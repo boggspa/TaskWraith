@@ -164,6 +164,7 @@ import {
   codexGitMetadataRootsForWorkspace,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
+import { buildCodexAppServerThreadLaunchPlan } from './codex/CodexAppServerThreadLaunchPlan'
 import { concurrentWriteLanesEnabled, ensembleWakeupsEnabled } from './featureGates'
 import {
   GEMINI_MCP_SERVER_NAME,
@@ -216,6 +217,7 @@ import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,
   CodexAppServerClient,
+  CodexAppServerStartupAbortedError,
   codexConfigParseUserMessage,
   compareCodexVersions,
   isCodexAppServerThreadId,
@@ -518,6 +520,7 @@ import {
   providerTransportAdmissionStillAuthorized,
   providerTransportLaunchStillAuthorized,
   ProviderOperationRegistry,
+  ProviderProcessTerminationBackstop,
   waitForProviderOperationSettlement
 } from './run/ProviderOperationRegistry'
 import {
@@ -1012,6 +1015,7 @@ import {
   resolvePreparedClaudeRunAuthority,
   type ClaudeEnvironmentAuthoritySnapshot
 } from './providers/ClaudeRuntimeEnvironment'
+import { settleClaudeSdkTerminal } from './providers/ClaudeSdkRunLifecycle'
 import {
   buildBridgeApnsPusherFromSettings,
   cancelGeminiOAuthLogin,
@@ -1193,9 +1197,11 @@ import {
   createMcpBridgeRuntime,
   endBridgeSubprocessLogHistoryClear,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
+  GeminiMcpBridgePreparationAbortedError,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   resolveBrokerParentProvider,
-  startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
+  startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps,
+  type GeminiMcpBridgePrepareOptions
 } from './mcp/McpBridgeRuntime'
 import {
   GATEWAY_MCP_DIRECT_TOOLS,
@@ -1279,6 +1285,8 @@ import { buildPiRpcArgs } from './pi/PiCliArgs'
 import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
 import { splitPiWireModelId } from './pi/PiModels'
 import { PiKeyStore } from './pi/PiKeyStore'
+import { createPiIsolatedHome } from './pi/PiIsolatedHome'
+import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
 import {
   cursorEffectiveExitCode,
@@ -1287,23 +1295,31 @@ import {
   cursorTerminalFailureText,
   type NormalizedCursorRunEvent
 } from './cursor/CursorStreamJson'
+import { cursorWriteCapable } from './cursor/CursorCliArgs'
 import {
-  buildContainedCursorReadOnlyArgv,
-  buildContainedCursorWriteArgv,
-  cursorWriteCapable
-} from './cursor/CursorCliArgs'
+  buildCursorPathBLaunchPlan,
+  resolveCursorPathBBrokerPolicy
+} from './cursor/CursorPathBLaunchPlan'
 import {
-  CURSOR_BROKER_MCP_ALLOW_RULES,
-  CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
-  CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
   CURSOR_MCP_SERVER_NAME,
   CURSOR_SCOPED_MCP_SERVER_NAME,
   buildCursorBrokerMcpServerEntry
 } from './cursor/CursorMcpBridge'
+import { createVerifiedCursorWorkspaceConfigTransaction } from './cursor/CursorWorkspaceConfig'
+import { createCursorGlobalBrokerRegistrationTransaction } from './cursor/CursorGlobalBrokerRegistrationTransaction'
+import { runCursorMcpEnable } from './cursor/CursorMcpEnable'
 import {
-  applyCursorWriteModeConfig,
-  ensureGlobalCursorBrokerRegistered
-} from './cursor/CursorWorkspaceConfig'
+  CursorWorkspaceConfigLeaseAbortedError,
+  CursorWorkspaceConfigLeaseCoordinator,
+  cursorWorkspaceConfigurationKey,
+  type CursorWorkspaceConfigLease
+} from './cursor/CursorWorkspaceConfigLease'
+import {
+  CursorGlobalBrokerRegistryLeaseAbortedError,
+  CursorGlobalBrokerRegistryInstallError,
+  cursorGlobalBrokerRegistryLeases,
+  type CursorGlobalBrokerRegistryLease
+} from './cursor/CursorGlobalBrokerRegistryLease'
 import { cursorMcpToolsDenied } from './cursor/CursorMcpPolicy'
 import {
   createGrokTurnAbortController,
@@ -2441,6 +2457,7 @@ const providerRunPersistenceAuthorities = new Map<string, HistoryClearRunPersist
 // provider abort/kill can settle before the adapter's close/cleanup callback.
 const providerAdapterRunsInFlight = new Map<string, Promise<void>>()
 const providerTransportOperations = new ProviderOperationRegistry()
+const providerProcessTerminationBackstop = new ProviderProcessTerminationBackstop(4_000)
 const hostCommandOperations = new HostCommandOperationRegistry()
 interface ProviderDispatchReservation {
   authority: HistoryClearDispatchAuthority
@@ -6969,14 +6986,14 @@ const AUDIT_ROLE_RUN_TIMEOUT_MS = 15 * 60 * 1000
 const WORKFLOW_LOOP_STEP_TIMEOUT_MS = 30 * 60 * 1000
 
 // v1: providers whose plan-mode runs can actually reach the MCP bridge to record
-// audit_* artifacts. gemini/grok keep the --sandbox seatbelt in plan mode (the
-// bridge subprocess can't reach the broker), Cursor is disabled before process
-// launch, and codex's primary app-server
-// path doesn't stamp TASKWRAITH_RUN_ID (so an audit_* call wouldn't route back to
-// the role-run's context). Assigning any of them a recording role yields a run
-// that exits ok but records NOTHING — a silently-empty audit. Restrict audit
-// roles to this set until the gemini seatbelt-swap + codex daemon run-id
-// correlation land, then widen it. (ollama excluded for v1 — unverified.)
+// audit_* artifacts. Gemini/Grok plan seats still cannot reach the recording
+// path; managed Cursor Path-B is live but its current plan/broker profile is not
+// qualified for audit recording; Codex's primary app-server path does not stamp
+// TASKWRAITH_RUN_ID (so an audit_* call would not route back to the role-run's
+// context). Assigning any of them a recording role yields a run that can exit ok
+// but record NOTHING — a silently-empty audit. Restrict audit roles to this set
+// until those provider-specific recording routes qualify. (Ollama excluded for
+// v1 — unverified.)
 const AUDIT_ARTIFACT_CAPABLE_PROVIDERS: ReadonlySet<ProviderId> = new Set(['claude', 'kimi'])
 
 // The live AuditOrchestrator, assigned in app.whenReady() (Slice A) where
@@ -13658,6 +13675,7 @@ async function dispatchDueScheduledTaskHeadless(
     return
   }
   let transcriptSeeded = false
+  let unsealedLaunchReason: string | null = null
   try {
     if (!verifyScheduledTaskAttachmentOwnership(task)) {
       failScheduledOccurrence(
@@ -13710,11 +13728,33 @@ async function dispatchDueScheduledTaskHeadless(
         return
       }
       if (sealOutcome.ok === 'skipped') {
+        unsealedLaunchReason = sealOutcome.reason
         console.warn(`[scheduled-occurrence] ${sealOutcome.reason}`)
       }
     }
     transcriptSeeded = true
     seedScheduledSoloTranscript(task, owner, composed, executionWorkspacePath)
+    if (unsealedLaunchReason) {
+      try {
+        sendAgentCompatLine(
+          headlessRunSender,
+          owner.provider,
+          {
+            type: 'provider_warning',
+            provider: owner.provider,
+            severity: 'warning',
+            title: 'Scheduled launch ran without an exact launch seal',
+            message: unsealedLaunchReason
+          },
+          { appRunId: owner.ownerRunId, appChatId: owner.chatId }
+        )
+      } catch (warningError) {
+        console.warn(
+          `[scheduled-occurrence] could not publish unsealed-launch warning for ${owner.ownerRunId}:`,
+          warningError
+        )
+      }
+    }
     const result = await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
       sender: headlessRunSender
     })
@@ -16250,6 +16290,14 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   ) {
     state.completed = true
     const terminalStatus = event?.status || event?.result?.status || event?.subtype || 'success'
+    const normalizedTerminalStatus = bridgeResultTerminalStatus({
+      status: terminalStatus,
+      error: event?.error,
+      is_error: event?.is_error,
+      subtype: event?.subtype
+    })
+    state.terminalResultStatus = normalizedTerminalStatus
+    state.terminalResultFailed = normalizedTerminalStatus === 'failed'
     if (state.deferTerminalResult) {
       const merged = mergeKimiWireTerminalEvidence(
         {
@@ -16265,6 +16313,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
       )
       state.deferredTerminalStatus = merged.status
       state.deferredTerminalConflict = merged.conflict
+      state.terminalResultStatus = merged.conflict ? 'failed' : merged.status
       state.terminalResultFailed = merged.status === 'failed' || merged.conflict
       return
     }
@@ -16287,6 +16336,70 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
       },
       state
     )
+  }
+}
+
+function projectVisibleProviderSetupFailure(input: {
+  sender: Electron.WebContents
+  provider: ProviderId
+  route: AgentRunRoute
+  message: string
+  setupRequired?: boolean
+  securityUnavailable?: boolean
+  fallback?: boolean
+  exitCode?: number
+}): void {
+  const project = (send: () => void): void => {
+    try {
+      send()
+    } catch (error) {
+      try {
+        console.error(
+          `[${input.provider}] setup-failure projection failed for ${input.route.appRunId || 'unrouted'}:`,
+          error
+        )
+      } catch {
+        // Run settlement below is independent of diagnostics.
+      }
+    }
+  }
+  project(() =>
+    sendAgentCompatError(input.sender, input.provider, input.message, input.route)
+  )
+  project(() =>
+    sendAgentCompatLine(
+      input.sender,
+      input.provider,
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: input.provider,
+        setupRequired: input.setupRequired === true,
+        ...(input.securityUnavailable === true ? { securityUnavailable: true } : {}),
+        fallback: input.fallback === true
+      },
+      input.route
+    )
+  )
+  project(() =>
+    sendAgentCompatExit(input.sender, input.provider, input.exitCode ?? 1, input.route)
+  )
+}
+
+function settleVisibleProviderSetupFailure(input: {
+  sender: Electron.WebContents
+  provider: ProviderId
+  route: AgentRunRoute
+  message: string
+  setupRequired?: boolean
+  securityUnavailable?: boolean
+  fallback?: boolean
+  exitCode?: number
+}): void {
+  projectVisibleProviderSetupFailure(input)
+  if (input.route.appRunId) {
+    settleProviderRunWithoutTransport(runManager, input.route.appRunId, 'failed')
   }
 }
 
@@ -16326,10 +16439,28 @@ function runCliProviderProcess(
   ) = { fallback: true }
 ): Promise<void> {
   const route = routeWithRunId(provider, payload)
-  const transportClose = createProviderTransportCloseOperation(options.onComplete)
-  const existingSession = runManager.get(route.appRunId)
-  if (!canStartRunTransport(existingSession?.status, options.requireExistingRun)) {
-    transportClose.markTransportClosed()
+  let transportCleanupOperation: Promise<void> | null = null
+  const completeTransportCleanup = (): Promise<void> => {
+    if (!transportCleanupOperation) {
+      transportCleanupOperation = Promise.resolve()
+        .then(() => options.onComplete?.())
+        .catch((error) => {
+          try {
+            console.error(`[${provider}] transport cleanup failed:`, error)
+          } catch {
+            // Exact close settlement remains authoritative.
+          }
+        })
+    }
+    return transportCleanupOperation
+  }
+  const transportClose = createProviderTransportCloseOperation(completeTransportCleanup)
+  if (!providerTransportLaunchAuthorized(provider, payload, route)) {
+    try {
+      settleDeniedProviderTransportLaunch(route)
+    } finally {
+      transportClose.markTransportClosed()
+    }
     return transportClose.operation
   }
   const cwd = payload.workspace!
@@ -16369,54 +16500,100 @@ function runCliProviderProcess(
     options.requireExistingRun
   )
   if (!registeredSession) {
-    transportClose.markTransportClosed()
+    try {
+      settleDeniedProviderTransportLaunch(route)
+    } finally {
+      transportClose.markTransportClosed()
+    }
     return transportClose.operation
   }
-  void emitProviderCapabilityWarnings(
-    event.sender,
-    provider,
-    payload.workspace,
-    payload.approvalMode,
-    state
-  )
+  // Pretrack cleanup before any init/warning projector can throw after the
+  // provider state adopted the coordinator-owned starting session.
+  let transportOperation: Promise<void>
+  try {
+    transportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      transportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider,
+        route,
+        message: `${providerDisplayName(provider)} transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: options.fallback
+      })
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    return transportClose.operation
+  }
+  try {
+    void emitProviderCapabilityWarnings(
+      event.sender,
+      provider,
+      payload.workspace,
+      payload.approvalMode,
+      state
+    )
 
-  if (options.warning) {
+    if (options.warning) {
+      sendAgentCompatLine(
+        event.sender,
+        provider,
+        {
+          type: 'provider_warning',
+          provider,
+          message: options.warning,
+          fallback: options.fallback
+        },
+        state
+      )
+    }
+
     sendAgentCompatLine(
       event.sender,
       provider,
       {
-        type: 'provider_warning',
+        type: 'init',
+        session_id: state.providerSessionId || '',
+        model,
+        timestamp: new Date().toISOString(),
         provider,
-        message: options.warning,
         fallback: options.fallback
       },
       state
     )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider,
+        route,
+        message: `${providerDisplayName(provider)} initialization projection failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: options.fallback
+      })
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    return transportOperation
   }
-
-  sendAgentCompatLine(
-    event.sender,
-    provider,
-    {
-      type: 'init',
-      session_id: state.providerSessionId || '',
-      model,
-      timestamp: new Date().toISOString(),
-      provider,
-      fallback: options.fallback
-    },
-    state
-  )
-
-  // Register the exact close+cleanup operation before the child is exposed to
-  // RunManager or any provider-global compatibility handle. Destructive
-  // history deletion can therefore never observe an active Claude child
-  // without also having a joinable transport authority.
-  const transportOperation = providerTransportOperations.track(
-    route.appRunId!,
-    transportClose.operation
-  )
   let child: ChildProcess
+  if (!providerTransportLaunchAuthorized(provider, payload, route)) {
+    try {
+      settleDeniedProviderTransportLaunch(route)
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    return transportOperation
+  }
   try {
     const childEnv: Readonly<Record<string, string>> =
       provider === 'antigravity'
@@ -16444,38 +16621,25 @@ function runCliProviderProcess(
       env: childEnv
     })
   } catch (error) {
-    sendAgentCompatError(
-      event.sender,
-      provider,
-      `Failed to start ${providerDisplayName(provider)}: ${error instanceof Error ? error.message : String(error)}`,
-      state
-    )
-    sendAgentCompatExit(event.sender, provider, 1, state)
-    runManager.finish(route.appRunId, 'failed')
-    transportClose.markTransportClosed()
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider,
+        route,
+        message: `Failed to start ${providerDisplayName(provider)}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: options.fallback
+      })
+    } finally {
+      transportClose.markTransportClosed()
+    }
     return transportOperation
   }
-  if (options.stdinPlan) {
-    for (const line of options.stdinPlan.initialLines) {
-      child.stdin?.write(`${line}\n`)
-    }
-    const appRunId = route.appRunId
-    if (appRunId) {
-      piRunStdinClosers.set(appRunId, () => {
-        try {
-          child.stdin?.end()
-        } catch {
-          /* the kill backstop below still runs */
-        }
-        const backstop = setTimeout(() => {
-          if (child.exitCode === null && !child.killed) child.kill('SIGKILL')
-        }, 4_000)
-        backstop.unref?.()
-      })
-    }
-  } else {
-    child.stdin?.end()
-  }
+  // Publish exact child identity before any stdin operation can synchronously
+  // fail or cause the provider to exit. Lifecycle listeners are installed
+  // below before the initial prompt/EOF is written.
   runManager.attachProcess(route.appRunId!, child)
   cliProviderProcesses.set(provider, child)
 
@@ -16557,14 +16721,25 @@ function runCliProviderProcess(
     emitCliProviderStderr(cliProviderStderrSanitizer.push(text))
   })
 
+  let providerSetupFailed = false
+  let setupFailureProjected = false
   child.on('error', (error) => {
-    emitCliProviderStderr(cliProviderStderrSanitizer.flush())
-    sendAgentCompatError(
-      event.sender,
-      provider,
-      `Failed to start ${providerDisplayName(provider)}: ${error.message}`,
-      state
-    )
+    providerSetupFailed = true
+    try {
+      emitCliProviderStderr(cliProviderStderrSanitizer.flush())
+      sendAgentCompatError(
+        event.sender,
+        provider,
+        `Failed to start ${providerDisplayName(provider)}: ${error.message}`,
+        state
+      )
+    } catch (projectionError) {
+      try {
+        console.error(`[${provider}] child-error projection failed:`, projectionError)
+      } catch {
+        // Exact close below remains authoritative.
+      }
+    }
     // Node emits `close` after an `error` once the child/stdout lifecycle has
     // actually ended. Keep the exact RunManager and compatibility handles live
     // until that callback publishes the exit, terminalizes the run, and marks
@@ -16572,99 +16747,181 @@ function runCliProviderProcess(
   })
 
   child.on('close', async (code) => {
-    if (route.appRunId) piRunStdinClosers.delete(route.appRunId)
-    emitCliProviderStderr(cliProviderStderrSanitizer.flush())
-    // Providers whose session id never appears in stream output (agy) resolve it
-    // from an on-disk receipt now. Awaited HERE, before the terminal `result`
-    // line carries `providerThreadId` and before `runManager.finish`, so the
-    // adopted id reaches chat persistence and the persistence-authority gate in
-    // updateCliProviderSession still sees a live run.
-    if (options.resolveExitSessionId) {
-      try {
-        const resolvedSessionId = await options.resolveExitSessionId()
-        if (resolvedSessionId) updateCliProviderSession(state, resolvedSessionId)
-      } catch {
-        // Best-effort: an unresolved receipt only means the next turn is fresh.
-      }
+    if (route.appRunId) {
+      piRunStdinClosers.delete(route.appRunId)
+      providerProcessTerminationBackstop.clear(route.appRunId)
     }
-    const trailing = stdoutBuffer.trim()
-    if (trailing) {
-      try {
-        handleCliProviderJsonEvent(state, JSON.parse(trailing))
-      } catch {
-        sendAgentCompatLine(
-          event.sender,
-          provider,
-          {
-            type: 'content',
-            text: sanitizeCanvasEvalProviderText(trailing + '\n'),
-            provider,
-            fallback: options.fallback
-          },
-          state
-        )
-      }
-    }
-    // Grok reports no token usage; record a projected estimate so it appears in
-    // the dashboard (see estimateProjectedTokenUsage — projection, not billing).
-    if (provider === 'grok' && !state.tokenUsage) {
-      state.tokenUsage = estimateProjectedTokenUsage(
-        payload.prompt,
-        state.assistantText,
-        (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
-      )
-    }
-    // 1.0.6-G5e — Honor Grok's terminal stopReason. Grok exits 0 even when it
-    // self-cancels a turn mid-reasoning (stopReason 'Cancelled') before producing
-    // an answer or writing files, which otherwise renders as a misleading
-    // "Task complete / success". Surface the real reason + a short note instead.
-    const grokStopped =
-      provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
     const effectiveExitCode =
-      provider === 'cursor'
-        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
-        : code
-    if (grokStopped && !state.completed) {
-      sendAgentCompatLine(
-        event.sender,
-        'grok',
-        {
-          type: 'provider_warning',
-          provider: 'grok',
-          severity: 'warning',
-          title: `Grok ended this turn early (${state.grokStopReason})`,
-          message: `Grok stopped before finishing this turn (stopReason: ${state.grokStopReason}). It may not have produced an answer or written files — any reasoning above is partial. This is Grok's own turn outcome, not an TaskWraith error.`
-        },
-        state
-      )
+      providerSetupFailed
+        ? 1
+        : provider === 'cursor'
+          ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
+          : code
+    try {
+      try {
+        emitCliProviderStderr(cliProviderStderrSanitizer.flush())
+        // Providers whose session id never appears in stream output (agy)
+        // resolve it from an on-disk receipt now, before the terminal result.
+        if (options.resolveExitSessionId) {
+          try {
+            const resolvedSessionId = await options.resolveExitSessionId()
+            if (resolvedSessionId) updateCliProviderSession(state, resolvedSessionId)
+          } catch {
+            // Best-effort: an unresolved receipt only means the next turn is fresh.
+          }
+        }
+        const trailing = stdoutBuffer.trim()
+        if (trailing) {
+          try {
+            handleCliProviderJsonEvent(state, JSON.parse(trailing))
+          } catch {
+            sendAgentCompatLine(
+              event.sender,
+              provider,
+              {
+                type: 'content',
+                text: sanitizeCanvasEvalProviderText(trailing + '\n'),
+                provider,
+                fallback: options.fallback
+              },
+              state
+            )
+          }
+        }
+        // Grok reports no token usage; record a projected estimate so it appears in
+        // the dashboard (see estimateProjectedTokenUsage — projection, not billing).
+        if (provider === 'grok' && !state.tokenUsage) {
+          state.tokenUsage = estimateProjectedTokenUsage(
+            payload.prompt,
+            state.assistantText,
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+          )
+        }
+        const grokStopped =
+          provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
+        if (grokStopped && !state.completed) {
+          sendAgentCompatLine(
+            event.sender,
+            'grok',
+            {
+              type: 'provider_warning',
+              provider: 'grok',
+              severity: 'warning',
+              title: `Grok ended this turn early (${state.grokStopReason})`,
+              message: `Grok stopped before finishing this turn (stopReason: ${state.grokStopReason}). It may not have produced an answer or written files — any reasoning above is partial. This is Grok's own turn outcome, not an TaskWraith error.`
+            },
+            state
+          )
+        }
+        if (!state.completed) {
+          sendAgentCompatLine(
+            event.sender,
+            provider,
+            {
+              type: 'result',
+              status: grokStopped
+                ? state.grokStopReason!
+                : effectiveExitCode === 0
+                  ? 'success'
+                  : 'failed',
+              stats: {
+                ...(state.tokenUsage || {}),
+                duration_ms: Date.now() - state.startedAt
+              },
+              provider,
+              providerThreadId: state.providerSessionId || undefined,
+              fallback: options.fallback
+            },
+            state
+          )
+        }
+        // Cleanup receipts are part of this run's honest terminal projection.
+        // Emit any Cursor/Pi cleanup warning while the run is still active and
+        // before the exit event closes renderer/transcript presentation.
+        await completeTransportCleanup()
+        if (!setupFailureProjected) {
+          sendAgentCompatExit(event.sender, provider, effectiveExitCode, state)
+        }
+      } catch (projectionError) {
+        try {
+          console.error(`[${provider}] terminal projection failed:`, projectionError)
+        } catch {
+          // Terminal ownership below is independent of diagnostics.
+        }
+      }
+    } finally {
+      if (cliProviderProcesses.get(provider) === child) cliProviderProcesses.delete(provider)
+      const terminalStatus =
+        runManager.getClaimedTerminalStatus(route.appRunId) ??
+        (effectiveExitCode !== 0 || state.terminalResultFailed === true
+          ? 'failed'
+          : (state.terminalResultStatus ?? 'completed'))
+      try {
+        // Cleanup may need to publish an honest warning (Cursor registry
+        // restoration and Pi isolated-home removal). Keep the exact run's
+        // projection/persistence authority live until that once-only cleanup
+        // finishes, then terminalize and settle the joined close operation.
+        await completeTransportCleanup()
+      } finally {
+        try {
+          runManager.finish(route.appRunId, terminalStatus)
+        } finally {
+          try {
+            runManager.confirmTerminalStatus(
+              route.appRunId,
+              runManager.getClaimedTerminalStatus(route.appRunId) ?? terminalStatus
+            )
+          } finally {
+            transportClose.markTransportClosed()
+          }
+        }
+      }
     }
-    if (!state.completed) {
-      sendAgentCompatLine(
-        event.sender,
-        provider,
-        {
-          type: 'result',
-          status: grokStopped
-            ? state.grokStopReason!
-            : effectiveExitCode === 0
-              ? 'success'
-              : 'failed',
-          stats: {
-            ...(state.tokenUsage || {}),
-            duration_ms: Date.now() - state.startedAt
-          },
-          provider,
-          providerThreadId: state.providerSessionId || undefined,
-          fallback: options.fallback
-        },
-        state
-      )
-    }
-    sendAgentCompatExit(event.sender, provider, effectiveExitCode, state)
-    if (cliProviderProcesses.get(provider) === child) cliProviderProcesses.delete(provider)
-    runManager.finish(route.appRunId, effectiveExitCode === 0 ? 'completed' : 'failed')
-    transportClose.markTransportClosed()
   })
+
+  // Install close/error/data listeners before the provider can observe stdin.
+  // Pi can settle synchronously from its first RPC command; agy/Claude/Cursor
+  // can exit on EOF immediately.
+  try {
+    if (options.stdinPlan) {
+      for (const line of options.stdinPlan.initialLines) {
+        child.stdin?.write(`${line}\n`)
+      }
+      const appRunId = route.appRunId
+      if (appRunId) {
+        piRunStdinClosers.set(appRunId, () => {
+          try {
+            child.stdin?.end()
+          } catch {
+            /* the kill backstop below still runs */
+          }
+          providerProcessTerminationBackstop.arm(appRunId, child)
+        })
+      }
+    } else {
+      child.stdin?.end()
+    }
+  } catch (error) {
+    providerSetupFailed = true
+    setupFailureProjected = true
+    state.completed = true
+    projectVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider,
+      route,
+      message: `${providerDisplayName(provider)} input setup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      setupRequired: true,
+      fallback: options.fallback
+    })
+    try {
+      child.kill()
+    } catch {
+      // The force-kill backstop below still owns bounded containment.
+    }
+    providerProcessTerminationBackstop.arm(route.appRunId!, child)
+  }
 
   return transportOperation
 }
@@ -17137,7 +17394,10 @@ async function tryRunClaudeSdk(
   if (typeof query !== 'function') return false
   const model = normalizeCliProviderModel('claude', payload.model)
   const pathToClaudeCodeExecutable = environmentAuthority.binaryPath || undefined
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return true
+  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return true
+  }
   const controller = new AbortController()
   cliProviderAbortControllers.set('claude', controller)
   const state: CliProviderStreamState = {
@@ -17181,7 +17441,36 @@ async function tryRunClaudeSdk(
     }
     return true
   }
-  runManager.attachAbortController(route.appRunId!, controller)
+  const transportClose = createProviderTransportCloseOperation()
+  let transportOperation: Promise<void>
+  try {
+    transportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      transportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'claude',
+        route,
+        message: `Claude SDK transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+    } finally {
+      transportClose.markTransportClosed()
+      if (cliProviderAbortControllers.get('claude') === controller) {
+        cliProviderAbortControllers.delete('claude')
+      }
+    }
+    await transportClose.operation
+    return true
+  }
+  try {
+    runManager.attachAbortController(route.appRunId!, controller)
   void emitProviderCapabilityWarnings(
     event.sender,
     'claude',
@@ -17287,14 +17576,17 @@ async function tryRunClaudeSdk(
       claudeSdkAllowedTools = null
     })
   }
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
     controller.abort()
-    if (cliProviderAbortControllers.get('claude') === controller) {
-      cliProviderAbortControllers.delete('claude')
-    }
+    settleDeniedProviderTransportLaunch(route)
     return true
   }
+  let sdkTransportAdopted = false
   try {
+    // From this point the SDK may synchronously construct/spawn provider
+    // transport before returning its iterator. Never replay the turn through
+    // the CLI after crossing this boundary, even when query() itself throws.
+    sdkTransportAdopted = true
     const stream = query({
       prompt: payload.prompt,
       options: {
@@ -17351,45 +17643,145 @@ async function tryRunClaudeSdk(
       handleCliProviderJsonEvent(state, message)
     }
 
-    if (!state.completed) {
-      sendAgentCompatLine(
-        event.sender,
-        'claude',
-        {
-          type: 'result',
-          status: 'success',
-          stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-          provider: 'claude',
-          providerThreadId: state.providerSessionId || undefined,
-          fallback: false
-        },
-        state
-      )
-    }
-    sendAgentCompatExit(event.sender, 'claude', 0, state)
-    runManager.finish(route.appRunId, 'completed')
+    const sdkTerminalStatus = controller.signal.aborted
+      ? 'cancelled'
+      : (state.terminalResultStatus ?? 'completed')
+    settleClaudeSdkTerminal({
+      runManager,
+      runId: route.appRunId,
+      status: sdkTerminalStatus,
+      project: (effectiveStatus) => {
+        if (!state.completed && effectiveStatus !== 'cancelled') {
+          sendAgentCompatLine(
+            event.sender,
+            'claude',
+            {
+              type: 'result',
+              status: effectiveStatus === 'completed' ? 'success' : 'failed',
+              subtype: effectiveStatus === 'completed' ? 'success' : 'error',
+              stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+              provider: 'claude',
+              providerThreadId: state.providerSessionId || undefined,
+              fallback: false
+            },
+            state
+          )
+        }
+        sendAgentCompatExit(
+          event.sender,
+          'claude',
+          effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
+          state
+        )
+      },
+      onError: (phase, error) => {
+        console.error(`[claude-sdk] terminal ${phase} failed:`, error)
+      }
+    })
     return true
   } catch (error) {
+    const runStatus = runManager.get(route.appRunId)?.status
     const decision = decideClaudeSdkFailure({
       error,
       signalAborted: controller.signal.aborted,
-      runStatus: runManager.get(route.appRunId)?.status,
+      runStatus,
       abortErrorConstructor: sdk?.AbortError || sdk?.default?.AbortError
     })
     if (decision === 'cancelled') {
-      runManager.finish(route.appRunId, 'cancelled')
-      // Preserve the cancelled RunManager status, but still publish the provider
-      // exit so scheduled-run, audit, bridge-transcript, and budget cleanup all
-      // settle through the shared terminal path.
-      sendAgentCompatExit(event.sender, 'claude', 130, state)
+      const terminalStatus =
+        runManager.getClaimedTerminalStatus(route.appRunId) ?? 'cancelled'
+      settleClaudeSdkTerminal({
+        runManager,
+        runId: route.appRunId,
+        status: terminalStatus,
+        // Preserve the claimed RunManager status, but still publish the provider
+        // exit so scheduled-run, audit, bridge-transcript, and budget cleanup all
+        // settle through the shared terminal path.
+        project: (effectiveStatus) =>
+          sendAgentCompatExit(
+            event.sender,
+            'claude',
+            effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
+            state
+          ),
+        onError: (phase, error) => {
+          console.error(`[claude-sdk] cancellation ${phase} failed:`, error)
+        }
+      })
       return true
     }
-    if (decision === 'terminal') return true
+    if (decision === 'terminal') {
+      const terminalStatus =
+        runManager.getClaimedTerminalStatus(route.appRunId) ??
+        (runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled'
+          ? runStatus
+          : 'failed')
+      settleClaudeSdkTerminal({
+        runManager,
+        runId: route.appRunId,
+        status: terminalStatus,
+        project: () => undefined
+      })
+      return true
+    }
+    if (sdkTransportAdopted) {
+      settleClaudeSdkTerminal({
+        runManager,
+        runId: route.appRunId,
+        status: 'failed',
+        project: (effectiveStatus) => {
+          if (effectiveStatus === 'failed') {
+            sendAgentCompatError(
+              event.sender,
+              'claude',
+              `Claude Agent SDK failed after its provider transport started; TaskWraith did not replay the turn through the CLI fallback. Reason: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              state
+            )
+            if (!state.completed) {
+              sendAgentCompatLine(
+                event.sender,
+                'claude',
+                {
+                  type: 'result',
+                  status: 'failed',
+                  subtype: 'error',
+                  stats: {
+                    ...(state.tokenUsage || {}),
+                    duration_ms: Date.now() - state.startedAt
+                  },
+                  provider: 'claude',
+                  providerThreadId: state.providerSessionId || undefined,
+                  fallback: false
+                },
+                state
+              )
+            }
+          }
+          sendAgentCompatExit(
+            event.sender,
+            'claude',
+            effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
+            state
+          )
+        },
+        onError: (phase, settlementError) => {
+          console.error(`[claude-sdk] post-launch failure ${phase} failed:`, settlementError)
+        }
+      })
+      return true
+    }
     throw error
+  }
   } finally {
+    // The exact SDK operation owns all cleanup above; this outer boundary only
+    // exists so pre-query setup/projection failures cannot leak that ownership.
     if (cliProviderAbortControllers.get('claude') === controller) {
       cliProviderAbortControllers.delete('claude')
     }
+    transportClose.markTransportClosed()
+    await transportOperation
   }
 }
 
@@ -17479,7 +17871,10 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     payload.providerSessionId || null
   )
   if (!startingSession) return
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
+  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   if (sdk) {
     try {
       if (await tryRunClaudeSdk(event, payload, sdk, route, environmentAuthority)) return
@@ -17520,7 +17915,10 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
   }
 
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) return
+  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   if (!environmentAuthority.binaryPath) {
     runManager.finish(route.appRunId, 'failed')
     sendAgentCompatError(
@@ -17655,7 +18053,8 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const claudeFallbackWarning = sdk
     ? 'Using Claude Code CLI fallback for this run.'
     : 'Claude Agent SDK is not bundled in this app build; using Claude Code CLI stream-json fallback for this run.'
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     if (mcpConfigPath) {
       await fs.unlink(mcpConfigPath).catch(() => {})
     }
@@ -17686,22 +18085,15 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
 async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   if (!grokAcpEnabled()) {
     const route = routeWithRunId('grok', payload)
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'grok', GROK_ACP_REQUIRED_MESSAGE, route)
-    sendAgentCompatLine(
-      event.sender,
-      'grok',
-      {
-        type: 'result',
-        status: 'failed',
-        stats: {},
-        provider: 'grok',
-        setupRequired: true,
-        securityUnavailable: true
-      },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'grok', 1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'grok',
+      route,
+      message: GROK_ACP_REQUIRED_MESSAGE,
+      setupRequired: true,
+      securityUnavailable: true,
+      fallback: false
+    })
     return
   }
   await runGrokAcpProvider(event, payload)
@@ -17726,29 +18118,29 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 // the next launch would then skip the one reliable approval recipe and reject
 // every MCP call).
 const cursorMcpApprovedWorkspaceServers = new Set<string>()
+const cursorWorkspaceConfigLeases = new CursorWorkspaceConfigLeaseCoordinator()
 async function ensureCursorMcpApproved(
   binaryPath: string,
   workspace: string,
-  serverName: string = CURSOR_MCP_SERVER_NAME
+  serverName: string = CURSOR_MCP_SERVER_NAME,
+  signal?: AbortSignal
 ): Promise<void> {
   const key = `${workspace}\0${serverName}`
   if (cursorMcpApprovedWorkspaceServers.has(key)) return
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      binaryPath,
-      ['mcp', 'enable', serverName],
-      { cwd: workspace, timeout: 10000 },
-      (error, _stdout, stderr) => {
-        if (error) {
-          const detail = (String(stderr || '').trim() || error.message || '').slice(0, 300)
-          reject(
-            new Error(`cursor-agent mcp enable ${serverName} failed${detail ? `: ${detail}` : ''}`)
+  await runCursorMcpEnable({
+    serverName,
+    signal,
+    launch: (callback) =>
+      execFile(
+        binaryPath,
+        ['mcp', 'enable', serverName],
+        { cwd: workspace, timeout: 10000 },
+        (error, _stdout, stderr) =>
+          callback(
+            error instanceof Error ? error : error ? new Error(String(error)) : null,
+            String(stderr || '')
           )
-          return
-        }
-        resolve()
-      }
-    )
+      )
   })
   cursorMcpApprovedWorkspaceServers.add(key)
 }
@@ -17764,7 +18156,11 @@ function globalCursorMcpPath(): string {
 }
 
 function cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath: string): boolean {
-  return canonicalPath(mcpPath) === canonicalPath(globalCursorMcpPath())
+  const workspaceRegistryPath =
+    canonicalExternalGrantPath(mcpPath) || canonicalPath(mcpPath)
+  const globalRegistryPath =
+    canonicalExternalGrantPath(globalCursorMcpPath()) || canonicalPath(globalCursorMcpPath())
+  return workspaceRegistryPath === globalRegistryPath
 }
 
 async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
@@ -17775,21 +18171,20 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
 
   const resolved = await resolveCliProviderBinary('cursor', payload.runtimeProfile)
   if (!resolved.binaryPath) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(
-      event.sender,
-      'cursor',
-      resolved.error ||
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'cursor',
+      route,
+      message:
+        resolved.error ||
         'Cursor CLI (cursor-agent) is not configured. Install it and run `cursor-agent login`.',
-      route
-    )
-    sendAgentCompatLine(
-      event.sender,
-      'cursor',
-      { type: 'result', status: 'failed', stats: {}, provider: 'cursor', setupRequired: true },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'cursor', 1, route)
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     return
   }
 
@@ -17803,28 +18198,108 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   const cursorAdvertiseTaskWraithMcp =
     payload.taskWraithMcpAdvertised === true && !mcpToolsDenied && Boolean(payload.workspace)
-  let restoreCursorConfig: (() => void) | undefined
+  const cursorPlanSeat =
+    !writeCapable && payload.effectivePermissions?.presetId === 'plan'
+  const cursorBrokerPolicy = resolveCursorPathBBrokerPolicy({
+    writeCapable,
+    planSeat: cursorPlanSeat,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId ?? null
+  })
+  let cursorGlobalBrokerRegistryLease: CursorGlobalBrokerRegistryLease | undefined
+  let cursorWorkspaceConfigLease: CursorWorkspaceConfigLease | undefined
+  const releaseCursorConfigurationLeases = async (): Promise<void> => {
+    const workspaceLease = cursorWorkspaceConfigLease
+    cursorWorkspaceConfigLease = undefined
+    const globalLease = cursorGlobalBrokerRegistryLease
+    cursorGlobalBrokerRegistryLease = undefined
+    const cleanupIssues: string[] = []
+
+    try {
+      const receipt = await workspaceLease?.release()
+      if (receipt?.cleanup?.outcome === 'restore-attempted-unverified') {
+        cleanupIssues.push(
+          `Workspace configuration restoration was attempted but could not be verified${
+            receipt.cleanup.detail ? `: ${receipt.cleanup.detail}` : '.'
+          }`
+        )
+      } else if (receipt?.cleanup?.outcome === 'cleanup-failed') {
+        cleanupIssues.push(`Workspace configuration cleanup failed: ${receipt.cleanup.message}`)
+      }
+    } catch (error) {
+      cleanupIssues.push(
+        `Workspace configuration lease release failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+
+    // Lock order is global → workspace; release must be the exact reverse so
+    // an incompatible global profile can never observe a live workspace
+    // overlay from its predecessor.
+    try {
+      const receipt = await globalLease?.release()
+      if (receipt?.cleanup?.outcome === 'restore-attempted-unverified') {
+        cleanupIssues.push(
+          `Global broker restoration was attempted but could not be verified${
+            receipt.cleanup.detail ? `: ${receipt.cleanup.detail}` : '.'
+          }`
+        )
+      } else if (receipt?.cleanup?.outcome === 'cleanup-failed') {
+        cleanupIssues.push(`Global broker cleanup failed: ${receipt.cleanup.message}`)
+      }
+    } catch (error) {
+      cleanupIssues.push(
+        `Global broker lease release failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+    }
+
+    if (cleanupIssues.length > 0) {
+      try {
+        sendAgentCompatLine(
+          event.sender,
+          'cursor',
+          {
+            type: 'provider_warning',
+            provider: 'cursor',
+            severity: 'warning',
+            title: 'Cursor configuration cleanup not verified',
+            message: `${cleanupIssues.join(' ')} Cursor remains available; inspect the affected configuration before relying on its prior contents.`
+          },
+          route
+        )
+      } catch {
+        // Cleanup truth must never turn provider settlement into a new failure.
+      }
+    }
+  }
   let cursorMcpBridgeActive = false
+  let workspaceMcpAliasesGlobalRegistry = false
   if (cursorAdvertiseTaskWraithMcp) {
     try {
+      if (!payload.taskWraithMcpProfileId) {
+        throw new Error('The composed Cursor broker request has no TaskWraith MCP profile.')
+      }
       const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
       if (!bridgeCommandStatus.available) {
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
-      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
       // Read-only seat: the safe-subset broker (read tools only; the bridge
       // itself fails non-safe tools/call closed). A plan-preset seat widens to
       // the host-gated plan instruments. Write seat: the full broker.
-      const cursorPlanSeat = !writeCapable && payload.effectivePermissions?.presetId === 'plan'
       const brokerInvocation = {
         command: bridgeCommandStatus.command,
         args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-          safeSubset: !writeCapable,
-          planSubset: cursorPlanSeat,
-          coreSubset,
-          gatewaySubset
+          safeSubset: cursorBrokerPolicy.safeSubset,
+          planSubset: cursorBrokerPolicy.planSubset,
+          coreSubset: cursorBrokerPolicy.coreSubset,
+          gatewaySubset: cursorBrokerPolicy.gatewaySubset
         }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
@@ -17844,13 +18319,29 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // Cursor child inherits its own TASKWRAITH_RUN_ID/CHAT_ID/WORKSPACE_PATH
       // from the provider launch environment, so concurrent Cursor seats
       // cannot overwrite one another's broker route in ~/.cursor/mcp.json.
-      ensureGlobalCursorBrokerRegistered(
-        fsSync,
-        globalCursorMcpPath(),
-        globalCursorMcpDir(),
-        buildCursorBrokerMcpServerEntry(brokerInvocation),
-        [CURSOR_SCOPED_MCP_SERVER_NAME]
-      )
+      const globalMcpPath = globalCursorMcpPath()
+      const globalBrokerEntries = buildCursorBrokerMcpServerEntry(brokerInvocation)
+      const globalBrokerRegistrationTransaction =
+        createCursorGlobalBrokerRegistrationTransaction({
+          fs: fsSync,
+          registryPath: globalMcpPath,
+          registryDirectory: globalCursorMcpDir()
+        })
+      cursorGlobalBrokerRegistryLease = await cursorGlobalBrokerRegistryLeases.acquire({
+        registryPath: globalMcpPath,
+        canonicalRegistryResourcePath:
+          canonicalExternalGrantPath(globalMcpPath) || canonicalPath(globalMcpPath),
+        brokerEntries: globalBrokerEntries,
+        removeServerNames: [CURSOR_SCOPED_MCP_SERVER_NAME],
+        signal: payload.providerSetupAbortSignal,
+        install: globalBrokerRegistrationTransaction.install,
+        onInstallFailure: globalBrokerRegistrationTransaction.onInstallFailure
+      })
+      if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+        await releaseCursorConfigurationLeases()
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
       // Transient workspace config (restored after the run): allow THIS
       // broker's tools, and strip workspace-registered MCP servers — under
       // `--force` those would execute ungoverned. The native-tool deny-list is
@@ -17859,32 +18350,62 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // denied so read-only holds on the native stack as well as the broker.
       const cursorDir = join(payload.workspace!, '.cursor')
       const mcpPath = join(cursorDir, 'mcp.json')
-      restoreCursorConfig = applyCursorWriteModeConfig(
+      workspaceMcpAliasesGlobalRegistry = cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
+      const workspaceResourceKey =
+        canonicalExternalGrantPath(payload.workspace!) || canonicalPath(payload.workspace!)
+      const workspacePostureKey = cursorWorkspaceConfigurationKey(
+        writeCapable ? 'write' : cursorPlanSeat ? 'plan' : 'read-only'
+      )
+      const workspaceConfigTransaction = createVerifiedCursorWorkspaceConfigTransaction(
         fsSync,
         join(cursorDir, 'cli.json'),
         cursorDir,
         {
-          allowRules: writeCapable
-            ? CURSOR_BROKER_MCP_ALLOW_RULES
-            : cursorPlanSeat
-              ? CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
-              : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
+          allowRules: cursorBrokerPolicy.allowRules,
           mcpConfigPath: mcpPath,
           serverEntry: {},
-          ...(cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
+          ...(workspaceMcpAliasesGlobalRegistry
             ? { preserveExistingMcpServers: true }
             : {})
         },
-        { denyRules: writeCapable ? [] : ['Shell(**)', 'Write(**)'] }
+        {
+          denyRules: cursorBrokerPolicy.denyRules,
+          configurationKey: workspacePostureKey
+        }
       )
-      await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace!)
+      cursorWorkspaceConfigLease = await cursorWorkspaceConfigLeases.acquire({
+        resourceKey: workspaceResourceKey,
+        configurationKey: workspaceConfigTransaction.configurationKey,
+        signal: payload.providerSetupAbortSignal,
+        install: workspaceConfigTransaction.install,
+        onInstallFailure: workspaceConfigTransaction.onInstallFailure
+      })
+      if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+        await releaseCursorConfigurationLeases()
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
+      await ensureCursorMcpApproved(
+        resolved.binaryPath,
+        payload.workspace!,
+        CURSOR_MCP_SERVER_NAME,
+        payload.providerSetupAbortSignal
+      )
       cursorMcpBridgeActive = true
     } catch (error) {
       // Degrade WITH A VISIBLE WARNING (Grok parity): the seat runs native-only
       // rather than dying — or worse, trying tools that would all reject.
-      restoreCursorConfig?.()
-      restoreCursorConfig = undefined
+      await releaseCursorConfigurationLeases()
       cursorMcpBridgeActive = false
+      if (
+        error instanceof CursorGlobalBrokerRegistryLeaseAbortedError ||
+        error instanceof CursorWorkspaceConfigLeaseAbortedError ||
+        payload.providerSetupAbortSignal?.aborted
+      ) {
+        payload.taskWraithMcpAdvertised = false
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
       sendAgentCompatLine(
         event.sender,
         'cursor',
@@ -17895,19 +18416,48 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           title: 'Cursor MCP bridge unavailable',
           message: `TaskWraith could not set up the MCP broker; Cursor is running with native tools only. ${
             error instanceof Error ? error.message : String(error)
+          }${
+            error instanceof CursorGlobalBrokerRegistryInstallError
+              ? ` Registry recovery outcome: ${error.cleanup.outcome}${
+                  error.cleanup.outcome === 'cleanup-failed'
+                    ? ` (${error.cleanup.message})`
+                    : error.cleanup.outcome === 'restore-attempted-unverified' &&
+                        error.cleanup.detail
+                      ? ` (${error.cleanup.detail})`
+                      : ''
+                }.`
+              : ''
           }`
         },
         route
       )
     }
   }
-  payload.taskWraithMcpAdvertised = cursorMcpBridgeActive
-  if (!cursorMcpBridgeActive) {
-    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-      advertised: false,
-      coreProfile: false
-    })
+  if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+    await releaseCursorConfigurationLeases()
+    settleDeniedProviderTransportLaunch(route)
+    return
   }
+  const cursorLaunchPlan = buildCursorPathBLaunchPlan({
+    workspacePath: payload.workspace!,
+    prompt: payload.prompt,
+    model: payload.model,
+    reasoningEffort: payload.reasoningEffort ?? null,
+    fastMode: payload.serviceTier === 'fast',
+    writeCapable,
+    planSeat: cursorPlanSeat,
+    brokerRequested: cursorAdvertiseTaskWraithMcp,
+    brokerOutcome: cursorMcpBridgeActive
+      ? 'active'
+      : cursorAdvertiseTaskWraithMcp
+        ? 'native-only-degraded'
+        : 'not-requested',
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId ?? null,
+    workspaceMcpAliasesGlobalRegistry
+  })
+  payload.prompt = cursorLaunchPlan.prompt
+  payload.taskWraithMcpAdvertised = cursorLaunchPlan.taskWraithMcpAdvertised
+  payload.taskWraithMcpProfileId = cursorLaunchPlan.taskWraithMcpProfileId ?? undefined
 
   // Cursor is ALWAYS enabled and contained by argv — there is no per-build
   // fingerprint gate (that was brittle: provider auto-updates broke the exact-SHA
@@ -17925,30 +18475,21 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // user's REAL ~/.cursor login via the process env (headless-verified:
   // apiKeySource "login", no key). The CursorStartupContainment canary is
   // retained as a DEV-only containment check, not a runtime gate.
-  const args = writeCapable
-    ? buildContainedCursorWriteArgv({
-        workspace: payload.workspace!,
-        prompt: payload.prompt,
-        model: payload.model,
-        forceAllowMcpTools: cursorMcpBridgeActive
-      })
-    : buildContainedCursorReadOnlyArgv({
-        workspace: payload.workspace!,
-        prompt: payload.prompt,
-        model: payload.model,
-        mode: cursorMcpBridgeActive ? null : 'ask',
-        forceAllowMcpTools: cursorMcpBridgeActive
-      })
+  const args = [...cursorLaunchPlan.argv]
 
   // extraEnv (NOT resolvedEnv): createCliEnv inherits the REAL process.env (real
   // HOME + real ~/.cursor → the user's login works) and auto-injects the
   // TASKWRAITH_* keys. `--sandbox enabled` is enforced via argv, not env; no
   // CURSOR_CONFIG_DIR/CURSOR_DATA_DIR override (Path B = real config).
-  await runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
-    fallback: false,
-    extraEnv: {},
-    onComplete: () => restoreCursorConfig?.()
-  })
+  try {
+    await runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
+      fallback: false,
+      extraEnv: {},
+      onComplete: releaseCursorConfigurationLeases
+    })
+  } finally {
+    await releaseCursorConfigurationLeases()
+  }
 }
 
 // ── Pi coding agent (BYOK, `pi --mode rpc`) ─────────────────────────────────
@@ -17964,15 +18505,14 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   payload.providerSessionId = null
 
   const failFast = (message: string, setupRequired: boolean): void => {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'pi', message, route)
-    sendAgentCompatLine(
-      event.sender,
-      'pi',
-      { type: 'result', status: 'failed', stats: {}, provider: 'pi', setupRequired },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'pi', 1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'pi',
+      route,
+      message,
+      setupRequired,
+      fallback: false
+    })
   }
 
   const resolved = await resolveCliProviderBinary('pi', payload.runtimeProfile)
@@ -18024,26 +18564,32 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     coreProfile: false
   })
 
-  const writeCapable = payload.approvalMode === 'default'
+  const { writeCapable } = resolvePiNativeToolPosture({
+    approvalMode: payload.approvalMode,
+    effectivePermissions: payload.effectivePermissions
+  })
   // Ensemble lanes run single-turn on the composed prompt (the tagged
   // transcript already carries history — the antigravity double-injection
   // lesson); solo chats get durable per-chat continuity via --session-id.
   const ephemeralSession = Boolean(payload.ensembleRun)
   const sessionDir = join(app.getPath('userData'), 'pi-sessions', route.appChatId || 'global')
-  const isolatedHomeDir = join(
-    os.tmpdir(),
-    `taskwraith-pi-home-${route.appRunId || Date.now().toString(36)}`
-  )
+  let isolatedHome: ReturnType<typeof createPiIsolatedHome> | undefined
   try {
-    fsSync.mkdirSync(isolatedHomeDir, { recursive: true, mode: 0o700 })
+    isolatedHome = createPiIsolatedHome({
+      temporaryRoot: os.tmpdir(),
+      runId: route.appRunId || `unrouted-${Date.now().toString(36)}`
+    })
     if (!ephemeralSession) fsSync.mkdirSync(sessionDir, { recursive: true })
   } catch (error) {
+    isolatedHome?.cleanup()
     failFast(
       `Could not prepare the Pi runtime directories: ${error instanceof Error ? error.message : String(error)}`,
       false
     )
     return
   }
+  if (!isolatedHome) return
+  const isolatedHomeLease = isolatedHome
 
   const args = buildPiRpcArgs({
     upstream: split.upstream,
@@ -18071,7 +18617,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   for (const [name, value] of Object.entries(firewalled)) {
     if (typeof value === 'string') resolvedEnv[name] = value
   }
-  resolvedEnv.PI_CODING_AGENT_DIR = isolatedHomeDir
+  resolvedEnv.PI_CODING_AGENT_DIR = isolatedHomeLease.path
   resolvedEnv.PI_TELEMETRY = '0'
   resolvedEnv.PI_SKIP_VERSION_CHECK = '1'
   resolvedEnv.PI_OFFLINE = '1'
@@ -18081,10 +18627,20 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     resolvedEnv,
     stdinPlan: { initialLines: [piPromptCommand(payload.prompt)] },
     onComplete: () => {
-      try {
-        fsSync.rmSync(isolatedHomeDir, { recursive: true, force: true })
-      } catch {
-        /* best-effort cleanup */
+      const cleanup = isolatedHomeLease.cleanup()
+      if (!cleanup.ok) {
+        sendAgentCompatLine(
+          event.sender,
+          'pi',
+          {
+            type: 'provider_warning',
+            provider: 'pi',
+            severity: 'warning',
+            title: 'Pi isolated home was not removed',
+            message: cleanup.reason
+          },
+          route
+        )
       }
     }
   })
@@ -18162,21 +18718,19 @@ const grokSeatSessionRegistry = new GrokSeatSessionRegistry()
 async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('grok', payload)
   const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
+  if (!providerTransportLaunchAuthorized('grok', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   if (!resolved.binaryPath) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(
-      event.sender,
-      'grok',
-      resolved.error || 'Grok CLI is not configured.',
-      route
-    )
-    sendAgentCompatLine(
-      event.sender,
-      'grok',
-      { type: 'result', status: 'failed', stats: {}, provider: 'grok', setupRequired: true },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'grok', 1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'grok',
+      route,
+      message: resolved.error || 'Grok CLI is not configured.',
+      setupRequired: true,
+      fallback: false
+    })
     return
   }
   const binaryPath = resolved.binaryPath
@@ -18213,18 +18767,58 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     payload.providerSessionId || null
   )
   if (!registeredSession) return
-  sendAgentCompatLine(
-    event.sender,
-    'grok',
-    {
-      type: 'init',
-      session_id: state.providerSessionId || '',
-      model,
-      timestamp: new Date().toISOString(),
-      provider: 'grok',
-      fallback: false
-    },
-    state
+  // Publish exact settlement authority before initialization diagnostics,
+  // workspace sweeping, or broker setup can project or await.
+  const grokTransportClose = createProviderTransportCloseOperation()
+  let grokTransportOperation: Promise<void>
+  try {
+    grokTransportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      grokTransportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'grok',
+        route,
+        message: `Grok transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+    } finally {
+      grokTransportClose.markTransportClosed()
+    }
+    await grokTransportClose.operation
+    return
+  }
+  const safelyProjectGrok = (projection: () => void): void => {
+    try {
+      projection()
+    } catch (error) {
+      try {
+        console.error('[grok-acp] projection failed', error)
+      } catch {
+        // Exact transport settlement remains independent of diagnostics.
+      }
+    }
+  }
+  safelyProjectGrok(() =>
+    sendAgentCompatLine(
+      event.sender,
+      'grok',
+      {
+        type: 'init',
+        session_id: state.providerSessionId || '',
+        model,
+        timestamp: new Date().toISOString(),
+        provider: 'grok',
+        fallback: false
+      },
+      state
+    )
   )
 
   if (payload.workspace) {
@@ -18279,6 +18873,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
       }
       await mcpBridgeRuntime.startGeminiMcpBroker()
+      if (!providerTransportLaunchAuthorized('grok', payload, route)) {
+        settleDeniedProviderTransportLaunch(route)
+        grokTransportClose.markTransportClosed()
+        await grokTransportOperation
+        return
+      }
       const safeSubset = grokReadOnlySeat
       // Plan-tier seat: a plan-preset (not read_only) Grok seat widens the safe
       // subset to the plan instruments (canvas actuation + media), which the broker
@@ -18334,19 +18934,21 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         advertised: false,
         coreProfile: false
       })
-      sendAgentCompatLine(
-        event.sender,
-        'grok',
-        {
-          type: 'provider_warning',
-          provider: 'grok',
-          severity: 'warning',
-          title: 'Grok MCP bridge unavailable',
-          message: `TaskWraith could not start the MCP broker; Grok is running without TaskWraith MCP tools. ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        },
-        state
+      safelyProjectGrok(() =>
+        sendAgentCompatLine(
+          event.sender,
+          'grok',
+          {
+            type: 'provider_warning',
+            provider: 'grok',
+            severity: 'warning',
+            title: 'Grok MCP bridge unavailable',
+            message: `TaskWraith could not start the MCP broker; Grok is running without TaskWraith MCP tools. ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          },
+          state
+        )
       )
     }
   }
@@ -18447,20 +19049,31 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     return allowed ? 'allow' : 'deny'
   }
 
-  let grokTransportCloseResolved = false
-  let resolveGrokTransportClose!: () => void
-  const grokTransportClose = new Promise<void>((resolve) => {
-    resolveGrokTransportClose = resolve
-  })
   const finishGrokAcpTurn = (
     code: number | null,
     turnComplete: boolean,
     terminalStatus?: string
   ): void => {
+    const finalStopReason = normalizeGrokStopReason(terminalStatus)
+    const finalFailed =
+      !turnComplete ||
+      finalStopReason !== 'success' ||
+      (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
+    const safelyProject = (projection: () => void): void => {
+      try {
+        projection()
+      } catch (error) {
+        try {
+          console.error('[grok-acp] terminal projection failed', error)
+        } catch {
+          // Terminal ownership below is independent of diagnostics.
+        }
+      }
+    }
     try {
       if (!state.completed) {
         state.completed = true
-        const stopReason = normalizeGrokStopReason(terminalStatus)
+        const stopReason = finalStopReason
         if (stopReason !== 'success') state.grokStopReason = stopReason
         const emptyAfterToolFailure =
           turnComplete &&
@@ -18473,51 +19086,64 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
             stopReason !== 'success'
               ? `Grok stopped before finishing this turn (stopReason: ${stopReason}). It may not have produced an answer or written files.`
               : grokAcpEmptyToolFailureMessage(state)
-          sendAgentCompatError(event.sender, 'grok', message, state)
+          safelyProject(() => sendAgentCompatError(event.sender, 'grok', message, state))
         }
         // Grok (ACP path too) reports no usage — project tokens + cost so it
         // appears in the composer tally / dashboard, mirroring the headless
         // path's close handler.
         if (!state.tokenUsage) {
           state.tokenUsage = estimateProjectedTokenUsage(
-        payload.prompt,
-        state.assistantText,
-        (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
-      )
+            payload.prompt,
+            state.assistantText,
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+          )
         }
-        sendAgentCompatLine(
-          event.sender,
-          'grok',
-          {
-            type: 'result',
-            status: failed ? 'failed' : 'success',
-            stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-            provider: 'grok',
-            providerThreadId: state.providerSessionId || undefined,
-            ...(stopReason !== 'success' ? { stopReason } : {}),
-            fallback: false
-          },
-          state
+        safelyProject(() =>
+          sendAgentCompatLine(
+            event.sender,
+            'grok',
+            {
+              type: 'result',
+              status: failed ? 'failed' : 'success',
+              stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+              provider: 'grok',
+              providerThreadId: state.providerSessionId || undefined,
+              ...(stopReason !== 'success' ? { stopReason } : {}),
+              fallback: false
+            },
+            state
+          )
         )
-        sendAgentCompatExit(
-          event.sender,
-          'grok',
-          failed ? 1 : turnComplete ? 0 : (code ?? 1),
-          state
+        safelyProject(() =>
+          sendAgentCompatExit(
+            event.sender,
+            'grok',
+            failed ? 1 : turnComplete ? 0 : (code ?? 1),
+            state
+          )
         )
       }
-      deleteCliProviderProcessIfOwned(cliProviderProcesses, 'grok', grokOwnedProcess)
-      grokOwnedProcess = null
-      const finalStopReason = normalizeGrokStopReason(terminalStatus)
-      const finalFailed =
-        !turnComplete ||
-        finalStopReason !== 'success' ||
-        (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
-      runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+    } catch (error) {
+      try {
+        console.error('[grok-acp] terminal projection failed', error)
+      } catch {
+        // Terminal ownership below is independent of diagnostic projection.
+      }
     } finally {
-      if (!grokTransportCloseResolved) {
-        grokTransportCloseResolved = true
-        resolveGrokTransportClose()
+      try {
+        deleteCliProviderProcessIfOwned(cliProviderProcesses, 'grok', grokOwnedProcess)
+        grokOwnedProcess = null
+        runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+      } finally {
+        try {
+          runManager.confirmTerminalStatus(
+            route.appRunId!,
+            runManager.getClaimedTerminalStatus(route.appRunId) ??
+              (finalFailed ? 'failed' : 'completed')
+          )
+        } finally {
+          grokTransportClose.markTransportClosed()
+        }
       }
     }
   }
@@ -18535,7 +19161,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are
   // pending; never spawn a fresh ACP child after its exact authority is gone.
-  if (!providerRunPersistenceAuthorized('grok', state)) return
+  if (!providerTransportLaunchAuthorized('grok', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    grokTransportClose.markTransportClosed()
+    await grokTransportOperation
+    return
+  }
 
   // Legacy Spike 7 persistent per-seat ACP session implementation. The gate is
   // hard-disabled until durable child identity + joined history-clear close
@@ -18553,65 +19184,93 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     grokReadOnlySeat &&
     grokMcpServers.length === 0
   ) {
-    const seatKey = `${route.appChatId || 'chat'}:${grokSeatParticipantId}`
-    const seatFingerprint = JSON.stringify([binaryPath, grokAcpArgs, payload.workspace])
-    const { session, reused } = grokSeatSessionRegistry.acquire(seatKey, seatFingerprint, () => ({
-      cwd: payload.workspace!,
-      spawnProcess: grokSpawnAcpProcess,
-      onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message)
-    }))
-    const seatProcess = session.process() as unknown as ChildProcess
-    runManager.attachProcess(route.appRunId!, seatProcess)
-    grokOwnedProcess = seatProcess
-    cliProviderProcesses.set('grok', seatProcess)
-    if (reused) {
-      applyGrokRunEvent(state, {
-        type: 'provider_warning',
-        text: 'Grok seat session resumed — this turn continues the seat’s live ACP session (provider-native memory).'
+    try {
+      const seatKey = `${route.appChatId || 'chat'}:${grokSeatParticipantId}`
+      const seatFingerprint = JSON.stringify([binaryPath, grokAcpArgs, payload.workspace])
+      const { session, reused } = grokSeatSessionRegistry.acquire(seatKey, seatFingerprint, () => ({
+        cwd: payload.workspace!,
+        spawnProcess: grokSpawnAcpProcess,
+        onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message)
+      }))
+      const seatProcess = session.process() as unknown as ChildProcess
+      runManager.attachProcess(route.appRunId!, seatProcess)
+      grokOwnedProcess = seatProcess
+      cliProviderProcesses.set('grok', seatProcess)
+      if (reused) {
+        applyGrokRunEvent(state, {
+          type: 'provider_warning',
+          text: 'Grok seat session resumed — this turn continues the seat’s live ACP session (provider-native memory).'
+        })
+      }
+      const seatTurnHandle = session.runTurn({
+        prompt: grokProviderPrompt,
+        onEvent: (evt) => applyGrokRunEvent(state, evt),
+        onPermissionRequest: grokPermissionHandler,
+        onTurnEnd: (turnComplete, terminalStatus, processExited) =>
+          finishGrokAcpTurn(processExited && !turnComplete ? 1 : 0, turnComplete, terminalStatus)
       })
+      runManager.attachAbortController(
+        route.appRunId!,
+        createGrokTurnAbortController(seatTurnHandle)
+      )
+      await grokTransportOperation
+      return
+    } catch {
+      finishGrokAcpTurn(null, false, 'failed')
+      settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+      await grokTransportOperation
+      return
     }
-    const seatTurnHandle = session.runTurn({
-      prompt: grokProviderPrompt,
-      onEvent: (evt) => applyGrokRunEvent(state, evt),
-      onPermissionRequest: grokPermissionHandler,
-      onTurnEnd: (turnComplete, terminalStatus, processExited) =>
-        finishGrokAcpTurn(processExited && !turnComplete ? 1 : 0, turnComplete, terminalStatus)
-    })
-    runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(seatTurnHandle))
-    providerTransportOperations.track(route.appRunId!, grokTransportClose)
-    return
   }
 
-  const grokAcpHandle = runGrokAcpTurn({
-    // Read-only seat: prepend the read-only steer so Grok answers from
-    // read/inspection tools instead of attempting a write the host gate will
-    // refuse — a refused write makes Grok hard-cancel and dead-end with no
-    // answer. Write-capable seats get the WRITE steer (use Write/Edit, adapt
-    // rather than end the turn on a refusal). Every ACP turn opens a fresh
-    // session/new (no Grok-side resume threads through here), so the steer must
-    // ride each turn's prompt; there's no prior turn for Grok to remember it
-    // from, hence no redundant re-injection to avoid.
-    prompt: grokProviderPrompt,
-    cwd: payload.workspace!,
-    mcpServers: grokMcpServers,
-    spawnProcess: grokSpawnAcpProcess,
-    onProcess: (child) => {
-      const proc = child as unknown as ChildProcess
-      runManager.attachProcess(route.appRunId!, proc)
-      grokOwnedProcess = proc
-      cliProviderProcesses.set('grok', proc)
-    },
-    onPermissionRequest: grokPermissionHandler,
-    onEvent: (evt) => applyGrokRunEvent(state, evt),
-    onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
-    onClose: finishGrokAcpTurn
-  })
+  let grokAcpHandle: ReturnType<typeof runGrokAcpTurn>
+  try {
+    grokAcpHandle = runGrokAcpTurn({
+      // Read-only seat: prepend the read-only steer so Grok answers from
+      // read/inspection tools instead of attempting a write the host gate will
+      // refuse — a refused write makes Grok hard-cancel and dead-end with no
+      // answer. Write-capable seats get the WRITE steer (use Write/Edit, adapt
+      // rather than end the turn on a refusal). Every ACP turn opens a fresh
+      // session/new (no Grok-side resume threads through here), so the steer must
+      // ride each turn's prompt; there's no prior turn for Grok to remember it
+      // from, hence no redundant re-injection to avoid.
+      prompt: grokProviderPrompt,
+      cwd: payload.workspace!,
+      mcpServers: grokMcpServers,
+      spawnProcess: grokSpawnAcpProcess,
+      onProcess: (child) => {
+        const proc = child as unknown as ChildProcess
+        runManager.attachProcess(route.appRunId!, proc)
+        grokOwnedProcess = proc
+        cliProviderProcesses.set('grok', proc)
+      },
+      onPermissionRequest: grokPermissionHandler,
+      onEvent: (evt) => applyGrokRunEvent(state, evt),
+      onRawFrame: (direction, message) => maybeLogGrokRawAcp(direction, message),
+      onClose: finishGrokAcpTurn
+    })
+  } catch (error) {
+    try {
+      sendAgentCompatError(
+        event.sender,
+        'grok',
+        `Grok ACP could not start: ${error instanceof Error ? error.message : String(error)}`,
+        state
+      )
+    } catch {
+      // The settlement path below is projection-independent.
+    }
+    finishGrokAcpTurn(null, false, 'failed')
+    settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+    await grokTransportOperation
+    return
+  }
   runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(grokAcpHandle))
-  providerTransportOperations.track(route.appRunId!, grokAcpHandle.closed)
   // Keep the adapter invocation itself live from dispatch registration through
   // the real child close. History deletion may begin before the transport
   // operation is published above; its adapter join must cover that setup race.
   await grokAcpHandle.closed
+  await grokTransportOperation
 }
 
 /**
@@ -18809,11 +19468,46 @@ async function runKimiAcpProvider(
   admittedRuntime: AdmittedKimiRuntime
 ): Promise<void> {
   const route = routeWithRunId('kimi', payload)
+  // Publish exact settlement authority before any credential, cwd, gateway,
+  // diagnostic, or provider setup can await or project. The coordinator-owned
+  // lifecycle session already exists at this point.
+  const kimiTransportClose = createProviderTransportCloseOperation()
+  let kimiTransportOperation: Promise<void>
+  try {
+    kimiTransportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      kimiTransportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message: `Kimi transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+    } finally {
+      kimiTransportClose.markTransportClosed()
+    }
+    await kimiTransportClose.operation
+    return
+  }
+
+  try {
   const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
 
   const model = normalizeCliProviderModel('kimi', payload.model)
   const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
   const kimiModelConfig = kimiAcpModelConfigValue(model, payload.serviceTier)
+
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
 
   // Build the isolated home BEFORE registering the run so a fail-closed
   // not-authenticated / build error surfaces as setup-required without a
@@ -18838,16 +19532,19 @@ async function runKimiAcpProvider(
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) {
-    sendAgentCompatError(event.sender, 'kimi', home.message, route)
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
       provider: 'kimi',
-      setupRequired: home.reason === 'not-authenticated'
+      route,
+      message: home.message,
+      setupRequired: home.reason === 'not-authenticated',
+      fallback: false
     })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    await home.cleanup().catch(() => undefined)
+    settleDeniedProviderTransportLaunch(route)
     return
   }
 
@@ -18859,18 +19556,25 @@ async function runKimiAcpProvider(
     })
   } catch (error) {
     await home.cleanup()
+    if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
     const message = `Kimi's private runtime cwd could not be created; the provider was not started. ${
       error instanceof Error ? error.message : String(error)
     }`
-    sendAgentCompatError(event.sender, 'kimi', message, route)
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi'
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'kimi',
+      route,
+      message,
+      fallback: false
     })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
+    settleDeniedProviderTransportLaunch(route)
     return
   }
 
@@ -18900,15 +19604,13 @@ async function runKimiAcpProvider(
     await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
     const message =
       'This Kimi session predates the synthetic-cwd containment boundary and cannot be resumed for native compaction. Start a new Kimi turn first.'
-    sendAgentCompatError(event.sender, 'kimi', message, route)
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi'
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'kimi',
+      route,
+      message,
+      fallback: false
     })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
     return
   }
 
@@ -18956,28 +19658,57 @@ async function runKimiAcpProvider(
     } catch {
       await cleanup().catch(() => undefined)
     }
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   const kimiNativeCompactionStartedAt =
     productionSession.prompt.trim() === '/compact' && productionSession.resumeSessionId
       ? Date.now()
       : null
-  if (kimiNativeCompactionStartedAt !== null) {
-    emitContextCompactionCompatLine(
-      event.sender,
-      'kimi',
-      { kind: 'started', telemetry: { provider: 'kimi', trigger: 'manual' } },
-      state
-    )
-  }
+  try {
+    if (kimiNativeCompactionStartedAt !== null) {
+      emitContextCompactionCompatLine(
+        event.sender,
+        'kimi',
+        { kind: 'started', telemetry: { provider: 'kimi', trigger: 'manual' } },
+        state
+      )
+    }
 
-  if (productionSession.legacyResumeRejected) {
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'provider_diagnostic',
+    if (productionSession.legacyResumeRejected) {
+      sendAgentCompatLine(
+        event.sender,
+        'kimi',
+        {
+          type: 'provider_diagnostic',
+          provider: 'kimi',
+          message:
+            'The linked Kimi session was born before the synthetic-cwd containment boundary. TaskWraith started a new safe session with full authorized context instead of resuming it.'
+        },
+        state
+      )
+    }
+  } catch (error) {
+    const cleanup = createJoinedKimiCleanup(
+      () => privateCwd.cleanup(),
+      () => home.cleanup()
+    )
+    try {
+      await cleanup()
+    } catch {
+      await cleanup().catch(() => undefined)
+    }
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
       provider: 'kimi',
-      message:
-        'The linked Kimi session was born before the synthetic-cwd containment boundary. TaskWraith started a new safe session with full authorized context instead of resuming it.'
+      route,
+      message: `Kimi initialization projection failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      setupRequired: true,
+      fallback: false
     })
+    return
   }
 
   // Per-tool approval policy for the gateway MCP surface. Every native Kimi
@@ -19008,16 +19739,8 @@ async function runKimiAcpProvider(
     return allowed ? 'allow' : 'deny'
   }
 
-  // Publish a joinable authority before gateway admission can reach the Kimi
-  // spawn callback. `runKimiAcpTurn` exposes the child synchronously through
-  // onProcess, so tracking only after launch returns would leave a deletion
-  // window with a live process but no exact transport operation.
-  const kimiTransportClose = createProviderTransportCloseOperation()
-  const kimiTransportOperation = providerTransportOperations.track(
-    route.appRunId!,
-    kimiTransportClose.operation
-  )
   let handle: ReturnType<typeof runKimiAcpTurn>
+  let providerTransportLaunchAttempted = false
   try {
     const launched = await launchKimiProductionAcp({
       taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised !== false,
@@ -19029,10 +19752,15 @@ async function runKimiAcpProvider(
         // re-check its promoted persistence authority after attestation. The
         // synchronous launch callback repeats this check after the await
         // continuation and owns the final no-spawn boundary.
-        assertKimiSpawnAuthority(() => providerRunPersistenceAuthorized('kimi', state))
+        assertKimiSpawnAuthority(() =>
+          providerTransportLaunchAuthorized('kimi', payload, route)
+        )
         return binaryPath
       },
       startGateway: async () => {
+        assertKimiSpawnAuthority(() =>
+          providerTransportLaunchAuthorized('kimi', payload, route)
+        )
         const bridge = await startKimiHttpMcpBridge({
           dispatch: createKimiMcpDispatch({
             route,
@@ -19044,14 +19772,22 @@ async function runKimiAcpProvider(
               mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
           })
         })
-        return {
-          server: {
-            name: 'taskwraith',
-            type: 'http',
-            url: bridge.url,
-            headers: [{ name: bridge.headerName, value: bridge.headerValue }]
-          },
-          close: () => bridge.close()
+        try {
+          assertKimiSpawnAuthority(() =>
+            providerTransportLaunchAuthorized('kimi', payload, route)
+          )
+          return {
+            server: {
+              name: 'taskwraith',
+              type: 'http',
+              url: bridge.url,
+              headers: [{ name: bridge.headerName, value: bridge.headerValue }]
+            },
+            close: () => bridge.close()
+          }
+        } catch (error) {
+          await bridge.close()
+          throw error
         }
       },
       snapshot: {
@@ -19065,8 +19801,11 @@ async function runKimiAcpProvider(
         // `launchKimiProductionAcp` resumes from an await before invoking this
         // callback. Repeat the exact check as its first synchronous statement;
         // no microtask can invalidate authority between here and child spawn.
-        assertKimiSpawnAuthority(() => providerRunPersistenceAuthorized('kimi', state))
+        assertKimiSpawnAuthority(() =>
+          providerTransportLaunchAuthorized('kimi', payload, route)
+        )
         const teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
+        providerTransportLaunchAttempted = true
         return runKimiAcpTurn({
           prompt: production.session.prompt,
           resumeSessionId: production.session.resumeSessionId,
@@ -19244,7 +19983,15 @@ async function runKimiAcpProvider(
                     state
                   )
                 },
-                finish: () => runManager.finish(route.appRunId, finishStatus)
+                finish: () => {
+                  const terminalStatus =
+                    runManager.getClaimedTerminalStatus(route.appRunId) ?? finishStatus
+                  try {
+                    runManager.finish(route.appRunId, terminalStatus)
+                  } finally {
+                    runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
+                  }
+                }
               })
             } catch (error) {
               try {
@@ -19276,21 +20023,26 @@ async function runKimiAcpProvider(
     // otherwise leak the isolated home — a 0600 copy of the real OAuth token.
     // Tear it down and surface the failure.
     await home.cleanup().catch(() => undefined)
-    sendAgentCompatError(
-      event.sender,
-      'kimi',
-      error instanceof Error ? error.message : String(error),
-      route
-    )
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi'
+    projectVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'kimi',
+      route,
+      message: error instanceof Error ? error.message : String(error),
+      fallback: false
     })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    if (providerTransportLaunchAttempted) {
+      const terminalStatus =
+        runManager.getClaimedTerminalStatus(route.appRunId) ?? 'failed'
+      try {
+        runManager.finish(route.appRunId, terminalStatus)
+      } finally {
+        runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
+      }
+    } else {
+      settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+    }
     return
+  }
   } finally {
     // Normal flow reaches this point only after handle.closed; pre-spawn
     // failures reach it after launchKimiProductionAcp and home cleanup. Either
@@ -19348,27 +20100,19 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   }
 
   const resolved = await resolveCliProviderBinary('kimi', payload.runtimeProfile)
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   if (!resolved.binaryPath) {
-    sendAgentCompatError(
-      event.sender,
-      'kimi',
-      resolved.error || 'Kimi CLI is not configured.',
-      route
-    )
-    sendAgentCompatLine(
-      event.sender,
-      'kimi',
-      {
-        type: 'result',
-        status: 'failed',
-        stats: {},
-        provider: 'kimi',
-        setupRequired: true
-      },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'kimi',
+      route,
+      message: resolved.error || 'Kimi CLI is not configured.',
+      setupRequired: true,
+      fallback: false
+    })
     return
   }
 
@@ -19380,25 +20124,22 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     isPackaged: app.isPackaged,
     environment: process.env
   })
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   if (!admission.admitted || !kimiAcpEnabled()) {
     const message = admission.admitted
       ? 'Kimi ACP is disabled in this build; legacy Wire/print execution is not permitted.'
       : `Kimi runtime admission blocked execution: ${admission.message}`
-    sendAgentCompatError(event.sender, 'kimi', message, route)
-    sendAgentCompatLine(
-      event.sender,
-      'kimi',
-      {
-        type: 'result',
-        status: 'failed',
-        stats: {},
-        provider: 'kimi',
-        setupRequired: true
-      },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'kimi',
+      route,
+      message,
+      setupRequired: true,
+      fallback: false
+    })
     return
   }
   if (admission.mode === 'unattested-development') {
@@ -19414,6 +20155,10 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       },
       route
     )
+  }
+  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
   }
   await runKimiAcpProvider(event, payload, admission)
   return
@@ -19639,7 +20384,9 @@ function registerRunSession(
   workspacePath?: string,
   state?: any,
   providerSessionId?: string | null,
-  requireExistingRun = false
+  requireExistingRun = false,
+  createStatus: 'starting' | 'running' = 'running',
+  setupAbortController?: AbortController
 ) {
   const routed = routeWithRunId(provider, route)
   const expectedPersistenceAuthority = routed.appRunId
@@ -19771,13 +20518,13 @@ function registerRunSession(
   const graphOwnedRegistration = graphQueueJobs.length > 0 || graphClaims.length > 0
   if (existing) {
     if (isTerminalRunSessionStatus(existing.status)) return undefined
+    const providerOwnsLifecycle = state !== undefined
     runManager.update(existing.runId, {
       sender,
       workspacePath,
       appChatId: routed.appChatId,
       providerSessionId: providerSessionId || existing.providerSessionId,
-      state,
-      status: 'running'
+      ...(providerOwnsLifecycle ? { state, status: 'running' as const } : {})
     })
     if (graphOwnedRegistration) {
       runManager.requireTerminalConfirmation(existing.runId)
@@ -19793,8 +20540,9 @@ function registerRunSession(
     workspacePath,
     providerSessionId: providerSessionId || undefined,
     sender,
+    abortController: setupAbortController,
     state,
-    status: 'running'
+    status: createStatus
   })
   if (graphOwnedRegistration) {
     runManager.requireTerminalConfirmation(created.runId)
@@ -20446,9 +21194,9 @@ function normalizeExternalPathGrants(grants?: ExternalPathGrant[]): ExternalPath
   // `isMainIssuedExternalPathGrant` still guards integrity; the
   // provider field is part of the signed payload so a grant for one
   // provider cannot be smuggled in as another.
-  // Only currently dispatchable providers may carry executable grants. Signed
-  // historical Cursor records remain decodable in storage but are dropped from
-  // run authority here.
+  // Only currently dispatchable providers may carry executable grants. Live
+  // Cursor grants remain available to its governed broker, but never widen the
+  // opaque native Cursor tool stack; retired-provider records are decode-only.
   const allowedProviders = EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS
   for (const grant of grants) {
     if (!grant || typeof grant.path !== 'string') continue
@@ -20715,6 +21463,7 @@ function createCodexRunState(
     runtimeProfileId: payload?.runtimeProfileId,
     taskWraithMcpProfileId: payload?.taskWraithMcpProfileId,
     effectivePermissions: payload?.effectivePermissions,
+    effectivePermissionsSignature: payload?.effectivePermissionsSignature,
     ensembleRun: payload?.ensembleRun,
     usagePromptText: payload?.usagePromptText,
     ...normalizeRunRoute(route),
@@ -24898,6 +25647,7 @@ async function runCodexAppServerWithClient(
   client: CodexAppServerClient
 ) {
   const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
+  const route = routeWithRunId('codex', payload)
   client.setNotificationHandler(handleCodexNotification)
   client.setRequestHandler(handleCodexServerRequest)
   client.setStderrHandler((chunk) => {
@@ -24985,9 +25735,20 @@ async function runCodexAppServerWithClient(
     return
   }
   try {
-    await client.ensureStarted(app.getVersion())
+    await client.ensureStarted(app.getVersion(), {
+      signal: payload.providerSetupAbortSignal,
+      assertCanStart: (boundary) => {
+        if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+          throw new CodexAppServerStartupAbortedError(boundary)
+        }
+      }
+    })
   } catch (error) {
     admissionReservation?.releaseBeforeAdmission()
+    if (error instanceof CodexAppServerStartupAbortedError) {
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
     throw error
   }
   if (!graphContextIsolated) {
@@ -24995,46 +25756,41 @@ async function runCodexAppServerWithClient(
   }
 
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
-  const model = normalizeCodexModel(payload.model)
-  const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
   const approvalPolicy =
     payload.scope === 'global'
       ? 'on-request'
       : codexApprovalPolicyForMode(payload.approvalMode, settings)
   const fullAccessGranted = isFullShellAccessGranted(payload.effectivePermissions)
   const sandbox = codexSandboxForMode(payload.approvalMode, fullAccessGranted)
-  const startOrResumeParams = {
-    cwd: payload.workspace!,
-    model,
-    config: codexReasoning.threadConfig,
-    ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {}),
+  const threadLaunchPlan = buildCodexAppServerThreadLaunchPlan({
+    model: payload.model,
+    reasoningEffort: payload.reasoningEffort,
+    serviceTier: payload.serviceTier,
+    workspacePath: payload.workspace!,
     approvalPolicy,
     sandbox,
-    experimentalRawEvents: false,
-    persistExtendedHistory: true
-  }
+    resumableThreadId
+  })
+  const model = threadLaunchPlan.model
+  const codexReasoning = threadLaunchPlan.reasoning
 
   let threadResponse: any
   // Last synchronous authority check before the RPC that creates or revives a
-  // provider-native thread. A fresh (non-resumable) run holds no admission
-  // reservation yet, so a history clear prepared during the ensureStarted
-  // await cannot join it — without this recheck, thread/start would mint a
-  // native rollout for the frozen scope that TaskWraith never erases.
-  if (historyClearAdmissionBlocked(payload.appRunId, payload.workspace, payload.appChatId)) {
+  // provider-native thread. The shared coordinator has already registered a
+  // starting RunManager owner, so an exact cancellation during ensureStarted
+  // revokes this run's persistence authority as well as a concurrent history
+  // clear. Never mint a native thread from either stale continuation.
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
     admissionReservation?.releaseBeforeAdmission()
-    runManager.finish(payload.appRunId, 'cancelled')
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   try {
-    if (resumableThreadId) {
-      threadResponse = await client.request(
-        'thread/resume',
-        buildCodexThreadResumeRequest(resumableThreadId, codexReasoning),
-        30_000
-      )
-    } else {
-      threadResponse = await client.request('thread/start', startOrResumeParams, 30_000)
-    }
+    threadResponse = await client.request(
+      threadLaunchPlan.request.method,
+      threadLaunchPlan.request.params,
+      30_000
+    )
   } catch (error) {
     admissionReservation?.releaseBeforeAdmission()
     throw error
@@ -25080,9 +25836,9 @@ async function runCodexAppServerWithClient(
       return
     }
   }
-  if (historyClearAdmissionBlocked(payload.appRunId, payload.workspace, payload.appChatId)) {
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
     admissionReservation.releaseBeforeAdmission()
-    runManager.finish(payload.appRunId, 'cancelled')
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   if (
@@ -25116,7 +25872,6 @@ async function runCodexAppServerWithClient(
     }
   }
 
-  const route = routeWithRunId('codex', payload)
   const codexState = createCodexRunState(
     event.sender,
     threadId,
@@ -25129,21 +25884,8 @@ async function runCodexAppServerWithClient(
   )
   codexState.admissionKind = 'turn'
   codexState.admissionReservation = admissionReservation
-  const sessionBeforeTurnRegistration = runManager.get(route.appRunId)
-  if (
-    !providerTransportAdmissionStillAuthorized({
-      historyBlocked: historyClearAdmissionBlocked(
-        route.appRunId,
-        payload.workspace,
-        route.appChatId
-      ),
-      sessionExists: Boolean(sessionBeforeTurnRegistration),
-      persistenceAuthorized: sessionBeforeTurnRegistration
-        ? providerRunPersistenceAuthorized('codex', route)
-        : false
-    })
-  ) {
-    runManager.finish(route.appRunId, 'cancelled')
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     admissionReservation.releaseBeforeAdmission()
     return
   }
@@ -25167,18 +25909,8 @@ async function runCodexAppServerWithClient(
       await turnOperation
       return
     }
-    if (
-      !providerTransportAdmissionStillAuthorized({
-        historyBlocked: historyClearAdmissionBlocked(
-          route.appRunId,
-          payload.workspace,
-          route.appChatId
-        ),
-        sessionExists: true,
-        persistenceAuthorized: providerRunPersistenceAuthorized('codex', route)
-      })
-    ) {
-      runManager.finish(route.appRunId, 'cancelled')
+    if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+      settleDeniedProviderTransportLaunch(route)
       admissionReservation.releaseBeforeAdmission()
       completeCodexAppServerTurnProjection(codexState)
       await turnOperation
@@ -25206,6 +25938,13 @@ async function runCodexAppServerWithClient(
       codexState
     )
 
+    if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+      settleDeniedProviderTransportLaunch(route)
+      admissionReservation.releaseBeforeAdmission()
+      completeCodexAppServerTurnProjection(codexState)
+      await turnOperation
+      return
+    }
     const turnStartResult = await client.request(
       'turn/start',
       buildCodexTurnStartRequest(
@@ -25269,8 +26008,8 @@ async function runCodexExecFallback(
   reason: string
 ) {
   const route = routeWithRunId('codex', payload)
-  if (historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId)) {
-    runManager.finish(route.appRunId, 'cancelled')
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   // The one-shot exec fallback does not own a route-stamped TaskWraith MCP
@@ -25292,30 +26031,34 @@ async function runCodexExecFallback(
   }
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   if (payload.scope === 'global') {
-    sendAgentCompatError(
-      event.sender,
-      'codex',
-      `Codex app-server unavailable, so global chat execution is blocked. Global host tools require in-app approval prompts. Reason: ${reason}`,
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'codex',
+      route,
+      message: `Codex app-server unavailable, so global chat execution is blocked. Global host tools require in-app approval prompts. Reason: ${reason}`,
+      setupRequired: true,
+      fallback: true
+    })
     return
   }
   if (codexNeedsApprovalGate(settings) || settings.agenticServices?.networkAccess === 'deny') {
-    sendAgentCompatError(
-      event.sender,
-      'codex',
-      `Codex app-server unavailable and agentic service gates are active, so exec fallback is blocked. Reason: ${reason}`,
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', 1, route)
-    runManager.finish(route.appRunId, 'failed')
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'codex',
+      route,
+      message: `Codex app-server unavailable and agentic service gates are active, so exec fallback is blocked. Reason: ${reason}`,
+      setupRequired: true,
+      fallback: true
+    })
     return
   }
 
   const model = normalizeCodexModel(payload.model)
   const codexHome = await ensureTaskWraithCodexHomeForLaunch(taskWraithCodexHome())
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
   const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
   const sandbox = codexSandboxForMode(
     payload.approvalMode,
@@ -25342,32 +26085,24 @@ async function runCodexExecFallback(
   args.push(payload.resumeFallbackPrompt || payload.prompt)
 
   const resolvedCodex = await resolveCliProviderBinary('codex', payload.runtimeProfile)
-  if (!resolvedCodex.binaryPath) {
-    sendAgentCompatError(
-      event.sender,
-      'codex',
-      resolvedCodex.error || 'Codex CLI was not found.',
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', -1, route)
-    runManager.finish(route.appRunId, 'failed')
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     return
   }
-  const sessionAfterBinaryResolution = runManager.get(route.appRunId)
-  if (
-    !providerTransportAdmissionStillAuthorized({
-      historyBlocked: historyClearAdmissionBlocked(
-        route.appRunId,
-        payload.workspace,
-        route.appChatId
-      ),
-      sessionExists: Boolean(sessionAfterBinaryResolution),
-      persistenceAuthorized: sessionAfterBinaryResolution
-        ? providerRunPersistenceAuthorized('codex', route)
-        : false
+  if (!resolvedCodex.binaryPath) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'codex',
+      route,
+      message: resolvedCodex.error || 'Codex CLI was not found.',
+      setupRequired: true,
+      fallback: true,
+      exitCode: -1
     })
-  ) {
-    runManager.finish(route.appRunId, 'cancelled')
+    return
+  }
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     return
   }
   const codexCommand = resolvedCodex.binaryPath
@@ -25407,60 +26142,121 @@ async function runCodexExecFallback(
   let child: ChildProcess | null = null
   let terminalCode: number | null = null
   let spawnFailure: Error | null = null
+  const safelyProjectCodexExec = (project: () => void): void => {
+    try {
+      project()
+    } catch (error) {
+      try {
+        console.error('[codex-exec] projection failed:', error)
+      } catch {
+        // Exact terminal settlement below is independent of diagnostics.
+      }
+    }
+  }
   const transportClose = createProviderTransportCloseOperation(() => {
     // This callback is the provider-owned terminal projection. It runs only
     // after child close (or a synchronous spawn failure, where no child ever
     // existed), and the tracked operation remains live until it finishes.
-    emitCodexExecStdout(codexExecStdoutSanitizer.flush())
-    emitCodexExecStderr(codexExecStderrSanitizer.flush())
-    if (spawnFailure) {
-      sendAgentCompatError(
-        event.sender,
-        'codex',
-        `Failed to start codex exec fallback: ${spawnFailure.message}`,
-        route
-      )
-    }
     const exitCode = spawnFailure ? -1 : (terminalCode ?? -1)
-    const durationMs = Math.max(0, Date.now() - codexExecStartedAtMs)
-    let terminalStats: Record<string, unknown> = {
-      ...(codexExecUsage || {}),
-      duration_ms: durationMs
+    const requestedStatus = exitCode === 0 ? 'completed' : 'failed'
+    const terminalStatus =
+      runManager.getClaimedTerminalStatus(route.appRunId) ?? requestedStatus
+    try {
+      safelyProjectCodexExec(() => emitCodexExecStdout(codexExecStdoutSanitizer.flush()))
+      safelyProjectCodexExec(() => emitCodexExecStderr(codexExecStderrSanitizer.flush()))
+      if (spawnFailure) {
+        safelyProjectCodexExec(() =>
+          sendAgentCompatError(
+            event.sender,
+            'codex',
+            `Failed to start codex exec fallback: ${spawnFailure!.message}`,
+            route
+          )
+        )
+      }
+      const durationMs = Math.max(0, Date.now() - codexExecStartedAtMs)
+      let terminalStats: Record<string, unknown> = {
+        ...(codexExecUsage || {}),
+        duration_ms: durationMs
+      }
+      if (!payload.ensembleRun) {
+        try {
+          terminalStats = recordCodexUsageOnCompletion({
+            chat: route.appChatId ? AppStore.getChat(route.appChatId) : null,
+            runId: route.appRunId,
+            model,
+            stats: terminalStats,
+            fallbackDurationMs: durationMs,
+            promptText: payload.usagePromptText,
+            recordUsage: (entry) => AppStore.recordUsage(entry)
+          })
+        } catch (error) {
+          try {
+            console.error('[codex-exec] usage projection failed:', error)
+          } catch {
+            // Terminal settlement remains authoritative.
+          }
+        }
+      }
+      safelyProjectCodexExec(() =>
+        sendAgentCompatLine(
+          event.sender,
+          'codex',
+          {
+            type: 'result',
+            status: terminalStatus === 'completed' ? 'success' : 'failed',
+            stats: terminalStats,
+            timestamp: new Date().toISOString(),
+            provider: 'codex',
+            fallback: true
+          },
+          route
+        )
+      )
+      safelyProjectCodexExec(() =>
+        sendAgentCompatExit(
+          event.sender,
+          'codex',
+          terminalStatus === 'completed' ? 0 : exitCode || 1,
+          route
+        )
+      )
+    } finally {
+      providerProcessTerminationBackstop.clear(route.appRunId)
+      if (child && codexExecProcess === child) codexExecProcess = null
+      try {
+        runManager.finish(route.appRunId, terminalStatus)
+      } finally {
+        runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
+      }
     }
-    if (!payload.ensembleRun) {
-      terminalStats = recordCodexUsageOnCompletion({
-        chat: route.appChatId ? AppStore.getChat(route.appChatId) : null,
-        runId: route.appRunId,
-        model,
-        stats: terminalStats,
-        fallbackDurationMs: durationMs,
-        promptText: payload.usagePromptText,
-        recordUsage: (entry) => AppStore.recordUsage(entry)
-      })
-    }
-    sendAgentCompatLine(
-      event.sender,
-      'codex',
-      {
-        type: 'result',
-        status: exitCode === 0 ? 'success' : 'failed',
-        stats: terminalStats,
-        timestamp: new Date().toISOString(),
-        provider: 'codex',
-        fallback: true
-      },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', exitCode, route)
-    if (child && codexExecProcess === child) codexExecProcess = null
-    runManager.finish(route.appRunId, exitCode === 0 ? 'completed' : 'failed')
   })
   // Track before spawn: there is no interval in which RunManager can expose a
   // live child without an exact close+projection promise for history deletion.
-  const transportOperation = providerTransportOperations.track(
-    route.appRunId!,
-    transportClose.operation
-  )
+  let transportOperation: Promise<void>
+  try {
+    transportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      transportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'codex',
+        route,
+        message: `Codex exec transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: true
+      })
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    await transportClose.operation
+    return
+  }
   let registeredSession: ReturnType<typeof registerRunSession>
   try {
     registeredSession = registerRunSession(
@@ -25481,53 +26277,51 @@ async function runCodexExecFallback(
     await transportOperation
     return
   }
-  void emitProviderCapabilityWarnings(
-    event.sender,
-    'codex',
-    payload.workspace,
-    payload.approvalMode,
-    route
-  )
+  void Promise.resolve(
+    emitProviderCapabilityWarnings(
+      event.sender,
+      'codex',
+      payload.workspace,
+      payload.approvalMode,
+      route
+    )
+  ).catch(() => undefined)
 
-  sendAgentCompatError(
-    event.sender,
-    'codex',
-    `Codex app-server unavailable; falling back to codex exec --json for this one-shot run. Rich thread resume and approvals are unavailable. Reason: ${reason}`,
-    route
-  )
-  if (normalizeExternalPathGrants(payload.externalPathGrants).length > 0) {
+  safelyProjectCodexExec(() =>
     sendAgentCompatError(
       event.sender,
       'codex',
-      'Codex external path grants are not applied in exec fallback mode; app-server is required for scoped outside-workspace roots.',
+      `Codex app-server unavailable; falling back to codex exec --json for this one-shot run. Rich thread resume and approvals are unavailable. Reason: ${reason}`,
       route
     )
-  }
-  sendAgentCompatLine(
-    event.sender,
-    'codex',
-    {
-      type: 'init',
-      session_id: `codex-exec-${Date.now()}`,
-      model,
-      timestamp: new Date().toISOString(),
-      provider: 'codex',
-      fallback: true
-    },
-    route
   )
-  if (
-    !providerTransportAdmissionStillAuthorized({
-      historyBlocked: historyClearAdmissionBlocked(
-        route.appRunId,
-        payload.workspace,
-        route.appChatId
-      ),
-      sessionExists: true,
-      persistenceAuthorized: providerRunPersistenceAuthorized('codex', route)
-    })
-  ) {
-    runManager.finish(route.appRunId, 'cancelled')
+  if (normalizeExternalPathGrants(payload.externalPathGrants).length > 0) {
+    safelyProjectCodexExec(() =>
+      sendAgentCompatError(
+        event.sender,
+        'codex',
+        'Codex external path grants are not applied in exec fallback mode; app-server is required for scoped outside-workspace roots.',
+        route
+      )
+    )
+  }
+  safelyProjectCodexExec(() =>
+    sendAgentCompatLine(
+      event.sender,
+      'codex',
+      {
+        type: 'init',
+        session_id: `codex-exec-${Date.now()}`,
+        model,
+        timestamp: new Date().toISOString(),
+        provider: 'codex',
+        fallback: true
+      },
+      route
+    )
+  )
+  if (!providerTransportLaunchAuthorized('codex', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
     transportClose.markTransportClosed()
     await transportOperation
     return
@@ -25829,6 +26623,17 @@ async function terminateExactProviderSession(
     } catch {
       // A provider process may already have exited after publishing its handle.
     }
+    if (
+      exactProcess &&
+      (provider === 'gemini' ||
+        provider === 'pi' ||
+        provider === 'antigravity' ||
+        provider === 'claude' ||
+        provider === 'cursor' ||
+        provider === 'codex')
+    ) {
+      providerProcessTerminationBackstop.arm(runId, exactProcess)
+    }
     if (cliProviderProcesses.get(provider) === exactProcess) {
       cliProviderProcesses.delete(provider)
     }
@@ -26124,6 +26929,20 @@ function geminiApiProviderDeps() {
     sendAgentCompatError,
     sendAgentCompatExit,
     runManager,
+    isRunPersistenceAuthorized: (provider: ProviderId, route: AgentRunRoute) =>
+      providerRunPersistenceAuthorized(provider, route),
+    beginTransportOperation: (runId: string) => {
+      const transportClose = createProviderTransportCloseOperation()
+      try {
+        return {
+          settlement: providerTransportOperations.track(runId, transportClose.operation),
+          markTransportClosed: transportClose.markTransportClosed
+        }
+      } catch (error) {
+        transportClose.markTransportClosed()
+        throw error
+      }
+    },
     getSettings: () => AppStore.getSettings(),
     getGeminiAuthProfiles,
     getDefaultGeminiAuthProfileId,
@@ -26264,8 +27083,14 @@ async function runGeminiProvider(
     geminiReadOnlyAdvertise
   )
   if (argsError) {
-    sendAgentCompatError(event.sender, 'gemini', argsError, route)
-    sendAgentCompatExit(event.sender, 'gemini', -1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'gemini',
+      route,
+      message: argsError,
+      fallback: false,
+      exitCode: -1
+    })
     return
   }
 
@@ -26291,13 +27116,15 @@ async function runGeminiProvider(
 
   const resolved = await resolveCliProviderBinary('gemini', payload.runtimeProfile)
   if (!resolved.binaryPath) {
-    sendAgentCompatError(
-      event.sender,
-      'gemini',
-      resolved.error || 'Gemini CLI is not configured.',
-      route
-    )
-    sendAgentCompatExit(event.sender, 'gemini', -1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'gemini',
+      route,
+      message: resolved.error || 'Gemini CLI is not configured.',
+      setupRequired: true,
+      fallback: false,
+      exitCode: -1
+    })
     return
   }
 
@@ -26310,17 +27137,43 @@ async function runGeminiProvider(
       Boolean(payload.sessionTrust),
       {
         requireWriteTools: requiresGeminiWriteTools,
-        runPayload: payload
+        runPayload: payload,
+        setupSignal: payload.providerSetupAbortSignal,
+        isRunAuthorized: () => providerTransportLaunchAuthorized('gemini', payload, route),
+        cleanupInstalledRunContextOnRevocation: (installedRoute) => {
+          const installedRunId = installedRoute.appRunId
+          if (!installedRunId) return
+          try {
+            settleProviderRunWithoutTransport(runManager, installedRunId, 'cancelled')
+          } finally {
+            if (activeGeminiToolContext?.appRunId === installedRunId) {
+              activeGeminiToolContext = null
+              const latestGemini = getSingleActiveProviderSession('gemini')?.state as
+                | GeminiToolContext
+                | undefined
+              activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
+            }
+          }
+        }
       }
     )
   } catch (error) {
-    sendAgentCompatError(
-      event.sender,
-      'gemini',
-      error instanceof Error ? error.message : String(error),
-      route
-    )
-    sendAgentCompatExit(event.sender, 'gemini', -1, route)
+    if (
+      error instanceof GeminiMcpBridgePreparationAbortedError ||
+      !providerTransportLaunchAuthorized('gemini', payload, route)
+    ) {
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'gemini',
+      route,
+      message: error instanceof Error ? error.message : String(error),
+      setupRequired: true,
+      fallback: false,
+      exitCode: -1
+    })
     return
   }
 
@@ -26332,12 +27185,31 @@ async function runGeminiProvider(
     route
   )
 
-  await ensureGeminiAuthProfileMaterialized(
-    payload.geminiAuthProfileId || getDefaultGeminiAuthProfileId(),
-    {
-      includeMcp: settings.geminiMcpBridgeEnabled || requiresGeminiWriteTools
+  try {
+    await ensureGeminiAuthProfileMaterialized(
+      payload.geminiAuthProfileId || getDefaultGeminiAuthProfileId(),
+      {
+        includeMcp: settings.geminiMcpBridgeEnabled || requiresGeminiWriteTools
+      }
+    )
+  } catch (error) {
+    if (!providerTransportLaunchAuthorized('gemini', payload, route)) {
+      settleDeniedProviderTransportLaunch(route)
+      return
     }
-  )
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'gemini',
+      route,
+      message: `Gemini authentication setup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      setupRequired: true,
+      fallback: false,
+      exitCode: -1
+    })
+    return
+  }
 
   const env = createCliEnv(
     {
@@ -26380,6 +27252,15 @@ async function runGeminiProvider(
   )
   markGeminiAuthProfileUsed(payload.geminiAuthProfileId || getDefaultGeminiAuthProfileId())
 
+  // Auth/profile materialization is an awaited boundary after the Gemini tool
+  // context registered this exact run. Cancellation or history deletion may
+  // revoke that authority while materialization is in flight; never launch a
+  // child from the stale continuation.
+  if (!providerTransportLaunchAuthorized('gemini', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
+
   // 1.0.5-EW17 — In global-mode runs, swap the spawn cwd from
   // `$HOME` (what `globalRunCwd()` set on payload.workspace) to a
   // dedicated isolated dir. Gemini CLI scans its cwd recursively
@@ -26394,11 +27275,105 @@ async function runGeminiProvider(
   // workspace-scoped tools. The only thing we change is where the
   // CLI process itself thinks it's standing.
   const spawnCwd = payload.scope === 'global' ? globalGeminiCwd() : payload.workspace!
-  const child = spawn(resolved.binaryPath, args, {
-    cwd: spawnCwd,
-    shell: false,
-    env
-  })
+  // Track the exact child-close operation before exposing the process through
+  // RunManager. Cancellation and destructive-history settlement must wait for
+  // the legacy Gemini terminal projection below, not merely for adapter setup
+  // to return.
+  const transportClose = createProviderTransportCloseOperation()
+  let transportOperation: Promise<void>
+  try {
+    transportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      transportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'gemini',
+        route,
+        message: `Gemini transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false,
+        exitCode: -1
+      })
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    await transportClose.operation
+    return
+  }
+  const projectSynchronousGeminiSpawnFailure = (rawError: unknown): void => {
+    const error = `Failed to start process: ${
+      rawError instanceof Error ? rawError.message : String(rawError)
+    }`
+    appendDurableRunEventForRoute(
+      'gemini',
+      route,
+      'provider_error',
+      'raw',
+      'Gemini process failed to start',
+      { error },
+      'provider'
+    )
+    publishRunEvent('gemini-error', 'gemini', { provider: 'gemini', error, ...route }, event.sender)
+    appendDurableRunEventForRoute(
+      'gemini',
+      route,
+      'provider_exit',
+      'raw',
+      'Gemini process failed before exit',
+      { code: -1 },
+      'provider'
+    )
+    ensembleOrchestratorRef?.markRunExited(route.appRunId, -1)
+    auditRunTracker.handleExit(route.appRunId, -1)
+    publishRunEvent(
+      'gemini-exit',
+      'gemini',
+      { provider: 'gemini', code: -1, ...route },
+      event.sender
+    )
+    if (route.appRunId) geminiCrossProviderWarningsFired.delete(route.appRunId)
+    if (!geminiSessionProcess) {
+      const latestGemini = getSingleActiveProviderSession('gemini')?.state as
+        | GeminiToolContext
+        | undefined
+      activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
+    }
+  }
+  let child: ChildProcess
+  try {
+    child = spawn(resolved.binaryPath, args, {
+      cwd: spawnCwd,
+      shell: false,
+      env
+    })
+  } catch (error) {
+    // No child exists, so project the legacy raw terminal outcome before
+    // settling the exact operation.
+    try {
+      try {
+        projectSynchronousGeminiSpawnFailure(error)
+      } catch (projectionError) {
+        try {
+          console.error('[gemini] synchronous spawn-failure projection failed:', projectionError)
+        } catch {
+          // No-transport settlement below is independent of diagnostics.
+        }
+      }
+    } finally {
+      try {
+        settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+      } finally {
+        transportClose.markTransportClosed()
+      }
+    }
+    await transportOperation
+    return
+  }
   geminiProcess = child
   runManager.attachProcess(route.appRunId!, child)
 
@@ -26603,16 +27578,14 @@ async function runGeminiProvider(
     emitGeminiStderr(geminiStderrSanitizer.push(data.toString()))
   })
 
-  child.on('close', (code) => {
+  let geminiCliProcessError: Error | null = null
+  const projectGeminiCliClose = (code: number | null): void => {
+    // Preserve the legacy -1 exit for a process that never spawned while still
+    // waiting for Node's exact close event. Errors from a live child retain its
+    // real close code.
+    const effectiveCode = geminiCliProcessError && child.pid === undefined ? -1 : code
     emitGeminiStdout(geminiStdoutSanitizer.flush())
     emitGeminiStderr(geminiStderrSanitizer.flush())
-    // 1.0.5-EW7 / EW12 — Clear the stuck-process safety timer; we
-    // no longer need it once the process actually closes. EW12
-    // switched setTimeout → setInterval so use clearInterval.
-    if (ensembleStuckTimer) {
-      clearInterval(ensembleStuckTimer)
-      ensembleStuckTimer = null
-    }
     // Drain any partial-line tail through the ensemble bridge before
     // we tear down — guards against a final JSON event that lacks a
     // trailing newline (rare, but the renderer's adapter handles the
@@ -26625,8 +27598,10 @@ async function runGeminiProvider(
       route,
       'provider_exit',
       'raw',
-      `Gemini exited with code ${typeof code === 'number' ? code : 'unknown'}`,
-      { code },
+      `Gemini exited with code ${
+        typeof effectiveCode === 'number' ? effectiveCode : 'unknown'
+      }`,
+      { code: effectiveCode },
       'provider'
     )
     // 1.0.5-EW6 — Mark the run exited on the ensemble orchestrator
@@ -26639,83 +27614,104 @@ async function runGeminiProvider(
     // (sendAgentCompatExit, ~line 7929) does this correctly for
     // every other provider; legacy Gemini PTY was the only path
     // missing the call.
-    ensembleOrchestratorRef?.markRunExited(route.appRunId, typeof code === 'number' ? code : -1)
+    ensembleOrchestratorRef?.markRunExited(
+      route.appRunId,
+      typeof effectiveCode === 'number' ? effectiveCode : -1
+    )
     // Audit completion bridge — the Gemini one-shot path finalises here rather
     // than through sendAgentCompatExit, so settle a tracked audit role-run on
     // this exit too (no-op for non-audit runs). v1: Gemini audit role-runs
     // settle on exit (ok/fail + duration); token/cost stats are NOT scraped
     // from the Gemini stream here — a v1 cut, the audit still completes and the
     // structured findings/verdicts flow via the artifact collector.
-    auditRunTracker.handleExit(route.appRunId, typeof code === 'number' ? code : -1)
-    publishRunEvent('gemini-exit', 'gemini', { provider: 'gemini', code, ...route }, event.sender)
-    if (geminiProcess === child) {
-      geminiProcess = null
-    }
-    runManager.finish(route.appRunId, code === 0 ? 'completed' : 'failed')
-    if (route.appRunId) geminiCrossProviderWarningsFired.delete(route.appRunId)
-    if (!geminiSessionProcess) {
-      const latestGemini = getSingleActiveProviderSession('gemini')?.state as
-        | GeminiToolContext
-        | undefined
-      activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
+    auditRunTracker.handleExit(
+      route.appRunId,
+      typeof effectiveCode === 'number' ? effectiveCode : -1
+    )
+    publishRunEvent(
+      'gemini-exit',
+      'gemini',
+      { provider: 'gemini', code: effectiveCode, ...route },
+      event.sender
+    )
+  }
+
+  child.on('close', (code) => {
+    providerProcessTerminationBackstop.clear(route.appRunId)
+    const effectiveCode = geminiCliProcessError && child.pid === undefined ? -1 : code
+    const terminalStatus = effectiveCode === 0 ? 'completed' : 'failed'
+    try {
+      try {
+        projectGeminiCliClose(code)
+      } catch (projectionError) {
+        try {
+          console.error('[gemini] terminal projection failed:', projectionError)
+        } catch {
+          // Exact lifecycle settlement below is independent of diagnostics.
+        }
+      }
+    } finally {
+      if (ensembleStuckTimer) {
+        clearInterval(ensembleStuckTimer)
+        ensembleStuckTimer = null
+      }
+      if (geminiProcess === child) geminiProcess = null
+      try {
+        runManager.finish(route.appRunId, terminalStatus)
+      } finally {
+        try {
+          runManager.confirmTerminalStatus(
+            route.appRunId,
+            runManager.getClaimedTerminalStatus(route.appRunId) ?? terminalStatus
+          )
+        } finally {
+          try {
+            if (route.appRunId) geminiCrossProviderWarningsFired.delete(route.appRunId)
+            if (!geminiSessionProcess) {
+              const latestGemini = getSingleActiveProviderSession('gemini')?.state as
+                | GeminiToolContext
+                | undefined
+              activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
+            }
+          } finally {
+            transportClose.markTransportClosed()
+          }
+        }
+      }
     }
   })
 
   child.on('error', (err) => {
-    emitGeminiStdout(geminiStdoutSanitizer.flush())
-    emitGeminiStderr(geminiStderrSanitizer.flush())
-    // 1.0.5-EW7 / EW12 — Clear the stuck-process safety timer;
-    // nothing to monitor once the spawn itself failed.
-    if (ensembleStuckTimer) {
-      clearInterval(ensembleStuckTimer)
-      ensembleStuckTimer = null
-    }
+    geminiCliProcessError = err
     const error = `Failed to start process: ${err.message}`
-    appendDurableRunEventForRoute(
-      'gemini',
-      route,
-      'provider_error',
-      'raw',
-      'Gemini process failed to start',
-      { error },
-      'provider'
-    )
-    publishRunEvent('gemini-error', 'gemini', { provider: 'gemini', error, ...route }, event.sender)
-    appendDurableRunEventForRoute(
-      'gemini',
-      route,
-      'provider_exit',
-      'raw',
-      'Gemini process failed before exit',
-      { code: -1 },
-      'provider'
-    )
-    // 1.0.5-EW6 — Same orchestrator finalisation as the close
-    // handler above. Spawn failures are the worst case for a
-    // hang because the process never even produced output, so
-    // feedOrchestrator never ran and there's no fallback signal.
-    ensembleOrchestratorRef?.markRunExited(route.appRunId, -1)
-    // Audit completion bridge — settle a tracked audit role-run whose Gemini
-    // process failed before exit (no-op for non-audit runs).
-    auditRunTracker.handleExit(route.appRunId, -1)
-    publishRunEvent(
-      'gemini-exit',
-      'gemini',
-      { provider: 'gemini', code: -1, ...route },
-      event.sender
-    )
-    if (geminiProcess === child) {
-      geminiProcess = null
+    try {
+      appendDurableRunEventForRoute(
+        'gemini',
+        route,
+        'provider_error',
+        'raw',
+        'Gemini process failed to start',
+        { error },
+        'provider'
+      )
+      publishRunEvent(
+        'gemini-error',
+        'gemini',
+        { provider: 'gemini', error, ...route },
+        event.sender
+      )
+    } catch (projectionError) {
+      try {
+        console.error('[gemini] child-error projection failed:', projectionError)
+      } catch {
+        // Node's exact close callback remains authoritative.
+      }
     }
-    runManager.finish(route.appRunId, 'failed')
-    if (route.appRunId) geminiCrossProviderWarningsFired.delete(route.appRunId)
-    if (!geminiSessionProcess) {
-      const latestGemini = getSingleActiveProviderSession('gemini')?.state as
-        | GeminiToolContext
-        | undefined
-      activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
-    }
+    // Node emits `close` after `error`. Error remains diagnostic-only: stream
+    // flush, timer teardown, provider_exit/gemini-exit, RunManager
+    // terminalization, and transport settlement all belong to exact close.
   })
+  await transportOperation
 }
 
 /**
@@ -26875,9 +27871,14 @@ async function runAntigravityProvider(
       const wireModel = typeof turnPayload.model === 'string' ? turnPayload.model.trim() : ''
       const bareModel = ANTIGRAVITY_GEMINI_API_WIRE_MODEL.exec(wireModel)?.[1]
       const failVisible = (message: string): void => {
-        sendAgentCompatError(turnEvent.sender, 'antigravity', message, route)
-        sendAgentCompatExit(turnEvent.sender, 'antigravity', 1, route)
-        runManager.finish(route.appRunId, 'failed')
+        settleVisibleProviderSetupFailure({
+          sender: turnEvent.sender,
+          provider: 'antigravity',
+          route,
+          message,
+          setupRequired: true,
+          fallback: false
+        })
       }
       if (!bareModel) {
         failVisible(mapAntigravityGeminiApiTurnStatusToMessage('invalidModel'))
@@ -26909,7 +27910,12 @@ async function runAntigravityProvider(
     sendAgentCompatError,
     sendAgentCompatExit,
     finishRun: (runId, status) => {
-      runManager.finish(runId, status)
+      if (!runId) return
+      try {
+        runManager.finish(runId, status)
+      } finally {
+        runManager.confirmTerminalStatus(runId, status)
+      }
     },
     runAgyProvider: runAntigravityAgyProvider
   })
@@ -26943,15 +27949,14 @@ async function runAntigravityAgyProvider(
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(event.sender, 'antigravity', message, route)
-    sendAgentCompatLine(
-      event.sender,
-      'antigravity',
-      { type: 'result', status: 'failed', stats: {}, provider: 'antigravity', setupRequired: true },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'antigravity', 1, route)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'antigravity',
+      route,
+      message,
+      setupRequired: true,
+      fallback: false
+    })
     return
   }
 
@@ -27110,7 +28115,7 @@ const providerAdapters = createProviderAdapterRegistry<
   ...grokAdapters,
   ...cursorAdapters,
   ...piAdapters
-])
+], { requireCompleteProviderSet: true })
 
 async function readCliVersion(command: string): Promise<string> {
   const provider = availableProviderIds().includes(command as ProviderId)
@@ -28367,7 +29372,9 @@ async function executeAgentRosterPresetImport(
       preset,
       sourceRunId: context.appRunId,
       queuedAt: new Date().toISOString(),
-      makeParticipantId: () => `agent-roster-${randomUUID()}`
+      makeParticipantId: () => `agent-roster-${randomUUID()}`,
+      isProviderSelectable: (provider) =>
+        selectableProviderIds(AppStore.getSettings()).includes(provider)
     })
     if (!resolution.ok) {
       return {
@@ -28436,7 +29443,9 @@ async function executeAgentRosterPresetImport(
       preset: savedPreset,
       sourceRunId: context.appRunId,
       queuedAt: new Date().toISOString(),
-      makeParticipantId: () => `agent-roster-${randomUUID()}`
+      makeParticipantId: () => `agent-roster-${randomUUID()}`,
+      isProviderSelectable: (provider) =>
+        selectableProviderIds(AppStore.getSettings()).includes(provider)
     })
     if (!resolution.ok) {
       return {
@@ -31465,7 +32474,7 @@ async function prepareGeminiMcpBridgeForRun(
   route?: AgentRunRoute | null,
   scope: ChatScope = 'workspace',
   sessionTrust: boolean = false,
-  options: { requireWriteTools?: boolean; runPayload?: AgentRunPayload } = {}
+  options: GeminiMcpBridgePrepareOptions = {}
 ): Promise<AgentRunRoute> {
   return mcpBridgeRuntime.prepareGeminiMcpBridgeForRun(
     sender,
@@ -31501,6 +32510,7 @@ function installGeminiToolContextForRun(
     runtimeProfileId: options.runPayload?.runtimeProfileId,
     taskWraithMcpProfileId: options.runPayload?.taskWraithMcpProfileId,
     effectivePermissions: options.runPayload?.effectivePermissions,
+    effectivePermissionsSignature: options.runPayload?.effectivePermissionsSignature,
     ensembleRun: options.runPayload?.ensembleRun,
     providerSessionId: options.providerSessionId ?? options.runPayload?.providerSessionId,
     workflowMode: options.runPayload?.workflowMode,
@@ -32693,9 +33703,8 @@ if (isGeminiMcpBridgeProcess) {
           statuses: ['starting', 'active', 'cancelling']
         }).some((candidate) => candidate.runId !== job.runId)
         if (queueLeaseAlreadyHeld) return false
-        // Sweep available providers (including Grok and historical Cursor state)
-        // so an already-active legacy/provider session on this chat blocks a
-        // concurrent lease, matching the core four.
+        // Sweep every available provider, including live Grok and Cursor, so an
+        // already-active provider session on this chat blocks a concurrent lease.
         return !availableProviderIds().some((provider) =>
           runManager
             .getActiveByProvider(provider)
@@ -33588,7 +34597,7 @@ if (isGeminiMcpBridgeProcess) {
           return provider
         }
         throw new Error(
-          'AntiGravity is unavailable until its opted-in, authenticated model catalog is ready.'
+          'AntiGravity needs its consent and authenticated model catalog setup before this new run can start.'
         )
       }
       const bridgeGitService = new GitService()
@@ -36187,7 +37196,8 @@ if (isGeminiMcpBridgeProcess) {
           // profile at all, providers fall back to raw adapter defaults that
           // can diverge hard from how this chat ran on the desktop (observed:
           // Grok hitting an ACP path its CLI rejects with 'Method not found').
-          // Cursor is separately rejected by the unconditional no-spawn gate.
+          // Live Cursor Path-B follows the same profile inheritance; its
+          // sandbox/broker containment is established later by runCursorProvider.
           // Inherit the most recent run's profile; for fresh iOS chats use
           // the first builtin workspace-scoped profile for the provider —
           // the same one the desktop picker shows by default.
