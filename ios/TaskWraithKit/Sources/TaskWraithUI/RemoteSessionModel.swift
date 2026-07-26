@@ -4424,9 +4424,34 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Display name for a workspace id (telemetry rail / headers).
+    ///
+    /// Raw projected `displayName` — the folder root name for most workspaces.
+    /// Prefer ``workspaceRepoName(for:)`` for anything the user reads alongside
+    /// a branch; this stays for surfaces that genuinely mean "the workspace
+    /// entry" rather than "the repository".
     public func workspaceName(for workspaceId: String?) -> String? {
         guard let workspaceId else { return nil }
         return workspaces.first(where: { $0.id == workspaceId })?.displayName
+    }
+
+    /// The workspace's OFFICIAL repo name, resolved the way the desktop
+    /// composer's above-row resolves it (`resolveWorkspaceDisplayName`): git
+    /// remote → repo root → folder path, with the legacy AGBench → TaskWraith
+    /// rewrite. Without this the same checkout reads "TaskWraith" on desktop
+    /// and "AGBench" on the phone.
+    ///
+    /// Falls back to the plain display name whenever no git snapshot has landed
+    /// yet, so the pill never blanks while the snapshot is in flight.
+    public func workspaceRepoName(for workspaceId: String?) -> String? {
+        guard let workspaceId else { return nil }
+        guard let workspace = workspaces.first(where: { $0.id == workspaceId }) else { return nil }
+        let snapshot = gitSnapshots[workspaceId]
+        let resolved = TWWorkspaceDisplayName.resolve(
+            displayName: workspace.displayName,
+            path: workspace.path,
+            repoRoot: snapshot?.repoRoot,
+            remoteUrl: snapshot?.remoteUrl)
+        return resolved.isEmpty ? workspace.displayName : resolved
     }
 
     public func workspaceId(forPath path: String?) -> String? {

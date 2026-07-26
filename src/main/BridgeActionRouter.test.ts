@@ -207,6 +207,18 @@ function makeStubExecutor(
     }),
     executeGitCommit: make('executeGitCommit', { executed: true, message: 'gitCommit done' }),
     executeGitPush: make('executeGitPush', { executed: true, message: 'gitPush done' }),
+    executeGitBranches: make('executeGitBranches', {
+      executed: true,
+      message: 'gitBranches done'
+    }),
+    executeGitCheckout: make('executeGitCheckout', {
+      executed: true,
+      message: 'gitCheckout done'
+    }),
+    executeGithubWatchPr: make('executeGithubWatchPr', {
+      executed: true,
+      message: 'githubWatchPr done'
+    }),
     executeGithubPrStatus: make('executeGithubPrStatus', {
       executed: true,
       message: 'githubPrStatus done'
@@ -2694,6 +2706,61 @@ describe('BridgeActionRouter', () => {
         expect(result.message).toMatch(/capability "diffReview"/i)
       }
       expect(calls).toHaveLength(0)
+    })
+
+    it('denies branch listing and PR watching without diffReview', async () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      // Deliberately generous elsewhere — fileWrite alone must not buy a repo
+      // read, and `pin` must not buy a standing PR read subscription.
+      upsertGitWorkspace(allowlist, ['monitor', 'fileBrowse', 'fileRead', 'fileWrite', 'pin'])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, executor })
+
+      for (const payload of [
+        { kind: 'gitBranches' },
+        { kind: 'githubWatchPr', chatId: 'chat-1', watch: true }
+      ]) {
+        const result = (await router.route('bridge.requestActionAck', {
+          pairID: `pair-git-read-deny-${payload.kind}`,
+          payloadBase64: encodeGitAction(payload)
+        })) as { accepted: boolean; reasonCode?: string; message?: string }
+        expect(result.accepted).toBe(false)
+        expect(result.reasonCode).toBe('capabilityDenied')
+        expect(result.message).toMatch(/capability "diffReview"/i)
+      }
+      expect(calls).toHaveLength(0)
+    })
+
+    it('denies branch checkout without fileWrite, and allows it with', async () => {
+      // Checkout rewrites the working tree, so it sits at the same tier as a
+      // commit — a read-only review device must not be able to switch branches.
+      const readOnly = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(readOnly, ['monitor', 'diffReview', 'fileBrowse', 'fileRead'])
+      const denied = makeStubExecutor()
+      const deniedRouter = new BridgeActionRouter({ allowlist: readOnly, executor: denied.executor })
+      const deniedResult = (await deniedRouter.route('bridge.requestActionAck', {
+        pairID: 'pair-checkout-deny',
+        payloadBase64: encodeGitAction({ kind: 'gitCheckout', branch: 'feature/x' })
+      })) as { accepted: boolean; reasonCode?: string; message?: string }
+      expect(deniedResult.accepted).toBe(false)
+      expect(deniedResult.reasonCode).toBe('capabilityDenied')
+      expect(deniedResult.message).toMatch(/capability "fileWrite"/i)
+      expect(denied.calls).toHaveLength(0)
+
+      const writable = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(writable, ['monitor', 'diffReview', 'fileBrowse', 'fileRead', 'fileWrite'])
+      const allowed = makeStubExecutor()
+      const allowedRouter = new BridgeActionRouter({
+        allowlist: writable,
+        executor: allowed.executor
+      })
+      const allowedResult = (await allowedRouter.route('bridge.requestActionAck', {
+        pairID: 'pair-checkout-allow',
+        payloadBase64: encodeGitAction({ kind: 'gitCheckout', branch: 'feature/x' })
+      })) as { accepted: boolean; reasonCode?: string }
+      expect(allowedResult.accepted).toBe(true)
+      expect(allowedResult.reasonCode).toBe('accepted')
+      expect(allowed.calls).toHaveLength(1)
     })
 
     it('denies git actions for a non-allowlisted workspace', async () => {

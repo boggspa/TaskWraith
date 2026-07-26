@@ -704,6 +704,12 @@ export class BridgeActionRouter {
         return this.executor.executeGitCommit(payload)
       case 'gitPush':
         return this.executor.executeGitPush(payload)
+      case 'gitBranches':
+        return this.executor.executeGitBranches(payload)
+      case 'gitCheckout':
+        return this.executor.executeGitCheckout(payload)
+      case 'githubWatchPr':
+        return this.executor.executeGithubWatchPr(payload)
       case 'githubPrStatus':
         return this.executor.executeGithubPrStatus(payload)
       case 'githubPrReadiness':
@@ -1323,18 +1329,25 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'workspaceDiff':
       return 'diffReview'
     // Git reads are the same trust tier as reviewing diffs — they reveal
-    // repo state but change nothing.
+    // repo state but change nothing. `gitBranches` is a plain repo read.
+    // `githubWatchPr` persists a standing PR READ subscription, so it takes
+    // the capability that gates the one-shot PR reads: granting `pin` alone
+    // must not buy a device polling it could not otherwise perform.
     case 'gitSnapshot':
     case 'githubPrStatus':
     case 'githubPrReadiness':
+    case 'gitBranches':
+    case 'githubWatchPr':
       return 'diffReview'
-    // Git local mutations rewrite repo state and are covered by fileWrite.
-    // Publishing crosses the workspace boundary, so push/PR-create require the
-    // separate externalPublish capability.
+    // Git local mutations rewrite repo state and are covered by fileWrite —
+    // including `gitCheckout`, which rewrites the working tree exactly as a
+    // commit does and never leaves the machine. Publishing crosses the
+    // workspace boundary, so push/PR-create require externalPublish.
     case 'gitStageAll':
     case 'gitStagePaths':
     case 'gitUnstagePaths':
     case 'gitCommit':
+    case 'gitCheckout':
       return 'fileWrite'
     case 'gitPush':
     case 'githubCreatePr':

@@ -856,6 +856,96 @@ describe('decodeBridgeActionPayload', () => {
       ).toMatchObject({ kind: 'unknown', rawKind: 'gitPush' })
     })
 
+    it('decodes gitBranches as a read, not a mutation', () => {
+      const list = decodeBridgeActionPayload(
+        encode({ kind: 'gitBranches', actionId: 'br-1', workspaceId: 'ws-1' })
+      ).payload
+      expect(list.kind).toBe('gitBranches')
+      expect(payloadIsMutating(list)).toBe(false)
+    })
+
+    it('decodes gitCheckout and classifies it as mutating', () => {
+      const checkout = decodeBridgeActionPayload(
+        encode({ kind: 'gitCheckout', actionId: 'co-1', workspaceId: 'ws-1', branch: 'feature/x' })
+      ).payload
+      expect(checkout.kind).toBe('gitCheckout')
+      expect(checkout).toMatchObject({ branch: 'feature/x' })
+      expect(payloadIsMutating(checkout)).toBe(true)
+    })
+
+    // The branch name reaches `git checkout`. It travels as its own argv entry
+    // (no shell), so this is defence in depth — but a refname is a constrained
+    // grammar and there is no reason to forward anything outside it.
+    it('rejects branch names outside the git refname grammar', () => {
+      const reject = (branch: unknown, label: string): void => {
+        expect(
+          decodeBridgeActionPayload(
+            encode({ kind: 'gitCheckout', actionId: `co-${label}`, workspaceId: 'ws-1', branch })
+          ).payload
+        ).toMatchObject({ kind: 'unknown', rawKind: 'gitCheckout' })
+      }
+      reject('--force', 'leading-dash')
+      reject('-b', 'flag')
+      reject('a..b', 'range')
+      reject('main@{upstream}', 'reflog')
+      reject('../../etc/passwd', 'traversal')
+      reject('has space', 'space')
+      reject('tab\there', 'tab')
+      reject('bell\u0007', 'control-char')
+      reject('star*', 'glob')
+      reject('tilde~1', 'tilde')
+      reject('caret^', 'caret')
+      reject('colon:ref', 'colon')
+      reject('back\\slash', 'backslash')
+      reject('trailing/', 'trailing-slash')
+      reject('/leading', 'leading-slash')
+      reject('branch.lock', 'lock-suffix')
+      reject('', 'empty')
+      reject('  padded  ', 'untrimmed')
+      reject(42, 'non-string')
+      reject('x'.repeat(256), 'over-long')
+      // Ordinary names still pass.
+      for (const ok of ['main', 'feature/x', 'release-1.2', 'user/fix_thing']) {
+        expect(
+          decodeBridgeActionPayload(
+            encode({ kind: 'gitCheckout', actionId: 'co-ok', workspaceId: 'ws-1', branch: ok })
+          ).payload.kind
+        ).toBe('gitCheckout')
+      }
+    })
+
+    it('decodes githubWatchPr and requires both the workspace and the chat', () => {
+      const watch = decodeBridgeActionPayload(
+        encode({
+          kind: 'githubWatchPr',
+          actionId: 'w-1',
+          workspaceId: 'ws-1',
+          chatId: 'chat-1',
+          watch: true
+        })
+      ).payload
+      expect(watch.kind).toBe('githubWatchPr')
+      expect(payloadIsMutating(watch)).toBe(true)
+      // workspaceId is what carries it through the allowlist gate — without it
+      // a persisted PR subscription would skip workspace scoping entirely.
+      expect(
+        decodeBridgeActionPayload(
+          encode({ kind: 'githubWatchPr', actionId: 'w-2', chatId: 'chat-1', watch: true })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubWatchPr' })
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'githubWatchPr',
+            actionId: 'w-3',
+            workspaceId: 'ws-1',
+            chatId: '  ',
+            watch: true
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'githubWatchPr' })
+    })
+
     it('decodes githubCreatePr with optional title/body/draft', () => {
       const create = decodeBridgeActionPayload(
         encode({

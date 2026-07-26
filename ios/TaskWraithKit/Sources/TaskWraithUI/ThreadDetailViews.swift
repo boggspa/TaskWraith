@@ -1876,7 +1876,7 @@ struct ThreadDetailView: View {
                             // than pretending to change it.
                             if wideViewport {
                                 let workspacePill = ComposerWorkspacePill(
-                                    workspaceName: model.workspaceName(for: primaryWorkspaceId),
+                                    workspaceName: model.workspaceRepoName(for: primaryWorkspaceId),
                                     branch: primaryGitSnapshot?.branch,
                                     behind: primaryGitSnapshot?.behind ?? 0,
                                     mergeState: primaryGitSnapshot?.mergeState,

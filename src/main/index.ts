@@ -1,6 +1,8 @@
 // MUST stay first — gives the unpackaged dev build its own name + userData so it
 // doesn't collide with a release build on the same Mac (see devAppName.ts).
+
 import './devAppName'
+import { watchedPrDescriptorFromGitHubUrl } from '../shared/watchedPrNotify'
 import {
   app,
   Menu,
@@ -1186,7 +1188,10 @@ import {
   isThreadMessageMcpToolName
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
-import { createThreadMessageEvent } from '../shared/threadMessage'
+import {
+  createThreadMessageEvent,
+  summarizeThreadMessageInbox
+} from '../shared/threadMessage'
 import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
 import { createThreadMessageWakeDispatcher } from './ThreadMessageWakeDispatcher'
 import {
@@ -34361,6 +34366,10 @@ if (isGeminiMcpBridgeProcess) {
         notes: chat.pinnedNotes,
         blackboardEntries: chat.ensemble?.blackboard,
         threadId: chat.appChatId,
+        // Counts and sender names only; projectRemoteThread never ships bodies.
+        threadMessageInbox: summarizeThreadMessageInbox(
+          AppStore.getThreadMessageInbox(chat.appChatId)
+        ),
         mode,
         previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
         generatedAt,
@@ -36954,6 +36963,102 @@ if (isGeminiMcpBridgeProcess) {
           if (!result.ok) return { ok: false, reason: result.error }
           return { ok: true, pr: compactGitPrForBridge(result.data) }
         },
+        gitBranchesFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          // Local heads only. Remote-tracking refs would multiply the list on a
+          // busy repo and none of them are checkout targets for this action.
+          // Bounded so a repo with hundreds of heads can't turn one pill tap
+          // into an oversized relay frame. The picker is for switching to a
+          // branch you know the name of, not for browsing every ref.
+          const MAX_BRIDGE_GIT_BRANCHES = 200
+          const MAX_BRIDGE_GIT_WORKTREES = 50
+          const [branchResult, worktreeResult] = await Promise.all([
+            bridgeGitService.listBranches(path),
+            bridgeGitService.listWorktrees(path)
+          ])
+          if (!branchResult.ok) return { ok: false, reason: branchResult.error }
+          const branches = branchResult.data.branches
+            .filter((entry) => !entry.isRemote)
+            .slice(0, MAX_BRIDGE_GIT_BRANCHES)
+            .map((entry) => ({
+              name: entry.name,
+              isCurrent: entry.isCurrent === true,
+              upstream: entry.upstream,
+              worktreePath: entry.worktreePath
+            }))
+          const worktrees = worktreeResult.ok
+            ? worktreeResult.data.worktrees.slice(0, MAX_BRIDGE_GIT_WORKTREES).map((entry) => ({
+                path: entry.path,
+                branch: entry.branch,
+                isCurrent: entry.isCurrent === true,
+                detached: entry.detached === true
+              }))
+            : []
+          return { ok: true, branches, worktrees }
+        },
+        gitCheckoutFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          // GitService.checkoutBranch re-derives cleanliness from a FRESH
+          // snapshot and refuses a dirty tree itself — that refusal is the
+          // safety property, so it is deliberately NOT duplicated (or
+          // second-guessed) here. Its message is surfaced as `dirtyReason` so
+          // the phone explains the refusal instead of showing a bare failure.
+          const result = await bridgeGitService.checkoutBranch({
+            repoPath: path,
+            branch: action.branch
+          })
+          if (!result.ok) {
+            const dirty = /before checking out|commit, stash, or discard/i.test(result.error)
+            return dirty ? { ok: false, dirtyReason: result.error } : { ok: false, reason: result.error }
+          }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, snapshot: git as unknown as Record<string, unknown> }
+        },
+        githubWatchPrFn: async (action) => {
+          const chat = AppStore.getChats().find((entry) => entry.appChatId === action.chatId)
+          if (!chat) {
+            return { ok: false, reason: `Chat "${action.chatId}" is not registered` }
+          }
+          if (!action.watch) {
+            await AppStore.persistWatchedPr(action.chatId, null)
+            return { ok: true, watching: false }
+          }
+          // Watch what actually EXISTS. Resolving the descriptor Mac-side (rather
+          // than trusting one from the phone) means a device can only subscribe
+          // to the PR its own branch already has — it cannot point the watcher
+          // at an arbitrary repository.
+          // The chat's OWN workspace, not the one the caller named: the action
+          // is chat-scoped, so the PR it may watch is whatever that chat's
+          // workspace has. A chat with no workspace can't watch anything.
+          const path = chat.workspaceId ? bridgeGitWorkspacePath(chat.workspaceId) : null
+          if (!path) {
+            return { ok: false, reason: 'This chat has no registered workspace.' }
+          }
+          const status = await bridgeGitService.pullRequestStatus(path)
+          if (!status.ok) {
+            return { ok: false, reason: 'No open pull request to watch.' }
+          }
+          // Same helper the desktop toggle uses, so a phone-initiated watch and
+          // a desktop one produce byte-identical descriptors — the poller keys
+          // on them, and two shapes for one PR would poll it twice.
+          const descriptor = watchedPrDescriptorFromGitHubUrl({
+            chatId: action.chatId,
+            workspacePath: path,
+            pr: status.data
+          })
+          if (!descriptor) {
+            return { ok: false, reason: 'No open pull request to watch.' }
+          }
+          await AppStore.persistWatchedPr(action.chatId, descriptor)
+          return { ok: true, watching: true }
+        },
         composerPromptFn: async (action) => {
           const internalQueueDispatch = remoteComposerInternalDispatches.get(action)
           // T72 — global chats are conversational from the phone, but every
@@ -38256,6 +38361,10 @@ if (isGeminiMcpBridgeProcess) {
             notes: chat.pinnedNotes,
             blackboardEntries: chat.ensemble?.blackboard,
             threadId: chat.appChatId,
+            // Counts and sender names only; projectRemoteThread never ships bodies.
+            threadMessageInbox: summarizeThreadMessageInbox(
+              AppStore.getThreadMessageInbox(chat.appChatId)
+            ),
             mode: { kind: 'latestN', n: 24 },
             previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
             generatedAt,

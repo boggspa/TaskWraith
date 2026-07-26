@@ -22,7 +22,10 @@ import type {
   BridgeGitPushAction,
   BridgeGithubPrStatusAction,
   BridgeGithubPrReadinessAction,
+  BridgeGitBranchesAction,
+  BridgeGitCheckoutAction,
   BridgeGithubCreatePrAction,
+  BridgeGithubWatchPrAction,
   BridgeWorkflowRunNowAction,
   BridgeWorkflowSetEnabledAction,
   BridgeEnsembleCancelRoundAction,
@@ -161,6 +164,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeGitCommit(action: BridgeGitCommitAction): Promise<BridgeActionExecutionResult>
   executeGitPush(action: BridgeGitPushAction): Promise<BridgeActionExecutionResult>
+  executeGitBranches(action: BridgeGitBranchesAction): Promise<BridgeActionExecutionResult>
+  executeGitCheckout(action: BridgeGitCheckoutAction): Promise<BridgeActionExecutionResult>
+  executeGithubWatchPr(action: BridgeGithubWatchPrAction): Promise<BridgeActionExecutionResult>
   executeGithubPrStatus(action: BridgeGithubPrStatusAction): Promise<BridgeActionExecutionResult>
   executeGithubPrReadiness(
     action: BridgeGithubPrReadinessAction
@@ -353,6 +359,21 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
   async executeGitPush(action: BridgeGitPushAction): Promise<BridgeActionExecutionResult> {
     return notWired('gitPush', action.workspaceId)
+  }
+  async executeGitBranches(
+    action: BridgeGitBranchesAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitBranches', action.workspaceId)
+  }
+  async executeGitCheckout(
+    action: BridgeGitCheckoutAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitCheckout', action.workspaceId)
+  }
+  async executeGithubWatchPr(
+    action: BridgeGithubWatchPrAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('githubWatchPr', action.workspaceId)
   }
   async executeGithubPrStatus(
     action: BridgeGithubPrStatusAction
@@ -719,6 +740,29 @@ export interface MainProcessActionExecutorDependencies {
   githubCreatePrFn?: (action: BridgeGithubCreatePrAction) => Promise<{
     ok: boolean
     pr?: Record<string, unknown>
+    reason?: string
+  }>
+  gitBranchesFn?: (action: BridgeGitBranchesAction) => Promise<{
+    ok: boolean
+    branches?: Array<Record<string, unknown>>
+    worktrees?: Array<Record<string, unknown>>
+    reason?: string
+  }>
+  /**
+   * Checkout. The implementation MUST re-derive the dirty-worktree refusal
+   * from a fresh snapshot rather than trusting anything the caller sent —
+   * `dirtyReason` is how it reports that refusal, so the phone can show the
+   * same wording the desktop popover does instead of a generic failure.
+   */
+  gitCheckoutFn?: (action: BridgeGitCheckoutAction) => Promise<{
+    ok: boolean
+    snapshot?: Record<string, unknown>
+    dirtyReason?: string
+    reason?: string
+  }>
+  githubWatchPrFn?: (action: BridgeGithubWatchPrAction) => Promise<{
+    ok: boolean
+    watching?: boolean
     reason?: string
   }>
   workflowSetEnabledFn?: (
@@ -1398,6 +1442,92 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] githubCreatePr failed: ${message}`)
       return { executed: false, message: `Create pull request failed: ${message}` }
+    }
+  }
+
+  async executeGitBranches(
+    action: BridgeGitBranchesAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitBranchesFn) {
+      return notWired('gitBranches', action.workspaceId)
+    }
+    this.log(`[BridgeActionExecutor] gitBranches ws=${action.workspaceId}`)
+    try {
+      const result = await this.deps.gitBranchesFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message: 'Branches listed.',
+          data: { branches: result.branches ?? [], worktrees: result.worktrees ?? [] }
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Could not list branches.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitBranches failed: ${message}`)
+      return { executed: false, message: `List branches failed: ${message}` }
+    }
+  }
+
+  /**
+   * Check out a local branch.
+   *
+   * The dirty-worktree refusal is the whole safety story here and it is
+   * enforced by `gitCheckoutFn` against a FRESH snapshot, not by the caller:
+   * the phone is an untrusted client, and a checkout landing while a desktop
+   * session has uncommitted work would strand or clobber it. A refusal is
+   * reported as a normal non-executed result carrying the desktop's own
+   * wording, so the phone can explain rather than just fail.
+   */
+  async executeGitCheckout(
+    action: BridgeGitCheckoutAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitCheckoutFn) {
+      return notWired('gitCheckout', action.workspaceId)
+    }
+    this.log(`[BridgeActionExecutor] gitCheckout ws=${action.workspaceId} branch=${action.branch}`)
+    try {
+      const result = await this.deps.gitCheckoutFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message: `Checked out ${action.branch}.`,
+          data: result.snapshot ? { snapshot: result.snapshot } : undefined
+        }
+      }
+      if (result.dirtyReason) {
+        return { executed: false, message: result.dirtyReason }
+      }
+      return { executed: false, message: result.reason ?? 'Could not switch branch.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitCheckout failed: ${message}`)
+      return { executed: false, message: `Switch branch failed: ${message}` }
+    }
+  }
+
+  async executeGithubWatchPr(
+    action: BridgeGithubWatchPrAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.githubWatchPrFn) {
+      return notWired('githubWatchPr', action.workspaceId)
+    }
+    this.log(`[BridgeActionExecutor] githubWatchPr chat=${action.chatId} watch=${action.watch}`)
+    try {
+      const result = await this.deps.githubWatchPrFn(action)
+      if (result.ok) {
+        const watching = result.watching ?? action.watch
+        return {
+          executed: true,
+          message: watching ? 'Watching this pull request.' : 'Stopped watching.',
+          data: { watching }
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Could not update the PR watch.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] githubWatchPr failed: ${message}`)
+      return { executed: false, message: `PR watch failed: ${message}` }
     }
   }
 

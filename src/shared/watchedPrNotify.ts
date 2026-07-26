@@ -30,6 +30,41 @@ export interface WatchedPrDescriptor {
   prNumber: number;
 }
 
+/** Minimal PR shape the descriptor needs. Structural, so both the renderer's
+ * `GitPrSummary` and the main process's raw status data satisfy it without
+ * shared/ taking a dependency on the Electron-side GitService types. */
+export interface WatchedPrSource {
+  number?: number | string
+  url?: string
+}
+
+export function watchedPrDescriptorFromGitHubUrl(input: {
+  chatId: string
+  workspacePath: string
+  pr: WatchedPrSource
+}): WatchedPrDescriptor | null {
+  const chatId = input.chatId.trim()
+  const workspacePath = input.workspacePath.trim()
+  const prNumber = Number(input.pr.number)
+  const rawUrl = input.pr.url?.trim()
+  if (!chatId || !workspacePath || !Number.isInteger(prNumber) || prNumber <= 0 || !rawUrl) {
+    return null
+  }
+
+  try {
+    const url = new URL(rawUrl)
+    if (!['github.com', 'www.github.com'].includes(url.hostname.toLowerCase())) return null
+    const parts = url.pathname.split('/').filter(Boolean)
+    if (parts.length < 4 || parts[2] !== 'pull' || Number(parts[3]) !== prNumber) return null
+    const owner = decodeURIComponent(parts[0] || '').trim()
+    const repo = decodeURIComponent(parts[1] || '').trim()
+    if (!owner || !repo || owner.includes('/') || repo.includes('/')) return null
+    return { chatId, workspacePath, owner, repo, prNumber }
+  } catch {
+    return null
+  }
+}
+
 /** A single poll result the host poller obtained for a watched chat. */
 export interface PolledPrCiState {
   prNumber: number;

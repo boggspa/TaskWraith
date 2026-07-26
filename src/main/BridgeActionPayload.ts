@@ -356,6 +356,50 @@ export interface BridgeGitPushAction extends BridgeActionMetadata {
   setUpstream?: boolean
 }
 
+/** List local branches and worktrees for the branch picker. Read-only —
+ * gated by `diffReview`, the same tier as `gitSnapshot`. */
+export interface BridgeGitBranchesAction extends BridgeActionMetadata {
+  kind: 'gitBranches'
+  workspaceId: string
+}
+
+/** Check out an existing local branch.
+ *
+ * Mutating — gated by `fileWrite`, because it rewrites the working tree just
+ * as a commit does. NOT `externalPublish`: nothing leaves the machine.
+ *
+ * The executor MUST refuse on a dirty worktree. The desktop popover already
+ * disables the control in that state, but a UI gate is not a gate: a phone is
+ * an untrusted client and this repo routinely has concurrent desktop sessions
+ * editing the same tree, so a checkout landing mid-edit would silently strand
+ * or clobber another session's uncommitted work. The refusal is re-derived
+ * server-side from a fresh snapshot at execution time. */
+export interface BridgeGitCheckoutAction extends BridgeActionMetadata {
+  kind: 'gitCheckout'
+  workspaceId: string
+  branch: string
+}
+
+/** Start or stop watching a chat's pull request.
+ *
+ * Chat-scoped, not workspace-scoped: the watch descriptor lives on the chat
+ * record (`chat.watchedPr`), mirroring the desktop satellite popover.
+ *
+ * Gated by `diffReview` rather than `pin`: what this really persists is a
+ * standing PR *read* subscription, so the capability that gates the one-shot
+ * reads (`githubPrStatus` / `githubPrReadiness`) must also gate subscribing to
+ * them. Granting `pin` alone must not buy a device polling it could not
+ * otherwise perform. `watch: false` clears the descriptor. */
+export interface BridgeGithubWatchPrAction extends BridgeActionMetadata {
+  kind: 'githubWatchPr'
+  /** Carried so the action passes the workspace-allowlist gate like every
+   * other chat-scoped variant (`toggleMessagePin`, `togglePinChat`). The
+   * descriptor still lands on the chat. */
+  workspaceId: string
+  chatId: string
+  watch: boolean
+}
+
 /** Read-only `gh pr view` summary for the current branch. Gated by
  * `diffReview`. */
 export interface BridgeGithubPrStatusAction extends BridgeActionMetadata {
@@ -838,6 +882,9 @@ export type BridgeActionPayload =
   | BridgeGitUnstagePathsAction
   | BridgeGitCommitAction
   | BridgeGitPushAction
+  | BridgeGitBranchesAction
+  | BridgeGitCheckoutAction
+  | BridgeGithubWatchPrAction
   | BridgeGithubPrStatusAction
   | BridgeGithubPrReadinessAction
   | BridgeGithubCreatePrAction
@@ -976,6 +1023,9 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
+    case 'gitBranches':
+    case 'gitCheckout':
+    case 'githubWatchPr':
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
@@ -1055,6 +1105,9 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
+    case 'gitBranches':
+    case 'gitCheckout':
+    case 'githubWatchPr':
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'githubCreatePr':
@@ -1178,6 +1231,8 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitPush':
+    case 'gitCheckout':
+    case 'githubWatchPr':
     case 'githubCreatePr':
     case 'registerApnsToken':
     case 'ensemblePresetMutate':
@@ -1191,6 +1246,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'workspaceFileRead':
     case 'workspaceDiff':
     case 'gitSnapshot':
+    case 'gitBranches':
     case 'githubPrStatus':
     case 'githubPrReadiness':
     case 'discoverTailnetHosts':
@@ -1302,6 +1358,18 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isGitPush(parsed)
         ? (parsed as unknown as BridgeGitPushAction)
         : { kind: 'unknown', rawKind: 'gitPush', raw: parsed }
+    case 'gitBranches':
+      return isWorkspaceScopedGitRead(parsed)
+        ? (parsed as unknown as BridgeGitBranchesAction)
+        : { kind: 'unknown', rawKind: 'gitBranches', raw: parsed }
+    case 'gitCheckout':
+      return isGitCheckout(parsed)
+        ? (parsed as unknown as BridgeGitCheckoutAction)
+        : { kind: 'unknown', rawKind: 'gitCheckout', raw: parsed }
+    case 'githubWatchPr':
+      return isGithubWatchPr(parsed)
+        ? (parsed as unknown as BridgeGithubWatchPrAction)
+        : { kind: 'unknown', rawKind: 'githubWatchPr', raw: parsed }
     case 'githubPrStatus':
       return isWorkspaceScopedGitRead(parsed)
         ? (parsed as unknown as BridgeGithubPrStatusAction)
@@ -1760,6 +1828,56 @@ function isGitPush(v: Record<string, unknown>): boolean {
     hasValidActionMetadata(v) &&
     typeof v.workspaceId === 'string' &&
     (v.setUpstream === undefined || typeof v.setUpstream === 'boolean')
+  )
+}
+
+/** Git refname ceiling — well above any real branch, low enough that a
+ *  pathological name can't ride the wire. */
+const MAX_GIT_BRANCH_NAME_LENGTH = 255
+
+/**
+ * A branch name safe to hand to `git checkout`.
+ *
+ * Deliberately an allowlist, not a denylist. The executor passes the name as a
+ * separate argv entry (no shell), so this is defence in depth rather than the
+ * only barrier — but a refname is a constrained grammar and there is no reason
+ * to accept anything outside it. Rejects the git-refname rules that matter
+ * here: no leading `-` (would parse as a flag), no `..` or `@{`, no path
+ * traversal, no whitespace or control characters, no `~^:?*[\` and no trailing
+ * `.lock` or `/`.
+ */
+function isSafeGitBranchName(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const name = value.trim()
+  if (!name || name.length > MAX_GIT_BRANCH_NAME_LENGTH) return false
+  if (name !== value) return false
+  if (name.startsWith('-') || name.startsWith('/') || name.endsWith('/')) return false
+  if (name.endsWith('.') || name.endsWith('.lock')) return false
+  if (name.includes('..') || name.includes('@{') || name.includes('//')) return false
+  // Whitespace, ASCII control characters and DEL, plus git's own forbidden
+  // refname set (`~^:?*[\`). Note `;` and `&` are NOT rejected — they are legal
+  // refname characters, and the executor passes the name as its own argv entry
+  // with no shell, so there is nothing for them to escape into.
+  // eslint-disable-next-line no-control-regex
+  if (/[\s~^:?*[\\\x00-\x1f\x7f]/.test(name)) return false
+  return true
+}
+
+function isGitCheckout(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isSafeGitBranchName(v.branch)
+  )
+}
+
+function isGithubWatchPr(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.chatId === 'string' &&
+    v.chatId.trim().length > 0 &&
+    typeof v.watch === 'boolean'
   )
 }
 
