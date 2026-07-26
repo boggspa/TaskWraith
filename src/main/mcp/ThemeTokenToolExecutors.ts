@@ -22,6 +22,9 @@ import {
  * SUCCESS. Family executors like this one answer with an explicit error instead.
  */
 
+/** Main -> renderer push so an agent restyle applies without a reload. */
+export const AGENT_THEME_TOKENS_CHANGED_CHANNEL = 'agent-theme-tokens-changed'
+
 export const THEME_TOKEN_MCP_TOOL_NAMES = ['theme_tokens_get', 'theme_tokens_set'] as const
 export type ThemeTokenMcpToolName = (typeof THEME_TOKEN_MCP_TOOL_NAMES)[number]
 

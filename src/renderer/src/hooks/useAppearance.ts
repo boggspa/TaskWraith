@@ -421,6 +421,22 @@ export function useAppearance() {
     }
   }, [state, loaded, applyToDocument])
 
+  // Live-apply an agent restyle. Settings are otherwise read ONCE on mount, so
+  // without this an agent write persists but nothing changes until a reload —
+  // which for "ask the agent to round the corners" reads as the tool not
+  // working. Folded into state (rather than poking the DOM directly) so the
+  // normal apply path stays the single writer, and re-validated on arrival
+  // because a renderer must not trust an IPC payload any more than stored data.
+  useEffect(() => {
+    const unsubscribe = window.api.onAgentThemeTokensChanged?.((tokens) => {
+      setState((current) => ({
+        ...current,
+        agentThemeTokens: normalizeAgentThemeTokenOverrides(tokens)
+      }))
+    })
+    return () => unsubscribe?.()
+  }, [])
+
   const update = useCallback(
     (partial: Partial<AppearanceState>) => {
       setState((prev) => {

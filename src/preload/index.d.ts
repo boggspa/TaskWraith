@@ -2311,6 +2311,10 @@ declare global {
       onExternalUsageUpdated: (callback: () => void) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
+      /** Agent-set theme tokens changed in main; re-apply without a reload. */
+      onAgentThemeTokensChanged: (
+        callback: (tokens: Record<string, string>) => void
+      ) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void

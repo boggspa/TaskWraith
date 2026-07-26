@@ -1157,6 +1157,7 @@ import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegTool
 import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
 import { isDocumentMcpToolName } from './mcp/DocumentToolExecutors'
 import {
+  AGENT_THEME_TOKENS_CHANGED_CHANNEL,
   createThemeTokenToolExecutor,
   isThemeTokenMcpToolName
 } from './mcp/ThemeTokenToolExecutors'
@@ -6773,6 +6774,14 @@ const themeTokenToolExecutor = createThemeTokenToolExecutor({
     const patch = { agentThemeTokens: next }
     if (settingsServiceRef) await settingsServiceRef.updateSettings(patch)
     else AppStore.updateSettings(patch)
+    // Push to every window. `useAppearance` reads settings ONCE on mount and
+    // there is no general settings broadcast, so without this the user asks an
+    // agent to restyle, the write persists, and nothing visibly happens until a
+    // reload. Deliberately narrow — theme tokens only, not a settings-changed
+    // firehose — so the blast radius stays this feature.
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(AGENT_THEME_TOKENS_CHANGED_CHANNEL, next)
+    }
   }
 })
 const providerPreflightService = new ProviderPreflightService()

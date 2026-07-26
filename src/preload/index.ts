@@ -2026,6 +2026,12 @@ const api = {
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
   ackChatUpdated: (ack: ChatUpdateAck) => ipcRenderer.send(CHAT_UPDATE_ACK_CHANNEL, ack),
+  /** Agent-set theme tokens changed in main; re-apply without a reload. */
+  onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => {
+    const wrapped = (_event: unknown, tokens: Record<string, string>): void => callback(tokens)
+    ipcRenderer.on('agent-theme-tokens-changed', wrapped)
+    return () => ipcRenderer.removeListener('agent-theme-tokens-changed', wrapped)
+  },
   onProjectsChanged: (callback: (projects: unknown) => void) => {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)
     ipcRenderer.on('projects-changed', wrapped)
