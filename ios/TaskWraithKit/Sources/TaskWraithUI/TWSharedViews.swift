@@ -10068,6 +10068,12 @@ public struct ComposerWorkspacePill: View {
     let workspaceOptions: [(id: String, name: String)]
     let primaryWorkspaceId: String?
     var onSelectWorkspace: ((String) -> Void)? = nil
+    /// Opens the git workspace surface (branch / commit / PR). When set, this
+    /// wins over the workspace-switch menu: on a live thread the workspace is
+    /// fixed but the BRANCH and its changes are exactly what the pill is
+    /// reporting, so the git surface is what a tap should reach. Without it the
+    /// pill was a dead readout — it stated a branch and did nothing about it.
+    var onOpenGitSurface: (() -> Void)? = nil
     var glassNamespace: Namespace.ID? = nil
 
     public init(
@@ -10079,6 +10085,7 @@ public struct ComposerWorkspacePill: View {
         workspaceOptions: [(id: String, name: String)] = [],
         primaryWorkspaceId: String? = nil,
         onSelectWorkspace: ((String) -> Void)? = nil,
+        onOpenGitSurface: (() -> Void)? = nil,
         glassNamespace: Namespace.ID? = nil
     ) {
         self.workspaceName = workspaceName
@@ -10089,6 +10096,7 @@ public struct ComposerWorkspacePill: View {
         self.workspaceOptions = workspaceOptions
         self.primaryWorkspaceId = primaryWorkspaceId
         self.onSelectWorkspace = onSelectWorkspace
+        self.onOpenGitSurface = onOpenGitSurface
         self.glassNamespace = glassNamespace
     }
 
@@ -10114,7 +10122,12 @@ public struct ComposerWorkspacePill: View {
 
     public var body: some View {
         Group {
-            if canSwitch {
+            if let onOpenGitSurface {
+                Button(action: onOpenGitSurface) {
+                    chipBody
+                }
+                .buttonStyle(.plain)
+            } else if canSwitch {
                 Menu {
                     Section("Workspace") {
                         ForEach(workspaceOptions, id: \.id) { option in
@@ -10139,7 +10152,10 @@ public struct ComposerWorkspacePill: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
-        .accessibilityHint(canSwitch ? "Switch the thread's workspace." : "")
+        .accessibilityHint(
+            onOpenGitSurface != nil
+                ? "Open branch, changes and pull request controls."
+                : canSwitch ? "Switch the thread's workspace." : "")
     }
 
     private var chipBody: some View {

@@ -1100,6 +1100,49 @@ production order. The wire flattens that (prose → `preview`, tools →
 the header can say the lane was flattened rather than silently reorder it.
 Restoring true interleave needs a parts-array on the wire — deferred.
 
+## v0.46 — git workspace surface behind the composer pill (2026-07-26)
+
+The composer's workspace pill stated a repo and a branch and did nothing when
+tapped — it was a deliberate readout ("a live thread cannot be repointed"), but
+that reasoning only covered the WORKSPACE. The branch and its changes are
+exactly what the pill reports, and on desktop those hang off the equivalent
+above-row as three anchored popovers: `ComposerBranchWorktreePopover`,
+`GitCommitControls`, and `GitHubSatellitePopover`.
+
+Three floating panels is a desktop affordance. On the phone they combine into
+one `GitWorkspaceSurface` scroll, ordered the way the work happens — where you
+are (branch & worktree) → what changed and what to do about it (the existing
+`GitWorkflowPanel`) → what happens after you push (PR watch). Presentation
+follows the roster (`a1815e037`): sheet on phone, and the same content adapts to
+an anchored popover at regular width.
+
+Three new bridge actions carry it, each gated on what it actually does:
+`gitBranches` (diffReview), `gitCheckout` (fileWrite — it rewrites the working
+tree exactly as a commit does and never leaves the machine), and
+`githubWatchPr` (diffReview — a standing PR *read* subscription must take the
+capability that gates the one-shot PR reads; `pin` alone must not buy polling).
+
+**Two safety properties worth not regressing:**
+
+- **The dirty-worktree refusal is the Mac's, from a fresh snapshot.** The phone
+  never pre-judges from its cached snapshot — the tree can go dirty in between,
+  and a stale "looks clean" is a worse failure than a clear refusal. The cached
+  snapshot drives an advisory warning only, and the Mac's own wording ("commit,
+  stash, or discard…") is surfaced verbatim because it reads as instructions.
+- **The watch descriptor is resolved Mac-side** from the chat's own workspace,
+  so a device can only subscribe to the PR its branch already has rather than
+  pointing the watcher at an arbitrary repository.
+
+Naming (v0.45's sibling): the pill showed the raw projected `displayName` — the
+folder root — so a checkout whose folder is `AGBench` but whose remote is
+`TaskWraith` read differently on each platform. `TWWorkspaceDisplayName` ports
+`shared/workspaceDisplayName.ts` and the pill now resolves remote → repo root →
+folder like the desktop above-row. Repo segment only, never `owner/repo`.
+
+`watchingPr` is projected onto the remote task card (presence only, descriptor
+stays Mac-side) so the toggle opens in the right state instead of reading "off"
+every time.
+
 ## Current follow-ups
 
 1. Define the confirmation and elevation contract for `workflowDelete` before
@@ -1112,6 +1155,12 @@ Restoring true interleave needs a parts-array on the wire — deferred.
    foreground reconnect, APNs wake, image attachments, and settings persistence.
 5. Real-device visual QA for the v0.45 fan-out and run-failure cards (wire,
    fold, and decode are unit-covered; the rendered look is not).
+6. Real-device QA for the v0.46 git surface — in particular a genuine dirty-tree
+   checkout refusal and a PR watch against a live open PR. The wire, capability
+   gating and decode are unit-covered; the round trip against a real repo is not.
+7. Worktree CREATION and branch creation stay desktop-only. The surface lists
+   worktrees read-only; adding them from the phone needs a destination-path
+   contract that does not yet exist.
 
 ## Non-goals
 

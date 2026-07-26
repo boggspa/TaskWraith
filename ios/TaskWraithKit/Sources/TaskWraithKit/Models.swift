@@ -687,6 +687,10 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public let parentChatRelation: String?
     /// Sidebar pin (desktop parity — drives the Pinned section).
     public let pinned: Bool?
+    /// Whether this chat currently watches a pull request. Presence only —
+    /// the descriptor stays Mac-side. Drives the PR-watch toggle's initial
+    /// state; without it the toggle would read "off" on every open.
+    public let watchingPr: Bool?
     /// Sub-agent character identity (desktop parity).
     public let agentName: String?
     public let agentAccent: String?
@@ -920,6 +924,13 @@ public struct BridgeActionAckData: Codable, Sendable {
     public let pr: GitPullRequestSummary?
     /// PR readiness probe (`githubPrReadiness` ack).
     public let readiness: GitPrReadinessResult?
+    /// Local branches (`gitBranches` ack). Bounded Mac-side.
+    public let branches: [GitBranchEntry]?
+    /// Linked worktrees (`gitBranches` ack).
+    public let worktrees: [GitWorktreeEntry]?
+    /// Mac-final watch state (`githubWatchPr` ack) — authoritative over the
+    /// phone's optimistic toggle, since the Mac may refuse (no open PR).
+    public let watching: Bool?
     /// QR-optional discovery (`discoverTailnetHosts` ack) — the OTHER TaskWraith
     /// hosts on the tailnet, with this host (self) already dropped Mac-side. The
     /// phone still dedupes its already-paired hosts on its side. Wire key `hosts`.
@@ -1748,6 +1759,28 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+/// A local branch from the `gitBranches` ack. Every field optional except the
+/// name, per the additive-decode contract.
+public struct GitBranchEntry: Codable, Sendable, Equatable, Identifiable {
+    public let name: String
+    public let isCurrent: Bool?
+    public let upstream: String?
+    /// Set when this branch is checked out in a LINKED worktree — git refuses
+    /// to check it out again here, so the row must say so rather than offer an
+    /// action that is going to fail.
+    public let worktreePath: String?
+    public var id: String { name }
+}
+
+/// A linked worktree from the `gitBranches` ack.
+public struct GitWorktreeEntry: Codable, Sendable, Equatable, Identifiable {
+    public let path: String
+    public let branch: String?
+    public let isCurrent: Bool?
+    public let detached: Bool?
+    public var id: String { path }
+}
+
 // ── Actions (iPhone → Mac) ────────────────────────────────────────────────────
 //
 // Encoded as the base64 payload inside `bridge.requestActionAck`. Helpers build
@@ -2559,6 +2592,44 @@ public enum BridgeAction {
         encode([
             "kind": "gitPush", "actionId": actionId,
             "workspaceId": workspaceId, "setUpstream": setUpstream,
+        ])
+    }
+
+    /// Local heads + worktrees for the branch picker. Read-only (`diffReview`).
+    public static func gitBranches(
+        workspaceId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "gitBranches", "actionId": actionId,
+            "workspaceId": workspaceId,
+        ])
+    }
+
+    /// Check out a local branch. Gated `fileWrite` — it rewrites the working
+    /// tree. The Mac refuses on a dirty worktree and returns that refusal as
+    /// the ack message; the phone must NOT pre-judge it, because the tree can
+    /// go dirty between the snapshot the phone holds and the checkout landing.
+    public static func gitCheckout(
+        workspaceId: String, branch: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "gitCheckout", "actionId": actionId,
+            "workspaceId": workspaceId, "branch": branch,
+        ])
+    }
+
+    /// Start/stop watching this chat's pull request. The DESCRIPTOR is resolved
+    /// Mac-side from the chat's own workspace — the phone sends only the intent,
+    /// never a repo/PR it picked.
+    public static func githubWatchPr(
+        workspaceId: String, chatId: String, watch: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "githubWatchPr", "actionId": actionId,
+            "workspaceId": workspaceId, "chatId": chatId, "watch": watch,
         ])
     }
 

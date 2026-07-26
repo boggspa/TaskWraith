@@ -4719,6 +4719,59 @@ public final class RemoteSessionModel: ObservableObject {
         return git
     }
 
+    /// Whether a chat currently watches a pull request, from the Mac's
+    /// projection. The Mac is the authority — the phone never infers this from
+    /// its own toggle history, which would drift the moment a watch was added
+    /// or dropped on the desktop.
+    public func isWatchingPr(chatId: String) -> Bool {
+        taskCards.first(where: { $0.id == chatId || $0.threadId == chatId })?.watchingPr == true
+    }
+
+    /// Local branches + linked worktrees for the branch picker.
+    public func fetchGitBranches(
+        workspaceId: String
+    ) async throws -> (branches: [GitBranchEntry], worktrees: [GitWorktreeEntry]) {
+        let ack = try await requestFileAction(
+            BridgeAction.gitBranches(workspaceId: workspaceId), timeoutMs: 20_000)
+        return (ack.data?.branches ?? [], ack.data?.worktrees ?? [])
+    }
+
+    /// Check out a local branch.
+    ///
+    /// The dirty-worktree refusal is the MAC's to make, against a fresh
+    /// snapshot at execution time — the phone deliberately does not pre-check
+    /// its cached snapshot, because the tree can go dirty between that snapshot
+    /// and the checkout landing, and a stale "looks clean" would be a worse
+    /// failure than a clear refusal. A refused checkout surfaces as a thrown
+    /// error carrying the Mac's own wording.
+    public func checkoutBranch(
+        workspaceId: String, branch: String
+    ) async throws -> GitWorkspaceSnapshot? {
+        let ack = try await requestFileAction(
+            BridgeAction.gitCheckout(workspaceId: workspaceId, branch: branch),
+            timeoutMs: 60_000)
+        if let git = ack.data?.git {
+            cacheGitSnapshot(git, workspaceId: workspaceId)
+            return git
+        }
+        // Checkout succeeded but the ack carried no snapshot (older Mac): ask
+        // for one rather than leaving every surface on the pre-checkout branch.
+        return try? await fetchGitSnapshot(workspaceId: workspaceId)
+    }
+
+    /// Start/stop watching this chat's pull request. Returns the MAC's final
+    /// state, which may differ from what was asked (it refuses when the branch
+    /// has no open PR).
+    @discardableResult
+    public func setPrWatch(
+        workspaceId: String, chatId: String, watch: Bool
+    ) async throws -> Bool {
+        let ack = try await requestFileAction(
+            BridgeAction.githubWatchPr(workspaceId: workspaceId, chatId: chatId, watch: watch),
+            timeoutMs: 30_000)
+        return ack.data?.watching ?? watch
+    }
+
     /// PR summary for the current branch — nil when no PR exists yet
     /// (a successful read, not an error).
     public func fetchPrStatus(workspaceId: String) async throws -> GitPullRequestSummary? {

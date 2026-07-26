@@ -27,6 +27,7 @@ struct ChatKindBridgeTests {
             updatedAt: nil,
             parentChatRelation: parentChatRelation,
             pinned: nil,
+            watchingPr: nil,
             agentName: nil,
             agentAccent: nil,
             agentSlug: nil,

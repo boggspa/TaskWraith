@@ -259,6 +259,12 @@ struct ThreadDetailView: View {
     @State private var ensembleSoloProviderChoices: [String] = []
     @StateObject private var composerDiffSheetState = MobileDiffStudioState()
     @State private var composerDiffSheetPresented = false
+    /// Git workspace surface (branch / changes / PR) opened from the
+    /// composer workspace pill. The workspace is captured at open time — the
+    /// pill lives inside a view builder whose locals aren't in scope at the
+    /// presentation modifier.
+    @State private var gitSurfacePresented = false
+    @State private var gitSurfaceWorkspaceId: String?
     @State private var diffPillRefreshGeneration = 0
     /// Drives the focus-independent git snapshot refresh on foregrounding —
     /// the compact pill (mounted only while the composer is blurred) can no
@@ -1881,6 +1887,9 @@ struct ThreadDetailView: View {
                                     behind: primaryGitSnapshot?.behind ?? 0,
                                     mergeState: primaryGitSnapshot?.mergeState,
                                     conflicts: primaryGitSnapshot?.conflicts ?? 0,
+                                    onOpenGitSurface: primaryWorkspaceId.map { id in
+                                        { openGitSurface(workspaceId: id) }
+                                    },
                                     glassNamespace: composerPillGlass
                                 )
                                 if workspacePill.hasContent { workspacePill }
@@ -2214,6 +2223,21 @@ struct ThreadDetailView: View {
         composerDiffSheetPresented = true
     }
 
+    /// Open the git workspace surface. Requires the diffReview floor — below
+    /// it there is nothing to show, so route to the inspector (which explains
+    /// the missing capability) rather than presenting an empty panel.
+    private func openGitSurface(workspaceId: String) {
+        guard model.workspaceCanReviewDiffs(workspaceId) else {
+            model.inspectorPresented = true
+            return
+        }
+        #if canImport(UIKit)
+            dismissKeyboard()
+        #endif
+        gitSurfaceWorkspaceId = workspaceId
+        gitSurfacePresented = true
+    }
+
     private func openComposerDiff(workspaceId: String?) {
         if model.workspaceCanReviewDiffs(workspaceId) {
             model.requestDiffMode(workspaceId: workspaceId)
@@ -2518,6 +2542,20 @@ struct ThreadDetailView: View {
                 }
             }
             .twSheetLiquidGlass(detents: [.medium])
+        }
+        .sheet(isPresented: $gitSurfacePresented) {
+            // Roster pattern (a1815e037): the SAME content adapts — a sheet on
+            // phone, and `presentationCompactAdaptation(.popover)` lets a
+            // regular-width iPad render it as an anchored popover instead.
+            if let workspaceId = gitSurfaceWorkspaceId {
+                GitWorkspaceSurface(
+                    model: model,
+                    workspaceId: workspaceId,
+                    chatId: taskId,
+                    onDismiss: { gitSurfacePresented = false }
+                )
+                .twSheetLiquidGlass(detents: [.large])
+            }
         }
         .sheet(isPresented: $composerDiffSheetPresented) {
             NavigationStack {

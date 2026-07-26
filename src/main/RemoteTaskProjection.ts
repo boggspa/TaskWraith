@@ -254,6 +254,12 @@ export interface RemoteTaskCard {
   parentChatId?: string
   /** Sidebar pin (drives remote Pinned sections). */
   pinned?: boolean
+  /** Whether this chat currently watches a pull request. Presence only — the
+   * descriptor (owner/repo/number) stays Mac-side, since the phone never needs
+   * it: the watch toggle sends intent and the Mac resolves the target itself.
+   * Without this the phone's toggle would read "off" every time the surface
+   * opened, regardless of the real state. */
+  watchingPr?: boolean
   /** Sub-agent character identity (desktop parity): pool/platform name,
    * accent hex, and identicon catalog slug. */
   agentName?: string
@@ -1133,6 +1139,7 @@ export function buildRemoteTaskCard(
     threadId: chat.appChatId,
     ...(chat.parentChatId ? { parentChatId: chat.parentChatId } : {}),
     ...(chat.pinned ? { pinned: true } : {}),
+    ...(chat.watchedPr ? { watchingPr: true } : {}),
     ...(agentIdentity?.name ? { agentName: agentIdentity.name } : {}),
     ...(agentIdentity?.accent ? { agentAccent: agentIdentity.accent } : {}),
     ...(agentIdentity?.slug ? { agentSlug: agentIdentity.slug } : {}),

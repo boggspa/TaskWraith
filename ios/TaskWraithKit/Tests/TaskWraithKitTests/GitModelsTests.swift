@@ -220,6 +220,81 @@ struct GitModelsTests {
         #expect(quietPayload["publish"] as? Bool == false)
     }
 
+    @Test("branch / checkout / PR-watch helpers encode their kinds")
+    func branchAndWatchHelpersEncode() throws {
+        func decode(_ params: [String: Any]) throws -> [String: Any] {
+            let base64 = try #require(params["payloadBase64"] as? String)
+            let data = try #require(Data(base64Encoded: base64))
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        let branches = try decode(BridgeAction.gitBranches(workspaceId: "ws-1"))
+        #expect(branches["kind"] as? String == "gitBranches")
+        #expect(branches["workspaceId"] as? String == "ws-1")
+
+        let checkout = try decode(
+            BridgeAction.gitCheckout(workspaceId: "ws-1", branch: "feature/x"))
+        #expect(checkout["kind"] as? String == "gitCheckout")
+        #expect(checkout["branch"] as? String == "feature/x")
+
+        // The watch carries workspaceId (for the allowlist gate) AND chatId
+        // (what it actually acts on). The Mac rejects the payload without both.
+        let watch = try decode(
+            BridgeAction.githubWatchPr(workspaceId: "ws-1", chatId: "chat-1", watch: true))
+        #expect(watch["kind"] as? String == "githubWatchPr")
+        #expect(watch["workspaceId"] as? String == "ws-1")
+        #expect(watch["chatId"] as? String == "chat-1")
+        #expect(watch["watch"] as? Bool == true)
+
+        let unwatch = try decode(
+            BridgeAction.githubWatchPr(workspaceId: "ws-1", chatId: "chat-1", watch: false))
+        #expect(unwatch["watch"] as? Bool == false)
+    }
+
+    @Test("gitBranches ack decodes branches and worktrees")
+    func branchAckDecodes() throws {
+        let json = """
+            {"branches":[
+               {"name":"master","isCurrent":true,"upstream":"origin/master"},
+               {"name":"codex/lifecycle-qa","isCurrent":false,"worktreePath":"/tmp/wt-1"}
+             ],
+             "worktrees":[
+               {"path":"/repo","isCurrent":true},
+               {"path":"/tmp/wt-1","branch":"codex/lifecycle-qa","detached":false}
+             ]}
+            """
+        let ack = try JSONDecoder().decode(
+            BridgeActionAckData.self, from: Data(json.utf8))
+        let branches = try #require(ack.branches)
+        #expect(branches.count == 2)
+        #expect(branches[0].name == "master")
+        #expect(branches[0].isCurrent == true)
+        #expect(branches[0].upstream == "origin/master")
+        // A branch held by a linked worktree can't be checked out here — the
+        // row needs this to say so instead of offering a doomed action.
+        #expect(branches[1].worktreePath == "/tmp/wt-1")
+        let worktrees = try #require(ack.worktrees)
+        #expect(worktrees.count == 2)
+        #expect(worktrees[0].isCurrent == true)
+        #expect(worktrees[1].branch == "codex/lifecycle-qa")
+    }
+
+    @Test("githubWatchPr ack carries the Mac's final watch state")
+    func watchAckDecodes() throws {
+        // The Mac refuses when there is no open PR, so the acked value — not
+        // the requested one — is what the toggle must settle on.
+        let refused = try JSONDecoder().decode(
+            BridgeActionAckData.self, from: Data(#"{"watching":false}"#.utf8))
+        #expect(refused.watching == false)
+        let accepted = try JSONDecoder().decode(
+            BridgeActionAckData.self, from: Data(#"{"watching":true}"#.utf8))
+        #expect(accepted.watching == true)
+        // Older Macs omit the field entirely — must decode, not throw.
+        let legacy = try JSONDecoder().decode(BridgeActionAckData.self, from: Data("{}".utf8))
+        #expect(legacy.watching == nil)
+        #expect(legacy.branches == nil)
+    }
+
     @Test("threadMediaFetch helper encodes bounded media request")
     func threadMediaFetchHelperEncodes() throws {
         func decode(_ params: [String: Any]) throws -> [String: Any] {
