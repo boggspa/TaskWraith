@@ -19,6 +19,16 @@ function expectBefore(source: string, first: string, second: string): void {
 }
 
 describe('unavailable provider renderer admission', () => {
+  it('does not turn missing scheduled-seal evidence into a Kimi availability gate', () => {
+    const scheduleControls = sourceBetween(
+      'const scheduleDisabledReason =',
+      'const scheduleControls ='
+    )
+
+    expect(scheduleControls).not.toContain("currentProvider === 'kimi'")
+    expect(appSource).not.toContain('Scheduled Kimi runs are unavailable')
+  })
+
   it('blocks direct-copy side chats, run lanes, and handoffs before creation IPC', () => {
     const sideChat = sourceBetween(
       'const createSideChatFromCurrentChat =',
@@ -58,7 +68,7 @@ describe('unavailable provider renderer admission', () => {
       'if (!isRunnableProvider(sideComposerProvider))',
       'const sideRunAttachments ='
     )
-    expect(sideRun).toContain('Switch this linked chat to a live provider to continue.')
+    expect(sideRun).toContain('Choose a currently offered provider for this linked chat.')
 
     const sideRunEligibility = sourceBetween(
       'const sideComposerProvider =',
@@ -104,7 +114,7 @@ describe('unavailable provider renderer admission', () => {
       'if (!isRunnableProvider(request.provider))',
       'queueRunRequestRef.current('
     )
-    expect(paneRun).toContain('Switch this pane to a live provider to continue.')
+    expect(paneRun).toContain('Choose a currently offered provider for this pane.')
 
     const paneGrant = sourceBetween(
       'const handleMultiviewPaneToggleGrant =',

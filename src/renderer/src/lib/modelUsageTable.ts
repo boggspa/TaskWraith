@@ -533,7 +533,7 @@ function cursorRecordsLikelyOverlap(internal: UsageRecord, external: UsageRecord
   return ratio >= 0.75 && ratio <= 1.33
 }
 
-/** Drop external Cursor rows that likely duplicate a historical TaskWraith
+/** Drop external Cursor rows that likely duplicate an internal TaskWraith
  * Cursor record (same ~2m window and similar token total). */
 function dedupeCursorExternalAgainstInternal(
   internalRecords: UsageRecord[],

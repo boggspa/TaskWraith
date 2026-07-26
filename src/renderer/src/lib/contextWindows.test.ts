@@ -60,7 +60,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'unknown-local', undefined, 65_536)).toBe(65_536)
   })
 
-  it('uses provider fallbacks for all eight providers when the model is unknown', () => {
+  it('uses provider fallbacks for all nine provider identities when the model is unknown', () => {
     const expected: Record<ContextWindowProviderId, number> = {
       gemini: 1_048_576,
       codex: 1_050_000,

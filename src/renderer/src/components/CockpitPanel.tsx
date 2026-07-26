@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { compactPromptPreview, type RunLane } from '../lib/RunLanes'
 import { getProviderLabel } from '../lib/providerLabels'
 import type { HandoffCard, ProviderId } from '../../../main/store/types'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 
 function CockpitPanel({
   lanes,
@@ -81,15 +82,9 @@ function CockpitPanel({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const providerIds: ProviderId[] = [
-    'gemini',
-    'codex',
-    'claude',
-    'kimi',
-    'grok',
-    'cursor',
-    'ollama'
-  ]
+  // Accounting includes historical Gemini and conditional AntiGravity so an
+  // already-recorded lane is never dropped from the cockpit.
+  const providerIds: ProviderId[] = ['gemini', ...LIVE_SELECTABLE_PROVIDER_IDS, 'antigravity']
   const activeCount = lanes.filter((lane) => lane.phase === 'active').length
   const waitingCount = lanes.filter(
     (lane) => lane.phase === 'queued' || lane.phase === 'scheduled' || lane.phase === 'paused'

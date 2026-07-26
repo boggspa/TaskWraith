@@ -279,15 +279,12 @@ struct TaskCompleteCard: View {
     private func tokenHeaderCell(_ cell: TokenParticipant, dense: Bool) -> some View {
         let accent = accent(for: cell)
         return HStack(spacing: 5) {
-            ZStack {
-                Circle()
-                    .fill(accent.opacity(0.16))
-                    .frame(width: 18, height: 18)
-                Circle()
-                    .strokeBorder(accent.opacity(0.28), lineWidth: 0.75)
-                    .frame(width: 18, height: 18)
-                ProviderLogoIcon(provider: cell.provider, modelId: cell.model, size: 11)
-            }
+            // Satellite mark: no tinted chip behind the logo. The 18pt frame
+            // is the old container's footprint, kept so the participant
+            // columns don't reflow; the logo grows into the space the chip
+            // used to occupy rather than shrinking to fit inside it.
+            ProviderLogoIcon(provider: cell.provider, modelId: cell.model, size: 16)
+                .frame(width: 18, height: 18)
             Text(dense ? cell.numberLabel : "\(cell.numberLabel) \(cell.roleLabel)")
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(accent)

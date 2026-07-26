@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
-import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
+import {
+  ANTIGRAVITY_PROVIDER_ID,
+  LIVE_SELECTABLE_PROVIDER_IDS
+} from '../../../shared/retiredProviders'
+import { useConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { getProviderLabel } from '../lib/providerLabels'
 import { PillButton } from './PillButton'
 
@@ -26,31 +30,43 @@ import { PillButton } from './PillButton'
  */
 
 /**
- * Delegation-target helper copy, keyed over the canonical live set: admitting
- * a provider without helper copy fails typecheck, and retiring one (e.g.
- * gemini) removes its seat with no edit in this file.
+ * Delegation-target helper copy, keyed over every non-retired provider:
+ * admitting a provider without helper copy fails typecheck. AntiGravity is
+ * still appended only from the main process's configured-provider snapshot;
+ * it is deliberately absent from the static live set.
  *
  * Every live provider is a valid CHILD seat (AGENTS.md "Sub-Threads") — a
- * sub-thread dispatches through the ordinary per-provider send path. Even
- * managed Cursor, which cannot CALL delegate_to_subthread as a parent, can be
- * delegated TO.
+ * sub-thread dispatches through the ordinary per-provider send path. A
+ * broker-active managed Cursor parent can call `delegate_to_subthread`; a
+ * visible native-only fallback cannot. Either posture remains a valid child
+ * target.
  */
-const PROVIDER_HELPERS: Record<(typeof LIVE_SELECTABLE_PROVIDER_IDS)[number], string> = {
+const PROVIDER_HELPERS: Record<Exclude<ProviderId, 'gemini'>, string> = {
   codex: 'Fast-twitch CLI work, shell commands, sandboxed execution.',
   claude: 'Deep reasoning, tool use, careful code edits with strong safety.',
   kimi: 'Admitted ACP runtime with a governed per-run TaskWraith gateway.',
-  cursor: 'Contained Cursor CLI — native tools inside the OS sandbox, no TaskWraith MCP seat.',
+  cursor:
+    'Managed Cursor Path-B — sandboxed native tools plus governed TaskWraith broker tools when attached.',
   grok: 'Grok CLI seat; shell and file tools route through the TaskWraith bridge when enabled.',
   ollama: 'Local models over HTTP with the curated TaskWraith gateway tool surface.',
-  pi: 'Pi coding agent seat; BYOK access to DeepSeek, GLM, Qwen, MiniMax, Mistral and open-weights hosts.'
+  pi: 'Pi coding agent seat; BYOK access to DeepSeek, GLM, Qwen, MiniMax, Mistral and open-weights hosts.',
+  antigravity:
+    'Conditionally admitted AntiGravity seat using its configured agy CLI or Gemini API lane.'
 }
 
-const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> =
-  LIVE_SELECTABLE_PROVIDER_IDS.map((value) => ({
+function buildSubThreadProviderOptions(
+  configuredProviderIds: readonly ProviderId[]
+): Array<{ value: ProviderId; label: string; helper: string }> {
+  const providerIds: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
+  if (configuredProviderIds.includes(ANTIGRAVITY_PROVIDER_ID)) {
+    providerIds.push(ANTIGRAVITY_PROVIDER_ID)
+  }
+  return providerIds.map((value) => ({
     value,
     label: getProviderLabel(value),
     helper: PROVIDER_HELPERS[value]
   }))
+}
 
 interface SubThreadCreatorProps {
   /** Parent chat. The new sub-thread will inherit its workspace and
@@ -68,11 +84,13 @@ export function SubThreadCreator({
   onCreated,
   onCancel
 }: SubThreadCreatorProps): React.JSX.Element {
+  const configuredProviderSnapshot = useConfiguredProviderSnapshot()
+  const providerOptions = buildSubThreadProviderOptions(configuredProviderSnapshot.providerIds)
   // Default the picked provider to anything OTHER than the parent's
   // current provider — the point of delegation is cross-provider.
   // First entry in the options list that doesn't match parent.provider.
   const defaultProvider: ProviderId =
-    PROVIDER_OPTIONS.find((opt) => opt.value !== parentChat.provider)?.value ?? 'codex'
+    providerOptions.find((opt) => opt.value !== parentChat.provider)?.value ?? 'codex'
   const [provider, setProvider] = useState<ProviderId>(defaultProvider)
   const [delegationPrompt, setDelegationPrompt] = useState('')
   const [returnResultToParent, setReturnResultToParent] = useState(true)
@@ -153,7 +171,7 @@ export function SubThreadCreator({
         <fieldset className="sub-thread-creator-section" disabled={isParentItselfSubThread}>
           <legend>Provider</legend>
           <div className="sub-thread-creator-provider-grid">
-            {PROVIDER_OPTIONS.map((opt) => (
+            {providerOptions.map((opt) => (
               <label
                 key={opt.value}
                 className={`sub-thread-creator-provider-card${
@@ -219,7 +237,7 @@ export function SubThreadCreator({
           >
             {submitting
               ? 'Creating…'
-              : `Spawn ${PROVIDER_OPTIONS.find((o) => o.value === provider)?.label} sub-thread`}
+              : `Spawn ${providerOptions.find((o) => o.value === provider)?.label} sub-thread`}
           </PillButton>
         </footer>
       </div>

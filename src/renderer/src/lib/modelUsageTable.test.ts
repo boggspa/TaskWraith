@@ -827,7 +827,7 @@ describe('buildModelUsageTableForSettings — private-home supplements when exte
     expect(cursor.models).toHaveLength(2)
   })
 
-  it('dedupes external cursor rows that mirror a historical TaskWraith Cursor record', () => {
+  it('dedupes external cursor rows that mirror an internal TaskWraith Cursor record', () => {
     const ts = NOW - HOURS(1)
     const internal = [
       makeRecord({

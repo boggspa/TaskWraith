@@ -1,5 +1,5 @@
 import type { ProviderCapabilityContract, ProviderId } from '../../../main/store/types'
-import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
+import { isEnsembleSeatProvider, isRetiredProvider } from '../../../shared/retiredProviders'
 
 /**
  * ComposerSlashCommands — single source of truth for the chat composer's
@@ -320,7 +320,7 @@ function passesCapabilityGate(
 export function buildComposerSlashCommandRegistry(
   input: ComposerSlashRegistryInput
 ): ComposerSlashCommand[] {
-  if (!isLiveSelectableProvider(input.provider)) return []
+  if (isRetiredProvider(input.provider) || !isEnsembleSeatProvider(input.provider)) return []
   const wrapped = input.paletteItems.map(wrapPaletteItemAsSlashCommand)
   const combined = [...wrapped, ...(input.extraCommands ?? [])]
   return dedupeComposerSlashCommands(
@@ -498,18 +498,13 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
  * emulated /fork) — nothing assumes an MCP bridge, so contained Path-B Cursor
  * qualifies. /review here is TaskWraith's own read-only diff review
  * (reviewDiffPrompt + a plan-mode run), provider-agnostic. Providers outside
- * the canonical live set intentionally return an empty command set while
- * their history remains decodable. */
+ * retired Gemini returns an empty command set while its history remains
+ * decodable. A dynamically admitted AntiGravity seat uses the same
+ * TaskWraith-side command core as the other non-Codex transports. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
-  if (!isLiveSelectableProvider(provider)) return RETIRED_PROVIDER_PALETTE_CORE
+  if (isRetiredProvider(provider)) return RETIRED_PROVIDER_PALETTE_CORE
   if (provider === 'codex') return CODEX_PALETTE_CORE
-  if (
-    provider === 'claude' ||
-    provider === 'kimi' ||
-    provider === 'grok' ||
-    provider === 'cursor' ||
-    provider === 'ollama'
-  ) {
+  if (isEnsembleSeatProvider(provider)) {
     return CLI_PROVIDER_PALETTE_CORE
   }
   return RETIRED_PROVIDER_PALETTE_CORE

@@ -1185,6 +1185,7 @@ import {
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
 import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
+import { createThreadMessageWakeDispatcher } from './ThreadMessageWakeDispatcher'
 import {
   annotateRecallCitations,
   formatRecallCitation,
@@ -4398,6 +4399,26 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
   }
 })
 
+/**
+ * Sweeps pending peer-message wake requests into runs. Held as a ref because the
+ * dispatcher needs the run-dispatch path, which only exists after app-ready, while
+ * the senders that trigger a sweep are constructed at module scope.
+ *
+ * Deliberately NOT given `signRunPermissionPosture` — see ThreadMessageWakeDispatcher.
+ */
+let threadMessageWakeDispatcherRef: ReturnType<
+  typeof createThreadMessageWakeDispatcher
+> | null = null
+
+function sweepThreadMessageWakes(): void {
+  // Fire-and-forget with an explicit catch: a wake sweep must never fail the send
+  // that triggered it — the message is already durably queued, and the dispatcher
+  // retries on the next sweep.
+  void threadMessageWakeDispatcherRef?.dispatchPendingWakes().catch((error) => {
+    console.error('Failed to sweep thread-message wakes', error)
+  })
+}
+
 const threadMessageToolExecutors = createThreadMessageToolExecutors({
   listTargetChats: () =>
     AppStore.getChats().map((chat) => ({
@@ -4420,7 +4441,8 @@ const threadMessageToolExecutors = createThreadMessageToolExecutors({
   enqueueThreadMessage: (event) => AppStore.enqueueThreadMessage(event),
   mintThreadMessageId: (fromChatId, toChatId, nonce) =>
     createThreadMessageId(fromChatId, toChatId, nonce),
-  now: () => Date.now()
+  now: () => Date.now(),
+  notifyThreadMessageQueued: () => sweepThreadMessageWakes()
 })
 
 const recallToolExecutors = createRecallToolExecutors({
@@ -41735,6 +41757,7 @@ if (isGeminiMcpBridgeProcess) {
       broadcastThreadMessageInboxChanged: (chatId) => {
         const chat = AppStore.getChat(chatId)
         if (chat) saveAndBroadcastChat(chat)
+        sweepThreadMessageWakes()
       }
     })
 
@@ -45277,6 +45300,45 @@ if (isGeminiMcpBridgeProcess) {
       now: () => Date.now(),
       nowIso: () => new Date().toISOString()
     })
+    // Peer-message wakes. NOTE the contrast with SoloChatWakeupService directly
+    // above: that one receives `signRunPermissionPosture` because the USER
+    // scheduled it and it may resume their permissions. This one must not, so the
+    // signer is absent from the deps entirely.
+    threadMessageWakeDispatcherRef = createThreadMessageWakeDispatcher({
+      getPendingInboxes: () => AppStore.getPendingThreadMessageInboxes(),
+      resolveTarget: (chatId) => {
+        const chat = AppStore.getChat(chatId)
+        // No provider means nothing to run, so there is nothing to wake — fail
+        // closed rather than guessing a provider for someone else's thread.
+        if (!chat?.provider) return null
+        return {
+          chatId,
+          provider: chat.provider,
+          workspacePath: chat.workspacePath ?? null,
+          providerSessionId: chat.linkedProviderSessionId ?? null,
+          archived: chat.archived === true,
+          // Durable rather than in-memory, so a run that survived a restart still
+          // counts as busy and its turn picks the message up through normal delivery.
+          busy: AppStore.getRunQueueJobs({ includeTerminal: false }).some(
+            (job) => job.chatId === chatId
+          )
+        }
+      },
+      dispatchRun: async (payload) =>
+        // The dispatcher types its payload as a plain record precisely so it cannot
+        // name a permission field; the cast is the one place that shape meets the
+        // run payload type, and it adds nothing.
+        dispatchRunWithProviderPause(payload as unknown as AgentRunPayload, {
+          sender: mainWindow!.webContents
+        }),
+      createRunId: createFallbackRunId,
+      log: (message) => console.log(message)
+    })
+    if (!historyDeletionStartupRecoveryBlockedReason) {
+      // A wake that arrived while the app was closed would otherwise wait for the
+      // next send to trigger a sweep.
+      sweepThreadMessageWakes()
+    }
     if (!historyDeletionStartupRecoveryBlockedReason && ensembleWakeupsEnabled()) {
       recoverPersistedEnsembleWakeups()
       // 1.0.5-EW37 — Solo wakeups gated behind the same flag as

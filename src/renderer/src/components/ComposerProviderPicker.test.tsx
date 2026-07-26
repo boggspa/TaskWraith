@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import {
   ComposerProviderPicker,
   ComposerProviderPickerRows,
@@ -64,45 +65,33 @@ describe('ComposerProviderPicker trigger', () => {
   })
 })
 
-describe('resolveProviderRows (gated visibility + option order)', () => {
+describe('resolveProviderRows (additive visibility + option order)', () => {
   it('explains why historical Gemini chats cannot run while keeping live providers clear', () => {
     expect(providerRunUnavailableReason('gemini')).toBe(
-      'Gemini managed runs are unavailable. Switch this chat to a live provider to continue.'
+      'Gemini is retired for new runs; historical chats remain available. Choose a currently offered provider to continue.'
     )
     expect(providerRunUnavailableReason('claude')).toBeNull()
     expect(providerRunUnavailableReason('cursor')).toBeNull()
-    expect(providerRunUnavailableReason('antigravity')).toContain('unavailable')
+    expect(providerRunUnavailableReason('antigravity')).toContain('consent or Gemini API setup')
     expect(providerRunUnavailableReason('antigravity', ['antigravity'])).toBeNull()
   })
 
-  it('hides optional providers unless their availability flags are set', () => {
+  it('offers every statically live provider when legacy readiness flags are false', () => {
     expect(resolveProviderRows(false, false).map((r) => r.id)).toEqual([
-      'codex',
-      'claude',
-      'kimi',
-      'ollama'
+      ...LIVE_SELECTABLE_PROVIDER_IDS
     ])
   })
 
-  it('offers Grok and Path-B Cursor when both availability flags are set', () => {
+  it('does not change the static offer set when legacy readiness flags are true', () => {
     expect(resolveProviderRows(true, true).map((r) => r.id)).toEqual([
-      'codex',
-      'claude',
-      'kimi',
-      'grok',
-      'cursor',
-      'ollama'
+      ...LIVE_SELECTABLE_PROVIDER_IDS
     ])
   })
 
-  it('offers Cursor when its availability flag is set without requiring Grok', () => {
-    expect(resolveProviderRows(false, true).map((r) => r.id)).toEqual([
-      'codex',
-      'claude',
-      'kimi',
-      'cursor',
-      'ollama'
-    ])
+  it('keeps both Cursor and Grok visible when only one legacy readiness flag is true', () => {
+    const ids = resolveProviderRows(false, true).map((r) => r.id)
+    expect(ids).toContain('cursor')
+    expect(ids).toContain('grok')
   })
 
   it('labels each row with the provider display name + a descriptor', () => {
@@ -139,17 +128,17 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
         snapshot: { ready: true, providerIds: ['claude', 'cursor'] },
         pendingFallbackProvider: 'codex'
       }).map((row) => row.id)
-    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+    ).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS])
   })
 
   it('offers AntiGravity only when the configured snapshot has admitted it', () => {
-    // AntiGravity is the sole discovery-gated row; live providers show alongside it.
-    // AntiGravity ranks above local Ollama (and below the CLI lanes).
+    // AntiGravity is the sole configured-snapshot-gated row; live providers
+    // show alongside it. AntiGravity ranks immediately above local Ollama.
     expect(
       resolveProviderRows(false, false, undefined, {
         snapshot: { ready: true, providerIds: ['codex', 'antigravity'] }
       }).map((row) => row.id)
-    ).toEqual(['codex', 'claude', 'kimi', 'antigravity', 'ollama'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'antigravity', 'ollama', 'pi'])
 
     expect(
       resolveProviderRows(false, false, undefined, {
@@ -166,17 +155,17 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
         snapshot: { ready: false, providerIds: [] },
         pendingFallbackProvider: 'kimi'
       }).map((row) => row.id)
-    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+    ).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS])
   })
 
-  it('never surfaces retired or flag-gated providers through the configured snapshot', () => {
-    // The snapshot cannot smuggle in gemini (retired) or grok (its availability
-    // flag is off); only the always-offered live rows remain.
+  it('never surfaces retired providers through the configured snapshot', () => {
+    // The snapshot cannot smuggle in Gemini (retired). Grok remains present
+    // because it is statically live even when its legacy readiness flag is off.
     expect(
       resolveProviderRows(false, false, undefined, {
         snapshot: { ready: true, providerIds: ['gemini', 'grok', 'codex'] }
       }).map((row) => row.id)
-    ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
+    ).toEqual([...LIVE_SELECTABLE_PROVIDER_IDS])
   })
 })
 
@@ -190,18 +179,20 @@ describe('ComposerProviderPickerRows (popover body)', () => {
       />
     )
 
-    // A row per live provider (gemini retired; Cursor Path-B is live)...
+    // A row per live provider (Gemini remains retired/history-only)...
     expect(html).not.toContain('data-provider-value="gemini"')
     expect(html).toContain('data-provider-value="codex"')
     expect(html).toContain('data-provider-value="claude"')
     expect(html).toContain('data-provider-value="kimi"')
     expect(html).toContain('data-provider-value="grok"')
     expect(html).toContain('data-provider-value="cursor"')
+    expect(html).toContain('data-provider-value="ollama"')
+    expect(html).toContain('data-provider-value="pi"')
     // ...each with the shared rich-popover row chrome + a provider icon.
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
-    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {
+    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
       expect(html).toContain(`data-provider-logo="${provider}"`)
       expect(html).not.toContain(`provider-glyph-${provider}`)
     }
@@ -225,7 +216,7 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html.match(/composer-combined-picker-check/g)?.length).toBe(1)
   })
 
-  it('omits gated rows when their flags are off', () => {
+  it('does not omit live rows when legacy readiness flags are off', () => {
     const html = renderToStaticMarkup(
       <ComposerProviderPickerRows
         rows={resolveProviderRows(false, false)}
@@ -234,7 +225,10 @@ describe('ComposerProviderPickerRows (popover body)', () => {
       />
     )
 
-    expect(html).not.toContain('data-provider-value="grok"')
-    expect(html).not.toContain('data-provider-value="cursor"')
+    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
+      expect(html).toContain(`data-provider-value="${provider}"`)
+    }
+    expect(html).not.toContain('data-provider-value="gemini"')
+    expect(html).not.toContain('data-provider-value="antigravity"')
   })
 })

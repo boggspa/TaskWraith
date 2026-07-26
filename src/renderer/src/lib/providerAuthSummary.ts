@@ -34,7 +34,7 @@ export function summariseProviderApiKeyStatus(
         variant: 'not-available',
         statusText: 'Managed runtime unavailable',
         hint:
-          'Kimi Code is installed, but this exact runtime is not admitted by this TaskWraith build. OAuth login or an API key does not bypass admission.'
+          'Kimi Code is installed, but its stable identity, bounded startup, or ACP compatibility checks failed. Structural ACP admission is always enabled; credentials do not bypass these checks. Admitted unreviewed runtimes are labelled unattested-development.'
       }
     }
     return {
@@ -68,7 +68,7 @@ export function summariseProviderApiKeyStatus(
       statusText: 'Credential state not observed',
       hint:
         providerLabel === 'Kimi'
-          ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; runtime admission is separate.'
+          ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
           : `Open Settings → ${providerLabel} to check sign-in or paste an API key.`
     }
   }
@@ -77,7 +77,7 @@ export function summariseProviderApiKeyStatus(
     statusText: 'Not authenticated',
     hint:
       providerLabel === 'Kimi'
-        ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; runtime admission is separate.'
+        ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; structural runtime compatibility is separate, and admitted unreviewed runtimes are labelled unattested-development.'
         : `Open Settings → ${providerLabel} to sign in or paste an API key.`
   }
 }

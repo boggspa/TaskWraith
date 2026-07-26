@@ -32,7 +32,8 @@ const fake = vi.hoisted(() => {
 import {
   RosterParticipantRow,
   RosterSettingsPanel,
-  RosterTransferPicker
+  RosterTransferPicker,
+  rosterProviderAvailability
 } from './RosterSettingsPanel'
 import {
   createEmptyEnsembleRosterPreset,
@@ -166,6 +167,63 @@ describe('RosterSettingsPanel', () => {
     expect(html).not.toContain('security unavailable')
     expect(html).not.toContain('security-unavailable')
     expect(html).not.toContain('retired')
+  })
+
+  it('keeps an admitted conditional AntiGravity seat editable', () => {
+    const preset = createEmptyEnsembleRosterPreset('AntiGravity panel')
+    const participants = materializeParticipantsFromPresetWithBossman(
+      preset.participants
+    ).participants
+    const participant = {
+      ...participants[0],
+      provider: 'antigravity' as const,
+      role: 'AntiGravity reviewer',
+      model: undefined
+    }
+    const html = renderToStaticMarkup(
+      <RosterParticipantRow
+        participant={participant}
+        configuredProviderSnapshot={{ ready: true, providerIds: ['antigravity'] }}
+        mentionParticipants={[participant]}
+        index={0}
+        total={1}
+        canRemove
+        composerStyle="default"
+        grokAvailable={false}
+        cursorAvailable={false}
+        showApplyToAll
+        isBossman={false}
+        isSecondInCommand={false}
+        onMove={() => {}}
+        onRemove={() => {}}
+        onSetBossman={() => {}}
+        onSetSecondInCommand={() => {}}
+        onPatch={() => {}}
+        onFlush={() => {}}
+        onApplyPermissionsToAll={() => {}}
+        onSaveToPool={() => {}}
+      />
+    )
+
+    expect(html).toContain('AntiGravity reviewer')
+    expect(html).toContain('data-provider="antigravity"')
+    expect(html).not.toContain('Setup required')
+    expect(html).not.toContain('security unavailable')
+  })
+
+  it('labels a conditional provider as setup-required without calling it unsafe', () => {
+    expect(
+      rosterProviderAvailability('antigravity', { ready: true, providerIds: [] })
+    ).toBe('setup-required')
+    expect(
+      rosterProviderAvailability('antigravity', { ready: false, providerIds: [] })
+    ).toBe('available')
+    expect(
+      rosterProviderAvailability('antigravity', {
+        ready: true,
+        providerIds: ['antigravity']
+      })
+    ).toBe('available')
   })
 
   it('keeps retirement copy specific to stored Gemini seats', () => {

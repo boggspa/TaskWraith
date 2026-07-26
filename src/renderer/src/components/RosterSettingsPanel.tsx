@@ -126,6 +126,25 @@ function rosterExportFileName(): string {
   return `taskwraith-roster-presets-${day}.json`
 }
 
+export function rosterProviderAvailability(
+  provider: ProviderId,
+  configuredProviderSnapshot: ConfiguredProviderSnapshot | undefined
+): 'available' | 'setup-required' | 'retired' {
+  if (isRetiredProvider(provider)) return 'retired'
+  if (isLiveSelectableProvider(provider)) return 'available'
+  // AntiGravity is intentionally conditional rather than statically live. The
+  // main-owned configured snapshot already applies its consent/credential
+  // wall, so a present id is authoritative. While discovery is pending, retain
+  // the editable row instead of inventing a "security unavailable" verdict.
+  if (
+    !configuredProviderSnapshot?.ready ||
+    configuredProviderSnapshot.providerIds.includes(provider)
+  ) {
+    return 'available'
+  }
+  return 'setup-required'
+}
+
 export interface RosterTransferPickerState {
   mode: 'import' | 'export'
   presets: EnsembleRosterPreset[]
@@ -353,9 +372,13 @@ export function RosterParticipantRow({
 }: RosterParticipantRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
-  const unavailable = !isLiveSelectableProvider(participant.provider)
-  const retired = isRetiredProvider(participant.provider)
-  const unavailableLabel = retired ? 'Retired' : 'Security unavailable'
+  const availability = rosterProviderAvailability(
+    participant.provider,
+    configuredProviderSnapshot
+  )
+  const unavailable = availability !== 'available'
+  const retired = availability === 'retired'
+  const unavailableLabel = retired ? 'Retired' : 'Setup required'
   const rolePresetId = resolveRolePresetId(participant.role)
   const isLinkedToPool = Boolean(participant.pooledAgentId)
 
@@ -448,10 +471,10 @@ export function RosterParticipantRow({
                 title={
                   retired
                     ? 'This provider is retired. Remove this participant to replace it.'
-                    : `TaskWraith does not start managed ${getProviderLabel(participant.provider)} processes in this build. This saved participant remains available for configuration and history only.`
+                    : `${getProviderLabel(participant.provider)} needs its approved provider setup before it can start new runs. This saved participant remains available for configuration and history.`
                 }
               >
-                {retired ? 'retired' : 'security unavailable'}
+                {retired ? 'retired' : 'setup required'}
               </span>
               <button
                 type="button"
@@ -473,9 +496,9 @@ export function RosterParticipantRow({
                 </>
               ) : (
                 <>
-                  {participant.role || 'Untitled'} — {getProviderLabel(participant.provider)} is
-                  security-unavailable for new runs. This saved row is retained for configuration
-                  and history only. Remove it to replace it with a live provider.
+                  {participant.role || 'Untitled'} — {getProviderLabel(participant.provider)} needs
+                  its consent or credential setup before new runs. This saved row is retained
+                  without changing the provider roster.
                 </>
               )}
             </p>
@@ -1175,7 +1198,8 @@ export function RosterSettingsPanel({
       const participants = current.participants.map((participant) =>
         // Don't mutate unavailable participants; otherwise mirror the source's
         // permission preset + grants (deep-cloned so nothing aliases).
-        !isLiveSelectableProvider(participant.provider)
+        rosterProviderAvailability(participant.provider, configuredProviderSnapshot) !==
+        'available'
           ? participant
           : {
               ...participant,
@@ -1185,7 +1209,7 @@ export function RosterSettingsPanel({
       )
       commit({ ...current, participants })
     },
-    [commit]
+    [commit, configuredProviderSnapshot]
   )
 
   const orderedParticipants = useMemo(

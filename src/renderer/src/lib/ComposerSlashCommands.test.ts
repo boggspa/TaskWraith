@@ -62,6 +62,12 @@ describe('ComposerSlashCommands', () => {
     it('returns CLI_PROVIDER_PALETTE_CORE for ollama', () => {
       expect(paletteCoreForProvider('ollama')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
+    it('returns CLI_PROVIDER_PALETTE_CORE for pi', () => {
+      expect(paletteCoreForProvider('pi')).toBe(CLI_PROVIDER_PALETTE_CORE)
+    })
+    it('does not classify an admitted AntiGravity seat as retired', () => {
+      expect(paletteCoreForProvider('antigravity')).toBe(CLI_PROVIDER_PALETTE_CORE)
+    })
   })
 
   describe('buildComposerSlashCommandRegistry', () => {
@@ -227,6 +233,15 @@ describe('ComposerSlashCommands', () => {
           extraCommands: [extraCommand]
         })
       ).toEqual([])
+    })
+
+    it('retains commands for an already-admitted AntiGravity seat', () => {
+      const result = buildComposerSlashCommandRegistry({
+        provider: 'antigravity',
+        paletteItems: CLI_PROVIDER_PALETTE_CORE
+      })
+      expect(result).toHaveLength(CLI_PROVIDER_PALETTE_CORE.length)
+      expect(result.map((command) => command.command)).toContain('/fork')
     })
   })
 

@@ -5,6 +5,7 @@ import type { UsageRecord } from '../../../main/store/types'
 import {
   HEATMAP_DAY_COUNT,
   HEATMAP_HOUR_COUNT,
+  WELCOME_USAGE_PROVIDER_IDS,
   buildWelcomeUsageDashboardData,
   formatDashboardDuration,
   mixProviderColors
@@ -60,6 +61,8 @@ describe('buildWelcomeUsageDashboardData hourly grid', () => {
     expect(hourCell!.providerTotals.gemini).toBe(400)
     expect(hourCell!.providerTotals.claude).toBe(0)
     expect(hourCell!.providerTotals.kimi).toBe(0)
+    expect(hourCell!.providerTotals.antigravity).toBe(0)
+    expect(hourCell!.providerTotals.pi).toBe(0)
     expect(hourCell!.level).toBeGreaterThanOrEqual(1)
     expect(hourCell!.level).toBeLessThanOrEqual(4)
   })
@@ -1422,7 +1425,7 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
   const HOUR = 60 * 60 * 1000
   const DAY = 24 * HOUR
 
-  it('always emits 9 canonical providers in cost breakdown, even with no records', () => {
+  it('always emits all 9 stable provider identities, even with no records', () => {
     const data = buildWelcomeUsageDashboardData([], [], '30d', NOW)
     expect(data.providerCostBreakdown).toHaveLength(9)
     const providers = data.providerCostBreakdown.map((entry) => entry.provider).sort()
@@ -1435,6 +1438,18 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
       'grok',
       'kimi',
       'ollama',
+      'pi'
+    ])
+    expect(Object.keys(data.providerTokenTotals).sort()).toEqual(providers)
+    expect(WELCOME_USAGE_PROVIDER_IDS).toEqual([
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
       'pi'
     ])
     // Zero-token / zero-cost providers still appear with the canonical
@@ -1504,6 +1519,40 @@ describe('buildWelcomeUsageDashboardData EW52 provider breakdown + 24H wall time
 
     expect(data.providerCostBreakdown.find((p) => p.provider === 'grok')?.tokens).toBe(1_500)
     expect(data.providerCostBreakdown.find((p) => p.provider === 'cursor')?.tokens).toBe(2_500)
+  })
+
+  it('includes AntiGravity and Pi records without treating reporting as admission', () => {
+    const records: UsageRecord[] = [
+      baseRecord({
+        id: 'antigravity',
+        provider: 'antigravity',
+        timestamp: NOW - HOUR,
+        totalTokens: 3_500,
+        explicitCostUsd: 0.007 as any
+      } as never),
+      baseRecord({
+        id: 'pi',
+        provider: 'pi',
+        timestamp: NOW - HOUR,
+        totalTokens: 4_500,
+        explicitCostUsd: 0.009 as any
+      } as never)
+    ]
+
+    const data = buildWelcomeUsageDashboardData(records, [], '30d', NOW)
+
+    expect(data.providerCostBreakdown.find((p) => p.provider === 'antigravity')).toMatchObject({
+      displayName: 'AntiGravity',
+      tokens: 3_500,
+      costUsd: 0.007
+    })
+    expect(data.providerCostBreakdown.find((p) => p.provider === 'pi')).toMatchObject({
+      displayName: 'Pi',
+      tokens: 4_500,
+      costUsd: 0.009
+    })
+    expect(data.providerTokenTotals.antigravity).toBe(3_500)
+    expect(data.providerTokenTotals.pi).toBe(4_500)
   })
 
   it('sorts provider breakdown DESC by tokens (cost as tiebreaker)', () => {

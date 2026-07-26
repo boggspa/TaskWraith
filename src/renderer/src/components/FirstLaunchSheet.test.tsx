@@ -11,8 +11,7 @@ import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
  *      but this is the contract the host depends on).
  *   2. Status-summary lines flip correctly for the four provider
  *      shapes (signed-in / not-available / not-signed-in / no status).
- *   3. Kimi card is rendered with the de-emphasised class so the
- *      light-mode CSS picks up the muted styling.
+ *   3. Kimi admission copy stays truthful without hiding the provider.
  *
  * We don't simulate clicks — the codebase uses `renderToStaticMarkup`
  * (no jsdom), so interaction coverage lives in manual / e2e testing.
@@ -54,7 +53,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toBe('')
   })
 
-  it('renders provider cards including local Ollama when open', () => {
+  it('renders live onboarding plus historical Gemini reporting when open', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -66,14 +65,12 @@ describe('FirstLaunchSheet', () => {
     )
     expect(html).toContain('data-provider="codex"')
     expect(html).toContain('data-provider="claude"')
-    // Gemini is retired — no provider card and no install-command row, so its
-    // data-provider marker is absent everywhere in the sheet.
-    expect(html).not.toContain('data-provider="gemini"')
-    // AntiGravity is deliberately Settings-only behind its separate risk-consent
-    // card; it must never appear in general First Launch onboarding.
+    expect(html).toContain('data-provider="gemini"')
+    // AntiGravity stays hidden until BOTH pieces of its conditional setup exist.
     expect(html).not.toContain('data-provider="antigravity"')
     expect(html).toContain('data-provider="kimi"')
     expect(html).toContain('data-provider="ollama"')
+    expect(html).toContain('data-provider="pi"')
   })
 
   it('renders Welcome heading and the numbered onboarding sections', () => {
@@ -128,6 +125,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('local-first desktop workbench')
     expect(html).toContain('<strong>Codex</strong>')
     expect(html).toContain('<strong>Ollama</strong>')
+    expect(html).toContain('<strong>Pi</strong>')
     expect(html).not.toContain('<strong>Gemini</strong>')
   })
 
@@ -235,7 +233,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).not.toContain('stay amber')
   })
 
-  it('Kimi card carries the de-emphasised + optional classes for muted styling', () => {
+  it('describes structural Kimi admission and the explicit unreviewed label', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -245,13 +243,14 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}      />
     )
-    // The kimi card div should appear with both modifier classes.
-    expect(html).toMatch(
-      /first-launch-sheet-provider-card[^"]*first-launch-sheet-provider-card-deemphasised/
-    )
+    const card = providerCardMarkup(html, 'kimi')
+    expect(card).toContain('structural identity, probe, and posture admission checks')
+    expect(card).toContain('unattested-development')
+    expect(card).not.toContain('require reviewed ACP runtime admission')
+    expect(card).not.toContain('first-launch-sheet-provider-card-deemphasised')
   })
 
-  it('does not offer the retired Gemini provider as an onboarding sign-in card', () => {
+  it('reports historical Gemini without offering a new-run action', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -261,12 +260,54 @@ describe('FirstLaunchSheet', () => {
         claudeAuthStatus={null}
         kimiAuthStatus={null}      />
     )
-    // Gemini is RETIRED — its sign-in card is no longer rendered. The four
-    // remaining optional cards are Kimi, Cursor, Grok, Ollama.
-    expect(html).not.toContain('Google Gemini CLI')
-    const badges = html.match(/first-launch-sheet-provider-card-optional-badge/g)
-    expect(badges).toBeTruthy()
-    expect(badges!.length).toBe(4)
+    const card = providerCardMarkup(html, 'gemini')
+    expect(card).toContain('Historical · not offered for new runs')
+    expect(card).toContain('Historical')
+    expect(card).not.toContain('Sign in')
+    expect(card).not.toContain('Open Settings')
+    expect(card).not.toContain('Manage in Settings')
+  })
+
+  it('shows AntiGravity only when the host conditional-offer snapshot includes it', () => {
+    const render = (antigravityProviderOffered: boolean) =>
+      renderToStaticMarkup(
+        <FirstLaunchSheet
+          open={true}
+          onDismiss={() => {}}
+          onOpenSettings={() => {}}
+          codexStatus={null}
+          claudeAuthStatus={null}
+          kimiAuthStatus={null}
+          antigravityProviderOffered={antigravityProviderOffered}
+        />
+      )
+
+    expect(render(false)).not.toContain('data-provider="antigravity"')
+    const configured = render(true)
+    const card = providerCardMarkup(configured, 'antigravity')
+    expect(card).toContain('Conditional setup ready')
+    expect(card).toContain('host confirms')
+    expect(card).toContain('Conditional')
+    expect(card).toContain('Open Settings')
+  })
+
+  it('adds Pi onboarding as BYOK setup without claiming admission', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+      />
+    )
+    const card = providerCardMarkup(html, 'pi')
+    expect(card).toContain('BYOK setup in Settings')
+    expect(card).toContain('this card does not grant provider admission')
+    expect(card).not.toContain('aria-label="Sign in to Pi"')
+    expect(card).toContain('Open Settings')
   })
 
   it('renders Ollama as a local-first provider; no sign-in shown without a login handler', () => {

@@ -247,6 +247,30 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('Managed runs unavailable')
   })
 
+  it('describes Kimi structural compatibility failures without a reviewed-roster gate', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          kimiAuthStatus: {
+            available: false,
+            authState: 'oauth',
+            apiKeyConfigured: false,
+            encryptionAvailable: true,
+            binaryPath: '/opt/kimi',
+            transportSupported: false
+          }
+        })}
+      />
+    )
+
+    expect(html).toContain('stable identity/startup/ACP compatibility checks failed')
+    expect(html).toContain('Structural ACP admission is always enabled')
+    expect(html).toContain('unattested-development')
+    expect(html).toContain('Credentials do not bypass')
+    expect(html).not.toContain('reviewed ACP runtime admission')
+    expect(html).not.toContain('reviewed runtime admission')
+  })
+
   it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
@@ -487,7 +511,9 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('runtime: Claude')
     expect(html).toContain('Ready for Codex + Claude')
     expect(html).toContain('Ready for Claude')
-    expect(html).toContain('Cursor JSON exports for Cursor MCP config; TaskWraith Path-B runs use the real ~/.cursor login under OS sandbox')
+    expect(html).toContain(
+      'Cursor JSON remains exportable; managed Path-B runs attach TaskWraith’s built-in broker separately and do not attach these user-server records'
+    )
     expect(html).toContain('SSE attaches to Claude only')
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')

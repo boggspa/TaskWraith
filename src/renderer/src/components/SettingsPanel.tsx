@@ -750,8 +750,8 @@ const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; help
 ]
 
 
-// Cursor remains in the status grid for an explicit historical/unavailable
-// explanation; this list is not a live-provider offer set.
+// Settings status order for the current live providers. Offer/run membership
+// remains owned by the canonical shared provider set, not this presentation list.
 const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'codex',
   'claude',
@@ -1132,7 +1132,9 @@ export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServ
   if (server.transport === 'sse') {
     notes.push('SSE attaches to Claude only')
   } else {
-    notes.push('Cursor JSON exports for Cursor MCP config; TaskWraith Path-B runs use the real ~/.cursor login under OS sandbox')
+    notes.push(
+      'Cursor JSON remains exportable; managed Path-B runs attach TaskWraith’s built-in broker separately and do not attach these user-server records'
+    )
   }
   if (!server.enabled) {
     return {
@@ -4749,7 +4751,7 @@ export function SettingsPanel({
   const cursorAuthSummary = summariseCliProviderEnabled(
     cursorProviderAvailable,
     'Cursor',
-    'Sign in once with `cursor-agent login` in your shell; runs are contained by the native OS sandbox.'
+    'Sign in once with `cursor-agent login` in your shell; managed Path-B runs pin the native OS sandbox and attach the governed broker when available.'
   )
   const grokAuthSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
@@ -4811,9 +4813,10 @@ export function SettingsPanel({
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
     const status = mcpStatusByProvider?.[provider]
-    // Grok gets the brokered TaskWraith MCP bridge through its provider-native
-    // MCP surface. Cursor uses native tools under the OS sandbox. These blocks only
-    // seed the card BEFORE the contract has loaded so it doesn't flash stale copy.
+    // Grok and Cursor can attach the brokered TaskWraith MCP surface at run
+    // launch. Cursor also retains its sandbox-bounded native tools. These blocks
+    // only seed the card BEFORE the contract has loaded; the static card cannot
+    // claim a particular run's broker attachment state.
     const provisionalFallback =
       contract?.mcp
         ? null
@@ -4825,7 +4828,7 @@ export function SettingsPanel({
               toolCount: 0,
               providerManaged: true,
               message:
-                'Cursor runs native tools contained by the OS sandbox. TaskWraith host tools are not injected into Cursor.'
+                'Cursor Path-B runs keep native tools inside the OS sandbox and attach the governed TaskWraith broker when setup succeeds. Broker attachment is reported on the run, not by this static status card.'
             }
           : provider === 'grok'
             ? {
@@ -4842,7 +4845,8 @@ export function SettingsPanel({
     // Provider-managed fallback surfaces are not installable TaskWraith MCP
     // servers, so they must never read as an error ("unsupported" /
     // "not installed"). Grok reports `bridge` when its TaskWraith MCP
-    // registration is enabled; disabled Cursor reports unavailable.
+    // registration is enabled; Cursor's static provider status remains
+    // provider-managed because it cannot probe a particular run attachment.
     const providerManaged =
       mcp?.source === 'provider-managed' ||
       mcp?.source === 'taskwraith web bridge' ||
@@ -7048,7 +7052,7 @@ export function SettingsPanel({
                     provider="cursor"
                     label="Cursor"
                     summary={cursorAuthSummary}
-                    description="Cursor Composer 2.5 for write-capable agentic runs via the Cursor CLI, contained by the native OS sandbox."
+                    description="Cursor Composer 2.5 via managed Path-B: native tools stay inside the OS sandbox, with governed TaskWraith broker tools when attachment succeeds."
                     optional
                   >
                     <div className="settings-provider-auth-command">
@@ -7076,7 +7080,9 @@ export function SettingsPanel({
                     </div>
                     <p className="settings-provider-auth-footnote">
                       TaskWraith stores no Cursor credential; auth stays inside the Cursor CLI.
-                      Runs use the real ~/.cursor login under a contained --sandbox argv.
+                      Runs use the real ~/.cursor login under a contained --sandbox argv. Eligible
+                      runs attach TaskWraith&apos;s governed broker; setup failure falls back
+                      visibly to sandboxed native tools.
                       {renderProviderUpgradeHint('cursor')}
                     </p>
                     {renderProviderPauseControls('cursor')}
@@ -7717,15 +7723,15 @@ export function SettingsPanel({
                     {!kimiAuthStatus.available ? (
                       <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
                         {kimiAuthStatus.binaryPath
-                          ? '● Binary found — blocked pending reviewed ACP runtime admission'
+                          ? '● Binary found — stable identity/startup/ACP compatibility checks failed'
                           : '● Binary not found'}
                       </span>
                     ) : kimiAuthStatus.transportSupported === false ? (
                       <span
                         style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}
                       >
-                        ● Kimi Code detected — this exact runtime is not admitted for managed ACP
-                        runs
+                        ● Kimi Code detected — stable identity/startup/ACP compatibility checks
+                        failed
                       </span>
                     ) : ['authenticated', 'api-key', 'oauth'].includes(
                         (kimiAuthStatus.authState || '').toLowerCase()
@@ -7758,7 +7764,10 @@ export function SettingsPanel({
                 >
                   Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
                   (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key stored
-                  here is not projected into ACP. No credential bypasses reviewed runtime admission.
+                  here is not projected into ACP. Structural ACP admission is always enabled;
+                  compatible unreviewed runtimes run with the explicit{' '}
+                  <code>unattested-development</code> label. Credentials do not bypass stable
+                  identity, bounded startup, or ACP compatibility checks.
                 </p>
                 <div
                   style={{
@@ -8143,7 +8152,8 @@ export function SettingsPanel({
                       Enables TaskWraith&apos;s bundled MCP broker, including image_edit,
                       svg_rasterize, and image_generate. Qualified Grok runs auto-inject a scoped
                       broker when they need TaskWraith-owned tools; no manual Grok MCP install is
-                      required. Cursor starts no managed process. image_generate additionally
+                      required. Managed Cursor Path-B runs attach their governed broker at launch
+                      when the run posture permits and setup succeeds. image_generate additionally
                       needs to be enabled with an API key.
                     </small>
                   </span>
@@ -8525,8 +8535,9 @@ export function SettingsPanel({
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
                     servers attach to Codex and Claude launches; SSE attaches to Claude. Cursor JSON
-                    remains available for configuration interchange outside TaskWraith, but no
-                    server attaches to a source-ahead Cursor run because no managed process starts.
+                    remains available for configuration interchange outside TaskWraith. Managed
+                    Cursor runs attach TaskWraith&apos;s built-in broker separately; these
+                    user-server records are not injected into Cursor.
                     Remote headers are stored locally and redacted in audit JSON.
                   </p>
                 </div>
@@ -8745,7 +8756,9 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   These records are stored by TaskWraith. Stdio and HTTP servers are available to
                   Codex and Claude provider launch paths; SSE is available to Claude. Cursor JSON
-                  remains exportable for use outside TaskWraith, but it is not attached here.
+                  remains exportable for use outside TaskWraith. Cursor&apos;s managed Path-B
+                  launch may attach the built-in TaskWraith broker, but not these user-server
+                  records.
                 </p>
               </div>
               {userMcpServers.length > 0 && (

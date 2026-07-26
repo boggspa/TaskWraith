@@ -8,6 +8,7 @@ import type {
   RunAnalystSnapshot,
   RunEventReplay
 } from '../../../main/store/types'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import { compactPromptPreview, type RunLane } from '../lib/RunLanes'
 import { buildLaunchAttemptRows, type LaunchAttemptRow } from '../lib/launchAttemptRows'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -41,15 +42,9 @@ interface RunSource {
   run: ChatRun | null
 }
 
-const providerIds: ProviderId[] = [
-  'gemini',
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-]
+// Accounting includes historical Gemini and conditional AntiGravity so an
+// already-recorded lane is never dropped from the rail.
+const providerIds: ProviderId[] = ['gemini', ...LIVE_SELECTABLE_PROVIDER_IDS, 'antigravity']
 
 function formatDuration(startedAt?: string, endedAt?: string): string {
   if (!startedAt || !endedAt) return ''

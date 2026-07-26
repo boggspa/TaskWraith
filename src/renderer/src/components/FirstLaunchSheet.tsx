@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react'
 import type {
   AppSettings,
   ComposerStyle,
+  ProviderId,
   ProviderApiKeyStatus,
   ThemeAppearance,
   UserBubbleColor
@@ -26,14 +27,7 @@ import { formatResetShort } from '../lib/UsageFormat'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 
-type OnboardingProviderId =
-  | 'codex'
-  | 'claude'
-  | 'gemini'
-  | 'kimi'
-  | 'cursor'
-  | 'grok'
-  | 'ollama'
+type OnboardingProviderId = ProviderId
 
 /**
  * FirstLaunchSheet — onboarding overlay for fresh TaskWraith testers.
@@ -98,6 +92,11 @@ export interface FirstLaunchSheetProps {
   /** Ollama local mode has no sign-in; this only reflects whether
    * TaskWraith can see a local Ollama runtime/service. */
   ollamaProviderAvailable?: boolean
+  /**
+   * AntiGravity stays absent until the host's authoritative conditional-offer
+   * snapshot includes it. This reporting prop does not grant admission.
+   */
+  antigravityProviderOffered?: boolean
   /** Per-provider quota aggregates (App.tsx#usageSummary). Lets a
    * signed-in provider card flip to an explicit "out of usage" state
    * when its window hits ~100% — otherwise a rate-limited provider
@@ -131,6 +130,10 @@ interface ProviderRowSpec {
   deemphasised?: boolean
   /** When true, the card is marked optional but still actionable. */
   optional?: boolean
+  /** Explicit badge for historical or conditional reporting rows. */
+  badge?: string
+  /** Reporting-only rows expose no sign-in, sign-out, or Settings action. */
+  reportingOnly?: boolean
   /** Local setup rows do not show provider-owned sign-in / sign-out actions. */
   localOnly?: boolean
   /** Local-first rows (Ollama) that still expose an OPTIONAL cloud sign-in
@@ -273,6 +276,7 @@ export function FirstLaunchSheet({
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
   ollamaProviderAvailable = false,
+  antigravityProviderOffered = false,
   usageSummary,
   themeAppearance = 'system',
   composerStyle = 'default',
@@ -385,9 +389,8 @@ export function FirstLaunchSheet({
       id: 'kimi',
       label: 'Kimi',
       description:
-        'Moonshot Kimi. Managed runs require reviewed ACP runtime admission and use a governed per-run TaskWraith gateway. Skip unless Kimi Code is installed and signed in.',
+        'Moonshot Kimi. Every run receives structural identity, probe, and posture admission checks. When no reviewed runtime tuple exists, TaskWraith labels the run unattested-development explicitly; that unreviewed state does not remove Kimi from the provider set.',
       ...kimiSummary,
-      deemphasised: true,
       optional: true
     },
     {
@@ -421,15 +424,58 @@ export function FirstLaunchSheet({
       optional: true,
       localOnly: true,
       cloudSignIn: true
+    },
+    ...(antigravityProviderOffered
+      ? [
+          {
+            id: 'antigravity' as const,
+            label: 'AntiGravity',
+            description:
+              'Conditionally offered AntiGravity identity. It appears here only after the host confirms that one authorized transport lane has satisfied its own consent and credential requirements.',
+            variant: 'partial' as const,
+            statusText: 'Conditional setup ready',
+            hint:
+              'The host currently offers this provider; its selected runtime still passes ordinary structural admission checks at launch.',
+            optional: true,
+            badge: 'Conditional',
+            localOnly: true
+          }
+        ]
+      : []),
+    {
+      id: 'pi',
+      label: 'Pi',
+      description:
+        'Pi coding agent with bring-your-own upstream keys. TaskWraith keeps Pi provider credentials scoped to the configured upstream and applies the selected read/write tool posture.',
+      variant: 'partial',
+      statusText: 'BYOK setup in Settings',
+      hint:
+        'Install the Pi CLI, then configure a supported upstream key and model in Settings. Pi is reported here even before setup; this card does not grant provider admission.',
+      optional: true,
+      localOnly: true
+    },
+    {
+      id: 'gemini',
+      label: 'Gemini',
+      description:
+        'Historical Gemini provider identity. Existing chats, usage, and audit records remain attributed to Gemini, but it is not offered for new runs.',
+      variant: 'partial',
+      statusText: 'Historical · not offered for new runs',
+      hint:
+        'Kept visible for honest reporting and history continuity; there is no new-run sign-in or enable action here.',
+      badge: 'Historical',
+      deemphasised: true,
+      reportingOnly: true
     }
   ]
   // Flip any signed-in provider whose quota window is maxed to the
   // explicit "out of usage" state — the tester-confusion fix.
   // Retired providers (see retiredProviders.ts) are never offered as onboarding
-  // sign-in cards — filtered here defensively even though none are seeded above.
+  // sign-in cards. A reporting-only historical row may remain visible without
+  // exposing any action or changing provider admission.
   const providerRows = baseProviderRows
     .map((row) => applyOutOfUsage(row, usageSummary))
-    .filter((row) => !isRetiredProvider(row.id))
+    .filter((row) => row.reportingOnly || !isRetiredProvider(row.id))
 
   return (
     <div
@@ -485,10 +531,19 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-prose">
             TaskWraith is a local-first desktop workbench for AI coding agents. It brings together{' '}
             <strong>Codex</strong>,{' '}
-            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>, and local{' '}
-            <strong>Ollama</strong> models inside one consistent
+            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>,{' '}
+            <strong>Cursor</strong>, local <strong>Ollama</strong> models, and BYOK{' '}
+            <strong>Pi</strong>
+            {antigravityProviderOffered ? (
+              <>
+                , plus your conditionally configured <strong>AntiGravity</strong> seat
+              </>
+            ) : null}{' '}
+            inside one consistent
             UI so you can run solo chats, side chats, delegated workers, and Ensembles side by side.
             Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
+            Historical Gemini chats and usage stay visible for reporting even though Gemini is not
+            offered for new runs.{' '}
             Chat history, goals, approvals, audit events, and usage stay in TaskWraith&apos;s local
             store; each provider receives only the context for the chat or run it is working on.
             Bare provider filesystem and shell shortcuts that cannot enforce that boundary stay
@@ -559,12 +614,16 @@ export function FirstLaunchSheet({
             <strong>Claude</strong> uses in-app OAuth or an API key;{' '}
             <strong>Kimi</strong> uses its current CLI OAuth login or a provider key configured in
             its own <code>~/.kimi-code/config.toml</code>; the key saved in TaskWraith Settings is
-            usage-only, and its exact runtime must also pass admission. <strong>Ollama</strong>{' '}
+            usage-only. TaskWraith always applies structural admission; an unreviewed runtime is
+            labelled <code>unattested-development</code> explicitly. <strong>Ollama</strong>{' '}
             is local-first: install
             Ollama and pull a model with no cloud account, or optionally sign in for Ollama Cloud /
             Turbo and private models. <strong>Cursor</strong> and Grok auth stay inside their CLIs,
             so TaskWraith may ask you to finish login in Terminal (<code>cursor-agent login</code>
-            / Grok CLI). Cursor runs use the real ~/.cursor login under a contained --sandbox argv.
+            / Grok CLI). Cursor runs use the real ~/.cursor login under a contained --sandbox argv.{' '}
+            <strong>Pi</strong> uses the upstream key and model you configure in Settings.
+            AntiGravity remains absent until the host confirms that an authorized conditional lane
+            is ready.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
@@ -954,6 +1013,7 @@ function ProviderCard({
       ? 'signed-in'
       : row.variant
   const showSignInAction =
+    !row.reportingOnly &&
     Boolean(onProviderLogin) &&
     row.variant !== 'signed-in' &&
     row.variant !== 'out-of-usage' &&
@@ -970,8 +1030,10 @@ function ProviderCard({
       <div className="first-launch-sheet-provider-card-header">
         <ProviderBrandLogo provider={row.id} className="first-launch-sheet-provider-card-logo" />
         <span className="first-launch-sheet-provider-card-label">{row.label}</span>
-        {row.optional && (
-          <span className="first-launch-sheet-provider-card-optional-badge">Optional</span>
+        {(row.badge || row.optional) && (
+          <span className="first-launch-sheet-provider-card-optional-badge">
+            {row.badge || 'Optional'}
+          </span>
         )}
       </div>
       <div className="first-launch-sheet-provider-card-status">
@@ -991,46 +1053,50 @@ function ProviderCard({
       )}
       <p className="first-launch-sheet-provider-card-description">{row.description}</p>
       <p className="first-launch-sheet-provider-card-hint">{row.hint}</p>
-      <div className="first-launch-sheet-provider-card-actions">
-        {showSignInAction && onProviderLogin && (
+      {!row.reportingOnly && (
+        <div className="first-launch-sheet-provider-card-actions">
+          {showSignInAction && onProviderLogin && (
+            <button
+              type="button"
+              // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
+              // optional, so it's a ghost button, not the primary "you must sign
+              // in" CTA the cloud providers use.
+              className={signInClass}
+              onClick={() => onProviderLogin(row.id)}
+              aria-label={
+                row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`
+              }
+              title={
+                row.cloudSignIn
+                  ? `Open the ${row.label} cloud sign-in flow. Local ${row.label} runs still work without this.`
+                  : `Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`
+              }
+            >
+              {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
+            </button>
+          )}
+          {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (
+            <button
+              type="button"
+              className="segmented-control-action segmented-control-action--compact"
+              onClick={() => onProviderLogout(row.id)}
+              aria-label={`Sign out of ${row.label}`}
+              title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
+            >
+              Sign out
+            </button>
+          )}
           <button
             type="button"
-            // cloudSignIn rows (Ollama) are local-FIRST — the cloud sign-in is
-            // optional, so it's a ghost button, not the primary "you must sign
-            // in" CTA the cloud providers use.
-            className={signInClass}
-            onClick={() => onProviderLogin(row.id)}
-            aria-label={row.cloudSignIn ? `Sign in to ${row.label} Cloud` : `Sign in to ${row.label}`}
-            title={
-              row.cloudSignIn
-                ? `Open the ${row.label} cloud sign-in flow. Local ${row.label} runs still work without this.`
-                : `Open the ${row.label} sign-in flow used by TaskWraith runs. Credentials stay with the provider CLI or service.`
-            }
+            className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
+            onClick={onOpenSettings}
+            aria-label={`Open settings for ${row.label}`}
+            title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}
           >
-            {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
+            {row.variant === 'signed-in' ? 'Manage in Settings' : 'Open Settings'}
           </button>
-        )}
-        {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (
-          <button
-            type="button"
-            className="segmented-control-action segmented-control-action--compact"
-            onClick={() => onProviderLogout(row.id)}
-            aria-label={`Sign out of ${row.label}`}
-            title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
-          >
-            Sign out
-          </button>
-        )}
-        <button
-          type="button"
-          className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"
-          onClick={onOpenSettings}
-          aria-label={`Open settings for ${row.label}`}
-          title={`Open provider settings for ${row.label}, including auth, model, and permission controls.`}
-        >
-          {row.variant === 'signed-in' ? 'Manage in Settings' : 'Open Settings'}
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   )
 }

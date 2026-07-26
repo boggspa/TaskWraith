@@ -211,7 +211,10 @@ import {
   clampWorkspaceSidebarWidth,
   getStoredWorkspaceSidebarWidth
 } from './lib/panelWidths'
-import { getProviderLabel } from './lib/providerLabels'
+import {
+  getProviderLabel,
+  getProviderOfferUnavailableReason
+} from './lib/providerLabels'
 import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
@@ -7114,7 +7117,7 @@ function App(): React.JSX.Element {
         ...prev,
         {
           type: 'stderr',
-          content: `Cannot enable workspace grants for ${getProviderLabel(targetProvider)} — managed runs are unavailable. Switch to a live provider.`
+          content: `${getProviderOfferUnavailableReason(targetProvider)} Workspace grants are available only for currently offered providers.`
         }
       ])
       return false
@@ -14897,7 +14900,7 @@ function App(): React.JSX.Element {
       settleProjectReferenceContextForRequest(baseRequest, 'rejected')
       appendThreadRawLog(baseRequest.chatRecord?.appChatId || currentChat?.appChatId, {
         type: 'info',
-        content: `${getProviderLabel(baseRequest.provider)} managed runs are unavailable. Switch this chat to a live provider to continue.`
+        content: `${getProviderOfferUnavailableReason(baseRequest.provider)} Choose a currently offered provider to continue.`
       })
       return
     }
@@ -15042,7 +15045,7 @@ function App(): React.JSX.Element {
           : null
       const sideProvider = selectedSideParticipant?.provider || parentProvider
       if (!isRunnableProvider(sideProvider)) {
-        const message = `${getProviderLabel(sideProvider)} managed runs are unavailable, so a new side chat cannot use this provider. Switch to a live provider first.`
+        const message = `${getProviderOfferUnavailableReason(sideProvider)} A new side chat cannot use this provider; choose a currently offered provider first.`
         appendThreadRawLog(parentChat.appChatId, { type: 'info', content: message })
         window.alert(message)
         return null
@@ -15582,7 +15585,7 @@ function App(): React.JSX.Element {
   ) => {
     if (!sideChat) return
     if (!isRunnableProvider(sideComposerProvider)) {
-      const message = `${getProviderLabel(sideComposerProvider)} managed runs are unavailable. Switch this linked chat to a live provider to continue.`
+      const message = `${getProviderOfferUnavailableReason(sideComposerProvider)} Choose a currently offered provider for this linked chat.`
       appendThreadRawLog(sideChat.appChatId, { type: 'info', content: message })
       window.alert(message)
       return
@@ -17037,7 +17040,7 @@ function App(): React.JSX.Element {
     if (!chat) return
     const provider = lane.provider || getChatProvider(chat)
     if (!isRunnableProvider(provider)) {
-      const message = `${getProviderLabel(provider)} managed runs are unavailable, so this run lane cannot be duplicated. Switch to a live provider first.`
+      const message = `${getProviderOfferUnavailableReason(provider)} This run lane cannot be duplicated with that provider; choose a currently offered provider first.`
       appendThreadRawLog(chat.appChatId, { type: 'info', content: message })
       window.alert(message)
       return
@@ -17126,7 +17129,7 @@ function App(): React.JSX.Element {
       chats.find((item) => item.appChatId === card.sourceChatId)
     const provider = card.recommendedProvider || card.sourceProvider
     if (!isRunnableProvider(provider)) {
-      const message = `${getProviderLabel(provider)} managed runs are unavailable, so this handoff cannot be dispatched to that provider. Choose a live provider first.`
+      const message = `${getProviderOfferUnavailableReason(provider)} This handoff cannot be dispatched to that provider; choose a currently offered provider first.`
       appendThreadRawLog(sourceChat?.appChatId || card.sourceChatId, {
         type: 'info',
         content: message
@@ -20770,7 +20773,7 @@ function App(): React.JSX.Element {
         ...prev,
         {
           type: 'stderr',
-          content: `Cannot enable workspace grants for ${getProviderLabel(sideComposerProvider)} — managed runs are unavailable.`
+          content: `${getProviderOfferUnavailableReason(sideComposerProvider)} Workspace grants are available only for currently offered providers.`
         }
       ])
       return false
@@ -21020,8 +21023,9 @@ function App(): React.JSX.Element {
       const chat = chatId ? chatByIdRef.current.get(chatId) : null
       if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
-      // Cursor is historical/decode-only while managed startup containment is
-      // unqualified. Do not turn compaction into an attempted Cursor run.
+      // Path-B Cursor starts a fresh contained process and receives host-fed
+      // context; it has no provider-native session compaction lever. This only
+      // hides "compact now" and does not affect ordinary managed Cursor runs.
       if (provider === 'cursor') return
       const sessionId = chat.linkedProviderSessionId
       const kimiNativeSession = Boolean(
@@ -24406,14 +24410,15 @@ function App(): React.JSX.Element {
         </select>
       </label>
     ) : null
-  const scheduleDisabledReason =
-    currentProvider === 'kimi'
-      ? 'Scheduled Kimi runs are unavailable until the signed schedule seal covers the ACP containment posture.'
-      : !hasWorkspaceContext
-        ? 'Scheduling requires a workspace-backed chat.'
-        : !currentChat
-          ? 'Open a chat to schedule a message.'
-          : undefined
+  // Launch-seal maturity is additive assurance, not provider admission.
+  // Main records an explicit unsealed/skipped outcome for providers whose
+  // exact scheduled evidence is not wired yet, then continues the user-created
+  // schedule under its ordinary signed run posture.
+  const scheduleDisabledReason = !hasWorkspaceContext
+    ? 'Scheduling requires a workspace-backed chat.'
+    : !currentChat
+      ? 'Open a chat to schedule a message.'
+      : undefined
   const scheduleControls = currentChat ? (
     <ComposerScheduleButton
       provider={currentProvider}
@@ -24427,9 +24432,7 @@ function App(): React.JSX.Element {
           currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
         )
       }
-      disabled={
-        currentProvider === 'kimi' || !hasWorkspaceContext || !currentWorkspace || !currentChat
-      }
+      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
       disabledReason={scheduleDisabledReason}
     />
   ) : null
@@ -26103,7 +26106,7 @@ function App(): React.JSX.Element {
       })
       if (!isRunnableProvider(request.provider)) {
         settleProjectReferenceContextForRequest(request, 'rejected')
-        const message = `${getProviderLabel(request.provider)} managed runs are unavailable. Switch this pane to a live provider to continue.`
+        const message = `${getProviderOfferUnavailableReason(request.provider)} Choose a currently offered provider for this pane.`
         appendThreadRawLog(chatId, { type: 'info', content: message })
         window.alert(message)
         return
@@ -26214,7 +26217,7 @@ function App(): React.JSX.Element {
           ...prev,
           {
             type: 'stderr',
-            content: `Cannot enable workspace grants for ${getProviderLabel(paneProvider)} — managed runs are unavailable.`
+            content: `${getProviderOfferUnavailableReason(paneProvider)} Workspace grants are available only for currently offered providers.`
           }
         ])
         return false
@@ -29762,6 +29765,9 @@ function App(): React.JSX.Element {
         kimiAuthStatus={kimiAuthStatus}
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
+        antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes(
+          'antigravity'
+        )}
         ollamaProviderAvailable={
           agentStatusByProvider.ollama?.available === true &&
           (typeof agentStatusByProvider.ollama?.modelCount !== 'number' ||

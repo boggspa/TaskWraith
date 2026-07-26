@@ -1,5 +1,5 @@
 import type { ProviderId } from '../../../main/store/types'
-import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
+import { isEnsembleSeatProvider, isRetiredProvider } from '../../../shared/retiredProviders'
 
 export type ForkCapabilityKind = 'native' | 'emulated' | 'unsupported'
 
@@ -24,7 +24,7 @@ const IPC_GET_CAPABILITY = 'fork:get-capability'
 
 /** Static fallback until WriteMain exposes fork:get-capability IPC. */
 export function buildStaticForkCapability(provider: ProviderId): ForkCapabilitySummary {
-  if (!isLiveSelectableProvider(provider)) {
+  if (isRetiredProvider(provider)) {
     return {
       provider,
       kind: 'unsupported',
@@ -43,13 +43,7 @@ export function buildStaticForkCapability(provider: ProviderId): ForkCapabilityS
       requiresLinkedSession: true
     }
   }
-  if (
-    provider === 'claude' ||
-    provider === 'kimi' ||
-    provider === 'cursor' ||
-    provider === 'grok' ||
-    provider === 'ollama'
-  ) {
+  if (isEnsembleSeatProvider(provider)) {
     return {
       provider,
       kind: 'emulated',

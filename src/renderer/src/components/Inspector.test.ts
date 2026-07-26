@@ -333,6 +333,30 @@ describe('Inspector capabilities', () => {
     }
   })
 
+  it('describes Kimi structural admission without making reviewed tuples an availability gate', () => {
+    const overrides = {
+      provider: 'kimi' as const,
+      currentChat: makeChat({ appChatId: 'solo-kimi', provider: 'kimi' }),
+      providerCapabilities: makeCapabilityContract('kimi'),
+      codexStatus: {
+        available: true,
+        binaryPath: '/usr/local/bin/kimi',
+        version: '1.2.3',
+        authState: 'oauth',
+        transportSupported: true
+      }
+    }
+    const capabilitiesHtml = renderInspector(overrides)
+    const safetyHtml = renderInspector({ ...overrides, rightTab: 'safety' })
+
+    for (const html of [capabilitiesHtml, safetyHtml]) {
+      expect(html).toContain('Structural ACP admission is always enabled')
+      expect(html.toLowerCase()).toContain('credentials')
+      expect(html).toContain('unattested-development')
+      expect(html).not.toContain('reviewed tuple')
+    }
+  })
+
   it('keeps the Gemini panel for historical gemini chats', () => {
     const html = renderInspector({
       provider: 'gemini',

@@ -73,7 +73,12 @@ describe('summariseProviderApiKeyStatus — Kimi', () => {
       variant: 'not-available',
       statusText: 'Managed runtime unavailable'
     })
-    expect(summary.hint).toContain('does not bypass admission')
+    expect(summary.hint).toContain('stable identity')
+    expect(summary.hint).toContain('bounded startup')
+    expect(summary.hint).toContain('Structural ACP admission is always enabled')
+    expect(summary.hint).toContain('credentials do not bypass these checks')
+    expect(summary.hint).toContain('unattested-development')
+    expect(summary.hint).not.toContain('reviewed tuple')
     expect(summary.hint).not.toContain('/opt/kimi')
   })
 })

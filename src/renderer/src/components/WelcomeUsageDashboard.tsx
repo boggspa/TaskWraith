@@ -5,6 +5,7 @@ import {
   formatCompactUsageNumber,
   formatDashboardDuration,
   mixProviderColors,
+  WELCOME_USAGE_PROVIDER_IDS,
   type WelcomeUsageDashboardData,
   type WelcomeUsageTab
 } from '../lib/welcomeUsageDashboard'
@@ -42,7 +43,7 @@ const WELCOME_USAGE_TABS: Array<{
   // workspace concept without a new asset.
   { value: 'workspaces', label: 'Workspaces', Icon: FolderSymbolIcon },
   // 1.0.5-EW52 — Providers tab. Per-provider tokens + cost
-  // cards (four canonical providers, always shown) above a
+  // cards (all nine stable provider identities, always shown) above a
   // giant 24H wall-time timecode display. Different shape from
   // Workspaces (which has a 30d chart underneath) — the
   // timecode emphasises "how much agent-time happened today"
@@ -234,19 +235,11 @@ export function WelcomeUsageDashboard({
   // segment is always present; segments with no tokens fall to a
   // hairline minimum so the ribbon never collapses entirely while
   // also not pretending a provider was active when it wasn't.
-  const totalProviderTokens =
-    data.providerTokenTotals.gemini +
-    data.providerTokenTotals.codex +
-    data.providerTokenTotals.claude +
-    data.providerTokenTotals.kimi +
-    data.providerTokenTotals.grok +
-    data.providerTokenTotals.cursor +
-    data.providerTokenTotals.ollama
-  const providerRibbonSegments = (
-    ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as Array<
-      keyof typeof PROVIDER_PALETTE
-    >
-  ).map((provider) => ({
+  const totalProviderTokens = WELCOME_USAGE_PROVIDER_IDS.reduce(
+    (total, provider) => total + data.providerTokenTotals[provider],
+    0
+  )
+  const providerRibbonSegments = WELCOME_USAGE_PROVIDER_IDS.map((provider) => ({
     provider,
     weight: data.providerTokenTotals[provider],
     share: totalProviderTokens > 0 ? data.providerTokenTotals[provider] / totalProviderTokens : 0
@@ -390,7 +383,7 @@ export function WelcomeUsageDashboard({
         </span>
       </div>
 
-      {/* Phase K-followup — Provider mix ribbon. Four-segment
+      {/* Phase K-followup — Provider mix ribbon. Nine-segment
           horizontal bar where each segment's width is proportional to
           that provider's token share in the 30-day window. TaskWraith's
           multi-provider identity made literal — Claude structurally
@@ -681,7 +674,7 @@ export function WelcomeUsageDashboard({
       ) : (
         /*
           1.0.5-EW52 — Providers tab. Per-provider card list at
-          the top (4 cards, always shown — even zero-token
+          the top (nine cards, always shown — even zero-token
           providers stay visible because "you haven't tried
           Kimi" is itself useful information). Below the cards:
           a giant timecode showing the cumulative wall-clock

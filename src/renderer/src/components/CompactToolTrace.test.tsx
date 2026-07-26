@@ -56,7 +56,7 @@ describe('CompactToolTrace', () => {
     expect(html).toContain('Codex')
   })
 
-  it('renders Cursor as a historical provider label', () => {
+  it('renders Cursor as a live provider label', () => {
     const html = renderToStaticMarkup(
       <CompactToolTrace activity={makeActivity({ metadata: { provider: 'cursor' } })} />
     )

@@ -2041,8 +2041,9 @@ function CapabilitiesTab(props: InspectorProps) {
               margin: '0 0 var(--space-md) 0'
             }}
           >
-            {label} is registered as a first-class provider. Structured quota, thread browser, and
-            MCP status are shown only when the provider exposes safe machine-readable APIs.
+            {props.provider === 'kimi'
+              ? 'Structural ACP admission is always enabled for Kimi. Stable identity, bounded startup, and ACP compatibility checks remain required; credentials cannot bypass them. Admitted unreviewed runs are explicitly labelled unattested-development.'
+              : `${label} is registered as a first-class provider. Structured quota, thread browser, and MCP status are shown only when the provider exposes safe machine-readable APIs.`}
           </p>
           <div className="safety-row">
             <span>Binary</span>
@@ -2125,7 +2126,7 @@ function CapabilitiesTab(props: InspectorProps) {
             }}
           >
             {props.provider === 'cursor'
-              ? 'Cursor managed runs are contained: the Cursor CLI executes its own native tools inside the OS-level sandbox (--sandbox) and is intentionally not attached to a TaskWraith MCP bridge. MCP rows here describe that posture, not a fault.'
+              ? 'Cursor Path-B is a managed launch: native Cursor tools run inside the OS-level sandbox (--sandbox enabled), and an eligible run also attaches the governed TaskWraith broker. If broker setup fails, Cursor continues native-only with a visible warning. Static MCP rows cannot report an individual run’s attachment state.'
               : `${label} is registered as a first-class provider. Structured quota, thread browser, and MCP status are shown only when the provider exposes safe machine-readable APIs.`}
           </p>
           <div className="safety-row">
@@ -2834,7 +2835,7 @@ function SafetyTab(props: InspectorProps) {
             }}
           >
             {provider === 'kimi'
-              ? 'Managed Kimi runs read the current Kimi Code OAuth/provider configuration to prepare a private seat home under a durable credential authority. Tool execution routes through the TaskWraith gateway; login remains a user-owned CLI setup step and does not qualify the runtime.'
+              ? 'Managed Kimi runs read the current Kimi Code OAuth/provider configuration to prepare a private seat home under a durable credential authority. Structural ACP admission is always enabled and checks stable identity, bounded startup, and ACP compatibility. Credentials do not bypass those checks; admitted unreviewed runs are explicitly labelled unattested-development. Tool execution routes through the TaskWraith gateway.'
               : `${label} runs through the provider adapter. Credential files are not read by this app; setup stays delegated to the provider CLI.`}
           </p>
           <div className="safety-row">

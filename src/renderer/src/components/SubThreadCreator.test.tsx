@@ -1,9 +1,19 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import { getProviderLabel } from '../lib/providerLabels'
+
+const configuredSnapshot = vi.hoisted(() => ({ providerIds: [] as string[] }))
+
+vi.mock('../hooks/useConfiguredProviderSnapshot', () => ({
+  useConfiguredProviderSnapshot: () => ({
+    ready: true,
+    providerIds: configuredSnapshot.providerIds
+  })
+}))
+
 import { SubThreadCreator } from './SubThreadCreator'
 
 function makeParentChat(provider: ProviderId): ChatRecord {
@@ -33,6 +43,10 @@ function renderCreator(parentProvider: ProviderId = 'claude'): string {
 }
 
 describe('SubThreadCreator provider picker', () => {
+  beforeEach(() => {
+    configuredSnapshot.providerIds = []
+  })
+
   it('offers every live selectable provider as a delegation target', () => {
     const html = renderCreator()
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
@@ -45,6 +59,26 @@ describe('SubThreadCreator provider picker', () => {
     const html = renderCreator()
     expect(html).not.toContain('value="gemini"')
     expect(html).not.toContain('Gemini')
+  })
+
+  it('keeps conditional AntiGravity behind the configured-provider snapshot', () => {
+    const html = renderCreator()
+    expect(html).not.toContain('value="antigravity"')
+    expect(html).not.toContain('AntiGravity')
+  })
+
+  it('offers AntiGravity only when the configured-provider snapshot admits it', () => {
+    configuredSnapshot.providerIds = ['gemini', 'antigravity']
+    const html = renderCreator()
+    expect(html).toContain('value="antigravity"')
+    expect(html).toContain('AntiGravity')
+    expect(html).not.toContain('value="gemini"')
+  })
+
+  it('renders an existing AntiGravity parent without treating it as retired', () => {
+    const html = renderCreator('antigravity')
+    expect(html).toContain('Parent chat')
+    expect(html).not.toContain('retired')
   })
 
   it('defaults the picked provider to the first non-parent option', () => {

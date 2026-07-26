@@ -64,14 +64,14 @@ export interface DailyCostBucket {
  * from the same `recordsAfterReset` walk as the existing
  * provider-token totals — but rolled up with cost so the
  * Providers tab can show "tokens · cost · share" parity with
- * the Workspaces tab. Always emits all six canonical providers
+ * the Workspaces tab. Always emits all nine stable provider identities
  * (zero-filled for any provider the user hasn't run yet) so the
  * tab's card list reads as a stable roster rather than a sparse
  * set that grows over time.
  */
 export interface ProviderCostBreakdownEntry {
   provider: ProviderId
-  /** Human-readable label ("Codex" / "Claude" / "Gemini" / "Kimi" / "Grok" / "Cursor"). */
+  /** Human-readable label for the stable provider identity. */
   displayName: string
   tokens: number
   costUsd: number
@@ -79,7 +79,7 @@ export interface ProviderCostBreakdownEntry {
   shareOfTotalCost: number
   /**
    * 1.0.5-EW52 follow-up — Percentage of post-reset *tokens* across
-   * all six providers. 0–100. Drives the under-card meter on the
+   * all nine providers. 0–100. Drives the under-card meter on the
    * Providers tab because token totals are populated for every
    * provider (the cost field is often 0 for Gemini CLI runs, which
    * made the cost-based meter visually misleading). Mirrors the
@@ -108,6 +108,46 @@ const LEGACY_AGBENCH_GLOBAL_CHATS_WORKSPACE_KEYS = new Set([
   '__agentbench_global_chats__',
   '_agentbench_global_chats_'
 ])
+
+/**
+ * Reporting inventory, deliberately independent from provider offer/admission.
+ * Historical Gemini and conditionally offered AntiGravity remain visible in
+ * ledgers, while every unused identity is represented by a zero-filled row.
+ */
+const WELCOME_USAGE_PROVIDER_MEMBERSHIP: Readonly<Record<ProviderId, true>> = {
+  gemini: true,
+  codex: true,
+  claude: true,
+  kimi: true,
+  grok: true,
+  cursor: true,
+  ollama: true,
+  antigravity: true,
+  pi: true
+}
+
+export const WELCOME_USAGE_PROVIDER_IDS: readonly ProviderId[] = Object.freeze(
+  Object.keys(WELCOME_USAGE_PROVIDER_MEMBERSHIP) as ProviderId[]
+)
+
+const WELCOME_USAGE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(
+  WELCOME_USAGE_PROVIDER_IDS
+)
+
+const isWelcomeUsageProviderId = (value: unknown): value is ProviderId =>
+  typeof value === 'string' && WELCOME_USAGE_PROVIDER_ID_SET.has(value)
+
+const PROVIDER_DISPLAY_NAMES: Readonly<Record<ProviderId, string>> = {
+  gemini: 'Gemini',
+  codex: 'Codex',
+  claude: 'Claude',
+  kimi: 'Kimi',
+  grok: 'Grok',
+  cursor: 'Cursor',
+  ollama: 'Ollama',
+  antigravity: 'AntiGravity',
+  pi: 'Pi'
+}
 
 export interface WelcomeUsageDayCell {
   dayKey: string
@@ -245,8 +285,8 @@ export interface WelcomeUsageDashboardData {
   dailyCostBreakdown: DailyCostBucket[]
   /**
    * 1.0.5-EW52 — Per-provider cumulative cost + token breakdown
-   * for the "Providers" tab. Always 4 entries (codex / claude /
-   * gemini / kimi), sorted DESC by cost so the dominant
+   * for the "Providers" tab. Always nine entries, sorted DESC by
+   * tokens then cost so the dominant
    * provider lands at the top. Zero-filled for providers with
    * no post-reset activity.
    */
@@ -275,7 +315,7 @@ export interface WelcomeUsageDashboardData {
    * Per-provider token totals across the selected range. Drives the
    * provider color rails on stat chips and the multi-provider mix
    * ribbon under the tabs — TaskWraith's structural differentiator from
-   * Claude's single-provider dashboard. Always carries all six
+   * Claude's single-provider dashboard. Always carries all nine
    * provider keys (zero-filled when a provider has no activity).
    */
   providerTokenTotals: Record<ProviderId, number>
@@ -310,17 +350,10 @@ const dayKeyFromTimestamp = (timestamp: number): string => {
   return `${year}-${month}-${day}`
 }
 
-const emptyProviderTotals = (): Record<ProviderId, number> => ({
-  gemini: 0,
-  codex: 0,
-  claude: 0,
-  kimi: 0,
-  grok: 0,
-  cursor: 0,
-  ollama: 0,
-  antigravity: 0,
-  pi: 0
-})
+const emptyProviderTotals = (): Record<ProviderId, number> =>
+  Object.fromEntries(
+    WELCOME_USAGE_PROVIDER_IDS.map((provider) => [provider, 0])
+  ) as Record<ProviderId, number>
 
 const formatHourLabel = (dayKey: string, hour: number): string => {
   const [year, month, day] = dayKey.split('-').map(Number)
@@ -628,24 +661,19 @@ export const buildWelcomeUsageDashboardData = (
   const dailyCostCutoff = now - DASHBOARD_COST_CHART_DAY_COUNT * 24 * 60 * 60 * 1000
   const NO_WORKSPACE_KEY = '__no_workspace'
   // 1.0.5-EW52 — Per-provider aggregate (tokens + cost) for the
-  // new "Providers" dashboard tab. Initialised with all six
-  // canonical providers so the card list is a stable roster
+  // new "Providers" dashboard tab. Initialised with all nine
+  // stable provider identities so the card list is a stable roster
   // regardless of which providers the user has actually run.
   // Cost source is the same `explicitCostUsd` field the
   // Workspaces tab uses (Codex / Claude / Kimi populate it via
   // chat-completions; Gemini often leaves it 0 — that's a real
   // signal worth surfacing, not noise).
-  const providerCostAggregate: Record<ProviderId, { tokens: number; costUsd: number }> = {
-    codex: { tokens: 0, costUsd: 0 },
-    claude: { tokens: 0, costUsd: 0 },
-    gemini: { tokens: 0, costUsd: 0 },
-    kimi: { tokens: 0, costUsd: 0 },
-    grok: { tokens: 0, costUsd: 0 },
-    cursor: { tokens: 0, costUsd: 0 },
-    ollama: { tokens: 0, costUsd: 0 },
-    antigravity: { tokens: 0, costUsd: 0 },
-    pi: { tokens: 0, costUsd: 0 }
-  }
+  const providerCostAggregate = Object.fromEntries(
+    WELCOME_USAGE_PROVIDER_IDS.map((provider) => [
+      provider,
+      { tokens: 0, costUsd: 0 }
+    ])
+  ) as Record<ProviderId, { tokens: number; costUsd: number }>
   // 1.0.5-EW52 — Cumulative wall time across runs whose
   // timestamp is within the last 24 hours. Distinct from
   // `totalWallTimeMs` (lifetime-from-reset). Rolling 24h slice
@@ -692,15 +720,7 @@ export const buildWelcomeUsageDashboardData = (
     // silently drops (matches the broader dashboard's
     // posture).
     const recordProvider = record.provider as ProviderId | undefined
-    if (
-      recordProvider === 'codex' ||
-      recordProvider === 'claude' ||
-      recordProvider === 'gemini' ||
-      recordProvider === 'kimi' ||
-      recordProvider === 'grok' ||
-      recordProvider === 'cursor' ||
-      recordProvider === 'ollama'
-    ) {
+    if (isWelcomeUsageProviderId(recordProvider)) {
       providerCostAggregate[recordProvider].tokens += recordTotalTokens
       if (hasCost) providerCostAggregate[recordProvider].costUsd += cost
     }
@@ -734,7 +754,7 @@ export const buildWelcomeUsageDashboardData = (
   // Multi-provider color rail aggregate. Each provider gets a running
   // token total scoped to the displayed range; the chip rail colour
   // is mixed weighted by these totals at render time. Always carries
-  // all six provider keys so consumers don't need to null-check.
+  // all nine provider keys so consumers don't need to null-check.
   const providerTokenTotals = emptyProviderTotals()
   const hourlyTotals = new Array(24).fill(0) as number[]
   const dailyTotals = new Map<string, number>()
@@ -1079,43 +1099,31 @@ export const buildWelcomeUsageDashboardData = (
   }
 
   // 1.0.5-EW52 — Build the per-provider breakdown from the
-  // aggregate map. Always 4 entries (one per canonical
-  // provider) so the Providers tab card list is a stable
+  // aggregate map. Always nine entries (one per stable provider
+  // identity) so the Providers tab card list is a stable
   // roster — even an unused provider gets a 0-token card,
   // which surfaces "you haven't tried Kimi yet" usefully.
-  // Sorted DESC by cost (tokens tiebreaker, then alpha by
+  // Sorted DESC by tokens (cost tiebreaker, then alpha by
   // provider name for stable cross-provider ordering when
   // everything's zero).
   const totalProviderCost = Object.values(providerCostAggregate).reduce(
     (sum, bucket) => sum + bucket.costUsd,
     0
   )
-  const providerDisplayNames: Record<ProviderId, string> = {
-    codex: 'Codex',
-    claude: 'Claude',
-    gemini: 'Gemini',
-    kimi: 'Kimi',
-    grok: 'Grok',
-    cursor: 'Cursor',
-    ollama: 'Ollama',
-    antigravity: 'Antigravity',
-    pi: 'Pi'
-  }
   // 1.0.5-EW52 follow-up — Also compute total provider-tokens
   // so each card's meter can render as share-of-tokens rather
   // than share-of-cost. Gemini CLI runs frequently report 0
   // cost, which made the cost-based meter visually misleading
   // (e.g. 92M Gemini tokens but no fill). Tokens are populated
   // for every provider so the meter is consistently informative.
-  const totalProviderTokensForBreakdown = (
-    Object.keys(providerCostAggregate) as ProviderId[]
-  ).reduce((sum, provider) => sum + providerCostAggregate[provider].tokens, 0)
-  const providerCostBreakdown: ProviderCostBreakdownEntry[] = (
-    Object.keys(providerCostAggregate) as ProviderId[]
+  const totalProviderTokensForBreakdown = WELCOME_USAGE_PROVIDER_IDS.reduce(
+    (sum, provider) => sum + providerCostAggregate[provider].tokens,
+    0
   )
+  const providerCostBreakdown: ProviderCostBreakdownEntry[] = WELCOME_USAGE_PROVIDER_IDS
     .map((provider) => ({
       provider,
-      displayName: providerDisplayNames[provider],
+      displayName: PROVIDER_DISPLAY_NAMES[provider],
       tokens: providerCostAggregate[provider].tokens,
       costUsd: providerCostAggregate[provider].costUsd,
       shareOfTotalCost:

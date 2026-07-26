@@ -18,10 +18,9 @@
  * branches in this component and NO per-shell CSS.
  *
  * Behaviour parity with the old <select>:
- *   - Available providers come from the canonical live-provider contract
- *     (the shared live-selectable predicate is the final gate); the Grok
- *     and Path-B Cursor rows additionally require their runtime
- *     availability advertisements.
+ *   - Available providers come from the canonical live-provider contract.
+ *     Readiness and discovery state may inform warnings elsewhere, but never
+ *     hide a statically live provider from this picker.
  *   - The active provider carries a checkmark.
  *   - Selection calls `onSelect(providerId)` — wired by App.tsx to
  *     the same `handleComposerProviderChange` the <select> used, so
@@ -36,8 +35,12 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { AppSettings, ComposerStyle, ProviderId } from '../../../main/store/types'
-import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
+import {
+  isLiveSelectableProvider,
+  LIVE_SELECTABLE_PROVIDER_IDS
+} from '../../../shared/retiredProviders'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { getProviderOfferUnavailableReason } from '../lib/providerLabels'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
@@ -50,9 +53,9 @@ interface ComposerProviderPickerProps {
    */
   provider: ProviderId
   composerStyle: ComposerStyle
-  /** Show the Grok row only when the runtime advertises Grok. */
+  /** Legacy readiness hint retained for caller compatibility; it does not hide Grok. */
   grokAvailable: boolean
-  /** Show the Cursor row only when the runtime advertises Path-B Cursor. */
+  /** Legacy readiness hint retained for caller compatibility; it does not hide Cursor. */
   cursorAvailable: boolean
   /** Cached main-process discovery result; reading it never starts provider probes. */
   configuredProviderSnapshot?: ConfiguredProviderPickerSnapshot
@@ -94,7 +97,7 @@ export interface ConfiguredProviderPickerSnapshot {
 
 export interface ProviderPickerAvailability {
   snapshot: ConfiguredProviderPickerSnapshot
-  /** Keep the current live provider selectable only while background discovery is pending. */
+  /** Legacy discovery fallback retained for compatibility; it never hides static live rows. */
   pendingFallbackProvider?: ProviderId
 }
 
@@ -116,64 +119,44 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   pi: 'Pi CLI (BYOK)'
 }
 
-/** User-facing reason used to make historical provider chats read-only. */
+/** User-facing offer-policy reason for a retired or not-yet-configured provider. */
 export function providerRunUnavailableReason(
   provider: ProviderId,
   configuredProviderIds: readonly ProviderId[] = []
 ): string | null {
   if (provider === 'antigravity' && configuredProviderIds.includes('antigravity')) return null
   if (isLiveSelectableProvider(provider)) return null
-  return `${getProviderName(provider)} managed runs are unavailable. Switch this chat to a live provider to continue.`
+  return `${getProviderOfferUnavailableReason(provider)} Choose a currently offered provider to continue.`
 }
 
 /**
- * Resolve the visible provider rows. The shared live-provider predicate is the
- * final gate, so a retired id (Gemini) never renders even when seeded; Grok
- * and Path-B Cursor rows additionally require their runtime availability
- * flags. Exported so the popover body can be unit-tested via SSR without a
- * DOM (the live popover only mounts after a click + layout effect).
+ * Resolve the visible provider rows. Every canonical live provider remains
+ * selectable regardless of readiness/discovery hints; those signals belong in
+ * warnings and setup guidance, not provider admission. A retired id (Gemini)
+ * never renders even when seeded. AntiGravity remains the sole conditional
+ * row, admitted only by the configured-provider snapshot. Exported so the
+ * popover body can be unit-tested via SSR without a DOM (the live popover only
+ * mounts after a click + layout effect).
  */
 export function resolveProviderRows(
-  grokAvailable: boolean,
-  cursorAvailable: boolean,
+  _grokAvailable: boolean,
+  _cursorAvailable: boolean,
   providerRunPauses?: AppSettings['providerRunPauses'],
   availability?: ProviderPickerAvailability
 ): ProviderRow[] {
-  // The live-selectable providers are the canonical offer set and are ALWAYS
-  // selectable — you switch to a provider (and sign in, if needed) BY picking
-  // it, so a background discovery probe must never hide one. Gating live rows
-  // on the discovery snapshot regressed Claude off the picker whenever its
-  // auth probe timed out ('unknown') or reported not-authenticated. Only
-  // AntiGravity — the opt-in, discovery-admitted provider — is gated on the
-  // snapshot; Grok / Path-B Cursor keep their own runtime-availability flags.
-  // Pi is gated the same way for a different reason: it is statically live,
-  // but a seat with no stored upstream key has an EMPTY model list, so an
-  // ungated row would be a provider you can pick and never run. Admission
-  // requires the CLI plus at least one key (ProviderConfiguration's fail-closed
-  // pi probe), which is exactly what the snapshot reports.
+  // Selecting a live provider is how a user reaches its setup/sign-in path.
+  // Runtime availability, authentication, model discovery, or another stronger
+  // management layer may produce an honest warning, but must not remove the
+  // provider row. AntiGravity is deliberately different: it is not statically
+  // live and remains behind its configured/consent snapshot.
   const antigravityAdmitted = Boolean(availability?.snapshot.providerIds.includes('antigravity'))
-  const piAdmitted = Boolean(availability?.snapshot.providerIds.includes('pi'))
-  const ids: ProviderId[] = ([
-    'gemini',
-    'codex',
-    'claude',
-    'kimi',
-    ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
-    ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
-    // AntiGravity ranks below the CLI lanes but above local Ollama.
-    // Not a static offer: survives only when the strict, post-connection
-    // main-process discovery snapshot has admitted it.
-    ...(antigravityAdmitted ? (['antigravity'] as ProviderId[]) : []),
-    // Pi ranks with the BYOK lanes, above local Ollama.
-    ...(piAdmitted ? (['pi'] as ProviderId[]) : []),
-    'ollama'
-  ] as ProviderId[]).filter((id) =>
-    id === 'antigravity'
-      ? antigravityAdmitted
-      : id === 'pi'
-        ? piAdmitted
-        : isLiveSelectableProvider(id)
-  )
+  const ids: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
+  if (antigravityAdmitted) {
+    // Keep the conditional remote lane adjacent to the other remote providers
+    // while preserving the canonical order of every static live provider.
+    const insertionIndex = ids.indexOf('ollama')
+    ids.splice(insertionIndex < 0 ? ids.length : insertionIndex, 0, 'antigravity')
+  }
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)
     return {
