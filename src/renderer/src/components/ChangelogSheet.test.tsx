@@ -300,8 +300,6 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('The workshop can wear your colours')
     expect(entry.releaseNotes).toContain('theme_tokens_set')
     expect(entry.releaseNotes).toContain('Every provider leaves a clearer receipt')
-    expect(entry.releaseNotes).toContain('A stalled cleanup no longer parks the workshop')
-    expect(entry.releaseNotes).toContain('cannot commit the deletion')
     expect(entry.releaseNotes).toContain('The phone keeps the same map')
   })
 

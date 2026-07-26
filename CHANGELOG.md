@@ -170,15 +170,6 @@ or compaction runs all re-check the scope they are about to use. `canvas_eval`
 is available as an approval-visible instrument in Plan rather than disappearing
 behind a silent deny.
 
-### A stalled cleanup no longer parks the workshop
-
-History deletion still waits for every owned provider, Canvas, graph, media,
-and journal sink to go quiet before it commits. That wait now has a generous
-two-minute deadline: if a sink stalls, TaskWraith rolls back the deletion holds
-and admits new runs again instead of leaving the durable intent parked until
-restart. A sink that settles after the deadline cannot commit the deletion
-behind those released holds.
-
 ### The phone keeps the same map
 
 iOS gains the full-colour Ensemble identity, anchored participant editors,
