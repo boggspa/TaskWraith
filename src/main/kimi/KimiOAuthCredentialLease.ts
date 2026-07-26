@@ -13,6 +13,63 @@ const PRIVATE_FILE_MODE = 0o600
 const PRIMARY_CREDENTIAL = 'credentials/kimi-code.json'
 const CREDENTIAL_ARTEFACTS = [PRIMARY_CREDENTIAL, 'oauth/kimi-code', 'device_id'] as const
 
+/**
+ * Which files in a provider's home make up its rotating OAuth credential.
+ *
+ * The durable state machine below — claim, seed, provider lifetime, atomic
+ * compare-and-swap writeback, stale-owner recovery — is provider-agnostic; only
+ * these two values were ever Kimi-specific. Codex has the same hazard (a
+ * single-use refresh token that rotates on use) and therefore needs the same
+ * authority, so the layout is injected rather than copied. Duplicating this
+ * state machine would mean two subtly-different implementations of a
+ * crash-safety protocol that both have to stay correct forever.
+ */
+export interface OAuthCredentialLayout {
+  /** Provider name for error messages, e.g. 'Kimi'. */
+  label: string
+  /** The file whose rotation must be committed back to the source home. */
+  primaryCredential: string
+  /** Every artefact seeded into the isolated home; MUST include the primary. */
+  artefacts: readonly string[]
+  /**
+   * Monotonic freshness of a credential, used to refuse a ROLLBACK: a
+   * writeback must move the chain forward, never replace a newer credential
+   * with an older one.
+   *
+   * Provider-specific, and not optional in practice — Kimi stamps a numeric
+   * `expires_at`, Codex an ISO `last_refresh`, and reading the wrong field
+   * yields 0 for both sides so EVERY rotation reads as a rollback and is
+   * rejected. Return 0 only when genuinely unknown.
+   */
+  freshness: (raw: Buffer) => number
+}
+
+export const KIMI_CREDENTIAL_LAYOUT: OAuthCredentialLayout = {
+  label: 'Kimi',
+  primaryCredential: PRIMARY_CREDENTIAL,
+  artefacts: CREDENTIAL_ARTEFACTS,
+  freshness: credentialExpiry
+}
+
+/**
+ * Codex keeps its whole ChatGPT grant in a single `auth.json`, so the layout is
+ * one file that is both the primary and the entire artefact set.
+ *
+ * The reason this exists: TaskWraith holds its OWN Codex grant in a private
+ * home, so an account whose plan limits concurrent Codex sessions ends up in a
+ * revocation ping-pong — signing in to TaskWraith knocks out the ChatGPT app,
+ * using the ChatGPT app leaves TaskWraith's token `token_revoked`. Leasing the
+ * user's real ~/.codex credential means ONE grant, borrowed under a durable
+ * lease and with rotations written straight back, instead of two grants
+ * competing.
+ */
+export const CODEX_CREDENTIAL_LAYOUT: OAuthCredentialLayout = {
+  label: 'Codex',
+  primaryCredential: 'auth.json',
+  artefacts: ['auth.json'],
+  freshness: codexLastRefresh
+}
+
 interface TransitionOwner {
   version: 1
   pid: number
@@ -65,6 +122,9 @@ export type KimiOAuthCredentialLeaseAcquireResult =
   | { ok: false; reason: 'busy' | 'error'; message: string }
 
 export interface KimiOAuthCredentialAuthorityOptions {
+  /** Which files form the rotating credential. Defaults to Kimi's layout so
+   *  every existing caller and test is unaffected. */
+  credentialLayout?: OAuthCredentialLayout
   pid?: number
   instanceId?: string
   now?: () => number
@@ -96,6 +156,24 @@ function pathIsWithin(parent: string, child: string): boolean {
 
 function sha256(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex')
+}
+
+/**
+ * Codex stamps `last_refresh` as an ISO instant rather than a numeric expiry,
+ * so it needs its own reader. Reading Kimi's `expires_at` here would return 0
+ * for both the current and rotated credential, and `0 <= 0` rejects EVERY
+ * writeback as a rollback — a rotation that silently never lands, which is
+ * indistinguishable from the revocation bug this whole feature exists to fix.
+ */
+function codexLastRefresh(raw: Buffer): number {
+  try {
+    const value = (JSON.parse(raw.toString('utf8')) as { last_refresh?: unknown }).last_refresh
+    if (typeof value !== 'string') return 0
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  } catch {
+    return 0
+  }
 }
 
 function credentialExpiry(raw: Buffer): number {
@@ -365,6 +443,10 @@ export class KimiOAuthCredentialAuthority {
   private readonly onTransition?: KimiOAuthCredentialAuthorityOptions['onTransition']
   private readonly onLockTransition?: KimiOAuthCredentialAuthorityOptions['onLockTransition']
   private readonly activeLeaseIds = new Set<string>()
+  private readonly primaryCredential: string
+  private readonly artefacts: readonly string[]
+  private readonly credentialLabel: string
+  private readonly freshness: (raw: Buffer) => number
 
   constructor(options: KimiOAuthCredentialAuthorityOptions = {}) {
     this.pid = options.pid ?? process.pid
@@ -375,6 +457,17 @@ export class KimiOAuthCredentialAuthority {
     this.transitionWaitMs = options.transitionWaitMs ?? 10_000
     this.onTransition = options.onTransition
     this.onLockTransition = options.onLockTransition
+    const layout = options.credentialLayout ?? KIMI_CREDENTIAL_LAYOUT
+    this.primaryCredential = layout.primaryCredential
+    this.artefacts = layout.artefacts
+    this.credentialLabel = layout.label
+    this.freshness = layout.freshness
+    if (!this.artefacts.includes(this.primaryCredential)) {
+      // A layout whose artefact list omits its own primary would seed an
+      // isolated home with no credential and then "commit" a rotation of a file
+      // that was never there. Fail at construction, not mid-lease.
+      throw new Error('OAuth credential layout must include its primary credential.')
+    }
   }
 
   async acquire(
@@ -409,11 +502,11 @@ export class KimiOAuthCredentialAuthority {
         }
 
         const snapshots = new Map<string, Buffer>()
-        for (const rel of CREDENTIAL_ARTEFACTS) {
+        for (const rel of this.artefacts) {
           const data = await readOptionalPrivateFileWithin(sourceHome, join(sourceHome, rel))
           if (data) snapshots.set(rel, data)
         }
-        const expected = snapshots.get(PRIMARY_CREDENTIAL)
+        const expected = snapshots.get(this.primaryCredential)
         if (!expected) {
           return {
             ok: false,
@@ -545,7 +638,7 @@ export class KimiOAuthCredentialAuthority {
       return 'unchanged'
     }
 
-    const currentPath = join(record.sourceHome, PRIMARY_CREDENTIAL)
+    const currentPath = join(record.sourceHome, this.primaryCredential)
     const current = await readPrivateFileWithin(record.sourceHome, currentPath)
     const currentDigest = sha256(current)
     // Recovery after the source's atomic rename does not depend on the
@@ -556,7 +649,7 @@ export class KimiOAuthCredentialAuthority {
       return 'rotated'
     }
 
-    const candidatePath = join(record.isolatedHome, PRIMARY_CREDENTIAL)
+    const candidatePath = join(record.isolatedHome, this.primaryCredential)
     const candidate = await readOptionalPrivateFileWithin(record.boundaryRoot, candidatePath)
     if (!candidate) {
       throw new Error('The seeded Kimi OAuth credential disappeared before writeback.')
@@ -570,8 +663,10 @@ export class KimiOAuthCredentialAuthority {
     // marker: the authority already equals this candidate, so finish forward.
     if (currentDigest === candidateDigest) return 'rotated'
     if (currentDigest !== record.expectedCredentialSha256) return 'stale-rejected'
-    if (credentialExpiry(candidate) <= credentialExpiry(current)) {
-      throw new Error('The rotated Kimi OAuth credential did not advance monotonically.')
+    if (this.freshness(candidate) <= this.freshness(current)) {
+      throw new Error(
+        `The rotated ${this.credentialLabel} OAuth credential did not advance monotonically.`
+      )
     }
 
     if (!record.pendingCredentialSha256) {
@@ -587,8 +682,8 @@ export class KimiOAuthCredentialAuthority {
 
     // Commit auxiliary state first and the credential JSON last. The final
     // atomic rename is the expected-old → new authority transition.
-    for (const rel of CREDENTIAL_ARTEFACTS) {
-      if (rel === PRIMARY_CREDENTIAL) continue
+    for (const rel of this.artefacts) {
+      if (rel === this.primaryCredential) continue
       const data = await readOptionalPrivateFileWithin(
         record.boundaryRoot,
         join(record.isolatedHome, rel)
@@ -612,7 +707,7 @@ export class KimiOAuthCredentialAuthority {
       const outcome = await this.commitCandidate(authorityRoot, record)
       const committedCredential = await readPrivateFileWithin(
         record.sourceHome,
-        join(record.sourceHome, PRIMARY_CREDENTIAL)
+        join(record.sourceHome, this.primaryCredential)
       )
       const {
         pendingCredentialSha256: _pendingCredentialSha256,
