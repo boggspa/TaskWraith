@@ -1154,6 +1154,10 @@ import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
 import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
 import { isDocumentMcpToolName } from './mcp/DocumentToolExecutors'
+import {
+  createThemeTokenToolExecutor,
+  isThemeTokenMcpToolName
+} from './mcp/ThemeTokenToolExecutors'
 import { createWiredDocumentToolExecutors } from './documents/DocumentToolWiring'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
 import { createSemaphore } from './media/Semaphore'
@@ -6717,6 +6721,17 @@ const permissionService = new PermissionService({
     settingsServiceRef
       ? settingsServiceRef.updateSettings(partial)
       : AppStore.updateSettings(partial)
+})
+// Routes through settingsServiceRef when present so an agent-authored appearance
+// write takes the same sanitiser + managed-policy path as any other settings
+// patch — the allowlist in shared/agentThemeTokens is enforced on BOTH sides.
+const themeTokenToolExecutor = createThemeTokenToolExecutor({
+  getOverrides: () => (settingsServiceRef?.getSettings() ?? AppStore.getSettings()).agentThemeTokens,
+  setOverrides: async (next) => {
+    const patch = { agentThemeTokens: next }
+    if (settingsServiceRef) await settingsServiceRef.updateSettings(patch)
+    else AppStore.updateSettings(patch)
+  }
 })
 const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
@@ -30436,6 +30451,10 @@ async function executeGeminiMcpTool(
           })
         )
       }
+    } else if (isThemeTokenMcpToolName(toolName)) {
+      // Pure settings write behind the shared allowlist — touches no file, no
+      // shell and no network, so there is no flood budget to spend here.
+      applyRichResult(await themeTokenToolExecutor.executeThemeTokenTool(toolName, args))
     } else if (isDocumentMcpToolName(toolName)) {
       // No per-run flood budget here, unlike the media tools: these write no file
       // and emit no media ref, so a loop costs CPU only — the same reasoning that

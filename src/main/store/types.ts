@@ -2217,6 +2217,14 @@ export interface AppSettings {
   userBubbleColor: UserBubbleColor
   /** Unified +N / -N diff stat colors for composer rows and transcript tool-call rows. */
   diffStatColors?: DiffStatColors
+  /**
+   * Appearance tokens set by an AGENT via the theme_tokens_* MCP tools, kept
+   * separate from the user's own picker choices so they can be cleared
+   * independently and audited as agent-authored. Values are pre-validated
+   * against the allowlist in shared/agentThemeTokens and re-validated on load —
+   * an override persisted by an older build must not bypass today's bounds.
+   */
+  agentThemeTokens?: Record<string, string>
   /** Selected app-icon variant; Dock/taskbar swap on desktop. See src/shared/iconVariants.ts. */
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle

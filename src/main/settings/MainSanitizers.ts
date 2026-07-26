@@ -2,6 +2,7 @@ import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
 import type {
   AgenticServiceId,
   AgenticWorkspaceGrant,
@@ -138,6 +139,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // live and were silently dropped on persist, never surviving a restart. Same
   // class as the toolIconAccent/userBubbleColor omission above it.
   'diffStatColors',
+  'agentThemeTokens',
   'promptSurfaceStyle',
   'composerStyle',
   'transcriptFontFamily',
@@ -1531,6 +1533,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     // what a renderer (or, later, an agent-driven token write) sends.
     if ('diffStatColors' in sanitized) {
       sanitized.diffStatColors = normalizeDiffStatColors(sanitized.diffStatColors)
+    }
+    // Agent-authored, so the write is sanitised against the allowlist here and
+    // not merely trusted from whatever produced the patch.
+    if ('agentThemeTokens' in sanitized) {
+      sanitized.agentThemeTokens = normalizeAgentThemeTokenOverrides(sanitized.agentThemeTokens)
     }
     if ('auditRetention' in sanitized) {
       sanitized.auditRetention = sanitizeAuditRetentionSettings(

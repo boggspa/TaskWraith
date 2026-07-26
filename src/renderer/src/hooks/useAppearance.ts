@@ -15,6 +15,10 @@ import type { DiffStatColors } from '../../../shared/diffStatColors'
 import type { AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
+  normalizeAgentThemeTokenOverrides,
+  type AgentThemeTokenOverrides
+} from '../../../shared/agentThemeTokens'
+import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
 } from '../../../shared/systemThemeAppearance'
@@ -45,6 +49,7 @@ export interface AppearanceState {
   toolIconAccent: ToolIconAccent
   userBubbleColor: UserBubbleColor
   diffStatColors: DiffStatColors
+  agentThemeTokens: AgentThemeTokenOverrides
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
@@ -143,6 +148,7 @@ function getInitialState(): AppearanceState {
     toolIconAccent: 'system',
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
+    agentThemeTokens: {},
     appIconVariant: 'regular',
     promptSurfaceStyle: 'liquid_glass',
     composerStyle: 'default',
@@ -231,6 +237,7 @@ export function useAppearance() {
           appIconVariant: settings.appIconVariant || 'regular',
           userBubbleColor: settings.userBubbleColor || 'system',
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
+          agentThemeTokens: normalizeAgentThemeTokenOverrides(settings.agentThemeTokens),
           promptSurfaceStyle: settings.promptSurfaceStyle || 'liquid_glass',
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
@@ -395,6 +402,17 @@ export function useAppearance() {
     root.style.setProperty('--composer-font-family', composerFontFamily)
     root.style.setProperty('--inspector-width', `${next.inspectorWidth}px`)
     root.style.setProperty('--sidebar-width', `${next.sidebarWidth}px`)
+
+    // Agent-set tokens are applied LAST and re-validated here, so a value that
+    // reached settings from an older build (or any path that skipped the main
+    // sanitiser) still cannot set an unlisted property or an out-of-range one.
+    // Applied after --sidebar-width/--inspector-width on purpose: where an agent
+    // override names the same token, the explicit agent instruction is what the
+    // user asked for and wins over the stored slider value.
+    const agentTokens = normalizeAgentThemeTokenOverrides(next.agentThemeTokens)
+    for (const [token, value] of Object.entries(agentTokens)) {
+      root.style.setProperty(`--${token}`, value)
+    }
   }, [])
 
   useLayoutEffect(() => {

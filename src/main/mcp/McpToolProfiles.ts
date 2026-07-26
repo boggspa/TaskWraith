@@ -152,6 +152,8 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'canvas_fill',
   'canvas_annotate',
   'canvas_eval',
+  'theme_tokens_get',
+  'theme_tokens_set',
   'canvas_close',
   'tw_recall_find',
   'tw_recall_read',

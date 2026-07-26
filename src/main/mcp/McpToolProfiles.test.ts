@@ -52,9 +52,13 @@ describe('immutable v1 MCP profile snapshots', () => {
   it('pins full-v1 to the exact historical 155-tool surface', () => {
     // 2026-07-24: ensemble_continue removed with the Work Session surface
     // (fb88667b1) — 156 → 155.
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(155)
+    // 2026-07-26: theme_tokens_get/_set — 155 → 157. FULL-only placement (the
+    // canvas_eval pattern): full seats get them directly, and gateway seats
+    // reach them through discovery because V1_HIDDEN is a filter() off FULL,
+    // so no gateway DIRECT budget is spent.
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(157)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      'eec0885ba65addda9da1861a580fbb76795177d604bbd3e6a8bab26a3f5a27e2'
+      'f3c9578f76c4be878fe114a98b3a2884ee9f17cb41ae8f543e4c080228e5f1aa'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -94,9 +98,9 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
   })
 
   it('keeps gateway-v1 hidden membership exact while v2 adds only the proposal tool', () => {
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(117)
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(119)
     expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
-      'bd9d9e82bb1da79b1c1c8ae4613548d92310e294e9fa28d55c628e7f3db01c52'
+      '3e05150155cf73b0489b0ce9c579f0271cbc0fe6cab09b3deb7f61c42507277f'
     )
     expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
@@ -222,8 +226,13 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // permissionOverrides.externalPathGrants is gateway-advertised (both).
     // Transport contract unaffected: gateway keeps 644 chars of headroom under
     // the 40k limit and the ratio moves 0.29831 -> 0.29843.
-    expect(fullChars).toBe(131_876)
-    expect(gatewayChars).toBe(39_356)
+    // Re-measured 2026-07-26: theme_tokens_get/_set on the FULL surface only.
+    // full +1,934 chars; gateway +50 despite the tools NOT being gateway-direct,
+    // because the capability-gateway definitions enumerate the discoverable set.
+    // Headroom 594 chars under the 40k transport cap, ratio 0.29843 -> 0.29449
+    // (the ratio IMPROVES: the hidden surface grew while direct barely moved).
+    expect(fullChars).toBe(133_810)
+    expect(gatewayChars).toBe(39_406)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })

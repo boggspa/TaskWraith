@@ -223,6 +223,13 @@ export const TASKWRAITH_MCP_TOOLS = [
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
   'canvas_close',
+  // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
+  // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and
+  // never a token that could move the approval chrome or restyle a provider's
+  // identity colour. `_get` is a read; `_set` mutates persisted settings and is
+  // classified workspace_write so a read-only seat cannot restyle the app.
+  'theme_tokens_get',
+  'theme_tokens_set',
   // Cross-thread retrospection (recall) — an in-thread agent resolves a vague
   // {provider, workspace, time, task} reference to a past run on ANOTHER
   // thread/provider/workspace and reads how far it got. Read-only; `find` is

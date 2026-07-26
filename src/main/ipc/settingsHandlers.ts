@@ -135,6 +135,7 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     toolIconAccent: settings.toolIconAccent,
     userBubbleColor: settings.userBubbleColor,
     diffStatColors: settings.diffStatColors,
+    agentThemeTokens: settings.agentThemeTokens,
     appIconVariant: settings.appIconVariant,
     promptSurfaceStyle: settings.promptSurfaceStyle,
     composerStyle: settings.composerStyle,

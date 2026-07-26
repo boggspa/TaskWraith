@@ -199,6 +199,10 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'start_background_process',
         'svg_rasterize',
         'switch_auth_profile',
+        // Mutates persisted appearance settings, so it belongs in the
+        // read-only DENY set. `theme_tokens_get` is classified
+        // workspace_read and deliberately stays out of this array.
+        'theme_tokens_set',
         'transcode_audio',
         'transcode_video',
         'video_concat_clips',

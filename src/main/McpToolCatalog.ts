@@ -3982,6 +3982,44 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'theme_tokens_get',
+      description:
+        "Read the user's current TaskWraith appearance overrides plus the full list of tokens you are allowed to change, with each token's type and bounds. Call this before theme_tokens_set so adjustments are relative to what is actually set rather than guessed. Read-only.",
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'theme_tokens_set',
+      description:
+        "Change the user's TaskWraith appearance by setting allowlisted theme tokens. Supply a map of token name to value, e.g. {\"radius-md\": 14, \"scrollbar-thumb\": \"#4D6BFE\"}. Values are TYPED, not CSS: pixel tokens take a number (a plain 12 or \"12px\"), colour tokens take #RGB or #RRGGBB. calc(), var(), url(), named colours, percentages and any other CSS text are rejected — this is a data channel, not a stylesheet. Only the tokens listed by theme_tokens_get can be set; provider identity colours, focus rings and approval-chrome geometry are deliberately not writable. Invalid or out-of-range entries are reported back individually and the rest still apply. Persisted for the user across restarts, and applied live. Approval-gated, and denied outright under read-only postures.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          tokens: {
+            type: 'object',
+            description:
+              'Map of allowlisted token name (without the leading --) to its new value. Call theme_tokens_get for the writable set and each token\'s bounds.'
+          },
+          reset: {
+            type: 'boolean',
+            description:
+              'When true, clear ALL agent-set appearance overrides and return to the user’s theme defaults. Applied before any tokens in this same call.'
+          }
+        }
+      }
+    },
+    {
       name: 'canvas_close',
       description: 'Close a Canvas session and free its preview window. Gated.',
       annotations: {

@@ -108,6 +108,10 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
 ])
 
 const WORKSPACE_READ_TOOLS = new Set<string>([
+  // Reading the user's appearance overrides is retrospection, not a write.
+  // `theme_tokens_set` deliberately stays in the default workspace_write bucket
+  // so a read-only seat cannot restyle the app it is being reviewed in.
+  'theme_tokens_get',
   'read_file',
   'list_directory',
   'grep',
