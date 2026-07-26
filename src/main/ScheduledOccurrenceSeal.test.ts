@@ -380,6 +380,34 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
           fallbackPolicy: 'forbid'
         }
       }
+    case 'mistral':
+      return {
+        schemaVersion: 1,
+        provider,
+        common,
+        runtime: cli,
+        tools,
+        controls: {
+          transport: 'acp',
+          // `plan` is Vibe's read-only mode and pairs with readOnlySeat: true.
+          // The ungated modes (`accept-edits`, `auto-approve`) auto-approve
+          // inside the agent, so a tool never reaches the host gate — the seal
+          // refuses them outright rather than sealing them as a valid state.
+          sessionMode: 'plan',
+          readOnlySeat: true,
+          clientFsCapability: 'none',
+          taskWraithMcpAttachmentMode: 'acp-session',
+          // The security fact this seat exists to bind: plan-oauth REQUIRES a
+          // scrubbed env, because Vibe resolves credentials api-key-first and
+          // MISTRAL_API_KEY is also Pi's upstream key.
+          credentialLane: 'plan-oauth',
+          apiKeyEnvScrubbed: true,
+          model: 'devstral-small',
+          nativeDenyRulesSha256: hex('1'),
+          promptPreambleSha256: hex('2'),
+          fallbackPolicy: 'forbid'
+        }
+      }
     case 'cursor':
       return {
         schemaVersion: 1,
@@ -493,6 +521,15 @@ function contradictoryPosturePlan(
         ...plan,
         controls: { ...plan.controls, readOnlySeat: false }
       } as ProviderLaunchAuthorityInputByProvider['grok']
+    case 'mistral':
+      // A write-tier seat claimed under a read-only posture. Both fields move
+      // together so the controls stay internally COHERENT — the contradiction
+      // under test is controls-vs-posture, not a malformed control block that
+      // some other invariant would reject first and mask the real assertion.
+      return {
+        ...plan,
+        controls: { ...plan.controls, readOnlySeat: false, sessionMode: 'default' }
+      } as ProviderLaunchAuthorityInputByProvider['mistral']
     case 'cursor':
       // Keep the default tool surface (profile intact) so the read-only
       // posture contradiction is the write-tier execution mode, not the bridge.

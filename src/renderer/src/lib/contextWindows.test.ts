@@ -70,7 +70,8 @@ describe('resolveContextWindow', () => {
       cursor: 200_000,
       ollama: 262_144,
       antigravity: 1_048_576,
-      pi: 1_000_000
+      pi: 1_000_000,
+      mistral: 1_000_000,
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<

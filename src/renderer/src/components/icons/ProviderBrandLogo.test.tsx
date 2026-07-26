@@ -17,9 +17,17 @@ describe('ProviderBrandLogo', () => {
     for (const provider of KNOWN_PROVIDERS) {
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
+      // PROVIDER_BRAND_LOGO_SOURCES is a Partial map: providers without a
+      // sourced first-party asset (currently Mistral, awaiting artwork) are
+      // absent by design and fall back to ProviderGlyph. KNOWN_PROVIDERS lists
+      // only the ones that DO have artwork, so a missing entry here is a real
+      // regression — asserted rather than silently non-null-asserted away.
+      const bundled = PROVIDER_BRAND_LOGO_SOURCES[provider]
+      expect(bundled, `${provider} is listed as known but has no bundled logo`).toBeDefined()
+
       expect(html).toContain(`data-provider-logo="${provider}"`)
       expect(html).toContain(`provider-brand-logo-${provider}`)
-      expect(html).toContain(`src="${PROVIDER_BRAND_LOGO_SOURCES[provider].light}"`)
+      expect(html).toContain(`src="${bundled?.light}"`)
       expect(html).not.toContain('data-provider-glyph="true"')
       expect(html).not.toContain('<svg')
     }
@@ -30,7 +38,7 @@ describe('ProviderBrandLogo', () => {
       const source = resolveProviderBrandLogoSource(provider)
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
-      expect(source).toEqual({ light: PROVIDER_BRAND_LOGO_SOURCES[provider].light })
+      expect(source).toEqual({ light: PROVIDER_BRAND_LOGO_SOURCES[provider]?.light })
       expect(html).toContain('is-static')
       expect(html).not.toContain('has-theme-pair')
       expect(html.match(/<img/g)).toHaveLength(1)
@@ -44,12 +52,13 @@ describe('ProviderBrandLogo', () => {
       const source = PROVIDER_BRAND_LOGO_SOURCES[provider]
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
-      expect(source.dark).toBeDefined()
+      expect(source, `${provider} is listed as themed but has no bundled logo`).toBeDefined()
+      expect(source?.dark).toBeDefined()
       expect(html).toContain('has-theme-pair')
       expect(html).not.toContain('is-static')
       expect(html.match(/<img/g)).toHaveLength(2)
-      expect(html).toContain(`src="${source.light}"`)
-      expect(html).toContain(`src="${source.dark}"`)
+      expect(html).toContain(`src="${source?.light}"`)
+      expect(html).toContain(`src="${source?.dark}"`)
       expect(html).toContain('provider-brand-logo-image-light')
       expect(html).toContain('provider-brand-logo-image-dark')
     }

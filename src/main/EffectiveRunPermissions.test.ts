@@ -72,7 +72,8 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         cursor: 120000,
         ollama: 120000,
         antigravity: 120000,
-        pi: 120000
+        pi: 120000,
+        mistral: 120000,
       },
       mainAuthorityMs: 120000
     },
