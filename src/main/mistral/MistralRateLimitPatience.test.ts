@@ -16,7 +16,8 @@ function quotaAt(spentUsd: number): MistralQuotaEstimate {
 
 function signals(over: Partial<MistralLimitSignals> = {}): MistralLimitSignals {
   return {
-    errorText: 'API error from mistral (model: mistral-vibe-cli-latest): Rate limit exceeded. Please wait a moment before trying again.',
+    errorText:
+      'API error from mistral (model: mistral-vibe-cli-latest): Rate limit exceeded. Please wait a moment before trying again.',
     consecutiveAttempts: 0,
     ...over
   }
@@ -86,7 +87,8 @@ describe('classifyMistralLimit', () => {
 
   it('escalates backoff across the ladder rather than hammering', () => {
     const delays = [0, 1, 2, 3, 4].map(
-      (a) => classifyMistralLimit(signals({ consecutiveAttempts: a, quota: quotaAt(7) })).retryAfterMs
+      (a) =>
+        classifyMistralLimit(signals({ consecutiveAttempts: a, quota: quotaAt(7) })).retryAfterMs
     )
     expect(delays).toEqual([5_000, 15_000, 30_000, 60_000, 90_000])
     for (let i = 1; i < delays.length; i++) expect(delays[i]).toBeGreaterThan(delays[i - 1])
@@ -117,7 +119,9 @@ describe('classifyMistralLimit', () => {
     // Issue #275's complaint was the absence of any feedback. Every limit
     // verdict must say something.
     for (const spent of [1, 7, 13]) {
-      expect(classifyMistralLimit(signals({ quota: quotaAt(spent) })).userMessage.length).toBeGreaterThan(0)
+      expect(
+        classifyMistralLimit(signals({ quota: quotaAt(spent) })).userMessage.length
+      ).toBeGreaterThan(0)
     }
   })
 })

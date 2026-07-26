@@ -270,7 +270,7 @@ public enum TWTheme {
     /// change must be mirrored here or iOS ships with a stale roster (build 81
     /// shipped a Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
-        "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi",
+        "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {

@@ -987,20 +987,17 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
-      },
-      {
-        // The `local` catalog entry runs against a local llamacpp server and is
-        // priced at zero, so ACP omits `cost` from usage_update entirely for it.
-        // Registered explicitly so it resolves to genuinely-free rather than
-        // falling back to models[0] and being charged at the medium-3.5 rate.
-        modelId: 'devstral',
-        inputUsdPerMillion: 0,
-        outputUsdPerMillion: 0,
-        sourceUrl: 'https://mistral.ai/pricing',
-        lastVerified: RATE_TABLE_VERSION,
-        notes:
-          'Local llamacpp lane (catalog alias `local`), zero-priced. Vibe emits no cost for it; the quota estimator treats a missing cost as 0 rather than fabricating one.'
       }
+      // Vibe's third catalogue entry, `local` (a llamacpp backend on
+      // 127.0.0.1:8080), has NO row here on purpose. An earlier revision
+      // registered it at zero to stop `resolveModelRate` falling back to
+      // models[0] and charging a free local run at the flagship rate — but a
+      // zero-priced row violates the positive-rate invariant every other
+      // provider upholds, and the seat does not offer `local` at all
+      // (MISTRAL_SEAT_MODELS excludes it: local inference is Ollama's lane
+      // here). A model the picker never offers cannot be run, so it cannot be
+      // mispriced. If the seat ever does surface it, give it a real lane rather
+      // than a zero row.
     ]
   }
 }

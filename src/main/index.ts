@@ -180,6 +180,8 @@ import {
   MAX_SCHEDULE_TIMER_DELAY_MS,
   GROK_USAGE_FRESH_TTL_MS,
   GROK_SCOPED_MCP_SERVER_NAME,
+  MISTRAL_SCOPED_MCP_SERVER_NAME,
+  MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
   PROBE_TIMEOUT_MS,
   KNOWN_OFF_PATH_CODEX_BINARIES,
   LIGHT_THEME_POPOUT_BACKDROPS,
@@ -1287,6 +1289,45 @@ import {
 } from './ReadOnlyGitShellCommand'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
+// ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
+// Imported as one block on purpose. This seat has NO argv (`vibe-acp` accepts
+// only `[-h] [-v] [--setup]`), so its entire containment, credential and
+// accounting story lives in these four modules rather than in a command line
+// a reader can inspect at the spawn site: the session-mode/model selection
+// (MistralCliArgs), the emergency-stop and BYOK gates (mistralGate), the
+// model-aware meter (MistralUsage) and the three-way rate-limit disambiguator
+// (MistralRateLimitPatience).
+import {
+  MISTRAL_ACP_REQUIRED_MESSAGE,
+  mistralAcpEnabled,
+  mistralByokLaneEnabled,
+  mistralMcpAdvertiseEnabled
+} from './mistralGate'
+import {
+  MISTRAL_BINARY_NAME,
+  MISTRAL_CREDENTIAL_ENV_VARS,
+  applyMistralPromptPreamble,
+  buildMistralAcpCliArgs,
+  mistralSessionModeForSeat,
+  mistralWriteCapable,
+  normalizeMistralThinkingLevel,
+  scrubMistralCredentialEnv
+} from './mistral/MistralCliArgs'
+import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
+import { estimateMistralTokenUsage } from './mistral/MistralUsage'
+import {
+  configureMistralQuotaStore,
+  currentMistralQuotaEstimate,
+  flushMistralQuotaStore,
+  mistralQuotaStorePath,
+  recordMistralTurnCost,
+  type MistralQuotaSnapshot
+} from './mistral/MistralQuotaStore'
+import {
+  classifyMistralLimit,
+  isMistralRateLimitText,
+  mistralStopIsQuotaWall
+} from './mistral/MistralRateLimitPatience'
 import { cursorDebugEnabled } from './cursorGate'
 import {
   PiRpcTurnReducer,
@@ -1587,7 +1628,8 @@ import {
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   PLAN_MCP_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS
+  READ_ONLY_MCP_ADVERTISE_TOOLS,
+  isReadOnlyAdvertisedTool
 } from './mcp/McpAutoAllowedTools'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
@@ -19338,6 +19380,931 @@ function claudeTaskWraithMcpConfigPathForRun(runId: string): string {
   return join(tempDir, `taskwraith-claude-mcp-${safeRunId}.json`)
 }
 
+// ── Mistral Vibe over ACP (`vibe-acp`) ──────────────────────────────────────
+// The structural twin of runGrokAcpProvider: joined one-shot ACP, direct stdio
+// MCP attachment, host-mediated tool approval, exact transport settlement.
+//
+// THREE THINGS DIVERGE, AND ALL THREE ARE SILENT WHEN WRONG:
+//
+//  1. THERE IS NO ARGV. `vibe-acp` accepts only `[-h] [-v] [--setup]`, so
+//     `buildMistralAcpCliArgs()` returns an empty array. The permission MODE
+//     and the MODEL are selected over the protocol via
+//     `session/set_config_option` after session/new. Drop the mode option and a
+//     read-only seat runs write-capable; drop the model option and the turn
+//     runs whatever `active_model` sits in the user's global
+//     ~/.vibe/config.toml. Neither failure raises anything — the handshake
+//     succeeds, the session opens, the prompt answers.
+//
+//  2. THE CREDENTIAL IS SCRUBBED, NOT INHERITED. Vibe resolves auth
+//     API-KEY-FIRST, and `MISTRAL_API_KEY` is also Pi's `mistral` upstream key
+//     (PiModelPolicy.PI_UPSTREAM_KEY_ENV.mistral). On a machine where Pi is
+//     configured — the normal case — an inherited env moves every run of this
+//     seat onto the user's metered pay-as-you-go line while the plan
+//     subscription is never consulted. Different credential, different bill, no
+//     error. See scrubMistralCredentialEnv at the spawn closure.
+//
+//  3. USAGE IS PRICED PER MODEL. The seat's two models are 15x/25x apart, and
+//     the projection feeds MistralQuotaEstimate — the only budget signal that
+//     exists, since Mistral publishes no numeric plan budget and no quota
+//     endpoint. Grok's flat-rate estimateProjectedTokenUsage would be wrong by
+//     more than an order of magnitude here.
+//
+// Persistent per-seat sessions are deliberately NOT ported from Grok's Spike-7
+// fast path. `mistralSeatSessionsEnabled()` is hard-`false`, and Vibe's
+// protocol-level support (loadSession/session_resume/session_fork) makes that
+// tempting — but a reused session would also have to stop PromptComposition's
+// unconditional `mistralNeedsContextInjection` re-injection in the same change,
+// or the host pays for the same transcript twice every turn. Omitted whole
+// rather than left as dead code behind a false gate.
+
+/**
+ * Rate-limit evidence observed on this run's ERROR channel.
+ *
+ * Module-level WeakMap rather than a `CliProviderStreamState` field because
+ * that interface lives in runStateTypes.ts, which this change does not own.
+ * Keyed by the state object, so it is per-run and collected with it.
+ *
+ * Only the ERROR channel feeds this. A tool that prints "rate limit exceeded"
+ * from a curl must never classify the RUN as rate-limited.
+ */
+const mistralLimitStopEvidence = new WeakMap<CliProviderStreamState, string>()
+
+/**
+ * Classify this run's rate-limit stop, if it had one.
+ *
+ * `consecutiveAttempts: 0` is exact, not a placeholder: dispatch is one-shot and
+ * retries nothing in-process, so every classification here is a first
+ * observation. The classifier still earns its place — Mistral overloads ONE wire
+ * message across a ~60s per-minute throttle, a spent monthly budget, and (with
+ * pay-as-you-go overflow on) a run that did not stop at all. Telling the user
+ * which one it probably was is the whole point; the reporter in
+ * mistralai/mistral-vibe#275 had no way to know.
+ */
+function mistralLimitVerdictForState(state: CliProviderStreamState) {
+  const errorText = mistralLimitStopEvidence.get(state) || ''
+  if (!errorText) return null
+  return classifyMistralLimit({ errorText, consecutiveAttempts: 0 })
+}
+
+// Fallback tool-id counter for Mistral tool events that arrive without an id,
+// so two id-less calls render as two cards instead of merging into one.
+let mistralFallbackToolSeq = 0
+
+/**
+ * Map one normalized ACP run event onto the shared CLI run-event sink.
+ *
+ * Mirrors applyGrokRunEvent — the ACP core normalizes both seats into the same
+ * NormalizedGrokRunEvent shape — with one deliberate difference in the warning
+ * branch: a rate-limit stop is captured and re-worded before it reaches the
+ * transcript. See mistralLimitStopEvidence.
+ */
+function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent) {
+  if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
+  if (evt.type === 'content' && evt.text) {
+    state.assistantText = `${state.assistantText || ''}${evt.text}`
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'mistral',
+      { type: 'content', text: evt.text, provider: 'mistral' },
+      state
+    )
+  } else if (evt.type === 'thinking' && evt.text) {
+    accumulateEstimatedStreamChars(state, 'output', evt.text.length)
+    reportGenericLiveEstimate(state)
+    emitCliProviderThinkingEvent(state, evt.text)
+  } else if (evt.type === 'tool_use') {
+    const toolId = evt.toolId || `mistral-tool-${++mistralFallbackToolSeq}`
+    const toolName = evt.toolName || 'tool'
+    const diagnosticToolName =
+      sanitizeCanvasEvalProviderText(toolName) === toolName ? toolName : 'canvas_eval'
+    // Independent correlation lane for delayed canvas_eval diagnostics: the
+    // transcript sanitizer consumes its marker when the result is projected, so
+    // a second bounded sanitizer is what keeps the cached last-tool-error from
+    // ever holding a raw canvas_eval result. Per-state, so it is per-run.
+    grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: diagnosticToolName,
+        parameters: evt.toolInput || {},
+        raw: evt.raw
+      },
+      undefined,
+      `mistral:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
+    accumulateEstimatedStreamChars(
+      state,
+      'output',
+      toolName.length + visiblePayloadChars(evt.toolInput)
+    )
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'mistral',
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: toolName,
+        // Canonical ACP kind (read|edit|execute|search|…) so the renderer can
+        // resolve a category icon when tool_name is a freeform ACP title.
+        tool_kind: evt.toolKind,
+        parameters: evt.toolInput || {},
+        provider: 'mistral'
+      },
+      state
+    )
+  } else if (evt.type === 'tool_result') {
+    const toolId = evt.toolId || `mistral-tool-${mistralFallbackToolSeq || ++mistralFallbackToolSeq}`
+    accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
+    reportGenericLiveEstimate(state)
+    const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        raw: evt.raw
+      },
+      undefined,
+      `mistral:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
+    const diagnosticOutput =
+      isRecord(diagnosticProjection) && typeof diagnosticProjection.output === 'string'
+        ? diagnosticProjection.output
+        : ''
+    if (evt.toolStatus === 'error') {
+      // These two lanes are named for Grok only because runStateTypes.ts named
+      // them first; they are the generic ACP tool-failure counters and this
+      // change does not own that file to rename them.
+      state.grokToolErrorCount = (state.grokToolErrorCount || 0) + 1
+      if (evt.toolOutput) state.grokLastToolError = diagnosticOutput
+    }
+    sendAgentCompatLine(
+      state.sender,
+      'mistral',
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        provider: 'mistral'
+      },
+      state
+    )
+  } else if (evt.type === 'result') {
+    // Terminal ACP stop reason. The canonical result line is synthesized on
+    // close, but an abnormal reason is remembered here so close-out can report
+    // it honestly instead of rendering a blank success.
+    const stopReason = normalizeGrokStopReason(evt.status)
+    if (stopReason !== 'success') state.grokStopReason = stopReason
+  } else if (evt.type === 'provider_warning' && evt.text) {
+    if (isMistralRateLimitText(evt.text)) {
+      // Retain the RAW text as the classifier's input, but never let it reach
+      // the transcript verbatim: "Rate limit exceeded. Please wait a moment
+      // before trying again." reads as a monthly wall, and most of the time it
+      // is a ~60-second throttle.
+      //
+      // Surfaced HERE as well as at close-out on purpose. A limit that appears
+      // mid-turn on a run which then finishes would otherwise be invisible, and
+      // a silently-throttled turn that simply took two minutes is exactly the
+      // experience this seat's classifier exists to explain.
+      mistralLimitStopEvidence.set(state, evt.text)
+      const verdict = classifyMistralLimit({ errorText: evt.text, consecutiveAttempts: 0 })
+      sendAgentCompatLine(
+        state.sender,
+        'mistral',
+        {
+          type: 'provider_warning',
+          provider: 'mistral',
+          severity: mistralStopIsQuotaWall(verdict) ? 'warning' : 'info',
+          title: 'Mistral rate limit',
+          message: verdict.userMessage
+        },
+        state
+      )
+      return
+    }
+    sendAgentCompatError(state.sender, 'mistral', evt.text, state)
+  }
+}
+
+/**
+ * Opt-in raw ACP frame capture (both directions), keyed on
+ * TASKWRAITH_MISTRAL_DEBUG. Off by default; never throws. Worth its own flag
+ * rather than sharing Grok's: the frames that matter here are the
+ * `session/set_config_option` acknowledgements, which no other seat sends.
+ */
+function maybeLogMistralRawAcp(direction: 'in' | 'out', message: unknown): void {
+  const flag = process.env.TASKWRAITH_MISTRAL_DEBUG
+  if (flag !== '1' && flag !== 'true' && flag !== 'yes') return
+  let serialized = ''
+  try {
+    serialized = JSON.stringify(message)
+  } catch {
+    return
+  }
+  try {
+    process.stderr.write(`[mistral-acp-raw] ${direction === 'out' ? '→' : '←'} ${serialized}\n`)
+  } catch {
+    /* diagnostics only */
+  }
+}
+
+/**
+ * Whether a Vibe permission request targets one of TaskWraith's own immutable
+ * read-only broker tools.
+ *
+ * Accepts either qualifier this seat can actually produce — the scoped
+ * safe-subset server name or the broker's own namespace — and then fails closed
+ * on the UNQUALIFIED tool membership check. The qualifier only says "this came
+ * from a server we attached"; membership in the immutable read-only set is what
+ * authorizes it.
+ */
+function mistralTaskWraithSafeToolRequested(request: {
+  toolName?: string
+  rawToolCall?: unknown
+}): boolean {
+  const raw = request.rawToolCall as
+    | { rawInput?: { tool_name?: unknown; name?: unknown } }
+    | undefined
+  const namespaces = [
+    MISTRAL_SCOPED_MCP_SERVER_NAME,
+    MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+    GEMINI_MCP_SERVER_NAME
+  ]
+  for (const candidate of [request.toolName, raw?.rawInput?.tool_name, raw?.rawInput?.name]) {
+    if (typeof candidate !== 'string') continue
+    for (const namespace of namespaces) {
+      const prefix = `${namespace}__`
+      if (!candidate.startsWith(prefix)) continue
+      const toolName = candidate.slice(prefix.length)
+      if (toolName && (isReadOnlyAdvertisedTool(toolName) || isCapabilityGatewayToolName(toolName))) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Close-out copy for the "turn completed, produced nothing, and a tool failed"
+ * shape. Reported as a failure rather than a blank success, because a seat whose
+ * only tool call was refused can otherwise render as an empty successful run.
+ */
+function mistralAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
+  const rawDetail = state.grokLastToolError?.trim() || ''
+  const detail = rawDetail.length > 500 ? `${rawDetail.slice(0, 497)}...` : rawDetail
+  return `Mistral ended this turn without producing an assistant response after a tool failed or was rejected.${
+    detail ? ` Last tool error: ${detail}` : ''
+  }`
+}
+
+// Managed Mistral runs have exactly one admissible transport: `vibe-acp` over
+// ACP. `vibe` (the interactive TUI) is NOT a headless alternative — it waits on
+// a terminal a managed run does not have and hangs the turn rather than
+// failing, which is why the gate below makes the seat UNAVAILABLE instead of
+// selecting some other path.
+async function runMistralProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  if (!mistralAcpEnabled()) {
+    const route = routeWithRunId('mistral', payload)
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'mistral',
+      route,
+      message: MISTRAL_ACP_REQUIRED_MESSAGE,
+      setupRequired: true,
+      securityUnavailable: true,
+      fallback: false
+    })
+    return
+  }
+  await runMistralAcpProvider(event, payload)
+}
+
+async function runMistralAcpProvider(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload
+) {
+  const route = routeWithRunId('mistral', payload)
+  const resolved = await resolveCliProviderBinary('mistral', payload.runtimeProfile)
+  if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
+  if (!resolved.binaryPath) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'mistral',
+      route,
+      message:
+        resolved.error ||
+        `Mistral Vibe is not configured: the \`${MISTRAL_BINARY_NAME}\` binary was not found. Install the Mistral Vibe CLI and sign in with \`vibe --setup\`.`,
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  const binaryPath = resolved.binaryPath
+  const model = normalizeCliProviderModel('mistral', payload.model)
+  // clientInfo is MANDATORY for this seat and for no other. `vibe-acp` forwards
+  // it into the metadata of every upstream Mistral API request, and an empty
+  // `client_version` is rejected as an opaque JSON-RPC -32603 naming the model
+  // rather than the field — it reads exactly like an auth or quota failure, and
+  // it only appears at the first PROMPT, after initialize and session/new have
+  // both succeeded. buildMistralInitializeParams throws rather than emit one;
+  // this pre-check turns that throw into an honest setup failure before a run
+  // is registered, and the try/catch around the spawn is the backstop for the
+  // path where app.getVersion() changes under us.
+  const mistralAppVersion = (() => {
+    try {
+      return String(app.getVersion() || '').trim()
+    } catch {
+      return ''
+    }
+  })()
+  if (!mistralAppVersion) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'mistral',
+      route,
+      message:
+        'Mistral Vibe could not start: TaskWraith could not read its own application version, which `vibe-acp` forwards to Mistral as `client_version`. An empty value is rejected by the Mistral API as an opaque error that looks like a sign-in failure.',
+      setupRequired: true,
+      fallback: false
+    })
+    return
+  }
+  const state: CliProviderStreamState = {
+    provider: 'mistral',
+    sender: event.sender,
+    startedAt: Date.now(),
+    model,
+    fallback: false,
+    completed: false,
+    assistantText: '',
+    providerSessionId: payload.providerSessionId || null,
+    approvalMode: payload.approvalMode,
+    workflowMode: payload.workflowMode,
+    sessionTrust: Boolean(payload.sessionTrust),
+    externalPathGrants: payload.externalPathGrants,
+    runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+    taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
+    effectivePermissions: payload.effectivePermissions,
+    effectivePermissionsSignature: payload.effectivePermissionsSignature,
+    ensembleRun: payload.ensembleRun,
+    ...route
+  }
+  let mistralOwnedProcess: ChildProcess | null = null
+  // Seeded with the raw prompt and reassigned once the preamble is applied
+  // below. Declared here so the terminal closer can meter the PROVIDER-VISIBLE
+  // prompt without reaching forward into a `const` that would still be in its
+  // temporal dead zone on an early failure path.
+  let mistralProviderPrompt = payload.prompt
+  const registeredSession = registerRunSession(
+    'mistral',
+    event.sender,
+    route,
+    payload.scope === 'global' ? undefined : payload.workspace,
+    state,
+    payload.providerSessionId || null
+  )
+  if (!registeredSession) return
+  // Publish exact settlement authority before initialization diagnostics or
+  // broker setup can project or await.
+  const mistralTransportClose = createProviderTransportCloseOperation()
+  let mistralTransportOperation: Promise<void>
+  try {
+    mistralTransportOperation = providerTransportOperations.track(
+      route.appRunId!,
+      mistralTransportClose.operation
+    )
+  } catch (error) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'mistral',
+        route,
+        message: `Mistral transport ownership could not be acquired: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+    } finally {
+      mistralTransportClose.markTransportClosed()
+    }
+    await mistralTransportClose.operation
+    return
+  }
+  const safelyProjectMistral = (projection: () => void): void => {
+    try {
+      projection()
+    } catch (error) {
+      try {
+        console.error('[mistral-acp] projection failed', error)
+      } catch {
+        // Exact transport settlement remains independent of diagnostics.
+      }
+    }
+  }
+  safelyProjectMistral(() =>
+    sendAgentCompatLine(
+      event.sender,
+      'mistral',
+      {
+        type: 'init',
+        session_id: state.providerSessionId || '',
+        model,
+        timestamp: new Date().toISOString(),
+        provider: 'mistral',
+        fallback: false
+      },
+      state
+    )
+  )
+
+  // No stale-registration sweep here, unlike Grok. Grok registers TaskWraith's
+  // broker in a per-project MCP config file on disk, which can outlive a run;
+  // `vibe-acp` takes stdio MCP servers directly in session/new, so this seat
+  // leaves nothing behind to sweep.
+
+  // ── TaskWraith MCP over ACP session/new ──────────────────────────────────
+  // Default-ON for this seat (mistralMcpAdvertiseEnabled), which is the
+  // opposite of Grok's read-only advertise gate, and the reason is a measured
+  // difference in containment rather than a preference: Vibe raises
+  // `session/request_permission` for every tool execution in both `plan` and
+  // `default`, so the host gate actually sees each brokered call and can refuse
+  // it. Grok's gate is default-OFF because a live trace showed Grok
+  // auto-running advertised MCP tools with NO permission request, leaving the
+  // advertise list itself as the only boundary. If Vibe is ever observed doing
+  // that, this default and the run-management declaration for `mistral` must
+  // change together.
+  let mistralMcpServers: unknown[] = []
+  const mistralWriteSeat = mistralWriteCapable(payload.approvalMode)
+  const mistralReadOnlySeat = !mistralWriteSeat
+  const mistralAdvertiseTaskWraithMcp =
+    payload.taskWraithMcpAdvertised === true && mistralMcpAdvertiseEnabled()
+  if (mistralAdvertiseTaskWraithMcp) {
+    try {
+      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+      if (!bridgeCommandStatus.available) {
+        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+      }
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
+        settleDeniedProviderTransportLaunch(route)
+        mistralTransportClose.markTransportClosed()
+        await mistralTransportOperation
+        return
+      }
+      const safeSubset = mistralReadOnlySeat
+      // A plan-preset (not read_only) seat widens the safe subset to the plan
+      // instruments, which the broker then host-gates. Only meaningful when
+      // safeSubset is set — a write-capable seat already gets the full server.
+      const mistralPlanSeat = safeSubset && payload.effectivePermissions?.presetId === 'plan'
+      const mistralAuditRun = Boolean(payload.auditRun)
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const mistralBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+        safeSubset,
+        planSubset: mistralPlanSeat,
+        coreSubset,
+        gatewaySubset
+      })
+      mistralMcpServers = [
+        {
+          // ACP McpServer is an UNTAGGED enum: the stdio variant is
+          // {name, command, args, env} with NO `type` field and env REQUIRED. A
+          // stray `type:'stdio'` matches no variant and produces a -32602 that
+          // also hangs the turn. env carries the routing identity in the ACP
+          // EnvVariable shape ({name,value}) so broker calls map to THIS run.
+          name: safeSubset ? MISTRAL_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
+          command: bridgeCommandStatus.command,
+          args: mistralAuditRun
+            ? [...mistralBridgeArgs, GEMINI_MCP_AUDIT_SUBSET_ARG]
+            : mistralBridgeArgs,
+          env: [
+            { name: GEMINI_MCP_BRIDGE_ENV, value: '1' },
+            { name: 'TASKWRAITH_PARENT_PROVIDER', value: 'mistral' },
+            { name: 'TASKWRAITH_RUN_ID', value: route.appRunId || '' },
+            { name: 'TASKWRAITH_CHAT_ID', value: route.appChatId || '' },
+            {
+              name: 'TASKWRAITH_WORKSPACE_PATH',
+              value: payload.scope === 'global' ? '' : payload.workspace || ''
+            },
+            ...(mistralAuditRun ? [{ name: 'TASKWRAITH_MCP_AUDIT', value: '1' }] : [])
+          ]
+        }
+      ]
+    } catch (error) {
+      // Broker failed to start → no tools (safe). The turn still runs, toolless,
+      // and the prompt's tool claims are stripped so it does not promise a
+      // capability that is not attached.
+      mistralMcpServers = []
+      payload.taskWraithMcpAdvertised = false
+      state.taskWraithMcpAdvertised = false
+      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+        advertised: false,
+        coreProfile: false
+      })
+      safelyProjectMistral(() =>
+        sendAgentCompatLine(
+          event.sender,
+          'mistral',
+          {
+            type: 'provider_warning',
+            provider: 'mistral',
+            severity: 'warning',
+            title: 'Mistral MCP bridge unavailable',
+            message: `TaskWraith could not start the MCP broker; Mistral is running without TaskWraith MCP tools. ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          },
+          state
+        )
+      )
+    }
+  }
+
+  // Empty, always. See MistralCliArgs: `vibe-acp` accepts only -h/-v/--setup,
+  // none of which belong in a managed run. Kept as a call rather than a literal
+  // `[]` so the emptiness is single-sourced, asserted by a test, and bound into
+  // the launch seal like every other seat's argv template.
+  const mistralAcpArgs = buildMistralAcpCliArgs()
+
+  // The whole configuration surface of this seat, in protocol form. Order is
+  // load-bearing to a reader, not to Vibe: mode first because it is the
+  // security decision, then model, then thinking.
+  const mistralThinkingLevel = normalizeMistralThinkingLevel(payload.reasoningEffort)
+  const mistralSessionMode = mistralSessionModeForSeat(mistralReadOnlySeat)
+  const mistralSessionConfigOptions: { configId: string; value: string }[] = [
+    // `plan` for a read-only seat, `default` for a write seat. Built through
+    // mistralSessionModeForSeat, never a literal: Vibe's `accept-edits` and
+    // `auto-approve` modes auto-approve INSIDE the agent, so the tool never
+    // reaches session/request_permission and never reaches the host gate —
+    // selecting either would delete this seat's approval boundary while every
+    // TaskWraith control still rendered as armed. They are unreachable from
+    // that helper by design.
+    { configId: 'mode', value: mistralSessionMode },
+    // Without this the run silently uses whatever `active_model` sits in the
+    // user's global ~/.vibe/config.toml — a different model, a different price,
+    // and a meter that is then measuring the wrong thing.
+    { configId: 'model', value: model },
+    // Omitted entirely when TaskWraith's effort vocabulary has no Vibe
+    // equivalent: `set_config_option` rejects an unknown value and leaves the
+    // session on the model default, which is a silent downgrade rather than an
+    // error.
+    ...(mistralThinkingLevel ? [{ configId: 'thinking', value: mistralThinkingLevel }] : [])
+  ]
+
+  // ── Credential lane ──────────────────────────────────────────────────────
+  // Vibe resolves auth API-KEY-FIRST, so an inherited MISTRAL_API_KEY — which
+  // is also Pi's `mistral` upstream key, i.e. present on most machines that
+  // reach Mistral models at all — silently bills the user's metered API account
+  // and never consults the plan subscription. Different credential, different
+  // bill, no error.
+  //
+  // The env is resolved HERE rather than inside the spawn closure so the notice
+  // below is derived from the ACTUAL child environment rather than from
+  // `process.env`, which is only a proxy for it: a runtime profile can
+  // contribute variables this process never had. Same reason the scheduled
+  // launch seal derives `apiKeyEnvScrubbed` from the resolved env instead of
+  // asserting it.
+  const mistralByokLane = mistralByokLaneEnabled()
+  const mistralBaseEnv = createCliEnv(
+    {
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'mistral',
+      TASKWRAITH_RUN_ID: route.appRunId || '',
+      TASKWRAITH_CHAT_ID: route.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+    },
+    binaryPath
+  )
+  const mistralCredentialEnvPresent = MISTRAL_CREDENTIAL_ENV_VARS.some((key) =>
+    Boolean(mistralBaseEnv[key])
+  )
+  // scrubMistralCredentialEnv returns a NEW object and never mutates its input,
+  // which is what makes it safe to run over a resolved env that other launches
+  // may share.
+  const mistralChildEnv = mistralByokLane
+    ? mistralBaseEnv
+    : scrubMistralCredentialEnv(mistralBaseEnv)
+  if (mistralByokLane) {
+    safelyProjectMistral(() =>
+      sendAgentCompatLine(
+        event.sender,
+        'mistral',
+        {
+          type: 'provider_warning',
+          provider: 'mistral',
+          severity: 'warning',
+          title: 'Mistral BYOK lane enabled',
+          message:
+            'TASKWRAITH_MISTRAL_BYOK is set, so MISTRAL_API_KEY is being passed through to Vibe. Vibe resolves credentials API-key-first, so this run bills your metered Mistral API account — not your Vibe plan subscription.'
+        },
+        state
+      )
+    )
+  } else if (mistralCredentialEnvPresent) {
+    // The scrub is the default and is what makes this a subscription seat, but
+    // a user who has MISTRAL_API_KEY exported (for Pi, usually) and expects it
+    // to be used deserves to be told it was removed rather than quietly
+    // ignored. Only fires when a key actually existed, so it is not per-turn
+    // noise for everyone else.
+    safelyProjectMistral(() =>
+      sendAgentCompatLine(
+        event.sender,
+        'mistral',
+        {
+          type: 'provider_warning',
+          provider: 'mistral',
+          severity: 'info',
+          title: 'Mistral API key not used',
+          message:
+            'MISTRAL_API_KEY was removed from this run’s environment so Vibe uses your plan sign-in rather than your metered API account. Set TASKWRAITH_MISTRAL_BYOK=1 if you want the key used instead.'
+        },
+        state
+      )
+    )
+  }
+
+  const mistralSpawnAcpProcess = (): AcpChildProcess => {
+    const child = spawn(binaryPath, mistralAcpArgs, {
+      cwd: payload.workspace!,
+      shell: false,
+      // Already scrubbed unless the BYOK lane is explicitly on. Never re-derive
+      // it here: a second createCliEnv call inside the closure would be a fresh
+      // unscrubbed object, and the seat's whole credential story is that the
+      // env the child gets is the env the notice above described.
+      env: mistralChildEnv
+    })
+    // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
+    return child as unknown as AcpChildProcess
+  }
+
+  // Client-mediated tool approval. Vibe asks before running ANY tool in the two
+  // modes this seat selects, so unlike Grok this handler is the primary gate
+  // rather than defence-in-depth. The ACP core turns a 'deny' into a rejected
+  // outcome, so nothing runs without an explicit allow.
+  const mistralPermissionHandler = async (request: AcpPermissionRequest) => {
+    // TaskWraith's own immutable read-only broker tools are already gated by
+    // the broker's gateway; auto-allowing them here avoids a second card for a
+    // call the host is about to execute itself. Fails closed on membership.
+    if (mistralTaskWraithSafeToolRequested(request)) return 'allow'
+    const networkRead = grokAcpNetworkReadRequested(request)
+    if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      toolName: request.toolName,
+      toolKind: request.toolKind,
+      rawToolCall: request.rawToolCall,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      // Vibe exposes a permission hook but no workspace-rooted native shell
+      // sandbox. File tools can be path-preflighted; shell stays fail-closed
+      // until a runtime can attest one.
+      runtimeSandboxed: false
+    })
+    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
+    if (mistralReadOnlySeat) {
+      if (networkRead) return 'allow'
+      if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
+        return 'allow'
+      }
+      // Deliberate divergence from Grok's read-only ACP handler, which denies
+      // every shell call. Grok can afford that because its read-only argv
+      // (`--deny 'Bash(*)'`) stops it ATTEMPTING one; this seat has no argv, so
+      // the only thing standing between the read-only preamble's promise
+      // ("you CAN run ls, cat, grep, find, git log/status/diff") and a
+      // dead-ended turn is this branch. isReadOnlyShellCommand is the
+      // fail-closed authority — anything it cannot prove read-only, including
+      // anything it cannot parse, falls through to the deny below.
+      if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+      return 'deny'
+    }
+    const service =
+      nativeWorkspacePreflight.kind === 'allow'
+        ? nativeWorkspacePreflight.service
+        : grokToolKindToService(request.toolKind)
+    const allowed = await requestAgenticServiceApproval(
+      event.sender,
+      'mistral',
+      service,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      {
+        method: `mistral/${request.toolKind || 'tool'}`,
+        title: `Mistral wants to run: ${request.toolName}`,
+        body: `Mistral requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        runId: route.appRunId
+      }
+    )
+    return allowed ? 'allow' : 'deny'
+  }
+
+  const finishMistralAcpTurn = (
+    code: number | null,
+    turnComplete: boolean,
+    terminalStatus?: string
+  ): void => {
+    // normalizeGrokStopReason is shared, not borrowed: the vocabulary it folds
+    // (`end_turn` / `stop` / anything else) is the ACP core's terminal status,
+    // not Grok's. It is named for whoever needed it first.
+    const finalStopReason = normalizeGrokStopReason(terminalStatus)
+    const finalFailed =
+      !turnComplete ||
+      finalStopReason !== 'success' ||
+      (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
+    const safelyProject = (projection: () => void): void => {
+      try {
+        projection()
+      } catch (error) {
+        try {
+          console.error('[mistral-acp] terminal projection failed', error)
+        } catch {
+          // Terminal ownership below is independent of diagnostics.
+        }
+      }
+    }
+    try {
+      if (!state.completed) {
+        state.completed = true
+        const stopReason = finalStopReason
+        if (stopReason !== 'success') state.grokStopReason = stopReason
+        const emptyAfterToolFailure =
+          turnComplete &&
+          stopReason === 'success' &&
+          state.assistantText.trim().length === 0 &&
+          (state.grokToolErrorCount || 0) > 0
+        const failed = !turnComplete || stopReason !== 'success' || emptyAfterToolFailure
+        if (failed) {
+          // A rate-limit stop gets the CLASSIFIED wording, never the raw
+          // "Rate limit exceeded. Please wait a moment before trying again."
+          // That one string covers a ~60s throttle, a spent monthly budget, and
+          // (with pay-as-you-go overflow on) a run that did not stop at all —
+          // reporting it verbatim is what left mistral-vibe#275's reporter
+          // unable to decide anything.
+          //
+          // Only a `budget` verdict is a real wall. Should a `mistral` entry
+          // ever be added to ProviderQuotaWallClassifier's PROVIDER_RULES (it
+          // has none today, so this seat can never trip auto-failover), it must
+          // be gated on mistralStopIsQuotaWall — failing over to another
+          // provider because Mistral asked us to wait sixty seconds is exactly
+          // the behaviour this seat is built to avoid.
+          const limitVerdict = mistralLimitVerdictForState(state)
+          const limitIsQuotaWall = Boolean(limitVerdict && mistralStopIsQuotaWall(limitVerdict))
+          const message = limitVerdict
+            ? limitIsQuotaWall
+              ? limitVerdict.userMessage
+              : `${limitVerdict.userMessage} Retrying in about ${Math.max(
+                  1,
+                  Math.round(limitVerdict.retryAfterMs / 1000)
+                )}s is likely to succeed.`
+            : stopReason !== 'success'
+              ? `Mistral stopped before finishing this turn (stopReason: ${stopReason}). It may not have produced an answer or written files.`
+              : mistralAcpEmptyToolFailureMessage(state)
+          safelyProject(() => sendAgentCompatError(event.sender, 'mistral', message, state))
+        }
+        // Vibe reports no token usage over ACP, so the host projects it — with
+        // PER-MODEL rates. The seat's two models are 15x/25x apart and this
+        // number is the only budget signal the user has, so a flat rate would
+        // be wrong by more than an order of magnitude in one direction.
+        if (!state.tokenUsage) {
+          state.tokenUsage = estimateMistralTokenUsage(
+            model,
+            mistralProviderPrompt,
+            state.assistantText,
+            (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+          )
+        }
+        // Feed the heuristic plan meter. Fire-and-forget by design: this is an
+        // O(1) in-memory accumulate plus a debounced async flush, and awaiting a
+        // persistence write on the turn path is the known main-process freeze
+        // class here. A dropped sample costs an advisory estimate a few cents of
+        // accuracy; a blocked turn costs the user their run.
+        if (state.tokenUsage) {
+          void recordMistralTurnCost({
+            costUsd: Number(state.tokenUsage.total_cost_usd) || 0,
+            totalTokens: Number(state.tokenUsage.total_tokens) || 0
+          })
+        }
+        safelyProject(() =>
+          sendAgentCompatLine(
+            event.sender,
+            'mistral',
+            {
+              type: 'result',
+              status: failed ? 'failed' : 'success',
+              stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+              provider: 'mistral',
+              providerThreadId: state.providerSessionId || undefined,
+              ...(stopReason !== 'success' ? { stopReason } : {}),
+              fallback: false
+            },
+            state
+          )
+        )
+        safelyProject(() =>
+          sendAgentCompatExit(
+            event.sender,
+            'mistral',
+            failed ? 1 : turnComplete ? 0 : (code ?? 1),
+            state
+          )
+        )
+      }
+    } catch (error) {
+      try {
+        console.error('[mistral-acp] terminal projection failed', error)
+      } catch {
+        // Terminal ownership below is independent of diagnostic projection.
+      }
+    } finally {
+      try {
+        deleteCliProviderProcessIfOwned(cliProviderProcesses, 'mistral', mistralOwnedProcess)
+        mistralOwnedProcess = null
+        runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+      } finally {
+        try {
+          runManager.confirmTerminalStatus(
+            route.appRunId!,
+            runManager.getClaimedTerminalStatus(route.appRunId) ??
+              (finalFailed ? 'failed' : 'completed')
+          )
+        } finally {
+          mistralTransportClose.markTransportClosed()
+        }
+      }
+    }
+  }
+
+  // Every ACP turn opens a fresh session/new — seat sessions are hard-disabled —
+  // so the steer must ride each turn's prompt; there is no prior turn for Vibe
+  // to remember it from and therefore no redundant re-injection to avoid.
+  // Read-only seats get the recon steer (answer from reads rather than
+  // attempting a write the host will refuse); write seats get the write steer.
+  mistralProviderPrompt = applyMistralPromptPreamble(payload.prompt, mistralWriteSeat)
+  // Broker startup and prompt composition await after run registration. A
+  // destructive-history fence can terminalize that run while those awaits are
+  // pending; never spawn a fresh ACP child after its exact authority is gone.
+  if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    mistralTransportClose.markTransportClosed()
+    await mistralTransportOperation
+    return
+  }
+
+  let mistralAcpHandle: ReturnType<typeof runMistralAcpTurn>
+  try {
+    mistralAcpHandle = runMistralAcpTurn({
+      prompt: mistralProviderPrompt,
+      cwd: payload.workspace!,
+      // Throws on a blank version rather than letting an empty client_version
+      // reach Mistral; pre-checked above, and this catch is the backstop.
+      appVersion: mistralAppVersion,
+      mcpServers: mistralMcpServers,
+      sessionConfigOptions: mistralSessionConfigOptions,
+      spawnProcess: mistralSpawnAcpProcess,
+      onProcess: (child) => {
+        const proc = child as unknown as ChildProcess
+        runManager.attachProcess(route.appRunId!, proc)
+        mistralOwnedProcess = proc
+        cliProviderProcesses.set('mistral', proc)
+      },
+      onPermissionRequest: mistralPermissionHandler,
+      onEvent: (evt) => applyMistralRunEvent(state, evt),
+      onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),
+      onClose: finishMistralAcpTurn
+    })
+  } catch (error) {
+    try {
+      sendAgentCompatError(
+        event.sender,
+        'mistral',
+        `Mistral Vibe ACP could not start: ${error instanceof Error ? error.message : String(error)}`,
+        state
+      )
+    } catch {
+      // The settlement path below is projection-independent.
+    }
+    finishMistralAcpTurn(null, false, 'failed')
+    settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+    await mistralTransportOperation
+    return
+  }
+  runManager.attachAbortController(
+    route.appRunId!,
+    createMistralTurnAbortController(mistralAcpHandle)
+  )
+  // Keep the adapter invocation itself live from dispatch registration through
+  // the real child close. History deletion may begin before the transport
+  // operation is published above; its adapter join must cover that setup race.
+  await mistralAcpHandle.closed
+  await mistralTransportOperation
+}
+
 function respondToKimiWireRequest(child: ChildProcess, requestId: string | number, result: any) {
   child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: requestId, result }) + '\n')
 }
@@ -28070,6 +29037,112 @@ const piAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[
   }
 ]
 
+/**
+ * Static MCP status for the Mistral seat.
+ *
+ * Honest and run-independent: whether a PARTICULAR turn attached the broker
+ * depends on that run's advertise decision and posture, which a static probe
+ * cannot see. What is stable — and what this reports — is the attachment MODE.
+ */
+function mistralMcpStatusSnapshot() {
+  const advertiseEnabled = mistralMcpAdvertiseEnabled()
+  return {
+    provider: 'mistral' as const,
+    available: advertiseEnabled,
+    enabled: advertiseEnabled,
+    source: 'bridge',
+    serverName: advertiseEnabled ? GEMINI_MCP_SERVER_NAME : null,
+    tools: [] as string[],
+    sections: [] as unknown[],
+    message: advertiseEnabled
+      ? 'TaskWraith attaches its MCP broker directly to each Vibe ACP session (session/new), scoped to the run’s posture. Every brokered call still raises a Vibe permission request that TaskWraith answers, so this status cannot report a particular run’s attachment.'
+      : 'TaskWraith MCP tools are disabled for Mistral runs by TASKWRAITH_MISTRAL_MCP.'
+  }
+}
+
+// Mistral Vibe: the `vibe-acp` seat, plan-backed by the user's Vibe sign-in.
+//
+// Every field of the descriptor is spelled out rather than inherited. This is
+// not verbosity — `defaultProviderDescriptor` has NO `mistral` branch, so the
+// spread below lands on its trailing CLAUDE default and `providerLabel` returns
+// the string 'Gemini'. Both are wrong and neither fails to compile. Fixing the
+// shared helper belongs to ProviderAdapters.ts, which this change does not own;
+// until it does, these overrides are what keeps the registry honest.
+const mistralAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('mistral'),
+    label: 'Mistral',
+    transport: 'mistral-vibe-acp',
+    capabilitySource: 'provider',
+    features: {
+      // Hard-disabled (mistralSeatSessionsEnabled), despite Vibe advertising
+      // loadSession/resume/fork — see the note above runMistralAcpProvider.
+      persistentSessions: false,
+      // TRUE here where Grok is false, and it is the seat's whole safety story:
+      // `vibe-acp` raises session/request_permission for every tool execution
+      // in both modes this seat selects, so each call is answered by
+      // TaskWraith's approval ledger rather than by a provider-side allowlist.
+      appManagedApprovals: true,
+      workspaceGrants: true,
+      agentBenchMcpBridge: false,
+      providerManagedMcp: false,
+      nativeThreadTools: false,
+      hostCommandFallback: false
+    },
+    capabilities: {
+      approvalModes: ['plan', 'default'],
+      // Mapped onto Vibe's own thinking ladder and applied over the protocol;
+      // TaskWraith tiers with no Vibe equivalent clamp rather than pass through.
+      reasoningEffort: true,
+      speedTiers: [],
+      imageAttachments: false,
+      contextInjection: true,
+      // Every turn opens a fresh session/new. Nothing resumes.
+      sessionResumption: false,
+      perThreadMcp: false,
+      assistantTextStreaming: 'token'
+    },
+    capabilityCaveats: [
+      {
+        id: 'mistral-containment-is-the-session-mode',
+        severity: 'info',
+        capability: 'approvalModes',
+        title: 'Mistral containment rides the ACP session mode',
+        message:
+          '`vibe-acp` has no command-line surface at all, so this seat is contained by the ACP session mode selected after the handshake: `plan` for read-only seats, `default` for write-capable ones. Both raise a permission request for every tool call, which TaskWraith answers through its approval ledger and workspace path checks.'
+      }
+    ],
+    run: ({ event, payload }) => runMistralProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('mistral', runId),
+    // Deliberately NOT getAgentStatusSnapshotDirect: its final else-branch
+    // answers with a GEMINI-shaped snapshot built from `getCliProviderStatus`
+    // ('gemini') for any provider it does not name, and it does not name
+    // mistral. That would report Gemini's binary and version as this seat's.
+    getStatus: () => getCliProviderStatus('mistral'),
+    getMcpStatus: async () => mistralMcpStatusSnapshot(),
+    getCapabilityContract: async (request = {}) => {
+      // Built here rather than via getProviderCapabilityContractDirect for the
+      // same reason as getStatus: that helper resolves its status through the
+      // Gemini else-branch above.
+      const settings = AppStore.getSettings()
+      const status = await getCliProviderStatus('mistral').catch((error) => ({
+        provider: 'mistral',
+        available: false,
+        setupRequired: true,
+        error: error instanceof Error ? error.message : String(error)
+      }))
+      return buildProviderCapabilityContract({
+        provider: 'mistral',
+        settings,
+        workspacePath: request.workspacePath,
+        approvalMode: request.approvalMode,
+        status,
+        mcpStatus: mistralMcpStatusSnapshot()
+      })
+    }
+  }
+]
+
 const antigravityAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('antigravity'),
@@ -28166,7 +29239,8 @@ const providerAdapters = createProviderAdapterRegistry<
   ...antigravityAdapters,
   ...grokAdapters,
   ...cursorAdapters,
-  ...piAdapters
+  ...piAdapters,
+  ...mistralAdapters
 ], { requireCompleteProviderSet: true })
 
 async function readCliVersion(command: string): Promise<string> {
@@ -34269,6 +35343,16 @@ if (isGeminiMcpBridgeProcess) {
     const bridgeApnsTokenStorePath = join(app.getPath('userData'), 'bridge', 'apns-tokens.json')
     const bridgeApnsTokenStore = new BridgeApnsTokenStore({
       storagePath: bridgeApnsTokenStorePath,
+      log: (line) => {
+        console.log(line)
+      }
+    })
+    // Mistral publishes no quota for any plan and exposes no usage endpoint, so
+    // the seat's meter is fed entirely from locally observed spend. No file is
+    // written until a turn is actually recorded — the file's existence is what
+    // gates the sidebar row, so a user who never runs Mistral never sees it.
+    configureMistralQuotaStore({
+      storagePath: mistralQuotaStorePath(app.getPath('userData')),
       log: (line) => {
         console.log(line)
       }
@@ -40522,6 +41606,9 @@ if (isGeminiMcpBridgeProcess) {
     reconcileBridgeDaemonFromSettings()
     app.on('will-quit', () => {
       teardownCanvasSurfacesForWindowClose()
+      // Up to one debounce window of the last turn's spend is otherwise lost.
+      // The estimate is advisory, so this is tidiness rather than correctness.
+      void flushMistralQuotaStore()
       stopBridgeDaemon()
       releaseRemotePowerAssertion()
       if (stallReconcilerInterval) {
@@ -43654,6 +44741,14 @@ if (isGeminiMcpBridgeProcess) {
         return client.request('account/rateLimits/read', {}, 15_000)
       }
     )
+
+    // Mistral's ESTIMATED monthly burn. Deliberately NOT a probe and not a
+    // vendor figure — Mistral publishes no quota for any plan and has no usage
+    // endpoint, so this reads the locally accumulated cycle. Resolves null until
+    // the seat has actually run, which is what gates the sidebar meter.
+    ipcMain.handle('mistral-quota:get', async (): Promise<MistralQuotaSnapshot | null> => {
+      return currentMistralQuotaEstimate()
+    })
 
     ipcMain.handle('import-codex-usage-credential', async (event, filePath?: string | null) => {
       return importCodexUsageCredential(event, filePath)

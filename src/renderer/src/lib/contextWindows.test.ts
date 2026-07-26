@@ -60,7 +60,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'unknown-local', undefined, 65_536)).toBe(65_536)
   })
 
-  it('uses provider fallbacks for all nine provider identities when the model is unknown', () => {
+  it('uses provider fallbacks for all ten provider identities when the model is unknown', () => {
     const expected: Record<ContextWindowProviderId, number> = {
       gemini: 1_048_576,
       codex: 1_050_000,
@@ -71,7 +71,9 @@ describe('resolveContextWindow', () => {
       ollama: 262_144,
       antigravity: 1_048_576,
       pi: 1_000_000,
-      mistral: 1_000_000,
+      // Both Vibe seat models sit at 262_144 — NOT Pi's 1_000_000, despite the
+      // shared brand word. The two `mistral` identities are different providers.
+      mistral: 262_144
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<

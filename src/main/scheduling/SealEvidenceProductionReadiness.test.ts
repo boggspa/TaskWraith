@@ -14,6 +14,7 @@ import { CODEX_SCHEDULED_SEAL_READINESS } from './SealEvidenceCodex'
 import { CLAUDE_SCHEDULED_SEAL_READINESS } from './SealEvidenceClaude'
 import { KIMI_SCHEDULED_SEAL_READINESS } from './SealEvidenceKimi'
 import { GROK_SCHEDULED_SEAL_READINESS } from './SealEvidenceGrok'
+import { MISTRAL_SCHEDULED_SEAL_READINESS } from './SealEvidenceMistral'
 import { OLLAMA_SCHEDULED_SEAL_READINESS } from './SealEvidenceOllama'
 
 const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
@@ -23,6 +24,7 @@ const candidates = [
   CLAUDE_SCHEDULED_SEAL_READINESS,
   KIMI_SCHEDULED_SEAL_READINESS,
   GROK_SCHEDULED_SEAL_READINESS,
+  MISTRAL_SCHEDULED_SEAL_READINESS,
   OLLAMA_SCHEDULED_SEAL_READINESS
 ]
 
@@ -33,6 +35,7 @@ describe('scheduled seal producer production readiness', () => {
       'claude',
       'kimi',
       'grok',
+      'mistral',
       'ollama'
     ])
     for (const candidate of candidates) {

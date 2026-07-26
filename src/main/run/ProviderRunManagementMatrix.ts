@@ -16,7 +16,11 @@ export const PROVIDER_RUN_MANAGEMENT_IDS = [
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  // Tail-appended to stay element-for-element equal to RUN_MANAGER_PROVIDERS
+  // (index.constants.ts), which ProviderRunManagementBinding.test compares
+  // directly. Inserting mid-list silently breaks that equality.
+  'mistral'
 ] as const satisfies readonly ProviderId[]
 
 export type ProviderRunManagementId = (typeof PROVIDER_RUN_MANAGEMENT_IDS)[number]
@@ -112,6 +116,29 @@ export const PROVIDER_RUN_MANAGEMENT_DECLARATIONS = {
     offerState: 'live-selectable',
     toolMediationMode: 'provider-native-launch-allowlist',
     brokerObservability: 'none',
+    binaryRuntimeProvenance: 'observed-cli-path-and-version'
+  },
+  mistral: {
+    offerState: 'live-selectable',
+    // Stronger than Grok's `hybrid-…`, and the difference is measured rather
+    // than assumed. `vibe-acp` raises `session/request_permission` for EVERY
+    // tool execution in both modes this seat selects (`plan` read-only,
+    // `default` write) — native file/shell calls and brokered TaskWraith MCP
+    // calls alike — so the host answers each one through the same approval
+    // ledger. Nothing in this seat runs on a provider-native allowlist.
+    //
+    // This declaration is load-bearing, not descriptive: mistralGate's
+    // `mistralMcpAdvertiseEnabled()` defaults ON *because* of it. If Vibe is
+    // ever observed executing an advertised tool without a permission request,
+    // this row and that default must change together.
+    toolMediationMode: 'taskwraith-approval-gateway',
+    // Every tool call is a host-answered permission request and every brokered
+    // call is host-executed, so the host — not a provider-side event stream —
+    // is the authority for what this seat did.
+    brokerObservability: 'host-authoritative',
+    // The seat resolves a real `vibe-acp` executable path and can read its
+    // `--version`; there is no descriptor-bound admission step (Kimi) and no
+    // HTTP-server probe (Ollama).
     binaryRuntimeProvenance: 'observed-cli-path-and-version'
   }
 } as const satisfies Record<ProviderRunManagementId, ProviderRunManagementDeclaration>

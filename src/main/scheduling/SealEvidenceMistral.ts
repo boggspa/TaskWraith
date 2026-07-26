@@ -72,24 +72,23 @@ export const MISTRAL_SCHEDULED_SEAL_READINESS = {
   provider: 'mistral',
   productionWiring: 'blocked',
   blockers: [
-    // Nothing calls this producer's output: there is no runMistralProvider /
-    // production dispatch route for the Vibe ACP seat at all yet.
-    'production-dispatch-route-does-not-exist',
-    // providerBinaryName() maps 'mistral' -> 'mistral', but the managed binary
-    // is `vibe-acp`. Until the shared resolver knows that, the binary this seal
-    // would bind is not the binary a launch would spawn.
-    'cli-binary-resolution-does-not-name-vibe-acp',
+    // NOTE: two earlier blockers are now resolved and deliberately removed
+    // rather than left to rot — a stale blocker list is worse than none,
+    // because it makes a producer look less ready than it is and invites the
+    // next reader to re-solve a solved problem. `runMistralProvider` /
+    // `runMistralAcpProvider` now exist in index.ts, and
+    // `providerBinaryName('mistral')` now resolves to `vibe-acp`.
+    //
     // The session mode is selected AFTER session/new via
-    // session/set_config_option. The seal binds the intended mode; nothing yet
+    // session/set_config_option. The seal binds the INTENDED mode; nothing yet
     // observes the agent's acknowledgement, so a rejected set_config_option
-    // would leave the session on Vibe's own default.
+    // would silently leave the session on Vibe's own default — which for a
+    // read-only seat means running write-capable. This is the most
+    // consequential remaining gap.
     'session-mode-selection-not-observed-post-handshake',
-    // The steered prompt preamble is digested here, but no dispatch path has
-    // yet fixed the boundary at which the provider-visible prompt is final.
-    'provider-visible-steered-prompt-not-bound',
-    // ScheduledSealCoverage's producer inventory does not list 'mistral', so
-    // sealSoloOccurrence reports this provider as having no producer at all.
-    'scheduled-seal-coverage-inventory-excludes-mistral'
+    // The steered prompt preamble is digested here, but the dispatch path does
+    // not yet fix the boundary at which the provider-visible prompt is final.
+    'provider-visible-steered-prompt-not-bound'
   ]
 } as const
 

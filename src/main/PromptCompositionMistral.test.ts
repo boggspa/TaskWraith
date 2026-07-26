@@ -46,7 +46,9 @@ describe('composeRunPrompt — Mistral cross-turn context', () => {
     const result = composeMistral()
     expect(result.contextualPrompt).toContain('Conversation context')
     expect(result.contextualPrompt).toContain('Rename the byte pin to spark_pin.')
-    expect(result.contextualPrompt).toContain('Current user request:\nNow update the docs to match.')
+    expect(result.contextualPrompt).toContain(
+      'Current user request:\nNow update the docs to match.'
+    )
     expect(result.contextTurnsApplied).toBeGreaterThan(0)
   })
 

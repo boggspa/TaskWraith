@@ -18,7 +18,8 @@ describe('ScheduledSealCoverage', () => {
       'cursor',
       'ollama',
       'antigravity',
-      'pi'
+      'pi',
+      'mistral'
     ])
     expect(SCHEDULED_SEAL_PRODUCTION_WIRED_PROVIDER_IDS).toEqual(['cursor'])
 

@@ -37,6 +37,20 @@ export const GROK_SCOPED_MCP_SERVER_NAME = 'taskwraith-grok'
 /** Tool namespace reported by Grok ACP for the per-run TaskWraith broker. */
 export const GROK_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
 
+/**
+ * Read-only Mistral Vibe seats attach the safe-subset broker under this name.
+ *
+ * It must NOT collide with `taskwraith-grok` or `taskwraith-broker`: the
+ * permission handler decides whether a `session/request_permission` targets one
+ * of TaskWraith's own immutable read-only tools by unqualifying the reported
+ * tool name against the namespaces this seat actually advertised. A shared name
+ * would let one seat's scoped-subset qualifier vouch for another seat's call.
+ */
+export const MISTRAL_SCOPED_MCP_SERVER_NAME = 'taskwraith-mistral'
+
+/** Tool namespace `vibe-acp` reports for the per-run TaskWraith broker. */
+export const MISTRAL_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
+
 export const PROBE_TIMEOUT_MS = 1000
 
 export const KNOWN_OFF_PATH_CODEX_BINARIES = ['/Applications/Codex.app/Contents/Resources/codex']
@@ -63,5 +77,10 @@ export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  // Appended, not inserted: ProviderRunManagementBinding.test asserts this list
+  // is element-for-element equal to PROVIDER_RUN_MANAGEMENT_IDS, so the two
+  // orderings are one fact stored twice. Keep new identities at the tail of
+  // BOTH.
+  'mistral'
 ]
