@@ -14,10 +14,10 @@ export interface HumanCollaborationInviteComposerControlProps {
   live?: boolean
   busy?: boolean
   defaultOpen?: boolean
-  onCopyInvite?: (options?: { allowLanOnly?: boolean }) =>
-    | Promise<HumanCollaborationInviteCopyResult>
-    | HumanCollaborationInviteCopyResult
-    | void
+  onCopyInvite?: (options?: {
+    allowLanOnly?: boolean
+    allowLoopback?: boolean
+  }) => Promise<HumanCollaborationInviteCopyResult> | HumanCollaborationInviteCopyResult | void
   onCopyInviteText?: (invitePayload: string) => Promise<boolean> | boolean
   onStopSharing?: () => void
   onOpenRemoteSetup?: () => void
@@ -102,6 +102,13 @@ export function HumanCollaborationInviteComposerControl({
   const showLanOnlyAction = Boolean(
     latestResult?.code === 'no-relay-url' && latestResult.canCopyLanOnly && latestResult.invitePayload
   )
+  // Same-Mac door: only offered once the guard has actually fired, so it never
+  // competes with a real remote invite — it's the two-dev-instance test path.
+  const showLoopbackOnlyAction = Boolean(
+    latestResult?.code === 'no-relay-url' &&
+    latestResult.canCopyLoopbackOnly &&
+    latestResult.invitePayload
+  )
   const showManualInvite = Boolean(manualInvite)
 
   const copyFreshInvite = async (allowLanOnly = false): Promise<void> => {
@@ -121,7 +128,9 @@ export function HumanCollaborationInviteComposerControl({
     }
   }
 
-  const copyExistingPayload = async (): Promise<void> => {
+  const copyExistingPayload = async (
+    successStatus = 'LAN-only People invite copied.'
+  ): Promise<void> => {
     const payload = latestResult?.invitePayload
     if (!payload || !onCopyInviteText) return
     setLocalBusy(true)
@@ -129,7 +138,7 @@ export function HumanCollaborationInviteComposerControl({
       const copied = await Promise.resolve(onCopyInviteText(payload))
       if (copied) {
         setManualInvite('')
-        setStatus('LAN-only People invite copied.')
+        setStatus(successStatus)
       } else {
         setManualInvite(payload)
         setStatus('Clipboard copy failed. The invite is shown below so you can copy it manually.')
@@ -250,6 +259,17 @@ export function HumanCollaborationInviteComposerControl({
                 onClick={() => void copyExistingPayload()}
               >
                 Copy LAN-only invite
+              </button>
+            )}
+            {showLoopbackOnlyAction && (
+              <button
+                type="button"
+                className="composer-human-invite-secondary"
+                disabled={disabled || copyBusy}
+                onClick={() => void copyExistingPayload('Same-Mac People invite copied.')}
+                title="Reachable only from this Mac — for testing against a second instance on this machine."
+              >
+                Copy same-Mac invite
               </button>
             )}
             {(latestResult?.code === 'bridge-stopped' || latestResult?.code === 'no-relay-url') && (

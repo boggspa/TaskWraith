@@ -927,8 +927,8 @@ describe('Sidebar shared chat create options', () => {
         ({ variant, label, disabled }) => ({ variant, label, disabled })
       )
     ).toEqual([
-      { variant: 'global', label: 'Shared General Chat', disabled: false },
-      { variant: 'workspace', label: 'Shared Workspace Chat', disabled: false }
+      { variant: 'global', label: 'People Chat (General)', disabled: false },
+      { variant: 'workspace', label: 'People Chat (Workspace)', disabled: false }
     ])
 
     expect(
@@ -977,8 +977,8 @@ describe('Sidebar shared chat create options', () => {
 
     expect(html).toContain('Shared planning thread')
     expect(html).toContain('sidebar-shared-chat-item')
-    expect(html).toContain('Shared with collaborators')
-    expect(html).toContain('aria-label="Shared chat actions"')
+    expect(html).toContain('People have access')
+    expect(html).toContain('aria-label="People chat actions"')
     expect(html).toContain('sidebar-overflow-menu')
   })
 
@@ -1572,7 +1572,7 @@ describe('Sidebar footer controls', () => {
   it('renders the Approvals and Shares control buttons', () => {
     const html = renderSidebar([makeChat()])
     expect(html).toContain('aria-label="Approvals"')
-    expect(html).toContain('aria-label="Shares"')
+    expect(html).toContain('aria-label="People"')
   })
 
   it('glows the Approvals button red only while an approval is pending', () => {

@@ -518,7 +518,7 @@ export function JoinSharedChatModal({
 
         {step === 'viewing' ? (
           <>
-            <h2 className="creative-approval-modal-title">{projection?.title || 'Shared chat'}</h2>
+            <h2 className="creative-approval-modal-title">{projection?.title || 'People chat'}</h2>
             <div className={connectionClassName}>Connection: {connectionLabel}</div>
             {connectionState === 'disconnected' && (
               /* P2a presence clarity: offline is a STATE, not an error — say

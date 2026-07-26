@@ -1570,6 +1570,14 @@ function App(): React.JSX.Element {
         chat?: ChatRecord | null
         requireActiveShare?: boolean
         allowLanOnly?: boolean
+        /**
+         * Same-Mac testing: accept an invite whose only door is loopback. A
+         * loopback door is useless to a phone (which is why it's rejected by
+         * default) but it is exactly right for two dev instances on one box —
+         * and strictly SAFER than a LAN door, since nothing off this machine
+         * can reach it. See devAppName.ts / TASKWRAITH_INSTANCE_ID.
+         */
+        allowLoopback?: boolean
       } = {}
     ): Promise<HumanCollaborationInviteCopyResult> => {
       if (typeof window.api.humanCollaborationCreateShare !== 'function') {
@@ -1641,7 +1649,7 @@ function App(): React.JSX.Element {
           ...previous,
           [chatId]: postHealth
         }))
-        if (availability.relayUrls.length === 0 || availability.loopbackOnly) {
+        if (availability.relayUrls.length === 0) {
           return {
             ok: false,
             code: 'no-relay-url',
@@ -1652,6 +1660,20 @@ function App(): React.JSX.Element {
             relayWarning,
             availability,
             health: postHealth
+          }
+        }
+        if (!options.allowLoopback && availability.loopbackOnly) {
+          return {
+            ok: false,
+            code: 'no-relay-url',
+            message:
+              'This invite can only be reached from this Mac. Open remote setup for a collaborator on another machine, or copy it anyway to test against a second instance on this Mac.',
+            invitePayload,
+            relayUrls,
+            relayWarning,
+            availability,
+            health: postHealth,
+            canCopyLoopbackOnly: true
           }
         }
         if (!options.allowLanOnly && availability.lanAvailable && !availability.remoteAvailable) {
@@ -1689,7 +1711,11 @@ function App(): React.JSX.Element {
           relayWarning,
           availability,
           health: postHealth,
-          message: options.allowLanOnly ? 'LAN-only People invite copied.' : 'Fresh People invite copied.'
+          message: options.allowLoopback
+            ? 'Same-Mac People invite copied.'
+            : options.allowLanOnly
+              ? 'LAN-only People invite copied.'
+              : 'Fresh People invite copied.'
         }
       } catch (error) {
         console.error('[human-collaboration] create share failed', error)
@@ -27498,11 +27524,12 @@ function App(): React.JSX.Element {
       humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
       humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
       onCopyHumanCollaborationInvite: paneHumanCollaborationShare
-        ? (options?: { allowLanOnly?: boolean }) =>
+        ? (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
             createFreshHumanCollaborationInvite(paneHumanCollaborationShare.chatId, {
               mode: paneHumanCollaborationShare.mode,
               chat: viewerChat,
-              allowLanOnly: options?.allowLanOnly
+              allowLanOnly: options?.allowLanOnly,
+              allowLoopback: options?.allowLoopback
             })
         : undefined,
       onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
@@ -28711,11 +28738,12 @@ function App(): React.JSX.Element {
         humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
         humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
         onCopyHumanCollaborationInvite: paneHumanCollaborationShare
-          ? (options?: { allowLanOnly?: boolean }) =>
+          ? (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
               createFreshHumanCollaborationInvite(paneHumanCollaborationShare.chatId, {
                 mode: paneHumanCollaborationShare.mode,
                 chat: viewerChat,
-                allowLanOnly: options?.allowLanOnly
+                allowLanOnly: options?.allowLanOnly,
+                allowLoopback: options?.allowLoopback
               })
           : undefined,
         onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,
@@ -29188,10 +29216,11 @@ function App(): React.JSX.Element {
       ? connectedCollaborationChatIds.has(currentChat.appChatId)
       : false,
     onCopyHumanCollaborationInvite: currentChatHumanCollaborationShare
-      ? (options?: { allowLanOnly?: boolean }) =>
+      ? (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
           createFreshHumanCollaborationInvite(currentChatHumanCollaborationShare.chatId, {
             mode: currentChatHumanCollaborationShare.mode,
-            allowLanOnly: options?.allowLanOnly
+            allowLanOnly: options?.allowLanOnly,
+            allowLoopback: options?.allowLoopback
           })
       : undefined,
     onCopyHumanCollaborationInviteText: copyHumanCollaborationInvitePayload,

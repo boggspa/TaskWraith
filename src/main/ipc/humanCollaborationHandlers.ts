@@ -164,6 +164,29 @@ function retryableJoinError(err: unknown): boolean {
   )
 }
 
+/**
+ * An invite can advertise several relay doors (tailnet wss, LAN, loopback, a
+ * manually-configured public URL) and we try each in turn. Reporting only the
+ * LAST failure hides which doors were attempted — on a cross-network join the
+ * useful signal is precisely "the wss door refused but the LAN door timed out".
+ * Aggregate every attempt into one actionable message.
+ */
+export function describeRelayAttemptFailures(
+  attempts: ReadonlyArray<{ relayUrl: string; error: unknown }>,
+  fallbackMessage: string
+): Error {
+  if (attempts.length === 0) return new Error(fallbackMessage)
+  const lines = attempts.map(({ relayUrl, error }) => {
+    const detail = error instanceof Error ? error.message : String(error)
+    return `  • ${relayUrl} — ${detail}`
+  })
+  const header =
+    attempts.length === 1
+      ? 'Could not reach the collaboration relay.'
+      : `Could not reach any of the ${attempts.length} collaboration relay URLs in this invite.`
+  return new Error(`${header}\n${lines.join('\n')}`)
+}
+
 export function registerHumanCollaborationHandlers(
   deps: HumanCollaborationHandlersDeps
 ): HumanCollaborationHandlersRegistration {
@@ -627,7 +650,7 @@ export function registerHumanCollaborationHandlers(
         )
       }
 
-      let lastRetryableError: unknown = null
+      const relayAttemptFailures: Array<{ relayUrl: string; error: unknown }> = []
       const collaboratorIdentity = loadCollaboratorIdentity()
       for (const relayUrl of relayUrls) {
         const client = new HumanCollaborationCollaboratorClient({
@@ -666,12 +689,13 @@ export function registerHumanCollaborationHandlers(
           if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
           else client.dispose()
           if (!retryableJoinError(err)) throw err
-          lastRetryableError = err
+          relayAttemptFailures.push({ relayUrl, error: err })
         }
       }
-      throw lastRetryableError instanceof Error
-        ? lastRetryableError
-        : new Error('Could not connect to any collaboration relay URL.')
+      throw describeRelayAttemptFailures(
+        relayAttemptFailures,
+        'Could not connect to any collaboration relay URL.'
+      )
     }
   )
 
@@ -715,7 +739,7 @@ export function registerHumanCollaborationHandlers(
       throw new Error('Collaborator identity is unavailable, so reconnect is not possible.')
     }
     disposeCollaboratorClient()
-    let lastRetryableError: unknown = null
+    const relayAttemptFailures: Array<{ relayUrl: string; error: unknown }> = []
     for (const relayUrl of record.relayUrls) {
       const client = new HumanCollaborationCollaboratorClient({
         socketFactory: deps.socketFactory,
@@ -746,12 +770,13 @@ export function registerHumanCollaborationHandlers(
         if (humanCollaborationCollaboratorClient === client) disposeCollaboratorClient()
         else client.dispose()
         if (!retryableJoinError(err)) throw err
-        lastRetryableError = err
+        relayAttemptFailures.push({ relayUrl, error: err })
       }
     }
-    throw lastRetryableError instanceof Error
-      ? lastRetryableError
-      : new Error('Could not reconnect over any known relay URL.')
+    throw describeRelayAttemptFailures(
+      relayAttemptFailures,
+      'Could not reconnect over any known relay URL.'
+    )
   })
 
   ipcMain.handle(

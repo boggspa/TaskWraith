@@ -1081,6 +1081,70 @@
 .shares-panel-open-invites {
   font-size: var(--font-size-xs, 11px);
 }
+.shares-panel-audit {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  background: color-mix(in srgb, var(--panel-bg) 42%, transparent);
+}
+.shares-panel-audit-summary {
+  cursor: pointer;
+  font-size: var(--font-size-sm, 12px);
+  color: var(--text-secondary);
+  user-select: none;
+}
+.shares-panel-audit-summary:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  outline-offset: 2px;
+}
+.shares-panel-audit-hint,
+.shares-panel-audit-empty {
+  margin-top: 8px;
+}
+.shares-panel-audit-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.shares-panel-audit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: var(--font-size-xs, 11px);
+  background: color-mix(in srgb, var(--panel-bg) 30%, transparent);
+}
+.shares-panel-audit-row.is-problem {
+  background: color-mix(in srgb, var(--warning, #f5b14c) 12%, transparent);
+}
+.shares-panel-audit-time {
+  flex: 0 0 auto;
+  min-width: 56px;
+  color: color-mix(in srgb, var(--text-secondary) 80%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.shares-panel-audit-kind {
+  font-weight: 600;
+}
+.shares-panel-audit-code {
+  color: var(--warning, #f5b14c);
+}
+.shares-panel-audit-detail,
+.shares-panel-audit-preview {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.shares-panel-audit-preview {
+  font-style: italic;
+}
 .approval-grant-admin {
   display: flex;
   flex-direction: column;

@@ -378,7 +378,7 @@ export interface ComposerProps {
   markPersistentSessionRestartNeeded: any
   multiview: any
   onOllamaModelSelected?: (modelId: string, modelLabel?: string) => void
-  onCopyHumanCollaborationInvite?: (options?: { allowLanOnly?: boolean }) =>
+  onCopyHumanCollaborationInvite?: (options?: { allowLanOnly?: boolean; allowLoopback?: boolean }) =>
     | Promise<HumanCollaborationInviteCopyResult>
     | HumanCollaborationInviteCopyResult
     | void

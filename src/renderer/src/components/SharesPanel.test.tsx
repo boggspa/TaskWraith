@@ -121,7 +121,7 @@ describe('SharesPanelView', () => {
         now={NOW}
       />
     )
-    expect(html).toContain('Shared chat')
+    expect(html).toContain('People chat')
   })
 
   it('shows an awaiting state and counts open invites with no participants', () => {
@@ -358,5 +358,71 @@ describe('SharesPanelView presence states (P2a)', () => {
     )
     expect(html).toContain('Invite issued')
     expect(html).toContain('Invite sent — awaiting collaborator')
+  })
+
+  it('hides the activity log entirely when the bridge does not expose one', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{}}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+      />
+    )
+    expect(html).not.toContain('Activity log')
+  })
+
+  it('renders a rejected contribution with its reason, not just that it happened', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{}}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        auditEvents={[
+          {
+            id: 'a-1',
+            at: NOW - 30_000,
+            kind: 'contribution.rejected',
+            code: 'quota_exceeded',
+            detail: 'Alex'
+          },
+          {
+            id: 'a-2',
+            at: NOW - 5_000,
+            kind: 'admission.sas_confirmed'
+          }
+        ] as never}
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Activity log')
+    // The denial code must be translated — 'quota_exceeded' alone is jargon.
+    expect(html).toContain('Contribution rejected')
+    expect(html).toContain('rate limit — too many, too fast')
+    expect(html).toContain('30s ago')
+    expect(html).toContain('Security code confirmed')
+    // Failures are tinted so they survive a scan of a long log.
+    expect(html).toContain('is-problem')
+  })
+
+  it('surfaces an activity-log load failure instead of implying no activity', () => {
+    const html = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare() as never]}
+        chatTitles={{}}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        auditEvents={[]}
+        auditError="Could not load the activity log."
+        now={NOW}
+      />
+    )
+    expect(html).toContain('Could not load the activity log.')
+    expect(html).not.toContain('No collaboration activity yet.')
   })
 })

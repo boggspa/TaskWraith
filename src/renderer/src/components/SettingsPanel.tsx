@@ -2971,10 +2971,10 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
   },
   {
     id: 'shares',
-    label: 'Shares',
+    label: 'People',
     group: 'integrations',
-    description: 'Chats shared with human collaborators — participants, access mode, and per-share revoke.',
-    aliases: ['share', 'shares', 'shared chats', 'collaborators', 'people', 'collaboration', 'guests', 'invite'],
+    description: 'Chats you have invited people into — participants, access level, and per-chat revoke.',
+    aliases: ['share', 'shares', 'shared chats', 'collaborators', 'people', 'collaboration', 'guests', 'guest', 'invite'],
     scope: 'global'
   },
   {

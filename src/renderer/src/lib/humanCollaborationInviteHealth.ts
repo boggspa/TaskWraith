@@ -48,6 +48,8 @@ export type HumanCollaborationInviteCopyResult =
       availability?: HumanCollaborationRelayAvailability
       health?: HumanCollaborationInviteHealth
       canCopyLanOnly?: boolean
+      /** Only door is loopback — reachable from this Mac only (same-box testing). */
+      canCopyLoopbackOnly?: boolean
     }
 
 export function classifyHumanCollaborationRelayUrls(

@@ -3,6 +3,7 @@ import type {
   HumanCollaborationShare,
   HumanCollaboratorParticipant
 } from '../../../main/collaboration/HumanCollaborationStore'
+import type { HumanCollaborationAuditEvent } from '../../../main/collaboration/HumanCollaborationAuditLog'
 import { buildHumanCollaborationInvitePayload } from '../lib/humanCollaborationInvitePayload'
 
 /**
@@ -62,6 +63,73 @@ function participantStatusLabel(status: HumanCollaboratorParticipant['status']):
   return 'Removed'
 }
 
+/**
+ * Activity log (P2 audit surface).
+ *
+ * `HumanCollaborationAuditLog` has always recorded the full admission and
+ * contribution timeline — including the reason a contribution was DROPPED —
+ * but nothing rendered it, so a silently-rejected comment looked identical to
+ * one that was never sent. These labels turn the machine vocabulary into what a
+ * host actually needs to see while a share is live.
+ */
+const AUDIT_KIND_LABELS: Record<string, string> = {
+  'share.created': 'Share created',
+  'share.rules_changed': 'Contribution rules changed',
+  'share.revoked': 'Sharing stopped',
+  'participant.revoked': 'Collaborator removed',
+  'invite.created': 'Invite created',
+  'invite.consumed': 'Invite used',
+  'admission.began': 'Join started — security code shown',
+  'admission.sas_confirmed': 'Security code confirmed',
+  'admission.sas_failed': 'Security code REJECTED',
+  'session.disconnected': 'Collaborator disconnected',
+  'contribution.received': 'Comment received',
+  'contribution.deduped': 'Duplicate ignored',
+  'contribution.rejected': 'Contribution rejected',
+  'draft.inserted': 'Inserted into your composer'
+}
+
+/** Denial codes read as jargon in a log line; say what actually happened. */
+const AUDIT_CODE_LABELS: Record<string, string> = {
+  read_only: 'share is view-only',
+  rule_denied: 'blocked by the contribution rules',
+  quota_exceeded: 'rate limit — too many, too fast',
+  revoked: 'access had been revoked',
+  stale_session: 'session was stale — needs a reconnect',
+  protocol_unsupported: 'unsupported protocol version',
+  duplicate_contribution: 'duplicate of one already recorded'
+}
+
+/** Kinds that mean something went wrong — tinted so they stand out in a scan. */
+const AUDIT_PROBLEM_KINDS = new Set([
+  'admission.sas_failed',
+  'contribution.rejected',
+  'share.revoked',
+  'participant.revoked'
+])
+
+function auditKindLabel(kind: string): string {
+  return AUDIT_KIND_LABELS[kind] || kind
+}
+
+function auditCodeLabel(code: string | undefined): string | null {
+  if (!code) return null
+  return AUDIT_CODE_LABELS[code] || code
+}
+
+/** Relative time from the view's supplied `now` — no clock read during render. */
+function auditRelativeTime(at: number, now: number): string {
+  const deltaMs = Math.max(0, now - at)
+  const seconds = Math.floor(deltaMs / 1000)
+  if (seconds < 10) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 export function SharesPanelView({
   shares,
   chatTitles,
@@ -73,6 +141,8 @@ export function SharesPanelView({
   onRevokeParticipant,
   onChangeRules,
   liveSessionKeys,
+  auditEvents,
+  auditError,
   now
 }: {
   shares: HumanCollaborationShare[]
@@ -87,6 +157,9 @@ export function SharesPanelView({
   onChangeRules?: (shareId: string, preset: string) => void
   /** P2a presence clarity: `${shareId}:${collaboratorId}` keys with a LIVE session. */
   liveSessionKeys?: Set<string>
+  /** Newest-first audit timeline. Omitted entirely when the bridge lacks it. */
+  auditEvents?: HumanCollaborationAuditEvent[]
+  auditError?: string | null
   // The "current time" for open-invite expiry, supplied by the container so the
   // view stays a pure function of its props (no clock read during render).
   now: number
@@ -112,7 +185,7 @@ export function SharesPanelView({
               : 'Not connected'
         return {
           share,
-          title: chatTitles[share.chatId] || 'Shared chat',
+          title: chatTitles[share.chatId] || 'People chat',
           participants,
           openInvites,
           isConnected,
@@ -125,7 +198,7 @@ export function SharesPanelView({
   return (
     <div className="shares-panel">
       <div className="shares-panel-header">
-        <label className="settings-label">Shares</label>
+        <label className="settings-label">People</label>
         <div className="settings-hint">
           Chats you&apos;ve shared with human collaborators. Each collaborator joins over an
           out-of-band invite and a one-time security code; you can stop a share at any time.
@@ -262,6 +335,54 @@ export function SharesPanelView({
           ))}
         </ul>
       )}
+
+      {(auditEvents !== undefined || auditError) && (
+        <details className="shares-panel-audit">
+          <summary className="shares-panel-audit-summary">
+            Activity log
+            {auditEvents && auditEvents.length > 0 ? ` (${auditEvents.length})` : ''}
+          </summary>
+          <div className="settings-hint shares-panel-audit-hint">
+            Every admission and contribution, newest first — including the ones that were
+            dropped and why. Nothing here is sent anywhere; it stays on this Mac.
+          </div>
+          {auditError ? (
+            <div className="settings-error" role="alert">
+              {auditError}
+            </div>
+          ) : !auditEvents || auditEvents.length === 0 ? (
+            <div className="settings-hint shares-panel-audit-empty">No collaboration activity yet.</div>
+          ) : (
+            <ul className="shares-panel-audit-list">
+              {auditEvents.map((entry) => {
+                const codeLabel = auditCodeLabel(entry.code)
+                return (
+                  <li
+                    className={`shares-panel-audit-row${
+                      AUDIT_PROBLEM_KINDS.has(entry.kind) ? ' is-problem' : ''
+                    }`}
+                    key={entry.id}
+                  >
+                    <span className="shares-panel-audit-time">
+                      {auditRelativeTime(entry.at, now)}
+                    </span>
+                    <span className="shares-panel-audit-kind">{auditKindLabel(entry.kind)}</span>
+                    {codeLabel && (
+                      <span className="shares-panel-audit-code">{codeLabel}</span>
+                    )}
+                    {entry.detail && (
+                      <span className="shares-panel-audit-detail">{entry.detail}</span>
+                    )}
+                    {entry.preview && (
+                      <span className="shares-panel-audit-preview">“{entry.preview}”</span>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </details>
+      )}
     </div>
   )
 }
@@ -276,6 +397,12 @@ export function SharesPanel() {
   const [now, setNow] = useState(() => Date.now())
   const [connectedChatIds, setConnectedChatIds] = useState<Set<string>>(new Set())
   const [liveSessionKeys, setLiveSessionKeys] = useState<Set<string>>(new Set())
+  // `undefined` = the bridge doesn't expose the audit log, so the section is
+  // hidden entirely rather than rendering a permanently-empty box.
+  const [auditEvents, setAuditEvents] = useState<HumanCollaborationAuditEvent[] | undefined>(
+    undefined
+  )
+  const [auditError, setAuditError] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     setNow(Date.now())
@@ -323,6 +450,23 @@ export function SharesPanel() {
     }
   }, [])
 
+  // A rejected contribution does NOT broadcast a collaboration update (nothing
+  // was recorded), so the log has to be polled to stay live during a session —
+  // an update-only refresh would never show the very rows you need most.
+  const refreshAudit = useCallback(() => {
+    if (typeof window.api.humanCollaborationAuditLog !== 'function') {
+      setAuditEvents(undefined)
+      return
+    }
+    void window.api
+      .humanCollaborationAuditLog({ limit: 80 })
+      .then((events) => {
+        setAuditEvents(Array.isArray(events) ? (events as HumanCollaborationAuditEvent[]) : [])
+        setAuditError(null)
+      })
+      .catch(() => setAuditError('Could not load the activity log.'))
+  }, [])
+
   // Resolve chat titles for the shared chatIds. Best-effort — a share whose
   // chat can't be resolved falls back to a generic label.
   const refreshTitles = useCallback(() => {
@@ -343,22 +487,25 @@ export function SharesPanel() {
     refresh()
     refreshTitles()
     refreshConnected()
+    refreshAudit()
     if (typeof window.api.onHumanCollaborationUpdated !== 'function') return
     const unsubscribe = window.api.onHumanCollaborationUpdated(() => {
       refresh()
       refreshTitles()
       refreshConnected()
+      refreshAudit()
     })
 
     const connectedInterval = window.setInterval(() => {
       refreshConnected()
+      refreshAudit()
     }, 5000)
 
     return () => {
       unsubscribe?.()
       window.clearInterval(connectedInterval)
     }
-  }, [refresh, refreshTitles, refreshConnected])
+  }, [refresh, refreshTitles, refreshConnected, refreshAudit])
 
   const handleRevoke = useCallback(
     (shareId: string) => {
@@ -461,6 +608,8 @@ export function SharesPanel() {
       onChangeRules={handleChangeRules}
       connectedChatIds={connectedChatIds}
       liveSessionKeys={liveSessionKeys}
+      auditEvents={auditEvents}
+      auditError={auditError}
       now={now}
     />
   )

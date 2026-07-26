@@ -105,16 +105,16 @@ export function getSharedChatCreateOptions({
   return [
     {
       variant: 'global',
-      label: 'Shared General Chat',
-      title: 'Create a shared general chat',
+      label: 'People Chat (General)',
+      title: 'Create a general chat you can invite people into',
       disabled: false
     },
     {
       variant: 'workspace',
-      label: 'Shared Workspace Chat',
+      label: 'People Chat (Workspace)',
       title: hasWorkspace
-        ? 'Create a shared workspace chat'
-        : 'Open a workspace first to create a shared workspace chat',
+        ? 'Create a workspace chat you can invite people into'
+        : 'Open a workspace first to create a workspace chat for people',
       disabled: !hasWorkspace
     }
   ]
@@ -1713,7 +1713,7 @@ function SidebarChatRowInner({
     variant === 'shared'
       ? {
           chatId: chat.appChatId,
-          title: chat.title || 'Shared chat',
+          title: chat.title || 'People chat',
           provider: chat.provider,
           selected: isSelected,
           isRunning,
@@ -1747,7 +1747,7 @@ function SidebarChatRowInner({
     variant === 'workspace'
       ? needsInput || isRunning || showStatus || subThreadCount > 0 || isCollaborating
       : needsInput || isRunning || showStatus
-  const copyTitle = variant === 'shared' ? chat.title || 'Shared chat' : chat.title
+  const copyTitle = variant === 'shared' ? chat.title || 'People chat' : chat.title
   return (
     <div
       role="button"
@@ -1839,7 +1839,7 @@ function SidebarChatRowInner({
             {variant === 'workspace' && isCollaborating && (
               <span
                 className="sidebar-branched-badge sidebar-shared-badge"
-                title="Shared with collaborators"
+                title="People have access"
               >
                 People
               </span>
@@ -1850,7 +1850,7 @@ function SidebarChatRowInner({
       {variant === 'shared' && (
         <span
           className="sidebar-branched-badge sidebar-shared-badge"
-          title="Shared with collaborators"
+          title="People have access"
         >
           People
         </span>
@@ -1858,7 +1858,7 @@ function SidebarChatRowInner({
       {isRunning && <SidebarRunningGhost />}
       {!isRunning && <ChatAgeLabel timestamp={chat.updatedAt || chat.createdAt} />}
       <SidebarOverflowMenu
-        triggerLabel={variant === 'shared' ? 'Shared chat actions' : 'Chat actions'}
+        triggerLabel={variant === 'shared' ? 'People chat actions' : 'Chat actions'}
         items={buildMenuItems(chat, surfaceId)}
       />
     </div>
@@ -2808,7 +2808,7 @@ export function SharesFooterPopover({
 }) {
   return (
     <SidebarFooterPopover
-      title="Shares"
+      title="People"
       ariaLabel="Active shared chats"
       navLabel="Manage shares"
       onNav={onOpenSettings}
@@ -2817,7 +2817,7 @@ export function SharesFooterPopover({
         <div className="sidebar-footer-popover-empty">No active shares</div>
       ) : (
         shares.map((share) => {
-          const title = resolveChatTitle?.(share.chatId) || 'Shared chat'
+          const title = resolveChatTitle?.(share.chatId) || 'People chat'
           const isConnected = connectedShareChatIds?.has(share.chatId) ?? false
           const active = share.participants.filter(
             (participant) => participant.status === 'active'
@@ -4755,7 +4755,7 @@ export function Sidebar({
                     title="Join a shared chat — paste an invite to follow along"
                   >
                     <PeopleSymbolIcon />
-                    <span className="sidebar-new-menu-item-label">Join Shared Chat</span>
+                    <span className="sidebar-new-menu-item-label">Join a People Chat</span>
                   </button>
                 )}
               </div>
@@ -5802,7 +5802,7 @@ export function Sidebar({
                                 {collaboratingChatIds.has(chat.appChatId) && (
                                   <span
                                     className="sidebar-branched-badge sidebar-shared-badge"
-                                    title="Shared with collaborators"
+                                    title="People have access"
                                   >
                                     People
                                   </span>
@@ -6164,10 +6164,10 @@ export function Sidebar({
                   className="sidebar-section-header-toggle"
                   onClick={() => toggleSidebarSection('shared')}
                   aria-expanded={!isSectionCollapsed('shared')}
-                  title={isSectionCollapsed('shared') ? 'Expand Shared' : 'Collapse Shared'}
+                  title={isSectionCollapsed('shared') ? 'Expand People' : 'Collapse People'}
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('shared')} />
-                  <h4 className="sidebar-section-title">Shared</h4>
+                  <h4 className="sidebar-section-title">People</h4>
                   {visibleSharedChats.length > 0 && (
                     <span className="sidebar-section-count">{visibleSharedChats.length}</span>
                   )}
@@ -6406,9 +6406,9 @@ export function Sidebar({
                   setDevicesPopoverOpen(false)
                   setSharesPopoverOpen((open) => !open)
                 }}
-                title={hasConnectedCollaborator ? 'Shares — collaborator connected' : 'Shares'}
+                title={hasConnectedCollaborator ? 'People — someone connected' : 'People'}
                 aria-label={
-                  hasConnectedCollaborator ? 'Shares, a collaborator is connected' : 'Shares'
+                  hasConnectedCollaborator ? 'People, someone is connected' : 'People'
                 }
                 aria-haspopup="dialog"
                 aria-expanded={sharesPopoverOpen}

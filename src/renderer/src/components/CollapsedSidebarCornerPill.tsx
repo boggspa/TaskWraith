@@ -231,8 +231,8 @@ export function CollapsedSidebarCornerPill({
         }`}
         type="button"
         onClick={() => togglePanel('shares')}
-        title={hasConnectedCollaborator ? 'Shares — collaborator connected' : 'Shares'}
-        aria-label={hasConnectedCollaborator ? 'Shares, a collaborator is connected' : 'Shares'}
+        title={hasConnectedCollaborator ? 'People — someone connected' : 'People'}
+        aria-label={hasConnectedCollaborator ? 'People, someone is connected' : 'People'}
         aria-haspopup="dialog"
         aria-expanded={openPanel === 'shares'}
       >

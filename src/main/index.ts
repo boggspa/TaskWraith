@@ -2,6 +2,7 @@
 // doesn't collide with a release build on the same Mac (see devAppName.ts).
 
 import './devAppName'
+import { devInstanceRelayPortOffset } from './devAppName'
 import { watchedPrDescriptorFromGitHubUrl } from '../shared/watchedPrNotify'
 import {
   app,
@@ -40231,7 +40232,11 @@ if (isGeminiMcpBridgeProcess) {
       .join(' ')
       .toLowerCase()
       .includes('debug')
-    const defaultIosRelayPort = (): number => (app.isPackaged && !packagedDebugBuild ? 8787 : 8788)
+    // The instance offset keeps two side-by-side dev instances off one port —
+    // without it the second one's embedded relay silently loses the bind and
+    // there is no door for a collaborator to dial. See devAppName.ts.
+    const defaultIosRelayPort = (): number =>
+      (app.isPackaged && !packagedDebugBuild ? 8787 : 8788) + devInstanceRelayPortOffset()
     const defaultIosServeHttpsPort = (): number =>
       app.isPackaged && !packagedDebugBuild ? 443 : 8443
     const iosRemoteRelayPort = (): number =>
