@@ -97,7 +97,9 @@ seats select Vibe's gated `plan` and `default` session modes over ACP; its
 auto-approve modes are unreachable, and inherited Mistral API credentials are
 scrubbed so a plan-backed run cannot silently cross into Pi's pay-as-you-go
 bill. Fresh sessions receive explicit host-composed context instead of
-pretending provider history was retained.
+pretending provider history was retained. Provably read-only shell commands
+remain useful in Plan, while short Vibe throttles surface as retryable warnings
+instead of masquerading as a subscription quota wall.
 
 ### The workshop can wear your colours
 
@@ -106,7 +108,9 @@ Agents on write-capable seats can read and set a small allowlist of typed
 data channel, not arbitrary CSS: selectors, rules, URLs, calculations, provider
 identity colours, focus rings, and approval-card geometry stay outside the
 writable set, with validation repeated when the renderer applies persisted
-values. Read-only review seats can inspect the palette but cannot restyle it.
+values. Successful writes are pushed narrowly to every open window and applied
+through the same validated appearance path, so the change appears without a
+reload. Read-only review seats can inspect the palette but cannot restyle it.
 
 ### Every provider leaves a clearer receipt
 
