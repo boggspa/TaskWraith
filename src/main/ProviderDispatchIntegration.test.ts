@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { RUN_MANAGER_PROVIDERS } from './index.constants'
 
 const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 const coordinatorSource = readFileSync(
@@ -17,21 +16,14 @@ function sourceBetween(startMarker: string, endMarker: string): string {
 }
 
 describe('provider dispatch integration', () => {
-  it('registers one adapter descriptor for every provider lifecycle identity', () => {
-    const registration = sourceBetween(
-      '// Grok is a first-class provider',
-      'async function readCliVersion('
-    )
-
-    for (const provider of RUN_MANAGER_PROVIDERS) {
-      const marker = `defaultProviderDescriptor('${provider}')`
-      expect(registration.split(marker)).toHaveLength(2)
-    }
-    expect(registration).toContain('...antigravityAdapters')
-    expect(registration).toContain('...grokAdapters')
-    expect(registration).toContain('...cursorAdapters')
-    expect(registration).toContain('...piAdapters')
-  })
+  // Adapter-registration completeness moved to
+  // ProviderAdapterRegistrationSite.test.ts, which walks the registry call with
+  // the TypeScript AST instead of scanning a source region. The scan asked only
+  // whether `defaultProviderDescriptor('<id>')` appeared between two markers, so
+  // an adapter array that was declared and never spread into the call still read
+  // as registered — verified: deleting `...mistralAdapters` from the call leaves
+  // this scan green and the app un-launchable. Its spread list was also a frozen
+  // four names, so it never grew with the roster it claimed to cover.
 
   it('routes the legacy Gemini IPC surface through the shared dispatch facade', () => {
     const handler = sourceBetween(
