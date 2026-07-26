@@ -52,7 +52,9 @@ const SCHEDULED_OCCURRENCE_LAUNCH_PROVIDERS = {
   kimi: true,
   grok: true,
   cursor: true,
-  ollama: true
+  ollama: true,
+  pi: true,
+  antigravity: true
 } as const
 
 const OUTER_KEYS = ['schemaVersion', 'rootId', 'createdAt', 'encryptedRoot'] as const

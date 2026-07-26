@@ -1,7 +1,11 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isAbsolute, parse, resolve } from 'node:path'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../shared/kimiAcpPosture'
-import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
+import {
+  ANTIGRAVITY_PROVIDER_ID,
+  isLiveSelectableProvider,
+  isRetiredProvider
+} from '../shared/retiredProviders'
 import type {
   AgenticNetworkPolicy,
   AgenticServiceId,
@@ -36,6 +40,12 @@ import {
   type OllamaLaunchControls,
   type ProviderLaunchAuthorityInput
 } from './ProviderLaunchAuthorityDigest'
+import type { PiLaunchControls } from './pi/PiLaunchAuthority'
+import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
+import type {
+  AntigravityGeminiApiLaunchControls,
+  AntigravityOfficialAgyLaunchControls
+} from './scheduling/AntigravityLaunchAuthority'
 import {
   workflowAuthorityEnvelope,
   workflowRunTemplateAuthority
@@ -464,12 +474,31 @@ function resolveEffectiveRuntimeLaunchAuthority(
     throw new TypeError('Provider launch plan does not match the effective launch provider.')
   }
   const effectiveBinary = nonEmptyText(record.effectiveBinary, 'effective binary')
+  const effectivePersistence = oneOf(
+    record.effectivePersistence,
+    ['reusable', 'ephemeral'],
+    'effective persistence'
+  )
   if (provider === 'ollama') {
     if (
       providerLaunchAuthority.runtime.kind !== 'http' ||
       effectiveBinary !== SCHEDULED_OCCURRENCE_OLLAMA_EFFECTIVE_BINARY_SENTINEL
     ) {
       throw new TypeError('Ollama effective binary must use the canonical HTTP runtime marker.')
+    }
+  } else if (
+    provider === ANTIGRAVITY_PROVIDER_ID &&
+    providerLaunchAuthority.runtime.kind === 'in-process-sdk'
+  ) {
+    if (providerLaunchAuthority.runtime.hostExecutableRealPath !== effectiveBinary) {
+      throw new TypeError(
+        'AntiGravity effective binary does not match the in-process SDK host executable.'
+      )
+    }
+    if (effectivePersistence !== 'reusable') {
+      throw new TypeError(
+        'AntiGravity in-process SDK launches require reusable host persistence.'
+      )
     }
   } else {
     if (
@@ -505,11 +534,7 @@ function resolveEffectiveRuntimeLaunchAuthority(
       ['allow', 'deny'],
       'effective network policy'
     ),
-    effectivePersistence: oneOf(
-      record.effectivePersistence,
-      ['reusable', 'ephemeral'],
-      'effective persistence'
-    ),
+    effectivePersistence,
     providerLaunchAuthorityDigest: providerLaunchAuthorityDigest(providerLaunchAuthority)
   }
   return {
@@ -1119,14 +1144,13 @@ function assertProviderPostureControls(
     }
     case 'cursor': {
       const controls = launch.controls as CursorLaunchControls
-      // Mirror of the live contained argv (runCursorProvider): `--sandbox
-      // enabled` is pinned for BOTH seat tiers; a read-only seat adds a
-      // non-mutating `--mode` (the schema's 'plan' tier) while a write-capable
-      // seat runs Cursor's sandboxed default ('contained-default'); no
-      // TaskWraith MCP bridge is written and no provider session is resumed.
-      // Broker/force/approve consistency with the absent bridge is enforced by
-      // the canonical digest invariants.
-      if (controls.executionMode !== (readOnly ? 'plan' : 'contained-default')) {
+      // This seal lane currently represents ONLY final native-only Path-B
+      // launches. `--sandbox enabled` is pinned for both seat tiers; a
+      // read-only seat uses the exact non-mutating `--mode ask` argv while a
+      // write-capable seat uses Cursor's sandboxed default. Broker-intended
+      // schedules are reported unsealed before reaching this validator until
+      // their dynamic setup outcome is prepared before sealing.
+      if (controls.executionMode !== (readOnly ? 'ask' : 'contained-default')) {
         throw new TypeError('Cursor execution mode does not match the signed posture.')
       }
       if (controls.bridgeMode !== 'none' || launch.tools.taskWraithMcpAdvertised) {
@@ -1144,6 +1168,47 @@ function assertProviderPostureControls(
         controls.networkAccess !== permissions.networkAccess
       ) {
         throw new TypeError('Ollama controls do not match the signed posture.')
+      }
+      return
+    }
+    case 'pi': {
+      const controls = launch.controls as PiLaunchControls
+      const expected = resolvePiNativeToolPosture({
+        approvalMode,
+        effectivePermissions: permissions
+      })
+      if (controls.writeCapable !== expected.writeCapable) {
+        throw new TypeError('Pi native tool tier does not match the signed approval posture.')
+      }
+      return
+    }
+    case 'antigravity': {
+      const controls = launch.controls as
+        | AntigravityOfficialAgyLaunchControls
+        | AntigravityGeminiApiLaunchControls
+      if (controls.transport === 'official-agy-cli') {
+        const expectedMode =
+          readOnly ||
+          approvalMode === 'plan' ||
+          permissions.agenticServices.shellCommands === 'deny' ||
+          permissions.agenticServices.fileChanges === 'deny'
+            ? 'plan'
+            : 'accept-edits'
+        if (controls.permissionMode !== expectedMode) {
+          throw new TypeError(
+            'AntiGravity agy permission mode does not match the signed posture.'
+          )
+        }
+      } else {
+        const expectedHistoryMode =
+          context.ensembleParticipantId === null
+            ? 'host-history-replay'
+            : 'ensemble-context-only'
+        if (controls.historyMode !== expectedHistoryMode) {
+          throw new TypeError(
+            'AntiGravity Gemini API history mode does not match the signed seat context.'
+          )
+        }
       }
       return
     }
@@ -1395,7 +1460,12 @@ function providerId(value: unknown, label: string): ProviderId {
 function runnableProviderId(value: unknown, label: string): ProviderId {
   const provider = providerId(value, label)
   if (isRetiredProvider(provider)) throw new TypeError(`${label} is retired.`)
-  if (!isLiveSelectableProvider(provider)) throw new TypeError(`${label} is unavailable.`)
+  // AntiGravity is conditionally offered behind existing consent/credential
+  // walls, so the pure seal validator must not mistake absence from the static
+  // live set for provider unavailability. Admission remains the caller's job.
+  if (!isLiveSelectableProvider(provider) && provider !== ANTIGRAVITY_PROVIDER_ID) {
+    throw new TypeError(`${label} is unavailable.`)
+  }
   return provider
 }
 

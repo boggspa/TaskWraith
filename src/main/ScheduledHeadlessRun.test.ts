@@ -302,4 +302,22 @@ describe('scheduled headless dispatch integration', () => {
       'Scheduled occurrence seal verification failed: ${sealOutcome.reason}'
     )
   })
+
+  it('continues to provider dispatch when solo sealing is explicitly skipped', () => {
+    const solo = sourceBetween(
+      'async function dispatchDueScheduledTaskHeadless(',
+      'function emitDueScheduledTasks() {'
+    )
+    const skipped = solo.indexOf("if (sealOutcome.ok === 'skipped')")
+    const transcriptSeed = solo.indexOf('transcriptSeeded = true', skipped)
+    const dispatch = solo.indexOf('const result = await dispatch(', transcriptSeed)
+
+    expect(skipped).toBeGreaterThanOrEqual(0)
+    expect(transcriptSeed).toBeGreaterThan(skipped)
+    expect(solo.slice(skipped, transcriptSeed)).not.toContain('return')
+    expect(dispatch).toBeGreaterThan(transcriptSeed)
+    expect(solo).toContain("title: 'Scheduled launch ran without an exact launch seal'")
+    expect(solo).toContain('message: unsealedLaunchReason')
+    expect(solo).toContain('could not publish unsealed-launch warning')
+  })
 })

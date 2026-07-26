@@ -7,6 +7,10 @@ import {
   type ProviderLaunchAuthorityInput,
   type ProviderLaunchAuthorityInputByProvider
 } from './ProviderLaunchAuthorityDigest'
+import {
+  antigravityLaunchAuthorityDigest,
+  buildAntigravityLaunchAuthority
+} from './scheduling/AntigravityLaunchAuthority'
 
 const hex = (marker: string): string => marker.repeat(64)
 
@@ -182,6 +186,110 @@ const ollama = {
 } as const satisfies ProviderLaunchAuthorityInputByProvider['ollama']
 
 const fixtures: ProviderLaunchAuthorityInput[] = [codex, claude, kimi, grok, cursor, ollama]
+
+const piTools = {
+  ...tools(),
+  taskWraithMcpAdvertised: false,
+  taskWraithMcpProfileId: null
+} as const
+
+const pi = {
+  schemaVersion: 1,
+  provider: 'pi',
+  common: {
+    ...common('deepseek/deepseek-chat'),
+    sessionMode: 'resume',
+    resumeSessionHmac: hex('4'),
+    providerSessionGenerationSha256: hex('5')
+  },
+  runtime: cliRuntime('pi'),
+  tools: piTools,
+  controls: {
+    transport: 'rpc',
+    upstream: 'deepseek',
+    modelId: 'deepseek-chat',
+    thinkingMode: 'provider-default',
+    writeCapable: true,
+    nativeToolPolicySha256: piTools.nativeToolPolicySha256,
+    providerApprovalMode: 'disabled',
+    taskWraithMcpAttachmentMode: 'none',
+    projectConfigurationDiscovery: 'disabled',
+    isolatedHomeMode: 'per-run-mkdtemp-verified-v1',
+    isolatedHomeAuthoritySha256: hex('6'),
+    sessionPersistence: 'durable-per-chat',
+    sessionDirectoryHmac: hex('7'),
+    promptTransport: 'stdin-jsonl',
+    stdinCommandTemplateSha256: hex('8'),
+    shutdownPolicySha256: hex('9'),
+    credentialFirewallSha256: hex('a'),
+    offlineStartup: true,
+    telemetryEnabled: false,
+    fallbackPolicy: 'forbid'
+  }
+} as const satisfies ProviderLaunchAuthorityInputByProvider['pi']
+
+const antigravityTools = {
+  ...tools(),
+  taskWraithMcpAdvertised: false,
+  taskWraithMcpProfileId: null
+} as const
+
+const antigravityAgy = {
+  schemaVersion: 1,
+  provider: 'antigravity',
+  common: common('gemini-2.5-pro'),
+  runtime: cliRuntime('agy'),
+  tools: antigravityTools,
+  controls: {
+    transport: 'official-agy-cli',
+    riskConsentAcceptedAt: 1_700_000_000_000,
+    binarySource: 'path',
+    binaryProvenanceState: 'verified',
+    binaryProvenanceTeamId: 'EQHXZ8M8AV',
+    binarySigningAuthoritySha256: hex('4'),
+    binaryProvenanceDetailSha256: null,
+    permissionMode: 'plan',
+    sandboxed: true,
+    printTimeout: '30m',
+    selectedModel: 'gemini-2.5-pro',
+    reasoningEffort: 'high',
+    conversationMode: 'fresh',
+    credentialEnvironmentPolicy: 'google-selectors-stripped',
+    taskWraithMcpAttachmentMode: 'none',
+    fallbackPolicy: 'forbid'
+  }
+} as const satisfies ProviderLaunchAuthorityInputByProvider['antigravity']
+
+const antigravityApi = {
+  schemaVersion: 1,
+  provider: 'antigravity',
+  common: common('gemini-api:gemini-2.5-flash'),
+  runtime: {
+    kind: 'in-process-sdk',
+    hostExecutableRealPath: resolve('/opt/taskwraith/bin/taskwraith'),
+    hostExecutableSha256: hex('4'),
+    hostRuntimeVersionSha256: hex('5'),
+    sdkPackageJsonRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/package.json'),
+    sdkPackageJsonSha256: hex('6'),
+    sdkEntrypointRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/dist/index.js'),
+    sdkEntrypointSha256: hex('7')
+  },
+  tools: tools(),
+  controls: {
+    transport: 'gemini-api-sdk',
+    disclosureAcceptedAt: 1_700_000_000_100,
+    apiModel: 'gemini-2.5-flash',
+    apiKeyHmac: hex('8'),
+    historyMode: 'host-history-replay',
+    imageTransport: 'none',
+    taskWraithFunctionCalling: true,
+    functionDeclarationsSha256: hex('9'),
+    maxToolRounds: 20,
+    requestConfigurationSha256: hex('a'),
+    taskWraithMcpAttachmentMode: 'in-process-function-calls',
+    fallbackPolicy: 'forbid'
+  }
+} as const satisfies ProviderLaunchAuthorityInputByProvider['antigravity']
 
 describe('ProviderLaunchAuthorityDigest', () => {
   it('builds one strict, deeply frozen authority for every live provider', () => {
@@ -515,6 +623,136 @@ describe('ProviderLaunchAuthorityDigest', () => {
         controls: { ...codex.controls, fallbackPolicy: 'exec-if-preflight-allows' }
       } as never)
     ).toThrow(/Codex fallback policy is invalid/i)
+  })
+
+  it('centrally normalizes Pi and both conditional AntiGravity transports', () => {
+    for (const fixture of [pi, antigravityAgy, antigravityApi] as const) {
+      const built = buildProviderLaunchAuthority(fixture)
+      expect(built.provider).toBe(fixture.provider)
+      expect(Object.isFrozen(built)).toBe(true)
+      expect(Object.isFrozen(built.runtime)).toBe(true)
+      expect(Object.isFrozen(built.controls)).toBe(true)
+      expect(providerLaunchAuthorityDigest(fixture)).toMatch(/^[a-f0-9]{64}$/)
+    }
+
+    expect(providerLaunchAuthorityDigest(antigravityAgy)).toBe(
+      antigravityLaunchAuthorityDigest(antigravityAgy)
+    )
+    expect(providerLaunchAuthorityDigest(antigravityApi)).toBe(
+      antigravityLaunchAuthorityDigest(antigravityApi)
+    )
+  })
+
+  it('binds Pi and AntiGravity provider-local controls and rejects provider swaps', () => {
+    expect(
+      providerLaunchAuthorityDigest({
+        ...pi,
+        controls: { ...pi.controls, writeCapable: false }
+      })
+    ).not.toBe(providerLaunchAuthorityDigest(pi))
+    expect(
+      providerLaunchAuthorityDigest({
+        ...antigravityApi,
+        controls: { ...antigravityApi.controls, apiKeyHmac: hex('f') }
+      })
+    ).not.toBe(providerLaunchAuthorityDigest(antigravityApi))
+
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...pi,
+        common: { ...pi.common, model: 'deepseek/different-model' }
+      })
+    ).toThrow(/exactly match.*upstream\/model/i)
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...pi,
+        common: { ...pi.common, model: 'qwen-token-plan/kimi-k2.5' },
+        controls: {
+          ...pi.controls,
+          upstream: 'qwen-token-plan',
+          modelId: 'kimi-k2.5'
+        }
+      })
+    ).toThrow(/resold copy|production policy/i)
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...antigravityAgy,
+        controls: { ...antigravityAgy.controls, selectedModel: 'different-model' }
+      })
+    ).toThrow(/selected model.*production normalization/i)
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...antigravityAgy,
+        controls: {
+          ...antigravityAgy.controls,
+          binaryProvenanceTeamId: null,
+          binarySigningAuthoritySha256: null
+        }
+      })
+    ).toThrow(/Verified agy provenance/i)
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...antigravityAgy,
+        controls: {
+          ...antigravityAgy.controls,
+          binaryProvenanceState: 'unverified',
+          binaryProvenanceTeamId: null,
+          binarySigningAuthoritySha256: null,
+          binaryProvenanceDetailSha256: null
+        }
+      })
+    ).toThrow(/Unverified agy provenance/i)
+
+    const defaultAgy = {
+      ...antigravityAgy,
+      common: { ...antigravityAgy.common, model: 'cli-default' },
+      controls: { ...antigravityAgy.controls, selectedModel: null }
+    } as const satisfies ProviderLaunchAuthorityInputByProvider['antigravity']
+    expect(() => buildProviderLaunchAuthority(defaultAgy)).not.toThrow()
+
+    expect(() =>
+      buildProviderLaunchAuthority({ ...pi, provider: 'antigravity' } as never)
+    ).toThrow(/AntiGravity|transport/i)
+    expect(() =>
+      buildProviderLaunchAuthority({ ...antigravityAgy, provider: 'pi' } as never)
+    ).toThrow(/Pi controls|invalid field set/i)
+  })
+
+  it('rejects AntiGravity symbol, accessor, whitespace, and NUL smuggling locally', () => {
+    const symbolControls = { ...antigravityAgy.controls } as Record<PropertyKey, unknown>
+    symbolControls[Symbol('hidden')] = true
+    expect(() =>
+      buildAntigravityLaunchAuthority({
+        ...antigravityAgy,
+        controls: symbolControls
+      } as never)
+    ).toThrow(/symbol fields/i)
+
+    const accessorControls = { ...antigravityAgy.controls } as Record<string, unknown>
+    Object.defineProperty(accessorControls, 'selectedModel', {
+      enumerable: true,
+      configurable: true,
+      get: () => antigravityAgy.controls.selectedModel
+    })
+    expect(() =>
+      buildAntigravityLaunchAuthority({
+        ...antigravityAgy,
+        controls: accessorControls
+      } as never)
+    ).toThrow(/accessor/i)
+
+    expect(() =>
+      buildAntigravityLaunchAuthority({
+        ...antigravityAgy,
+        common: { ...antigravityAgy.common, model: ` ${antigravityAgy.common.model}` }
+      } as never)
+    ).toThrow(/model must be non-empty bounded text/i)
+    expect(() =>
+      buildAntigravityLaunchAuthority({
+        ...antigravityAgy,
+        controls: { ...antigravityAgy.controls, printTimeout: '30m\0hidden' }
+      } as never)
+    ).toThrow(/print timeout must be non-empty bounded text/i)
   })
 
   it('keeps runtime field policies aligned with every provider control schema', () => {

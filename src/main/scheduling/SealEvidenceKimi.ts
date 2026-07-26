@@ -25,17 +25,37 @@ import {
 } from './SealEvidenceCommon'
 
 /**
- * Scheduled-launch evidence for Kimi Code on the production ACP transport.
+ * Candidate scheduled-launch evidence for Kimi Code on the production ACP
+ * transport.
  *
- * Mirrors launchKimiProductionAcp: argv is `[...modelArgs, 'acp']` from
+ * Reuses launchKimiProductionAcp's core composition helpers: argv is
+ * `[...modelArgs, 'acp']` from
  * appendKimiModelArgs; the process env is the exact
  * buildKimiContainedProcessEnv allowlist projection (the per-run private
  * synthetic cwd and seat home do not exist yet at seal time, so they enter
  * the template as route placeholders — the allowlist SHAPE and stable values
  * are produced by the real containment function, not re-implemented); the
  * governed loopback HTTP gateway is mandatory; native fs/shell tools are
- * deny-walled; resume follows buildKimiProductionSessionPlan exactly.
+ * deny-walled; the primary resume choice follows
+ * buildKimiProductionSessionPlan.
+ *
+ * This producer is deliberately not production-wired yet. The live resume
+ * lane carries a distinct full-context fallback prompt, prepares and seeds a
+ * credential-bearing isolated home, and performs a final descriptor-bound
+ * runtime admission immediately before spawn. Those final-use facts are not
+ * yet compared to the pre-dispatch seal.
  */
+export const KIMI_SCHEDULED_SEAL_READINESS = {
+  provider: 'kimi',
+  productionWiring: 'blocked',
+  blockers: [
+    'resume-fallback-prompt-not-bound',
+    'isolated-home-credential-state-not-bound',
+    'runtime-profile-environment-not-shared',
+    'final-runtime-admission-not-compared-to-seal'
+  ]
+} as const
+
 export interface KimiSealEvidenceFacts {
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']

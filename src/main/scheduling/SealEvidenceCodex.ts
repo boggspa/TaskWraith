@@ -1,12 +1,12 @@
 import { join } from 'node:path'
 import { buildCodexTaskWraithMcpArgs, type CodexMcpTaskWraithConfig } from '../CodexAppServerClient'
+import type { CodexAppServerProcessLaunchPlan } from '../codex/CodexAppServerProcessLaunchPlan'
 import {
   ensureTaskWraithCodexHomeForProtectedRead,
   requireAbsoluteCodexHome
 } from '../codex/CodexHome'
+import { buildCodexAppServerThreadLaunchPlan } from '../codex/CodexAppServerThreadLaunchPlan'
 import { codexSandboxForMode } from '../codex/CodexRunPolicy'
-import { resolveCodexOutboundReasoning } from '../codex/CodexOutboundReasoning'
-import { normalizeCodexModel } from '../providers/StaticProviderModels'
 import { isFullShellAccessGranted } from '../EffectiveRunPermissions'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type {
@@ -33,17 +33,33 @@ import {
 } from './SealEvidenceCommon'
 
 /**
- * Scheduled-launch evidence for Codex on the app-server transport.
+ * Candidate scheduled-launch evidence for Codex on the app-server transport.
  *
- * The app-server daemon is spawned with `[...taskwraithMcpConfigArgs,
- * 'app-server']` (CodexAppServerClient.start) and a run becomes a
- * thread/start request whose parameters are assembled at the dispatch site:
- * `{cwd, model, config: reasoning.threadConfig, serviceTier?, approvalPolicy,
- * sandbox, experimentalRawEvents: false, persistExtendedHistory: true}`.
- * This producer rebuilds that exact record from the same policy modules and
- * from index.ts's own policy closures, injected so a policy change there is
- * automatically a seal-evidence change here.
+ * The app-server daemon process plan is shared directly with
+ * CodexAppServerClient.start. The per-run thread/start-or-resume request is
+ * built by the same immutable request-plan helper intended for the dispatch
+ * site. Index-owned approval/sandbox closures remain injected so a host policy
+ * change is automatically an evidence change here.
+ *
+ * This producer is deliberately not production-wired yet. The live adapter
+ * can rewrite private-home continuity and MCP prompt claims after the
+ * occurrence seal is minted, then choose the one-shot exec transport if the
+ * app-server path fails. A signable scheduled lane must select and retain one
+ * final transport and prompt before this evidence is treated as parity proof.
  */
+export const CODEX_SCHEDULED_SEAL_READINESS = {
+  provider: 'codex',
+  productionWiring: 'blocked',
+  blockers: [
+    'post-seal-exec-fallback',
+    'post-seal-private-home-continuity-rewrite',
+    'post-seal-mcp-prompt-rewrite',
+    'reusable-daemon-launch-generation-not-bound',
+    'runtime-profile-posture-applied-after-seal',
+    'full-access-native-sandbox-verifier-mismatch'
+  ]
+} as const
+
 export interface CodexSealEvidenceDispatchPolicy {
   /** index.ts codexApprovalPolicyForMode — the exact dispatch closure. */
   approvalPolicyForMode(
@@ -63,8 +79,8 @@ export interface CodexSealEvidenceFacts {
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']
   readonly session: SeatSessionFacts
-  readonly resolvedEnv: Readonly<Record<string, string>>
-  readonly binaryPath: string
+  /** Exact immutable daemon process plan also consumed by production spawn. */
+  readonly processLaunchPlan: CodexAppServerProcessLaunchPlan
   readonly workspacePath: string
   readonly approvalMode: string
   readonly effectivePermissions: EffectiveRunPermissions
@@ -85,10 +101,8 @@ export async function buildCodexSealEvidence(
   deps: SealEvidenceDeps,
   facts: CodexSealEvidenceFacts
 ): Promise<ProviderLaunchAuthorityInputByProvider['codex']> {
-  const codexHome = requireAbsoluteCodexHome(facts.resolvedEnv.CODEX_HOME)
+  const codexHome = requireAbsoluteCodexHome(facts.processLaunchPlan.env.CODEX_HOME)
   await ensureTaskWraithCodexHomeForProtectedRead(codexHome, ['auth.json', 'config.toml'])
-  const model = normalizeCodexModel(facts.model)
-  const reasoning = resolveCodexOutboundReasoning(model, facts.reasoningEffort)
   const fullAccessGranted = isFullShellAccessGranted(facts.effectivePermissions)
   const approvalPolicy = facts.policy.approvalPolicyForMode(facts.approvalMode, facts.settings)
   const sandboxMode = codexSandboxForMode(facts.approvalMode, fullAccessGranted)
@@ -98,6 +112,16 @@ export async function buildCodexSealEvidence(
     facts.settings,
     fullAccessGranted
   )
+  const threadLaunchPlan = buildCodexAppServerThreadLaunchPlan({
+    model: facts.model,
+    reasoningEffort: facts.reasoningEffort,
+    serviceTier: facts.serviceTier,
+    workspacePath: facts.workspacePath,
+    approvalPolicy,
+    sandbox: sandboxMode,
+    resumableThreadId:
+      facts.session.sessionMode === 'fresh' ? null : facts.session.providerSessionId
+  })
   const attachmentMode = facts.taskWraithMcpAdvertised ? 'app-server-config' : 'none'
   if (facts.taskWraithMcpAdvertised !== Boolean(facts.codexMcpConfig?.enabled)) {
     throw new SealEvidenceError(
@@ -110,13 +134,26 @@ export async function buildCodexSealEvidence(
     ...(mcpConfigTemplate ? buildCodexTaskWraithMcpArgs(mcpConfigTemplate) : []),
     'app-server'
   ]
+  const expectedProcessArgs = [
+    ...(facts.codexMcpConfig ? buildCodexTaskWraithMcpArgs(facts.codexMcpConfig) : []),
+    'app-server'
+  ]
+  if (
+    facts.processLaunchPlan.transport !== 'app-server' ||
+    facts.processLaunchPlan.startupCompatibility !== 'configured' ||
+    !sameStringArray(facts.processLaunchPlan.args, expectedProcessArgs)
+  ) {
+    throw new SealEvidenceError(
+      'Codex seal evidence does not match the immutable app-server process launch plan.'
+    )
+  }
 
   const common = buildCommonLaunchAuthority(deps, {
     provider: 'codex',
-    model,
+    model: threadLaunchPlan.model,
     promptEnvelope: facts.promptEnvelope,
     session: facts.session,
-    resolvedEnv: facts.resolvedEnv,
+    resolvedEnv: facts.processLaunchPlan.env,
     credentialState: await codexCredentialStateEvidence(codexHome),
     providerConfiguration: {
       kind: 'codex-home-config',
@@ -159,21 +196,21 @@ export async function buildCodexSealEvidence(
     provider: 'codex',
     common,
     runtime: await buildCliRuntimeIdentity(deps, {
-      binaryPath: facts.binaryPath,
-      spawnEnvPath: facts.resolvedEnv.PATH,
+      binaryPath: facts.processLaunchPlan.command,
+      spawnEnvPath: facts.processLaunchPlan.env.PATH,
       argvTemplate
     }),
     tools,
     controls: {
       transport: 'app-server',
-      reasoningEffort: reasoning.effort ?? null,
+      reasoningEffort: threadLaunchPlan.reasoningEffort,
       reasoningConfigurationSha256: sha256HexOfCanonicalJson({
         schemaVersion: 1,
-        effort: reasoning.effort ?? null,
-        threadConfig: (reasoning.threadConfig ?? null) as CanonicalEvidenceValue,
-        summary: reasoningSummaryEvidence(reasoning)
+        effort: threadLaunchPlan.reasoningEffort,
+        threadConfig: threadLaunchPlan.threadConfig as CanonicalEvidenceValue,
+        summary: threadLaunchPlan.reasoningSummary
       }),
-      serviceTier: facts.serviceTier,
+      serviceTier: threadLaunchPlan.serviceTier,
       approvalPolicy,
       sandboxMode,
       sandboxPolicySha256: sha256HexOfCanonicalJson({
@@ -182,31 +219,19 @@ export async function buildCodexSealEvidence(
       }),
       appServerConfigurationSha256: sha256HexOfCanonicalJson({
         schemaVersion: 1,
-        // Mirrors the thread/start `startOrResumeParams` record at the
-        // dispatch site, field for field.
-        cwd: facts.workspacePath,
-        model,
-        config: (reasoning.threadConfig ?? null) as CanonicalEvidenceValue,
-        serviceTier: facts.serviceTier,
-        approvalPolicy,
-        sandbox: sandboxMode,
-        experimentalRawEvents: false,
-        persistExtendedHistory: true
+        method: threadLaunchPlan.request.method,
+        params: threadLaunchPlan.request.params as CanonicalEvidenceValue
       }),
       taskWraithMcpAttachmentMode: attachmentMode,
       persistExtendedHistory: true,
       experimentalRawEvents: false,
-      fallbackPolicy: 'forbid'
+      fallbackPolicy: threadLaunchPlan.fallbackPolicy
     }
   }
 }
 
-function reasoningSummaryEvidence(
-  reasoning: ReturnType<typeof resolveCodexOutboundReasoning>
-): CanonicalEvidenceValue {
-  const record = reasoning as unknown as Record<string, unknown>
-  const summary = record.summary
-  return typeof summary === 'string' ? summary : null
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 /**

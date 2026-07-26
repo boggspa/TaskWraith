@@ -22,9 +22,9 @@ import {
 } from './SealEvidenceCommon'
 
 /**
- * Scheduled-launch evidence for Claude on the Agent SDK transport.
+ * Candidate scheduled-launch evidence for Claude on the Agent SDK transport.
  *
- * Mirrors runClaudeProvider's SDK invocation exactly: `query({prompt,
+ * Reconstructs the intended Agent SDK invocation: `query({prompt,
  * options})` with tools: [] (built-ins disabled), includePartialMessages:
  * true, permissionMode from the recon rule + claudePermissionModeForApproval,
  * effort/thinking from the shared normalizers, TaskWraith MCP servers from
@@ -32,7 +32,23 @@ import {
  * executable identity binds pathToClaudeCodeExecutable when the dispatch
  * environment authority resolved a CLI binary, else the SDK's own bundled
  * CLI entry — the same fallback the SDK itself uses.
+ *
+ * This producer is deliberately not production-wired yet. Production chooses
+ * SDK availability at dispatch, may rewrite MCP prompt claims if broker
+ * startup fails, and may fall back to the CLI-print transport after an SDK
+ * failure. Those post-seal choices are not represented by this single-lane
+ * evidence object.
  */
+export const CLAUDE_SCHEDULED_SEAL_READINESS = {
+  provider: 'claude',
+  productionWiring: 'blocked',
+  blockers: [
+    'sdk-or-cli-transport-selected-after-seal',
+    'post-seal-mcp-prompt-rewrite',
+    'post-seal-cli-print-fallback'
+  ]
+} as const
+
 export interface ClaudeSealEvidenceFacts {
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']

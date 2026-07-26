@@ -1,8 +1,14 @@
-import { isCodexAppServerThreadId, type CodexMcpTaskWraithConfig } from '../CodexAppServerClient'
+import {
+  buildCodexTaskWraithMcpArgs,
+  isCodexAppServerThreadId,
+  type CodexMcpTaskWraithConfig
+} from '../CodexAppServerClient'
+import { buildCodexAppServerProcessLaunchPlan } from '../codex/CodexAppServerProcessLaunchPlan'
 import {
   createCliProviderRunEnv,
   createResolvedProviderEnv,
   resolveCliProviderBinary,
+  runtimeSettings,
   type CliProviderRuntimeDependencies
 } from '../providers/CliProviderRuntime'
 import {
@@ -20,7 +26,10 @@ import type {
   ScheduledOccurrencePostureVerifier
 } from '../ScheduledOccurrencePostureAuthority'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
-import type { ProviderLaunchAuthorityInput } from '../ProviderLaunchAuthorityDigest'
+import type {
+  LiveProviderLaunchId,
+  ProviderLaunchAuthorityInput
+} from '../ProviderLaunchAuthorityDigest'
 import type {
   AppSettings,
   ChatRecord,
@@ -50,6 +59,7 @@ import { buildCursorSealEvidence } from './SealEvidenceCursor'
 import { buildGrokSealEvidence } from './SealEvidenceGrok'
 import { buildKimiSealEvidence } from './SealEvidenceKimi'
 import { buildOllamaSealEvidence } from './SealEvidenceOllama'
+import { hasScheduledSealEvidenceProducer } from './ScheduledSealCoverage'
 import { grokWriteCapable } from '../grok/GrokCliArgs'
 import { cursorWriteCapable } from '../cursor/CursorCliArgs'
 import { ollamaAdvertisedToolNames } from '../ollama/OllamaToolTiers'
@@ -108,7 +118,7 @@ export interface ScheduledOccurrenceSealServiceDeps {
   readonly postureVerifier: ScheduledOccurrencePostureVerifier
   readonly appVersion: string
   /** Only providers with an exact evidence-to-dispatch mapping are enabled. */
-  isSoloProviderSealWired(provider: ProviderId): boolean
+  isSoloProviderSealWired(provider: LiveProviderLaunchId): boolean
   getSettings(): AppSettings
   canonicalizePath(value: string): string
   signRunPermissionPosture(
@@ -221,6 +231,27 @@ export class ScheduledOccurrenceSealService {
         reason: 'Ensemble occurrences are not seal-wired yet (Stage 3); dispatching unsealed.'
       }
     }
+    if (composed.provider !== task.provider) {
+      return {
+        ok: false,
+        reason: `The composed provider '${composed.provider}' does not match the claimed scheduled provider '${task.provider}'.`
+      }
+    }
+    if (!isScheduledSealEvidenceProvider(task.provider)) {
+      return {
+        ok: 'skipped',
+        reason: hasScheduledSealEvidenceProducer(task.provider)
+          ? `Scheduled ${task.provider} solo seals are not wired yet: its exact evidence producer is not yet connected to the final production launch-plan handoff. Dispatch remains governed by the provider's independent admission policy.`
+          : `Scheduled ${task.provider} solo seals are not wired yet: this provider has no exact launch-evidence producer. Dispatch remains governed by the provider's independent admission policy.`
+      }
+    }
+    if (task.provider === 'cursor' && composed.taskWraithMcpAdvertised) {
+      return {
+        ok: 'skipped',
+        reason:
+          'Scheduled Cursor requested the TaskWraith broker, whose broker-active versus visibly degraded native-only launch plan is selected later at provider dispatch. Dispatching unsealed until that final plan is prepared before sealing.'
+      }
+    }
     if (!this.deps.isSoloProviderSealWired(task.provider)) {
       return {
         ok: 'skipped',
@@ -285,7 +316,7 @@ export class ScheduledOccurrenceSealService {
     tripwireAgainstComposed: boolean
   }): Promise<ScheduledOccurrenceCurrentContext> {
     const { task, ownerRunId, workspaceRealPath, composed } = input
-    const provider = requireLiveProvider(composed.provider)
+    const provider = requireScheduledSealEvidenceProvider(composed.provider)
     const settings = this.deps.getSettings()
     const mirror = deriveScheduledSeatPostureMirror({
       provider,
@@ -350,7 +381,7 @@ export class ScheduledOccurrenceSealService {
   private async buildSeat(input: {
     task: ScheduledTask
     ownerRunId: string
-    provider: LiveProvider
+    provider: LiveProviderLaunchId
     settings: AppSettings
     permissions: EffectiveRunPermissions
     approvalMode: string
@@ -430,7 +461,7 @@ export class ScheduledOccurrenceSealService {
   private async deriveProviderEvidence(input: {
     task: ScheduledTask
     ownerRunId: string
-    provider: LiveProvider
+    provider: LiveProviderLaunchId
     settings: AppSettings
     permissions: EffectiveRunPermissions
     approvalMode: string
@@ -548,30 +579,31 @@ export class ScheduledOccurrenceSealService {
     }
 
     if (provider === 'codex') {
-      const resolvedEnv = createResolvedProviderEnv(
-        {
-          FORCE_COLOR: '0',
-          NO_COLOR: '1',
-          TASKWRAITH_PARENT_PROVIDER: 'codex',
-          CODEX_HOME: this.deps.codexHomePath()
-        },
-        resolved.binaryPath as string,
-        this.deps.cliRuntimeDeps,
-        runtimeProfile ?? undefined
-      )
       const codexMcpConfig = this.deps.codexMcpConfig()
+      const processLaunchPlan = await buildCodexAppServerProcessLaunchPlan({
+        binaryPath: resolved.binaryPath as string,
+        codexHome: this.deps.codexHomePath(),
+        mcpConfigArgs: codexMcpConfig
+          ? buildCodexTaskWraithMcpArgs(codexMcpConfig)
+          : [],
+        mcp: codexMcpConfig ?? {
+          enabled: false,
+          parentProvider: 'codex'
+        },
+        runtimeProfile,
+        cliRuntimeDeps: this.deps.cliRuntimeDeps
+      })
       const evidence = await buildCodexSealEvidence(deps, {
         model: composed.model,
         promptEnvelope,
         session: codexSessionFacts(composed.providerSessionId, chat),
-        resolvedEnv,
-        binaryPath: resolved.binaryPath as string,
+        processLaunchPlan,
         workspacePath: task.workspacePath,
         approvalMode,
         effectivePermissions: permissions,
         reasoningEffort: composed.reasoningEffort,
         serviceTier: composed.serviceTier,
-        settings,
+        settings: runtimeSettings(settings, runtimeProfile),
         codexMcpConfig,
         taskWraithMcpAdvertised: composed.taskWraithMcpAdvertised,
         taskWraithMcpProfileId: composed.taskWraithMcpProfileId,
@@ -587,7 +619,7 @@ export class ScheduledOccurrenceSealService {
         effectiveBinary: evidence.runtime.executableRealPath,
         // The shared app-server daemon persists across occurrences.
         effectivePersistence: 'reusable',
-        resolvedEnv
+        resolvedEnv: processLaunchPlan.env
       }
     }
 
@@ -680,14 +712,17 @@ export class ScheduledOccurrenceSealService {
       }
     }
 
-    // cursor
+    if (provider !== 'cursor') {
+      return assertUnreachableScheduledSealProvider(provider)
+    }
+
     const resolvedEnv = createCliProviderRunEnv({
       provider: 'cursor',
       command: resolved.binaryPath as string,
       appRunId: ownerRunId,
       appChatId: task.chatId,
       scope: 'workspace',
-      workspace: task.workspacePath,
+      workspace: input.workspaceRealPath,
       runtimeProfileId: composed.runtimeProfileId,
       auditRun: false,
       extraEnv: {},
@@ -699,13 +734,13 @@ export class ScheduledOccurrenceSealService {
       promptEnvelope,
       resolvedEnv,
       binaryPath: resolved.binaryPath as string,
-      workspacePath: task.workspacePath,
+      workspacePath: input.workspaceRealPath,
       writeCapable,
       readOnlySeat: permissions.readOnly === true,
+      taskWraithMcpAdvertised: composed.taskWraithMcpAdvertised,
       cursorReasoningEffort: composed.reasoningEffort,
       cursorFastMode: composed.serviceTier === 'fast',
-      capabilityContract,
-      userMcpConfiguration
+      capabilityContract
     })
     return {
       evidence,
@@ -722,7 +757,7 @@ export class ScheduledOccurrenceSealService {
    * per-run, so binding them would claim provenance the launch never had.
    */
   private capabilityContractEvidence(
-    provider: LiveProvider,
+    provider: LiveProviderLaunchId,
     settings: AppSettings
   ): CanonicalEvidenceValue {
     return {
@@ -744,13 +779,30 @@ export class ScheduledOccurrenceSealService {
   }
 }
 
-type LiveProvider = Exclude<ProviderId, 'gemini'>
+const SCHEDULED_SEAL_EVIDENCE_PROVIDERS = {
+  codex: true,
+  claude: true,
+  kimi: true,
+  grok: true,
+  cursor: true,
+  ollama: true
+} as const satisfies Record<LiveProviderLaunchId, true>
 
-function requireLiveProvider(provider: ProviderId): LiveProvider {
-  if (provider === 'gemini') {
-    throw new SealEvidenceError('Gemini is retired and cannot hold scheduled launch authority.')
+function isScheduledSealEvidenceProvider(provider: ProviderId): provider is LiveProviderLaunchId {
+  return Object.prototype.hasOwnProperty.call(SCHEDULED_SEAL_EVIDENCE_PROVIDERS, provider)
+}
+
+function requireScheduledSealEvidenceProvider(provider: ProviderId): LiveProviderLaunchId {
+  if (!isScheduledSealEvidenceProvider(provider)) {
+    throw new SealEvidenceError(
+      `${provider} does not have an exact scheduled launch-evidence producer.`
+    )
   }
   return provider
+}
+
+function assertUnreachableScheduledSealProvider(provider: never): never {
+  throw new SealEvidenceError(`Unsupported scheduled launch-evidence provider: ${String(provider)}`)
 }
 
 function requireText(value: unknown, label: string): string {

@@ -25,7 +25,8 @@ import {
 } from './SealEvidenceCommon'
 
 /**
- * Scheduled-launch evidence for Grok on the joined one-shot ACP transport
+ * Candidate scheduled-launch evidence for Grok on the joined one-shot ACP
+ * transport
  * (`grok … agent stdio`) — the only managed Grok transport.
  *
  * Mirrors runGrokAcpProvider: the seat tier comes from
@@ -35,7 +36,23 @@ import {
  * subprocess; the ACP argv never enables provider web search and network
  * authority stays host-gated. ACP seats are one-shot: no provider session
  * is ever resumed.
+ *
+ * This producer is deliberately not production-wired yet. Production builds
+ * the final provider-visible goal/tool steering prompt after MCP startup and
+ * can rewrite that prompt plus the tool surface when the broker degrades.
+ * The sealed prompt and MCP document must be finalized at the same boundary
+ * before this becomes parity evidence.
  */
+export const GROK_SCHEDULED_SEAL_READINESS = {
+  provider: 'grok',
+  productionWiring: 'blocked',
+  blockers: [
+    'provider-visible-steered-prompt-not-bound',
+    'post-seal-mcp-prompt-rewrite',
+    'runtime-profile-environment-not-shared'
+  ]
+} as const
+
 export interface GrokSealEvidenceFacts {
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']

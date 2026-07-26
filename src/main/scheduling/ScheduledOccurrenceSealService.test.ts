@@ -17,10 +17,12 @@ import { signRunPermissionPosture } from '../RunPermissionPosture'
 import type {
   AppSettings,
   EffectiveRunPermissions,
+  ProviderId,
   RuntimeProfile,
   ScheduledOccurrenceSealV2,
   ScheduledTask
 } from '../store/types'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { deriveScheduledSeatPostureMirror } from './SealEvidenceCommon'
 import {
   ScheduledOccurrenceSealService,
@@ -57,18 +59,18 @@ function authorityRoot(): ScheduledOccurrenceAuthorityRoot {
   }) as ScheduledOccurrenceAuthorityRoot
 }
 
-function scheduledTask(): ScheduledTask {
+function scheduledTask(provider: ProviderId = 'cursor'): ScheduledTask {
   const now = new Date('2026-07-21T12:00:00.000Z').toISOString()
   return {
-    id: 'cursor-occurrence',
-    provider: 'cursor',
+    id: `${provider}-occurrence`,
+    provider,
     workspaceId: 'workspace-1',
     workspacePath: WORKSPACE,
     chatId: 'chat-1',
     prompt: 'Inspect the current working tree.',
     selectedModelType: 'composer-1',
     customModel: 'composer-1',
-    runtimeProfileId: 'cursor-profile',
+    runtimeProfileId: provider === 'cursor' ? 'cursor-profile' : undefined,
     approvalMode: 'plan',
     sessionTrust: false,
     imageAttachments: [],
@@ -79,7 +81,7 @@ function scheduledTask(): ScheduledTask {
     updatedAt: now,
     firedAt: now,
     runningSince: now,
-    runId: 'cursor-scheduled-run'
+    runId: `${provider}-scheduled-run`
   } as ScheduledTask
 }
 
@@ -99,9 +101,12 @@ function profile(): RuntimeProfile {
   }
 }
 
-function composed(task: ScheduledTask, permissions: EffectiveRunPermissions): ScheduledSealComposedFacts {
+function composed(
+  task: ScheduledTask,
+  permissions: EffectiveRunPermissions
+): ScheduledSealComposedFacts {
   return {
-    provider: 'cursor',
+    provider: task.provider,
     model: 'composer-1',
     prompt: task.prompt,
     finalPrompt: task.prompt,
@@ -118,16 +123,20 @@ function composed(task: ScheduledTask, permissions: EffectiveRunPermissions): Sc
     cursorFastMode: false,
     taskWraithMcpAdvertised: false,
     taskWraithMcpProfileId: null,
-    runtimeProfileId: 'cursor-profile',
+    runtimeProfileId: task.runtimeProfileId ?? null,
     imageCount: 0
   }
 }
 
-function makeService(input: { tamperPersistedSeal?: boolean }) {
-  let current = scheduledTask()
+function makeService(input: {
+  tamperPersistedSeal?: boolean
+  provider?: ProviderId
+  sealWired?: boolean
+}) {
+  let current = scheduledTask(input.provider)
   const settings = {} as AppSettings
   const permissions = deriveScheduledSeatPostureMirror({
-    provider: 'cursor',
+    provider: current.provider,
     workspacePath: WORKSPACE,
     requestedModel: 'composer-1',
     taskApprovalMode: 'plan',
@@ -137,11 +146,21 @@ function makeService(input: { tamperPersistedSeal?: boolean }) {
   }).effectivePermissions
   const root = authorityRoot()
   const postureVerifier = createScheduledOccurrencePostureVerifier(SECRET)
+  const isSoloProviderSealWired = vi.fn(() => input.sealWired ?? true)
+  const persistOccurrenceSeal = vi.fn(
+    (_taskId: string, _runId: string, occurrenceSeal: ScheduledOccurrenceSealV2) => {
+      const persisted = input.tamperPersistedSeal
+        ? { ...occurrenceSeal, sealMac: '0'.repeat(64) }
+        : occurrenceSeal
+      current = { ...current, occurrenceSeal: persisted }
+      return current
+    }
+  )
   const service = new ScheduledOccurrenceSealService({
     authorityRoot: root,
     postureVerifier,
     appVersion: 'test',
-    isSoloProviderSealWired: (provider) => provider === 'cursor',
+    isSoloProviderSealWired,
     getSettings: () => settings,
     canonicalizePath: (value) => realpathSync(value),
     signRunPermissionPosture: (approvalMode, effectivePermissions, context) =>
@@ -151,13 +170,7 @@ function makeService(input: { tamperPersistedSeal?: boolean }) {
     getRuntimeProfile: (id) => (id === 'cursor-profile' ? profile() : null),
     codexHomePath: () => join(TEMP_ROOT, 'codex-home'),
     getScheduledTask: () => current,
-    persistOccurrenceSeal: (_taskId, _runId, occurrenceSeal) => {
-      const persisted = input.tamperPersistedSeal
-        ? { ...occurrenceSeal, sealMac: '0'.repeat(64) }
-        : occurrenceSeal
-      current = { ...current, occurrenceSeal: persisted }
-      return current
-    },
+    persistOccurrenceSeal,
     codexMcpConfig: () => null,
     codexApprovalPolicyForMode: () => 'never',
     codexSandboxPolicyForMode: () => ({}),
@@ -174,7 +187,13 @@ function makeService(input: { tamperPersistedSeal?: boolean }) {
     probeCliVersion: async () => 'test',
     cliRuntimeDeps: { env: { PATH: process.env.PATH } }
   })
-  return { service, current: () => current, composed: composed(current, permissions) }
+  return {
+    service,
+    current: () => current,
+    composed: composed(current, permissions),
+    isSoloProviderSealWired,
+    persistOccurrenceSeal
+  }
 }
 
 describe('ScheduledOccurrenceSealService Cursor Stage 2', () => {
@@ -213,4 +232,76 @@ describe('ScheduledOccurrenceSealService Cursor Stage 2', () => {
       '0'.repeat(64)
     )
   })
+
+  it('reports broker-intended Cursor as explicitly unsealed and keeps dispatch eligible', async () => {
+    const fixture = makeService({})
+    const dispatch = vi.fn().mockResolvedValue({ dispatched: true })
+    const outcome = await fixture.service.sealSoloOccurrence({
+      task: fixture.current(),
+      ownerRunId: 'cursor-scheduled-run',
+      workspaceRealPath: WORKSPACE,
+      composed: {
+        ...fixture.composed,
+        taskWraithMcpAdvertised: true,
+        taskWraithMcpProfileId: 'taskwraith-gateway-v1'
+      }
+    })
+    if (outcome.ok !== false) {
+      await dispatch()
+    }
+
+    expect(outcome).toEqual({
+      ok: 'skipped',
+      reason: expect.stringMatching(/broker-active versus visibly degraded native-only/i)
+    })
+    expect(dispatch).toHaveBeenCalledOnce()
+    expect(fixture.isSoloProviderSealWired).not.toHaveBeenCalled()
+    expect(fixture.persistOccurrenceSeal).not.toHaveBeenCalled()
+  })
+
+  it('rejects a composed-provider substitution before evidence derivation', async () => {
+    const fixture = makeService({})
+    const outcome = await fixture.service.sealSoloOccurrence({
+      task: fixture.current(),
+      ownerRunId: 'cursor-scheduled-run',
+      workspaceRealPath: WORKSPACE,
+      composed: { ...fixture.composed, provider: 'codex' }
+    })
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: expect.stringMatching(/does not match the claimed scheduled provider/i)
+    })
+    expect(fixture.isSoloProviderSealWired).not.toHaveBeenCalled()
+    expect(fixture.persistOccurrenceSeal).not.toHaveBeenCalled()
+  })
+
+  it.each(['pi', 'antigravity'] as const)(
+    'keeps %s dispatch-eligible when its evidence producer lacks final launch handoff',
+    async (provider) => {
+      const fixture = makeService({ provider, sealWired: true })
+      const dispatch = vi.fn().mockResolvedValue({ dispatched: true })
+
+      const outcome = await fixture.service.sealSoloOccurrence({
+        task: fixture.current(),
+        ownerRunId: `${provider}-scheduled-run`,
+        workspaceRealPath: WORKSPACE,
+        composed: fixture.composed
+      })
+      if (outcome.ok !== false) {
+        await dispatch()
+      }
+
+      if (provider === 'pi') expect(isLiveSelectableProvider(provider)).toBe(true)
+      expect(outcome).toEqual({
+        ok: 'skipped',
+        reason: expect.stringMatching(
+          /exact evidence producer is not yet connected.*production launch-plan handoff/i
+        )
+      })
+      expect(dispatch).toHaveBeenCalledOnce()
+      expect(fixture.isSoloProviderSealWired).not.toHaveBeenCalled()
+      expect(fixture.persistOccurrenceSeal).not.toHaveBeenCalled()
+    }
+  )
 })

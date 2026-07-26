@@ -18,12 +18,23 @@ import {
   buildProviderLaunchAuthority,
   providerLaunchAuthorityDigest
 } from '../ProviderLaunchAuthorityDigest'
+import {
+  buildCodexTaskWraithMcpArgs,
+  type CodexMcpTaskWraithConfig
+} from '../CodexAppServerClient'
+import type { CodexAppServerProcessLaunchPlan } from '../codex/CodexAppServerProcessLaunchPlan'
+import { buildContainedCursorReadOnlyArgv } from '../cursor/CursorCliArgs'
+import { resolveOllamaFinalLaunchPlan } from '../ollama/OllamaLaunchPlan'
+import type { OllamaNativeToolDefinition } from '../ollama/OllamaProvider'
+import { TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE } from '../PromptComposition'
 import type { ScheduledOccurrenceAuthorityRoot } from '../ScheduledOccurrenceAuthorityRootStore'
 import type { AppSettings, EffectiveRunPermissions } from '../store/types'
 import {
   SealEvidenceFileHasher,
+  SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
   SEAL_EVIDENCE_ARGV_ROUTE_PLACEHOLDER,
-  canonicalEvidenceEncode
+  canonicalEvidenceEncode,
+  launchArgsTemplateSha256
 } from './SealEvidenceCore'
 import {
   SealEvidenceVersionProbe,
@@ -42,6 +53,24 @@ const TEMP_ROOT = mkdtempSync(join(tmpdir(), 'seal-evidence-producers-'))
 afterAll(() => {
   rmSync(TEMP_ROOT, { recursive: true, force: true })
 })
+
+function codexProcessLaunchPlan(
+  binaryPath: string,
+  env: Record<string, string>,
+  config: CodexMcpTaskWraithConfig | null
+): CodexAppServerProcessLaunchPlan {
+  return Object.freeze({
+    transport: 'app-server',
+    startupCompatibility: 'configured',
+    command: binaryPath,
+    args: Object.freeze([
+      ...(config ? buildCodexTaskWraithMcpArgs(config) : []),
+      'app-server'
+    ]),
+    shell: false,
+    env: Object.freeze({ ...env })
+  })
+}
 
 function testRoot(): ScheduledOccurrenceAuthorityRoot {
   const key = Buffer.alloc(32, 53)
@@ -159,15 +188,15 @@ describe('cursor seal evidence', () => {
       workspacePath: WORKSPACE,
       writeCapable: false,
       readOnlySeat: true,
+      taskWraithMcpAdvertised: false,
       cursorReasoningEffort: null,
       cursorFastMode: false,
-      capabilityContract: { gates: { sandbox: 'enabled' } },
-      userMcpConfiguration: { servers: [] }
+      capabilityContract: { gates: { sandbox: 'enabled' } }
     })
     const canonical = buildProviderLaunchAuthority(evidence)
     expect(canonical.provider).toBe('cursor')
     expect(canonical.controls).toMatchObject({
-      executionMode: 'plan',
+      executionMode: 'ask',
       bridgeMode: 'none',
       brokerRegistration: 'none',
       forceMcpTools: false,
@@ -176,6 +205,16 @@ describe('cursor seal evidence', () => {
     expect(canonical.tools.taskWraithMcpAdvertised).toBe(false)
     expect(canonical.common.sessionMode).toBe('fresh')
     expect(canonical.runtime.kind).toBe('cli')
+    expect(evidence.runtime.launchArgsTemplateSha256).toBe(
+      launchArgsTemplateSha256(
+        buildContainedCursorReadOnlyArgv({
+          workspace: WORKSPACE,
+          prompt: SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
+          model: 'composer-1',
+          mode: 'ask'
+        })
+      )
+    )
     expect(providerLaunchAuthorityDigest(evidence)).toMatch(/^[0-9a-f]{64}$/)
   })
 
@@ -190,22 +229,22 @@ describe('cursor seal evidence', () => {
         workspacePath: WORKSPACE,
         writeCapable: true,
         readOnlySeat: false,
+        taskWraithMcpAdvertised: false,
         cursorReasoningEffort: 'medium',
         cursorFastMode: true,
-        capabilityContract: {},
-        userMcpConfiguration: { servers: [] }
+        capabilityContract: {}
       })
     const evidence = await build('Contextual prompt body one.')
     const otherPrompt = await build('A completely different prompt.')
     expect(evidence.controls.executionMode).toBe('contained-default')
+    expect(evidence.controls.reasoningEffort).toBeNull()
+    expect(evidence.controls.fastMode).toBe(false)
     // The argv template excludes prompt bytes: different prompts, same
     // template digest — while the prompt envelope digest DOES change.
     expect(otherPrompt.runtime.launchArgsTemplateSha256).toBe(
       evidence.runtime.launchArgsTemplateSha256
     )
-    expect(otherPrompt.common.promptEnvelopeSha256).not.toBe(
-      evidence.common.promptEnvelopeSha256
-    )
+    expect(otherPrompt.common.promptEnvelopeSha256).not.toBe(evidence.common.promptEnvelopeSha256)
     expect(canonicalEvidenceEncode(evidence)).not.toContain('Contextual prompt body')
     expect(() => buildProviderLaunchAuthority(evidence)).not.toThrow()
   })
@@ -221,12 +260,59 @@ describe('cursor seal evidence', () => {
         workspacePath: WORKSPACE,
         writeCapable: true,
         readOnlySeat: true,
+        taskWraithMcpAdvertised: false,
         cursorReasoningEffort: null,
         cursorFastMode: false,
-        capabilityContract: {},
-        userMcpConfiguration: {}
+        capabilityContract: {}
       })
     ).rejects.toThrow(/contradicts/i)
+  })
+
+  it('refuses broker intent instead of minting native-only evidence for a dynamic plan', async () => {
+    const binary = fakeBinary('cursor-agent-broker-intent')
+    await expect(
+      buildCursorSealEvidence(deps(), {
+        model: 'composer-1',
+        promptEnvelope: PROMPT_ENVELOPE,
+        resolvedEnv: {},
+        binaryPath: binary,
+        workspacePath: WORKSPACE,
+        writeCapable: false,
+        readOnlySeat: true,
+        taskWraithMcpAdvertised: true,
+        cursorReasoningEffort: null,
+        cursorFastMode: false,
+        capabilityContract: {}
+      })
+    ).rejects.toThrow(/broker-active versus native-only/i)
+  })
+
+  it('hashes the post-defusal prompt exactly as native-only dispatch sees it', async () => {
+    const binary = fakeBinary('cursor-agent-prompt-defusal')
+    const build = (contextualPrompt: string) =>
+      buildCursorSealEvidence(deps(), {
+        model: 'composer-1',
+        promptEnvelope: {
+          ...PROMPT_ENVELOPE,
+          contextualPrompt,
+          finalPrompt: 'Review the workspace.'
+        },
+        resolvedEnv: {},
+        binaryPath: binary,
+        workspacePath: WORKSPACE,
+        writeCapable: false,
+        readOnlySeat: true,
+        taskWraithMcpAdvertised: false,
+        cursorReasoningEffort: null,
+        cursorFastMode: false,
+        capabilityContract: {}
+      })
+    const staleClaim = await build(
+      `${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\nReview the workspace.`
+    )
+    const alreadyDefused = await build('Review the workspace.')
+
+    expect(staleClaim.common.promptEnvelopeSha256).toBe(alreadyDefused.common.promptEnvelopeSha256)
   })
 })
 
@@ -252,41 +338,43 @@ describe('codex seal evidence', () => {
 
   it('builds canonical app-server authority and placeholds bridge/user-MCP secrets', async () => {
     const binary = fakeBinary('codex')
-    const build = (bridgeToken: string, headerValue: string) =>
-      buildCodexSealEvidence(deps(), {
+    const build = (bridgeToken: string, headerValue: string) => {
+      const codexMcpConfig: CodexMcpTaskWraithConfig = {
+        enabled: true,
+        bridgeBinaryPath: '/opt/bridge',
+        bridgeArgs: ['--socket', '/tmp/sock', '--token', bridgeToken],
+        parentProvider: 'codex',
+        userMcpServers: [
+          {
+            serverId: 'linear-1',
+            serverName: 'linear',
+            transport: 'http',
+            url: 'https://mcp.linear.app/mcp',
+            bearerTokenEnvVar: 'LINEAR_TOKEN',
+            headers: { Authorization: headerValue }
+          } as never
+        ]
+      }
+      const processEnv = { PATH: '/usr/bin', CODEX_HOME: join(TEMP_ROOT, 'codex-home') }
+      return buildCodexSealEvidence(deps(), {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: { PATH: '/usr/bin', CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
-        binaryPath: binary,
+        processLaunchPlan: codexProcessLaunchPlan(binary, processEnv, codexMcpConfig),
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
         effectivePermissions: readOnlyPermissions(),
         reasoningEffort: 'high',
         serviceTier: 'fast',
         settings: { agenticServices: {} } as unknown as AppSettings,
-        codexMcpConfig: {
-          enabled: true,
-          bridgeBinaryPath: '/opt/bridge',
-          bridgeArgs: ['--socket', '/tmp/sock', '--token', bridgeToken],
-          parentProvider: 'codex',
-          userMcpServers: [
-            {
-              serverId: 'linear-1',
-              serverName: 'linear',
-              transport: 'http',
-              url: 'https://mcp.linear.app/mcp',
-              bearerTokenEnvVar: 'LINEAR_TOKEN',
-              headers: { Authorization: headerValue }
-            } as never
-          ]
-        },
+        codexMcpConfig,
         taskWraithMcpAdvertised: true,
         taskWraithMcpProfileId: 'taskwraith-gateway-v2',
         capabilityContract: { bridgeEnabled: true },
         userMcpConfiguration: { servers: [{ name: 'linear', transport: 'http' }] },
         policy
       })
+    }
     const evidence = await build('SECRET-BRIDGE-TOKEN', 'Bearer SECRET-HEADER-VALUE')
     const canonical = buildProviderLaunchAuthority(evidence)
     expect(canonical.controls).toMatchObject({
@@ -319,8 +407,11 @@ describe('codex seal evidence', () => {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: { CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
-        binaryPath: binary,
+        processLaunchPlan: codexProcessLaunchPlan(
+          binary,
+          { CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
+          null
+        ),
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
         effectivePermissions: readOnlyPermissions(),
@@ -337,6 +428,39 @@ describe('codex seal evidence', () => {
     ).rejects.toThrow(/does not match the app-server MCP configuration/i)
   })
 
+  it('rejects the post-seal fast-service-tier compatibility spawn', async () => {
+    const binary = fakeBinary('codex-fast-compatibility')
+    const configuredPlan = codexProcessLaunchPlan(
+      binary,
+      { CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
+      null
+    )
+    await expect(
+      buildCodexSealEvidence(deps(), {
+        model: 'gpt-5.6-terra',
+        promptEnvelope: PROMPT_ENVELOPE,
+        session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
+        processLaunchPlan: {
+          ...configuredPlan,
+          startupCompatibility: 'force-fast-service-tier',
+          args: ['-c', 'service_tier="fast"', 'app-server']
+        },
+        workspacePath: WORKSPACE,
+        approvalMode: 'plan',
+        effectivePermissions: readOnlyPermissions(),
+        reasoningEffort: null,
+        serviceTier: null,
+        settings: { agenticServices: {} } as unknown as AppSettings,
+        codexMcpConfig: null,
+        taskWraithMcpAdvertised: false,
+        taskWraithMcpProfileId: null,
+        capabilityContract: {},
+        userMcpConfiguration: {},
+        policy
+      })
+    ).rejects.toThrow(/immutable app-server process launch plan/i)
+  })
+
   it('rejects Codex seal evidence without an absolute private CODEX_HOME', async () => {
     const binary = fakeBinary('codex-home-required')
     await expect(
@@ -344,8 +468,11 @@ describe('codex seal evidence', () => {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: { CODEX_HOME: 'relative/codex-home' },
-        binaryPath: binary,
+        processLaunchPlan: codexProcessLaunchPlan(
+          binary,
+          { CODEX_HOME: 'relative/codex-home' },
+          null
+        ),
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
         effectivePermissions: readOnlyPermissions(),
@@ -375,8 +502,7 @@ describe('codex seal evidence', () => {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: { CODEX_HOME: codexHome },
-        binaryPath: binary,
+        processLaunchPlan: codexProcessLaunchPlan(binary, { CODEX_HOME: codexHome }, null),
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
         effectivePermissions: readOnlyPermissions(),
@@ -630,18 +756,80 @@ describe('grok seal evidence', () => {
 describe('ollama seal evidence', () => {
   const fetchStub = async (url: string): Promise<unknown> => {
     if (url.endsWith('/api/version')) return { version: '0.9.9-test' }
-    if (url.endsWith('/api/show')) {
-      return {
-        details: { family: 'qwen3', parameter_size: '32B' },
-        capabilities: ['completion', 'tools']
-      }
-    }
     throw new Error(`Unexpected probe URL: ${url}`)
+  }
+
+  const launchPlan = async (
+    model = 'qwen3:4b-instruct',
+    advertisedToolNames = ['read_file', 'list_directory']
+  ) => {
+    const plan = await resolveOllamaFinalLaunchPlan(
+      {
+        baseUrl: 'http://127.0.0.1:11434',
+        requestedModel: model,
+        configuredDefaultModel: null,
+        prompt: PROMPT_ENVELOPE.contextualPrompt,
+        scope: 'workspace',
+        workspacePath: WORKSPACE,
+        toolExecutionAvailable: true,
+        mcpToolsPolicy: 'ask',
+        configuredNetworkAccess: 'deny',
+        effectiveNetworkAccess: 'deny',
+        readOnly: true,
+        ollamaRunProfile: undefined,
+        taskWraithMcpAdvertised: true,
+        taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+        chatId: 'chat-ollama-seal',
+        ensemble: { enabled: false }
+      },
+      {
+        loadInstalledModels: async () => [
+          {
+            id: model,
+            label: model,
+            digest: `digest:${model}`
+          }
+        ],
+        loadModelShow: async () => ({
+          details: { family: 'qwen3', parameter_size: '32B' },
+          capabilities: ['completion', 'tools']
+        }),
+        modelLabel: (value) => value,
+        buildNativeToolDefinitions: () =>
+          advertisedToolNames.map(
+            (name): OllamaNativeToolDefinition => ({
+              type: 'function',
+              function: {
+                name,
+                description: `Test definition for ${name}.`,
+                parameters: { type: 'object', properties: {} }
+              }
+            })
+          ),
+        getSessionMemory: () => ({
+          modelId: model,
+          updatedAt: 123,
+          workingMemory: 'Bound scheduled memory.',
+          toolTurnCount: 1,
+          trajectory: []
+        }),
+        prepareEnsemblePrompt: ({ prompt }) => prompt,
+        buildWorkspaceIndexBlock: () => 'Bound workspace index.',
+        buildOpeningMessages: ({ userPrompt, workspaceIndexBlock }) => [
+          { role: 'system', content: workspaceIndexBlock },
+          { role: 'user', content: userPrompt }
+        ],
+        resolveNumCtx: () => 16_384
+      }
+    )
+    if (!plan) throw new Error('Expected an installed Ollama launch plan.')
+    return plan
   }
 
   it('builds canonical HTTP authority from live server evidence', async () => {
     const evidence = await buildOllamaSealEvidence(deps(), {
-      model: 'qwen3-coder:32b',
+      launchPlan: await launchPlan(),
+      model: 'qwen3:4b-instruct',
       promptEnvelope: PROMPT_ENVELOPE,
       configuredBaseUrl: 'http://127.0.0.1:11434/',
       chatRunProfileId: undefined,
@@ -665,17 +853,17 @@ describe('ollama seal evidence', () => {
       networkAccess: 'deny',
       toolProtocolEnabled: true,
       nativeToolsSupported: true,
-      temperature: 0.2,
+      temperature: 0.25,
       maxConsecutiveNonProductiveTurns: 4
     })
     expect(canonical.common.sessionMode).toBe('fresh')
     expect(providerLaunchAuthorityDigest(evidence)).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  it('refuses advertisement without a live tool protocol', async () => {
+  it('refuses legacy reconstructed facts without the production launch plan', async () => {
     await expect(
       buildOllamaSealEvidence(deps(), {
-        model: 'qwen3-coder:32b',
+        model: 'qwen3:4b-instruct',
         promptEnvelope: PROMPT_ENVELOPE,
         configuredBaseUrl: null,
         chatRunProfileId: undefined,
@@ -690,6 +878,32 @@ describe('ollama seal evidence', () => {
         userMcpConfiguration: {},
         fetchJson: fetchStub
       })
-    ).rejects.toThrow(/does not match its tool protocol availability/i)
+    ).rejects.toThrow(/exact immutable final launch plan/i)
+  })
+
+  it('binds the effective fallback temperature sent on the wire', async () => {
+    const evidence = await buildOllamaSealEvidence(deps(), {
+      launchPlan: await launchPlan('qwen3-coder:32b', ['read_file']),
+      model: 'legacy-value-is-not-authority',
+      promptEnvelope: PROMPT_ENVELOPE,
+      configuredBaseUrl: null,
+      chatRunProfileId: undefined,
+      effectivePermissions: readOnlyPermissions(),
+      agenticServices: { mcpTools: 'deny', networkAccess: 'allow' },
+      workspaceScoped: false,
+      sessionMemory: null,
+      taskWraithMcpAdvertised: false,
+      taskWraithMcpProfileId: null,
+      advertisedToolNames: [],
+      capabilityContract: {},
+      userMcpConfiguration: { ignored: true },
+      fetchJson: fetchStub
+    })
+
+    const canonical = buildProviderLaunchAuthority(evidence)
+    if (canonical.provider !== 'ollama') throw new Error('Expected Ollama authority.')
+    expect(canonical.common.model).toBe('qwen3-coder:32b')
+    expect(canonical.controls.temperature).toBe(0.2)
+    expect(providerLaunchAuthorityDigest(evidence)).toMatch(/^[0-9a-f]{64}$/)
   })
 })

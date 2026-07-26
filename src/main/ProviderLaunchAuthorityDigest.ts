@@ -1,17 +1,34 @@
 import { createHash } from 'node:crypto'
 import { isAbsolute, resolve } from 'node:path'
 import type { ProviderId, TaskWraithMcpProfileId } from './store/types'
+import {
+  assertPiLaunchAuthorityInvariants,
+  normalizePiLaunchControls,
+  type PiLaunchControls,
+  type PiProviderLaunchAuthorityInput
+} from './pi/PiLaunchAuthority'
+import {
+  buildAntigravityLaunchAuthority,
+  type AntigravityGeminiApiLaunchControls,
+  type AntigravityInProcessSdkRuntimeIdentityAuthority,
+  type AntigravityLaunchAuthorityInput,
+  type AntigravityOfficialAgyLaunchControls
+} from './scheduling/AntigravityLaunchAuthority'
 
 const PROVIDER_LAUNCH_DOMAIN = 'taskwraith:provider-launch-authority:v1\0'
 const MAX_TEXT_LENGTH = 4_096
 
-// antigravity is a known/decode ProviderId but has NO launch runtime yet (that
-// arrives in a later opt-in slice); exclude it from the launch-authority lane so
-// no vacuous launch-control/seal entry is minted for a provider that cannot run.
-// 'pi' is excluded like antigravity for now: scheduled-occurrence launches
-// need a real SealEvidence producer before joining (do not half-wire — the
-// seal-service dispatch is live). Interactive pi runs are unaffected.
+/**
+ * The original six-provider union consumed by SealEvidenceCommon and the
+ * production-wired scheduling service. Keep it narrow: Pi and conditional
+ * AntiGravity now have strict evidence schemas, but neither is allowed to
+ * become production seal-wired merely because the central digest can validate
+ * its provider-local authority.
+ */
 export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi'>
+
+/** Every provider with a strict central launch-authority schema/producer. */
+export type LaunchAuthorityProviderId = LiveProviderLaunchId | 'pi' | 'antigravity'
 
 export interface ProviderLaunchCommonAuthority {
   readonly adapterRevision: string
@@ -153,7 +170,12 @@ export interface CursorLaunchControls {
   readonly transport: 'cursor-agent-stream-json'
   readonly reasoningEffort: string | null
   readonly fastMode: boolean
-  readonly executionMode: 'plan' | 'contained-default'
+  /**
+   * Exact Cursor CLI mode. `ask` is the native-only read-only argv; `plan` is
+   * retained for strict decode of earlier authority fixtures, while bridged
+   * read-only seats use `contained-default` because ask/plan executes no MCP.
+   */
+  readonly executionMode: 'ask' | 'plan' | 'contained-default'
   readonly bridgeMode: 'none' | 'safe-subset' | 'plan-subset' | 'full'
   readonly brokerRegistration: 'none' | 'workspace' | 'global'
   readonly forceMcpTools: boolean
@@ -190,6 +212,8 @@ export interface ProviderLaunchControlsByProvider {
   readonly grok: GrokLaunchControls
   readonly cursor: CursorLaunchControls
   readonly ollama: OllamaLaunchControls
+  readonly pi: PiLaunchControls
+  readonly antigravity: AntigravityOfficialAgyLaunchControls | AntigravityGeminiApiLaunchControls
 }
 
 export interface ProviderRuntimeIdentityByProvider {
@@ -199,9 +223,13 @@ export interface ProviderRuntimeIdentityByProvider {
   readonly grok: CliRuntimeIdentityAuthority
   readonly cursor: CliRuntimeIdentityAuthority
   readonly ollama: HttpRuntimeIdentityAuthority
+  readonly pi: CliRuntimeIdentityAuthority
+  readonly antigravity:
+    | CliRuntimeIdentityAuthority
+    | AntigravityInProcessSdkRuntimeIdentityAuthority
 }
 
-export type ProviderLaunchAuthorityInputByProvider = {
+type CommonProviderLaunchAuthorityInputByProvider = {
   readonly [P in LiveProviderLaunchId]: Readonly<{
     schemaVersion: 1
     provider: P
@@ -212,8 +240,14 @@ export type ProviderLaunchAuthorityInputByProvider = {
   }>
 }
 
+export type ProviderLaunchAuthorityInputByProvider =
+  CommonProviderLaunchAuthorityInputByProvider & {
+    readonly pi: PiProviderLaunchAuthorityInput
+    readonly antigravity: AntigravityLaunchAuthorityInput
+  }
+
 export type ProviderLaunchAuthorityInput =
-  ProviderLaunchAuthorityInputByProvider[LiveProviderLaunchId]
+  ProviderLaunchAuthorityInputByProvider[LaunchAuthorityProviderId]
 
 export type CanonicalProviderLaunchAuthority = ProviderLaunchAuthorityInput
 
@@ -374,9 +408,45 @@ export function buildProviderLaunchAuthority(
     'provider launch authority'
   )
   if (root.schemaVersion !== 1) throw new TypeError('Invalid provider launch schema version.')
-  const provider = liveProviderId(root.provider)
+  const provider = launchAuthorityProviderId(root.provider)
+
+  // AntiGravity owns a two-transport discriminated validator (official agy CLI
+  // versus the in-process Gemini API SDK). Run it first, then pass its shared
+  // common/tool/CLI shapes through the central normalizers as a second,
+  // deliberately stricter boundary.
+  if (provider === 'antigravity') {
+    const local = buildAntigravityLaunchAuthority(input as AntigravityLaunchAuthorityInput)
+    const common = normalizeCommon(local.common)
+    const tools = normalizeTools(local.tools)
+    const runtime =
+      local.runtime.kind === 'cli' ? normalizeCliRuntime(local.runtime) : local.runtime
+    return canonicalClone({
+      schemaVersion: 1,
+      provider,
+      common,
+      runtime,
+      tools,
+      controls: local.controls
+    }) as CanonicalProviderLaunchAuthority
+  }
+
   const common = normalizeCommon(root.common)
   const tools = normalizeTools(root.tools)
+
+  if (provider === 'pi') {
+    const runtime = normalizeCliRuntime(root.runtime)
+    const controls = normalizePiLaunchControls(root.controls)
+    assertPiLaunchAuthorityInvariants({ common, runtime, tools, controls })
+    return canonicalClone({
+      schemaVersion: 1,
+      provider,
+      common,
+      runtime,
+      tools,
+      controls
+    }) as CanonicalProviderLaunchAuthority
+  }
+
   const runtime = normalizeRuntime(provider, root.runtime)
   const controls = normalizeControls(provider, root.controls)
   assertCrossFieldInvariants(provider, common, tools, runtime, controls)
@@ -680,7 +750,7 @@ function normalizeCursorControls(value: unknown): CursorLaunchControls {
     fastMode: boolean(record.fastMode, 'Cursor fast mode'),
     executionMode: oneOf(
       record.executionMode,
-      ['plan', 'contained-default'],
+      ['ask', 'plan', 'contained-default'],
       'Cursor execution mode'
     ),
     bridgeMode: oneOf(
@@ -862,18 +932,22 @@ function assertCrossFieldInvariants(
   }
 }
 
-function liveProviderId(value: unknown): LiveProviderLaunchId {
+function launchAuthorityProviderId(value: unknown): LaunchAuthorityProviderId {
   if (
     value === 'codex' ||
     value === 'claude' ||
     value === 'kimi' ||
     value === 'grok' ||
     value === 'cursor' ||
-    value === 'ollama'
+    value === 'ollama' ||
+    value === 'pi' ||
+    value === 'antigravity'
   ) {
     return value
   }
-  throw new TypeError('Provider launch authority requires a live provider; Gemini is retired.')
+  throw new TypeError(
+    'Provider launch authority requires a supported authority provider; Gemini is retired.'
+  )
 }
 
 function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
@@ -886,7 +960,8 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
       'taskwraith-gateway-v1',
       'taskwraith-gateway-v2',
       'taskwraith-gateway-v3',
-      'taskwraith-gateway-v4'
+      'taskwraith-gateway-v4',
+      'taskwraith-gateway-v5'
     ],
     'TaskWraith MCP profile'
   )

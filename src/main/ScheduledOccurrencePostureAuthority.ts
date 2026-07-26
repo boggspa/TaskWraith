@@ -25,7 +25,9 @@ const PROVIDERS = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity',
+  'pi'
 ] as const satisfies readonly ProviderId[]
 
 const PRESET_IDS = [

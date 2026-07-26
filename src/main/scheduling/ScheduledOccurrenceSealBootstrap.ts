@@ -10,12 +10,16 @@ import type { EffectiveRunPermissions } from '../store/types'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import { ScheduledOccurrenceSealService } from './ScheduledOccurrenceSealService'
 import { taskWraithCodexHomePath } from '../codex/CodexHome'
+import { assertScheduledSealRunManagementCoverage } from './ScheduledSealCoverage'
 
 /**
- * Stage-2 construction for the first live seal lane. Only Cursor is admitted:
- * its contained argv and inherited environment are both re-derived from the
- * exact provider dispatch helpers. Other providers deliberately remain
- * unsealed until their dispatch-owned evidence can be supplied exactly.
+ * Stage-2 construction for the first live seal lane. Cursor is seal-eligible
+ * only when composition selected the final native-only Path-B plan: its
+ * contained argv and inherited environment are re-derived from the exact
+ * dispatch helpers. Broker-intended Cursor runs remain available and explicitly
+ * unsealed until their dynamic setup outcome moves before sealing. Other
+ * providers likewise remain available and unsealed until their dispatch-owned
+ * evidence can be supplied exactly.
  */
 export function createCursorScheduledOccurrenceSealService(input: {
   userDataPath: string
@@ -30,6 +34,7 @@ export function createCursorScheduledOccurrenceSealService(input: {
   ): string
   resolveUnattendedElevation(taskId: string): { ack: UnattendedElevationAck } | null
 }): ScheduledOccurrenceSealService {
+  assertScheduledSealRunManagementCoverage()
   const authorityRoot = new ScheduledOccurrenceAuthorityRootStore({
     userDataPath: input.userDataPath,
     safeStorage: input.safeStorage
@@ -56,8 +61,9 @@ export function createCursorScheduledOccurrenceSealService(input: {
       if (!current || current.status !== 'running' || current.runId !== ownerRunId) return null
       return AppStore.updateScheduledTask(taskId, { occurrenceSeal })
     },
-    // These are unreachable while only Cursor is admitted. Keeping the future
-    // service shape explicit makes accidental provider enablement fail closed.
+    // These are unreachable while only native-only Cursor is admitted. Keeping
+    // the future service shape explicit makes accidental provider enablement
+    // fail closed.
     codexMcpConfig: () => null,
     codexApprovalPolicyForMode: () => 'never',
     codexSandboxPolicyForMode: () => ({}),

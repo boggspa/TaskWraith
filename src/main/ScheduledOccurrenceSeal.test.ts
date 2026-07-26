@@ -259,9 +259,45 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
   }
   switch (provider) {
     case 'pi':
-      // Excluded from LiveProviderLaunchId (no seal-evidence producer yet);
-      // scheduled launches cannot name pi, so the helper must never either.
-      throw new Error('pi is not schedulable until a SealEvidencePi producer exists')
+      return {
+        schemaVersion: 1,
+        provider,
+        common: {
+          ...common,
+          model: 'deepseek/deepseek-chat',
+          sessionMode: 'resume',
+          resumeSessionHmac: hex('1'),
+          providerSessionGenerationSha256: hex('2')
+        },
+        runtime: cli,
+        tools: {
+          ...tools,
+          taskWraithMcpAdvertised: false,
+          taskWraithMcpProfileId: null
+        },
+        controls: {
+          transport: 'rpc',
+          upstream: 'deepseek',
+          modelId: 'deepseek-chat',
+          thinkingMode: 'provider-default',
+          writeCapable: false,
+          nativeToolPolicySha256: tools.nativeToolPolicySha256,
+          providerApprovalMode: 'disabled',
+          taskWraithMcpAttachmentMode: 'none',
+          projectConfigurationDiscovery: 'disabled',
+          isolatedHomeMode: 'per-run-mkdtemp-verified-v1',
+          isolatedHomeAuthoritySha256: hex('3'),
+          sessionPersistence: 'durable-per-chat',
+          sessionDirectoryHmac: hex('4'),
+          promptTransport: 'stdin-jsonl',
+          stdinCommandTemplateSha256: hex('5'),
+          shutdownPolicySha256: hex('6'),
+          credentialFirewallSha256: hex('7'),
+          offlineStartup: true,
+          telemetryEnabled: false,
+          fallbackPolicy: 'forbid'
+        }
+      }
     case 'codex':
       return {
         schemaVersion: 1,
@@ -400,7 +436,36 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
     case 'gemini':
       return { ...providerLaunchPlan('codex'), provider: 'gemini' } as never
     case 'antigravity':
-      return { ...providerLaunchPlan('codex'), provider: 'antigravity' } as never
+      return {
+        schemaVersion: 1,
+        provider,
+        common: { ...common, model: 'gemini-api:gemini-2.5-flash' },
+        runtime: {
+          kind: 'in-process-sdk',
+          hostExecutableRealPath: providerBinary(provider),
+          hostExecutableSha256: hex('c'),
+          hostRuntimeVersionSha256: hex('d'),
+          sdkPackageJsonRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/package.json'),
+          sdkPackageJsonSha256: hex('e'),
+          sdkEntrypointRealPath: resolve('/opt/taskwraith/node_modules/@google/genai/dist/index.js'),
+          sdkEntrypointSha256: hex('f')
+        },
+        tools,
+        controls: {
+          transport: 'gemini-api-sdk',
+          disclosureAcceptedAt: 1_700_000_000_000,
+          apiModel: 'gemini-2.5-flash',
+          apiKeyHmac: hex('1'),
+          historyMode: 'host-history-replay',
+          imageTransport: 'none',
+          taskWraithFunctionCalling: true,
+          functionDeclarationsSha256: hex('2'),
+          maxToolRounds: 20,
+          requestConfigurationSha256: hex('3'),
+          taskWraithMcpAttachmentMode: 'in-process-function-calls',
+          fallbackPolicy: 'forbid'
+        }
+      }
   }
 }
 
@@ -502,10 +567,13 @@ function grokStreamingReadOnlyPlan(
   }
 }
 
+type CursorTestLaunchControls = ProviderLaunchAuthorityInputByProvider['cursor']['controls']
+
 function cursorBridgePlan(
-  bridgeMode: ProviderLaunchAuthorityInputByProvider['cursor']['controls']['bridgeMode'],
-  executionMode: ProviderLaunchAuthorityInputByProvider['cursor']['controls']['executionMode'] =
-    bridgeMode === 'none' ? 'plan' : 'contained-default'
+  bridgeMode: CursorTestLaunchControls['bridgeMode'],
+  executionMode: CursorTestLaunchControls['executionMode'] = bridgeMode === 'none'
+    ? 'ask'
+    : 'contained-default'
 ): ProviderLaunchAuthorityInputByProvider['cursor'] {
   const plan = providerLaunchPlan('cursor') as ProviderLaunchAuthorityInputByProvider['cursor']
   const active = bridgeMode !== 'none'
@@ -520,10 +588,25 @@ function cursorBridgePlan(
       ...plan.controls,
       executionMode,
       bridgeMode,
-      brokerRegistration: active ? 'workspace' : 'none',
+      brokerRegistration: active ? 'global' : 'none',
       forceMcpTools: active,
       approveMcpServers: active
     }
+  }
+}
+
+type AntigravityApiTestPlan = Extract<
+  ProviderLaunchAuthorityInputByProvider['antigravity'],
+  { readonly controls: { readonly transport: 'gemini-api-sdk' } }
+>
+
+function antigravityApiPlan(
+  historyMode: 'host-history-replay' | 'ensemble-context-only'
+): AntigravityApiTestPlan {
+  const plan = providerLaunchPlan('antigravity') as AntigravityApiTestPlan
+  return {
+    ...plan,
+    controls: { ...plan.controls, historyMode }
   }
 }
 
@@ -2095,6 +2178,58 @@ describe('runtime launch and loop verifier authority', () => {
     ).toMatchObject({ schemaVersion: 2 })
   })
 
+  it.each([
+    ['shell-command deny', { shellCommands: 'deny' as const, fileChanges: 'allow' as const }],
+    ['file-change deny', { shellCommands: 'allow' as const, fileChanges: 'deny' as const }],
+    ['shell and file deny', { shellCommands: 'deny' as const, fileChanges: 'deny' as const }]
+  ])(
+    'keeps Pi native writes disabled at the full seal boundary for default mode plus signed %s',
+    (_label, deniedServices) => {
+      const permissions = effectivePermissions({
+        presetId: 'workspace_write',
+        approvalMode: 'default',
+        readOnly: false,
+        agenticServices: {
+          ...effectivePermissions().agenticServices,
+          ...deniedServices
+        }
+      })
+      const readOnlyPlan = providerLaunchPlan(
+        'pi'
+      ) as ProviderLaunchAuthorityInputByProvider['pi']
+      const writePlan = {
+        ...readOnlyPlan,
+        controls: { ...readOnlyPlan.controls, writeCapable: true }
+      } as ProviderLaunchAuthorityInputByProvider['pi']
+      const scheduled = task({
+        provider: 'pi',
+        runtimeProfileId: undefined,
+        selectedModelType: 'deepseek/deepseek-chat',
+        approvalMode: permissions.approvalMode,
+        permissionPresetId: permissions.presetId
+      })
+
+      expect(
+        mintScheduledOccurrenceSeal(
+          ROOT,
+          context(scheduled, {
+            runtimeSeats: [defaultSeatForPermissions('pi', permissions, readOnlyPlan)]
+          }),
+          now
+        )
+      ).toMatchObject({ schemaVersion: 2 })
+      expect(() =>
+        mintScheduledOccurrenceSeal(
+          ROOT,
+          context(scheduled, {
+            runtimeSeats: [defaultSeatForPermissions('pi', permissions, writePlan)]
+          }),
+          now
+        )
+      ).toThrow(/Pi native tool tier does not match the signed approval posture/i)
+    }
+  )
+
   it('reconciles Codex approval policy with exact signed services and transport', () => {
     const planPermissions = effectivePermissions()
     const defaultPermissions = effectivePermissions({
@@ -2378,13 +2513,98 @@ describe('runtime launch and loop verifier authority', () => {
             defaultSeatForPermissions(
               'cursor',
               readOnlyPermissions,
-              cursorBridgePlan('safe-subset', 'plan')
+              cursorBridgePlan('safe-subset', 'ask')
             )
           ]
         }),
         now
       )
     ).toThrow(/do not advertise a TaskWraith MCP bridge/i)
+  })
+
+  it('reconciles AntiGravity API history with solo and ensemble seat context', () => {
+    const permissions = effectivePermissions()
+    const soloTask = task({
+      provider: 'antigravity',
+      runtimeProfileId: undefined,
+      selectedModelType: 'gemini-api:gemini-2.5-flash',
+      externalPathGrants: []
+    })
+    const soloSeat = (
+      historyMode: 'host-history-replay' | 'ensemble-context-only'
+    ): ScheduledOccurrenceRuntimeSeatContext =>
+      defaultSeatForPermissions('antigravity', permissions, antigravityApiPlan(historyMode))
+
+    expect(
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(soloTask, { runtimeSeats: [soloSeat('host-history-replay')] }),
+        now
+      )
+    ).toMatchObject({ schemaVersion: 2 })
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(soloTask, { runtimeSeats: [soloSeat('ensemble-context-only')] }),
+        now
+      )
+    ).toThrow(/history mode does not match.*seat context/i)
+
+    const participantId = 'antigravity-api-seat'
+    const ensembleTask = task({
+      provider: 'antigravity',
+      runtimeProfileId: undefined,
+      selectedModelType: 'gemini-api:gemini-2.5-flash',
+      externalPathGrants: [],
+      kind: 'ensemble',
+      ensembleSnapshot: {
+        orchestrationMode: 'turn_bound',
+        participants: [
+          {
+            id: participantId,
+            provider: 'antigravity',
+            enabled: true,
+            role: 'Analyst',
+            instructions: 'Review.',
+            order: 1
+          }
+        ],
+        capturedAt: now
+      }
+    })
+    const ensembleSeat = (
+      historyMode: 'host-history-replay' | 'ensemble-context-only'
+    ): ScheduledOccurrenceRuntimeSeatContext => {
+      const plan = antigravityApiPlan(historyMode)
+      return defaultSeat('antigravity', {
+        seatId: participantId,
+        effective: effectiveAuthority('antigravity', {
+          effectiveMcpProfileId: plan.tools.taskWraithMcpProfileId,
+          effectiveApprovalMode: permissions.approvalMode,
+          effectiveAgenticServices: permissions.agenticServices,
+          effectiveNetworkPolicy: permissions.networkAccess,
+          providerLaunchAuthority: plan
+        }),
+        permissionCapability: postureCapability('antigravity', participantId, undefined, {
+          permissions
+        })
+      })
+    }
+
+    expect(
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(ensembleTask, { runtimeSeats: [ensembleSeat('ensemble-context-only')] }),
+        now
+      )
+    ).toMatchObject({ schemaVersion: 2 })
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(ensembleTask, { runtimeSeats: [ensembleSeat('host-history-replay')] }),
+        now
+      )
+    ).toThrow(/history mode does not match.*seat context/i)
   })
 
   it('seals the Kimi ACP production posture and rejects a gateway-less authority', () => {

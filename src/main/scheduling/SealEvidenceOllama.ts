@@ -1,22 +1,19 @@
 import {
   OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS,
-  OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS,
-  normalizeOllamaBaseUrl,
-  ollamaModelSupportsNativeTools,
-  type OllamaModelInfo
+  OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS
 } from '../ollama/OllamaProvider'
-import { ollamaHarnessEnforced } from '../ollama/OllamaHarnessGates'
-import { resolveOllamaRunProfile, resolveOllamaThinkingLevel } from '../ollama/OllamaRunProfiles'
+import type { OllamaFinalLaunchPlan } from '../ollama/OllamaLaunchPlan'
 import { SCHEDULED_OCCURRENCE_OLLAMA_EFFECTIVE_BINARY_SENTINEL } from '../ScheduledOccurrenceSeal'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type {
-  AgenticNetworkPolicy,
   EffectiveRunPermissions,
+  OllamaRunProfile,
   OllamaRunProfileId,
   TaskWraithMcpProfileId
 } from '../store/types'
 import {
   SealEvidenceError,
+  canonicalEvidenceEncode,
   providerLaunchHmacOfCanonicalJson,
   sha256HexOfCanonicalJson,
   type CanonicalEvidenceValue
@@ -30,38 +27,68 @@ import {
 } from './SealEvidenceCommon'
 
 /**
- * Scheduled-launch evidence for Ollama's local HTTP chat transport.
+ * Candidate scheduled-launch evidence for Ollama's local HTTP chat transport.
  *
  * The runtime identity is live server evidence, not file evidence: the
- * endpoint HMAC binds the normalized base URL; the server identity binds a
- * fresh GET /api/version response; the model manifest binds a fresh POST
- * /api/show response for the exact wire model. Both probes are performed
- * here (and again at verification) against the same endpoints dispatch
- * uses — an unreachable server fails seal derivation exactly as it would
- * fail the dispatch itself.
+ * endpoint HMAC binds the normalized base URL and the server identity binds a
+ * fresh GET /api/version response.
+ *
+ * Production and evidence now share one immutable OllamaFinalLaunchPlan. That
+ * plan already contains the installed wire model, tag/show manifest, complete
+ * native-or-JSON tool surface, keyed session memory, request options, and
+ * opening messages consumed by the first `/api/chat` request. This producer is
+ * deliberately not production-wired until scheduled dispatch carries that
+ * exact plan through the seal/final-use boundary.
  */
+export const OLLAMA_SCHEDULED_SEAL_READINESS = {
+  provider: 'ollama',
+  productionWiring: 'blocked',
+  blockers: [
+    'scheduled-dispatch-does-not-carry-final-launch-plan',
+    'mcp-profile-required-for-sealing-not-enforced-at-dispatch',
+    'model-manifest-not-revalidated-at-final-use'
+  ]
+} as const
+
 export interface OllamaSealEvidenceFacts {
+  /**
+   * The exact immutable object production dispatch consumes. Required at
+   * runtime; optional in the type only while the unwired scheduled service
+   * still constructs legacy facts for this candidate producer.
+   */
+  readonly launchPlan?: OllamaFinalLaunchPlan
+  /** @deprecated Replaced by launchPlan.model. */
   readonly model: string
   readonly promptEnvelope: CommonLaunchFacts['promptEnvelope']
+  /** @deprecated Replaced by launchPlan.baseUrl. */
   /** settings.ollamaBaseUrl (pre-normalization). */
   readonly configuredBaseUrl: string | null
+  /** @deprecated Replaced by launchPlan.runProfile. */
   /** Legacy per-chat run profile id, if the chat carries one. */
   readonly chatRunProfileId: OllamaRunProfileId | undefined
+  /** @deprecated Replaced by launchPlan.readOnly/networkAccess. */
   readonly effectivePermissions: EffectiveRunPermissions
+  /** @deprecated Replaced by launchPlan tool/network controls. */
   /** settings.agenticServices at dispatch. */
   readonly agenticServices: Readonly<{
     mcpTools?: string
     networkAccess?: string
   }>
+  /** @deprecated Replaced by launchPlan.toolProtocolEnabled. */
   /** Whether the dispatch tool loop is available (workspace-scoped run). */
   readonly workspaceScoped: boolean
+  /** @deprecated Replaced by launchPlan.sessionMemory. */
   /** Normalized ollama session memory for this chat, or null. */
   readonly sessionMemory: CanonicalEvidenceValue | null
+  /** @deprecated Replaced by launchPlan.taskWraithMcpAdvertised. */
   readonly taskWraithMcpAdvertised: boolean
+  /** @deprecated Replaced by launchPlan.taskWraithMcpProfileId. */
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** @deprecated Replaced by launchPlan.availableToolNames. */
   /** Advertised tool names after network/read-only stripping at dispatch. */
   readonly advertisedToolNames: readonly string[]
   readonly capabilityContract: CanonicalEvidenceValue
+  /** @deprecated Ollama does not attach user-authored MCP configuration. */
   readonly userMcpConfiguration: CanonicalEvidenceValue
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchJson?: (url: string, init?: RequestInit) => Promise<unknown>
@@ -71,36 +98,32 @@ export async function buildOllamaSealEvidence(
   deps: SealEvidenceDeps,
   facts: OllamaSealEvidenceFacts
 ): Promise<ProviderLaunchAuthorityInputByProvider['ollama']> {
-  const baseUrl = normalizeOllamaBaseUrl(facts.configuredBaseUrl)
+  const plan = facts.launchPlan
+  if (!plan) {
+    throw new SealEvidenceError(
+      'Ollama scheduled evidence requires the exact immutable final launch plan consumed by production dispatch.'
+    )
+  }
+  assertDeepFrozenLaunchPlan(plan)
+  const baseUrl = plan.baseUrl
   const fetchJson = facts.fetchJson ?? defaultFetchJson
-  const profile = requiredRunProfile(resolveOllamaRunProfile(facts.model, facts.chatRunProfileId))
-  const readOnly = facts.effectivePermissions.readOnly === true
-  const networkAccess: AgenticNetworkPolicy =
-    facts.agenticServices.networkAccess === 'deny'
-      ? 'deny'
-      : facts.effectivePermissions.networkAccess ||
-        (facts.agenticServices.networkAccess === 'allow' ? 'allow' : 'deny')
-  const toolProtocolEnabled =
-    facts.workspaceScoped && facts.agenticServices.mcpTools !== 'deny'
-  if (facts.taskWraithMcpAdvertised !== toolProtocolEnabled) {
+  const profile = requiredRunProfile(plan.runProfile)
+  if (plan.taskWraithMcpAdvertised !== plan.toolProtocolEnabled) {
     throw new SealEvidenceError(
       'Ollama TaskWraith MCP advertisement does not match its tool protocol availability.'
     )
   }
 
   const serverVersion = await fetchJson(`${baseUrl}/api/version`)
-  const modelShow = await fetchJson(`${baseUrl}/api/show`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: facts.model })
-  })
-  const modelInfo = extractModelInfoForNativeTools(modelShow)
-  const nativeToolsSupported = ollamaModelSupportsNativeTools(modelInfo)
 
   const common = buildCommonLaunchAuthority(deps, {
     provider: 'ollama',
-    model: facts.model,
-    promptEnvelope: facts.promptEnvelope,
+    model: plan.model,
+    promptEnvelope: {
+      contextualPrompt: canonicalEvidenceEncode(plan.openingMessages),
+      finalPrompt: plan.userPrompt,
+      runtimePreambleVersion: facts.promptEnvelope.runtimePreambleVersion
+    },
     // Ollama HTTP launches are always fresh; session memory binds separately.
     session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
     resolvedEnv: {},
@@ -121,27 +144,31 @@ export async function buildOllamaSealEvidence(
         numPredictTool: profile.numPredictTool,
         numPredictFinal: profile.numPredictFinal,
         keepAlive: profile.keepAlive
-      }
+      },
+      firstRequest: toCanonicalJson(plan.firstRequest)
     },
     capabilityContract: facts.capabilityContract
   })
 
   const tools = buildToolSurfaceAuthority({
-    taskWraithMcpAdvertised: facts.taskWraithMcpAdvertised,
-    taskWraithMcpProfileId: facts.taskWraithMcpProfileId,
+    taskWraithMcpAdvertised: plan.taskWraithMcpAdvertised,
+    taskWraithMcpProfileId: plan.taskWraithMcpProfileId,
     providerMcpConfiguration: {
-      attachment: toolProtocolEnabled ? 'local-tool-loop' : 'none',
-      advertisedToolNames: [...facts.advertisedToolNames]
+      attachment: plan.toolProtocolEnabled ? 'local-tool-loop' : 'none',
+      advertisedToolNames: [...plan.availableToolNames],
+      formatToolNames: [...plan.formatToolNames]
     },
-    userMcpConfiguration: facts.userMcpConfiguration,
+    userMcpConfiguration: { attachment: 'none' },
     nativeToolPolicy: {
       kind: 'ollama-local-tool-loop',
-      nativeToolsSupported,
-      readOnly,
-      networkAccess
+      nativeToolsSupported: plan.nativeToolsSupported,
+      nativeToolDefinitions: toCanonicalJson(plan.nativeToolDefinitions),
+      compactToolSchemas: plan.compactToolSchemas,
+      readOnly: plan.readOnly,
+      networkAccess: plan.networkAccess
     },
     brokerPolicy: {
-      kind: toolProtocolEnabled ? 'taskwraith-local-tool-broker' : 'none',
+      kind: plan.toolProtocolEnabled ? 'taskwraith-local-tool-broker' : 'none',
       approvalGate: 'signed-run-posture'
     }
   })
@@ -163,32 +190,28 @@ export async function buildOllamaSealEvidence(
       }),
       modelManifestSha256: sha256HexOfCanonicalJson({
         schemaVersion: 1,
-        kind: 'ollama-api-show',
-        model: facts.model,
-        response: toCanonicalJson(modelShow)
+        kind: 'ollama-final-model-manifest',
+        model: plan.model,
+        manifest: toCanonicalJson(plan.modelManifest)
       })
     },
     tools,
     controls: {
       transport: 'http-chat',
-      reasoningLevel:
-        resolveOllamaThinkingLevel(facts.model, { reasoningLevel: profile.reasoningLevel }) ??
-        null,
+      reasoningLevel: plan.thinkingLevel,
       contextCapTokens: profile.contextCapTokens,
       protocolMode: profile.protocolMode,
-      compactToolSchemas: profile.compactToolSchemas,
-      oneToolAtATime: profile.oneToolAtATime,
+      compactToolSchemas: plan.compactToolSchemas,
+      oneToolAtATime: plan.oneToolAtATime,
       numPredictTool: profile.numPredictTool,
       numPredictFinal: profile.numPredictFinal,
       keepAlive: profile.keepAlive,
-      // runOllamaChatTurn applies this default when no explicit temperature
-      // is provided; scheduled dispatch provides none.
-      temperature: 0.2,
-      toolProtocolEnabled,
-      nativeToolsSupported,
-      readOnly,
-      networkAccess,
-      harnessEnabled: toolProtocolEnabled && ollamaHarnessEnforced(facts.model),
+      temperature: plan.temperature,
+      toolProtocolEnabled: plan.toolProtocolEnabled,
+      nativeToolsSupported: plan.nativeToolsSupported,
+      readOnly: plan.readOnly,
+      networkAccess: plan.networkAccess,
+      harnessEnabled: plan.harnessEnabled,
       maxConsecutiveNonProductiveTurns: OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS,
       retryPolicySha256: sha256HexOfCanonicalJson({
         schemaVersion: 1,
@@ -197,7 +220,8 @@ export async function buildOllamaSealEvidence(
       }),
       memorySnapshotSha256: sha256HexOfCanonicalJson({
         schemaVersion: 1,
-        memory: facts.sessionMemory
+        memoryKey: plan.memoryKey,
+        memory: plan.sessionMemory
       })
     }
   }
@@ -223,9 +247,7 @@ interface RequiredOllamaRunProfile {
  * with a missing knob rather than substituting a default the runtime never
  * chose.
  */
-function requiredRunProfile(
-  profile: ReturnType<typeof resolveOllamaRunProfile>
-): RequiredOllamaRunProfile {
+function requiredRunProfile(profile: OllamaRunProfile): RequiredOllamaRunProfile {
   const reasoningLevel = profile.reasoningLevel
   if (reasoningLevel !== 'low' && reasoningLevel !== 'medium' && reasoningLevel !== 'high') {
     throw new SealEvidenceError('Ollama run profile reasoning level is missing.')
@@ -294,12 +316,17 @@ function toCanonicalJson(value: unknown): CanonicalEvidenceValue {
   }
 }
 
-function extractModelInfoForNativeTools(showResponse: unknown): OllamaModelInfo | null {
-  if (!showResponse || typeof showResponse !== 'object') return null
-  const record = showResponse as Record<string, unknown>
-  const capabilities = Array.isArray(record.capabilities)
-    ? record.capabilities.filter((entry): entry is string => typeof entry === 'string')
-    : undefined
-  if (!capabilities) return null
-  return { name: 'seal-evidence', capabilities } as unknown as OllamaModelInfo
+function assertDeepFrozenLaunchPlan(
+  value: unknown,
+  path = 'launchPlan',
+  seen = new Set<object>()
+): void {
+  if (!value || typeof value !== 'object' || seen.has(value)) return
+  if (!Object.isFrozen(value)) {
+    throw new SealEvidenceError(`Ollama final launch plan is mutable at ${path}.`)
+  }
+  seen.add(value)
+  for (const [key, child] of Object.entries(value)) {
+    assertDeepFrozenLaunchPlan(child, `${path}.${key}`, seen)
+  }
 }
