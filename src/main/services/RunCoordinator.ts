@@ -128,6 +128,22 @@ export interface DispatchResult {
    * run. This is authoritative when a runtime profile allocates a per-thread
    * worktree, so renderer-owned diff capture can follow the provider cwd. */
   effectiveWorkspacePath?: string
+  /**
+   * Why a preflight failure declined the dispatch, when there is a reason
+   * worth telling a human.
+   *
+   * A solo run already sees this — the same message goes to the sender as a
+   * compat-line error. An Ensemble seat did not: the orchestrator only learns
+   * `dispatched: false`, so its note fell to the `unknown` variant and read
+   * "dispatch failed. Skipping for this round" with no cause. That is how a
+   * plain "Codex needs sign-in" became undiagnosable inside a round — and why
+   * a panel seat could report a confident, invented cause instead.
+   *
+   * Set ONLY for genuine failures. A lifecycle cancellation is not a failure
+   * and deliberately leaves this undefined, so a cancelled seat stays quiet
+   * rather than accusing a provider of being broken.
+   */
+  failureMessage?: string
 }
 
 /**
@@ -191,7 +207,13 @@ export class RunCoordinator {
           dispatchReservation
         )
         this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route, dispatchReservation)
-        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+        // Carry the reason out, not just the refusal — an Ensemble seat has no
+        // other way to learn why it was skipped.
+        return {
+          dispatched: false,
+          appRunId: normalizedPayload.appRunId ?? '',
+          failureMessage: message
+        }
       }
       const declinedResult = (): DispatchResult => ({
         dispatched: false,

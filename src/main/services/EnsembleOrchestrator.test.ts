@@ -9105,6 +9105,79 @@ Next action:
     expect(failureNote?.content).toContain('Skipping for this round')
   })
 
+  it('surfaces a preflight refusal reason instead of a bare "dispatch failed"', async () => {
+    // A preflight refusal returns `dispatched: false` WITHOUT throwing, so the
+    // classifier never sees an error. RunCoordinator sends the reason to the
+    // sender (which is why a solo run shows it) but used to drop it from the
+    // result — leaving the orchestrator to emit the `unknown` variant, "dispatch
+    // failed. Skipping for this round", with no cause.
+    //
+    // That is how a plain "Codex sign-in is required" became undiagnosable
+    // inside a round, and why a panel seat invented a cause rather than
+    // reporting one. The seat must now say WHY it was skipped.
+    let callCount = 0
+    const harness = makeHarness({
+      dispatch: async () => {
+        callCount += 1
+        if (callCount === 1) {
+          return {
+            dispatched: false,
+            appRunId: '',
+            failureMessage: 'TaskWraith Codex sign-in is required.'
+          }
+        }
+        return { dispatched: true, appRunId: '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Implement and review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(callCount).toBeGreaterThanOrEqual(2))
+
+    const note = harness.chat.messages.find(
+      (message) =>
+        message.role === 'system' &&
+        message.metadata?.kind === 'ensembleRoundStatus' &&
+        typeof message.content === 'string' &&
+        message.content.includes('dispatch failed')
+    )
+    expect(note?.content).toContain('sign-in is required')
+    expect(note?.content).toContain('Skipping for this round')
+    // The whole point: NOT the reasonless variant.
+    expect(note?.content).not.toMatch(/dispatch failed\.\s*Skipping/)
+  })
+
+  it('stays quiet when a refusal carries no reason (a cancellation is not a failure)', async () => {
+    // `failureMessage` is deliberately absent for a lifecycle cancellation, so
+    // the note must fall back to the reasonless variant rather than inventing
+    // or borrowing a cause from elsewhere.
+    let callCount = 0
+    const harness = makeHarness({
+      dispatch: async () => {
+        callCount += 1
+        if (callCount === 1) return { dispatched: false, appRunId: '' }
+        return { dispatched: true, appRunId: '' }
+      }
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Implement and review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(callCount).toBeGreaterThanOrEqual(2))
+
+    const note = harness.chat.messages.find(
+      (message) =>
+        message.role === 'system' &&
+        message.metadata?.kind === 'ensembleRoundStatus' &&
+        typeof message.content === 'string' &&
+        message.content.includes('dispatch failed')
+    )
+    expect(note?.content).toMatch(/dispatch failed\.\s*Skipping/)
+  })
+
   it('accepts a ParticipantUnreachableError thrown by an adapter and classifies it as unreachable', async () => {
     // 1.0.4 — adapter sites that already know the failure is socket-
     // level can throw the typed `ParticipantUnreachableError` instead

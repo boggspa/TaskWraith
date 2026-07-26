@@ -366,10 +366,14 @@ export interface EnsembleOrchestratorDeps {
     appRunId: string
     attachments: EnsembleImageAttachment[]
   }) => ExternalPathGrant[]
+  /** Structural subset of RunCoordinator's `DispatchResult`. `failureMessage`
+   *  is why a preflight refusal happened, when there is a reason worth
+   *  telling a human; absent for a lifecycle cancellation, which is not a
+   *  failure. Without it a skipped seat can only say "dispatch failed". */
   dispatch: (
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
-  ) => Promise<{ dispatched: boolean; appRunId: string }>
+  ) => Promise<{ dispatched: boolean; appRunId: string; failureMessage?: string }>
   /**
    * Fan-out worktree isolation (fanoutIsolation === 'worktree'). Allocates
    * (or re-adopts) a per-LANE linked git worktree branched from the
@@ -12557,7 +12561,7 @@ export class EnsembleOrchestrator {
       // note shape is `formatDispatchFailureNote(participant, reason)`.
       // Origin: Claude/Explorer's introspective feedback in
       // production when ensemble_yield hit ECONNREFUSED on Gemini.
-      let dispatchedResult: { dispatched: boolean; appRunId: string } | null = null
+      let dispatchedResult: { dispatched: boolean; appRunId: string; failureMessage?: string } | null = null
       let dispatchFailure: DispatchFailureReason | null = null
       run.transportDispatchState = 'pending'
       try {
@@ -12590,7 +12594,17 @@ export class EnsembleOrchestrator {
         // RunCoordinator already consumed the error in its preflight
         // try/catch and we don't have access to the original.
         dispatchAttempts += 1
-        const reason: DispatchFailureReason = dispatchFailure || { kind: 'unknown', message: '' }
+        // Precedence: a typed classification from a thrown error wins (it
+        // carries a posix code). Next, a preflight message handed back on the
+        // `dispatched: false` result — RunCoordinator sends that text to the
+        // sender for a solo run, and now returns it so a seat's note can say
+        // WHY instead of "dispatch failed" with no cause. `unknown` is the
+        // last resort, for a refusal that genuinely carried no reason.
+        const reason: DispatchFailureReason =
+          dispatchFailure ||
+          (dispatchedResult?.failureMessage
+            ? { kind: 'preflight', message: dispatchedResult.failureMessage }
+            : { kind: 'unknown', message: '' })
         if (reason.kind === 'unreachable') unreachableFailures += 1
         const note = formatDispatchFailureNote(participant, reason)
         // 1.0.4 — yield-target-specific transcript note. When the
