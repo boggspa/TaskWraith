@@ -145,6 +145,7 @@ const agenticServiceKeys = [
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'canvasEval',
   'crossThreadRead',
   'threadMessage',

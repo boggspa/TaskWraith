@@ -7,6 +7,18 @@
 // architecture guard's `sharedUpwardRuntimeEdges` budget stays []. Lifted
 // verbatim from src/main/TaskWraithMcpTools.ts (137a7a8b7 introduced the sole
 // shared -> main runtime edge this extract removes). Keep it dependency-free.
+export const MESH_SCENE_MCP_TOOL_NAMES = [
+  'mesh_scene_create',
+  'mesh_scene_list',
+  'mesh_scene_inspect',
+  'mesh_scene_import',
+  'mesh_scene_apply',
+  'mesh_scene_set_material',
+  'mesh_scene_present',
+  'mesh_scene_close',
+  'mesh_scene_delete'
+] as const
+
 export const TASKWRAITH_MCP_TOOLS = [
   'run_shell_command',
   'write_file',
@@ -227,6 +239,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
   'canvas_close',
+  // Mesh Canvas — declarative, provider-agnostic 3D scene construction and
+  // presentation. Normal gateway seats discover this specialist surface with
+  // capability_search; a fresh mesh-authorised participant can receive it
+  // directly. Catalog visibility is never itself a grant.
+  ...MESH_SCENE_MCP_TOOL_NAMES,
   // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
   // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and
   // never a token that could move the approval chrome or restyle a provider's
@@ -346,6 +363,8 @@ export const TASKWRAITH_MCP_TOOLS = [
 ] as const
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
+
+export type MeshSceneMcpToolName = (typeof MESH_SCENE_MCP_TOOL_NAMES)[number]
 
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 

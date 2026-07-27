@@ -89,6 +89,7 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
+  meshCanvas: 'ask',
   crossThreadRead: 'ask',
   threadMessage: 'ask',
   mediaEditing: 'ask',
@@ -106,6 +107,7 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing'
@@ -1332,6 +1334,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.canvasInteraction,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasInteraction
             ),
+            meshCanvas: sanitizeAgenticServicePolicy(
+              input.agenticServices.meshCanvas,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.meshCanvas ?? 'ask'
+            ),
             crossThreadRead: sanitizeAgenticServicePolicy(
               input.agenticServices.crossThreadRead,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.crossThreadRead ?? 'ask'
@@ -1629,6 +1635,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
           services.canvasInteraction,
           current.canvasInteraction
         ),
+        meshCanvas: sanitizeAgenticServicePolicy(services.meshCanvas, current.meshCanvas ?? 'ask'),
         crossThreadRead: sanitizeAgenticServicePolicy(
           services.crossThreadRead,
           current.crossThreadRead ?? 'ask'

@@ -7,3 +7,4 @@ Scope: implement the provider-agnostic Mesh Canvas vertical slice (scene/asset s
 Commits:
 
 - Slice 1 — shared mesh contracts; private model/texture vault; durable chat-owned scene service; focused service tests; Three.js dependency.
+- Slice 2 — governed provider-agnostic MCP scene operations; participant-scoped Mesh Canvas authority and session-profile fence; token-gated asset protocol; lifecycle/IPC plumbing; permission catalogue and focused coverage.

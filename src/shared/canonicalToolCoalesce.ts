@@ -1,6 +1,7 @@
 import {
   canonicalTaskWraithToolName,
   MEDIA_EDITING_TOOLS,
+  MESH_SCENE_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from './taskWraithMcpCatalog'
@@ -288,6 +289,9 @@ export function catalogToolAgenticService(toolName: string): AgenticServiceId {
     return 'canvasInteraction'
   }
   if (toolName === 'canvas_eval') return 'canvasEval'
+  if ((MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(toolName)) {
+    return 'meshCanvas'
+  }
   if (
     toolName === 'tw_recall_find' ||
     toolName === 'tw_recall_read' ||

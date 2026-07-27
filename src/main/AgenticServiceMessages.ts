@@ -6,6 +6,7 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
+  meshCanvas: 'Mesh Canvas',
   crossThreadRead: 'Cross-thread read',
   threadMessage: 'Thread message',
   mediaEditing: 'Media editing',
@@ -22,6 +23,7 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
     service === 'subThreadDelegation' ||
     service === 'externalPublish' ||
     service === 'canvasInteraction' ||
+    service === 'meshCanvas' ||
     service === 'crossThreadRead' ||
     service === 'threadMessage' ||
     service === 'mediaEditing' ||
@@ -40,6 +42,7 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',

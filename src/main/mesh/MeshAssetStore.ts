@@ -18,7 +18,10 @@ import {
 } from '../../shared/meshScene'
 
 const ASSET_ID_RE = /^[a-zA-Z0-9_-]{16,128}$/
-const MAX_IMPORT_BYTES = 512 * 1024 * 1024
+// Covers the entry file plus every copied dependency. A per-file cap alone
+// would allow a glTF/OBJ with many individually-valid textures to fill the
+// private vault without a bounded import cost.
+const MAX_MESH_BUNDLE_BYTES = 512 * 1024 * 1024
 const MANIFEST_FILE = 'manifest.json'
 
 export interface MeshAssetFile {
@@ -50,8 +53,10 @@ function strictSourceFile(sourcePath: string): { realPath: string; stat: fs.Stat
   }
   const realPath = fs.realpathSync(sourcePath)
   const stat = fs.statSync(realPath)
-  if (!stat.isFile() || stat.size > MAX_IMPORT_BYTES) {
-    throw new Error(`Mesh import source must be a regular file under ${MAX_IMPORT_BYTES / 1024 / 1024} MiB.`)
+  if (!stat.isFile() || stat.size > MAX_MESH_BUNDLE_BYTES) {
+    throw new Error(
+      `Mesh import source must be a regular file under ${MAX_MESH_BUNDLE_BYTES / 1024 / 1024} MiB.`
+    )
   }
   return { realPath, stat }
 }
@@ -286,6 +291,11 @@ export class MeshAssetStore {
         return
       }
       if (!pathInside(sourceDirReal, dependency.realPath)) return
+      if (byteLength + dependency.stat.size > MAX_MESH_BUNDLE_BYTES) {
+        throw new Error(
+          `Mesh import bundle exceeds ${MAX_MESH_BUNDLE_BYTES / 1024 / 1024} MiB including dependencies.`
+        )
+      }
       const destination = path.join(tempDir, ...relativePath.split('/'))
       fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 })
       fs.copyFileSync(dependency.realPath, destination, fs.constants.COPYFILE_EXCL)

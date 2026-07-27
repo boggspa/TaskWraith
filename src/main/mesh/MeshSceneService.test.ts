@@ -91,6 +91,7 @@ describe('MeshSceneService', () => {
     expect(JSON.stringify(imported)).not.toContain(sourceDir)
     const view = service.viewForChat(scene.id, 'chat-a')
     expect(view?.assetUrls[node.assetId]).toMatch(/^twmesh:\/\/asset\//)
+    expect(JSON.stringify(view)).not.toContain(workspace)
     // The tool-facing inspection record has no vault token; only the renderer
     // projection carries the opaque local URL needed by Three's loader.
     expect(JSON.stringify(service.inspect(scene.id, context()))).not.toContain(
@@ -128,5 +129,19 @@ describe('MeshSceneService', () => {
 
     expect(service.list(context())).toEqual([])
     expect(assets.get(node.assetId)).toBeNull()
+  })
+
+  it('deletes a scene and releases only assets no remaining scene references', () => {
+    const source = path.join(workspace, 'fixture.glb')
+    fs.writeFileSync(source, Buffer.from('glTF'))
+    const scene = service.create({}, context())
+    const imported = service.importModel(scene.id, { sourcePath: source }, context())
+    const node = imported.nodes[0]
+    if (!node || node.kind !== 'import') throw new Error('expected imported node')
+
+    expect(service.remove(scene.id, context())).toBe(scene.id)
+    expect(service.list(context())).toEqual([])
+    expect(assets.get(node.assetId)).toBeNull()
+    expect(events.at(-1)).toMatchObject({ kind: 'scene.deleted', sceneId: scene.id })
   })
 })

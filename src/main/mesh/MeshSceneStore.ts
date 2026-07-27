@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import {
   MESH_SCENE_SCHEMA_VERSION,
+  MESH_MAX_SCENE_NODES,
   cloneDefaultCamera,
   cloneDefaultLighting,
   cloneDefaultTransform,
@@ -143,7 +144,7 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
   }
   const rawNodes = Array.isArray(value.nodes) ? value.nodes : []
   const nodes = rawNodes.map(asNode).filter((node): node is MeshSceneNode => node !== null)
-  if (nodes.length !== rawNodes.length || nodes.length > 500) return null
+  if (nodes.length !== rawNodes.length || nodes.length > MESH_MAX_SCENE_NODES) return null
   const rawLighting = isRecord(value.lighting) ? value.lighting : {}
   const rawCamera = isRecord(value.camera) ? value.camera : {}
   const defaults = cloneDefaultCamera()
@@ -192,8 +193,30 @@ function assetsInScene(scene: MeshSceneRecord): Set<string> {
     if (node.kind === 'primitive' && node.material.textureAssetId) {
       assets.add(node.material.textureAssetId)
     }
+    if (node.kind === 'import' && node.material?.textureAssetId) {
+      assets.add(node.material.textureAssetId)
+    }
   }
   return assets
+}
+
+function orphanedAssets(
+  retired: readonly MeshSceneRecord[],
+  retained: readonly MeshSceneRecord[]
+): string[] {
+  const retainedAssets = new Set(retained.flatMap((scene) => [...assetsInScene(scene)]))
+  const retiredAssets = new Set(retired.flatMap((scene) => [...assetsInScene(scene)]))
+  return [...retiredAssets].filter((asset) => !retainedAssets.has(asset))
+}
+
+export interface MeshSceneUpsertResult {
+  scene: MeshSceneRecord
+  orphanedAssetIds: string[]
+}
+
+export interface MeshSceneRemoveResult {
+  removed: MeshSceneRecord | null
+  orphanedAssetIds: string[]
 }
 
 /** Small atomic JSON store isolated from the shared AppStore. */
@@ -249,15 +272,28 @@ export class MeshSceneStore {
     return this.list().find((scene) => scene.id === sceneId) ?? null
   }
 
-  upsert(scene: MeshSceneRecord): MeshSceneRecord {
+  upsert(scene: MeshSceneRecord): MeshSceneUpsertResult {
     const normalized = normalizeScene(scene)
     if (!normalized) throw new Error('Mesh scene record is invalid.')
-    const next = [normalized, ...this.list().filter((existing) => existing.id !== normalized.id)].slice(
-      0,
-      MAX_SCENES
-    )
+    const existing = this.list()
+    const replaced = existing.filter((entry) => entry.id === normalized.id)
+    const retainedExisting = existing.filter((entry) => entry.id !== normalized.id)
+    const next = [normalized, ...retainedExisting].slice(0, MAX_SCENES)
+    const evicted = retainedExisting.slice(Math.max(0, MAX_SCENES - 1))
     this.writeAll(next)
-    return normalized
+    return {
+      scene: normalized,
+      orphanedAssetIds: orphanedAssets([...replaced, ...evicted], next)
+    }
+  }
+
+  remove(sceneId: string): MeshSceneRemoveResult {
+    const scenes = this.list()
+    const removed = scenes.find((scene) => scene.id === sceneId) ?? null
+    if (!removed) return { removed: null, orphanedAssetIds: [] }
+    const retained = scenes.filter((scene) => scene.id !== sceneId)
+    this.writeAll(retained)
+    return { removed, orphanedAssetIds: orphanedAssets([removed], retained) }
   }
 
   purgeAuthorities(input: { chatIds?: Iterable<string>; workspacePaths?: Iterable<string> }): string[] {
@@ -274,10 +310,8 @@ export class MeshSceneStore {
     )
     if (!removed.length) return []
     const retained = scenes.filter((scene) => !removed.includes(scene))
-    const retainedAssets = new Set(retained.flatMap((scene) => [...assetsInScene(scene)]))
-    const assets = new Set(removed.flatMap((scene) => [...assetsInScene(scene)]))
     this.writeAll(retained)
-    return [...assets].filter((asset) => !retainedAssets.has(asset))
+    return orphanedAssets(removed, retained)
   }
 
   clearAll(): string[] {

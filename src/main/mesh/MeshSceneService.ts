@@ -9,6 +9,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import {
   MESH_SCENE_SCHEMA_VERSION,
+  MESH_MAX_SCENE_NODES,
   cloneDefaultCamera,
   cloneDefaultLighting,
   cloneDefaultTransform,
@@ -42,11 +43,23 @@ export interface MeshHistoryAuthority {
 
 export interface MeshSceneEvent {
   schemaVersion: 1
-  kind: 'scene.created' | 'scene.updated' | 'scene.presented' | 'scene.closed'
+  kind: 'scene.created' | 'scene.updated' | 'scene.presented' | 'scene.closed' | 'scene.deleted'
   sceneId: string
   chatId?: string
   summary: MeshSceneSummary
   createdAt: string
+}
+
+export interface MeshTransformInput {
+  position?: Partial<MeshTransform['position']>
+  rotation?: Partial<MeshTransform['rotation']>
+  scale?: Partial<MeshTransform['scale']>
+}
+
+export interface MeshSceneCameraInput {
+  position?: Partial<MeshSceneCamera['position']>
+  target?: Partial<MeshSceneCamera['target']>
+  fieldOfView?: number
 }
 
 export type MeshSceneMutation =
@@ -54,14 +67,14 @@ export type MeshSceneMutation =
       operation: 'add_primitive'
       primitive: MeshPrimitiveKind
       name?: string
-      transform?: Partial<MeshTransform>
+      transform?: MeshTransformInput
       material?: MeshPbrMaterial
     }
   | {
       operation: 'update_node'
       nodeId: string
       name?: string
-      transform?: Partial<MeshTransform>
+      transform?: MeshTransformInput
       material?: MeshPbrMaterial
       visible?: boolean
     }
@@ -71,7 +84,7 @@ export type MeshSceneMutation =
       title?: string
       backgroundColor?: string
       lighting?: Partial<MeshSceneLighting>
-      camera?: Partial<MeshSceneCamera>
+      camera?: MeshSceneCameraInput
     }
 
 export interface MeshSceneServiceDeps {
@@ -100,7 +113,7 @@ function boundedNumber(value: unknown, fallback: number, min: number, max: numbe
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
 }
 
-function mergeTransform(current: MeshTransform, next?: Partial<MeshTransform>): MeshTransform {
+function mergeTransform(current: MeshTransform, next?: MeshTransformInput): MeshTransform {
   const position: Partial<MeshTransform['position']> = next?.position ?? {}
   const rotation: Partial<MeshTransform['rotation']> = next?.rotation ?? {}
   const scale: Partial<MeshTransform['scale']> = next?.scale ?? {}
@@ -183,6 +196,12 @@ export class MeshSceneService {
 
   constructor(private readonly deps: MeshSceneServiceDeps) {}
 
+  private persist(scene: MeshSceneRecord): MeshSceneRecord {
+    const saved = this.deps.store.upsert(scene)
+    this.deps.assets.remove(saved.orphanedAssetIds)
+    return saved.scene
+  }
+
   private emit(kind: MeshSceneEvent['kind'], scene: MeshSceneRecord): void {
     this.deps.broadcast?.({
       schemaVersion: 1,
@@ -255,7 +274,7 @@ export class MeshSceneService {
       createdAt: now,
       updatedAt: now
     }
-    const saved = this.deps.store.upsert(scene)
+    const saved = this.persist(scene)
     this.emit('scene.created', saved)
     return cloneScene(saved)
   }
@@ -274,10 +293,13 @@ export class MeshSceneService {
 
   importModel(
     sceneId: string,
-    input: { sourcePath: string; name?: string; transform?: Partial<MeshTransform> },
+    input: { sourcePath: string; name?: string; transform?: MeshTransformInput },
     ctx: MeshSceneCallContext
   ): MeshSceneRecord {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
+    if (scene.nodes.length >= MESH_MAX_SCENE_NODES) {
+      throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_NODES} objects.`)
+    }
     const sourcePath = this.assertWorkspaceSource(input.sourcePath, ctx)
     const asset = this.deps.assets.importModel(sourcePath).manifest
     const node: MeshSceneNode = {
@@ -292,7 +314,13 @@ export class MeshSceneService {
     }
     scene.nodes.push(node)
     scene.updatedAt = this.deps.now()
-    const saved = this.deps.store.upsert(scene)
+    let saved: MeshSceneRecord
+    try {
+      saved = this.persist(scene)
+    } catch (error) {
+      this.deps.assets.remove([asset.id])
+      throw error
+    }
     this.emit('scene.updated', saved)
     return cloneScene(saved)
   }
@@ -301,6 +329,9 @@ export class MeshSceneService {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
     if (mutation.operation === 'add_primitive') {
       if (!isMeshPrimitiveKind(mutation.primitive)) throw new Error('Unsupported Mesh Canvas primitive.')
+      if (scene.nodes.length >= MESH_MAX_SCENE_NODES) {
+        throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_NODES} objects.`)
+      }
       scene.nodes.push({
         id: this.deps.uuid(),
         kind: 'primitive',
@@ -369,7 +400,7 @@ export class MeshSceneService {
       }
     }
     scene.updatedAt = this.deps.now()
-    const saved = this.deps.store.upsert(scene)
+    const saved = this.persist(scene)
     this.emit('scene.updated', saved)
     return cloneScene(saved)
   }
@@ -380,11 +411,25 @@ export class MeshSceneService {
     ctx: MeshSceneCallContext
   ): MeshSceneRecord {
     const material = { ...input.material }
+    // Validate the chat-owned node before allocating a new private texture
+    // asset, so a typo or cross-chat scene id cannot leave an orphaned vault
+    // bundle behind.
+    const existing = this.getOwned(sceneId, ctx)
+    if (!existing.nodes.some((node) => node.id === input.nodeId)) {
+      throw new Error('Mesh Canvas node was not found.')
+    }
+    let importedTextureAssetId: string | null = null
     if (input.textureSourcePath) {
       const textureSource = this.assertWorkspaceSource(input.textureSourcePath, ctx)
-      material.textureAssetId = this.deps.assets.importTexture(textureSource).manifest.id
+      importedTextureAssetId = this.deps.assets.importTexture(textureSource).manifest.id
+      material.textureAssetId = importedTextureAssetId
     }
-    return this.apply(sceneId, { operation: 'update_node', nodeId: input.nodeId, material }, ctx)
+    try {
+      return this.apply(sceneId, { operation: 'update_node', nodeId: input.nodeId, material }, ctx)
+    } catch (error) {
+      if (importedTextureAssetId) this.deps.assets.remove([importedTextureAssetId])
+      throw error
+    }
   }
 
   present(
@@ -399,7 +444,7 @@ export class MeshSceneService {
       ...(nonEmpty(input.title, 200) ? { title: nonEmpty(input.title, 200)! } : {})
     }
     scene.updatedAt = this.deps.now()
-    const saved = this.deps.store.upsert(scene)
+    const saved = this.persist(scene)
     this.emit('scene.presented', saved)
     return cloneScene(saved)
   }
@@ -408,9 +453,18 @@ export class MeshSceneService {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
     delete scene.presentation
     scene.updatedAt = this.deps.now()
-    const saved = this.deps.store.upsert(scene)
+    const saved = this.persist(scene)
     this.emit('scene.closed', saved)
     return cloneScene(saved)
+  }
+
+  remove(sceneId: string, ctx: MeshSceneCallContext): string {
+    const scene = cloneScene(this.getOwned(sceneId, ctx))
+    const result = this.deps.store.remove(scene.id)
+    if (!result.removed) throw new Error('Mesh Canvas scene was not found.')
+    this.deps.assets.remove(result.orphanedAssetIds)
+    this.emit('scene.deleted', scene)
+    return scene.id
   }
 
   /** Renderer-only projection. The tokenized URLs never cross the MCP result. */
@@ -438,7 +492,8 @@ export class MeshSceneService {
       })
       if (url) assetUrls[assetId] = url
     }
-    return { ...cloneScene(scene), assetUrls }
+    const { workspacePath: _workspacePath, ...rendererScene } = cloneScene(scene)
+    return { ...rendererScene, assetUrls }
   }
 
   listForChat(chatId: string): MeshSceneSummary[] {

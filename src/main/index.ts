@@ -1144,6 +1144,12 @@ import {
   readPngDimensions
 } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
+import { createMeshToolExecutors, isMeshMcpToolName } from './mcp/MeshToolExecutors'
+import { MeshAssetStore } from './mesh/MeshAssetStore'
+import { registerMeshAssetProtocol, MESH_ASSET_PRIVILEGE } from './mesh/MeshAssetProtocol'
+import { MeshSceneService, type MeshSceneEvent } from './mesh/MeshSceneService'
+import { MeshSceneStore } from './mesh/MeshSceneStore'
+import { registerMeshSceneHandlers } from './ipc/meshSceneHandlers'
 import {
   createLaunchToolExecutors,
   isLaunchMcpToolName,
@@ -1241,14 +1247,16 @@ import {
   type GeminiMcpBridgePrepareOptions
 } from './mcp/McpBridgeRuntime'
 import {
-  GATEWAY_MCP_DIRECT_TOOLS,
+  taskWraithGatewayDirectToolNamesForProfile,
   taskWraithGatewayHiddenToolNamesForProfile
 } from './mcp/McpToolProfiles'
+import { meshCanvasParticipantHasPregrantedAuthority } from './mcp/MeshCanvasRunAuthority'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
+  isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpEnsembleLanePresent,
@@ -2579,6 +2587,7 @@ interface TaskWraithMcpBridgeArgOptions {
   coreSubset?: boolean
   gatewaySubset?: boolean
   portableEnsembleControl?: boolean
+  meshDirect?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -2591,7 +2600,8 @@ function taskwraithMcpBridgeArgs(
     options.planSubset === true,
     options.coreSubset === true,
     options.gatewaySubset === true,
-    options.portableEnsembleControl === true
+    options.portableEnsembleControl === true,
+    options.meshDirect === true
   )
 }
 
@@ -3462,6 +3472,21 @@ const canvasEmbedController = new CanvasEmbedController({
 // JS-off, egress-cut rasterizer.
 const offscreenImageEngine = createNativeImageEngine()
 const CANVAS_HTML_RENDER_TIMEOUT_MS = 15_000
+// Mesh Canvas stores only declarative scene records and copies imported bundles
+// into a token-gated private vault. The renderer receives opaque twmesh:// URLs
+// through a chat-scoped projection; MCP results never receive vault/source paths.
+const meshAssetStore = new MeshAssetStore(join(app.getPath('userData'), 'mesh-assets'))
+const meshSceneStore = new MeshSceneStore(join(app.getPath('userData'), 'mesh-canvas'))
+const meshSceneService = new MeshSceneService({
+  store: meshSceneStore,
+  assets: meshAssetStore,
+  uuid: () => randomUUID(),
+  now: () => new Date().toISOString(),
+  broadcast: (event: MeshSceneEvent) => {
+    safeSendToWebContents(mainWindow, 'mesh-scene-event', event)
+  }
+})
+const meshToolExecutors = createMeshToolExecutors(meshSceneService)
 const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
   createDriver: (
@@ -3537,6 +3562,7 @@ const canvasService = new CanvasService({
   broadcast: (event: CanvasEventRecord) => {
     safeSendToWebContents(mainWindow, 'canvas-event', event)
   },
+  historyParticipants: [meshSceneService],
   logger: console
 })
 let canvasShutdownCloseAllInFlight: Promise<void> | null = null
@@ -5141,6 +5167,18 @@ const canvasEmbedIpcAuthority = registerCanvasEmbedIpc(ipcMain, {
   }
 })
 
+registerMeshSceneHandlers(ipcMain, {
+  controller: meshSceneService,
+  resolveContext: (event, chatId) => {
+    assertRendererChatScope(event, chatId)
+    const chat = AppStore.getChat(chatId)
+    if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chatId)) {
+      throw new Error('Mesh Canvas chat authority is unavailable.')
+    }
+    return { chatId, workspacePath: chat.workspacePath }
+  }
+})
+
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
 app.commandLine.appendSwitch('enable-gpu-rasterization')
 app.commandLine.appendSwitch('enable-zero-copy')
@@ -5149,7 +5187,7 @@ app.commandLine.appendSwitch('enable-zero-copy')
 // app `ready` — required, and callable only once, pre-ready. `stream:true` lets
 // <video>/<audio> stream + seek transcript media over HTTP Range (S0b). The handler
 // itself is registered post-ready in app.whenReady() below.
-protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE])
+protocol.registerSchemesAsPrivileged([TW_MEDIA_PRIVILEGE, MESH_ASSET_PRIVILEGE])
 
 // Swallow EPIPE on stderr writes. Common cause: the BridgeDaemon
 // subprocess streams chatty stderr lines through `onStderr → console.error`;
@@ -15013,7 +15051,10 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.provider !== 'claude' ||
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
-    grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined
+    grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
+    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+      applied.effectivePermissions
+    )
   })
   const desiredFreshResolution = resolveTaskWraithMcpProfile({
     provider: applied.provider,
@@ -15025,7 +15066,10 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.provider !== 'claude' ||
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
-    grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined
+    grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
+    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+      applied.effectivePermissions
+    )
   })
   const providerSeat = applyProviderSeatGeneration({
     payload: applied,
@@ -18557,7 +18601,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           gatewaySubset: cursorBrokerPolicy.gatewaySubset,
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
-          )
+          ),
+          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
         }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
@@ -19186,7 +19231,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         gatewaySubset,
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
-        )
+        ),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       grokMcpServers = [
         {
@@ -20075,7 +20121,8 @@ async function runMistralAcpProvider(
         gatewaySubset,
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
-        )
+        ),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       mistralMcpServers = [
         {
@@ -21416,7 +21463,10 @@ async function acquireCodexCredentialLeaseIfConsented(
   return null
 }
 
-function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerClient {
+function getCodexClient(
+  runtimeProfile?: RuntimeProfile | null,
+  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
+): CodexAppServerClient {
   if (!codexClient) {
     codexClient = new CodexAppServerClient(
       taskWraithCodexHome(),
@@ -21451,13 +21501,20 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   const taskWraithBridgeEnabled = Boolean(
     settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
   )
+  // Codex's app-server owns one bridge configuration for its process lifetime.
+  // A run passes its profile here before a fresh server starts; a running server
+  // retains its started profile as a compatibility receipt, never as a Mesh
+  // permission grant. Every actual mesh call still hits the current run's
+  // signed meshCanvas approval gate in executeGeminiMcpTool.
+  const mcpProfileId = taskWraithMcpProfileId ?? TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
   if (taskWraithBridgeEnabled || userMcpServers.length > 0) {
     codexClient.setMcpConfig({
       enabled: taskWraithBridgeEnabled,
       bridgeBinaryPath: bridgeCommandStatus.command,
       bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-        gatewaySubset: true,
-        portableEnsembleControl: true
+        gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId)
       }),
       parentProvider: 'codex',
       userMcpServers
@@ -26905,7 +26962,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
       coreProfile: false
     })
   }
-  const client = getCodexClient(payload.runtimeProfile ?? null)
+  const client = getCodexClient(payload.runtimeProfile ?? null, payload.taskWraithMcpProfileId)
   codexAppServerStartupLeaseCount += 1
   try {
     await runCodexAppServerWithClient(event, payload, client)
@@ -30892,7 +30949,7 @@ function gatewayEligibleHiddenToolNames(context: GeminiToolContext): TaskWraithM
   const hiddenToolNames = taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId)
   return selectGatewayHiddenToolNames({
     fullToolNames: hiddenToolNames,
-    directToolNames: GATEWAY_MCP_DIRECT_TOOLS,
+    directToolNames: taskWraithGatewayDirectToolNamesForProfile(context.taskWraithMcpProfileId),
     ...(posture?.readOnly
       ? {
           permissionEligibleToolNames:
@@ -31469,7 +31526,7 @@ async function executeGeminiMcpTool(
     type: 'tool_use',
     tool_id: toolId,
     tool_name: toolName,
-    parameters: isCanvasMcpToolName(toolName)
+    parameters: isCanvasMcpToolName(toolName) || isMeshMcpToolName(toolName)
       ? canvasMcpArgumentsForDurableProjection(args)
       : { ...args, cwd },
     provider: parentProvider,
@@ -31704,6 +31761,17 @@ async function executeGeminiMcpTool(
         return staleCanvasMcpResult(toolName)
       }
       applyRichResult(canvasResult)
+    } else if (isMeshMcpToolName(toolName)) {
+      const meshResult = await meshToolExecutors.executeMeshTool(
+        toolName,
+        args,
+        context,
+        parentProvider
+      )
+      if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+        return staleProviderMcpResult(toolName)
+      }
+      applyRichResult(meshResult)
     } else if (isLaunchMcpToolName(toolName)) {
       if (!launchMcpExecutors) {
         throw new Error('Launch tools are not available yet (app still initializing).')
@@ -34763,6 +34831,7 @@ if (isGeminiMcpBridgeProcess) {
       })
     )
     registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
+    registerMeshAssetProtocol(meshAssetStore)
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
     const antigravityGeminiApiSecretStore = new AntigravityGeminiApiSecretStore({

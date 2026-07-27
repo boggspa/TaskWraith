@@ -82,6 +82,7 @@ const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
   mcpTools: true,
   subThreadDelegation: true,
   canvasInteraction: true,
+  meshCanvas: true,
   canvasEval: true,
   crossThreadRead: true,
   threadMessage: true,

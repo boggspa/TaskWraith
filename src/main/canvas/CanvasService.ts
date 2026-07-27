@@ -69,6 +69,7 @@ export interface CanvasServiceDeps {
   logger?: Pick<Console, 'warn' | 'error'>
   maxInteractionsPerSession?: number
   maxEvalsPerSession?: number
+  historyParticipants?: readonly CanvasHistoryParticipant[]
 }
 
 interface LiveSession {
@@ -97,6 +98,19 @@ interface ClosingSession {
 export interface CanvasHistoryAuthority {
   chatIds?: Iterable<string>
   workspacePaths?: Iterable<string>
+}
+
+/**
+ * A durable surface that participates in the same history-clear transaction as
+ * Canvas. It receives the exact main-owned authority and raises/releases its
+ * own admission hold synchronously with Canvas rather than being purged later
+ * by a best-effort side channel.
+ */
+export interface CanvasHistoryParticipant {
+  beginAuthorityHistoryClear(input: CanvasHistoryAuthority): Promise<void>
+  endAuthorityHistoryClear(input: CanvasHistoryAuthority): void
+  beginHistoryClear(): Promise<void>
+  endHistoryClear(): void
 }
 
 const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
@@ -1135,6 +1149,9 @@ export class CanvasService implements CanvasController {
     input: CanvasHistoryAuthority
   ): Promise<void> {
     const authority = this.normalizedAuthority(input)
+    const participantPurges = (this.deps.historyParticipants ?? []).map((participant) =>
+      participant.beginAuthorityHistoryClear(authority)
+    )
     const generationAtStart = this.generation
     const startedDuringGlobalClear = this.purging
     for (const chatId of authority.chatIds) {
@@ -1196,9 +1213,8 @@ export class CanvasService implements CanvasController {
           this.settleAndClosePendingOpen(canvasId, open, 'during scoped history clear')
         ),
         ...retiredClosing.map(([, entry]) => entry.closePromise),
-        ...retiredFailed.map(([canvasId, entry]) =>
-          this.retryFailedClose(canvasId, entry)
-        )
+        ...retiredFailed.map(([canvasId, entry]) => this.retryFailedClose(canvasId, entry)),
+        ...participantPurges
       ]
     )
     const closeFailures = closeOutcomes.filter(
@@ -1241,6 +1257,9 @@ export class CanvasService implements CanvasController {
       if (next > 0) this.workspaceHistoryClearHolds.set(workspacePath, next)
       else this.workspaceHistoryClearHolds.delete(workspacePath)
     }
+    for (const participant of this.deps.historyParticipants ?? []) {
+      participant.endAuthorityHistoryClear(authority)
+    }
   }
 
   /**
@@ -1250,12 +1269,16 @@ export class CanvasService implements CanvasController {
    */
   async beginHistoryClear(): Promise<void> {
     this.historyClearHolds += 1
+    const participantPurge = Promise.all(
+      (this.deps.historyParticipants ?? []).map((participant) => participant.beginHistoryClear())
+    )
     if (!this.purging) {
       this.purging = true
       this.generation += 1
     }
     if (!this.purgeInFlight) {
       this.purgeInFlight = (async () => {
+        await participantPurge
         await this.closeAll()
         while (this.scopedClearOperations.size > 0) {
           const outcomes = await Promise.allSettled([...this.scopedClearOperations])
@@ -1280,13 +1303,14 @@ export class CanvasService implements CanvasController {
         if (this.historyClearHolds === 0) this.purging = false
       })
     }
-    return this.purgeInFlight
+    await Promise.all([this.purgeInFlight, participantPurge])
   }
 
   /** Release one global history-clear admission hold. */
   endHistoryClear(): void {
     if (this.historyClearHolds > 0) this.historyClearHolds -= 1
     if (this.historyClearHolds === 0 && !this.purgeInFlight) this.purging = false
+    for (const participant of this.deps.historyParticipants ?? []) participant.endHistoryClear()
   }
 
   /** Standalone purge used outside the multi-store clear transaction. */

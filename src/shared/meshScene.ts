@@ -8,6 +8,8 @@
  */
 
 export const MESH_SCENE_SCHEMA_VERSION = 1 as const
+/** Bound durable scene complexity before an import can allocate a private asset bundle. */
+export const MESH_MAX_SCENE_NODES = 500
 
 export const MESH_IMPORT_FORMATS = ['glb', 'gltf', 'obj'] as const
 export type MeshImportFormat = (typeof MESH_IMPORT_FORMATS)[number]
@@ -115,8 +117,14 @@ export interface MeshSceneSummary {
   presentedAt?: string
 }
 
-/** Renderer-safe scene view; vault access tokens are short opaque capabilities. */
-export interface MeshSceneView extends MeshSceneRecord {
+/**
+ * Renderer-safe scene view; vault access tokens are short opaque capabilities.
+ *
+ * `workspacePath` is durable main-process history authority, not rendering
+ * data. Keeping it out of this projection makes the renderer boundary unable
+ * to accidentally become a workspace-path disclosure channel.
+ */
+export type MeshSceneView = Omit<MeshSceneRecord, 'workspacePath'> & {
   assetUrls: Record<string, string>
 }
 

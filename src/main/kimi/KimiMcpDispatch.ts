@@ -4,7 +4,10 @@ import {
   type McpToolDefinition
 } from '../mcp/McpBridgeRuntime'
 import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
-import { isPortableEnsembleControlMcpProfile } from '../mcp/McpSessionProfileFence'
+import {
+  isMeshCanvasDirectTaskWraithMcpProfile,
+  isPortableEnsembleControlMcpProfile
+} from '../mcp/McpSessionProfileFence'
 import type { TaskWraithMcpProfileId } from '../store/types'
 
 export interface KimiMcpDispatchOptions {
@@ -39,6 +42,9 @@ export function createKimiMcpDispatch(
       TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
       ...(isPortableEnsembleControlMcpProfile(options.taskWraithMcpProfileId)
         ? { TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1' }
+        : {}),
+      ...(isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
+        ? { TASKWRAITH_MCP_MESH_DIRECT: '1' }
         : {}),
       TASKWRAITH_PARENT_PROVIDER: 'kimi',
       TASKWRAITH_RUN_ID: options.route.appRunId || '',

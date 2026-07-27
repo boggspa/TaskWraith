@@ -327,6 +327,7 @@ describe('createMcpToolApprovalPreviewer', () => {
   it.each([
     ['canvas_click', 'canvasInteraction'],
     ['canvas_eval', 'canvasEval'],
+    ['mesh_scene_present', 'meshCanvas'],
     ['tw_recall_read', 'crossThreadRead'],
     ['cancel_subthread', 'subThreadDelegation']
   ] as const)('keeps %s on its dedicated approval service', (toolName, service) => {

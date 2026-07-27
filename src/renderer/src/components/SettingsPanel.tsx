@@ -2477,7 +2477,16 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'canvas_fill',
     'canvas_annotate',
     'canvas_eval',
-    'canvas_close'
+    'canvas_close',
+    'mesh_scene_create',
+    'mesh_scene_list',
+    'mesh_scene_inspect',
+    'mesh_scene_import',
+    'mesh_scene_apply',
+    'mesh_scene_set_material',
+    'mesh_scene_present',
+    'mesh_scene_close',
+    'mesh_scene_delete'
   ],
   ensemble: [
     'delegate_to_subthread',
@@ -2492,6 +2501,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'ensemble_lane_result',
     'thread_message',
     'ensemble_bossman_control',
+    'ensemble_control',
     'ensemble_poll_response',
     'ensemble_propose_goal_complete',
     'ensemble_roster_edit',

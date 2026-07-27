@@ -1,5 +1,6 @@
 import {
   MEDIA_EDITING_TOOLS,
+  MESH_SCENE_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
@@ -250,6 +251,7 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
       tool === 'canvas_sketch_update' ||
+      (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       MEDIA_EDITING_TOOLS.has(tool)
   )
 )

@@ -489,6 +489,47 @@ describe('CanvasService', () => {
     service.endHistoryClear()
   })
 
+  it('carries scoped and global clears through registered durable history participants', async () => {
+    const calls: string[] = []
+    const participant = {
+      beginAuthorityHistoryClear: vi.fn(async () => {
+        calls.push('scoped-begin')
+      }),
+      endAuthorityHistoryClear: vi.fn(() => {
+        calls.push('scoped-end')
+      }),
+      beginHistoryClear: vi.fn(async () => {
+        calls.push('global-begin')
+      }),
+      endHistoryClear: vi.fn(() => {
+        calls.push('global-end')
+      })
+    }
+    service = new CanvasService({
+      createDriver: () => fake,
+      store,
+      uuid: () => 'participant-canvas',
+      now: () => '2026-06-21T00:00:00.000Z',
+      historyParticipants: [participant]
+    })
+    const authority = { chatIds: ['chat-a'], workspacePaths: ['/workspace/a'] }
+    try {
+      await service.beginAuthorityHistoryClear(authority)
+    } finally {
+      service.endAuthorityHistoryClear(authority)
+    }
+    try {
+      await service.beginHistoryClear()
+    } finally {
+      service.endHistoryClear()
+    }
+    expect(calls).toEqual(['scoped-begin', 'scoped-end', 'global-begin', 'global-end'])
+    expect(participant.beginAuthorityHistoryClear).toHaveBeenCalledWith({
+      chatIds: new Set(['chat-a']),
+      workspacePaths: new Set(['/workspace/a'])
+    })
+  })
+
   it('caps interactions per session (click/fill/annotate share the budget)', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     for (let i = 0; i < 3; i++) {

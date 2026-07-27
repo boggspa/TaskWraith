@@ -24,10 +24,17 @@ import {
   GATEWAY_V6_MCP_ADVERTISE_TOOLS,
   GATEWAY_V6_MCP_DIRECT_TOOLS,
   GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V7_ADDED_TOOL_NAMES,
+  GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V7_MCP_DIRECT_TOOLS,
+  GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V7_MESH_MCP_DIRECT_TOOLS,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
+  taskWraithGatewayDirectToolNamesForProfile,
   taskWraithGatewayHiddenToolNamesForProfile,
   taskWraithMcpAdvertisedToolNamesForProfile,
   shouldUseCoreMcpProfile
@@ -53,7 +60,13 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V6_MCP_DIRECT_TOOLS,
       GATEWAY_V6_MCP_ADVERTISE_TOOLS,
-      GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V7_ADDED_TOOL_NAMES,
+      GATEWAY_V7_MCP_DIRECT_TOOLS,
+      GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V7_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -267,7 +280,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // `{executed: false, refusalReason: 'stale_target'}` with no description
     // retries the same action, which is the exact destructive loop the underlying
     // change exists to stop, so buying the bytes back here would re-open it.
-    expect(fullChars).toBe(136_306)
+    // Re-measured 2026-07-27: +13 full from the `meshCanvas` approval-status
+    // enum member. Mesh definitions remain behind v7 discovery on the normal
+    // gateway profile, so no direct gateway transport bytes are spent.
+    expect(fullChars).toBe(136_319)
     expect(gatewayChars).toBe(39_406)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
@@ -396,7 +412,10 @@ describe('catalogue reachability', () => {
       ...CORE_V2_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V6_MCP_ADVERTISE_TOOLS,
-      ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -418,6 +437,10 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V5_ADDED_TOOL_NAMES
     ])
     expect(GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V7_ADDED_TOOL_NAMES
+    ])
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
       ...GATEWAY_V4_ADDED_TOOL_NAMES,
@@ -448,6 +471,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v6')).toBe(
       GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
@@ -455,6 +484,26 @@ describe('catalogue reachability', () => {
     )
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v6')).toBe(
       GATEWAY_V6_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS
+    )
+  })
+
+  it('keeps Mesh Canvas discoverable normally and direct only for the run-authorised variant', () => {
+    for (const tool of GATEWAY_V7_ADDED_TOOL_NAMES) {
+      expect(GATEWAY_V7_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V7_MESH_MCP_DIRECT_TOOLS).toContain(tool)
+    }
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MESH_MCP_DIRECT_TOOLS
     )
   })
 })

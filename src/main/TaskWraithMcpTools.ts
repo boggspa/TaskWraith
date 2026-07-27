@@ -13,7 +13,12 @@ export {
   canonicalTaskWraithToolName,
   isPortableEnsembleControlToolName,
   normalizePortableEnsembleControlArguments,
+  MESH_SCENE_MCP_TOOL_NAMES,
   MEDIA_EDITING_TOOL_NAMES,
   MEDIA_EDITING_TOOLS
 } from '../shared/taskWraithMcpCatalog'
-export type { TaskWraithMcpToolName, MediaEditingToolName } from '../shared/taskWraithMcpCatalog'
+export type {
+  TaskWraithMcpToolName,
+  MediaEditingToolName,
+  MeshSceneMcpToolName
+} from '../shared/taskWraithMcpCatalog'

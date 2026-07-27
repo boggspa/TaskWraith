@@ -10,6 +10,7 @@ import type { WebContents } from 'electron'
 import {
   canonicalTaskWraithToolName,
   isPortableEnsembleControlToolName,
+  MESH_SCENE_MCP_TOOL_NAMES,
   normalizePortableEnsembleControlArguments,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
@@ -95,6 +96,10 @@ export const GEMINI_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
 // is deliberately gated independently from the generic gateway flag so a
 // receipted v1–v5 session cannot gain a new visible tool mid-session.
 export const GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG = '--portable-ensemble-control'
+// Mesh Canvas direct-discovery profile flag. It changes catalogue visibility,
+// never dispatch authority: main checks the active participant/run posture on
+// every Mesh Canvas call.
+export const GEMINI_MCP_MESH_DIRECT_ARG = '--mesh-direct'
 // Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
 // safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
 // also advertises the audit_* tool namespace. The bootstrap translates this arg
@@ -121,6 +126,7 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)) {
     env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
   }
+  if (argv.includes(GEMINI_MCP_MESH_DIRECT_ARG)) env.TASKWRAITH_MCP_MESH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
 
@@ -806,11 +812,16 @@ function isCoreMcpAdvertisedForSeat(name: string, portableEnsembleControl = fals
   )
 }
 
-function isGatewayMcpAdvertisedForSeat(name: string, portableEnsembleControl = false): boolean {
+function isGatewayMcpAdvertisedForSeat(
+  name: string,
+  portableEnsembleControl = false,
+  meshDirect = false
+): boolean {
   return (
     (isGatewayMcpAdvertisedTool(name) &&
       (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
-    (portableEnsembleControl && name === 'ensemble_control')
+    (portableEnsembleControl && name === 'ensemble_control') ||
+    (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name))
   )
 }
 
@@ -1034,6 +1045,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
+  GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1538,6 +1550,8 @@ export function handleMcpJsonRpcMessage(
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
+    const meshDirect =
+      (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -1556,7 +1570,7 @@ export function handleMcpJsonRpcMessage(
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
               (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
               (!gatewaySubsetOnly ||
-                isGatewayMcpAdvertisedForSeat(tool.name, portableEnsembleControl))
+                isGatewayMcpAdvertisedForSeat(tool.name, portableEnsembleControl, meshDirect))
           )
         : allTools
     const baseTools = gatewaySubsetOnly
@@ -1594,6 +1608,8 @@ export function handleMcpJsonRpcMessage(
     const portableEnsembleControl =
       (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
+    const meshDirect =
+      (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
     if (portableEnsembleControlRequested && !portableEnsembleControl) {
       writeMcpError(
         id,
@@ -1690,7 +1706,7 @@ export function handleMcpJsonRpcMessage(
     if (
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
-      !isGatewayMcpAdvertisedForSeat(advertisedToolName, portableEnsembleControl) &&
+      !isGatewayMcpAdvertisedForSeat(advertisedToolName, portableEnsembleControl, meshDirect) &&
       !auditToolRequested
     ) {
       bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
@@ -1955,7 +1971,8 @@ export class McpBridgeRuntime {
     planSubset = false,
     coreSubset = false,
     gatewaySubset = false,
-    portableEnsembleControl = false
+    portableEnsembleControl = false,
+    meshDirect = false
   ): string[] {
     const logEpochPath = join(
       os.homedir(),
@@ -1994,7 +2011,8 @@ export class McpBridgeRuntime {
       ...(gatewaySubset ? [GEMINI_MCP_GATEWAY_SUBSET_ARG] : []),
       // The compact Bossman front door is independently profile-fenced so
       // old receipted gateway sessions retain their original tool list.
-      ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : [])
+      ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : []),
+      ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : [])
     ]
   }
 

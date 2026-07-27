@@ -67,6 +67,7 @@ function effectiveServices(
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    meshCanvas: 'ask',
     crossThreadRead: 'ask',
     threadMessage: 'ask',
     mediaEditing: 'ask',

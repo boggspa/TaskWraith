@@ -70,6 +70,7 @@ function makeEffectivePermissions(
       mcpTools: 'ask',
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',
+      meshCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'deny',
