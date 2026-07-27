@@ -1,52 +1,9 @@
 [
   {
-    "id": "gemini",
-    "label": "Gemini",
-    "accent": "#2563EB",
-    "hint": "offset constellation sparkle"
-  },
-  {
-    "id": "codex",
-    "label": "Codex",
-    "accent": "#A070F2",
-    "hint": "asymmetric command cloud with terminal cutout",
-    "description": "Original filled asymmetric command cloud with a terminal cutout for Codex. Not an official logo."
-  },
-  {
-    "id": "claude",
-    "label": "Claude",
-    "accent": "#D97706",
-    "hint": "uneven radial burst"
-  },
-  {
-    "id": "kimi",
-    "label": "Kimi",
-    "accent": "#1A8CFF",
-    "hint": "crescent and angled wordmark slash"
-  },
-  {
-    "id": "cursor",
-    "label": "Cursor",
-    "accent": "#E3B91E",
-    "hint": "pointer with insertion caret"
-  },
-  {
-    "id": "grok",
-    "label": "Grok",
-    "accent": "#D8DEE9",
-    "hint": "crosshair diagonal slash"
-  },
-  {
-    "id": "ollama",
-    "label": "Ollama",
-    "accent": "#20A77A",
-    "hint": "llama profile"
-  },
-  {
     "id": "ensemble",
     "label": "Ensemble",
     "accent": "#986781",
     "hint": "Confluence Loom with provider-spectrum lanes and pooled blue hub",
-    "description": "Original multicolour Confluence Loom mnemonic for Ensemble. Not an official logo."
+    "description": "Original multicolour TaskWraith artwork for the app-owned Ensemble concept."
   }
 ]

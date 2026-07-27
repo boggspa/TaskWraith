@@ -18,6 +18,7 @@ import {
   type PoolIconAsset
 } from '../lib/agentPoolIconAssets'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 function shuffleIdentitySeed(seedBase: string | undefined): string {
   return `${seedBase || 'identity'}#${Date.now().toString(36)}-${Math.random()
@@ -55,6 +56,22 @@ function PoolAssetSwatch({
 }): JSX.Element {
   const instanceId = useId().replace(/:/g, '')
   const swatchAccent = accent ?? asset.accent ?? '#9AA0AA'
+  if (asset.providerLogo) {
+    return (
+      <span
+        className="agent-pool-asset-icon"
+        style={{
+          width: size,
+          height: size,
+          display: 'inline-flex',
+          fontSize: size
+        }}
+        aria-hidden
+      >
+        <ProviderBrandLogo provider={asset.providerLogo} />
+      </span>
+    )
+  }
   return (
     <span
       className="agent-pool-asset-icon"

@@ -55,7 +55,8 @@ export type PooledAgentIdentity = {
   /**
    * 'named' => `slug` drives a named-identicon SVG; 'seed' => procedural
    * AgentIdenticon; 'asset' => `assetKey` drives an app-wide pool icon
-   * (agent-pool-icons / provider glyph / ghost / action / command).
+   * (agent-pool-icons / provider logo or Ensemble glyph / ghost / action /
+   * command).
    */
   iconKind: 'named' | 'seed' | 'asset'
   /** App-wide icon-pool key (group-namespaced) when iconKind === 'asset'. */

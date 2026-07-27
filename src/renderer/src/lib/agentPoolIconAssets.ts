@@ -1,5 +1,6 @@
 import poolManifestRaw from '../../../../design-assets/agent-pool-icons/agent-pool-icons.manifest.json'
 import providerManifestRaw from '../../../../design-assets/provider-glyphs/provider-glyphs.manifest.json'
+import type { ProviderId } from '../../../main/store/types'
 
 /**
  * App-wide SVG icon pool for the Settings → Roster "Agent pool" picker.
@@ -7,12 +8,14 @@ import providerManifestRaw from '../../../../design-assets/provider-glyphs/provi
  * Folds several design-asset directories into one selectable catalogue, keyed by
  * a group-namespaced `key` (`pool:neon-node`, `provider:claude`, `ghost:…`,
  * `action:…`, `command:…`). The featured group is the purpose-built
- * `design-assets/agent-pool-icons` set; the rest are the provider glyphs, ghost
- * marks, workflow/action icons and slash-command icons the user asked to expose.
+ * `design-assets/agent-pool-icons` set; the rest are official provider marks,
+ * TaskWraith's Ensemble glyph, ghost marks, workflow/action icons and
+ * slash-command icons the user asked to expose.
  *
  * Recolouring is auto-detected: an SVG that uses `currentColor` / `--agent-accent`
  * is tinted to the agent's accent (like the named identicons); a fixed-palette
- * SVG (provider brand glyphs, the full-colour ghost art) renders natively.
+ * SVG (the Ensemble glyph and full-colour ghost art) renders natively. Official
+ * provider marks use the component-rendered PNG catalogue.
  *
  * This is deliberately separate from `agentIdentityCatalog.ts` (the
  * subagent/nickname identicon catalogue) — see that file's note.
@@ -25,8 +28,10 @@ export interface PoolIconAsset {
   key: string
   group: PoolIconGroup
   label: string
-  /** Raw SVG markup. */
-  raw: string
+  /** Raw SVG markup for TaskWraith-owned and generic catalogue artwork. */
+  raw?: string
+  /** Official provider mark rendered by ProviderBrandLogo instead of inline SVG. */
+  providerLogo?: ProviderId
   /** True when the icon honours `currentColor` and can be tinted to the accent. */
   recolor: boolean
   /** Suggested accent (hex) — from a manifest where available. */
@@ -76,6 +81,23 @@ const PROVIDER_RAW = globRaw(
     query: '?raw'
   }) as Record<string, string>
 )
+
+const OFFICIAL_PROVIDER_POOL_ASSETS: readonly {
+  providerLogo: ProviderId
+  label: string
+  accent: string
+}[] = [
+  { providerLogo: 'gemini', label: 'Gemini', accent: '#346EEC' },
+  { providerLogo: 'codex', label: 'Codex', accent: '#705AFF' },
+  { providerLogo: 'claude', label: 'Claude', accent: '#B16105' },
+  { providerLogo: 'kimi', label: 'Kimi', accent: '#0073E6' },
+  { providerLogo: 'cursor', label: 'Cursor', accent: '#8D7312' },
+  { providerLogo: 'grok', label: 'Grok', accent: '#757575' },
+  { providerLogo: 'ollama', label: 'Ollama', accent: '#1A8562' },
+  { providerLogo: 'antigravity', label: 'Antigravity', accent: '#308713' },
+  { providerLogo: 'pi', label: 'Pi', accent: '#68768C' },
+  { providerLogo: 'mistral', label: 'Mistral', accent: '#D44404' }
+]
 const ACTION_RAW = globRaw(
   import.meta.glob('../../../../design-assets/workflows/icons/*.svg', {
     eager: true,
@@ -148,16 +170,25 @@ function buildProviderGroup(): PoolIconAsset[] {
     const accent = parseHex(record.accent)
     if (accent) accentById.set(id, accent)
   }
-  const out: PoolIconAsset[] = []
-  for (const [file, raw] of PROVIDER_RAW) {
-    const id = stemOf(file)
-    out.push({
-      key: `provider:${id}`,
+  const out: PoolIconAsset[] = OFFICIAL_PROVIDER_POOL_ASSETS.map(
+    ({ providerLogo, label, accent }) => ({
+      key: `provider:${providerLogo}`,
       group: 'Providers',
-      label: labelById.get(id) ?? prettifyStem(id),
-      raw,
-      recolor: isRecolorable(raw),
-      accent: accentById.get(id)
+      label,
+      providerLogo,
+      recolor: false,
+      accent
+    })
+  )
+  const ensembleRaw = PROVIDER_RAW.get('ensemble.svg')
+  if (ensembleRaw) {
+    out.push({
+      key: 'provider:ensemble',
+      group: 'Providers',
+      label: labelById.get('ensemble') ?? 'Ensemble',
+      raw: ensembleRaw,
+      recolor: isRecolorable(ensembleRaw),
+      accent: accentById.get('ensemble')
     })
   }
   return out.sort((a, b) => a.label.localeCompare(b.label))
@@ -299,40 +330,6 @@ function namespaceInlineSvgClasses(raw: string, key: string): string {
   )
 }
 
-function normalizeProviderGlyphStroke(raw: string): string {
-  return raw
-    .replace(/(stroke-width:\s*)2\.85\b/g, (_match, prefix: string) => `${prefix}2.1`)
-    .replace(/(stroke-width:\s*)2\.75\b/g, (_match, prefix: string) => `${prefix}2.05`)
-    .replace(/(stroke-width:\s*)2\.3\b/g, (_match, prefix: string) => `${prefix}1.82`)
-    .replace(/(stroke-width:\s*)1\.85\b/g, (_match, prefix: string) => `${prefix}1.1`)
-    .replace(/(stroke-width:\s*)1\.75\b/g, (_match, prefix: string) => `${prefix}1.05`)
-    .replace(/(stroke-width:\s*)1\.3\b/g, (_match, prefix: string) => `${prefix}0.82`)
-    .replace(
-      /(stroke-width=")2\.85(")/g,
-      (_match, open: string, close: string) => `${open}2.1${close}`
-    )
-    .replace(
-      /(stroke-width=")2\.75(")/g,
-      (_match, open: string, close: string) => `${open}2.05${close}`
-    )
-    .replace(
-      /(stroke-width=")2\.3(")/g,
-      (_match, open: string, close: string) => `${open}1.82${close}`
-    )
-    .replace(
-      /(stroke-width=")1\.85(")/g,
-      (_match, open: string, close: string) => `${open}1.1${close}`
-    )
-    .replace(
-      /(stroke-width=")1\.75(")/g,
-      (_match, open: string, close: string) => `${open}1.05${close}`
-    )
-    .replace(
-      /(stroke-width=")1\.3(")/g,
-      (_match, open: string, close: string) => `${open}0.82${close}`
-    )
-}
-
 function tintStyleForAccent(accent: string): string {
   return `color: ${accent}; --agent-accent: ${accent}; --workflow-accent: ${accent};`
 }
@@ -346,7 +343,7 @@ function mergeRootSvgStyle(existing: string, accent: string): string {
 /**
  * Inline-ready SVG: injects sizing, and — for recolourable icons — tints
  * `currentColor` + `--agent-accent` to `accent`. Fixed-palette icons (provider
- * brand glyphs, full-colour ghost art) render natively, accent ignored.
+ * Ensemble artwork, full-colour ghost art) render natively, accent ignored.
  */
 export function preparePoolIconSvg(
   asset: PoolIconAsset,
@@ -354,10 +351,10 @@ export function preparePoolIconSvg(
   accent: string | undefined,
   instanceId: string
 ): string {
-  const raw =
-    asset.group === 'Providers' && asset.key !== 'provider:ensemble'
-      ? normalizeProviderGlyphStroke(asset.raw)
-      : asset.raw
+  const raw = asset.raw
+  if (!raw) {
+    throw new Error(`Pool icon ${asset.key} uses a component-rendered provider logo`)
+  }
   const namespaceKey = `${asset.key}-${instanceId}`
   let svg = namespaceInlineSvgIds(
     namespaceInlineSvgClasses(raw, namespaceKey),

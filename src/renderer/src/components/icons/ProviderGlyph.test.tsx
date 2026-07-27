@@ -3,33 +3,25 @@ import { describe, expect, it } from 'vitest'
 import { ProviderGlyph } from './ProviderGlyph'
 
 describe('ProviderGlyph', () => {
-  it('renders original mnemonic glyphs for all first-class providers', () => {
-    for (const provider of [
-      'gemini',
-      'codex',
-      'claude',
-      'kimi',
-      'grok',
-      'cursor',
-      'ollama',
-      'ensemble'
-    ] as const) {
+  it('uses only neutral fallback artwork for external or unknown provider ids', () => {
+    for (const provider of ['gemini', 'codex', 'claude', 'pi', 'mistral', 'future'] as const) {
       const html = renderToStaticMarkup(<ProviderGlyph provider={provider} />)
       expect(html).toContain(`provider-glyph-${provider}`)
       expect(html).toContain(`--provider-accent:var(--provider-${provider}-color, currentColor)`)
       expect(html).toContain('provider-glyph-contrast-outline')
       expect(html).toContain('provider-glyph-foreground')
+      expect(html).toContain('M4.6 6.2h14.8v11.6H4.6Z')
       expect(html).not.toContain('<img')
     }
   })
 
-  it('paints a contrast copy behind the provider-accented foreground', () => {
-    const html = renderToStaticMarkup(<ProviderGlyph provider="codex" />)
+  it('paints a contrast copy behind the neutral fallback foreground', () => {
+    const html = renderToStaticMarkup(<ProviderGlyph provider="future" />)
 
     expect(html.indexOf('provider-glyph-contrast-outline')).toBeLessThan(
       html.indexOf('provider-glyph-foreground')
     )
-    expect(html.match(/fill-rule="evenodd"/g)).toHaveLength(2)
+    expect(html.match(/M4\.6 6\.2h14\.8v11\.6H4\.6Z/g)).toHaveLength(2)
   })
 
   it('renders Ensemble as the full-colour Confluence Loom with collision-safe paint ids', () => {
@@ -54,14 +46,6 @@ describe('ProviderGlyph', () => {
     expect(html).not.toContain('M6.6 19.8c.25-3.45')
   })
 
-  it('renders Codex as the approved filled command cloud', () => {
-    const html = renderToStaticMarkup(<ProviderGlyph provider="codex" />)
-
-    expect(html).toContain('fill-rule="evenodd"')
-    expect(html.match(/M5\.2 18\.9C2\.9 18\.9/g)).toHaveLength(2)
-    expect(html).not.toContain('M4.6 6.2h14.8v11.6H4.6Z')
-  })
-
   it('falls back to a generic prompt glyph for future providers', () => {
     const html = renderToStaticMarkup(<ProviderGlyph provider="future" />)
 
@@ -76,10 +60,10 @@ describe('ProviderGlyph', () => {
     expect(html).toContain('--provider-accent:var(--provider-future-provider-color, currentColor)')
   })
 
-  it('can keep the glyph shape while overriding the accent provider hue', () => {
-    const html = renderToStaticMarkup(<ProviderGlyph provider="ollama" accentProvider="alibaba" />)
+  it('can keep the neutral fallback shape while overriding its accent hue', () => {
+    const html = renderToStaticMarkup(<ProviderGlyph provider="future" accentProvider="alibaba" />)
 
-    expect(html).toContain('provider-glyph-ollama')
+    expect(html).toContain('provider-glyph-future')
     expect(html).toContain('--provider-accent:var(--provider-alibaba-color, currentColor)')
   })
 })

@@ -8,6 +8,7 @@ import {
 import { namedAgentIdenticonForSlug } from '../../lib/agentIdentityCatalog'
 import { getPoolIconAsset, preparePoolIconSvg } from '../../lib/agentPoolIconAssets'
 import { AgentIdentityIcon } from './AgentIdentityIcon'
+import { ProviderBrandLogo } from './ProviderBrandLogo'
 import type { PooledAgentIdentitySnapshot } from '../../../../main/store/types'
 
 type IdentityColorSource = (PooledAgent['identity'] | PooledAgentIdentitySnapshot) & {
@@ -39,10 +40,10 @@ function resolvedTintColor(identity: IdentityColorSource): string {
 
 /**
  * Renders a pooled Agent's icon across all three identity kinds:
- *  - `asset`  → an app-wide icon-pool SVG (agent-pool-icons / provider glyph /
- *               ghost / action / command), tinted to the accent when the SVG is
- *               recolourable; falls back to procedural rendering if the asset key
- *               no longer resolves (a removed/renamed asset).
+ *  - `asset`  → an app-wide icon-pool asset (agent-pool-icons / official
+ *               provider logo or Ensemble glyph / ghost / action / command),
+ *               tinted when appropriate; falls back to procedural rendering if
+ *               the asset key no longer resolves (a removed/renamed asset).
  *  - `named`  → a named identicon (delegated to AgentIdentityIcon).
  *  - `seed`   → procedural AgentIdenticon (delegated).
  */
@@ -73,6 +74,26 @@ export function PooledAgentIcon({
 
   if (asset) {
     const accent = resolvedTintColor(identity)
+    if (asset.providerLogo) {
+      return (
+        <span
+          className={['agent-pool-asset-icon', className].filter(Boolean).join(' ')}
+          style={{
+            ...style,
+            width: size,
+            height: size,
+            display: 'inline-flex',
+            fontSize: size
+          }}
+          data-asset-key={asset.key}
+          role={title ? 'img' : undefined}
+          aria-label={title}
+          aria-hidden={title ? undefined : true}
+        >
+          <ProviderBrandLogo provider={asset.providerLogo} />
+        </span>
+      )
+    }
     return (
       <span
         className={['agent-pool-asset-icon', className].filter(Boolean).join(' ')}

@@ -8,7 +8,7 @@ import type {
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { BlackboardPollControls } from './BlackboardPollControls'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { MarkdownMessage } from './MarkdownMessage'
 
 /**
@@ -232,7 +232,7 @@ export function BlackboardParticipantChip({
       aria-label={title}
     >
       {author.provider ? (
-        <ProviderGlyph provider={author.provider} className="blackboard-chip-glyph" />
+        <ProviderBrandLogo provider={author.provider} className="blackboard-chip-glyph" />
       ) : (
         <span className="blackboard-chip-initial" aria-hidden>
           {author.label.slice(0, 1).toUpperCase()}

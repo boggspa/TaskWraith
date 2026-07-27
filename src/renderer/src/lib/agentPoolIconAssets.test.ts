@@ -6,12 +6,13 @@ import {
   POOL_ICON_GROUPS,
   preparePoolIconSvg
 } from './agentPoolIconAssets'
+import { resolveProviderBrandLogoSource } from '../components/icons/providerBrandLogoAssets'
 
 describe('agent pool icon assets', () => {
   it('builds a non-empty catalogue spanning multiple groups', () => {
     expect(POOL_ICON_ASSETS.length).toBeGreaterThan(0)
     const groups = new Set(POOL_ICON_ASSETS.map((a) => a.group))
-    // The purpose-built set + the provider glyphs at minimum.
+    // The purpose-built set + official provider marks at minimum.
     expect(groups.has('Agent pool')).toBe(true)
     expect(groups.has('Providers')).toBe(true)
   })
@@ -38,7 +39,7 @@ describe('agent pool icon assets', () => {
     expect(diffNice?.raw).toContain('-420')
   })
 
-  it('keeps all eight legacy provider SVGs available to icon pickers', () => {
+  it('offers every official provider mark plus TaskWraith-owned Ensemble artwork', () => {
     const providerIds = [
       'gemini',
       'codex',
@@ -47,6 +48,9 @@ describe('agent pool icon assets', () => {
       'cursor',
       'grok',
       'ollama',
+      'antigravity',
+      'pi',
+      'mistral',
       'ensemble'
     ] as const
     const providerAssets = POOL_ICON_ASSETS.filter((asset) => asset.group === 'Providers')
@@ -60,9 +64,14 @@ describe('agent pool icon assets', () => {
       expect(asset).toBeDefined()
       expect(asset?.group).toBe('Providers')
       expect(asset?.accent).toMatch(/^#[0-9A-F]{6}$/)
-      expect(asset?.raw).toContain('<svg')
-      expect(asset?.raw).toContain(`data-provider="${provider}"`)
-      expect(asset?.raw).toContain('data-provider-glyph="true"')
+      if (provider === 'ensemble') {
+        expect(asset?.raw).toContain('<svg')
+        expect(asset?.providerLogo).toBeUndefined()
+      } else {
+        expect(asset?.providerLogo).toBe(provider)
+        expect(asset?.raw).toBeUndefined()
+        expect(resolveProviderBrandLogoSource(provider)).toBeDefined()
+      }
     }
   })
 
@@ -90,34 +99,18 @@ describe('agent pool icon assets', () => {
     expect(sized.toLowerCase()).toContain('#123456')
 
     // A fixed-palette icon is sized but not forcibly tinted.
-    const fixed = POOL_ICON_ASSETS.find((a) => !a.recolor)
+    const fixed = POOL_ICON_ASSETS.find((a) => !a.recolor && a.raw)
     if (fixed) {
       const out = preparePoolIconSvg(fixed, 26, '#123456', 'fixed-test')
       expect(out).toContain('width="26"')
     }
   })
 
-  it('preparePoolIconSvg scopes embedded classes and slims provider strokes', () => {
+  it('preparePoolIconSvg scopes embedded classes without leaking into the host', () => {
     const pool = getPoolIconAsset('pool:neon-node')!
     const poolOut = preparePoolIconSvg(pool, 24, '#ABCDEF', 'pool-test')
     expect(poolOut).toContain('.agent-pool-icon-pool-neon-node-pool-test-line')
     expect(poolOut).not.toContain('class="line')
-
-    const provider = getPoolIconAsset('provider:codex')!
-    const providerOut = preparePoolIconSvg(provider, 24, undefined, 'provider-test')
-    expect(providerOut).toContain('.agent-pool-icon-provider-codex-provider-test-line')
-    expect(providerOut).toContain(
-      '.agent-pool-icon-provider-codex-provider-test-contrast-outline'
-    )
-    expect(providerOut).toContain('data-provider-glyph="true"')
-    expect(providerOut).toContain('stroke-width: 1.05')
-    expect(providerOut).toContain('stroke-width: 2.05')
-    expect(providerOut).toContain('stroke: #000000')
-    expect(providerOut).not.toContain('--provider-glyph-contrast-color')
-    expect(providerOut).not.toMatch(/(^|\s)\.line\s*{/m)
-    expect(providerOut).not.toMatch(/(^|\s)\.dot\s*{/m)
-    expect(providerOut).not.toContain('stroke-width: 1.75')
-    expect(providerOut).not.toContain('stroke-width: 2.75')
   })
 
   it('preserves the fixed-palette Ensemble artwork and namespaces its paint servers', () => {

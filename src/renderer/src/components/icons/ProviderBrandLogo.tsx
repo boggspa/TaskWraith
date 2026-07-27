@@ -19,8 +19,9 @@ interface ProviderBrandLogoIconProps extends ProviderBrandLogoProps {
 /**
  * Official/first-party provider artwork for identity contexts beside a
  * provider or model name. Ensemble and unknown providers intentionally fall
- * back to TaskWraith's provider mnemonic; those glyphs also remain available
- * in the generic Identity Icon Picker. Ensemble's mnemonic is full colour.
+ * back to TaskWraith-owned artwork or a neutral terminal mark. The generic
+ * Identity Icon Picker uses these same official marks; Ensemble stays full
+ * colour.
  */
 export function ProviderBrandLogo({
   provider,

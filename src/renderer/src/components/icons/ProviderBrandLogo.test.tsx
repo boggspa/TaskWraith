@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
@@ -142,11 +142,27 @@ describe('ProviderBrandLogo', () => {
     }
   })
 
+  it('keeps external brand mimicry out of the provider-glyph asset trees', () => {
+    const designGlyphs = readdirSync(resolve('design-assets/provider-glyphs/glyphs'))
+      .filter((name) => name.endsWith('.svg'))
+      .sort()
+    const designPngs = readdirSync(resolve('design-assets/provider-glyphs/png'))
+      .filter((name) => name.endsWith('.png'))
+      .sort()
+    const iosGlyphs = readdirSync(resolve('ios/TaskWraithKit/Sources/TaskWraithUI/Resources'))
+      .filter((name) => name.startsWith('provider-glyph-'))
+      .sort()
+
+    expect(designGlyphs).toEqual(['ensemble.svg'])
+    expect(designPngs).toEqual(['provider-glyph-ensemble.png'])
+    expect(iosGlyphs).toEqual(['provider-glyph-ensemble.png'])
+  })
+
   it.each([
     ['Ensemble', 'ensemble', 'ensemble'],
     ['unknown provider', 'future-provider', 'future-provider'],
     ['missing provider', undefined, 'unknown']
-  ])('falls back to the legacy glyph for %s', (_label, provider, providerKey) => {
+  ])('uses TaskWraith-owned fallback artwork for %s', (_label, provider, providerKey) => {
     const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
     expect(html).toContain('<svg')

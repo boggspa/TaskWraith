@@ -1400,8 +1400,8 @@ export function getProviderName(provider?: ProviderId) {
   return 'Gemini'
 }
 
-// Exported so compact provider rows can reuse the same original
-// provider mnemonic glyphs as the sidebar.
+// Exported so compact provider rows can reuse the same official marks as the
+// sidebar; Ensemble retains TaskWraith's own glyph.
 type SidebarProviderBadgeId = ProviderId | 'ensemble'
 
 export function ProviderBadgeIcon({
@@ -1412,6 +1412,10 @@ export function ProviderBadgeIcon({
   accentProvider?: string
 }) {
   const providerKey = provider || 'gemini'
+
+  if (providerKey !== 'ensemble') {
+    return <ProviderBrandLogoIcon provider={providerKey} />
+  }
 
   return (
     <span className={`sidebar-provider-icon provider-${providerKey}`} aria-hidden="true">
@@ -6285,7 +6289,7 @@ export function Sidebar({
         {/* Phase L6 slice 1 — Model Usage card extracted to its own
          * component. Phase L6 slices 2-6 will rebuild this card's
          * visual identity to match the another-project compact card
-         * (provider glyphs + warning gradient + pace tick + heatmap)
+         * (provider marks + warning gradient + pace tick + heatmap)
          * inside the new component, leaving Sidebar untouched. */}
         <ModelUsageCard
           usageSummary={usageSummary}

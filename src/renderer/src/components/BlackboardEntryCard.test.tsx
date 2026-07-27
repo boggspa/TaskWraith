@@ -127,6 +127,8 @@ describe('BlackboardParticipantChip (static render)', () => {
     )
     expect(html).toContain('provider-claude')
     expect(html).toContain('--blackboard-chip-color:var(--provider-claude-color, var(--accent))')
+    expect(html).toContain('provider-logo-claude.png')
+    expect(html).not.toContain('provider-glyph-claude')
     expect(html).toContain('>Sol<')
     expect(html).not.toContain('>ensemble-participant-1<')
     // Raw id stays discoverable via the tooltip.
