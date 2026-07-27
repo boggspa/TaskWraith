@@ -112,6 +112,7 @@
     "ws": "^8.21.0"
   },
   "overrides": {
+    "@hono/node-server": "2.0.12",
     "js-yaml": "4.3.0"
   },
   "devDependencies": {
