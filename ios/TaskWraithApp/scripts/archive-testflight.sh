@@ -40,8 +40,18 @@ fi
 cd "$app_dir"
 xcodegen generate
 
-version="$(awk -F'"' '/MARKETING_VERSION:/ { print $2; exit }' project.yml)"
-build="$(awk -F'"' '/CURRENT_PROJECT_VERSION:/ { print $2; exit }' project.yml)"
+# Read a scalar from project.yml regardless of how YAML happens to quote it.
+# This used to split on a literal double quote, which meant a formatting pass
+# that rewrote "85" as '85' silently broke the archive — and only at archive
+# time, long after every gate had gone green. Accept double-quoted,
+# single-quoted, and bare scalars so the value survives the next reformat.
+read_project_scalar() {
+  sed -nE "s/^[[:space:]]*$1:[[:space:]]*['\"]?([^'\"[:space:]]+)['\"]?[[:space:]]*$/\1/p" \
+    project.yml | head -n 1
+}
+
+version="$(read_project_scalar MARKETING_VERSION)"
+build="$(read_project_scalar CURRENT_PROJECT_VERSION)"
 if [[ -z "$version" || -z "$build" ]]; then
   echo "Could not read MARKETING_VERSION/CURRENT_PROJECT_VERSION from project.yml" >&2
   exit 1
