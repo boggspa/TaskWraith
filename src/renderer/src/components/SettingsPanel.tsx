@@ -99,6 +99,7 @@ import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsP
 import { PairingPage } from './PairingPage'
 import { PillButton } from './PillButton'
 import { PiProviderKeysCard } from './PiProviderKeysCard'
+import { MistralQuotaCard } from './MistralQuotaCard'
 import { SegmentedControl } from './SegmentedControl'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -7208,6 +7209,7 @@ export function SettingsPanel({
                     {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
+                  <MistralQuotaCard />
 
                   <AntigravityOptInCard
                     enabled={antigravityEnabled}

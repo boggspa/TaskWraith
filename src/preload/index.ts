@@ -132,8 +132,8 @@ async function saveClipboardImageAttachmentFromTrustedPaste(appChatId: string): 
   return ipcRenderer.invoke('save-clipboard-image-attachment', appChatId, intent.token)
 }
 
-const serializedChatPersistence = new SerializedChatPersistence((chat) =>
-  ipcRenderer.invoke('save-chat', chat) as Promise<CanonicalChatSaveResult>
+const serializedChatPersistence = new SerializedChatPersistence(
+  (chat) => ipcRenderer.invoke('save-chat', chat) as Promise<CanonicalChatSaveResult>
 )
 
 // Custom APIs for renderer
@@ -247,7 +247,10 @@ const api = {
     | { ok: true; grants: unknown[]; path: string; selectionReceipt?: string }
     | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
   > => ipcRenderer.invoke('external-path:pick-and-persist', payload),
-  revokeExternalPathGrants: (payload: { chatId: string; grantIds: string[] }): Promise<
+  revokeExternalPathGrants: (payload: {
+    chatId: string
+    grantIds: string[]
+  }): Promise<
     | { ok: true; grants: unknown[]; revokedGrantIds: string[] }
     | { ok: false; reason: 'no-chat' | 'no-grants' }
   > => ipcRenderer.invoke('external-path:revoke', payload),
@@ -345,6 +348,23 @@ const api = {
   // locally accumulated cycle. Resolves null until the seat has actually been
   // run, which is what gates the sidebar meter.
   getMistralQuotaEstimate: () => ipcRenderer.invoke('mistral-quota:get'),
+  setMistralPlan: (plan: string) => ipcRenderer.invoke('mistral-quota:set-plan', plan),
+  // Amounts are USD. The renderer converts from the console's currency using its
+  // own live FX table before this crosses IPC, so the main-process model never
+  // has to do currency maths — see MistralQuotaEstimate.ts's purity note.
+  setMistralQuotaAnchor: (reading: {
+    allowanceUsd: number
+    spentUsd: number
+    cycleResetsAt?: string
+    declared?: { allowance: number; spent: number; currency: string }
+  }) => ipcRenderer.invoke('mistral-quota:set-anchor', reading),
+  clearMistralQuotaAnchor: () => ipcRenderer.invoke('mistral-quota:clear-anchor'),
+  // Admin API key: write-only from the renderer's side. The status projection
+  // carries a configured boolean and a timestamp, never the key or its bytes.
+  getMistralAdminKeyStatus: () => ipcRenderer.invoke('mistral-admin-key:status'),
+  setMistralAdminKey: (apiKey: string) => ipcRenderer.invoke('mistral-admin-key:set', apiKey),
+  clearMistralAdminKey: () => ipcRenderer.invoke('mistral-admin-key:clear'),
+  refreshMistralAdminUsage: () => ipcRenderer.invoke('mistral-quota:refresh-admin'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitSubscribeSnapshot: (
@@ -384,7 +404,10 @@ const api = {
     repoPath?: string
     chatId?: string
     reason?: GitSnapshotInvalidationReason
-  }) => ipcRenderer.invoke('git:invalidate-snapshot', payload) as Promise<{ ok: true } | { ok: false; error: string }>,
+  }) =>
+    ipcRenderer.invoke('git:invalidate-snapshot', payload) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   gitStage: (payload: {
     workspacePath?: string
     repoPath?: string
@@ -399,15 +422,13 @@ const api = {
     repoPath?: string
     chatId?: string
     paths?: string[]
-  }) =>
-    ipcRenderer.invoke('git:unstage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  }) => ipcRenderer.invoke('git:unstage', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitCommit: (payload: {
     workspacePath?: string
     repoPath?: string
     chatId?: string
     message: string
-  }) =>
-    ipcRenderer.invoke('git:commit', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  }) => ipcRenderer.invoke('git:commit', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitPush: (payload: {
     workspacePath?: string
     repoPath?: string
@@ -415,19 +436,14 @@ const api = {
     setUpstream?: boolean
     remote?: string
   }) => ipcRenderer.invoke('git:push', payload) as Promise<GitResult<GitRepositorySnapshot>>,
-  'git:list-branches': (payload: {
-    workspacePath?: string
-    repoPath?: string
-    chatId?: string
-  }) =>
+  'git:list-branches': (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:list-branches', payload),
   'git:checkout-branch': (payload: {
     workspacePath?: string
     repoPath?: string
     chatId?: string
     branch?: string
-  }) =>
-    ipcRenderer.invoke('git:checkout-branch', payload),
+  }) => ipcRenderer.invoke('git:checkout-branch', payload),
   'git:create-branch': (payload: {
     workspacePath?: string
     repoPath?: string
@@ -435,11 +451,7 @@ const api = {
     branch?: string
     from?: string
   }) => ipcRenderer.invoke('git:create-branch', payload),
-  'git:list-worktrees': (payload: {
-    workspacePath?: string
-    repoPath?: string
-    chatId?: string
-  }) =>
+  'git:list-worktrees': (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:list-worktrees', payload),
   'git:create-worktree': (payload: {
     workspacePath?: string
@@ -461,8 +473,7 @@ const api = {
     repoPath?: string
     chatId?: string
     path?: string
-  }) =>
-    ipcRenderer.invoke('git:select-worktree', payload),
+  }) => ipcRenderer.invoke('git:select-worktree', payload),
   listFanoutCandidates: (chatId: string) => ipcRenderer.invoke('fanout-candidates:list', chatId),
   fanoutCandidateDiff: (chatId: string, candidateId: string) =>
     ipcRenderer.invoke('fanout-candidates:diff', chatId, candidateId),
@@ -470,17 +481,9 @@ const api = {
     ipcRenderer.invoke('fanout-candidates:promote', chatId, candidateId),
   discardFanoutCandidate: (chatId: string, candidateId: string) =>
     ipcRenderer.invoke('fanout-candidates:discard', chatId, candidateId),
-  githubPrStatus: (payload: {
-    workspacePath?: string
-    repoPath?: string
-    chatId?: string
-  }) =>
+  githubPrStatus: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-status', payload) as Promise<GitResult<GitPrSummary>>,
-  githubPrReadiness: (payload: {
-    workspacePath?: string
-    repoPath?: string
-    chatId?: string
-  }) =>
+  githubPrReadiness: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('github:pr-readiness', payload) as Promise<GitResult<GitPrReadiness>>,
   githubCiStatus: (payload: {
     workspacePath?: string
@@ -560,7 +563,8 @@ const api = {
   getAgentMcpStatus: (provider: ProviderId) => ipcRenderer.invoke('get-agent-mcp-status', provider),
   listAgentThreads: (provider: ProviderId, params: any = {}) =>
     ipcRenderer.invoke('list-agent-threads', provider, params),
-  'fork:get-capability': (provider: ProviderId) => ipcRenderer.invoke('fork:get-capability', provider),
+  'fork:get-capability': (provider: ProviderId) =>
+    ipcRenderer.invoke('fork:get-capability', provider),
   forkAgentThread: (provider: ProviderId, threadId: string, params: any = {}) =>
     ipcRenderer.invoke('fork-agent-thread', provider, threadId, params),
   rollbackAgentThread: (provider: ProviderId, threadId: string, numTurns: number = 1) =>
@@ -583,9 +587,8 @@ const api = {
     intentNote?: string
   ) => ipcRenderer.invoke('respond-agent-approval', requestId, action, intentNote),
   writeGeminiInput: (data: string) => ipcRenderer.invoke('write-gemini-input', data),
-  getDiff: (
-    workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }
-  ) => ipcRenderer.invoke('get-diff', workspace),
+  getDiff: (workspace: string | { workspacePath?: string; repoPath?: string; chatId?: string }) =>
+    ipcRenderer.invoke('get-diff', workspace),
   openWorkspacePopout: (
     input:
       | {
@@ -769,7 +772,9 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
-    openSketchWindow: (args: { chatId: string }): Promise<
+    openSketchWindow: (args: {
+      chatId: string
+    }): Promise<
       | {
           ok: true
           canvasId: string
@@ -779,7 +784,9 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-sketch-window', args),
-    openSketchEmbedded: (args: { chatId: string }): Promise<
+    openSketchEmbedded: (args: {
+      chatId: string
+    }): Promise<
       | {
           ok: true
           canvasId: string
@@ -889,11 +896,7 @@ const api = {
       ok: boolean
       error?: string
     }>,
-  answerEnsemblePoll: (payload: {
-    appChatId: string
-    pollId: string
-    choice: string
-  }) =>
+  answerEnsemblePoll: (payload: { appChatId: string; pollId: string; choice: string }) =>
     ipcRenderer.invoke('answer-ensemble-poll', payload) as Promise<{
       ok: boolean
       error?: string
@@ -1309,7 +1312,9 @@ const api = {
   getPluginActivation: () =>
     ipcRenderer.invoke('plugins:get-activation') as Promise<TaskWraithPluginActivationSnapshot>,
   getPluginSecretStatus: () =>
-    ipcRenderer.invoke('plugins:get-secret-status') as Promise<TaskWraithPluginSecretStatusSnapshot>,
+    ipcRenderer.invoke(
+      'plugins:get-secret-status'
+    ) as Promise<TaskWraithPluginSecretStatusSnapshot>,
   setPluginSecret: (pluginId: string, secretId: string, value: string) =>
     ipcRenderer.invoke(
       'plugins:set-secret',
@@ -1616,8 +1621,7 @@ const api = {
   humanCollaborationAuditLog: (input?: { chatId?: string; limit?: number }) =>
     ipcRenderer.invoke('human-collaboration:audit-log', input),
   // P2a presence clarity — live per-session summaries (share + collaborator).
-  humanCollaborationSessionStatus: () =>
-    ipcRenderer.invoke('human-collaboration:session-status'),
+  humanCollaborationSessionStatus: () => ipcRenderer.invoke('human-collaboration:session-status'),
   // Collaborator side (this instance joining someone else's shared chat).
   humanCollaborationCollaboratorJoin: (input: {
     shareId: string
@@ -1689,9 +1693,9 @@ const api = {
     ipcRenderer.invoke('update-workflow-definition', id, partial),
   deleteWorkflowDefinition: (id: string) => ipcRenderer.invoke('delete-workflow-definition', id),
   getExecutionGraphDiagnostics: () =>
-    ipcRenderer.invoke('execution-graphs:diagnostics') as Promise<
-      ExecutionGraphDiagnosticsSnapshot
-    >,
+    ipcRenderer.invoke(
+      'execution-graphs:diagnostics'
+    ) as Promise<ExecutionGraphDiagnosticsSnapshot>,
   listExecutionGraphRevisions: (workspaceId?: string) =>
     ipcRenderer.invoke('execution-graphs:list', workspaceId) as Promise<
       readonly ExecutionGraphRevision[]
@@ -1759,11 +1763,19 @@ const api = {
     ipcRenderer.invoke('save-evidence-pack', pack) as Promise<EvidencePackRecord>,
   deleteEvidencePack: (id: string) => ipcRenderer.invoke('delete-evidence-pack', id),
   getCapabilityLedgerSnapshot: (workspaceId?: string) =>
-    ipcRenderer.invoke('get-capability-ledger-snapshot', workspaceId) as Promise<CapabilityLedgerSnapshot>,
+    ipcRenderer.invoke(
+      'get-capability-ledger-snapshot',
+      workspaceId
+    ) as Promise<CapabilityLedgerSnapshot>,
   getRepoConventionIndexes: (workspaceId?: string) =>
-    ipcRenderer.invoke('get-repo-convention-indexes', workspaceId) as Promise<RepoConventionIndexSnapshot[]>,
+    ipcRenderer.invoke('get-repo-convention-indexes', workspaceId) as Promise<
+      RepoConventionIndexSnapshot[]
+    >,
   saveRepoConventionIndex: (snapshot: Partial<RepoConventionIndexSnapshot>) =>
-    ipcRenderer.invoke('save-repo-convention-index', snapshot) as Promise<RepoConventionIndexSnapshot>,
+    ipcRenderer.invoke(
+      'save-repo-convention-index',
+      snapshot
+    ) as Promise<RepoConventionIndexSnapshot>,
   runWorkflowNow: (id: string) => ipcRenderer.invoke('run-workflow-now', id),
   setWorkflowUnattendedElevation: (id: string, level: string) =>
     ipcRenderer.invoke('set-workflow-unattended-elevation', id, level),
@@ -1816,8 +1828,7 @@ const api = {
   }) => ipcRenderer.invoke('record-approval-elevation-ack', input),
   getMemoryProposalPacks: (workspaceId?: string | null) =>
     ipcRenderer.invoke('get-memory-proposal-packs', workspaceId),
-  getMemoryProposalPack: (packId: string) =>
-    ipcRenderer.invoke('get-memory-proposal-pack', packId),
+  getMemoryProposalPack: (packId: string) => ipcRenderer.invoke('get-memory-proposal-pack', packId),
   updateMemoryProposal: (packId: string, proposalId: string, partial: any) =>
     ipcRenderer.invoke('update-memory-proposal', { packId, proposalId, partial }),
   applyMemoryProposal: (packId: string, proposalId: string) =>

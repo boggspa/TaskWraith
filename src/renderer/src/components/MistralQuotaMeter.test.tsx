@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import { MistralQuotaMeterView } from './MistralQuotaMeter'
 import {
   accumulate,
+  applyAnchor,
+  applyReport,
   estimateQuota,
   recordLimitEvent,
   startCycle,
@@ -27,6 +29,28 @@ function snapshot(
     turns: cycle.turns,
     totalTokens: cycle.totalTokens
   }
+}
+
+/** A cycle carrying a console reading — the Pro figures observed 2026-07-27. */
+function anchoredSnapshot(): MistralQuotaSnapshot {
+  const cycle = applyAnchor(accumulate(startCycle(T0), { costUsd: 0.1, totalTokens: 1000 }), {
+    allowanceUsd: 27.8,
+    spentUsd: 0.31,
+    observedAt: '2026-07-27T12:00:00.000Z',
+    cycleResetsAt: '2026-07-31T00:00:00.000Z',
+    declared: { allowance: 25.5, spent: 0.28, currency: 'EUR' }
+  })
+  return { estimate: estimateQuota(cycle, 'pro', T0), plan: 'pro', turns: 1, totalTokens: 1000 }
+}
+
+/** The Admin API's shape: real spend, no entitlement, so the ceiling stays seeded. */
+function reportedSpendOnlySnapshot(): MistralQuotaSnapshot {
+  const cycle = applyReport(startCycle(T0), {
+    spentUsd: 3.27,
+    fetchedAt: '2026-07-27T12:00:00.000Z',
+    declared: { spent: 3, currency: 'EUR' }
+  })
+  return { estimate: estimateQuota(cycle, 'pro', T0), plan: 'pro', turns: 0, totalTokens: 0 }
 }
 
 function render(props: { snapshot: MistralQuotaSnapshot | null; loading?: boolean }): string {
@@ -69,9 +93,33 @@ describe('MistralQuotaMeterView — honesty', () => {
     expect(html).toContain('never billed')
   })
 
-  it('qualifies the ceiling in place so it cannot read as a published allowance', () => {
+  it('qualifies a SEEDED ceiling in place so it cannot read as a published allowance', () => {
     const html = render({ snapshot: snapshot(3.5, { plan: 'pro' }) })
-    expect(html).toContain('of ~$14.99 est.')
+    expect(html).toContain('of ~$27.80 est.')
+  })
+
+  it('drops the hedge once the allowance is a figure Mistral itself gave us', () => {
+    // Carrying "~… est." over the user's own console reading would understate
+    // what we know just as badly as the reverse overstates it.
+    const html = render({ snapshot: anchoredSnapshot() })
+    expect(html).toContain('of $27.80')
+    expect(html).not.toContain('est.')
+    expect(html).not.toContain('not yet calibrated')
+    expect(html).not.toContain('mistral-quota-bar--estimated')
+  })
+
+  it('quotes the reading back in the currency the console showed', () => {
+    const html = render({ snapshot: anchoredSnapshot() })
+    expect(html).toContain('your Mistral console')
+    expect(html).toContain('EUR 25.50')
+  })
+
+  it('still hedges when the spend is real but the ceiling is only a plan default', () => {
+    // Half-measured is not measured: a real numerator over a guessed denominator
+    // is still a guessed ratio.
+    const html = render({ snapshot: reportedSpendOnlySnapshot() })
+    expect(html).toContain('of ~$27.80 est.')
+    expect(visibleText(html)).toContain('(estimated)')
   })
 
   it('says plainly in the tooltip that nothing here comes from Mistral', () => {

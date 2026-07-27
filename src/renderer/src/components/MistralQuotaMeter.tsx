@@ -2,11 +2,23 @@
  * MistralQuotaMeter — the Mistral Vibe seat's sidebar quota band.
  *
  * WHAT MAKES THIS ONE DIFFERENT. Every other row in the Model Usage card
- * renders a number a vendor reported. Mistral publishes no quota figure for any
- * plan and exposes no usage endpoint, and overflow is pay-as-you-go — so there
- * is no wall to hit and no percentage to quote. What this row shows is
- * TaskWraith's own estimate, built from spend observed locally on this Mac
- * against a ceiling seeded from the plan price (see MistralQuotaEstimate.ts).
+ * renders a number a vendor reported. This row renders whichever source is
+ * strongest — see the ladder in MistralQuotaEstimate.ts — and hedges itself
+ * according to how good that source actually is. With no vendor source it falls
+ * back to TaskWraith's own estimate, built from spend observed locally on this
+ * Mac against a plan-default ceiling.
+ *
+ * TWO CORRECTIONS TO WHAT THIS FILE USED TO CLAIM, both from consoles read on
+ * 2026-07-27:
+ *
+ *   - "Mistral publishes no quota figure for any plan" — the SUBSCRIPTION
+ *     console does, as an "Included monthly usage" bar (Free €8.50, Pro €25.50).
+ *     It is per-account and appears in no public pricing page, which is why the
+ *     user enters it rather than us hardcoding it.
+ *   - "overflow is pay-as-you-go, so there is no wall to hit" — pay-as-you-go
+ *     for Vibe Code is its own toggle and ships DISABLED. With it off, exhausting
+ *     the included allowance STOPS the seat until the cycle resets. There is a
+ *     wall, which is precisely why this meter matters.
  *
  * The user asked for exactly this and no more: "even if it's just 'I have used
  * quite a bit this month' rather than 'where is the ceiling vs my usage'".
@@ -18,9 +30,9 @@
  *     the same convention as the API-spend rows.
  *   - A bare percentage is NEVER rendered. `usedPercent` drives the bar's
  *     length, where it reads as a band, and nothing else.
- *   - Until a real limit event has calibrated the ceiling
- *     (`confidence !== 'learned'`) the fill is hatched and dimmed, so a
- *     price-anchored guess cannot be mistaken for a measured value.
+ *   - Until the reading is backed by something real — a vendor figure, or a
+ *     limit event that calibrated the ceiling — the fill is hatched and dimmed,
+ *     so a plan-default guess cannot be mistaken for a measured value.
  *
  * SHAPE. Follows GrokCreditsMeter, not the generic quota-window path:
  * `ProviderUsageBlock` only ever renders `entry.windows`, so a provider with a
@@ -37,6 +49,10 @@
  */
 import { useEffect, useRef, useState, type ReactElement } from 'react'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
+import type {
+  MistralQuotaEstimate,
+  MistralQuotaFigureSource
+} from '../../../main/mistral/MistralQuotaEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
 import { providerPlanName } from '../lib/providerPlanName'
 import { ProviderLogoTile } from './ProviderLogoTile'
@@ -64,6 +80,31 @@ function formatUsd(value: number): string {
   return `$${safe.toFixed(2)}`
 }
 
+/** Where each half of a vendor-sourced reading came from, stated plainly. */
+function sourcePhrase(source: MistralQuotaFigureSource): string {
+  const origin =
+    source.confidence === 'reported'
+      ? "Mistral's Admin API"
+      : source.confidence === 'anchored'
+        ? 'your Mistral console'
+        : 'a local estimate'
+  const declared = source.declared
+    ? ` (${source.declared.currency} ${source.declared.amount.toFixed(2)})`
+    : ''
+  return `${origin}${declared}`
+}
+
+/** Replaces the hedged tooltip once the figures are Mistral's own. */
+function vendorTooltip(estimate: MistralQuotaEstimate): string {
+  const asOf = estimate.spentSource.asOf ? new Date(estimate.spentSource.asOf) : null
+  const when = asOf && !Number.isNaN(asOf.getTime()) ? ` Read ${asOf.toLocaleString()}.` : ''
+  return [
+    `Spend from ${sourcePhrase(estimate.spentSource)};`,
+    `allowance from ${sourcePhrase(estimate.ceilingSource)}.${when}`,
+    'Local estimates are added on top of the reading until you refresh it.'
+  ].join(' ')
+}
+
 export interface MistralQuotaMeterViewProps {
   /** null until the seat has been run at least once — the row stays hidden. */
   snapshot: MistralQuotaSnapshot | null
@@ -82,20 +123,35 @@ export function MistralQuotaMeterView({
   if (!snapshot) return null
 
   const { estimate } = snapshot
-  const calibrated = estimate.confidence === 'learned'
+  // `vendorReported` means BOTH halves came from Mistral — a real spend against
+  // a guessed ceiling is still a guessed ratio and must still be hedged.
+  const measured = estimate.vendorReported === true
+  const calibrated = measured || estimate.confidence === 'learned'
+  const ceilingFromVendor =
+    estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
+  // The spend half is judged separately: an anchored reading is Mistral's own
+  // number even when the ceiling behind it is still a plan default.
+  const spendFromVendor = estimate.confidence === 'anchored' || estimate.confidence === 'reported'
   const fraction = Math.max(0, Math.min(1, estimate.usedPercent / 100))
   const resetsAt = formatResetShort({ resetAt: estimate.cycleResetsAt })
   const planName =
     snapshot.plan === 'unknown' ? undefined : providerPlanName('mistral', snapshot.plan)
   const spent = formatUsd(estimate.spentUsd)
   const ceiling = formatUsd(estimate.estimatedCeilingUsd)
-  const title = calibrated ? ESTIMATE_TOOLTIP : `${ESTIMATE_TOOLTIP} ${SEEDED_TOOLTIP}`
-  // "of ~$14.99 est." — the ceiling is qualified in place so the ratio can never
-  // be read as a published allowance.
+  const title = measured
+    ? vendorTooltip(estimate)
+    : calibrated
+      ? ESTIMATE_TOOLTIP
+      : `${ESTIMATE_TOOLTIP} ${SEEDED_TOOLTIP}`
+  // A vendor figure drops the `~` and the "est." qualifier — carrying them over
+  // a number Mistral itself reported would understate what we actually know.
+  // Anything short of that keeps the hedge: "of ~$27.80 est." can never be read
+  // as a published allowance.
+  const ceilingText = ceilingFromVendor ? `of ${ceiling}` : `of ~${ceiling} est.`
   const footnote = [
-    `of ~${ceiling} est.`,
+    ceilingText,
     resetsAt ? `resets ${resetsAt}` : null,
-    calibrated ? null : 'not yet calibrated'
+    measured ? null : calibrated ? null : 'not yet calibrated'
   ]
     .filter(Boolean)
     .join(' · ')
@@ -120,8 +176,11 @@ export function MistralQuotaMeterView({
             <span className="model-usage-window-label mistral-quota-band-label">
               {estimate.label}
             </span>
-            <span className="model-usage-window-percent" title={MONEY_TOOLTIP}>
-              ~{spent}
+            <span
+              className="model-usage-window-percent"
+              title={spendFromVendor ? vendorTooltip(estimate) : MONEY_TOOLTIP}
+            >
+              {spendFromVendor ? spent : `~${spent}`}
             </span>
           </div>
           <QuotaProgressBar

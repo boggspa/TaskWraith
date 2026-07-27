@@ -1342,19 +1342,33 @@ import {
   buildMistralAcpCliArgs,
   mistralSessionModeForSeat,
   mistralWriteCapable,
+  normalizeMistralPlanId,
   normalizeMistralThinkingLevel,
   scrubMistralCredentialEnv
 } from './mistral/MistralCliArgs'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
 import { estimateMistralTokenUsage } from './mistral/MistralUsage'
 import {
+  clearMistralQuotaAnchor,
   configureMistralQuotaStore,
   currentMistralQuotaEstimate,
   flushMistralQuotaStore,
   mistralQuotaStorePath,
   recordMistralTurnCost,
+  setMistralPlan,
+  setMistralQuotaAnchor,
+  setMistralQuotaReport,
   type MistralQuotaSnapshot
 } from './mistral/MistralQuotaStore'
+import {
+  configureMistralAdminKeyStore,
+  mistralAdminKeyStore
+} from './mistral/MistralAdminKeyStore'
+import {
+  convertVendorAmountToUsd,
+  fetchMistralAdminUsage,
+  meterSpendFrom
+} from './mistral/MistralAdminUsage'
 import {
   classifyMistralLimit,
   isMistralRateLimitText,
@@ -35698,6 +35712,13 @@ if (isGeminiMcpBridgeProcess) {
         console.log(line)
       }
     })
+    // Optional Admin API key. Constructed here (post app-ready) so safeStorage
+    // has settled on its platform backend, same as the Gemini and Pi stores.
+    // Most installs never populate it: the Admin API is Enterprise-only.
+    configureMistralAdminKeyStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage
+    })
     const bridgeApnsPusher = buildBridgeApnsPusherFromSettings()
 
     // Publish to module-scope refs so top-level approval helpers can fan
@@ -45165,6 +45186,114 @@ if (isGeminiMcpBridgeProcess) {
     // the seat has actually run, which is what gates the sidebar meter.
     ipcMain.handle('mistral-quota:get', async (): Promise<MistralQuotaSnapshot | null> => {
       return currentMistralQuotaEstimate()
+    })
+
+    // Which plan the user believes they are on. Undetectable from the lane —
+    // nothing Vibe sends reports it — so it has to be declared. Until this
+    // existed the store's `setPlan` had no caller at all and every seat metered
+    // as `unknown`, which now seeds LOW (as Free): a Pro seat left undeclared is
+    // banded against a third of its real allowance.
+    ipcMain.handle(
+      'mistral-quota:set-plan',
+      async (_, plan: string): Promise<MistralQuotaSnapshot | null> => {
+        await setMistralPlan(normalizeMistralPlanId(plan))
+        return currentMistralQuotaEstimate()
+      }
+    )
+
+    // A reading taken off admin.mistral.ai/subscription. Amounts arrive in USD,
+    // already converted by the renderer.
+    ipcMain.handle(
+      'mistral-quota:set-anchor',
+      async (_, reading: Record<string, unknown>): Promise<MistralQuotaSnapshot | null> => {
+        const allowanceUsd = Number(reading?.allowanceUsd)
+        const spentUsd = Number(reading?.spentUsd)
+        // A non-positive allowance would divide the whole meter by zero, and a
+        // negative spend is meaningless. Reject rather than clamp: a silently
+        // corrected reading is worse than a rejected one the user can retype.
+        if (!Number.isFinite(allowanceUsd) || allowanceUsd <= 0) return currentMistralQuotaEstimate()
+        if (!Number.isFinite(spentUsd) || spentUsd < 0) return currentMistralQuotaEstimate()
+        const declared = reading?.declared as
+          | { allowance?: unknown; spent?: unknown; currency?: unknown }
+          | undefined
+        await setMistralQuotaAnchor({
+          allowanceUsd,
+          spentUsd,
+          ...(typeof reading?.cycleResetsAt === 'string' &&
+          !Number.isNaN(new Date(reading.cycleResetsAt).getTime())
+            ? { cycleResetsAt: new Date(reading.cycleResetsAt).toISOString() }
+            : {}),
+          ...(declared &&
+          Number.isFinite(Number(declared.allowance)) &&
+          Number.isFinite(Number(declared.spent)) &&
+          typeof declared.currency === 'string' &&
+          declared.currency.trim()
+            ? {
+                declared: {
+                  allowance: Number(declared.allowance),
+                  spent: Number(declared.spent),
+                  currency: declared.currency.trim().toUpperCase()
+                }
+              }
+            : {})
+        })
+        return currentMistralQuotaEstimate()
+      }
+    )
+
+    ipcMain.handle('mistral-quota:clear-anchor', async (): Promise<MistralQuotaSnapshot | null> => {
+      await clearMistralQuotaAnchor()
+      return currentMistralQuotaEstimate()
+    })
+
+    ipcMain.handle('mistral-admin-key:status', async () => {
+      return mistralAdminKeyStore()?.getStatus() ?? null
+    })
+
+    ipcMain.handle('mistral-admin-key:set', async (_, apiKey: string) => {
+      const store = mistralAdminKeyStore()
+      if (!store) return { ok: false, error: 'unavailable' }
+      const result = store.setApiKey(String(apiKey ?? ''))
+      return { ok: result.ok, ...(result.error ? { error: result.error } : {}) }
+    })
+
+    ipcMain.handle('mistral-admin-key:clear', async () => {
+      const store = mistralAdminKeyStore()
+      if (!store) return { ok: false, error: 'unavailable' }
+      const result = store.clear()
+      return { ok: result.ok, ...(result.error ? { error: result.error } : {}) }
+    })
+
+    // Pull this month's figures from the Admin API and fold them into the meter.
+    // Enterprise-only by construction — every other plan gets `no-key` or
+    // `unauthorized` and keeps whatever source it already had. Nothing here can
+    // throw: the client returns typed outcomes precisely so a meter refresh
+    // cannot take anything else down with it.
+    ipcMain.handle('mistral-quota:refresh-admin', async () => {
+      const keyStore = mistralAdminKeyStore()
+      if (!keyStore) return { ok: false, failure: 'unavailable' }
+      const loaded = keyStore.loadApiKey()
+      if (loaded.status !== 'ok') {
+        return { ok: false, failure: loaded.status === 'missing' ? 'no-key' : loaded.status }
+      }
+      const outcome = await fetchMistralAdminUsage({ apiKey: loaded.value })
+      if (!outcome.ok) return { ok: false, failure: outcome.failure }
+
+      const declaredCurrency = outcome.usage.currency
+      const spentDeclared = meterSpendFrom(outcome.usage)
+      await setMistralQuotaReport({
+        // The vendor reports in its own currency; the model is USD. Convert
+        // here in main using a static table — the live rates live in the
+        // renderer, and reaching for them would add a main→renderer edge.
+        spentUsd: convertVendorAmountToUsd(spentDeclared, declaredCurrency),
+        fetchedAt: new Date().toISOString(),
+        ...(outcome.usage.periodStart ? { periodStart: outcome.usage.periodStart } : {}),
+        ...(outcome.usage.periodEnd ? { periodEnd: outcome.usage.periodEnd } : {}),
+        ...(declaredCurrency
+          ? { declared: { spent: spentDeclared, currency: declaredCurrency } }
+          : {})
+      })
+      return { ok: true, snapshot: await currentMistralQuotaEstimate() }
     })
 
     ipcMain.handle('import-codex-usage-credential', async (event, filePath?: string | null) => {

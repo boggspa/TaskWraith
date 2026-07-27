@@ -40,6 +40,9 @@ import * as path from 'path'
 import { writeJsonAtomically } from '../store/ThreadWorktreeBindingPersistence'
 import {
   accumulate,
+  applyAnchor,
+  applyReport,
+  clearAnchor,
   estimateQuota,
   recordLimitEvent,
   rolloverIfElapsed,
@@ -282,6 +285,53 @@ export class MistralQuotaStore {
     if (this.cycle) this.markDirty()
   }
 
+  /**
+   * Record a console reading.
+   *
+   * Unlike `setPlan`, this DOES start a cycle if none exists: a user who has
+   * gone to the trouble of reading their console has told us something real, and
+   * refusing to store it until they happen to run a turn would throw it away.
+   * The UI gate is unaffected — an anchored cycle is a cycle.
+   */
+  async setAnchor(reading: {
+    allowanceUsd: number
+    spentUsd: number
+    observedAt?: string
+    cycleResetsAt?: string
+    declared?: MistralQuotaAnchor['declared']
+  }): Promise<void> {
+    await this.ensureLoaded()
+    const base = this.cycle ?? startCycle(this.now())
+    this.cycle = applyAnchor(base, {
+      allowanceUsd: reading.allowanceUsd,
+      spentUsd: reading.spentUsd,
+      observedAt: reading.observedAt ?? this.now().toISOString(),
+      ...(reading.cycleResetsAt ? { cycleResetsAt: reading.cycleResetsAt } : {}),
+      ...(reading.declared ? { declared: reading.declared } : {})
+    })
+    this.markDirty()
+  }
+
+  /** Drop the console reading, returning the meter to local accumulation. */
+  async clearAnchor(): Promise<void> {
+    await this.ensureLoaded()
+    if (!this.cycle?.anchor) return
+    this.cycle = clearAnchor(this.cycle)
+    this.markDirty()
+  }
+
+  /**
+   * Record an Admin API answer. No-op without a cycle: unlike an anchor, a
+   * report is a background fetch rather than a deliberate user action, so it
+   * must not conjure a meter for a seat that has never been run.
+   */
+  async setReport(report: MistralQuotaReport): Promise<void> {
+    await this.ensureLoaded()
+    if (!this.cycle) return
+    this.cycle = applyReport(this.cycle, report)
+    this.markDirty()
+  }
+
   /** The meter reading, or null when there is nothing real to show yet. */
   async currentEstimate(): Promise<MistralQuotaSnapshot | null> {
     await this.ensureLoaded()
@@ -429,6 +479,24 @@ export async function recordMistralLimitEvent(): Promise<void> {
 
 export async function currentMistralQuotaEstimate(): Promise<MistralQuotaSnapshot | null> {
   return (await singleton?.currentEstimate()) ?? null
+}
+
+export async function setMistralPlan(plan: MistralPlanId): Promise<void> {
+  await singleton?.setPlan(plan)
+}
+
+export async function setMistralQuotaAnchor(
+  reading: Parameters<MistralQuotaStore['setAnchor']>[0]
+): Promise<void> {
+  await singleton?.setAnchor(reading)
+}
+
+export async function clearMistralQuotaAnchor(): Promise<void> {
+  await singleton?.clearAnchor()
+}
+
+export async function setMistralQuotaReport(report: MistralQuotaReport): Promise<void> {
+  await singleton?.setReport(report)
 }
 
 export async function flushMistralQuotaStore(): Promise<void> {

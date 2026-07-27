@@ -516,10 +516,7 @@ declare global {
       getPathForFile: (file: File) => string
       saveClipboardImageAttachment: (appChatId: string) => Promise<string[]>
       readImagePreview: (path: string) => Promise<string | null>
-      transcribeComposerAudio: (input: {
-        localeIdentifier?: string
-        wav: ArrayBuffer
-      }) => Promise<
+      transcribeComposerAudio: (input: { localeIdentifier?: string; wav: ArrayBuffer }) => Promise<
         | {
             ok: true
             text: string
@@ -624,10 +621,7 @@ declare global {
       composeRun: (input: ComposerRunInput) => Promise<ComposerRunPayload>
       runAgent: (payload: AgentRunPayload) => Promise<DispatchResult>
       cancelAgentRun: (provider?: ProviderId, runId?: string) => Promise<void>
-      getAgentStatus: (
-        provider: ProviderId,
-        options?: { refreshAuth?: boolean }
-      ) => Promise<any>
+      getAgentStatus: (provider: ProviderId, options?: { refreshAuth?: boolean }) => Promise<any>
       getProviderCapabilities: (
         provider: ProviderId,
         workspace?: string,
@@ -683,6 +677,26 @@ declare global {
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       /** Locally accumulated Mistral burn estimate; null until the seat has run. */
       getMistralQuotaEstimate: () => Promise<MistralQuotaSnapshot | null>
+      setMistralPlan: (plan: string) => Promise<MistralQuotaSnapshot | null>
+      setMistralQuotaAnchor: (reading: {
+        allowanceUsd: number
+        spentUsd: number
+        cycleResetsAt?: string
+        declared?: { allowance: number; spent: number; currency: string }
+      }) => Promise<MistralQuotaSnapshot | null>
+      clearMistralQuotaAnchor: () => Promise<MistralQuotaSnapshot | null>
+      getMistralAdminKeyStatus: () => Promise<{
+        configured: boolean
+        encryptionAvailable: boolean
+        updatedAt?: string
+      } | null>
+      setMistralAdminKey: (apiKey: string) => Promise<{ ok: boolean; error?: string }>
+      clearMistralAdminKey: () => Promise<{ ok: boolean; error?: string }>
+      refreshMistralAdminUsage: () => Promise<{
+        ok: boolean
+        failure?: string
+        snapshot?: MistralQuotaSnapshot | null
+      }>
       gitSnapshot: (payload: {
         workspacePath?: string
         repoPath?: string
@@ -734,7 +748,12 @@ declare global {
         workspacePath?: string
         repoPath?: string
         chatId?: string
-      }) => Promise<{ ok: boolean; branches: GitBranchInfo[]; currentBranch?: string; error?: string }>
+      }) => Promise<{
+        ok: boolean
+        branches: GitBranchInfo[]
+        currentBranch?: string
+        error?: string
+      }>
       'git:checkout-branch': (payload: {
         workspacePath?: string
         repoPath?: string
@@ -977,7 +996,10 @@ declare global {
         chatId?: string
         path?: string
       }) => Promise<{ ok: boolean; error?: string }>
-      readExternalOfficeDocument: (chatId: string, path: string) => Promise<OfficeDocumentReadResult>
+      readExternalOfficeDocument: (
+        chatId: string,
+        path: string
+      ) => Promise<OfficeDocumentReadResult>
       writeExternalOfficeDocument: (
         chatId: string,
         path: string,
@@ -1226,9 +1248,7 @@ declare global {
         managedRunReady?: false
         notice?: string
       }>
-      openProviderUpgradeTerminal: (
-        provider: ProviderId
-      ) => Promise<{
+      openProviderUpgradeTerminal: (provider: ProviderId) => Promise<{
         ok: boolean
         error?: string
         scope?: 'user-owned-provider-setup'
@@ -1699,9 +1719,7 @@ declare global {
       verifyProjectReference: (id: string) => Promise<ProjectRegistryMutationResult>
       pickProjectReferencePath: (mode: 'file' | 'folder') => Promise<string | null>
       importLegacyProjects: (rawJson: string | null) => Promise<ProjectLegacyImportResult>
-      listProjectReferenceProposals: (
-        projectId: string
-      ) => Promise<ProjectReferenceProposalView[]>
+      listProjectReferenceProposals: (projectId: string) => Promise<ProjectReferenceProposalView[]>
       reviewProjectReferenceProposal: (input: {
         projectId: string
         proposalId: string
@@ -1951,10 +1969,7 @@ declare global {
           mode: 'admission' | 'reconnect'
         }>
       >
-      humanCollaborationAuditLog: (input?: {
-        chatId?: string
-        limit?: number
-      }) => Promise<
+      humanCollaborationAuditLog: (input?: { chatId?: string; limit?: number }) => Promise<
         Array<{
           id: string
           at: number
@@ -2019,9 +2034,7 @@ declare global {
       ) => Promise<WorkspaceActivitySnapshot>
       getScheduledTasks: (workspaceId?: string) => Promise<ScheduledTask[]>
       syncEnsembleRosterPresets: (presets: unknown[]) => Promise<void>
-      saveScheduledTask: (
-        task: ScheduledTaskCreateInput
-      ) => Promise<ScheduledTask>
+      saveScheduledTask: (task: ScheduledTaskCreateInput) => Promise<ScheduledTask>
       updateScheduledTask: (
         id: string,
         partial: ScheduledTaskLifecycleUpdate
@@ -2302,7 +2315,9 @@ declare global {
         error?: string
       }) => void
       onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => () => void
-      onWorkflowDefinitionsChanged: (callback: (payload: WorkflowDefinition[]) => void) => () => void
+      onWorkflowDefinitionsChanged: (
+        callback: (payload: WorkflowDefinition[]) => void
+      ) => () => void
       onWorkspaceBoardsChanged: (
         callback: (payload: {
           boards: WorkspaceBoardDefinition[]
@@ -2324,9 +2339,7 @@ declare global {
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */
-      onAgentThemeTokensChanged: (
-        callback: (tokens: Record<string, string>) => void
-      ) => () => void
+      onAgentThemeTokensChanged: (callback: (tokens: Record<string, string>) => void) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void
@@ -2375,7 +2388,11 @@ declare global {
         }) => void
       ) => () => void
       onWorkspacePopoutOpenFile: (
-        callback: (payload: { workspacePath: string; path: string; view?: 'editor' | 'diff' }) => void
+        callback: (payload: {
+          workspacePath: string
+          path: string
+          view?: 'editor' | 'diff'
+        }) => void
       ) => () => void
       onSideChatDockRequest: (
         callback: (payload: {

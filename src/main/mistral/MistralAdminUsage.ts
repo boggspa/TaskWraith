@@ -265,3 +265,34 @@ export async function fetchMistralAdminUsage(
 export function meterSpendFrom(usage: MistralAdminUsageResult): number {
   return usage.totalSpend
 }
+
+/**
+ * Static USD-relative FX for converting a vendor figure into the USD the quota
+ * model works in.
+ *
+ * Deliberately a small local table rather than an import: the live rates live in
+ * the RENDERER (`lib/formatCost.ts`), and reaching for them from main would add
+ * a main→renderer runtime edge that `guard:architecture` budgets to one. The
+ * anchor path avoids this entirely by converting in the renderer before it
+ * crosses IPC; only this Admin-API path, which starts in main, needs its own.
+ *
+ * Mistral bills the included allowance in EUR. A few percent of FX drift on an
+ * advisory monthly meter is immaterial next to the character-count estimate it
+ * replaces — but if this ever feeds anything billable, move the rates to
+ * `src/shared` and share one table.
+ */
+const STATIC_UNITS_PER_USD: Readonly<Record<string, number>> = {
+  USD: 1,
+  EUR: 0.92,
+  GBP: 0.79
+}
+
+/** Convert `amount` in `currency` to USD. An unknown or missing currency is
+ *  passed through unchanged rather than scaled by a guessed rate. */
+export function convertVendorAmountToUsd(amount: number, currency?: string): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0
+  const code = typeof currency === 'string' ? currency.trim().toUpperCase() : ''
+  const perUsd = code ? STATIC_UNITS_PER_USD[code] : undefined
+  if (!perUsd || !Number.isFinite(perUsd) || perUsd <= 0) return amount
+  return amount / perUsd
+}
