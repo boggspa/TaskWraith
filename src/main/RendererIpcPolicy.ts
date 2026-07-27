@@ -293,6 +293,14 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'canvas:list',
   'canvas:list-chat',
 
+  // Mesh Canvas's private asset URLs and human file picker are rendered only
+  // in the main chat window; secondary renderers have no independent surface.
+  'mesh-scene:list-chat',
+  'mesh-scene:view',
+  'mesh-scene:import-user-model',
+  'mesh-scene:close-presentation',
+  'mesh-scene:delete',
+
   // Office suite documents live in the main window's right dock only; there
   // is no office popout surface, so secondary renderers have no claim on
   // these channels. The handlers additionally assert workspace-file scope.
