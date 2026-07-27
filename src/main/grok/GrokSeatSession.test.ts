@@ -221,7 +221,8 @@ describe('GrokSeatSession', () => {
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
     expect(prompts[1]).toMatchObject({ id: 4, params: { sessionId: 'sess-1' } })
-    expect(JSON.stringify(prompts[1])).toContain('denied by TaskWraith policy')
+    expect(JSON.stringify(prompts[1])).toContain('native Bash/Shell/terminal refusal')
+    expect(JSON.stringify(prompts[1])).toContain('TaskWraith__run_shell_command')
     expect(first.ends).toHaveLength(0)
 
     // Duplicated/delayed terminal evidence for prompt 3 must not terminate the

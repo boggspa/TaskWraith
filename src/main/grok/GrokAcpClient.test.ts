@@ -370,12 +370,13 @@ describe('runGrokAcpTurn', () => {
       id: 5,
       params: { sessionId: 's-1' }
     })
-    expect(JSON.stringify(prompts[1])).toContain('denied by TaskWraith policy')
+    expect(JSON.stringify(prompts[1])).toContain('native Bash/Shell/terminal refusal')
+    expect(JSON.stringify(prompts[1])).toContain('TaskWraith__run_shell_command')
     expect(
       events.some(
         (event) =>
           event.type === 'provider_warning' &&
-          (event.text || '').includes('continuing without the denied tool')
+          (event.text || '').includes('clarified routing guidance')
       )
     ).toBe(true)
 

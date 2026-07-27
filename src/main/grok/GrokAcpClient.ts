@@ -23,6 +23,7 @@ import type {
   AcpPermissionRequest,
   AcpPermissionDecision
 } from './GrokAcpProtocol'
+import { GROK_MCP_SHELL_TOOL_NAME } from './GrokCliArgs'
 
 export type { AcpChildProcess } from '../acp/AcpTurnClient'
 
@@ -71,10 +72,13 @@ export interface GrokAcpRunHandle extends AcpTurnHandle {
 }
 
 export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
-  'Your previous native tool request was denied by TaskWraith policy. Continue this same turn ' +
-  'without retrying that tool or substituting another side-effecting tool. Answer from the ' +
-  'evidence already gathered. If the denied operation is essential, explain the blocker and ' +
-  'the safe next step instead of ending the turn.'
+  'Your previous native tool request was refused. A native Bash/Shell/terminal refusal can ' +
+  'reflect TaskWraith containment rather than a denial of the underlying shell permission. Do ' +
+  'not retry the native tool. If shell work is still needed and ' +
+  `${GROK_MCP_SHELL_TOOL_NAME} is listed in your MCP tools, call it once instead: that ` +
+  'host-mediated route honors the current shell grant and requests user approval when needed. ' +
+  'Only if that MCP tool is unavailable or itself denied should you report the exact blocker; do ' +
+  'not substitute unrelated side effects.'
 
 export function isGrokDeniedToolCancellation(status: string | null | undefined): boolean {
   const normalized = String(status || '')

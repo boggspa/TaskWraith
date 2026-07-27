@@ -697,7 +697,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
             deniedPromptRpcId = null
             options.onEvent({
               type: 'provider_warning',
-              text: 'The agent cancelled after a denied native tool; continuing without the denied tool.'
+              text: 'The agent cancelled after a refused native tool; continuing with clarified routing guidance.'
             })
             sendPrompt(options.deniedToolRecovery.prompt)
             continue
