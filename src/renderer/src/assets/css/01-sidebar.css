@@ -2056,9 +2056,64 @@ button.sidebar-item {
 .sidebar-title-ticker-identity {
   color: var(--sidebar-text-secondary);
   white-space: nowrap;
-  text-overflow: ellipsis;
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   line-height: inherit;
+}
+/* The branch name yields to the git strip: it ellipsizes, the icons never
+   shrink, so a long "Workspace/very-long-branch" can't push them off. */
+.sidebar-title-ticker-identity-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* ————————————————————————————————————————————————————————————————
+   Active-row git status strip — up to three icons at the right of the
+   identity face. Colour vocabulary is GitHub's: green open / green
+   ringed-tick ready / orange queued-to-merge / purple merged / red
+   closed-without-merge, plus the green "pushed" tick and a plain
+   ahead-count fallback. A detached HEAD renders no strip at all.
+   See lib/sidebarGitIndicators.ts for the precedence + cap.
+   ———————————————————————————————————————————————————————————————— */
+.sidebar-git-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.sidebar-git-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  line-height: 1;
+}
+.sidebar-git-indicator svg {
+  display: block;
+}
+.sidebar-git-indicator.tone-synced,
+.sidebar-git-indicator.tone-open {
+  color: color-mix(in srgb, var(--success, #4cc38a) 88%, var(--sidebar-text));
+}
+.sidebar-git-indicator.tone-queued {
+  color: color-mix(in srgb, var(--warning, #f5a623) 90%, var(--sidebar-text));
+}
+/* Merged is the one final-success state — purple, never green. */
+.sidebar-git-indicator.tone-merged {
+  color: #a78bfa;
+}
+.sidebar-git-indicator.tone-closed {
+  color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--sidebar-text));
+}
+/* The ahead-count fallback is informational, not a status — it stays in the
+   row's own ink so it never competes with a real state. */
+.sidebar-git-indicator.tone-idle {
+  color: var(--sidebar-text-secondary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 @keyframes sidebar-title-ticker-cycle {
   0%,

@@ -397,6 +397,10 @@ import {
 import { summarizeChecks } from './components/GitStatusChips'
 import { repoNameFromRemote } from './components/GitHubSatellitePopover'
 import {
+  buildSidebarGitIndicators,
+  encodeSidebarGitIndicators
+} from './lib/sidebarGitIndicators'
+import {
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
 } from './components/Sidebar'
@@ -2924,6 +2928,25 @@ function App(): React.JSX.Element {
     if (!name) return null
     const branch = primaryGitSnapshot?.branch?.trim()
     return branch ? `${name}/${branch}` : name
+  })()
+
+  // Git status icons riding the right of that identity face. Two independent
+  // sources: the workspace's LIVE pull request, and the thread's own durable
+  // `gitWorkflow` marker ("the PR THIS session shipped") — so a thread whose
+  // #10 landed can show purple beside the branch's current green #12.
+  // Encoded to a primitive because the sidebar row memo comparators only gate
+  // primitives; a fresh array each render would churn or, worse, never update.
+  const activeChatSidebarGitIndicators = ((): string | null => {
+    if (!activeChatSidebarIdentity) return null
+    return (
+      encodeSidebarGitIndicators(
+        buildSidebarGitIndicators({
+          snapshot: primaryGitSnapshot,
+          pr: primaryPr,
+          workflow: currentChat?.gitWorkflow
+        })
+      ) || null
+    )
   })()
 
   // Bounded, visibility-gated CI poll. CI transitions (pending → pass/fail) on
@@ -29714,6 +29737,7 @@ function App(): React.JSX.Element {
     handleSetChatHiddenFromMainList,
     handleClearChatGitWorkflow,
     activeChatSidebarIdentity,
+    activeChatSidebarGitIndicators,
     handleTogglePinWorkspace,
     handleTogglePinWorkspaceBoard,
     handleToggleWorkflowEnabled,

@@ -118,6 +118,8 @@ type MainAppLayoutSidebarProps = {
   /** Workspace/branch identity ("TaskWraith/master") for the active chat's
    * sidebar title ticker; null when the chat has no workspace context. */
   activeChatSidebarIdentity: SidebarProps['activeChatIdentityTicker']
+  /** Encoded git status strip for the right of that identity face. */
+  activeChatSidebarGitIndicators: SidebarProps['activeChatIdentityGitIndicators']
   handleTogglePinWorkspace: NonNullable<SidebarProps['onTogglePinWorkspace']>
   handleTogglePinWorkspaceBoard: NonNullable<SidebarProps['onTogglePinWorkspaceBoard']>
   handleToggleWorkflowEnabled: NonNullable<SidebarProps['onToggleWorkflowEnabled']>
@@ -401,6 +403,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleSetChatHiddenFromMainList: MainAppLayoutSidebarProps['handleSetChatHiddenFromMainList']
   handleClearChatGitWorkflow: MainAppLayoutSidebarProps['handleClearChatGitWorkflow']
   activeChatSidebarIdentity: MainAppLayoutSidebarProps['activeChatSidebarIdentity']
+  activeChatSidebarGitIndicators: MainAppLayoutSidebarProps['activeChatSidebarGitIndicators']
   handleTogglePinWorkspace: MainAppLayoutSidebarProps['handleTogglePinWorkspace']
   handleTogglePinWorkspaceBoard: MainAppLayoutSidebarProps['handleTogglePinWorkspaceBoard']
   handleToggleWorkflowEnabled: MainAppLayoutSidebarProps['handleToggleWorkflowEnabled']

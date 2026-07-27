@@ -334,6 +334,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSetChatHiddenFromMainList,
   handleClearChatGitWorkflow,
   activeChatSidebarIdentity,
+  activeChatSidebarGitIndicators,
   handleTogglePinWorkspace,
   handleTogglePinWorkspaceBoard,
   handleToggleWorkflowEnabled,
@@ -1287,6 +1288,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onSetChatHiddenFromMainList={handleSetChatHiddenFromMainList}
                 onClearChatGitWorkflow={handleClearChatGitWorkflow}
                 activeChatIdentityTicker={activeChatSidebarIdentity}
+                activeChatIdentityGitIndicators={activeChatSidebarGitIndicators}
                 onToggleArchiveChat={handleToggleArchiveChat}
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}
