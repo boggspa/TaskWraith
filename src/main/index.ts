@@ -34771,6 +34771,7 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    await installTaskWraithLocalControl(app, () => createBridgeActionExecutor())
     try {
       await regenerableHistoryByteStore.initializeStrict(
         AppStore.getPendingHistoryDeletion()?.operationId
@@ -48375,8 +48376,6 @@ if (isGeminiMcpBridgeProcess) {
         cancelledAuditRunIds.delete(id)
       }
     })
-
-    await installTaskWraithLocalControl(app, createBridgeActionExecutor())
 
     void startGeminiMcpBroker().catch((error) => {
       console.error('Failed to start Gemini MCP broker', error)

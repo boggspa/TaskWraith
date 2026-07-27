@@ -10,6 +10,7 @@ type TaskWraithLocalControlExecutor = Pick<
   | 'executeEnsembleSteer'
   | 'executeEnsembleCancelRound'
 >
+type TaskWraithLocalControlExecutorFactory = () => TaskWraithLocalControlExecutor
 
 /**
  * Owns the Electron lifecycle seam for the TUI host. Keeping this here leaves
@@ -18,15 +19,15 @@ type TaskWraithLocalControlExecutor = Pick<
  */
 export async function installTaskWraithLocalControl(
   app: Pick<App, 'getPath' | 'getVersion' | 'once'>,
-  executor: TaskWraithLocalControlExecutor
+  executor: TaskWraithLocalControlExecutorFactory
 ): Promise<LocalControlServer | null> {
   const server = await startTaskWraithLocalControl({
     userDataPath: app.getPath('userData'),
     hostVersion: app.getVersion(),
-    executeComposerPrompt: (action) => executor.executeComposerPrompt(action),
-    executeCancelRun: (action) => executor.executeCancelRun(action),
-    executeEnsembleSteer: (action) => executor.executeEnsembleSteer(action),
-    executeEnsembleCancelRound: (action) => executor.executeEnsembleCancelRound(action),
+    executeComposerPrompt: (action) => executor().executeComposerPrompt(action),
+    executeCancelRun: (action) => executor().executeCancelRun(action),
+    executeEnsembleSteer: (action) => executor().executeEnsembleSteer(action),
+    executeEnsembleCancelRound: (action) => executor().executeEnsembleCancelRound(action),
     log: (line) => console.log(line)
   }).catch((error) => {
     console.error('Failed to start TaskWraith local-control sidecar host', error)

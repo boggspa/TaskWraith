@@ -54,11 +54,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+/**
+ * Thrown when the discovered host advertises a control protocol version this
+ * sidecar build does not speak. Distinct from a generic connection failure so
+ * the terminal UI can show "update the App" rather than "retrying".
+ */
+export class TaskWraithControlIncompatibleProtocolError extends Error {
+  constructor(message = 'TaskWraith control protocol version is not supported.') {
+    super(message)
+    this.name = 'TaskWraithControlIncompatibleProtocolError'
+  }
+}
+
 function parseDiscovery(raw: string): TaskWraithControlDiscovery {
   const value: unknown = JSON.parse(raw)
   if (!isRecord(value)) throw new Error('TaskWraith control discovery is malformed.')
   if (value.protocolVersion !== TASKWRAITH_CONTROL_PROTOCOL_VERSION) {
-    throw new Error('TaskWraith control protocol version is not supported.')
+    throw new TaskWraithControlIncompatibleProtocolError()
   }
   if (
     typeof value.socketPath !== 'string' ||

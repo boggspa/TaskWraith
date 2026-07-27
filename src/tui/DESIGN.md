@@ -20,7 +20,7 @@ Rules:
 2. Glyph slots are named by **meaning**, not by shape. Two slots may resolve
    to the same character; they must not share a slot when the meanings differ.
 3. Provider identity carries colour; transcript prose stays neutral. Semantic
-   tones (`TUI_TONE` / `tuiToneHex`) are for *state*, never for message bodies.
+   tones (`TUI_TONE` / `tuiToneHex`) are for _state_, never for message bodies.
 4. If an affordance cannot be expressed in a static cell grid, it does not
    get a token — and therefore does not belong in the TUI.
 
@@ -30,16 +30,16 @@ Width adaptation is resolved **once** through `resolveTuiDensity(width)`.
 Callers branch on the returned named fields, never on inline column
 comparisons.
 
-| Affordance | Meaning |
-| ---------- | ------- |
-| `providerFullName` | Show short-code + role vs short code alone |
-| `hudModel` | Include the model label in the HUD |
-| `reasoningLadder` | Three-step reasoning ladder vs a single spark |
-| `batonExpandedLabel` | Expanded ensemble baton title vs compact |
-| `batonCastSlots` | How many seats the baton may name before `+n` |
-| `overlayLabelWidth` | Label column width inside bordered overlays |
-| `composerHints` | Composer hint strip depth: `none` / `short` / `full` |
-| `segmentSpacing` | HUD segment join: `tight` / `padded` |
+| Affordance           | Meaning                                              |
+| -------------------- | ---------------------------------------------------- |
+| `providerFullName`   | Show short-code + role vs short code alone           |
+| `hudModel`           | Include the model label in the HUD                   |
+| `reasoningLadder`    | Three-step reasoning ladder vs a single spark        |
+| `batonExpandedLabel` | Expanded ensemble baton title vs compact             |
+| `batonCastSlots`     | How many seats the baton may name before `+n`        |
+| `overlayLabelWidth`  | Label column width inside bordered overlays          |
+| `composerHints`      | Composer hint strip depth: `none` / `short` / `full` |
+| `segmentSpacing`     | HUD segment join: `tight` / `padded`                 |
 
 The three documented tiers (`compact` / `normal` / `expanded`) are derived
 inside the resolver via `TUI_BREAKPOINTS`. Sub-threshold detail (when the

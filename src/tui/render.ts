@@ -233,7 +233,8 @@ function renderTranscriptRow(
     lines.push(fitAnsiLine(`${gutter}${bodyTone(line)}`, width))
   }
   if (row.thinking) {
-    const status = row.thinking.status === 'running' ? glyphs.thinkingRunning : glyphs.thinkingSettled
+    const status =
+      row.thinking.status === 'running' ? glyphs.thinkingRunning : glyphs.thinkingSettled
     lines.push(
       fitAnsiLine(
         `${detailGutter}${ansi.color(status, row.provider?.accent ?? TUI_TONE.ensemble)} ${ansi.dim(
@@ -297,9 +298,7 @@ function shimmerWorking(
   const loopLength = characters.length + TUI_MOTION.shimmerTailPadding
   return characters
     .map((character, index) => {
-      const distance = Math.abs(
-        (((index - frame) % loopLength) + loopLength) % loopLength
-      )
+      const distance = Math.abs((((index - frame) % loopLength) + loopLength) % loopLength)
       const amount =
         distance <= 1
           ? TUI_MOTION.shimmerPeak
@@ -373,9 +372,13 @@ function renderHome(
   const status =
     state.connection === 'connecting'
       ? 'Looking for the Electron host…'
-      : state.connection === 'offline'
-        ? 'Electron host offline · retrying locally'
-        : 'No thread selected'
+      : state.connection === 'reconnecting'
+        ? 'Reconnecting to the TaskWraith host…'
+        : state.connection === 'offline'
+          ? 'Electron host offline · retrying locally'
+          : state.connection === 'incompatible-protocol'
+            ? 'Open TaskWraith to update the App · protocol mismatch'
+            : 'No thread selected'
   place(start + 6, ansi.dim(status))
   place(start + 8, ansi.dim('Ctrl+K threads · Ctrl+P commands'))
   return lines
@@ -590,7 +593,12 @@ function renderThreadsOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
-function renderHelpOverlay(width: number, height: number, ansi: Ansi, glyphs: TuiGlyphSet): string[] {
+function renderHelpOverlay(
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
   const lines = [
     borderTitle('Commands', width, ansi, glyphs),
     overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
@@ -710,9 +718,13 @@ function renderHud(
     const connection =
       state.connection === 'connecting'
         ? tone(ansi, 'CONNECTING', 'warning')
-        : state.connection === 'offline'
-          ? tone(ansi, 'OFFLINE', 'error')
-          : tone(ansi, state.connection.toUpperCase(), 'neutral')
+        : state.connection === 'reconnecting'
+          ? tone(ansi, 'RECONNECTING', 'warning')
+          : state.connection === 'offline'
+            ? tone(ansi, 'OFFLINE', 'error')
+            : state.connection === 'incompatible-protocol'
+              ? tone(ansi, 'Open TaskWraith to update the App', 'error')
+              : tone(ansi, state.connection.toUpperCase(), 'neutral')
     return joinLeftRight(ansi.bold('TaskWraith'), connection, width)
   }
   const workspace =
@@ -751,7 +763,7 @@ function renderHud(
   const elapsed = formatTuiDuration(currentWallTime(thread))
   const status =
     thread.status === 'needs-input'
-      ? tone(ansi, 'INPUT', 'warning')
+      ? tone(ansi, 'Open TaskWraith to answer', 'warning')
       : thread.status === 'failed'
         ? tone(ansi, 'FAILED', 'error')
         : thread.status === 'queued'
@@ -771,7 +783,12 @@ function renderHud(
   return joinLeftRight(left, right, width)
 }
 
-function renderComposer(state: TaskWraithTuiState, width: number, ansi: Ansi, glyphs: TuiGlyphSet): string {
+function renderComposer(
+  state: TaskWraithTuiState,
+  width: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string {
   const accent = state.thread?.thread.provider.accent ?? TUI_TONE.ensemble
   const prompt = ansi.provider(glyphs.promptCaret, accent)
   const density = resolveTuiDensity(width)

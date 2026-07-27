@@ -67,7 +67,61 @@ async function validateNativeModules(context) {
     console.log(`Validated TaskWraithBridgeDaemon: ${daemonPath} (${stat.size} bytes)`)
   }
 
+  // Developer Preview tw sidecar: official Node runtime under tui-runtime/
+  // (not ELECTRON_RUN_AS_NODE — RunAsNode fuse stays disabled below).
+  validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs)
+
   await hardenElectronFuses(context, resourcesDir)
+}
+
+function validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs) {
+  const runtimeRoot = path.join(resourcesDir, 'tui-runtime')
+  if (!fs.existsSync(runtimeRoot)) {
+    throw new Error(
+      `Packaged TUI Node runtime missing at ${runtimeRoot}. ` +
+        'Did `npm run prepare:tui-runtime` (or prepare:tui-runtime:mac) run before electron-builder?'
+    )
+  }
+
+  const binaryName = platform === 'win32' ? 'node.exe' : 'node'
+  const requiredDirs = []
+  if (platform === 'darwin' && expectedMacArchs.length > 1) {
+    requiredDirs.push('darwin-arm64', 'darwin-x64')
+  } else if (platform === 'darwin') {
+    requiredDirs.push(
+      arch === 'x64' || expectedMacArchs[0] === 'x86_64' ? 'darwin-x64' : 'darwin-arm64'
+    )
+  } else if (platform === 'win32') {
+    requiredDirs.push(`win32-${arch === 'arm64' ? 'arm64' : 'x64'}`)
+  } else {
+    requiredDirs.push(`linux-${arch === 'arm64' ? 'arm64' : 'x64'}`)
+  }
+
+  for (const dirName of requiredDirs) {
+    const binaryPath = path.join(runtimeRoot, dirName, binaryName)
+    if (!fs.existsSync(binaryPath) || !fs.statSync(binaryPath).isFile()) {
+      throw new Error(
+        `Packaged TUI Node runtime binary missing: ${binaryPath}. ` +
+          'Run prepare:tui-runtime with the matching --targets before packaging.'
+      )
+    }
+    const size = fs.statSync(binaryPath).size
+    if (size < 1_000_000) {
+      throw new Error(`Packaged TUI Node runtime looks too small: ${binaryPath} (${size} bytes)`)
+    }
+    console.log(`Validated TUI Node runtime: ${binaryPath} (${formatBytes(size)})`)
+  }
+
+  // Launchers must ship under bin/ (outside asar).
+  const binDir = path.join(resourcesDir, 'bin')
+  if (!fs.existsSync(binDir)) {
+    throw new Error(`Packaged TUI launcher directory missing: ${binDir}`)
+  }
+  const launcherName = platform === 'win32' ? 'tw.cmd' : 'tw'
+  const launcherPath = path.join(binDir, launcherName)
+  if (!fs.existsSync(launcherPath)) {
+    throw new Error(`Packaged TUI launcher missing: ${launcherPath}`)
+  }
 }
 
 function validateAppAsarSize(resourcesDir) {
@@ -229,11 +283,7 @@ function validateMacClaudeAgentSdkBinaries(unpackedDir, expectedArchs) {
     if (!fs.existsSync(binaryPath)) {
       throw new Error(`Required Claude Agent SDK helper is missing: ${binaryPath}`)
     }
-    verifyMachOArchitectures(
-      binaryPath,
-      [requiredPackage.machArch],
-      requiredPackage.packageName
-    )
+    verifyMachOArchitectures(binaryPath, [requiredPackage.machArch], requiredPackage.packageName)
   }
   if (requiredPackages.length > 0) {
     console.log(
@@ -276,11 +326,7 @@ function validateMacNapiCanvasBindings(unpackedDir, expectedArchs) {
           'Did `npm run prepare:mac-universal-deps` install both canvas-darwin packages?'
       )
     }
-    verifyMachOArchitectures(
-      bindingPath,
-      [requiredPackage.machArch],
-      requiredPackage.packageName
-    )
+    verifyMachOArchitectures(bindingPath, [requiredPackage.machArch], requiredPackage.packageName)
   }
   if (requiredPackages.length > 0) {
     console.log(
@@ -336,9 +382,7 @@ function removeHostOnlyNodePtyBuildBinding(unpackedDir, expectedArchs) {
   const hasAllArchs = expectedArchs.every((arch) => hasMachOArchitecture(buildBinding, arch))
   if (hasAllArchs) return
   fs.rmSync(path.join(nodePtyDir, 'build'), { recursive: true, force: true })
-  console.log(
-    `Removed host-only node-pty build binding from universal package: ${buildBinding}`
-  )
+  console.log(`Removed host-only node-pty build binding from universal package: ${buildBinding}`)
 }
 
 function removeWindowsNodePtyBuildBinding(unpackedDir, arch) {
@@ -352,10 +396,14 @@ function removeWindowsNodePtyBuildBinding(unpackedDir, arch) {
 }
 
 function findNodePtyDir(unpackedDir) {
-  const candidates = findDirectories(unpackedDir, (candidate) => {
-    const normalized = candidate.split(path.sep).join('/')
-    return normalized.endsWith('/node_modules/node-pty')
-  }, 8)
+  const candidates = findDirectories(
+    unpackedDir,
+    (candidate) => {
+      const normalized = candidate.split(path.sep).join('/')
+      return normalized.endsWith('/node_modules/node-pty')
+    },
+    8
+  )
   return candidates[0]
 }
 
@@ -383,7 +431,11 @@ function validateMacAppBinaries(resourcesDir, context, expectedArchs) {
   if (fs.existsSync(electronFramework)) {
     verifyMachOArchitectures(electronFramework, expectedArchs, 'Electron Framework')
   }
-  for (const helperApp of findDirectories(frameworksDir, (candidate) => candidate.endsWith('.app'), 5)) {
+  for (const helperApp of findDirectories(
+    frameworksDir,
+    (candidate) => candidate.endsWith('.app'),
+    5
+  )) {
     const helperMacOSDir = path.join(helperApp, 'Contents', 'MacOS')
     for (const entry of safeReadDir(helperMacOSDir)) {
       if (!entry.isFile()) continue

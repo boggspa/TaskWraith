@@ -102,12 +102,15 @@ function socketWrite(socket: Socket, message: TaskWraithControlHostMessage): boo
 async function socketIsLive(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection(socketPath)
+    let deadline: ReturnType<typeof setTimeout> | null = null
     const settle = (value: boolean) => {
+      if (deadline) clearTimeout(deadline)
       socket.removeAllListeners()
       socket.destroy()
       resolve(value)
     }
-    socket.setTimeout(350, () => settle(false))
+    deadline = setTimeout(() => settle(false), 350)
+    deadline.unref?.()
     socket.once('connect', () => settle(true))
     socket.once('error', () => settle(false))
   })

@@ -6,14 +6,13 @@ import type {
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
 import { Ansi, sanitizeTerminalText, type AnsiColorMode } from './ansi'
-import { TaskWraithControlClient } from './client/TaskWraithControlClient'
+import {
+  TaskWraithControlClient,
+  TaskWraithControlIncompatibleProtocolError
+} from './client/TaskWraithControlClient'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState, type TuiOverlay } from './state'
-import {
-  detectTuiUnicode,
-  resolveTuiGlyphs,
-  type TuiGlyphSet
-} from './theme'
+import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
 interface Keypress {
   name?: string
@@ -119,6 +118,10 @@ export class TaskWraithTui {
   private bracketedPaste = false
   private bracketedPasteBuffer = ''
   private lastError = ''
+  /** Whether a `welcome` has ever been received. Distinguishes a first-time
+   *  "offline" state (App never found) from a "reconnecting" state (App was
+   *  reachable and the connection dropped). */
+  private everConnected = false
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -144,17 +147,24 @@ export class TaskWraithTui {
     if (!this.options.input.isTTY || !this.options.output.isTTY) {
       throw new Error('Interactive TaskWraith TUI requires a terminal.')
     }
-    this.enterTerminal()
-    this.bindInput()
-    if (this.options.animationEnabled && this.ansi.enabled) {
-      this.animationTimer = setInterval(() => {
-        if (this.state.thread?.thread.status !== 'working') return
-        this.state.animationFrame += 1
-        this.render()
-      }, ANIMATION_INTERVAL_MS)
-      this.animationTimer.unref?.()
+    try {
+      this.enterTerminal()
+      this.bindInput()
+      if (this.options.animationEnabled && this.ansi.enabled) {
+        this.animationTimer = setInterval(() => {
+          if (this.state.thread?.thread.status !== 'working') return
+          this.state.animationFrame += 1
+          this.render()
+        }, ANIMATION_INTERVAL_MS)
+        this.animationTimer.unref?.()
+      }
+      this.render()
+    } catch (error) {
+      // Startup failed after raw mode / the alternate screen may have been
+      // entered. Restore the terminal before surfacing the failure.
+      this.stop()
+      throw error
     }
-    this.render()
     if (this.client) {
       this.bindClient()
       await this.connect().catch(() => {})
@@ -178,19 +188,40 @@ export class TaskWraithTui {
 
   private enterTerminal(): void {
     if (this.terminalActive) return
+    // Mark restoration as required before the first mutating TTY operation.
+    // If raw-mode setup or the alternate-screen write throws, start() calls
+    // stop(), which must still attempt every restoration step.
+    this.terminalActive = true
     emitKeypressEvents(this.options.input)
     this.options.input.setRawMode(true)
     this.options.input.resume()
     this.options.output.write('\u001b[?1049h\u001b[?2004h\u001b[?25l\u001b[2J\u001b[H')
-    this.terminalActive = true
   }
 
+  /**
+   * Restores raw mode and the primary screen. Idempotent and defensive: this
+   * runs from `stop()`, from startup-failure recovery, and from process exit
+   * handlers where the input/output streams may already be half-torn-down —
+   * a throw here must never prevent the remaining restoration steps.
+   */
   private leaveTerminal(): void {
     if (!this.terminalActive) return
-    this.options.input.setRawMode(false)
-    this.options.input.pause()
-    this.options.output.write('\u001b[?2004l\u001b[?25h\u001b[?1049l')
     this.terminalActive = false
+    try {
+      this.options.input.setRawMode(false)
+    } catch {
+      // Stream may already be closed during process exit.
+    }
+    try {
+      this.options.input.pause()
+    } catch {
+      // Stream may already be closed during process exit.
+    }
+    try {
+      this.options.output.write('\u001b[?2004l\u001b[?25h\u001b[?1049l')
+    } catch {
+      // Stream may already be closed during process exit.
+    }
   }
 
   private bindInput(): void {
@@ -203,6 +234,7 @@ export class TaskWraithTui {
     this.client.on('welcome', (welcome) => {
       this.state.hostVersion = welcome.hostVersion
       this.state.connection = 'connected'
+      this.everConnected = true
       this.lastError = ''
       this.setNotice('Connected to TaskWraith', 'good', 1_500)
       this.render()
@@ -227,9 +259,16 @@ export class TaskWraithTui {
     })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
-      this.state.connection = 'offline'
+      // The host was reachable before, so this is a drop-and-retry rather
+      // than "the App was never found" — distinct terminal states.
+      this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
       this.lastError = error?.message ?? 'TaskWraith host disconnected.'
-      this.setNotice('Electron host disconnected · retrying', 'warning')
+      this.setNotice(
+        this.everConnected
+          ? 'TaskWraith host disconnected · reconnecting'
+          : 'Electron host offline · retrying',
+        'warning'
+      )
       this.scheduleReconnect()
       this.render()
     })
@@ -237,13 +276,14 @@ export class TaskWraithTui {
 
   private async connect(): Promise<void> {
     if (!this.client || this.stopped) return
-    this.state.connection = 'connecting'
+    this.state.connection = this.everConnected ? 'reconnecting' : 'connecting'
     this.render()
     try {
       await this.client.connect()
       const snapshot = await this.client.getSnapshot()
       this.state.snapshot = snapshot
       this.state.connection = 'connected'
+      this.everConnected = true
       const threadId = preferredThread(
         snapshot,
         this.state.selectedThreadId ?? this.options.initialThreadId
@@ -257,11 +297,25 @@ export class TaskWraithTui {
       this.render()
     } catch (error) {
       if (this.stopped) return
-      this.state.connection = 'offline'
-      const message = error instanceof Error ? error.message : String(error)
-      if (message !== this.lastError) {
-        this.lastError = message
-        this.setNotice('Electron host offline · retrying locally', 'warning')
+      if (error instanceof TaskWraithControlIncompatibleProtocolError) {
+        this.state.connection = 'incompatible-protocol'
+        const message = error.message
+        if (message !== this.lastError) {
+          this.lastError = message
+          this.setNotice('TaskWraith host protocol is incompatible · update the App', 'error')
+        }
+      } else {
+        this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
+        const message = error instanceof Error ? error.message : String(error)
+        if (message !== this.lastError) {
+          this.lastError = message
+          this.setNotice(
+            this.everConnected
+              ? 'TaskWraith host disconnected · reconnecting'
+              : 'Electron host offline · retrying locally',
+            'warning'
+          )
+        }
       }
       this.scheduleReconnect()
       this.render()

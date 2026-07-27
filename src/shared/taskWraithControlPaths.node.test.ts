@@ -37,4 +37,13 @@ describe('TaskWraith local-control paths', () => {
     expect(first).not.toBe(second)
     expect(first).toMatch(/taskwraith-control-v1\.sock$/)
   })
+
+  it('uses a bounded opaque named pipe on Windows', () => {
+    const first = taskWraithControlSocketPath('C:\\Users\\Ada\\TaskWraith', 'win32')
+    const second = taskWraithControlSocketPath('C:\\Users\\Ada\\TaskWraith Dev', 'win32')
+    expect(first.startsWith('\\\\.\\pipe\\taskwraith-control-')).toBe(true)
+    expect(first.slice(-16)).toMatch(/^[a-f0-9]{16}$/)
+    expect(first).not.toContain('Ada')
+    expect(first).not.toBe(second)
+  })
 })

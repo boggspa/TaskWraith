@@ -49,18 +49,33 @@ The installed `taskwraith` / `tw` binary defaults to the release app. Use
 parallel dev hosts. If automatic discovery is not the desired one, pass
 `--user-data <path>` or set `TASKWRAITH_USER_DATA`.
 
+### Packaged Developer Preview
+
+Keep the TaskWraith App running, then invoke the sidecar from the package:
+
+| Platform | Launcher                                                 |
+| -------- | -------------------------------------------------------- |
+| macOS    | `/Applications/TaskWraith.app/Contents/Resources/bin/tw` |
+| Linux    | `<TaskWraith install>/resources/bin/tw`                  |
+| Windows  | `<TaskWraith install>\resources\bin\tw.cmd` or `tw.ps1`  |
+
+`taskwraith` aliases are alongside each `tw` launcher. The package ships its
+own Node runtime under `tui-runtime`; the launchers neither require system Node
+nor use `ELECTRON_RUN_AS_NODE`. The App remains the authoritative host, so an
+offline sidecar can only reconnect or ask you to open TaskWraith.
+
 ## Colour and ASCII fallbacks
 
 Presentation degrades TrueColor → `NO_COLOR` → ASCII. Details and the
 width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
 
-| Control | Effect |
-| ------- | ------ |
-| `--ascii` | Force the ASCII glyph set for the process |
-| `TASKWRAITH_TUI_ASCII=1` | Same force via environment |
-| Auto-detect | `TERM=linux` / `TERM=dumb`, or a non-UTF-8 locale, selects ASCII |
-| `NO_COLOR=1` / `--no-color` | Colour off; glyphs and layout unchanged |
-| `--no-animation` | Static working indicator (also off under `NO_COLOR` / non-TTY) |
+| Control                     | Effect                                                           |
+| --------------------------- | ---------------------------------------------------------------- |
+| `--ascii`                   | Force the ASCII glyph set for the process                        |
+| `TASKWRAITH_TUI_ASCII=1`    | Same force via environment                                       |
+| Auto-detect                 | `TERM=linux` / `TERM=dumb`, or a non-UTF-8 locale, selects ASCII |
+| `NO_COLOR=1` / `--no-color` | Colour off; glyphs and layout unchanged                          |
+| `--no-animation`            | Static working indicator (also off under `NO_COLOR` / non-TTY)   |
 
 ## Interaction
 

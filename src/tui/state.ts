@@ -6,7 +6,13 @@ import type {
 } from '../shared/taskWraithControlProtocol'
 import { resolveTaskWraithProviderPresentation } from '../shared/taskWraithProviderPresentation'
 
-export type TuiConnectionState = 'connecting' | 'connected' | 'offline' | 'demo'
+export type TuiConnectionState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'offline'
+  | 'incompatible-protocol'
+  | 'demo'
 export type TuiOverlay = 'none' | 'context' | 'threads' | 'help'
 
 export interface TuiNotice {

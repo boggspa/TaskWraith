@@ -8,11 +8,7 @@ import { TaskWraithTui } from './TaskWraithTui'
 import { TaskWraithControlClient } from './client/TaskWraithControlClient'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
-import {
-  detectTuiUnicode,
-  resolveTuiGlyphs,
-  type TuiGlyphSet
-} from './theme'
+import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 
 const TUI_VERSION = '0.1.0'
 
@@ -220,6 +216,10 @@ async function main(): Promise<void> {
   await activeTui.start()
 }
 
+process.once('SIGINT', () => {
+  activeTui?.stop()
+  process.exitCode = 130
+})
 process.once('SIGTERM', () => {
   activeTui?.stop()
   process.exitCode = 143
@@ -227,6 +227,28 @@ process.once('SIGTERM', () => {
 process.once('SIGHUP', () => {
   activeTui?.stop()
   process.exitCode = 129
+})
+// A last line of defence: an escaped exception anywhere in the run loop must
+// still restore raw mode / the alternate screen before the process ends, or
+// the user's shell is left broken after the sidecar crashes.
+process.once('uncaughtException', (error) => {
+  activeTui?.stop()
+  process.stderr.write(
+    `TaskWraith TUI: unexpected error — ${error instanceof Error ? error.message : String(error)}\n`
+  )
+  process.exitCode = 1
+})
+process.once('unhandledRejection', (reason) => {
+  activeTui?.stop()
+  process.stderr.write(
+    `TaskWraith TUI: unexpected rejection — ${reason instanceof Error ? reason.message : String(reason)}\n`
+  )
+  process.exitCode = 1
+})
+// Synchronous last-resort restoration: `stop()` is idempotent, so this is a
+// no-op whenever an earlier handler already restored the terminal.
+process.on('exit', () => {
+  activeTui?.stop()
 })
 
 void main().catch((error) => {

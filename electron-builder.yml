@@ -45,6 +45,12 @@ files:
   - '!{AGENTS.md,CLAUDE.md,ARCHITECTURE.md,WINDOWS_PARITY_QA.md,TERMS_NOTES.md}'
   - '!{electron-builder.yml,electron-builder.debug.yml,vitest.config.ts}'
   - '!**/*.tsbuildinfo'
+  # TUI payload + official Node runtime ship outside app.asar via top-level
+  # extraResources (Developer Preview sidecar). RunAsNode is fused off on the
+  # App binary; launchers exec tui-runtime/<platform>-<arch>/node instead.
+  - '!out/tui/**'
+  - '!build/tui-launcher/**'
+  - '!build/tui-runtime/**'
   # pdfjs-dist ships ~36MB, most of it dev artefacts and a browser viewer we
   # never load. Pruning the unused trees takes it to roughly 9MB.
   #
@@ -69,6 +75,31 @@ files:
   # warning is misleading — text extraction dies too.) Verified empirically.
   # The universal build instead needs BOTH arch slices present + an
   # x64ArchFiles entry, the same treatment claude-agent-sdk/node-pty get.
+# All platforms: packaged TUI + launchers + Node runtime live under
+# process.resourcesPath (macOS: TaskWraith.app/Contents/Resources/; win/linux:
+# <install>/resources/). Requires `npm run tui:build` and
+# `npm run prepare:tui-runtime` (or prepare:tui-runtime:mac for universal)
+# before electron-builder. Do NOT re-enable FuseV1 RunAsNode for the App binary.
+extraResources:
+  - from: out/tui
+    to: tui
+    filter:
+      - '**/*'
+      - '!**/*.map'
+      - '!**/.DS_Store'
+  - from: build/tui-launcher
+    to: bin
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
+  - from: build/tui-runtime
+    to: tui-runtime
+    filter:
+      - '**/*'
+      - '!**/.DS_Store'
+      - '!**/.cache/**'
+      - '!**/README.md'
+      - '!**/*.partial'
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**
