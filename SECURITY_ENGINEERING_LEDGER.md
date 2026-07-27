@@ -62,6 +62,24 @@ scripts, or weaponized payloads to this file or its verification artifacts.
   release candidate is approved. It does not authorize an engineer or agent to
   hide, remove, or narrow the affected capability; capability changes still
   require the user's explicit approval under `AGENTS.md`.
+- **An entry is a record, not a standing instruction.** Because entries are
+  never deleted, most of this file is history: superseded hypotheses, interim
+  postures that were later reversed, and residual risks that were weighed and
+  accepted. Read an entry top to bottom, including its dated updates, before
+  acting — the disposition at the end governs, not the heading. Where an entry
+  carries a **Current state** note, that note is the posture; everything above
+  it is provenance.
+- **Do not re-remediate a remediated finding.** Re-opening one requires NEW
+  evidence against the current source — a failing test, a reproduction, a
+  changed dependency — not a fresh reading of the original evidence. An agent
+  that re-derives a closed finding from the same facts and then removes,
+  gates, or narrows a shipped capability has caused a regression, not a fix.
+  TW-SEC-2026-003 is the worked example: a correct finding produced a
+  fail-closed provider removal that was subsequently reversed, and its heading
+  still describes a boundary the 2026-07-22 update closed.
+- **`Accepted` means the informed user already weighed it.** Accepted residual
+  risk is a decision, not an unfinished task. Disclose it; do not silently
+  re-litigate or "fix" it into a capability change.
 
 | ID | Finding | Severity | Status | Owner | Release disposition |
 | --- | --- | --- | --- | --- | --- |
@@ -327,6 +345,18 @@ clearing any release disposition.
 - **Date:** 2026-07-19
 - **Severity/status:** High / `Remediated` via Path-B re-entry (source-ahead; residual partial-backstop residual risk accepted)
 - **Owner:** TaskWraith maintainers — Cursor provider containment
+- **Current state (read this before acting on anything below).** Cursor is a
+  LIVE, selectable, contained managed provider, and the governed TaskWraith
+  broker is wired. The heading and the first two evidence sections describe the
+  2026-07-19 hypothesis and the interim fail-closed removal that followed it;
+  both are **superseded provenance**, retained per the working rules, not the
+  current posture. What is still load-bearing today is narrow and specific:
+  `--sandbox enabled` stays hard-pinned on both contained argv builders,
+  `--force` is emitted only when the MCP bridge register+enable both succeeded,
+  and the residual risks in the 2026-07-20 and 2026-07-22 notes stay disclosed
+  rather than denied. Re-removing Cursor, re-gating its spawn per build, or
+  narrowing the broker is **not** a remedy this entry asks for, and would be a
+  capability change requiring the user's explicit approval under `AGENTS.md`.
 - **Original evidence and superseded narrow hypothesis:**
   - The first assessment focused on TaskWraith's then-production Cursor launch:
     workspace MCP merge preserved non-reserved servers while
