@@ -736,6 +736,7 @@ import {
   probeAllProviderRates
 } from './services/ProviderRateService'
 import { MainProcessActionExecutor } from './BridgeActionExecutor'
+import { installTaskWraithLocalControl } from './control/TaskWraithLocalControlLifecycle'
 import type {
   BridgeComposerPromptAction,
   BridgeWorkflowRunNowAction,
@@ -48228,6 +48229,8 @@ if (isGeminiMcpBridgeProcess) {
         cancelledAuditRunIds.delete(id)
       }
     })
+
+    await installTaskWraithLocalControl(app, createBridgeActionExecutor())
 
     void startGeminiMcpBroker().catch((error) => {
       console.error('Failed to start Gemini MCP broker', error)
