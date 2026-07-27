@@ -96,12 +96,14 @@ export function signEs256Jwt(args: {
   return `${signingInput}.${base64url(derEcdsaToConcat(der, 32))}`
 }
 
-/** Apple "permanently invalid token" reasons. NOTE: the Tier-2 relay gateway
- * deliberately reaps on 410 Unregistered ONLY — a wrong sandbox/prod env yields
- * 400 BadDeviceToken on a LIVE token (docs §6.4). This helper matches the
- * existing Tier-1 fanout behaviour (both). */
+/** Apple's authoritative "permanently invalid token" reason.
+ *
+ * A wrong sandbox/production gateway yields 400 BadDeviceToken for a live
+ * token, so callers must retain that registration and surface the environment
+ * mismatch. Only 410 Unregistered proves that the token should be reaped.
+ */
 export function isDeadTokenReason(reason: string | undefined | null): boolean {
-  return !!reason && /Unregistered|BadDeviceToken/.test(reason)
+  return /^Unregistered$/i.test(reason ?? '')
 }
 
 /**
