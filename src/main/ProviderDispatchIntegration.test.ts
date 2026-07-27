@@ -119,6 +119,17 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('binds Pi Ensemble coordination to a per-run broker credential before launch', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain('mcpBridgeRuntime.issuePiEnsembleCoordinationCredential(route)')
+    expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piCoordinationBrokerToken!')
+    expect(pi).toContain('mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)')
+    expect(pi.indexOf('issuePiEnsembleCoordinationCredential(route)')).toBeLessThan(
+      pi.indexOf('await runCliProviderProcess(')
+    )
+  })
+
   it('publishes the shared terminal exit when a Claude SDK budget abort blocks fallback', () => {
     const claudeProvider = sourceBetween(
       'async function runClaudeProvider(',

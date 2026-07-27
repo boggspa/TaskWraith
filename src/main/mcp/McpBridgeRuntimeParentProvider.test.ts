@@ -5,9 +5,10 @@ import {
 } from './McpBridgeRuntime'
 
 describe('normalizeBrokerParentProvider', () => {
-  it('preserves Cursor and Grok provider stamps for broker-routed MCP calls', () => {
+  it('preserves managed provider stamps for broker-routed calls', () => {
     expect(normalizeBrokerParentProvider('cursor')).toBe('cursor')
     expect(normalizeBrokerParentProvider('grok')).toBe('grok')
+    expect(normalizeBrokerParentProvider('pi')).toBe('pi')
   })
 
   it('falls back to Gemini for unknown provider stamps', () => {
@@ -24,6 +25,11 @@ describe('resolveBrokerParentProvider', () => {
   it('keeps a Cursor stamp as Cursor when no run-session provider is available', () => {
     expect(resolveBrokerParentProvider('cursor')).toBe('cursor')
     expect(resolveBrokerParentProvider('cursor', null)).toBe('cursor')
+  })
+
+  it('keeps Pi ownership when its contained coordination extension calls the broker', () => {
+    expect(resolveBrokerParentProvider('pi')).toBe('pi')
+    expect(resolveBrokerParentProvider('gemini', 'pi')).toBe('pi')
   })
 
   it('ignores invalid run-session providers and falls back to stamp normalization', () => {

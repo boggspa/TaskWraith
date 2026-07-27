@@ -11,6 +11,8 @@ export interface PiNativeToolEffectivePermissions {
   readonly agenticServices?: Readonly<{
     readonly shellCommands?: AgenticServicePolicy
     readonly fileChanges?: AgenticServicePolicy
+    /** Used by Pi's optional managed Ensemble coordination extension. */
+    readonly mcpTools?: AgenticServicePolicy
   }>
 }
 

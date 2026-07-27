@@ -55,6 +55,25 @@ function subThreadReturn(
 }
 
 describe('sanitizeTaskWraithMcpPromptClaims', () => {
+  it('removes only a leading generated shell-routing envelope when the broker is absent', async () => {
+    const { buildProviderShellRoutingPrompt } = await import('./ProviderShellRoutingPrompt')
+    const shellEnvelope = buildProviderShellRoutingPrompt({
+      provider: 'grok',
+      effectivePermissions: {
+        agenticServices: { shellCommands: 'allow', mcpTools: 'allow' }
+      } as never
+    })
+    const literalLaterInUserText = '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
+    const prompt = `${shellEnvelope}User work.\n\n${literalLaterInUserText}`
+
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: false, coreProfile: false })
+    ).toBe(`User work.\n\n${literalLaterInUserText}`)
+    expect(
+      sanitizeTaskWraithMcpPromptClaims(prompt, { advertised: true, coreProfile: false })
+    ).toBe(prompt)
+  })
+
   it('removes full-profile image claims and installs one core claim after reroute', () => {
     const prompt = `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this Claude workspace run has access to the TaskWraith MCP server.\n${TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE}\n\nDo image work.`
     const sanitized = sanitizeTaskWraithMcpPromptClaims(prompt, {

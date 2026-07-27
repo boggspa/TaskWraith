@@ -832,6 +832,91 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('confines a Pi broker credential to the fixed ensemble coordination surface', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+    const piCredential = runtime.issuePiEnsembleCoordinationCredential({
+      appRunId: 'pi-run-1',
+      appChatId: 'chat-1'
+    })
+
+    const rejected = await runtime.handleGeminiMcpBrokerRequest({
+      token: piCredential,
+      tool: 'run_shell_command',
+      arguments: { command: 'pwd' },
+      parentProvider: 'pi',
+      appRunId: 'pi-run-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('only permits ensemble coordination tools')
+    })
+    expect(executeGeminiMcpTool).not.toHaveBeenCalled()
+
+    await runtime.handleGeminiMcpBrokerRequest({
+      token: piCredential,
+      tool: 'ensemble_yield',
+      arguments: { target: 'Reviewer' },
+      parentProvider: 'pi',
+      appRunId: 'pi-run-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'ensemble_yield',
+      { target: 'Reviewer' },
+      { appRunId: 'pi-run-1', appChatId: 'chat-1' },
+      'pi',
+      {}
+    )
+  })
+
+  it('does not let a Pi coordination credential impersonate another live run', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool,
+      resolveBrokerParentProviderFromRunId: () => 'grok'
+    } as never)
+    const piCredential = runtime.issuePiEnsembleCoordinationCredential({
+      appRunId: 'pi-run-1',
+      appChatId: 'pi-chat-1'
+    })
+
+    const rejected = await runtime.handleGeminiMcpBrokerRequest({
+      token: piCredential,
+      tool: 'ensemble_yield',
+      arguments: { target: 'Reviewer' },
+      parentProvider: 'grok',
+      appRunId: 'grok-run-2',
+      appChatId: 'grok-chat-2'
+    })
+
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('bound to a different run route')
+    })
+    expect(executeGeminiMcpTool).not.toHaveBeenCalled()
+
+    const rejectedSharedToken = await runtime.handleGeminiMcpBrokerRequest({
+      token: 'token-1',
+      tool: 'ensemble_yield',
+      arguments: { target: 'Reviewer' },
+      parentProvider: 'pi',
+      appRunId: 'pi-run-1',
+      appChatId: 'pi-chat-1'
+    })
+    expect(rejectedSharedToken).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('requires a run-bound credential')
+    })
+  })
+
   it('prefers the live run provider when appRunId maps to a different provider stamp', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({

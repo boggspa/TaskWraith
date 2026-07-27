@@ -103,6 +103,7 @@ scripts, or weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-018 | A Canvas interaction grant applied beyond the exact surface the user approved | High | Remediated | TaskWraith maintainers — Canvas and approval authority | Verify surface identity on request, response, run-attached, fallback, and legacy-grant paths before clearing the block |
 | TW-SEC-2026-019 | Theme writes could inherit an unrelated MCP grant, while writable spacing influenced consent-control adjacency | High | Remediated | TaskWraith maintainers — Appearance and consent surfaces | Verify every-call human prompting and the structural consent-row guard on the exact candidate before clearing the block |
 | TW-SEC-2026-020 | The scoped history-deletion deadline rejects without retiring the durable intent or releasing retained holds | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | **Permit 1.9.0:** exact-candidate delayed-sink matrix and whole-tree gates prove no late commit, exact hold reconciliation, retained durable intent, and a clean same-process retry |
+| TW-SEC-2026-021 | A Pi Ensemble extension's local-broker credential could be mistaken for authority over the generic MCP catalogue | Medium | Remediated | TaskWraith maintainers — Pi runtime and MCP broker | Keep the broker-side Pi allowlist and per-run readiness receipt; verify the exact candidate and a live Pi Ensemble tool turn |
 
 ## v1.9.0 release-boundary update — 2026-07-26
 
@@ -2024,6 +2025,54 @@ same-UID residual boundaries when reconciling the final clean tip.
   Keep the delayed-sink matrix and completion-aware release boundary
   load-bearing; releasing a hold before its continuation settles or allowing a
   late commit reopens this finding.
+
+## TW-SEC-2026-021 — Pi coordination credentials are authentication, not generic authority
+
+- **Date:** 2026-07-27
+- **Severity/status:** Medium / `Remediated`
+- **Owner:** TaskWraith maintainers — Pi runtime and MCP broker
+- **Evidence and impact:**
+  - Pi has no native MCP client. The managed Ensemble feature uses one explicit
+    app-created extension, loaded by path while `--no-extensions` continues to
+    disable discovery. The extension receives a short-lived, run-bound
+    local-broker token in its process environment so it can make the eight
+    fixed coordination calls.
+  - A write-capable native Pi seat can inspect its own process environment.
+    That means possession of this token is authentication only; if the broker
+    accepted arbitrary tool names from a Pi-parent request, the added extension
+    could accidentally become a generic TaskWraith MCP capability path.
+  - This is a bounded surface-design finding, not evidence of compromise. The
+    user expressly approved adding the managed coordination surface; the
+    required mitigation preserves Pi's existing native tool choices and only
+    adds the requested coordination route.
+- **2026-07-27 remediation and regression evidence:**
+  - [`McpBridgeRuntime.ts`](src/main/mcp/McpBridgeRuntime.ts) binds the
+    credential to the exact Pi run before resolving request-supplied route or
+    provider fields, then rejects every Pi-parent broker request except
+    `ensemble_yield`, `ensemble_send`, `ensemble_fanout`,
+    `ensemble_poll_response`, `scout_brief`, and the three blackboard tools.
+    The route binding and allowlist are server-side, before the generic executor
+    or capability gateway sees the request.
+  - [`PiEnsembleCoordination.ts`](src/main/pi/PiEnsembleCoordination.ts)
+    materializes a mode-checked owner-only extension in the already
+    identity-bound isolated Pi home. It registers concrete schemas for only
+    that list, emits a readiness marker only after registration, and never
+    contains a generic shell, file, or MCP proxy.
+  - The Pi launch waits for that marker before sending a prompt that names the
+    tools. Missing preparation or readiness produces a durable unavailable
+    receipt, a visible warning, and the host-side unique `@Role`/`@Model`
+    fallback instead.
+  - Focused regression coverage lives in
+    [`PiEnsembleCoordination.test.ts`](src/main/pi/PiEnsembleCoordination.test.ts),
+    [`PiCliArgs.test.ts`](src/main/pi/PiCliArgs.test.ts), and
+    [`McpBridgeRuntimeSafeWrite.test.ts`](src/main/mcp/McpBridgeRuntimeSafeWrite.test.ts).
+    A local Pi 0.82.1 loader smoke run also proved that the extension loads
+    under `--no-extensions` with the explicit `--extension`/`--tools` route,
+    emits its marker, exits cleanly, and cleans its lease.
+- **Release disposition:** Keep `Remediated`, not `Verified`, until the exact
+  candidate passes the focused suites and a live Pi Ensemble coordination tool
+  turn verifies both the receipt and broker routing. Do not replace the
+  server-side allowlist with token-only trust.
 
 ## Combined AntiGravity/Gemini API certification contract
 

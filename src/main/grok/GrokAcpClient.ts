@@ -38,6 +38,8 @@ export interface GrokAcpRunOptions {
    * seats. Omitted/empty = no TaskWraith tools.
    */
   mcpServers?: unknown[]
+  /** True only after this exact ACP session receives the governed shell tool. */
+  taskWraithShellToolAvailable?: boolean
   /** Normalized run events: content / thinking / init(sessionId) / result / warning. */
   onEvent: (event: NormalizedGrokRunEvent) => void
   /** Called once with the spawned child (for the cancellation registry). */
@@ -71,7 +73,7 @@ export interface GrokAcpRunHandle extends AcpTurnHandle {
   closed: Promise<void>
 }
 
-export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
+const GROK_DENIED_TOOL_RECOVERY_WITH_BROKER_PROMPT =
   'Your previous native tool request was refused. A native Bash/Shell/terminal refusal can ' +
   'reflect TaskWraith containment rather than a denial of the underlying shell permission. Do ' +
   'not retry the native tool. If shell work is still needed and ' +
@@ -79,6 +81,19 @@ export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
   'host-mediated route honors the current shell grant and requests user approval when needed. ' +
   'Only if that MCP tool is unavailable or itself denied should you report the exact blocker; do ' +
   'not substitute unrelated side effects.'
+
+export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
+  'Your previous native tool request was refused. A native Bash/Shell/terminal refusal can ' +
+  'reflect TaskWraith containment rather than a denial of the underlying shell permission. Do ' +
+  'not retry the native tool. The TaskWraith shell broker is unavailable for this turn, so do not ' +
+  'call, search for, or infer a replacement shell tool. Report that exact blocker and continue ' +
+  'from the evidence already available; do not substitute unrelated side effects.'
+
+export function grokDeniedToolRecoveryPrompt(taskWraithShellToolAvailable: boolean): string {
+  return taskWraithShellToolAvailable
+    ? GROK_DENIED_TOOL_RECOVERY_WITH_BROKER_PROMPT
+    : GROK_DENIED_TOOL_RECOVERY_PROMPT
+}
 
 export function isGrokDeniedToolCancellation(status: string | null | undefined): boolean {
   const normalized = String(status || '')
@@ -141,7 +156,7 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     onPermissionRequest: options.onPermissionRequest,
     deniedToolRecovery: {
       detect: isGrokDeniedToolCancellation,
-      prompt: GROK_DENIED_TOOL_RECOVERY_PROMPT
+      prompt: grokDeniedToolRecoveryPrompt(Boolean(options.taskWraithShellToolAvailable))
     },
     formatProcessError: formatGrokProcessError,
     // Grok receives a bounded graceful termination request first. The neutral

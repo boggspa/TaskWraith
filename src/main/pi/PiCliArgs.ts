@@ -46,6 +46,14 @@ export interface PiRpcArgsInput {
   /** Ephemeral turn (ensemble lanes): no session persisted at all. */
   ephemeralSession?: boolean
   appendSystemPrompt?: string
+  /**
+   * A TaskWraith-owned explicit extension path. `--no-extensions` still
+   * disables every discovery path; Pi documents `-e` as an explicit allowlist
+   * which remains valid under that discovery clamp.
+   */
+  coordinationExtensionPath?: string
+  /** Fixed custom tool names implemented by coordinationExtensionPath. */
+  coordinationToolNames?: readonly string[]
 }
 
 export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
@@ -53,9 +61,20 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   args.push('--provider', input.upstream)
   args.push('--model', input.modelId)
   if (input.thinkingLevel) args.push('--thinking', input.thinkingLevel)
-  const tools = input.writeCapable ? PI_WRITE_TOOLS : PI_READ_ONLY_TOOLS
+  const nativeTools = input.writeCapable ? PI_WRITE_TOOLS : PI_READ_ONLY_TOOLS
+  const coordinationToolNames = input.coordinationToolNames || []
+  if (input.coordinationExtensionPath && coordinationToolNames.length === 0) {
+    throw new TypeError('Pi coordination extension requires an explicit custom tool allowlist.')
+  }
+  if (!input.coordinationExtensionPath && coordinationToolNames.length > 0) {
+    throw new TypeError('Pi coordination tools require their TaskWraith-owned extension path.')
+  }
+  const tools = [...new Set([...nativeTools, ...coordinationToolNames])]
   args.push('--tools', tools.join(','))
   args.push('--no-extensions', '--no-skills', '--no-prompt-templates')
+  if (input.coordinationExtensionPath) {
+    args.push('--extension', input.coordinationExtensionPath)
+  }
   args.push('--no-context-files', '--no-approve')
   args.push('--offline')
   if (input.ephemeralSession) {

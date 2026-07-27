@@ -739,9 +739,10 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toMatch(/address participants by their.*\(role\) name.*model name/i)
     expect(prompt).toMatch(/do not address peers by bare provider name/i)
     expect(prompt).toMatch(/same-provider peers.*ambiguous.*fails it closed/i)
-    expect(prompt).toMatch(/in-round mention.*changes no routing/i)
-    expect(prompt).toMatch(/new-round directed send is rejected/i)
+    expect(prompt).toMatch(/unique in-round mention.*promotes that remaining participant/i)
+    expect(prompt).toMatch(/new composer send/i)
     expect(prompt).toMatch(/participant picker.*unique role\/model alias/i)
+    expect(prompt).not.toMatch(/in-round mention.*changes no routing/i)
   })
 
   it('includes orchestrator-written session activity events in the round header', () => {
@@ -955,7 +956,8 @@ describe('Ensemble prompt composition', () => {
     // Scoping rule present in the Rules section
     expect(prompt).toContain('SPEAKING FIRST in a multi-participant round')
     expect(prompt).toContain('Do not complete the whole task on the opening turn')
-    expect(prompt).toContain('route peer-owned work with @Role or ensemble_yield(target)')
+    expect(prompt).toContain('route peer-owned work with a unique @Role/@Model mention')
+    expect(prompt).toContain('listed ensemble_yield(target)')
     expect(prompt).toContain('A normal coding request is not enough by itself')
   })
 
@@ -1065,17 +1067,15 @@ describe('Ensemble prompt composition', () => {
 
     expect(prompt).not.toContain('Grok direct-tool rule')
     expect(prompt).not.toContain('taskwraith-grok__ensemble_yield')
-    expect(prompt).toContain('Ensemble yield is a directly advertised lifecycle tool')
-    expect(prompt).toContain('Do not run `capability_search`, `capability_invoke`')
-    expect(prompt).toContain('the tool call is mandatory before ending the turn')
-    expect(prompt).toContain('Never replace the call with a narrated handoff')
-    expect(prompt).toContain('Lifecycle execution check')
-    expect(prompt.lastIndexOf('Lifecycle execution check')).toBeGreaterThan(
+    expect(prompt).toContain('Never search for or invent an Ensemble lifecycle tool')
+    expect(prompt).toContain('unique-mention fallback')
+    expect(prompt).toContain('Lifecycle handoff check')
+    expect(prompt.lastIndexOf('Lifecycle handoff check')).toBeGreaterThan(
       prompt.lastIndexOf('Current user request:')
     )
-    expect(prompt).toContain('call the tool first even when the request describes prose')
+    expect(prompt).toContain('call a listed lifecycle tool first even when the request describes prose')
     expect(prompt).toContain('Codex runtime rule')
-    expect(prompt).toContain('`ensemble_yield` tool on the `TaskWraith` MCP server directly')
+    expect(prompt).toContain('when `ensemble_yield` is listed on the `TaskWraith` MCP server')
     expect(prompt).toContain('Never substitute `run_shell_command`, `true`, `exit 0`')
   })
 
@@ -2685,8 +2685,8 @@ describe('slim resumed-turn prompt shape', () => {
     // Full-shell sections stay out.
     expect(prompt).not.toContain('Participant roster:')
     expect(prompt).not.toContain('Rules:')
-    expect(prompt).toContain('Lifecycle execution check')
-    expect(prompt.lastIndexOf('Lifecycle execution check')).toBeGreaterThan(
+    expect(prompt).toContain('Lifecycle handoff check')
+    expect(prompt.lastIndexOf('Lifecycle handoff check')).toBeGreaterThan(
       prompt.lastIndexOf('Current user request:')
     )
     expect(prompt).toContain('Respond now as')
@@ -2781,7 +2781,7 @@ describe('slim resumed-turn prompt shape', () => {
     expect(prompt).toContain('Ensemble blackboard (shared scratchpad')
     expect(prompt).toContain('queued-note-1: User guidance from a queued message.')
     expect(prompt).toContain('1 of these is new to you')
-    expect(prompt).toContain('re-check the board when you wrap up')
+    expect(prompt).toContain('when blackboard_read is listed')
 
     const allSeen: EnsembleConfig = {
       ...ensemble,
@@ -3108,8 +3108,9 @@ describe('permission-surface rule', () => {
     })
     expect(prompt).toContain('Your permission role is read_only')
     expect(prompt).toContain('file writes and shell commands are DENIED')
-    expect(prompt).toContain('offset/limit line windows')
-    expect(prompt).toContain('ensemble_send, blackboard_post/read, and poll votes run without approval')
+    expect(prompt).toContain('TaskWraith-aware lanes may list workspace_search')
+    expect(prompt).toContain('native-only lanes may instead list read, grep, find, and ls')
+    expect(prompt).toContain('Coordination tools are available only when they are listed')
   })
 
   it('workspace_write seats are told shell/file are available but approval may pause calls', () => {

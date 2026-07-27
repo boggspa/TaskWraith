@@ -13,6 +13,17 @@ function between(start: string, end: string): string {
 }
 
 describe('one-shot provider transport history join', () => {
+  it('keeps iOS bridge Pi prompts off generic MCP until the launch-time receipt', () => {
+    const bridgeMcpResolution = between(
+      'const bridgeClaudePinnedMcpReceipt =',
+      'const bridgeTaskWraithMcpProfile ='
+    )
+
+    expect(bridgeMcpResolution).toContain("provider === 'pi'")
+    expect(bridgeMcpResolution).toContain('? false')
+    expect(bridgeMcpResolution).toContain("provider === 'grok'")
+  })
+
   it('retains signed permission posture in Codex and Gemini run state', () => {
     const codexState = between(
       'function createCodexRunState(',
@@ -334,7 +345,7 @@ describe('one-shot provider transport history join', () => {
 
     const errorListener = launcher.indexOf("child.on('error'", exposed)
     const closeListener = launcher.indexOf("child.on('close'", errorListener)
-    const stdinWrite = launcher.indexOf('child.stdin?.write(', closeListener)
+    const stdinWrite = launcher.indexOf('writeStdinPlan(stdinPlan.initialLines)', closeListener)
     const stdinEnd = launcher.indexOf('child.stdin?.end()', closeListener)
     expect(exposed).toBeLessThan(errorListener)
     expect(errorListener).toBeLessThan(closeListener)

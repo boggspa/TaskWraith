@@ -5,6 +5,7 @@ import {
   buildPiProcessEnv,
   buildPiRpcArgs
 } from './PiCliArgs'
+import { PI_ENSEMBLE_COORDINATION_TOOL_NAMES } from './PiEnsembleCoordination'
 
 describe('buildPiRpcArgs', () => {
   const base = {
@@ -66,6 +67,33 @@ describe('buildPiRpcArgs', () => {
     const bare = buildPiRpcArgs({ ...base, writeCapable: true })
     expect(bare).not.toContain('--thinking')
     expect(bare).not.toContain('--append-system-prompt')
+  })
+
+  it('keeps discovery disabled while allowing only an explicit TaskWraith coordination extension', () => {
+    const extensionPath = '/tmp/taskwraith-pi-home/coordination.mjs'
+    const args = buildPiRpcArgs({
+      ...base,
+      writeCapable: false,
+      coordinationExtensionPath: extensionPath,
+      coordinationToolNames: PI_ENSEMBLE_COORDINATION_TOOL_NAMES
+    })
+    expect(args).toContain('--no-extensions')
+    expect(args[args.indexOf('--extension') + 1]).toBe(extensionPath)
+    const tools = args[args.indexOf('--tools') + 1].split(',')
+    expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES])
+  })
+
+  it('refuses a custom coordination allowlist without its explicit extension', () => {
+    expect(() =>
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: false,
+        coordinationToolNames: PI_ENSEMBLE_COORDINATION_TOOL_NAMES
+      })
+    ).toThrow(/extension path/i)
+    expect(() =>
+      buildPiRpcArgs({ ...base, writeCapable: false, coordinationExtensionPath: '/tmp/extension.mjs' })
+    ).toThrow(/allowlist/i)
   })
 })
 

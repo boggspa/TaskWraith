@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'child_process'
 import { spawn } from 'child_process'
-import { timingSafeEqual } from 'crypto'
+import { randomBytes, timingSafeEqual } from 'crypto'
 import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
 import { createConnection, createServer, type Server as NetServer, type Socket } from 'net'
@@ -34,6 +34,7 @@ import { MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE } from './McpInternalError'
 import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
+import { isPiEnsembleCoordinationToolName } from '../pi/PiEnsembleCoordination'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
@@ -376,6 +377,10 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   'grok',
   // Cursor ensemble seats stamp taskwraith-broker with parentProvider=cursor.
   'cursor',
+  // Pi has no general MCP client. Its contained per-run Ensemble extension is
+  // nevertheless a narrow authenticated broker client, so its calls must keep
+  // the Pi run identity rather than being coerced to Gemini.
+  'pi',
   // AntiGravity's gemini-api lane runs the in-process agentic runtime whose
   // tool calls resolve their parent from the run session; without this entry
   // resolveBrokerParentProvider would coerce those calls back to 'gemini'
@@ -1931,8 +1936,28 @@ export class McpBridgeRuntime {
   } | null = null
   private geminiMcpBridgeInstalledForCurrentToken = false
   private kimiMcpBridgeInstalledForCurrentToken = false
+  /**
+   * Pi is the only broker client whose token can be observed by a native shell
+   * in the same provider process. Bind that token to exactly one active Pi run
+   * before resolving any caller-supplied route or provider stamp.
+   */
+  private readonly piEnsembleCoordinationCredentials = new Map<string, McpBridgeAgentRunRoute>()
 
   constructor(private readonly deps: McpBridgeRuntimeDeps) {}
+
+  issuePiEnsembleCoordinationCredential(route: McpBridgeAgentRunRoute): string {
+    const boundRoute = normalizeRunRoute(route)
+    if (!boundRoute.appRunId) {
+      throw new TypeError('Pi Ensemble coordination credentials require an app run id.')
+    }
+    const token = randomBytes(32).toString('hex')
+    this.piEnsembleCoordinationCredentials.set(token, Object.freeze({ ...boundRoute }))
+    return token
+  }
+
+  revokePiEnsembleCoordinationCredential(token: string | null | undefined): void {
+    if (typeof token === 'string' && token) this.piEnsembleCoordinationCredentials.delete(token)
+  }
 
   private processExecPath(): string {
     return this.deps.getProcessExecPath?.() || process.execPath
@@ -2030,7 +2055,11 @@ export class McpBridgeRuntime {
 
   async handleGeminiMcpBrokerRequest(request: unknown): Promise<unknown> {
     const brokerRequestRecord = isRecord(request) ? request : {}
-    if (!this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token)) {
+    const piCredentialRoute =
+      typeof brokerRequestRecord.token === 'string'
+        ? this.piEnsembleCoordinationCredentials.get(brokerRequestRecord.token)
+        : undefined
+    if (!piCredentialRoute && !this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token)) {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
@@ -2042,14 +2071,43 @@ export class McpBridgeRuntime {
     ) {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
-    const route = normalizeRunRoute(brokerRequestRecord)
+    const requestedRoute = normalizeRunRoute(brokerRequestRecord)
+    if (
+      piCredentialRoute &&
+      ((requestedRoute.appRunId && requestedRoute.appRunId !== piCredentialRoute.appRunId) ||
+        (requestedRoute.appChatId && requestedRoute.appChatId !== piCredentialRoute.appChatId))
+    ) {
+      return {
+        ok: false,
+        error: 'Pi Ensemble coordination credential is bound to a different run route.'
+      }
+    }
+    const route = piCredentialRoute || requestedRoute
     const routeProvider = route.appRunId
       ? this.deps.resolveBrokerParentProviderFromRunId?.(route.appRunId)
       : undefined
-    const parentProvider = resolveBrokerParentProvider(
-      brokerRequestRecord.parentProvider,
-      routeProvider
-    )
+    const stampedParentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
+    if (!piCredentialRoute && (routeProvider === 'pi' || stampedParentProvider === 'pi')) {
+      return {
+        ok: false,
+        error: 'Pi Ensemble coordination requires a run-bound credential.'
+      }
+    }
+    const parentProvider = piCredentialRoute
+      ? 'pi'
+      : resolveBrokerParentProvider(brokerRequestRecord.parentProvider, routeProvider)
+    // Pi's explicit per-run extension is intentionally not a generic MCP
+    // client. Its process environment contains the run-bound local-broker
+    // credential, and a write-capable native Pi shell could inspect that
+    // environment; authentication alone therefore cannot be its authority
+    // boundary. Enforce the fixed ensemble-only allowlist at the broker before
+    // the generic executor or capability gateway see the call.
+    if (parentProvider === 'pi' && !isPiEnsembleCoordinationToolName(toolName)) {
+      return {
+        ok: false,
+        error: `Pi's contained TaskWraith bridge only permits ensemble coordination tools; ${String(rawToolName || 'unknown')} is unavailable.`
+      }
+    }
     const callerContext: McpCallerContext = {
       ...(typeof brokerRequestRecord.callerCwd === 'string'
         ? { callerCwd: brokerRequestRecord.callerCwd }

@@ -14,6 +14,7 @@ import {
   GROK_MCP_SHELL_PROMPT_NOTE,
   GROK_MCP_SHELL_TOOL_NAME,
   GROK_READ_ONLY_PROMPT_PREAMBLE,
+  GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE,
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   GROK_ACP_READ_ONLY_DENY_RULES,
   GROK_ACP_WRITE_MODE_DENY_RULES,
@@ -244,7 +245,7 @@ describe('buildGrokCliArgs', () => {
     })
     const prompt = args[args.indexOf('-p') + 1]
 
-    expect(prompt.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
+    expect(prompt.startsWith(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE)).toBe(true)
     expect(prompt.endsWith(discordPrompt)).toBe(true)
     expect(prompt).toContain('<discord_messages')
   })
@@ -260,8 +261,10 @@ describe('buildGrokCliArgs', () => {
 
     expect(prompt.startsWith('/goal Migrate the auth module to the new API')).toBe(true)
     expect(prompt.indexOf('/goal')).toBe(0)
-    expect(prompt).toContain(GROK_WRITE_MODE_PROMPT_PREAMBLE)
-    expect(prompt.indexOf('/goal')).toBeLessThan(prompt.indexOf(GROK_WRITE_MODE_PROMPT_PREAMBLE))
+    expect(prompt).toContain(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE)
+    expect(prompt.indexOf('/goal')).toBeLessThan(
+      prompt.indexOf(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE)
+    )
     expect(prompt.endsWith(discordPrompt)).toBe(true)
   })
 
@@ -364,7 +367,7 @@ describe('applyGrokPromptPreamble', () => {
   ].join('\n')
 
   it('prepends the WRITE steer for a write-capable seat', () => {
-    const out = applyGrokPromptPreamble('write the files', true)
+    const out = applyGrokPromptPreamble('write the files', true, true)
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith('write the files')).toBe(true)
     expect(out).not.toContain(GROK_READ_ONLY_PROMPT_PREAMBLE)
@@ -385,7 +388,7 @@ describe('applyGrokPromptPreamble', () => {
   })
 
   it("steers 'default' approval mode as write-capable (the reported regression)", () => {
-    const out = applyGrokPromptPreamble('write files', grokWriteCapable('default'))
+    const out = applyGrokPromptPreamble('write files', grokWriteCapable('default'), true)
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
   })
 
@@ -408,7 +411,7 @@ describe('applyGrokPromptPreamble', () => {
   })
 
   it('prepends Grok steering without dropping Discord context', () => {
-    const out = applyGrokPromptPreamble(discordPrompt, true)
+    const out = applyGrokPromptPreamble(discordPrompt, true, true)
 
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith(discordPrompt)).toBe(true)
@@ -431,6 +434,14 @@ describe('applyGrokPromptPreamble', () => {
     expect(out).toContain(GROK_MCP_SHELL_PROMPT_NOTE)
     expect(out).toContain(GROK_MCP_SHELL_TOOL_NAME)
     expect(out).toContain(GROK_WRITE_MODE_PROMPT_PREAMBLE)
+  })
+
+  it('does not invent a shell broker when a write-capable turn did not attach one', () => {
+    const out = buildGrokProviderPrompt('Run npm test.', 'default')
+
+    expect(out).toContain(GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE)
+    expect(out).not.toContain(GROK_MCP_SHELL_PROMPT_NOTE)
+    expect(out).not.toContain(GROK_MCP_SHELL_TOOL_NAME)
   })
 
   it('does not claim shell broker tooling on read-only seats', () => {
@@ -517,12 +528,12 @@ describe('applyGrokReadOnlyPromptPreamble', () => {
     expect(applyGrokReadOnlyPromptPreamble('x', readOnlySeatDefault)).toBe('x')
   })
 
-  it('steer tells Grok read-only shell is allowed, not to attempt writes, and to summarise', () => {
-    // Guards the intent (not exact wording): read-only shell IS available,
-    // mutations are refused (do-not-attempt), describe-instead, and summarise
-    // rather than dead-end on a refused tool.
+  it('steer keeps an unbrokered read-only seat off shell, writes, and dead ends', () => {
+    // Native Bash/Shell is deny-walled for this ACP seat. The prompt must say
+    // so rather than inventing a read-only shell route.
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt/i)
-    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/read-only shell/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/Native Bash\/Shell/i)
+    expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/do not attempt or search/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/describe what you would change/i)
     expect(GROK_READ_ONLY_PROMPT_PREAMBLE).toMatch(/summar/i)
   })

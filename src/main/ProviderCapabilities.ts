@@ -22,6 +22,7 @@ import {
   resolvePiNativeToolPosture,
   type PiNativeToolEffectivePermissions
 } from './pi/PiNativeToolPosture'
+import { PI_ENSEMBLE_COORDINATION_TOOL_NAMES } from './pi/PiEnsembleCoordination'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -600,9 +601,12 @@ function approvalContract(
     // "Claude Code permission handling is provider-managed in this build" — a
     // note about a different provider entirely.
     //
-    // Pi's containment is the launch-time `--tools` allowlist and nothing else:
-    // it runs `--mode rpc --no-approve`, so its own approval prompting is off
-    // and there is no per-tool bridge back to TaskWraith. The allowlist mirrors
+    // Pi's native containment is the launch-time `--tools` allowlist: it runs
+    // `--mode rpc --no-approve`, so native shell/file calls do not return to
+    // TaskWraith for per-tool approval. Ensemble-only coordination is the
+    // narrow exception: a verified app-owned extension routes its fixed
+    // coordination list through the authenticated TaskWraith broker; it is not
+    // a generic MCP, shell, or file bridge. The native allowlist mirrors
     // PI_READ_ONLY_TOOLS / PI_WRITE_TOOLS in pi/PiCliArgs.ts.
     //
     // `effectiveMode` is produced by the same downgrade-only helper as launch
@@ -619,7 +623,7 @@ function approvalContract(
       inAppApprovals: false,
       supportsWorkspaceGrants: false,
       notes: [
-        'Pi runs in RPC mode with an explicit --tools allowlist and --no-approve, so containment is the allowlist chosen at launch rather than per-tool approval. Extensions, skills, prompt templates and context files are disabled, and the credential firewall passes only the selected upstream key.'
+        'Pi runs in RPC mode with an explicit native --tools allowlist and --no-approve, so native shell/file containment is chosen at launch rather than through per-tool approval. In Ensemble mode only, TaskWraith may load one explicit per-run coordination extension after it proves ready; it preserves disabled extension discovery and cannot expose generic shell/file tools. Extensions, skills, prompt templates and context files remain disabled, and the credential firewall passes only the selected upstream key.'
       ]
     }
   }
@@ -992,6 +996,82 @@ export function buildProviderCapabilityContract({
       'taskwraith',
       'Ollama local mode cannot spawn sub-threads.'
     )
+  } else if (provider === 'pi') {
+    const piCoordinationPolicy =
+      effectivePermissions?.agenticServices?.mcpTools ?? services.mcpTools
+    const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
+    const piNativeWriteTools = piNativeToolPosture.writeCapable
+    mcp = {
+      state: piCoordinationAllowed ? serviceState(piCoordinationPolicy) : 'blocked',
+      source: 'taskwraith',
+      available: piCoordinationAllowed,
+      enabled: piCoordinationAllowed,
+      installed: piCoordinationAllowed,
+      serverName: 'TaskWraith Pi Ensemble extension',
+      tools: piCoordinationAllowed ? [...PI_ENSEMBLE_COORDINATION_TOOL_NAMES] : [],
+      message: piCoordinationAllowed
+        ? 'Ensemble-only: TaskWraith loads a fixed per-run Pi coordination extension after it proves ready. Pi extension discovery stays disabled and the extension exposes no generic shell or file tools; no manual Pi/MCP installation is required.'
+        : 'Pi Ensemble coordination is disabled by this lane’s Tool calls policy. Native Pi tools remain governed by the launch allowlist.'
+    }
+    shellCommands = piNativeWriteTools
+      ? delegatedCapability(
+          'shellCommands',
+          services.shellCommands,
+          ['bash'],
+          'Pi exposes native bash only in its exact write-capable allowlist; TaskWraith does not claim per-command interception for that native tool.'
+        )
+      : unavailableCapability(
+          'shellCommands',
+          'provider',
+          'This Pi posture launches the native read-only allowlist (read, grep, find, ls), which has no shell command tool.'
+        )
+    fileChanges = piNativeWriteTools
+      ? delegatedCapability(
+          'fileChanges',
+          services.fileChanges,
+          ['edit', 'write'],
+          'Pi exposes native edit/write only in its exact write-capable allowlist; TaskWraith does not claim per-file approval for those native tools.'
+        )
+      : unavailableCapability(
+          'fileChanges',
+          'provider',
+          'This Pi posture launches the native read-only allowlist, which has no file-edit tool.'
+        )
+    externalPublish = piNativeWriteTools
+      ? delegatedCapability(
+          'externalPublish',
+          services.externalPublish,
+          ['bash'],
+          'A write-capable Pi lane could invoke provider-native bash; TaskWraith does not claim a dedicated publishing bridge for it.'
+        )
+      : unavailableCapability(
+          'externalPublish',
+          'provider',
+          'This Pi posture has no native shell tool, so it cannot publish externally through Pi.'
+        )
+    mcpTools = piCoordinationAllowed
+      ? serviceCapability(
+          'mcpTools',
+          piCoordinationPolicy,
+          'taskwraith',
+          [...PI_ENSEMBLE_COORDINATION_TOOL_NAMES],
+          'Ensemble-only fixed coordination extension. Each run waits for a readiness receipt before Pi is told these tools exist; it is not a general MCP proxy.'
+        )
+      : unavailableCapability(
+          'mcpTools',
+          'taskwraith',
+          'Pi Ensemble coordination tools are not attached while this lane’s Tool calls policy is denied.'
+        )
+    elicit = unavailableCapability(
+      'elicit',
+      'taskwraith',
+      'Pi’s narrow Ensemble extension does not include the user-question tool. Ask visibly and let the normal round close.'
+    )
+    delegate = unavailableCapability(
+      'delegate',
+      'taskwraith',
+      'Pi’s narrow Ensemble extension does not include sub-thread delegation.'
+    )
   } else if (provider === 'antigravity') {
     mcp = {
       state: 'unavailable',
@@ -1195,7 +1275,14 @@ export function buildProviderCapabilityContract({
   }
 
   const networkAccess = networkCapability(services.networkAccess)
-  const creativeApps = creativeAppsCapability(services.mcpTools)
+  const creativeApps =
+    provider === 'pi'
+      ? unavailableCapability(
+          'creativeApps',
+          'taskwraith',
+          'Pi’s Ensemble extension is deliberately limited to coordination and does not expose creative-app tools.'
+        )
+      : creativeAppsCapability(services.mcpTools)
   if (networkAccess.state === 'blocked') {
     warnings.push(
       warning(

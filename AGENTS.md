@@ -346,7 +346,10 @@ ordering. `reason` is included in the audit trail.
 This explicit call requires a tool-capable seat. Broker-active managed Cursor
 seats are tool-capable and can call `ensemble_yield`; a Cursor turn that visibly
 degraded to native-only operation must instead use @-mention routing from a
-tool-capable peer or ordinary turn order.
+tool-capable peer or ordinary turn order. Pi is not a generic MCP seat, but an
+Ensemble Pi lane with a visible verified coordination receipt can call its fixed
+`ensemble_yield` tool; a Pi lane without that receipt must use unique @-mention
+routing instead.
 
 ### 3. You can call another participant in-line via @-mention
 
@@ -504,6 +507,14 @@ TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
 support brokered tools. Current tool-capable run providers are Codex, Claude,
 Kimi, Cursor, Grok, and local Ollama when their runtime-specific admission and
 broker setup succeeds.
+Pi is deliberately not a generic MCP client. In an Ensemble lane only,
+TaskWraith may attach one explicit app-owned Pi extension that exposes the fixed
+coordination list (`ensemble_yield`, `ensemble_send`, `ensemble_fanout`,
+`ensemble_poll_response`, `scout_brief`, and blackboard tools). The launch must
+receive its readiness receipt before the prompt names those tools; otherwise Pi
+uses unique @Role/@Model mention routing. This extension is never a shell/file
+or generic MCP proxy, requires no user-installed Pi/MCP configuration, and the
+host independently enforces its fixed allowlist.
 The current embedded Kimi qualification roster is empty, so Kimi admission
 runs in explicitly labelled `unattested-development` mode — structural
 identity/probe/posture checks, always enabled, packaged builds included — and
@@ -825,8 +836,11 @@ unshipped until it appears in the next release notes:
   sessions may retain the full profile. Managed Grok runs use the joined
   one-shot ACP transport; `TASKWRAITH_GROK_ACP=0` now makes Grok unavailable
   instead of reopening the retired headless path, and persistent Grok seat
-  processes remain hard-disabled. Grok keeps its native shell/file tools
-  alongside the brokered `taskwraith` surface. When it passes structural ACP
+  processes remain hard-disabled. Grok's native read/file affordances remain
+  provider-owned and posture-clamped; a TaskWraith shell route is advertised
+  only after its broker setup succeeds, and a degraded turn names that exact
+  absence instead of directing the model to retry a denied native shell. When
+  it passes structural ACP
   runtime admission, Kimi Code reaches the gateway through a per-run
   Electron-main local HTTP bridge because ACP `session/new` rejects stdio MCP
   servers; its native session files persist separately in the durable isolated

@@ -485,7 +485,12 @@ export class ComposerService {
         providerSessionId: resumeDecision.sessionId
       })
     const taskWraithMcpAdvertised =
-      provider === 'grok'
+      // Pi's optional Ensemble coordination extension is attached and
+      // receipt-gated at launch. It must not inherit the generic TaskWraith MCP
+      // preamble/profile from composer time.
+      provider === 'pi'
+        ? false
+        : provider === 'grok'
         ? shouldAdvertiseTaskWraithMcpToGrok({
             acpEnabled: grokAcpEnabled(),
             approvalMode,

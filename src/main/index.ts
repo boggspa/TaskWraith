@@ -1382,6 +1382,13 @@ import {
   type PiUsage
 } from './pi/PiRpc'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
+import {
+  PI_ENSEMBLE_COORDINATION_READY_MARKER,
+  piEnsembleCoordinationReadyPromptAppendix,
+  piEnsembleCoordinationUnavailablePromptAppendix,
+  preparePiEnsembleCoordinationExtension,
+  type PreparedPiEnsembleCoordinationExtension
+} from './pi/PiEnsembleCoordination'
 import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
 import { splitPiWireModelId } from './pi/PiModels'
 import { PiKeyStore } from './pi/PiKeyStore'
@@ -15037,7 +15044,13 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     )
   }
   const taskWraithMcpAdvertised =
-    applied.provider === 'grok'
+    // Pi never receives the generic TaskWraith MCP profile. Its Ensemble-only
+    // coordination extension is attached later, then explicitly receipt-gated
+    // before the prompt is sent. Keeping this false here prevents any earlier
+    // profile/prompt composition path from advertising the full catalogue.
+    applied.provider === 'pi'
+      ? false
+      : applied.provider === 'grok'
       ? shouldAdvertiseTaskWraithMcpToGrok({
           acpEnabled: grokAcpEnabled(),
           approvalMode: applied.approvalMode,
@@ -16735,7 +16748,21 @@ function runCliProviderProcess(
      * keyed by appRunId lets the terminal protocol event end the process
      * (SIGKILL backstop after 4s).
      */
-    stdinPlan?: { initialLines: string[] }
+    stdinPlan?: {
+      initialLines: string[]
+      /**
+       * A contained extension may prove its registration over stderr before
+       * TaskWraith writes the provider prompt. If it does not, the fallback
+       * prompt is sent instead so the model is never told to call ghost tools.
+       */
+      readiness?: {
+        marker: string
+        timeoutMs: number
+        fallbackInitialLines?: string[]
+        onReady?: () => void
+        onUnavailable?: (reason: 'timeout' | 'process_exit') => void
+      }
+    }
     /**
      * Resolve this run's provider session id after the child exits, for
      * providers that report it nowhere in stream output. `agy --print` is the
@@ -16966,6 +16993,12 @@ function runCliProviderProcess(
     if (!text) return
     sendAgentCompatError(event.sender, provider, sanitizeCanvasEvalProviderText(text), state)
   }
+  const stdinPlan = options.stdinPlan
+  const stdinReadiness = stdinPlan?.readiness
+  let stdinPlanWritten = false
+  let stdinReadinessSettled = !stdinReadiness
+  let stdinReadinessTimer: ReturnType<typeof setTimeout> | undefined
+  let stdinReadinessStderrBuffer = ''
   child.stdout?.on('data', (chunk) => {
     stdoutBuffer += chunk.toString()
     const lines = stdoutBuffer.split(/\r?\n/)
@@ -16990,6 +17023,58 @@ function runCliProviderProcess(
       }
     }
   })
+
+  let providerSetupFailed = false
+  let setupFailureProjected = false
+
+  const writeStdinPlan = (lines: readonly string[]): void => {
+    if (stdinPlanWritten) return
+    for (const line of lines) child.stdin?.write(`${line}\n`)
+    stdinPlanWritten = true
+  }
+  const flushStdinReadinessStderr = (): string => {
+    const buffered = stdinReadinessStderrBuffer
+    stdinReadinessStderrBuffer = ''
+    return buffered
+  }
+  const settleStdinReadiness = (reason: 'ready' | 'timeout' | 'process_exit'): void => {
+    if (!stdinReadiness || stdinReadinessSettled) return
+    stdinReadinessSettled = true
+    if (stdinReadinessTimer) {
+      clearTimeout(stdinReadinessTimer)
+      stdinReadinessTimer = undefined
+    }
+    if (reason === 'ready') {
+      stdinReadiness.onReady?.()
+      writeStdinPlan(stdinPlan?.initialLines || [])
+      return
+    }
+    stdinReadiness.onUnavailable?.(reason)
+    if (reason === 'timeout') {
+      writeStdinPlan(stdinReadiness.fallbackInitialLines || stdinPlan?.initialLines || [])
+    }
+  }
+  const consumeStdinReadinessMarker = (text: string): string => {
+    if (!stdinReadiness || stdinReadinessSettled) return text
+    stdinReadinessStderrBuffer += text
+    const markerIndex = stdinReadinessStderrBuffer.indexOf(stdinReadiness.marker)
+    if (markerIndex < 0) {
+      // Preserve a small suffix so a marker split across stderr chunks is still
+      // recognized, while surfacing ordinary provider diagnostics promptly.
+      const retain = Math.max(stdinReadiness.marker.length + 2, 256)
+      if (stdinReadinessStderrBuffer.length <= retain) return ''
+      const visible = stdinReadinessStderrBuffer.slice(0, -retain)
+      stdinReadinessStderrBuffer = stdinReadinessStderrBuffer.slice(-retain)
+      return visible
+    }
+    const before = stdinReadinessStderrBuffer.slice(0, markerIndex)
+    let after = stdinReadinessStderrBuffer.slice(markerIndex + stdinReadiness.marker.length)
+    if (after.startsWith('\r\n')) after = after.slice(2)
+    else if (after.startsWith('\n')) after = after.slice(1)
+    stdinReadinessStderrBuffer = ''
+    settleStdinReadiness('ready')
+    return `${before}${after}`
+  }
 
   // 1.0.5-EW23 — Detect Kimi's content-filter rejection. Moonshot's
   // hosted API can reject prompts upstream with a 400 + a
@@ -17033,14 +17118,14 @@ function runCliProviderProcess(
         state
       )
     }
-    emitCliProviderStderr(cliProviderStderrSanitizer.push(text))
+    emitCliProviderStderr(cliProviderStderrSanitizer.push(consumeStdinReadinessMarker(text)))
   })
 
-  let providerSetupFailed = false
-  let setupFailureProjected = false
   child.on('error', (error) => {
     providerSetupFailed = true
     try {
+      settleStdinReadiness('process_exit')
+      emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
       emitCliProviderStderr(cliProviderStderrSanitizer.flush())
       sendAgentCompatError(
         event.sender,
@@ -17062,6 +17147,7 @@ function runCliProviderProcess(
   })
 
   child.on('close', async (code) => {
+    settleStdinReadiness('process_exit')
     if (route.appRunId) {
       piRunStdinClosers.delete(route.appRunId)
       providerProcessTerminationBackstop.clear(route.appRunId)
@@ -17074,6 +17160,7 @@ function runCliProviderProcess(
           : code
     try {
       try {
+        emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
         emitCliProviderStderr(cliProviderStderrSanitizer.flush())
         // Providers whose session id never appears in stream output (agy)
         // resolve it from an on-disk receipt now, before the terminal result.
@@ -17198,10 +17285,7 @@ function runCliProviderProcess(
   // Pi can settle synchronously from its first RPC command; agy/Claude/Cursor
   // can exit on EOF immediately.
   try {
-    if (options.stdinPlan) {
-      for (const line of options.stdinPlan.initialLines) {
-        child.stdin?.write(`${line}\n`)
-      }
+    if (stdinPlan) {
       const appRunId = route.appRunId
       if (appRunId) {
         piRunStdinClosers.set(appRunId, () => {
@@ -17212,6 +17296,36 @@ function runCliProviderProcess(
           }
           providerProcessTerminationBackstop.arm(appRunId, child)
         })
+      }
+      if (stdinReadiness && !stdinReadinessSettled) {
+        stdinReadinessTimer = setTimeout(() => {
+          try {
+            settleStdinReadiness('timeout')
+            emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
+          } catch (error) {
+            providerSetupFailed = true
+            setupFailureProjected = true
+            state.completed = true
+            projectVisibleProviderSetupFailure({
+              sender: event.sender,
+              provider,
+              route,
+              message: `${providerDisplayName(provider)} coordination readiness setup failed: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+              setupRequired: true,
+              fallback: options.fallback
+            })
+            try {
+              child.kill()
+            } catch {
+              // The process termination backstop below still owns containment.
+            }
+            providerProcessTerminationBackstop.arm(route.appRunId!, child)
+          }
+        }, Math.max(1, stdinReadiness.timeoutMs))
+      } else {
+        writeStdinPlan(stdinPlan.initialLines)
       }
     } else {
       child.stdin?.end()
@@ -18883,7 +18997,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         )
       : undefined
 
-  // Pi has no MCP support; never let the prompt claim TaskWraith MCP tools.
+  // Pi has no generic MCP client. Its managed Ensemble extension below is a
+  // separate, fixed coordination surface, never a claim that Pi has the full
+  // TaskWraith MCP catalogue.
   payload.taskWraithMcpAdvertised = false
   payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
     advertised: false,
@@ -18936,6 +19052,37 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     }
   }
 
+  // Pi's `--no-extensions` wall stays enabled. Ensemble lanes may add exactly
+  // one app-created extension by explicit path; it registers only the fixed
+  // coordination tools and proves registration before the model prompt is sent.
+  let ensembleCoordination: PreparedPiEnsembleCoordinationExtension | undefined
+  let ensembleCoordinationPreparationFailure: string | undefined
+  let piCoordinationBrokerToken: string | undefined
+  const piCoordinationPolicy =
+    payload.effectivePermissions?.agenticServices?.mcpTools ??
+    AppStore.getSettings().agenticServices?.mcpTools
+  const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
+  if (ephemeralSession && piCoordinationAllowed) {
+    try {
+      await startGeminiMcpBroker()
+      ensembleCoordination = preparePiEnsembleCoordinationExtension({
+        isolatedHomeDir: isolatedHomeLease.path
+      })
+      piCoordinationBrokerToken = mcpBridgeRuntime.issuePiEnsembleCoordinationCredential(route)
+    } catch (error) {
+      mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)
+      piCoordinationBrokerToken = undefined
+      ensembleCoordination = undefined
+      ensembleCoordinationPreparationFailure =
+        error instanceof Error ? error.message : String(error)
+    }
+  } else if (ephemeralSession) {
+    ensembleCoordinationPreparationFailure =
+      'This lane’s Tool calls policy disables managed Ensemble coordination.'
+  }
+  const preparedEnsembleCoordination =
+    ensembleCoordination && piCoordinationBrokerToken ? ensembleCoordination : undefined
+
   const args = buildPiRpcArgs({
     upstream: split.upstream,
     modelId: split.modelId,
@@ -18943,7 +19090,13 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     sessionDir,
     ...(ephemeralSession
       ? { ephemeralSession: true }
-      : { sessionId: `taskwraith-${route.appChatId || 'chat'}` })
+      : { sessionId: `taskwraith-${route.appChatId || 'chat'}` }),
+    ...(preparedEnsembleCoordination
+      ? {
+          coordinationExtensionPath: preparedEnsembleCoordination.path,
+          coordinationToolNames: preparedEnsembleCoordination.toolNames
+        }
+      : {})
   })
 
   // Base env (PATH + TASKWRAITH markers) → credential firewall → pi switches.
@@ -18967,11 +19120,121 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   resolvedEnv.PI_SKIP_VERSION_CHECK = '1'
   resolvedEnv.PI_OFFLINE = '1'
 
+  if (preparedEnsembleCoordination) {
+    // This unique token binds the local socket to this exact Pi run before the
+    // broker accepts caller-controlled route fields. The broker independently
+    // constrains Pi to its fixed coordination allowlist, so a native
+    // write-capable Pi shell cannot turn the token into generic MCP authority.
+    resolvedEnv.TASKWRAITH_PI_COORDINATION_SOCKET = geminiMcpSocketPath()
+    resolvedEnv.TASKWRAITH_PI_COORDINATION_TOKEN = piCoordinationBrokerToken!
+  }
+
+  const piCoordinationFallbackPrompt = `${payload.prompt}\n\n${piEnsembleCoordinationUnavailablePromptAppendix(
+    ensembleCoordinationPreparationFailure || 'extension readiness was not verified before this turn began'
+  )}`
+  if (ephemeralSession && !preparedEnsembleCoordination) {
+    appendDurableRunEventForRoute(
+      'pi',
+      route,
+      'tool',
+      'control',
+      'Pi Ensemble coordination surface unavailable before launch',
+      {
+        eventType: 'ensemble_coordination_surface',
+        status: 'unavailable',
+        reason: ensembleCoordinationPreparationFailure || 'managed extension was not prepared',
+        fallback: 'unambiguous @Role/@Model mention routing'
+      }
+    )
+  }
+
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
-    stdinPlan: { initialLines: [piPromptCommand(payload.prompt)] },
+    ...(ephemeralSession && !preparedEnsembleCoordination
+      ? {
+          warning: `Pi Ensemble coordination is unavailable for this turn. ${
+            ensembleCoordinationPreparationFailure ||
+            'The managed extension was not prepared; no manual Pi/MCP installation is required.'
+          } TaskWraith will use safe @Role/@Model mention routing instead.`
+        }
+      : {}),
+    stdinPlan: preparedEnsembleCoordination
+      ? {
+          initialLines: [
+            piPromptCommand(
+              `${payload.prompt}\n\n${piEnsembleCoordinationReadyPromptAppendix(preparedEnsembleCoordination)}`
+            )
+          ],
+          readiness: {
+            marker: PI_ENSEMBLE_COORDINATION_READY_MARKER,
+            timeoutMs: 3_000,
+            fallbackInitialLines: [piPromptCommand(piCoordinationFallbackPrompt)],
+            onReady: () => {
+              appendDurableRunEventForRoute(
+                'pi',
+                route,
+                'tool',
+                'control',
+                'Pi Ensemble coordination surface verified',
+                {
+                  eventType: 'ensemble_coordination_surface',
+                  status: 'verified',
+                  transport: 'explicit_pi_extension_local_broker',
+                  extensionSha256: preparedEnsembleCoordination.sourceSha256,
+                  tools: [...preparedEnsembleCoordination.toolNames]
+                }
+              )
+              sendAgentCompatLine(
+                event.sender,
+                'pi',
+                {
+                  type: 'provider_warning',
+                  provider: 'pi',
+                  severity: 'info',
+                  title: 'Pi Ensemble coordination verified',
+                  message:
+                    'TaskWraith attached the fixed managed Pi coordination surface for this turn. The receipt-gated tools are available; no generic MCP, shell, or file tools were added.'
+                },
+                route
+              )
+            },
+            onUnavailable: (reason) => {
+              const detail =
+                reason === 'timeout'
+                  ? 'The managed Pi extension did not prove ready within three seconds.'
+                  : 'The Pi process ended before its managed coordination extension proved ready.'
+              appendDurableRunEventForRoute(
+                'pi',
+                route,
+                'tool',
+                'control',
+                'Pi Ensemble coordination surface unavailable',
+                {
+                  eventType: 'ensemble_coordination_surface',
+                  status: 'unavailable',
+                  reason,
+                  fallback: 'unambiguous @Role/@Model mention routing'
+                }
+              )
+              sendAgentCompatLine(
+                event.sender,
+                'pi',
+                {
+                  type: 'provider_warning',
+                  provider: 'pi',
+                  severity: 'warning',
+                  title: 'Pi Ensemble coordination unavailable',
+                  message: `${detail} Pi is continuing without coordination tools; it was told to use safe @Role/@Model mention routing. No manual Pi/MCP installation is required.`
+                },
+                route
+              )
+            }
+          }
+        }
+      : { initialLines: [piPromptCommand(ephemeralSession ? piCoordinationFallbackPrompt : payload.prompt)] },
     onComplete: () => {
+      mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)
       const cleanup = isolatedHomeLease.cleanup()
       if (!cleanup.ok) {
         sendAgentCompatLine(
@@ -19586,6 +19849,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       prompt: grokProviderPrompt,
       cwd: payload.workspace!,
       mcpServers: grokMcpServers,
+      taskWraithShellToolAvailable:
+        grokMcpServers.length > 0 && grokWriteCapable(payload.approvalMode),
       spawnProcess: grokSpawnAcpProcess,
       onProcess: (child) => {
         const proc = child as unknown as ChildProcess
@@ -39147,7 +39412,14 @@ if (isGeminiMcpBridgeProcess) {
               providerSessionId: resumeSessionId
             })
           const bridgeTaskWraithMcpAdvertised =
-            provider === 'grok'
+            // Pi has no generic TaskWraith MCP transport. Its small Ensemble
+            // coordination extension is prepared after this bridge prompt is
+            // composed and is advertised only after its in-process readiness
+            // receipt arrives. Do not let the bridge path tell Pi about the
+            // full catalogue before that proof exists.
+            provider === 'pi'
+              ? false
+              : provider === 'grok'
               ? shouldAdvertiseTaskWraithMcpToGrok({
                   acpEnabled: grokAcpEnabled(),
                   approvalMode: effectiveApprovalMode || 'default',

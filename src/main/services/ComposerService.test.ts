@@ -266,6 +266,19 @@ describe('ComposerService', () => {
     }
   })
 
+  it('keeps Pi generic MCP unadvertised until its launch-time coordination receipt', () => {
+    const payload = compose(
+      { provider: 'pi' },
+      { userInput: 'Ask the next participant to review the findings.' },
+      { geminiMcpBridgeEnabled: true }
+    )
+
+    expect(payload.taskWraithMcpAdvertised).toBe(false)
+    expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+    expect(payload.prompt).not.toContain('TaskWraith gateway MCP profile is active')
+    expect(payload.prompt).not.toContain('capability_search')
+  })
+
   it('honors a pinned Claude core receipt after the rollout flag is disabled', () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     delete process.env.TASKWRAITH_CORE_MCP_PROFILE

@@ -67,6 +67,36 @@ describe('ProviderCapabilities', () => {
       ).toBeUndefined()
     })
 
+    it('signposts the verified Ensemble-only coordination surface without claiming a generic MCP bridge', () => {
+      const contract = piContract('default')
+
+      expect(contract.mcp.source).toBe('taskwraith')
+      expect(contract.mcp.serverName).toBe('TaskWraith Pi Ensemble extension')
+      expect(contract.mcp.message).toContain('no manual Pi/MCP installation')
+      expect(contract.mcp.tools).toEqual(
+        expect.arrayContaining(['ensemble_yield', 'ensemble_send', 'blackboard_post'])
+      )
+      expect(contract.tools.mcpTools.source).toBe('taskwraith')
+      expect(contract.tools.mcpTools.details).toContain('readiness receipt')
+      expect(contract.tools.elicit.state).toBe('unavailable')
+      expect(contract.tools.delegate.state).toBe('unavailable')
+      expect(contract.tools.creativeApps.state).toBe('unavailable')
+    })
+
+    it('does not attach Pi Ensemble coordination when Tool calls are denied', () => {
+      const contract = buildProviderCapabilityContract({
+        provider: 'pi',
+        settings: settings({ ...defaultServices, mcpTools: 'deny' }),
+        approvalMode: 'default',
+        status: { provider: 'pi', available: true }
+      })
+
+      expect(contract.mcp.state).toBe('blocked')
+      expect(contract.mcp.available).toBe(false)
+      expect(contract.mcp.tools).toEqual([])
+      expect(contract.tools.mcpTools.state).toBe('unavailable')
+    })
+
     // Pi's exact-default baseline is stricter than the house convention (any
     // mode except 'plan'); the signed posture can only narrow it further. If
     // the runtime is ever intentionally widened, this test must change with it

@@ -12446,12 +12446,12 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
-      const promptWithDiscordContext = `${prompt}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
+      const promptWithDiscordContext = `${shellRoutingPrompt}${prompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       const resumeFallbackPrompt =
         slimTurn && (participant.provider === 'kimi' || participant.provider === 'codex')
-          ? `${buildEnsembleParticipantPrompt({
+          ? `${shellRoutingPrompt}${buildEnsembleParticipantPrompt({
               chat: dispatchChat,
               config: ensembleConfigForRound,
               participant,
@@ -12462,7 +12462,7 @@ export class EnsembleOrchestrator {
               slimTurn: false,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode
-            })}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
+            })}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
           : undefined
@@ -13828,7 +13828,7 @@ export class EnsembleOrchestrator {
         provider: participant.provider,
         effectivePermissions: permissions
       })
-      const promptWithDiscordContext = `${promptText}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
+      const promptWithDiscordContext = `${shellRoutingPrompt}${promptText}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       // Mirror the serial path: thread per-participant reasoning/thinking into

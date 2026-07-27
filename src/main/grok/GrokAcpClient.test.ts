@@ -333,7 +333,8 @@ describe('runGrokAcpTurn', () => {
   it('recovers once when a denied native tool makes Grok cancel the turn', async () => {
     const child = new FakeAcpChild()
     const { events, closeInfos } = run(child, {
-      onPermissionRequest: () => 'deny'
+      onPermissionRequest: () => 'deny',
+      taskWraithShellToolAvailable: true
     })
     child.emit({ jsonrpc: '2.0', id: 1, result: {} })
     child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
@@ -409,6 +410,34 @@ describe('runGrokAcpTurn', () => {
 
     expect(child.killed).toBe(true)
     expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
+  })
+
+  it('reports the exact broker-unavailable blocker after a denied native tool', async () => {
+    const child = new FakeAcpChild()
+    run(child, { onPermissionRequest: () => 'deny' })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      id: 42,
+      method: 'session/request_permission',
+      params: {
+        sessionId: 's-1',
+        toolCall: { title: 'run_terminal_command', kind: 'execute', rawInput: { command: 'pwd' } },
+        options: [
+          { optionId: 'a', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'r', name: 'Reject', kind: 'reject_once' }
+        ]
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(JSON.stringify(prompts[1])).toContain('shell broker is unavailable for this turn')
+    expect(JSON.stringify(prompts[1])).not.toContain('TaskWraith__run_shell_command')
   })
 
   it('bounds denied-tool recovery to one follow-up prompt', async () => {

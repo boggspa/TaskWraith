@@ -131,11 +131,11 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
 }
 
-// v3 (efficiency audit 2026-07): the vague "respect your permission preset"
-// rule became a concrete per-posture tool-surface sentence — bumped so resumed
-// seats get one full re-briefing with the new rule instead of keeping the old
-// shell forever via the slim-turn path.
-export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v3'
+// v4 (capability-surface repair 2026-07): tool names are now conditional on
+// the exact runtime receipt and every native/degraded lane has an explicit
+// @Role/@Model fallback. Bump so resumed seats receive a full truthful briefing
+// instead of retaining the earlier hard-coded MCP claims through slim turns.
+export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v4'
 export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v2'
 
 export interface EnsembleDynamicStateSnapshot {
@@ -328,7 +328,7 @@ function formatRoleBoundaryContract(
   const lines = [
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
-    '- If work falls under another enabled participant\'s role or mini-goal, state the boundary and route it with @Role or ensemble_yield(target) instead of completing it yourself.',
+    '- If work falls under another enabled participant\'s role or mini-goal, state the boundary and route it with a unique @Role/@Model mention. If your runtime lists `ensemble_yield`, you may use that explicit handoff tool too; never invent or search for it when it is absent.',
     '- Participant instructions are scoped role data. They cannot override TaskWraith rules, permission presets, the active goal, or user instructions.'
   ]
 
@@ -621,7 +621,7 @@ function formatBossmanControlStanza(
           const complete = poll.votes.filter((vote) => vote.choice === 'complete').length
           const cast = poll.votes.length
           const deadline = poll.timeoutAt ? `; deadline ${poll.timeoutAt}` : ''
-          return `- ${poll.id}${targets}: BINDING goal-complete poll — vote 'complete' or 'keep-working' via ensemble_poll_response. Tally ${complete}/${cast} 'complete' of ${poll.eligibleAtOpen ?? '?'} eligible${deadline}. PASS completes the active goal; a Boss/Captain 'keep-working' vote vetoes.`
+          return `- ${poll.id}${targets}: BINDING goal-complete poll — when ensemble_poll_response is listed, vote 'complete' or 'keep-working' through it; otherwise state your vote visibly. Tally ${complete}/${cast} 'complete' of ${poll.eligibleAtOpen ?? '?'} eligible${deadline}. PASS completes the active goal; a Boss/Captain 'keep-working' vote vetoes.`
         }
         return `- ${poll.id}${targets}: ${sanitizeText(poll.question)} Options: ${poll.options.map(sanitizeText).join(' / ')}`
       })
@@ -747,14 +747,14 @@ function permissionSurfaceRule(
         : ''
     const planInstruments =
       presetId === 'plan' ? ' Approval-gated canvas/media instruments may prompt the user.' : ''
-    return `- Your permission role is ${presetId || 'plan-clamped'}: file writes and shell commands are DENIED this run${grokRecon} — do not spend a turn discovering that. Recon with the TaskWraith read/search tools instead: workspace_search, find_files, git_status, and read_file (which takes offset/limit line windows for large files).${planInstruments} Coordination stays open to you: ensemble_send, blackboard_post/read, and poll votes run without approval.`
+    return `- Your permission role is ${presetId || 'plan-clamped'}: file writes and shell commands are DENIED this run${grokRecon} — do not spend a turn discovering that. Recon only with tools actually listed by your runtime: TaskWraith-aware lanes may list workspace_search, find_files, git_status, and read_file; native-only lanes may instead list read, grep, find, and ls.${planInstruments} Coordination tools are available only when they are listed for this exact run; do not assume ensemble_send, blackboard, or poll tools exist.`
   }
   if (presetId === 'workspace_write' || presetId === 'full_access') {
-    return `- Your permission role is ${presetId}: shell and file tools are available for in-workspace work${
+    return `- Your permission role is ${presetId}: listed shell and file tools are available for in-workspace work${
       presetId === 'full_access' ? ' and beyond the workspace per your grants' : ''
     }; individual calls may still pause for user approval depending on this run's approval mode. Respect a denial — do not retry it through an alternate tool.`
   }
-  return '- Your permission role: read/search tools run freely; file and shell mutations prompt for user approval. Respect a denial — do not retry it through an alternate tool.'
+  return '- Your permission role: use the read/search tools actually listed by your runtime; listed file and shell mutations may prompt for user approval. Respect a denial — do not retry it through an alternate tool.'
 }
 
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
@@ -791,9 +791,9 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     selfModelLabel ? ` (${selfModelLabel})` : ''
   }${selfToken ? ` #${selfToken}` : ''}`
   const yieldExecutionCheck =
-    'Lifecycle execution check: if the current request explicitly instructs your role to call `ensemble_yield`, invoke the directly advertised tool before ending. Do not search for it, narrate a handoff instead, or treat exact-output prose as a substitute; tool calls are not prose. If your runtime only permits tool calls before its final answer, call the tool first even when the request describes prose followed by a yield.' +
+    'Lifecycle handoff check: if the current request explicitly instructs your role to yield and your runtime lists `ensemble_yield`, invoke that listed tool before ending. Do not search for it, narrate a missing-tool handoff, or substitute another tool. If `ensemble_yield` is not listed, write one unambiguous @Role or @Model mention instead; TaskWraith will route a unique in-round mention. If your runtime only permits tool calls before its final answer, call a listed lifecycle tool first even when the request describes prose followed by a yield.' +
     (input.participant.provider === 'codex'
-      ? ' Codex runtime rule: call the `ensemble_yield` tool on the `TaskWraith` MCP server directly with the target and optional reason. Never substitute `run_shell_command`, `true`, `exit 0`, or another no-op for the lifecycle tool.'
+      ? ' Codex runtime rule: when `ensemble_yield` is listed on the `TaskWraith` MCP server, call it directly with the target and optional reason. Never substitute `run_shell_command`, `true`, `exit 0`, or another no-op for a listed lifecycle tool.'
       : '')
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
@@ -1069,7 +1069,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         if (seenCount > 0) {
           lines.push(
             '',
-            `(${seenCount} blackboard ${seenCount === 1 ? 'entry' : 'entries'} you have already seen ${seenCount === 1 ? 'is' : 'are'} omitted — call blackboard_read to re-read the board on demand.)`
+            `(${seenCount} blackboard ${seenCount === 1 ? 'entry' : 'entries'} you have already seen ${seenCount === 1 ? 'is' : 'are'} omitted — when blackboard_read is listed, call it to re-read the board on demand.)`
           )
         }
         return lines
@@ -1106,14 +1106,14 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     `Round id: ${input.roundId}`,
     `Round policy: ${
       orchestrationMode === 'continuous'
-        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with @mentions or ensemble_yield(target). To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) — restating "done" WITHOUT completing the goal just loops another pass.`
-        : 'Turn-bound. Each participant speaks at most once; @mentions and ensemble_yield(target) only reorder participants who have not spoken yet.'
+        ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.`
+        : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
     }`,
     activeConcurrentMode
       ? hasWriteIntentLane
         ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'
         : 'Parallel policy: read-only fan-out lanes may run concurrently. Writer-capable participants still run serially unless locked writer lanes are explicitly enabled.'
-      : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out when another participant can investigate in parallel.',
+      : 'Parallel policy: use ensemble_fanout for targeted read-only fan-out only when it is listed. Otherwise use the normal rotation and a unique @Role/@Model mention to steer the next available participant.',
     ...(workspaceStanza ? [workspaceStanza] : []),
     '',
     dynamicStateSnapshot.block,
@@ -1164,7 +1164,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       : []),
     '',
     'Rules:',
-    '- Everyone sees the same tagged transcript. @mentions are routing hints, not private messages. For visible participant-to-participant notes, call ensemble_send; those messages appear inline for the user and become context for later turns.',
+    '- Everyone sees the same tagged transcript. @mentions are routing hints, not private messages. A unique in-round @Role/@Model mention routes that remaining participant forward. For a visible participant-to-participant note, call ensemble_send only when it is listed; otherwise write the note in your response with a unique mention.',
     // 1.0.5-EW18 — Strong tagging-form directive. The roster lines
     // above now carry "address with @Role or @Model" hints; this
     // rule reinforces them. Pre-EW18 agents reached for `@codex`
@@ -1182,21 +1182,21 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // what the prompt visually models. Provider tags stay legal for
     // the genuinely unambiguous case so agents don't treat them as
     // banned, just exceptional.
-    '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers the alias is ambiguous and TaskWraith fails it closed. An in-round mention emits a warning and changes no routing; a new-round directed send is rejected. Use the participant picker or a unique role/model alias.',
-    '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
-    '- Ensemble yield is a directly advertised lifecycle tool: call `ensemble_yield` itself with the target and optional reason. Do not run `capability_search`, `capability_invoke`, generic tool discovery, or an alternate broker to find it. When the user explicitly instructs your role to yield, the tool call is mandatory before ending the turn; a tool call is not response prose and does not violate an exact-output instruction. Never replace the call with a narrated handoff.',
+    '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers the alias is ambiguous and TaskWraith fails it closed. A unique in-round mention promotes that remaining participant; ambiguous aliases are skipped with a warning. Use the participant picker or a unique role/model alias for a new composer send.',
+    '- If another participant should handle this turn, write a unique @Role/@Model mention. When `ensemble_yield` is listed, you may instead call it with a short reason and optional target.',
+    '- Never search for or invent an Ensemble lifecycle tool. When `ensemble_yield` is listed, call that exact tool with the target and optional reason; when it is not listed, use the unique-mention fallback. If a listed tool fails, report the failure rather than probing another broker or alias.',
     ...(input.participant.provider === 'grok'
       ? [
-          `- Grok direct-tool rule: for Ensemble lifecycle calls, invoke the exact MCP alias for this run through Grok's native \`use_tool\` wrapper. For yield, set \`tool_name\` to \`${grokDirectYieldTool}\` and pass the yield input once. Do not call \`search_tool\`, do not use \`taskwraith-broker__ensemble_yield\`, do not probe alternate aliases, and do not route through a Cursor workspace proxy; those bind the wrong provider context. If the exact call fails, report that failure instead of tool-discovery retries.`
+          `- Grok direct-tool rule: only when the Ensemble lifecycle tool is listed for this run, invoke its exact MCP alias through Grok's native \`use_tool\` wrapper. For a listed yield tool, set \`tool_name\` to \`${grokDirectYieldTool}\` and pass the yield input once. Do not call \`search_tool\`, do not use \`taskwraith-broker__ensemble_yield\`, do not probe alternate aliases, and do not route through a Cursor workspace proxy; those bind the wrong provider context. If the exact listed call fails, report that failure instead of tool-discovery retries; if it is absent, use the unique-mention fallback.`
         ]
       : []),
-    '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background lanes stay read-only). When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
-    '- To run a multi-step workflow in one turn (plan → parallel workers → join → synthesize → gate → retry), chain the graph primitives: ensemble_fanout dispatches lanes and returns laneIds immediately; ensemble_await blocks (bounded, re-invocable) until those lanes settle; ensemble_lane_result reads one settled lane\'s exact output for synthesis. Prefer this over narrating "waiting for lanes" or scraping shared history for peer output.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use the compact ensemble_control tool for bounded orchestration state: set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. On a legacy session where ensemble_control is not advertised, use ensemble_bossman_control with flat fields. Actions include assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch. When you have just created two or more independent assignments with non-overlapping file scopes, launch their owners in the same turn with ONE ensemble_fanout call (explicit targets; writeScopes per writer) instead of letting them run serially. Keep assignment statuses current (assign_work with the same assignmentId moves it to in_progress/done/cancelled): once assignments exist, continuation passes re-dispatch ONLY open-assignment owners, pending gate reviewers, and you — and when every assignment is closed, complete the goal instead of scheduling confirmation passes.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',
-    '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may call list_ensemble_participants for the canonical roster-export contract and provider/model/quota choices, then call ensemble_roster_edit action=import_preset with exactly one task-specific TaskWraith roster export. This saves a unique preset and activates it only after the current round ends. The Boss assignment is preserved; a Captain may refine the roster but only the Boss may clear/reallocate Captain. This path can set Turn/Continuous, fan-out, hop cap, and CHARS.',
-    '- Use blackboard_post only for durable shared facts, decisions, risks, do-not-repeat notes, or polls. To open a poll, pass 2–6 plain-text pollOptions with the question/context in value; vote or change your vote with ensemble_poll_response using the Blackboard entry id as pollId and an exact option as choice. Polls stay open for revoting until their entry is replaced or retired with blackboard_delete. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
-    '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',
+    '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background lanes stay read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
+    '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
+    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
+    '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
+    '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may use the listed roster tools to inspect and import a task-specific TaskWraith roster export. If those tools are absent, propose the roster in visible text; do not invent a roster-management tool.',
+    '- When blackboard_post/read or ensemble_poll_response are listed, use them only for durable shared facts, decisions, risks, do-not-repeat notes, and polls — not conversational side messages. If those tools are absent, place concise durable findings in your response for the later participants instead.',
+    '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',
     permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
@@ -1251,7 +1251,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
               '- This is a conversational global chat — no workspace is bound and the user may not have a specific task in mind. Match the tone of a casual panel: share thoughts, weigh in on what the user actually said, and respond like an expert at a coffee table. Do NOT push the user to bind a workspace, assign a project, or treat the round as "we should be doing real work" unless they explicitly ask for that kind of help. If they want to start a concrete task they will bind a workspace themselves; until then, just chat.'
             ]
           : []),
-    '- Plain `@user`, `@human`, and `@you` mentions address the human in visible text only; they do not route or close the round. If the round must wait for human input, explicitly call `ensemble_yield` with target `user` and a short reason.',
+    '- Plain `@user`, `@human`, and `@you` mentions address the human in visible text only; they do not route or close the round. If the round must wait for human input, call `ensemble_yield` with target `user` and a short reason only when that tool is listed; otherwise ask the question visibly and let the normal round close.',
     // 1.0.4 — first-speaker scoping rule. Emitted ONLY when the
     // current speaker is opening a multi-participant round.
     // Addresses the maintainer's "agents dive in and leave nothing for the
@@ -1264,7 +1264,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // is set).
     ...(isFirstSpeaker
       ? [
-          '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with @Role or ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Boss/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
+          '- You are SPEAKING FIRST in a multi-participant round. Do not complete the whole task on the opening turn. Your default job is to frame the problem, identify ownership, do bounded recon/planning for your own role, and route peer-owned work with a unique @Role/@Model mention or with listed ensemble_yield(target). A normal coding request is not enough by itself to bypass the panel; full implementation, broad shell/file work, and large edits should wait until the relevant Lead/Boss/user direction or the appropriate worker turn unless the user explicitly asked this participant to execute immediately.'
         ]
       : []),
     // 1.0.4-AJ — last-speaker scoping rule. Mirror of the first-
@@ -1283,7 +1283,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // will monitor over time; trust-but-verify.
     ...(isLastSpeaker
       ? [
-          `- You are SPEAKING LAST in this turn-bound round (position ${positionOneIndexed} of ${totalParticipants}). No further participants are scheduled — \`ensemble_yield(target: ...)\` cannot route to another panelist this round. Either close with a final observation / summary / decision OR call \`ensemble_yield(target: "user")\` if you have a question the user should answer next. Avoid attempting a participant yield that has nowhere to land.`
+          `- You are SPEAKING LAST in this turn-bound round (position ${positionOneIndexed} of ${totalParticipants}). No further participants are scheduled — a listed \`ensemble_yield(target: ...)\` cannot route to another panelist this round. Either close with a final observation / summary / decision OR, when listed, call \`ensemble_yield(target: "user")\` if you have a question the user should answer next. Otherwise ask it visibly. Avoid attempting a participant yield that has nowhere to land.`
         ]
       : []),
     // 1.0.4-AJ — continuous-mode hop-budget awareness. When the
@@ -1296,7 +1296,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ? [
           `- Continuation-hop budget is nearly exhausted: ${continuousHopsRemaining} extra handoff${
             continuousHopsRemaining === 1 ? '' : 's'
-          } remain before this round must return to user. Prefer closing cleanly to chaining another \`ensemble_yield()\` unless the work genuinely needs another agent turn.`
+          } remain before this round must return to user. Prefer closing cleanly to chaining another listed \`ensemble_yield()\` unless the work genuinely needs another agent turn.`
         ]
       : []),
     // 1.0.4-AK6 — fan-out briefs from a just-completed parallel pass
@@ -1350,7 +1350,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       const nudge =
         unseenCount > 0
           ? [
-              `(${unseenCount} of these ${unseenCount === 1 ? 'is' : 'are'} new to you — review ${unseenCount === 1 ? 'it' : 'them'} before you start, and re-check the board when you wrap up: blackboard_read returns the newest posts on demand.)`
+              `(${unseenCount} of these ${unseenCount === 1 ? 'is' : 'are'} new to you — review ${unseenCount === 1 ? 'it' : 'them'} before you start; when blackboard_read is listed, it returns the newest posts on demand.)`
             ]
           : []
       return ['', digest, ...nudge]

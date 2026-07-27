@@ -111,8 +111,9 @@ export function grokWriteCapable(approvalMode: string | null | undefined): boole
  */
 export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'You are running in READ-ONLY mode (recon / investigation). You CAN read and ' +
-  'inspect freely — read files and run read-only shell commands such as ls, ' +
-  'cat, grep, find, and git log / status / diff. An explicit no-tools instruction ' +
+  'inspect through the native read/file tools that are actually listed. Native Bash/Shell ' +
+  'and TaskWraith shell tools are unavailable in this seat, so do not attempt or search ' +
+  'for a shell route. An explicit no-tools instruction ' +
   'in the user request or role brief overrides that allowance: do not call read, ' +
   'shell, file, goal, or any other tool. File writes and edits, and ' +
   'MUTATING shell commands (anything that changes files or git state, installs ' +
@@ -152,6 +153,19 @@ export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
   'otherwise report the failure and answer in prose.'
 
 /**
+ * Write seats remain useful when the per-run broker setup fails, but must never
+ * be told to call a tool that did not attach. Native Bash/Shell remains denied
+ * in both variants; this one makes the degraded boundary explicit.
+ */
+export const GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE =
+  'When the task requests file changes, use Write and Edit (approved and diff-reviewed). ' +
+  'Native Bash/Shell are unavailable, and the TaskWraith shell broker is not verified for this turn. ' +
+  'Do not call, search for, or retry a TaskWraith shell tool. An explicit no-tools instruction in the user ' +
+  'request or role brief overrides that allowance: do not call file, goal, or any other tool. ' +
+  'If shell work is required, report that exact blocker and answer from the evidence already available; ' +
+  'do not substitute unrelated side effects.'
+
+/**
  * Prepend the read-only steer to a Grok ACP turn's prompt when the seat is
  * read-only; return the prompt unchanged for a write-capable seat. The
  * read-only-only gate lives here (single-sourced + unit-tested) so callers just
@@ -171,9 +185,16 @@ export function applyGrokReadOnlyPromptPreamble(prompt: string, readOnlySeat: bo
  * hard-cancelling when a shell tool is refused. Single-sourced + unit-tested so
  * the headless and ACP run paths stay in parity.
  */
-export function applyGrokPromptPreamble(prompt: string, writeCapable: boolean): string {
+export function applyGrokPromptPreamble(
+  prompt: string,
+  writeCapable: boolean,
+  taskWraithShellToolAvailable = false
+): string {
   if (!writeCapable) return applyGrokReadOnlyPromptPreamble(prompt, true)
-  return `${GROK_WRITE_MODE_PROMPT_PREAMBLE}\n\n${prompt}`
+  const preamble = taskWraithShellToolAvailable
+    ? GROK_WRITE_MODE_PROMPT_PREAMBLE
+    : GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE
+  return `${preamble}\n\n${prompt}`
 }
 
 export function formatGrokGoalSlashCommand(goal: ActiveGoal | null | undefined): string | null {
@@ -216,7 +237,11 @@ export function buildGrokProviderPrompt(
       ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
       : brokerAwarePrompt
   return applyGrokNativeGoalPrompt(
-    applyGrokPromptPreamble(questionAwarePrompt, grokWriteCapable(approvalMode)),
+    applyGrokPromptPreamble(
+      questionAwarePrompt,
+      grokWriteCapable(approvalMode),
+      Boolean(options?.taskWraithShellToolAvailable)
+    ),
     activeGoal
   )
 }
