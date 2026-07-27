@@ -47,6 +47,7 @@ function isMeshSceneView(value: unknown): value is MeshSceneView {
     typeof value.id === 'string' &&
     Array.isArray(value.nodes) &&
     isRecord(value.assetUrls) &&
+    isRecord(value.modelUrls) &&
     isRecord(value.camera) &&
     isRecord(value.lighting)
   )
@@ -275,7 +276,7 @@ export function MeshSceneViewer({ view, onIssue }: MeshSceneViewerProps) {
         scene.add(mesh)
         continue
       }
-      const entryUrl = view.assetUrls[node.assetId]
+      const entryUrl = view.modelUrls[node.id] ?? view.assetUrls[node.assetId]
       if (!entryUrl) {
         reportIssue(`The asset for “${node.name}” is no longer available.`)
         continue

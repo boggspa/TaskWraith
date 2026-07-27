@@ -2,6 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import {
+  MESH_SCENE_PACKAGE_KIND,
+  MESH_SCENE_PACKAGE_MANIFEST_FILE
+} from '../../shared/meshScenePackage'
 import { MeshAssetStore } from './MeshAssetStore'
 import { MeshSceneService, type MeshSceneEvent } from './MeshSceneService'
 import { MeshSceneStore } from './MeshSceneStore'
@@ -144,6 +148,55 @@ describe('MeshSceneService', () => {
     expect(edited.nodes[0]).toMatchObject({ name: 'Edited by agent' })
     expect(assets.get(node.assetId)).not.toBeNull()
     expect(events.map((event) => event.kind)).toEqual(['scene.created', 'scene.updated'])
+  })
+
+  it('imports a selected multi-root scene package as one chat-owned vault bundle', () => {
+    const exports = path.join(root, 'Downloads', 'gallery-export')
+    fs.mkdirSync(path.join(exports, 'models'), { recursive: true })
+    fs.writeFileSync(
+      path.join(exports, 'models', 'gallery.glb'),
+      Buffer.from([0x67, 0x6c, 0x54, 0x46])
+    )
+    fs.writeFileSync(
+      path.join(exports, 'models', 'sign.obj'),
+      'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'
+    )
+    const manifestPath = path.join(exports, MESH_SCENE_PACKAGE_MANIFEST_FILE)
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        kind: MESH_SCENE_PACKAGE_KIND,
+        title: 'Gallery export',
+        roots: [
+          { path: 'models/gallery.glb', name: 'Gallery' },
+          { path: 'models/sign.obj', name: 'Sign' }
+        ],
+        files: ['models/gallery.glb', 'models/sign.obj']
+      })
+    )
+
+    const scene = service.importUserSelectedScenePackage({ manifestPath }, context())
+    const imports = scene.nodes.filter(
+      (node): node is Extract<typeof node, { kind: 'import' }> => node.kind === 'import'
+    )
+    expect(scene).toMatchObject({
+      chatId: 'chat-a',
+      title: 'Gallery export',
+      nodes: [
+        { kind: 'import', name: 'Gallery', entryPath: 'models/gallery.glb', format: 'glb' },
+        { kind: 'import', name: 'Sign', entryPath: 'models/sign.obj', format: 'obj' }
+      ]
+    })
+    expect(new Set(imports.map((node) => node.assetId)).size).toBe(1)
+    expect(JSON.stringify(scene)).not.toContain(exports)
+
+    const view = service.viewForChat(scene.id, 'chat-a')
+    expect(view?.modelUrls[imports[0]!.id]).toMatch(/models\/gallery\.glb$/)
+    expect(view?.modelUrls[imports[1]!.id]).toMatch(/models\/sign\.obj$/)
+    const bundle = assets.get(imports[0]!.assetId)
+    expect(bundle?.files).toEqual(['models/gallery.glb', 'models/sign.obj'])
+    expect(events.map((event) => event.kind)).toEqual(['scene.created'])
   })
 
   it('reactively resolves object facts and chained node-property dependencies in one scene update', () => {

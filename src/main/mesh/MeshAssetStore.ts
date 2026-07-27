@@ -11,17 +11,23 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { randomBytes, randomUUID, timingSafeEqual } from 'crypto'
 import {
+  MESH_MAX_IMPORT_BUNDLE_BYTES,
   isSafeMeshAssetRelativePath,
   meshImportFormatFromPath,
   type MeshAssetManifest,
   type MeshImportFormat
 } from '../../shared/meshScene'
+import {
+  meshGltfReferences,
+  meshMtlTextureReferences,
+  meshObjMtlReferences
+} from './MeshModelDependencies'
+import { resolveMeshScenePackage } from './MeshScenePackageResolver'
 
 const ASSET_ID_RE = /^[a-zA-Z0-9_-]{16,128}$/
 // Covers the entry file plus every copied dependency. A per-file cap alone
 // would allow a glTF/OBJ with many individually-valid textures to fill the
 // private vault without a bounded import cost.
-const MAX_MESH_BUNDLE_BYTES = 512 * 1024 * 1024
 const MANIFEST_FILE = 'manifest.json'
 
 export interface MeshAssetFile {
@@ -35,6 +41,12 @@ export interface MeshAssetFile {
 
 export interface ImportedMeshAsset {
   manifest: MeshAssetManifest
+}
+
+export interface ImportedMeshScenePackage {
+  manifest: MeshAssetManifest
+  title?: string
+  roots: ReturnType<typeof resolveMeshScenePackage>['roots']
 }
 
 export interface MeshAssetStoreDeps {
@@ -53,9 +65,9 @@ function strictSourceFile(sourcePath: string): { realPath: string; stat: fs.Stat
   }
   const realPath = fs.realpathSync(sourcePath)
   const stat = fs.statSync(realPath)
-  if (!stat.isFile() || stat.size > MAX_MESH_BUNDLE_BYTES) {
+  if (!stat.isFile() || stat.size > MESH_MAX_IMPORT_BUNDLE_BYTES) {
     throw new Error(
-      `Mesh import source must be a regular file under ${MAX_MESH_BUNDLE_BYTES / 1024 / 1024} MiB.`
+      `Mesh import source must be a regular file under ${MESH_MAX_IMPORT_BUNDLE_BYTES / 1024 / 1024} MiB.`
     )
   }
   return { realPath, stat }
@@ -64,68 +76,6 @@ function strictSourceFile(sourcePath: string): { realPath: string; stat: fs.Stat
 function pathInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
   return Boolean(relative) && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)
-}
-
-function safeReferencedPath(raw: string): string | null {
-  const text = raw.trim().replace(/^['"]|['"]$/g, '')
-  if (!text || text.length > 512 || text.startsWith('data:')) return null
-  let decoded: string
-  try {
-    decoded = decodeURIComponent(text)
-  } catch {
-    return null
-  }
-  const normal = decoded.replace(/\\/g, '/')
-  return isSafeMeshAssetRelativePath(normal) ? normal : null
-}
-
-function textReferences(source: string, pattern: RegExp): string[] {
-  const refs = new Set<string>()
-  for (const match of source.matchAll(pattern)) {
-    const safe = safeReferencedPath(match[1] || '')
-    if (safe) refs.add(safe)
-  }
-  return [...refs]
-}
-
-function objMtlReferences(source: string): string[] {
-  // Wavefront's `mtllib` convention permits one path per line in normal DCC
-  // exports. Quoted values retain spaces; unquoted values are deliberately
-  // accepted as one trimmed path rather than guessing at multiple filenames.
-  return textReferences(source, /^\s*mtllib\s+(.+?)\s*$/gim)
-}
-
-function mtlTextureReferences(source: string): string[] {
-  const refs = new Set<string>()
-  for (const line of source.split(/\r?\n/)) {
-    const match = /^\s*map_[a-z0-9_]+\s+(.+?)\s*$/i.exec(line)
-    if (!match) continue
-    const raw = match[1].trim()
-    // Most MTL option forms put the actual filename last. This deliberately
-    // favours safe omission over treating an option as a path.
-    const quoted = /(?:^|\s)(['"])(.+?)\1\s*$/.exec(raw)
-    const candidate = quoted ? quoted[2] : raw.split(/\s+/).at(-1) || ''
-    const safe = safeReferencedPath(candidate)
-    if (safe) refs.add(safe)
-  }
-  return [...refs]
-}
-
-function gltfReferences(source: string): string[] {
-  try {
-    const parsed = JSON.parse(source) as {
-      buffers?: Array<{ uri?: unknown }>
-      images?: Array<{ uri?: unknown }>
-    }
-    const refs = new Set<string>()
-    for (const item of [...(parsed.buffers ?? []), ...(parsed.images ?? [])]) {
-      const safe = safeReferencedPath(typeof item?.uri === 'string' ? item.uri : '')
-      if (safe) refs.add(safe)
-    }
-    return [...refs]
-  } catch {
-    throw new Error('The glTF JSON could not be parsed.')
-  }
 }
 
 function meshMimeForPath(relativePath: string): string {
@@ -254,6 +204,57 @@ export class MeshAssetStore {
     return { manifest: this.importBundle(sourcePath, 'model', format) }
   }
 
+  /**
+   * Import a complete exporter-produced package as one private vault bundle.
+   * The resolver has already verified every source file is local, regular,
+   * beneath the selected directory, and explicitly declared by the manifest.
+   */
+  importScenePackage(manifestPath: string): ImportedMeshScenePackage {
+    this.ensureRoot()
+    const scenePackage = resolveMeshScenePackage(manifestPath)
+    const firstRoot = scenePackage.roots[0]
+    if (!firstRoot) throw new Error('Scene package has no importable roots.')
+    const assetId = this.uuid().replace(/[^a-zA-Z0-9_-]/g, '')
+    if (!safeId(assetId)) throw new Error('Mesh asset id generator returned an invalid id.')
+    const tempDir = path.join(this.baseDir, `.${assetId}-${randomBytes(8).toString('hex')}.tmp`)
+    const finalDir = this.assetDirectory(assetId)
+    try {
+      fs.mkdirSync(tempDir, { mode: 0o700 })
+      let byteLength = 0
+      for (const file of scenePackage.files) {
+        const destination = path.join(tempDir, ...file.relativePath.split('/'))
+        fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 })
+        fs.copyFileSync(file.sourcePath, destination, fs.constants.COPYFILE_EXCL)
+        byteLength += file.byteLength
+      }
+      const manifest: MeshAssetManifest = {
+        schemaVersion: 1,
+        id: assetId,
+        accessToken: randomBytes(32).toString('hex'),
+        kind: 'model',
+        format: firstRoot.format,
+        entryPath: firstRoot.path,
+        files: scenePackage.files.map((file) => file.relativePath).sort(),
+        byteLength,
+        createdAt: this.now()
+      }
+      fs.writeFileSync(path.join(tempDir, MANIFEST_FILE), JSON.stringify(manifest), {
+        encoding: 'utf8',
+        mode: 0o600,
+        flag: 'wx'
+      })
+      fs.renameSync(tempDir, finalDir)
+      return {
+        manifest,
+        ...(scenePackage.title ? { title: scenePackage.title } : {}),
+        roots: scenePackage.roots
+      }
+    } catch (error) {
+      fs.rmSync(tempDir, { recursive: true, force: true, maxRetries: 2 })
+      throw error
+    }
+  }
+
   importTexture(sourcePath: string): ImportedMeshAsset {
     if (!isSupportedTexturePath(sourcePath)) {
       throw new Error('Texture imports support PNG, JPEG, WebP, GIF, and BMP files.')
@@ -291,9 +292,9 @@ export class MeshAssetStore {
         return
       }
       if (!pathInside(sourceDirReal, dependency.realPath)) return
-      if (byteLength + dependency.stat.size > MAX_MESH_BUNDLE_BYTES) {
+      if (byteLength + dependency.stat.size > MESH_MAX_IMPORT_BUNDLE_BYTES) {
         throw new Error(
-          `Mesh import bundle exceeds ${MAX_MESH_BUNDLE_BYTES / 1024 / 1024} MiB including dependencies.`
+          `Mesh import bundle exceeds ${MESH_MAX_IMPORT_BUNDLE_BYTES / 1024 / 1024} MiB including dependencies.`
         )
       }
       const destination = path.join(tempDir, ...relativePath.split('/'))
@@ -311,16 +312,16 @@ export class MeshAssetStore {
 
       if (kind === 'model' && format === 'obj') {
         const obj = fs.readFileSync(source.realPath, 'utf8')
-        for (const mtlPath of objMtlReferences(obj)) {
+        for (const mtlPath of meshObjMtlReferences(obj)) {
           copyRelative(mtlPath)
           const copiedMtl = path.join(tempDir, ...mtlPath.split('/'))
           if (!fs.existsSync(copiedMtl)) continue
           const mtl = fs.readFileSync(copiedMtl, 'utf8')
-          for (const texturePath of mtlTextureReferences(mtl)) copyRelative(texturePath)
+          for (const texturePath of meshMtlTextureReferences(mtl)) copyRelative(texturePath)
         }
       } else if (kind === 'model' && format === 'gltf') {
         const gltf = fs.readFileSync(source.realPath, 'utf8')
-        for (const dependencyPath of gltfReferences(gltf)) copyRelative(dependencyPath)
+        for (const dependencyPath of meshGltfReferences(gltf)) copyRelative(dependencyPath)
       }
 
       const manifest: MeshAssetManifest = {

@@ -10,6 +10,8 @@
 export const MESH_SCENE_SCHEMA_VERSION = 1 as const
 /** Bound durable scene complexity before an import can allocate a private asset bundle. */
 export const MESH_MAX_SCENE_NODES = 500
+/** Maximum total bytes copied for one imported model or scene package. */
+export const MESH_MAX_IMPORT_BUNDLE_BYTES = 512 * 1024 * 1024
 /** Bound reactive object-information sources attached to one durable scene. */
 export const MESH_MAX_SCENE_OBJECT_DATA_SOURCES = 200
 /** One property has at most one incoming edge; this bounds graph evaluation cost. */
@@ -184,7 +186,10 @@ export interface MeshSceneSummary {
  * to accidentally become a workspace-path disclosure channel.
  */
 export type MeshSceneView = Omit<MeshSceneRecord, 'workspacePath' | 'dependencies'> & {
+  /** Default vault URL by asset id, used for explicitly assigned texture assets. */
   assetUrls: Record<string, string>
+  /** Import-node-specific entry URLs, allowing a scene package to share one vault bundle across roots. */
+  modelUrls: Record<string, string>
 }
 
 export interface MeshAssetManifest {

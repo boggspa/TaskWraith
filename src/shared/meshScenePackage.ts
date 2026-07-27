@@ -3,7 +3,11 @@
  * Mesh Canvas scenes. The manifest is data only: adapters may produce it, but
  * importing it never runs a project script, plugin, or editor binary.
  */
-import { isSafeMeshAssetRelativePath, meshImportFormatFromPath, type MeshImportFormat } from './meshScene'
+import {
+  isSafeMeshAssetRelativePath,
+  meshImportFormatFromPath,
+  type MeshImportFormat
+} from './meshScene'
 
 export const MESH_SCENE_PACKAGE_SCHEMA_VERSION = 1 as const
 export const MESH_SCENE_PACKAGE_KIND = 'taskwraith.mesh-scene-package' as const
@@ -70,13 +74,8 @@ function packageRoot(value: unknown, index: number): MeshScenePackageRoot {
       `roots[${index}].path must reference a .glb, .gltf, or .obj scene root.`
     )
   }
-  return {
-    path: entryPath,
-    ...(optionalLabel(value.name, `roots[${index}].name`)
-      ? { name: optionalLabel(value.name, `roots[${index}].name`) }
-      : {}),
-    format
-  }
+  const name = optionalLabel(value.name, `roots[${index}].name`)
+  return { path: entryPath, ...(name ? { name } : {}), format }
 }
 
 /**
@@ -85,21 +84,32 @@ function packageRoot(value: unknown, index: number): MeshScenePackageRoot {
  * their own metadata without expanding the importer's authority.
  */
 export function parseMeshScenePackageManifest(value: unknown): MeshScenePackageManifest {
-  if (!isRecord(value)) throw new MeshScenePackageManifestError('Scene package manifest must be an object.')
+  if (!isRecord(value))
+    throw new MeshScenePackageManifestError('Scene package manifest must be an object.')
   if (value.schemaVersion !== MESH_SCENE_PACKAGE_SCHEMA_VERSION) {
     throw new MeshScenePackageManifestError(
       `Scene package schemaVersion must be ${MESH_SCENE_PACKAGE_SCHEMA_VERSION}.`
     )
   }
   if (value.kind !== MESH_SCENE_PACKAGE_KIND) {
-    throw new MeshScenePackageManifestError(`Scene package kind must be “${MESH_SCENE_PACKAGE_KIND}”.`)
+    throw new MeshScenePackageManifestError(
+      `Scene package kind must be “${MESH_SCENE_PACKAGE_KIND}”.`
+    )
   }
-  if (!Array.isArray(value.roots) || !value.roots.length || value.roots.length > MESH_MAX_SCENE_PACKAGE_ROOTS) {
+  if (
+    !Array.isArray(value.roots) ||
+    !value.roots.length ||
+    value.roots.length > MESH_MAX_SCENE_PACKAGE_ROOTS
+  ) {
     throw new MeshScenePackageManifestError(
       `Scene package must declare between 1 and ${MESH_MAX_SCENE_PACKAGE_ROOTS} roots.`
     )
   }
-  if (!Array.isArray(value.files) || !value.files.length || value.files.length > MESH_MAX_SCENE_PACKAGE_FILES) {
+  if (
+    !Array.isArray(value.files) ||
+    !value.files.length ||
+    value.files.length > MESH_MAX_SCENE_PACKAGE_FILES
+  ) {
     throw new MeshScenePackageManifestError(
       `Scene package must declare between 1 and ${MESH_MAX_SCENE_PACKAGE_FILES} files.`
     )
@@ -122,10 +132,11 @@ export function parseMeshScenePackageManifest(value: unknown): MeshScenePackageM
     }
   }
 
+  const title = optionalLabel(value.title, 'title')
   return {
     schemaVersion: MESH_SCENE_PACKAGE_SCHEMA_VERSION,
     kind: MESH_SCENE_PACKAGE_KIND,
-    ...(optionalLabel(value.title, 'title') ? { title: optionalLabel(value.title, 'title') } : {}),
+    ...(title ? { title } : {}),
     roots,
     files
   }

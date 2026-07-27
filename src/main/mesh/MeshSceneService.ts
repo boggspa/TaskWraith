@@ -366,6 +366,69 @@ export class MeshSceneService {
     return cloneScene(saved)
   }
 
+  /**
+   * Import a human-selected declarative scene package. Its manifest has already
+   * constrained the copy to exported model roots and declared local sidecars;
+   * no native DCC project, extension, script, or editor process is executed.
+   */
+  importUserSelectedScenePackage(
+    input: { manifestPath: string; title?: string },
+    ctx: MeshSceneCallContext
+  ): MeshSceneRecord {
+    if (this.blocked(ctx)) {
+      throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
+    }
+    const chatId = this.requireChat(ctx)
+    const imported = this.deps.assets.importScenePackage(input.manifestPath)
+    if (imported.roots.length > MESH_MAX_SCENE_NODES) {
+      this.deps.assets.remove([imported.manifest.id])
+      throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_NODES} objects.`)
+    }
+    const now = this.deps.now()
+    const nodes: MeshSceneNode[] = imported.roots.map((root) => {
+      const displayName = path.basename(root.path, path.extname(root.path)) || 'Imported mesh'
+      return {
+        id: this.deps.uuid(),
+        kind: 'import',
+        name: root.name ?? displayName,
+        assetId: imported.manifest.id,
+        format: root.format,
+        entryPath: root.path,
+        transform: cloneDefaultTransform(),
+        visible: true
+      }
+    })
+    const firstNode = nodes[0]
+    if (!firstNode) {
+      this.deps.assets.remove([imported.manifest.id])
+      throw new Error('Scene package has no importable roots.')
+    }
+    const scene: MeshSceneRecord = {
+      schemaVersion: MESH_SCENE_SCHEMA_VERSION,
+      id: this.deps.uuid(),
+      chatId,
+      ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
+      ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
+      title: nonEmpty(input.title, 200) ?? imported.title ?? firstNode.name,
+      backgroundColor: '#171a21',
+      lighting: cloneDefaultLighting(),
+      camera: cloneDefaultCamera(),
+      nodes,
+      dependencies: createEmptyMeshSceneDependencyGraph(),
+      createdAt: now,
+      updatedAt: now
+    }
+    let saved: MeshSceneRecord
+    try {
+      saved = this.persist(scene)
+    } catch (error) {
+      this.deps.assets.remove([imported.manifest.id])
+      throw error
+    }
+    this.emit('scene.created', saved)
+    return cloneScene(saved)
+  }
+
   list(ctx: MeshSceneCallContext): MeshSceneSummary[] {
     const chatId = this.requireChat(ctx)
     return this.deps.store
@@ -582,9 +645,11 @@ export class MeshSceneService {
       }
     }
     const assetUrls: Record<string, string> = {}
+    const assetsById = new Map<string, NonNullable<ReturnType<MeshAssetStore['get']>>>()
     for (const assetId of assetIds) {
       const asset = this.deps.assets.get(assetId)
       if (!asset) continue
+      assetsById.set(assetId, asset)
       const url = meshAssetUrl({
         assetId: asset.id,
         accessToken: asset.accessToken,
@@ -592,8 +657,24 @@ export class MeshSceneService {
       })
       if (url) assetUrls[assetId] = url
     }
-    const { workspacePath: _workspacePath, dependencies: _dependencies, ...rendererScene } = cloneScene(scene)
-    return { ...rendererScene, assetUrls }
+    const modelUrls: Record<string, string> = {}
+    for (const node of scene.nodes) {
+      if (node.kind !== 'import') continue
+      const asset = assetsById.get(node.assetId)
+      if (!asset) continue
+      const url = meshAssetUrl({
+        assetId: asset.id,
+        accessToken: asset.accessToken,
+        relativePath: node.entryPath
+      })
+      if (url) modelUrls[node.id] = url
+    }
+    const {
+      workspacePath: _workspacePath,
+      dependencies: _dependencies,
+      ...rendererScene
+    } = cloneScene(scene)
+    return { ...rendererScene, assetUrls, modelUrls }
   }
 
   listForChat(chatId: string): MeshSceneSummary[] {
