@@ -1,5 +1,6 @@
 import { app } from 'electron'
-import { join } from 'path'
+import { tmpdir } from 'os'
+import { basename, isAbsolute, join, relative, resolve } from 'path'
 
 // Dev (electron-vite, unpackaged) runs under the package.json name "taskwraith",
 // which on macOS's case-INSENSITIVE filesystem resolves to the SAME userData
@@ -50,6 +51,31 @@ function readDevInstanceId(): string {
 export const devInstanceId = readDevInstanceId()
 
 /**
+ * Packaged smoke tests need an isolated profile so they cannot collide with,
+ * read, or stop a human's real TaskWraith instance. Keep this deliberately
+ * narrow: both the explicit smoke posture and a private temp-directory flag
+ * are required. Ordinary packaged launches still never relocate userData from
+ * an environment variable.
+ */
+function readPackagedSmokeUserDataPath(): string {
+  if (!app.isPackaged || !process.argv.includes('--taskwraith-package-smoke')) return ''
+  const prefix = '--taskwraith-package-smoke-user-data='
+  const raw = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length)
+  if (!raw || !isAbsolute(raw)) return ''
+
+  const candidate = resolve(raw)
+  const tempRoot = resolve(tmpdir())
+  const withinTemp = relative(tempRoot, candidate)
+  if (!withinTemp || withinTemp === '..' || isAbsolute(withinTemp) || withinTemp.startsWith('..')) {
+    return ''
+  }
+  if (!basename(candidate).startsWith('taskwraith-tui-package-smoke-')) return ''
+  return candidate
+}
+
+const packagedSmokeUserDataPath = readPackagedSmokeUserDataPath()
+
+/**
  * Port shift for this instance's embedded relay, so two dev instances don't
  * fight over one port (the loser silently ends up with no relay and cannot be
  * dialled — which reads as "collaboration is broken", not "port collision").
@@ -70,7 +96,19 @@ export function devInstanceRelayPortOffset(): number {
   return hash + 1
 }
 
-if (!app.isPackaged) {
+if (packagedSmokeUserDataPath) {
+  app.setName('TaskWraith Package Smoke')
+  app.setPath('userData', packagedSmokeUserDataPath)
+  const failPackageSmoke = (kind: string, error: unknown) => {
+    console.error(
+      `[package-smoke] ${kind}:`,
+      error instanceof Error ? error.stack || error.message : String(error)
+    )
+    app.exit(1)
+  }
+  process.once('uncaughtException', (error) => failPackageSmoke('uncaught exception', error))
+  process.once('unhandledRejection', (error) => failPackageSmoke('unhandled rejection', error))
+} else if (!app.isPackaged) {
   const instanceName = devInstanceId ? `TaskWraith Dev ${devInstanceId}` : 'TaskWraith Dev'
   app.setName(instanceName)
   // Pin userData explicitly too: setName drives the default path, but this is

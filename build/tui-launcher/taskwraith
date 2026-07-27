@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Alias of `tw` — same packaged TUI launcher (Developer Preview).
+# See build/tui-launcher/tw for layout and runtime notes.
+
+set -euo pipefail
+
+resolve_bin_dir() {
+  local source="${BASH_SOURCE[0]:-$0}"
+  while [ -L "$source" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ $source != /* ]] && source="$dir/$source"
+  done
+  cd -P "$(dirname "$source")" && pwd
+}
+
+BIN_DIR="$(resolve_bin_dir)"
+RESOURCES_DIR="$(cd "$BIN_DIR/.." && pwd)"
+CLI_JS="$RESOURCES_DIR/tui/tui/cli.js"
+RUNTIME_ROOT="$RESOURCES_DIR/tui-runtime"
+
+if [ ! -f "$CLI_JS" ]; then
+  echo "taskwraith: packaged TUI payload missing at:" >&2
+  echo "  $CLI_JS" >&2
+  echo "This launcher is for an installed TaskWraith package (Developer Preview)." >&2
+  echo "From a checkout, use: npm run tui -- [options]  or  npx tw [options]" >&2
+  exit 1
+fi
+
+normalize_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) printf 'x64\n' ;;
+    aarch64 | arm64) printf 'arm64\n' ;;
+    *) uname -m ;;
+  esac
+}
+
+detect_platform() {
+  case "$(uname -s)" in
+    Darwin) printf 'darwin\n' ;;
+    Linux) printf 'linux\n' ;;
+    *)
+      echo "taskwraith: unsupported platform for POSIX launcher: $(uname -s)" >&2
+      echo "On Windows use taskwraith.cmd / taskwraith.ps1." >&2
+      exit 1
+      ;;
+  esac
+}
+
+find_node_runtime() {
+  local platform arch primary cand
+
+  platform="$(detect_platform)"
+  arch="$(normalize_arch)"
+  primary="$RUNTIME_ROOT/${platform}-${arch}/node"
+
+  if [ -x "$primary" ] && [ -f "$primary" ]; then
+    printf '%s\n' "$primary"
+    return 0
+  fi
+
+  if [ -x "$RUNTIME_ROOT/node" ] && [ -f "$RUNTIME_ROOT/node" ]; then
+    printf '%s\n' "$RUNTIME_ROOT/node"
+    return 0
+  fi
+
+  if [ -d "$RUNTIME_ROOT" ]; then
+    for cand in "$RUNTIME_ROOT"/*/node; do
+      if [ -x "$cand" ] && [ -f "$cand" ]; then
+        printf '%s\n' "$cand"
+        return 0
+      fi
+    done
+  fi
+
+  return 1
+}
+
+if ! NODE_BIN="$(find_node_runtime)"; then
+  echo "taskwraith: packaged TUI Node runtime missing under:" >&2
+  echo "  $RUNTIME_ROOT" >&2
+  echo "Expected: tui-runtime/$(detect_platform)-$(normalize_arch)/node" >&2
+  echo "The package must run npm run prepare:tui-runtime before electron-builder." >&2
+  echo "TaskWraith does not use ELECTRON_RUN_AS_NODE (RunAsNode fuse is disabled)." >&2
+  exit 1
+fi
+
+exec "$NODE_BIN" "$CLI_JS" "$@"

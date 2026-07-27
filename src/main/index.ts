@@ -736,6 +736,7 @@ import {
   probeAllProviderRates
 } from './services/ProviderRateService'
 import { MainProcessActionExecutor } from './BridgeActionExecutor'
+import { installTaskWraithLocalControl } from './control/TaskWraithLocalControlLifecycle'
 import type {
   BridgeComposerPromptAction,
   BridgeWorkflowRunNowAction,
@@ -35049,6 +35050,7 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    await installTaskWraithLocalControl(app, () => createBridgeActionExecutor())
     try {
       await regenerableHistoryByteStore.initializeStrict(
         AppStore.getPendingHistoryDeletion()?.operationId

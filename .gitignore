@@ -8,6 +8,10 @@ out
 *.log*
 *.tsbuildinfo
 
+# Packaged TUI Node runtime binaries (prepared by scripts/prepare-tui-runtime.cjs)
+/build/tui-runtime/**
+!/build/tui-runtime/README.md
+
 # Local-only planning/release material kept out of the public source tree
 .local-only/
 papercuts/*
