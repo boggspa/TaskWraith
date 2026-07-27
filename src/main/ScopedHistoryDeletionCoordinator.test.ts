@@ -114,7 +114,7 @@ const delayedSinkCases: Array<{
     name: 'maintenance compaction',
     overrides: (gate) => ({
       listMaintenanceCompactions: vi.fn(() => [
-        { id: 'compaction-a', provider: 'codex', chatId: 'chat-a' }
+        { id: 'compaction-a', provider: 'codex' as const, chatId: 'chat-a' }
       ]),
       beginMaintenanceCompactionDeletion: vi.fn(() => ({ id: 'maintenance-hold' })),
       cancelAndJoinMaintenanceCompaction: vi.fn(() => gate.promise),
