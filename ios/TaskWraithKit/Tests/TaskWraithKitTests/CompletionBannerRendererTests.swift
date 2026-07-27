@@ -13,6 +13,7 @@ struct CompletionBannerRendererTests {
                 filesChanged: 3, additions: 128, deletions: 44))
         #expect(r.title == "\u{2705} Codex")
         #expect(r.body.contains("Refactored the card."))
+        #expect(r.body.contains("\u{1F4DD} 3 files"))
         #expect(r.body.contains("\u{1F7E9} +128"))
         #expect(r.body.contains("\u{1F7E5} -44"))
     }
@@ -51,17 +52,24 @@ struct CompletionBannerRendererTests {
         #expect(e.body == "Run finished.")
     }
 
-    @Test("diffBannerLine: singular/plural + nil when nothing changed")
+    @Test("diffBannerLine: file count leads, singular/plural, nil when nothing changed")
     func diffLine() {
         #expect(
             CompletionBannerRenderer.diffBannerLine(files: 1, additions: 0, deletions: 0)
-                == "1 file changed")
+                == "\u{1F4DD} 1 file")
         #expect(
             CompletionBannerRenderer.diffBannerLine(files: 2, additions: 0, deletions: 0)
-                == "2 files changed")
+                == "\u{1F4DD} 2 files")
+        // The file count is kept ALONGSIDE the +/- counts rather than being a
+        // fallback for when both are zero — this is what the foreground banner
+        // always showed, and unifying the render paths must not lose it.
         #expect(
             CompletionBannerRenderer.diffBannerLine(files: 2, additions: 23125, deletions: 10055)
-                == "\u{1F7E9} +23,125 \u{1F7E5} -10,055")
+                == "\u{1F4DD} 2 files \u{00B7} \u{1F7E9} +23,125 \u{00B7} \u{1F7E5} -10,055")
+        // Counts can arrive without a file count (older projections) — still renders.
+        #expect(
+            CompletionBannerRenderer.diffBannerLine(files: 0, additions: 5, deletions: 0)
+                == "\u{1F7E9} +5")
         #expect(CompletionBannerRenderer.diffBannerLine(files: 0, additions: 0, deletions: 0) == nil)
     }
 

@@ -1,0 +1,306 @@
+{
+  "_comment": "SHARED CORPUS. Read by src/shared/bannerTemplate.test.ts (TS preview renderer) AND ios/TaskWraithKit/Tests/TaskWraithKitTests/TWBannerFixtureTests.swift (Swift device renderer). Both MUST produce these exact strings. Add a case here instead of writing a hand-rolled assertion in one language — a case that only exists in one place is how the two renderers drift. `template: null` means the built-in default.",
+  "cases": [
+    {
+      "name": "default: title, summary and full diff line",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": "Refactored the card. It is clean now.",
+        "filesChanged": 3,
+        "additions": 128,
+        "deletions": 44,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "Refactored the card. It is clean now.\n📝 3 files · 🟩 +128 · 🟥 -44"
+    },
+    {
+      "name": "default: thousands separators are grouped",
+      "template": null,
+      "input": {
+        "title": "Claude",
+        "preview": null,
+        "filesChanged": 2,
+        "additions": 23125,
+        "deletions": 10055,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Claude",
+      "expectedBody": "📝 2 files · 🟩 +23,125 · 🟥 -10,055"
+    },
+    {
+      "name": "default: one file is singular",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": null,
+        "filesChanged": 1,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "📝 1 file"
+    },
+    {
+      "name": "default: nothing changed falls back to the status line",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": null,
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "Run finished."
+    },
+    {
+      "name": "default: empty title becomes TaskWraith",
+      "template": null,
+      "input": {
+        "title": "",
+        "preview": "",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ TaskWraith",
+      "expectedBody": "Run finished."
+    },
+    {
+      "name": "default: diff suppressed on failure, error copy used",
+      "template": null,
+      "input": {
+        "title": "Claude",
+        "preview": null,
+        "filesChanged": 9,
+        "additions": 9,
+        "deletions": 9,
+        "status": "error"
+      },
+      "expectedTitle": "⚠️ Claude",
+      "expectedBody": "Run needs your attention."
+    },
+    {
+      "name": "default: quota status has its own glyph and copy",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": null,
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "quota"
+      },
+      "expectedTitle": "❌ Codex",
+      "expectedBody": "Rate limit or quota wall."
+    },
+    {
+      "name": "default: cancelled status",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": null,
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "cancelled"
+      },
+      "expectedTitle": "⚠️ Codex",
+      "expectedBody": "Run cancelled."
+    },
+    {
+      "name": "default: two sentences max, rest dropped",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": "One. Two. Three. Four.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "One. Two."
+    },
+    {
+      "name": "default: newlines in the preview flatten to spaces",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": "Line one\nline two.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "Line one line two."
+    },
+    {
+      "name": "default: the user's own double spaces survive",
+      "template": null,
+      "input": {
+        "title": "Codex",
+        "preview": "Did  a  thing.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "✅ Codex",
+      "expectedBody": "Did  a  thing."
+    },
+    {
+      "name": "custom: reordered body, renamed title, custom separator",
+      "template": {
+        "version": 1,
+        "titleFormat": "{agent} — {status}",
+        "bodyLines": ["{diff}", "{summary}"],
+        "statusEmoji": {
+          "success": "🚀",
+          "warning": "⚠️",
+          "error": "⚠️",
+          "quota": "❌",
+          "cancelled": "⚠️"
+        },
+        "statusFallback": {
+          "success": "Run finished.",
+          "warning": "Run finished with warnings.",
+          "error": "Run needs your attention.",
+          "quota": "Rate limit or quota wall.",
+          "cancelled": "Run cancelled."
+        },
+        "diffSegments": [
+          { "field": "additions", "format": "+{value}" },
+          { "field": "deletions", "format": "-{value}" }
+        ],
+        "diffSeparator": "/",
+        "previewSentences": 2,
+        "previewCap": 180
+      },
+      "input": {
+        "title": "Claude",
+        "preview": "Done.",
+        "filesChanged": 3,
+        "additions": 10,
+        "deletions": 2,
+        "status": "success"
+      },
+      "expectedTitle": "Claude — success",
+      "expectedBody": "+10/-2\nDone."
+    },
+    {
+      "name": "custom: unknown tokens are stripped, not leaked",
+      "template": {
+        "version": 1,
+        "titleFormat": "{agent} {notAToken}",
+        "bodyLines": ["{fils} {summary}"],
+        "statusEmoji": {
+          "success": "✅",
+          "warning": "⚠️",
+          "error": "⚠️",
+          "quota": "❌",
+          "cancelled": "⚠️"
+        },
+        "statusFallback": {
+          "success": "Run finished.",
+          "warning": "Run finished with warnings.",
+          "error": "Run needs your attention.",
+          "quota": "Rate limit or quota wall.",
+          "cancelled": "Run cancelled."
+        },
+        "diffSegments": [{ "field": "files", "format": "📝 {value} file{s}" }],
+        "diffSeparator": " · ",
+        "previewSentences": 2,
+        "previewCap": 180
+      },
+      "input": {
+        "title": "Codex",
+        "preview": "Hi.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "Codex",
+      "expectedBody": "Hi."
+    },
+    {
+      "name": "custom: an all-empty title falls back to the agent name",
+      "template": {
+        "version": 1,
+        "titleFormat": "{nope}",
+        "bodyLines": ["{summary}"],
+        "statusEmoji": {
+          "success": "✅",
+          "warning": "⚠️",
+          "error": "⚠️",
+          "quota": "❌",
+          "cancelled": "⚠️"
+        },
+        "statusFallback": {
+          "success": "Run finished.",
+          "warning": "Run finished with warnings.",
+          "error": "Run needs your attention.",
+          "quota": "Rate limit or quota wall.",
+          "cancelled": "Run cancelled."
+        },
+        "diffSegments": [{ "field": "files", "format": "📝 {value} file{s}" }],
+        "diffSeparator": " · ",
+        "previewSentences": 2,
+        "previewCap": 180
+      },
+      "input": {
+        "title": "Codex",
+        "preview": "Hi.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "Codex",
+      "expectedBody": "Hi."
+    },
+    {
+      "name": "custom: one sentence cap",
+      "template": {
+        "version": 1,
+        "titleFormat": "{agent}",
+        "bodyLines": ["{summary}"],
+        "statusEmoji": {
+          "success": "✅",
+          "warning": "⚠️",
+          "error": "⚠️",
+          "quota": "❌",
+          "cancelled": "⚠️"
+        },
+        "statusFallback": {
+          "success": "Run finished.",
+          "warning": "Run finished with warnings.",
+          "error": "Run needs your attention.",
+          "quota": "Rate limit or quota wall.",
+          "cancelled": "Run cancelled."
+        },
+        "diffSegments": [{ "field": "files", "format": "📝 {value} file{s}" }],
+        "diffSeparator": " · ",
+        "previewSentences": 1,
+        "previewCap": 180
+      },
+      "input": {
+        "title": "Codex",
+        "preview": "One. Two. Three.",
+        "filesChanged": 0,
+        "additions": 0,
+        "deletions": 0,
+        "status": "success"
+      },
+      "expectedTitle": "Codex",
+      "expectedBody": "One."
+    }
+  ]
+}

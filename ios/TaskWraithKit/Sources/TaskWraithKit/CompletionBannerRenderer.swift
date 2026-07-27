@@ -55,30 +55,128 @@ public struct RenderedBanner: Sendable, Equatable {
 }
 
 public enum CompletionBannerRenderer {
+    /// Renders with the user's saved template, falling back to `.default` when
+    /// none is stored. The `template:` overload exists so the NSE, the Mac's
+    /// live preview, and tests can all render a template without touching
+    /// UserDefaults.
     public static func render(_ input: CompletionBannerInput) -> RenderedBanner {
-        let name = (input.title?.isEmpty == false) ? input.title! : "TaskWraith"
-        let title = "\(emoji(for: input.status)) \(name)"
-        var lines: [String] = []
-        if let summary = bannerSentences(input.preview) { lines.append(summary) }
-        if input.status == .success,
-            let diff = diffBannerLine(
-                files: input.filesChanged, additions: input.additions, deletions: input.deletions)
-        {
-            lines.append(diff)
-        }
-        if lines.isEmpty { lines.append(defaultBody(for: input.status)) }
-        return RenderedBanner(title: title, body: lines.joined(separator: "\n"))
+        render(input, template: TWBannerTemplateStore.load())
     }
 
-    /// "\u{1F7E9} +23,125 \u{1F7E5} -10,055" — compact plain-text diff stats.
+    public static func render(
+        _ input: CompletionBannerInput, template: TWBannerTemplate
+    ) -> RenderedBanner {
+        let t = template.sanitized()
+        let name = (input.title?.isEmpty == false) ? input.title! : "TaskWraith"
+        let statusKey = input.status.rawKey
+        let statusEmoji = t.statusEmoji[statusKey] ?? ""
+
+        // The diff line is suppressed for every non-success status: a failed or
+        // cancelled run's counts describe work that was rolled back or never
+        // finished, so showing "+128" next to "Run needs your attention" reads as
+        // a success. Pre-template behaviour, deliberately kept.
+        let diff =
+            input.status == .success
+            ? diffBannerLine(
+                files: input.filesChanged, additions: input.additions,
+                deletions: input.deletions, template: t)
+            : nil
+
+        let substitutions: [String: String] = [
+            "statusEmoji": statusEmoji,
+            "agent": name,
+            "status": statusKey,
+            "summary": bannerSentences(
+                input.preview, maxSentences: t.previewSentences, cap: t.previewCap) ?? "",
+            "diff": diff ?? ""
+        ]
+
+        let title = substitute(t.titleFormat, substitutions)
+        // Empty lines are dropped so a template can list {diff} unconditionally
+        // and still produce a tight banner on a run that changed nothing.
+        var lines = t.bodyLines
+            .map { substitute($0, substitutions) }
+            .filter { !$0.isEmpty }
+        if lines.isEmpty {
+            lines.append(t.statusFallback[statusKey] ?? defaultBody(for: input.status))
+        }
+
+        // Last line of defence for the NSE's "never worse than generic" contract:
+        // a template that renders an empty TITLE would produce a bodyless-looking
+        // notification, so fall back to the agent name rather than ship blank.
+        let safeTitle = title.isEmpty ? name : title
+        return RenderedBanner(title: safeTitle, body: lines.joined(separator: "\n"))
+    }
+
+    /// Token substitution over a CLOSED set. Unknown `{tokens}` are stripped
+    /// rather than left literal — the Mac's editor validates and refuses to save
+    /// them, so anything reaching a device is a corrupted or downgraded blob and
+    /// a stray "{fils}" on a lock screen is worse than a gap. Collapses the
+    /// whitespace an emptied token leaves behind.
+    static func substitute(_ format: String, _ values: [String: String]) -> String {
+        var out = ""
+        var token = ""
+        var inToken = false
+        // Only an EMPTY substitution can strand whitespace, so the collapse below
+        // is gated on one happening. Collapsing unconditionally would also squash
+        // double spaces inside the user's own preview text, which would make the
+        // default template stop reproducing the pre-template wording exactly.
+        var didEmptySubstitution = false
+        for ch in format {
+            if ch == "{" {
+                // An unclosed "{" earlier in the string: flush it literally.
+                if inToken { out += "{" + token }
+                inToken = true
+                token = ""
+            } else if ch == "}" && inToken {
+                let value = values[token] ?? ""
+                if value.isEmpty { didEmptySubstitution = true }
+                out += value
+                inToken = false
+                token = ""
+            } else if inToken {
+                token.append(ch)
+            } else {
+                out.append(ch)
+            }
+        }
+        if inToken { out += "{" + token }
+        guard didEmptySubstitution else {
+            return out.trimmingCharacters(in: .whitespaces)
+        }
+        return
+            out
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// "\u{1F4DD} 3 files \u{00B7} \u{1F7E9} +23,125 \u{00B7} \u{1F7E5} -10,055" — compact
+    /// plain-text diff stats. Emoji is the only way to colour a plain-text banner.
     /// nil when nothing changed.
-    public static func diffBannerLine(files: Int, additions: Int, deletions: Int) -> String? {
-        guard files > 0 || additions > 0 || deletions > 0 else { return nil }
+    ///
+    /// The file count leads and is kept ALONGSIDE the +/- counts (it used to be a
+    /// fallback shown only when both were zero). That matches what the foreground
+    /// banner has always shown, so unifying the two render paths doesn't cost the
+    /// foreground its file count.
+    public static func diffBannerLine(
+        files: Int, additions: Int, deletions: Int,
+        template: TWBannerTemplate = .default
+    ) -> String? {
         var parts: [String] = []
-        if additions > 0 { parts.append("\u{1F7E9} +\(grouped(additions))") }
-        if deletions > 0 { parts.append("\u{1F7E5} -\(grouped(deletions))") }
-        if !parts.isEmpty { return parts.joined(separator: " ") }
-        return "\(files) file\(files == 1 ? "" : "s") changed"
+        for segment in template.diffSegments {
+            let value: Int
+            switch segment.field {
+            case .files: value = files
+            case .additions: value = additions
+            case .deletions: value = deletions
+            }
+            guard value > 0 else { continue }
+            parts.append(
+                substitute(segment.format, ["value": grouped(value), "s": value == 1 ? "" : "s"]))
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.joined(separator: template.diffSeparator)
     }
 
     /// First 1–2 sentences of a card preview, flattened to one line + capped, for
