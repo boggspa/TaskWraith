@@ -48,7 +48,7 @@ describe('MeshCanvasPanel (static render)', () => {
     const html = renderToStaticMarkup(<MeshCanvasPanel chatId="chat-mesh-static" />)
     expect(html).toContain('Mesh Canvas')
     expect(html).toContain('Human and agent-built 3D scenes stay local to this chat.')
-    expect(html).toContain('Import 3D model')
+    expect(html).toContain('Import 3D scene or model')
     expect(html).toContain('No Mesh Canvas scene has been created in this chat yet.')
     expect(html).not.toContain('twmesh://')
   })

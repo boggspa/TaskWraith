@@ -83,7 +83,7 @@ describe('registerMeshSceneHandlers', () => {
     expect(controller.viewForChat).not.toHaveBeenCalled()
   })
 
-  it('imports only a native-picker-selected model into the caller chat without reflecting its path', async () => {
+  it('imports only a native-picker-selected scene root into the caller chat without reflecting its path', async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {
       handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -127,10 +127,13 @@ describe('registerMeshSceneHandlers', () => {
     expect(showOpenDialog).toHaveBeenCalledWith(
       window,
       expect.objectContaining({
-        title: 'Import a 3D model into Mesh Canvas',
+        title: 'Import a 3D scene or model into Mesh Canvas',
         properties: ['openFile'],
         filters: expect.arrayContaining([
-          expect.objectContaining({ extensions: ['glb', 'gltf', 'obj'] })
+          expect.objectContaining({
+            name: '3D scenes and models',
+            extensions: ['glb', 'gltf', 'obj']
+          })
         ])
       })
     )

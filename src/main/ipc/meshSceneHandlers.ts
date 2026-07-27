@@ -71,9 +71,9 @@ export function registerMeshSceneHandlers(ipcMain: IpcMain, deps: MeshSceneIpcDe
     // from the renderer or an agent; only the native picker result reaches the
     // service method that permits non-workspace Documents/Downloads imports.
     const selection = await deps.showOpenDialog(window, {
-      title: 'Import a 3D model into Mesh Canvas',
+      title: 'Import a 3D scene or model into Mesh Canvas',
       properties: ['openFile'],
-      filters: [{ name: '3D models', extensions: ['glb', 'gltf', 'obj'] }]
+      filters: [{ name: '3D scenes and models', extensions: ['glb', 'gltf', 'obj'] }]
     })
     const sourcePath = selection.canceled ? null : selection.filePaths[0]
     if (!sourcePath || !sourcePath.trim()) return { canceled: true }

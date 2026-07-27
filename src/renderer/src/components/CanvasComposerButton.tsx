@@ -232,7 +232,7 @@ export function CanvasComposerButton({
                     Mesh Canvas
                   </div>
                   <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                    Import a local GLB, glTF, or OBJ model into this chat.
+                    Import a local GLB/glTF scene or OBJ model into this chat.
                   </div>
                 </div>
                 <PillButton

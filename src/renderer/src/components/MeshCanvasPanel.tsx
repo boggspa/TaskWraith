@@ -471,7 +471,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       await refresh()
       if (summary) setActiveSceneId(summary.sceneId)
     } catch (error) {
-      setIssue(meshCanvasIssueMessage(error, 'Could not import the selected 3D model.'))
+      setIssue(meshCanvasIssueMessage(error, 'Could not import the selected 3D scene or model.'))
     } finally {
       setImporting(false)
     }
@@ -527,7 +527,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
             onClick={() => void importUserModel()}
             disabled={importing}
           >
-            {importing ? 'Opening picker…' : 'Import 3D model'}
+            {importing ? 'Opening picker…' : 'Import 3D scene or model'}
           </button>
           {view?.presentation && (
             <button
