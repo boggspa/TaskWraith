@@ -1,6 +1,6 @@
 # Codex Terra — Mesh Canvas scratchpad
 
-Status: active adapter follow-up. Retained as compact context for the manual-import, QA, reactive-scene, and safe DCC-adapter extension.
+Status: completed adapter follow-up. Retained as compact context for the manual-import, QA, reactive-scene, and safe DCC-adapter extension.
 
 ## Objective
 
@@ -40,6 +40,12 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 - `058d9a2fe` — Mesh Canvas review permission fixture.
 - `ced62c96e` — reactive scene dependencies.
 - `c379cd846` — scene-import wording clarification.
+- `5ebb3411e` — declarative scene-package manifest foundation.
+- `2c5ae19e7` — adapter work-session marker and scratchpad opened.
+- `52e1fd3ba` — closed-bundle scene package resolver, vault import, and multi-root rendering projection.
+- `fda213e29` — package-import slice work-session record.
+- `844cdf46a` — native scene-package folder picker, renderer IPC, preload API, and dock action.
+- `130a5eb3f` — DCC package guide and screenshot-capture inventory.
 
 ## Final verification
 
@@ -51,8 +57,8 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 ## Adapter follow-up
 
 - User requested sequential slices for an adapter layer that can admit entire exported scene packages while retaining the no-script/no-plugin boundary.
-- Slice 1: a versioned declarative scene-package manifest and pure validation/resolution rules.
-- Slice 2: main-owned manifest/package import that copies only allowlisted declared files into the private Mesh Canvas vault.
-- Slice 3: native picker support for a manifest root or package directory, followed by desktop QA.
-- Future adapters for Blender, Unity, Maya, 3ds Max, and Cinema 4D produce this manifest or a GLB/glTF export; TaskWraith will not execute native project scripts, extensions, or editor binaries during import.
-- 2026-07-27: Slice 2 committed as `52e1fd3ba`. Resolver rejects undeclared, remote/traversal, and symlinked sidecars before copying the declared package into one private vault bundle; a multi-root package produces independent renderer entry URLs while sharing that bundle.
+- Slice 1 delivered a versioned declarative scene-package manifest and pure validation/resolution rules.
+- Slice 2 delivered main-owned package import that copies only allowlisted declared files into the private Mesh Canvas vault and gives each root its own renderer entry URL.
+- Slice 3 delivered the native folder picker and chat-owned package-import IPC, then desktop QA.
+- DCC handoffs for Blender, Unity, Maya, 3ds Max, and Cinema 4D target this manifest or a GLB/glTF export; TaskWraith does not execute native project scripts, extensions, or editor binaries during import.
+- 2026-07-27 QA: a native folder-picker import of a temporary two-root GLB package created `QA two-root GLB export` in the restored QA chat. It remained present after HMR/restart with `World` and `Player` roots sharing one private vault asset.
