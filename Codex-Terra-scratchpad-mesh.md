@@ -1,6 +1,6 @@
 # Codex Terra — Mesh Canvas scratchpad
 
-Status: completed follow-up. Retained as compact context for the manual-import, QA, and reactive-scene extension.
+Status: active adapter follow-up. Retained as compact context for the manual-import, QA, reactive-scene, and safe DCC-adapter extension.
 
 ## Objective
 
@@ -47,3 +47,11 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 - Focused final coverage passed: 23 tests plus one opt-in local-fixture test correctly skipped when no explicit fixture path was supplied.
 - The supplied large Wavefront OBJ with its MTL sidecar and the local `world.glb` fixture both imported successfully without modifying their source files.
 - Desktop QA verified the no-error canonical-chat recovery path, two imported local scenes, the visible teal marker, and a live participant-governed `qa_live.x → QA marker.transform.position.x` update to `1.5` followed by presentation.
+
+## Adapter follow-up
+
+- User requested sequential slices for an adapter layer that can admit entire exported scene packages while retaining the no-script/no-plugin boundary.
+- Slice 1: a versioned declarative scene-package manifest and pure validation/resolution rules.
+- Slice 2: main-owned manifest/package import that copies only allowlisted declared files into the private Mesh Canvas vault.
+- Slice 3: native picker support for a manifest root or package directory, followed by desktop QA.
+- Future adapters for Blender, Unity, Maya, 3ds Max, and Cinema 4D produce this manifest or a GLB/glTF export; TaskWraith will not execute native project scripts, extensions, or editor binaries during import.
