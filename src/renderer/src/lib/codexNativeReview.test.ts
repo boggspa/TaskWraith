@@ -25,6 +25,7 @@ function composedPayload(): AgentRunPayload {
         mcpTools: 'deny',
         subThreadDelegation: 'deny',
         canvasInteraction: 'deny',
+        meshCanvas: 'deny',
         canvasEval: 'deny',
         crossThreadRead: 'deny',
         threadMessage: 'deny',
