@@ -152,10 +152,15 @@ describe('CursorGlobalBrokerRegistrationTransaction', () => {
       mcpServers: { user: { command: 'user-server' } }
     })
     nodeFs.chmodSync(registryPath, 0o660)
+    // Assert the invariant this test is actually about — that atomic
+    // replacement PRESERVES whatever mode the file had — rather than a literal
+    // 0o660, which Windows never reports because chmod there only toggles the
+    // read-only bit. Comparing before against after holds on every platform.
+    const modeBefore = nodeFs.statSync(registryPath).mode & 0o777
 
     transaction(registryPath, registryDirectory).install(context(registryPath))
 
-    expect(nodeFs.statSync(registryPath).mode & 0o777).toBe(0o660)
+    expect(nodeFs.statSync(registryPath).mode & 0o777).toBe(modeBefore)
   })
 
   it('keeps durable matching registration as a no-op', () => {
@@ -174,7 +179,11 @@ describe('CursorGlobalBrokerRegistrationTransaction', () => {
   it('creates a missing registry through the same atomic path', () => {
     const { registryPath, registryDirectory } = fixture()
     const tx = createCursorGlobalBrokerRegistrationTransaction({
-      fs: nodeFs,
+      // Raw nodeFs here would call fsync on a DIRECTORY handle, which is EPERM
+      // on Windows; the shared adapter tolerates that the same way production's
+      // own directory-fsync helpers do. This test is about creating a missing
+      // registry, not about the durability syscall.
+      fs: fsAdapter(),
       registryPath,
       registryDirectory,
       fsyncDirectory: true
