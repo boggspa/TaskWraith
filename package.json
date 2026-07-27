@@ -109,6 +109,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "three": "^0.181.0",
     "ws": "^8.21.0"
   },
   "overrides": {
