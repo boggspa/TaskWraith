@@ -6,14 +6,16 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## 1.9.0 - 2026-07-26
+## 1.9.0 - 2026-07-27
 
 If 1.8.9 gave every agent **room to work**, 1.9.0 connects those rooms into a
-workshop. Parallel lanes can return work you choose to keep, top-level threads
-can leave one another durable notes, and the dock can hold the documents,
-canvases, mail, and calendar context around the code. Pi opens a broad BYOK
-model bench, Mistral Vibe adds a plan-backed door, and the same local authority
-still decides what each seat may touch—or which colours it may change.
+workshop with a front door. Parallel lanes can return work you choose to keep,
+top-level threads can leave one another durable notes, and human collaborators
+can enter a host-reviewed People space without becoming agent authority. The
+dock holds the documents, canvases, mail, and calendar context around the code;
+Pi opens a broad BYOK model bench; and Mistral Vibe adds a plan-backed door. The
+same local authority still decides what each seat may touch—or which colours it
+may change—while product observation remains a clear, optional choice.
 
 ### Branches come back as candidates
 
@@ -32,6 +34,15 @@ contracts. Read-only postures can inspect `git status`, `git diff`, and
 `git log` without an approval card, so review lanes can gather evidence without
 borrowing mutation authority.
 
+### A panel stays a panel
+
+Turning a normal thread into an Ensemble now creates at least two seats, so the
+extra orchestration chrome always opens onto an actual panel. If a two-seat
+panel loses one participant through the ordinary composer controls, the thread
+returns to a solo chat on the remaining seat instead of persisting a one-agent
+Ensemble. Explicit agent-authored or saved-preset one-seat rosters remain
+untouched: TaskWraith does not rewrite a roster that was deliberately stated.
+
 ### Threads can knock on another door
 
 Top-level threads gain **peer messages**: a durable, permission-gated inbox for
@@ -46,6 +57,26 @@ The Peers dock makes that path visible on desktop, and the paired iPhone/iPad
 companion can read the inbox, send a reply, and show the same pending indicator.
 Sub-thread return still flows child to parent; peer messaging is the deliberate
 sideways path between independent top-level tasks.
+
+### People can enter without becoming an agent
+
+Human collaboration now calls itself **People** instead of Shares and makes the
+host boundary easier to read. Invite-issued, offline, and live states are
+distinct; contribution-rule presets say what a collaborator may request;
+participants can be removed individually; and an expandable activity log
+explains admission, disconnect, duplicate/rejected contributions, and draft
+insertion instead of making a dropped comment look like it vanished. Even the
+strongest preset only prepares a host draft—the user still decides whether to
+send it to an agent.
+
+Unpackaged builds also gain a same-Mac rehearsal lane: separately named
+instances receive separate app data, single-instance locks, identities, and
+relay and Tailscale Serve ports. An explicit LAN-only or loopback invite appears
+only after the corresponding remote-reachability guard refuses that invite, so
+the rehearsal does not weaken the packaged remote boundary. Side-by-side boot,
+data isolation, and port separation have been exercised; the collaboration
+handshake and unrelated-network two-Mac flow have not, so this remains a test
+path rather than a production-connectivity claim.
 
 ### The dock becomes a desk
 
@@ -164,7 +195,10 @@ a seat stopped by cancellation stays quiet rather than blaming its provider.
 The production adapter registry is checked against that full roster before a
 new identity can become a mysterious startup crash. Its test follows the
 actual registration graph, and a mismatch now names both the missing adapter
-and the construction site that needs repair.
+and the construction site that needs repair. Provider selection is exhaustive
+at compile time too: an unhandled identity fails type-checking instead of
+silently borrowing retired Gemini behavior, while the Settings usage and rate
+tables include the newest seats rather than dropping them from the end.
 
 That same discipline reaches smaller authority edges: peer-thread wakes,
 fan-out candidates, provider capability projection, grant expiry, and review
@@ -182,6 +216,35 @@ provider-run failures get native cards; the workspace/branch pill opens a Git
 surface for branch, checkout, and PR-watch actions; and the Peers inspector
 carries cross-thread messages. Pairing reconnects no longer flap the app back
 to the setup screen.
+
+An in-flight run can now stay visible as a **Live Activity** on the Lock Screen
+and Dynamic Island. Solo, diff, attention, and Ensemble layouts are compiled
+into the companion, with a master switch and layout picker on the Mac; the
+iPhone's system setting still has the final say. A connected phone updates its
+own card, while a Mac with APNs configured can keep it current after the relay
+drops and, after a grace period, raise one for a run that began while the app
+was closed. Stale and terminal states end honestly rather than leaving a timer
+running, and the delayed start stands down if the phone already created the
+card.
+
+That card is a deliberate exception to the companion's ordinary encrypted task
+projection: ActivityKit must decode its push state, so it cannot be
+end-to-end encrypted. The payload is therefore a strict allowlist of coarse
+phase, start time, file/add/delete counts, provider product names, bounded
+Ensemble seat states, palette/layout, and an opaque per-activity reference. It
+contains no prompt, output, title, path, repository/workspace name, or run/chat
+identifier. No privacy-sensitive value—including user-authored task/workspace
+content or an account/workspace-linkable identifier—may ever be seeded into
+that state; adding one requires a fresh privacy and security review. Live
+Activity tokens remain memory-only on the Mac.
+
+Foreground and closed-app completion banners now use the same renderer and a
+closed, versioned preset contract, so one run no longer gains different wording
+or symbols depending on whether the companion happened to be open. The default
+remains byte-for-byte compatible, and a Settings preview lets the user choose
+the wording safely. APNs delivery also respects each device's sandbox or
+production environment and prunes a token only when Apple says it is actually
+unregistered—not merely because it was sent to the wrong gateway.
 
 Across both apps, provider rows use cleaner labels, pickers stop calling an
 empty model list “loading,” compact tool foldouts retain their diff accents,
@@ -203,6 +266,12 @@ refuses a writeback that would move the credential backwards, and hands the
 lease back on exit, removing the borrowed credential and nothing else. A second
 TaskWraith window, or a machine with nothing to borrow, quietly runs the way it
 always did rather than failing a launch that would otherwise have worked.
+
+Provider identity gets the same cleanup. Official Pi and Mistral marks now
+replace approximated brand glyphs on desktop and iOS, and the invented
+mnemonic provider-glyph set is removed from external identity surfaces.
+Neutral pool, sidebar, notice, and collaborator contexts use honest monograms
+or product-owned symbols when no approved first-party mark belongs there.
 
 ### Product observation says exactly what it counts
 

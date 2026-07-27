@@ -280,14 +280,18 @@ describe('ChangelogSheet', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.9.0' }, null)
     expect(entry).toMatchObject({
       version: '1.9.0',
-      releaseDate: '2026-07-26'
+      releaseDate: '2026-07-27'
     })
     // 1.9.0 continues the story format and evolves 1.8.9's separate rooms
     // into a connected workshop. Pin the user-facing beats, not taxonomy.
     expect(entry.releaseNotes).toContain('connects those rooms into a')
     expect(entry.releaseNotes).toContain('Branches come back as candidates')
     expect(entry.releaseNotes).toContain('isolated worktree')
+    expect(entry.releaseNotes).toContain('A panel stays a panel')
+    expect(entry.releaseNotes).toContain('at least two seats')
     expect(entry.releaseNotes).toContain('Threads can knock on another door')
+    expect(entry.releaseNotes).toContain('People can enter without becoming an agent')
+    expect(entry.releaseNotes).toContain('same-Mac rehearsal lane')
     expect(entry.releaseNotes).toContain('Office dock')
     expect(entry.releaseNotes).toContain('stand down while a human is driving')
     expect(entry.releaseNotes).toContain('must never target')
@@ -300,7 +304,15 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('The workshop can wear your colours')
     expect(entry.releaseNotes).toContain('theme_tokens_set')
     expect(entry.releaseNotes).toContain('Every provider leaves a clearer receipt')
+    expect(entry.releaseNotes).toContain('fails type-checking')
     expect(entry.releaseNotes).toContain('The phone keeps the same map')
+    expect(entry.releaseNotes).toContain('Live Activity')
+    expect(entry.releaseNotes).toContain('cannot be')
+    expect(entry.releaseNotes).toContain('No privacy-sensitive value')
+    expect(entry.releaseNotes).toContain('same renderer')
+    expect(entry.releaseNotes).toContain("device's sandbox or")
+    expect(entry.releaseNotes).toContain('Official Pi and Mistral marks')
+    expect(entry.releaseNotes).toContain('invented')
     expect(entry.releaseNotes).toContain('keeps first-party observation off')
     expect(entry.releaseNotes).toContain('Share minimal activity')
     expect(entry.releaseNotes).toContain('neither choice removes a feature')
