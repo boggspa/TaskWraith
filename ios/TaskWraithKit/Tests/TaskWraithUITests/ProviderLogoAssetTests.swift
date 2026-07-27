@@ -152,6 +152,8 @@ struct ProviderLogoAssetTests {
         #expect(ProviderGlyphIcon.usesOriginalArtwork(provider: nil, isEnsemble: true))
         #expect(ProviderGlyphIcon.usesOriginalArtwork(provider: " EnSeMbLe ", isEnsemble: false))
         #expect(!ProviderGlyphIcon.usesOriginalArtwork(provider: "codex", isEnsemble: false))
+        #expect(ProviderGlyphIcon.bundledResourceURL(for: "codex") == nil)
+        #expect(ProviderGlyphIcon.bundledResourceURL(for: "ollama") == nil)
 
         let url = try #require(ProviderGlyphIcon.bundledResourceURL(for: "ensemble"))
         let data = try Data(contentsOf: url)
@@ -181,5 +183,18 @@ struct ProviderLogoAssetTests {
             JSONSerialization.jsonObject(with: contentsData) as? [String: Any])
         let properties = try #require(contents["properties"] as? [String: Any])
         #expect(properties["template-rendering-intent"] as? String == "original")
+
+        let packageResources = iosRoot.appendingPathComponent(
+            "TaskWraithKit/Sources/TaskWraithUI/Resources")
+        let packageGlyphs = try FileManager.default.contentsOfDirectory(
+            atPath: packageResources.path
+        ).filter { $0.hasPrefix("provider-glyph-") }.sorted()
+        #expect(packageGlyphs == ["provider-glyph-ensemble.png"])
+
+        let appAssets = iosRoot.appendingPathComponent("TaskWraithApp/Assets.xcassets")
+        let appGlyphSets = try FileManager.default.contentsOfDirectory(
+            atPath: appAssets.path
+        ).filter { $0.hasPrefix("provider-glyph-") }.sorted()
+        #expect(appGlyphSets == ["provider-glyph-ensemble.imageset"])
     }
 }

@@ -3917,25 +3917,15 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 // AttributedString and @mentions tinted by participant provider accent.
 // Deliberately dependency-free and bounded (preview text is ≤ a few KB).
 
-/// Provider mnemonic glyph — fallback when no first-party logo exists
-/// (Ensemble, unknown providers). Prefer ``ProviderLogoIcon`` for ordinary
-/// provider identity. Ordinary glyphs load a white-on-alpha template PNG and
-/// receive a provider tint plus black contrast at runtime. Ensemble preserves
-/// its full-colour Confluence Loom PNG as original artwork; its black silhouette
-/// and dual-ink sparkles are already safe on light and dark surfaces.
+/// TaskWraith-owned identity fallback for Ensemble and unknown providers.
+/// Prefer ``ProviderLogoIcon`` for ordinary
+/// provider identity. Ensemble preserves its full-colour Confluence Loom PNG as
+/// original artwork; unknown providers receive a neutral accent dot.
 public struct ProviderGlyphIcon: View {
     let provider: String?
     let modelId: String?
     let isEnsemble: Bool
     let size: CGFloat
-
-    /// Eight half-unit directions approximate the SVG catalogue's 1-unit
-    /// centred outline while retaining a single template PNG per provider.
-    private static let contrastDirections: [(x: CGFloat, y: CGFloat)] = [
-        (-1, -1), (0, -1), (1, -1),
-        (-1, 0), (1, 0),
-        (-1, 1), (0, 1), (1, 1),
-    ]
 
     public init(
         provider: String?, modelId: String? = nil, isEnsemble: Bool = false, size: CGFloat = 16
@@ -3947,12 +3937,15 @@ public struct ProviderGlyphIcon: View {
     }
 
     private static func glyphImage(for provider: String?) -> Image? {
-        guard let provider = provider?.lowercased(), !provider.isEmpty else { return nil }
+        guard
+            provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "ensemble"
+        else { return nil }
         #if canImport(UIKit)
-            if let ui = UIImage(named: "provider-glyph-\(provider)") {
+            if let ui = UIImage(named: "provider-glyph-ensemble") {
                 return Image(uiImage: ui)
             }
-            if let url = bundledResourceURL(for: provider),
+            if let url = bundledResourceURL(for: "ensemble"),
                 let data = try? Data(contentsOf: url),
                 let ui = UIImage(data: data)
             {
@@ -3963,47 +3956,17 @@ public struct ProviderGlyphIcon: View {
     }
 
     static func bundledResourceURL(for provider: String?) -> URL? {
-        guard let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-            !provider.isEmpty
+        guard
+            provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "ensemble"
         else { return nil }
-        return Bundle.module.url(
-            forResource: "provider-glyph-\(provider)", withExtension: "png")
+        return Bundle.module.url(forResource: "provider-glyph-ensemble", withExtension: "png")
     }
 
     static func usesOriginalArtwork(provider: String?, isEnsemble: Bool) -> Bool {
         isEnsemble
             || provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 == "ensemble"
-    }
-
-    private var contrastOffset: CGFloat {
-        max(0.25, size / 48)
-    }
-
-    @ViewBuilder
-    private func glyphWithContrast(_ glyph: Image, accent: Color) -> some View {
-        ZStack {
-            ForEach(Self.contrastDirections.indices, id: \.self) { index in
-                let direction = Self.contrastDirections[index]
-                glyph
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: size, height: size)
-                    .foregroundStyle(TWTheme.providerGlyphContrast)
-                    .offset(
-                        x: direction.x * contrastOffset,
-                        y: direction.y * contrastOffset)
-                    .accessibilityHidden(true)
-            }
-            glyph
-                .renderingMode(.template)
-                .resizable()
-                .scaledToFit()
-                .frame(width: size, height: size)
-                .foregroundStyle(accent)
-        }
-        .frame(width: size, height: size)
     }
 
     private func fullColourGlyph(_ glyph: Image) -> some View {
@@ -4025,10 +3988,6 @@ public struct ProviderGlyphIcon: View {
                     .foregroundStyle(TWTheme.providerAccent("ensemble"))
                     .frame(width: size, height: size)
             }
-        } else if let glyph = Self.glyphImage(for: provider) {
-            glyphWithContrast(
-                glyph,
-                accent: TWTheme.providerAccent(provider, modelId: modelId))
         } else {
             Circle()
                 .fill(TWTheme.providerAccent(provider, modelId: modelId))
@@ -4076,7 +4035,7 @@ enum ProviderLogoAssetResolver {
 /// Original-colour first-party provider mark (design-assets provider-logos,
 /// vendored under package Resources). Prefer this over ``ProviderGlyphIcon``
 /// for provider identity anywhere beside a label or in list chrome. Ensemble
-/// and unknown providers fall back to TaskWraith's provider glyph.
+/// falls back to TaskWraith artwork; unknown providers receive a neutral dot.
 public struct ProviderLogoIcon: View {
     @Environment(\.colorScheme) private var colorScheme
 

@@ -47,7 +47,7 @@ struct TaskCompleteCard: View {
     /// to fold every participant in the completed round into one token table.
     var runSummaries: [RemoteThreadSnapshot.RunSummary] = []
     /// Current ensemble roster, already enriched with model ids by the session
-    /// model so provider glyphs and Ollama spoof branding stay accurate.
+    /// model so provider marks and Ollama display branding stay accurate.
     var participants: [RemoteEnsembleState.Participant] = []
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }

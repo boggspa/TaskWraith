@@ -250,8 +250,7 @@ private struct RemoteNoticeGroupsView: View {
             ForEach(groups, id: \.provider) { group in
                 let accent = TWTheme.providerAccent(group.provider)
                 VStack(alignment: .leading, spacing: 2) {
-                    // First-party provider mark beside the explicit provider
-                    // heading. Generic icon pickers keep the mnemonic glyphs.
+                    // First-party provider mark beside the explicit heading.
                     HStack(spacing: 5) {
                         ProviderLogoIcon(provider: group.provider, size: 12)
                         Text(group.label)
