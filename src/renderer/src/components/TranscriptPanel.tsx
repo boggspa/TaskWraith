@@ -41,7 +41,11 @@ import { shortModelName } from '../lib/composerChipFormat'
 import { shouldSurfaceProposedPlanCard } from '../lib/ensemblePlanPolicy'
 import { deriveParticipantRenameContinuity } from '../lib/sessionActivityLedger'
 import { shouldCollapseUserMessage, truncateUserMessagePreview } from '../lib/UserMessageCollapse'
-import { buildEscalationChips } from '../lib/runCompleteSummary'
+import {
+  buildRunCompleteBlockers,
+  resolveRunCompleteStatus,
+  runCompleteProducedWork
+} from '../lib/runCompleteSummary'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
 import {
   deriveActiveEnsembleWorkingPresentation,
@@ -2401,10 +2405,59 @@ export const TranscriptPanel = memo(
     }, [messageContextMenu, visibleMessages])
     const shouldShowRunCompleteNotice =
       Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
-    // 1.0.7 (M5 surfacing) — advisory chips for the dark-shipped escalation
-    // signals on the current round. Read-only: the orchestrator persists
-    // these; we just surface label + recommended action.
-    const escalationChips = useMemo(() => buildEscalationChips(currentChat), [currentChat])
+    // The run-complete card's title is a dynamic status, not a fixed "Task
+    // complete": blockers the orchestrator flagged for the round REPLACE the
+    // title (and tint it) instead of contradicting it from an advisory banner
+    // underneath. Read-only — the orchestrator persists the signals; the
+    // resolver is a pure mapping over them.
+    const runCompleteBlockers = useMemo(
+      () => (isGlobal ? [] : buildRunCompleteBlockers(currentChat)),
+      [currentChat, isGlobal]
+    )
+    const runCompleteStatus = useMemo(() => {
+      if (!runCompleteNotice) return null
+      const noticeRunId = currentRun?.runId
+      return resolveRunCompleteStatus({
+        exitCode: runCompleteNotice.exitCode,
+        isGlobal,
+        blockers: runCompleteBlockers,
+        producedWork: runCompleteProducedWork({
+          chat: currentChat,
+          fileChangeCount: displayFileChangeSummaries.length,
+          // Solo runs have no round participants to read an outcome from, so
+          // a non-empty assistant reply for this run counts as work. Strictly
+          // scoped to the finished run: without a run id an older reply from
+          // earlier in the thread would launder a dead run into "work done".
+          hadAssistantOutput: Boolean(
+            noticeRunId &&
+            messages.some(
+              (message) =>
+                message.role === 'assistant' &&
+                message.runId === noticeRunId &&
+                Boolean(message.content?.trim())
+            )
+          )
+        }),
+        // Non-ensemble pause: the run ended on a question the user hasn't
+        // answered yet. Both queues are per-chat and are cleared on answer or
+        // dismiss, so anything still in them is genuinely outstanding; prefer
+        // this run's own question when the run id is known.
+        awaitingAnswer:
+          pendingAgentQuestions.some(
+            (question) => !noticeRunId || question.appRunId === noticeRunId
+          ) || Boolean(pendingPlanChoice)
+      })
+    }, [
+      currentChat,
+      currentRun?.runId,
+      displayFileChangeSummaries.length,
+      isGlobal,
+      messages,
+      pendingAgentQuestions,
+      pendingPlanChoice,
+      runCompleteBlockers,
+      runCompleteNotice
+    ])
     const runBoundaryByMessageId = useMemo(() => {
       const runs = currentChat?.runs || []
       const runById = new Map<string, ChatRun>()
@@ -4867,33 +4920,18 @@ export const TranscriptPanel = memo(
               aria-live="assertive"
               aria-atomic="true"
             >
-              <span className="sr-only">
-                {isGlobal
-                  ? runCompleteNotice.exitCode === 0
-                    ? 'Done'
-                    : runCompleteNotice.exitCode === 130
-                      ? 'Stopped'
-                      : "Couldn't finish"
-                  : runCompleteNotice.exitCode === 0
-                    ? 'Task complete'
-                    : runCompleteNotice.exitCode === 130
-                      ? 'Run cancelled'
-                      : `Task ended with code ${runCompleteNotice.exitCode}`}
-              </span>
+              <span className="sr-only">{runCompleteStatus?.srLabel}</span>
               <div className="run-complete-main">
                 <div className="run-complete-metadata">
-                  <strong>
-                    {isGlobal
-                      ? runCompleteNotice.exitCode === 0
-                        ? 'Done'
-                        : runCompleteNotice.exitCode === 130
-                          ? 'Stopped'
-                          : "Couldn't finish"
-                      : runCompleteNotice.exitCode === 0
-                        ? 'Task complete'
-                        : runCompleteNotice.exitCode === 130
-                          ? 'Run cancelled'
-                          : `Task ended (code ${runCompleteNotice.exitCode})`}
+                  <strong
+                    className={
+                      runCompleteStatus && runCompleteStatus.tone !== 'neutral'
+                        ? `tone-${runCompleteStatus.tone}`
+                        : undefined
+                    }
+                    title={runCompleteStatus?.detail || undefined}
+                  >
+                    {runCompleteStatus?.label}
                   </strong>
                   {!isGlobal && (
                     <span className="run-complete-time-row">
@@ -4907,7 +4945,9 @@ export const TranscriptPanel = memo(
                       {runCompleteDurationText && <span>{runCompleteDurationText}</span>}
                     </span>
                   )}
-                  {!isGlobal && runCompleteNotice.exitCode === 0 && (
+                  {/* Only a clean finish is "awaiting your next prompt" — a blocked
+                      or paused round would contradict its own title. */}
+                  {!isGlobal && runCompleteStatus?.kind === 'complete' && (
                     <span>Awaiting your next prompt.</span>
                   )}
                 </div>
@@ -4961,22 +5001,6 @@ export const TranscriptPanel = memo(
                   )}
                 </div>
               </div>
-              {!isGlobal && escalationChips.length > 0 && (
-                <div
-                  className="ensemble-escalation-advisory"
-                  role="status"
-                  aria-label="Round advisories"
-                >
-                  {escalationChips.map((chip) => (
-                    <div key={chip.id} className={`ensemble-escalation-chip tone-${chip.tone}`}>
-                      <span className="ensemble-escalation-chip-label">{chip.label}</span>
-                      {chip.action && (
-                        <span className="ensemble-escalation-chip-action">{chip.action}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
               {(!isGlobal || displayFileChangeSummaries.length > 0) && (
               <div className="file-change-summary-card">
                 <div className="file-change-summary-header">

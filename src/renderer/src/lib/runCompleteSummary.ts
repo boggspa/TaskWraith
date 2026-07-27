@@ -1,7 +1,6 @@
 import type {
   ChatRecord,
   ChatRun,
-  ComplexityEscalationAction,
   ComplexityEscalationKind,
   ComplexityEscalationSignal,
   EnsembleRoundParticipantState,
@@ -626,65 +625,104 @@ export const buildEnsembleRoundSummaryRows = (
   return rows
 }
 
-/**
- * 1.0.7 (M5 surfacing) — presentation model for one complexity-escalation
- * signal. The orchestrator already computes + persists these every round
- * (`chat.ensemble.escalationSignals`); they were dark-shipped and rendered
- * nowhere. This is a PURE mapping from the stored signal to the copy an
- * advisory chip renders — short label + a one-line recommended next step.
+/* ============================================================
+ * Run-complete status vocabulary
+ * ------------------------------------------------------------
+ * The card that closes every run used to be titled with a fixed
+ * "Task complete" and then contradict itself underneath with an
+ * advisory banner strip ("Round stalled — your input would help
+ * unblock this"). Those banners were inactionable and read as
+ * anxiety, so two of the four signal kinds were hidden outright
+ * and the rest still shouted from a box below a title claiming
+ * success.
  *
- * FRAMING (the maintainer's explicit constraint): these are advisory only —
- * the orchestrator never auto-acts. The copy makes a tradeoff VISIBLE so the
- * user decides; it must never frame a multi-seat panel as waste. Note the
- * recommended action for `disagreement-unresolved` used to be to add a
- * synthesizer, but that signal now stays hidden in the transcript summary:
- * it was persistently noisy and ambiguous in practice. See
- * HIDDEN_ESCALATION_KINDS for the rest of the hidden set.
+ * The banners are gone. The signal itself was the useful part,
+ * so it now REPLACES the card's title: the string that heads the
+ * card is a dynamic status, and every retired warning is revived
+ * as a member of this vocabulary rather than as its own box.
+ *
+ * Deliberately NOT ensemble-specific — `complete`, `cancelled`,
+ * `awaiting-answer` and `exit-failure` all resolve for a solo
+ * run; the four `ComplexityEscalationKind` members are the
+ * ensemble-only additions. Folding that union in is a
+ * choke-point: a new escalation kind fails to typecheck until it
+ * has a label + a severity rank here.
+ * ============================================================ */
+
+/**
+ * Accent applied to the status string. Nothing else about the card changes —
+ * no pill, no container, no icon.
+ *  - `neutral` : work finished, or the pause was intentional (unchanged white)
+ *  - `warning` : a blocker fired BUT the run still produced work
+ *  - `danger`  : a blocker fired and nothing was produced at all
  */
-export type EscalationChipModel = {
-  id: string
-  /** Short human label for the signal kind. */
+export type RunCompleteStatusTone = 'neutral' | 'warning' | 'danger'
+
+export type RunCompleteStatusKind =
+  /** Exit 0, nothing flagged. */
+  | 'complete'
+  /** Exit 130 — the user stopped it. Intentional, so never alarmed. */
+  | 'cancelled'
+  /** Ended on an unanswered agent question / plan choice. Intentional pause. */
+  | 'awaiting-answer'
+  /** Any other non-zero exit. */
+  | 'exit-failure'
+  /** Ensemble round blockers (see ComplexityEscalation.ts). */
+  | ComplexityEscalationKind
+
+export type RunCompleteStatus = {
+  kind: RunCompleteStatusKind
+  /** The card title — replaces the old hard-coded "Task complete". */
   label: string
-  /** One-line recommended next step (advisory). */
-  action: string
-  /** Coarse tone for styling — failures read warmer than advisories. */
-  tone: 'attention' | 'info'
+  /** Screen-reader phrasing (spelled out where the label is terse). */
+  srLabel: string
+  tone: RunCompleteStatusTone
+  /**
+   * The blocker's own evidence line, surfaced as the title's `title`
+   * attribute so the detail the banner used to carry is still reachable
+   * without occupying layout. Empty when there's nothing to add.
+   */
+  detail: string
 }
 
-const ESCALATION_KIND_LABEL: Record<ComplexityEscalationKind, string> = {
+/** One blocker flagged against the run/round, with its evidence line. */
+export type RunCompleteBlocker = {
+  kind: ComplexityEscalationKind
+  detail: string
+}
+
+const STATUS_LABEL: Record<RunCompleteStatusKind, string> = {
+  complete: 'Task complete',
+  cancelled: 'Run cancelled',
+  'awaiting-answer': 'Awaiting your answer',
+  // Carries the exit code, so it is filled in by the resolver.
+  'exit-failure': 'Task ended',
   stuck: 'Round stalled',
-  looping: 'Handoff/Turns Exhausted',
+  // Sentence case: this string now sits in the card's title slot alongside
+  // "Task complete", where Title Case read as a different typographic voice.
+  looping: 'Handoff/turns exhausted',
   'disagreement-unresolved': 'Unreconciled answers',
   'tool-error-cluster': 'Tool errors clustered'
 }
 
-const ESCALATION_KIND_TONE: Record<ComplexityEscalationKind, EscalationChipModel['tone']> = {
-  stuck: 'attention',
-  looping: 'info',
-  'disagreement-unresolved': 'info',
-  'tool-error-cluster': 'attention'
+/** The stripped global-chat card keeps its own terser wording. */
+const GLOBAL_STATUS_LABEL: Partial<Record<RunCompleteStatusKind, string>> = {
+  complete: 'Done',
+  cancelled: 'Stopped',
+  'exit-failure': "Couldn't finish"
 }
 
 /**
- * Signal kinds the orchestrator still records + persists, but which the chip
- * strip deliberately does NOT render. Both were accusations the user could not
- * act on:
- *  - `disagreement-unresolved` — persistently noisy and ambiguous in practice.
- *  - `tool-error-cluster` — "Tool errors clustered / your input would help
- *    unblock this" named a failure with no next step attached, so it read as
- *    distrust in the model or the harness rather than as advice. The failures
- *    themselves are already visible in the transcript where they happened.
+ * Which blocker wins the title when several fire for one round. They are
+ * independent lenses on the same round (an all-failed round trips both
+ * `tool-error-cluster` and `stuck`), so the title shows the most severe and
+ * the rest stay in the evidence tooltip.
  */
-const HIDDEN_ESCALATION_KINDS: ReadonlySet<ComplexityEscalationKind> = new Set([
-  'disagreement-unresolved',
-  'tool-error-cluster'
-])
-
-const ESCALATION_ACTION_COPY: Record<ComplexityEscalationAction, string> = {
-  // Lean into the panel — never frame more seats as waste.
-  'extend-rounds': 'Consider another round to converge.',
-  'call-synthesizer': 'Add a synthesizer to reconcile the answers.',
-  'pause-for-user': 'Your input would help unblock this.'
+const BLOCKER_SEVERITY: Record<ComplexityEscalationKind, number> = {
+  stuck: 4,
+  'tool-error-cluster': 3,
+  looping: 2,
+  'disagreement-unresolved': 1
 }
 
 function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRound']): string {
@@ -703,36 +741,135 @@ function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRoun
 }
 
 /**
- * Map the signals persisted on a chat's ensemble state to chip view-models
- * for the CURRENT round only (signals carry their originating `roundId`).
- * De-duplicates by signal kind (the orchestrator already uses deterministic
- * `${roundId}-esc-${kind}` ids, but a defensive de-dup keeps the chip strip
- * tidy). Returns [] when there's no active round or no signals — the caller
- * renders nothing.
+ * Blockers flagged against the CURRENT round only (signals carry their
+ * originating `roundId`), severity-ordered worst-first and de-duplicated by
+ * kind. Returns [] when there's no active round or no signals.
  *
- * Pure + side-effect-free so the kind/action copy + filtering are unit-tested
- * without a render harness.
+ * No kind is filtered any more: `disagreement-unresolved` and
+ * `tool-error-cluster` used to be suppressed because a banner naming a failure
+ * with no next step read as an accusation. As a title they are just the
+ * round's status, so both are back in the vocabulary.
+ *
+ * Pure + side-effect-free so the mapping is unit-tested without a render
+ * harness.
  */
-export const buildEscalationChips = (chat: ChatRecord | null): EscalationChipModel[] => {
+export const buildRunCompleteBlockers = (chat: ChatRecord | null): RunCompleteBlocker[] => {
   const round = chat?.ensemble?.activeRound
   const signals = chat?.ensemble?.escalationSignals
   if (!round || !signals || signals.length === 0) return []
   const seenKinds = new Set<ComplexityEscalationKind>()
-  const chips: EscalationChipModel[] = []
+  const blockers: RunCompleteBlocker[] = []
   for (const signal of signals as ComplexityEscalationSignal[]) {
     if (signal.roundId !== round.roundId) continue
-    if (HIDDEN_ESCALATION_KINDS.has(signal.kind)) continue
     if (seenKinds.has(signal.kind)) continue
     seenKinds.add(signal.kind)
-    chips.push({
-      id: signal.id,
-      label: ESCALATION_KIND_LABEL[signal.kind] || signal.kind,
-      action:
-        signal.kind === 'looping'
-          ? loopingLimitCopy(round)
-          : ESCALATION_ACTION_COPY[signal.recommendedAction] || '',
-      tone: ESCALATION_KIND_TONE[signal.kind] || 'info'
+    blockers.push({
+      kind: signal.kind,
+      // Live counters beat the stored evidence line for `looping`.
+      detail: signal.kind === 'looping' ? loopingLimitCopy(round) : signal.evidence || ''
     })
   }
-  return chips
+  return blockers.sort((a, b) => (BLOCKER_SEVERITY[b.kind] || 0) - (BLOCKER_SEVERITY[a.kind] || 0))
+}
+
+/**
+ * Did the round/run actually produce something? This is the ONLY input that
+ * separates the yellow accent from the red one: a blocker on top of real edits
+ * or a real answer is a partial result, a blocker on top of nothing is a dead
+ * round.
+ *
+ * `answered`/`yielded` mirrors ComplexityEscalation's ANSWER_STATUSES; solo
+ * runs have no participants, so they lean on `hadAssistantOutput`.
+ */
+export const runCompleteProducedWork = (input: {
+  chat: ChatRecord | null
+  fileChangeCount: number
+  hadAssistantOutput?: boolean
+}): boolean => {
+  if (input.fileChangeCount > 0) return true
+  if (input.hadAssistantOutput) return true
+  const participants = input.chat?.ensemble?.activeRound?.participants || []
+  return participants.some((p) => p.status === 'answered' || p.status === 'yielded')
+}
+
+export interface ResolveRunCompleteStatusInput {
+  exitCode: number
+  /** The stripped global-chat card, which uses terser wording. */
+  isGlobal?: boolean
+  /** Severity-ordered blockers — see {@link buildRunCompleteBlockers}. */
+  blockers?: readonly RunCompleteBlocker[]
+  /** See {@link runCompleteProducedWork}. */
+  producedWork: boolean
+  /** An agent question / plan choice was still unanswered when the run ended. */
+  awaitingAnswer?: boolean
+}
+
+/**
+ * Resolve the card's title + accent. Precedence, worst-understood-cause first:
+ *
+ *  1. `cancelled` — the user's own stop outranks anything the round inferred
+ *     about itself; an ensemble round cancelled mid-flight trips `stuck`, and
+ *     titling that "Round stalled" in red would blame the harness for a
+ *     deliberate act.
+ *  2. `exit-failure` — the process itself broke; the most concrete fact.
+ *  3. the worst blocker.
+ *  4. `awaiting-answer` — intentional pause.
+ *  5. `complete`.
+ */
+export const resolveRunCompleteStatus = (
+  input: ResolveRunCompleteStatusInput
+): RunCompleteStatus => {
+  const label = (kind: RunCompleteStatusKind): string =>
+    (input.isGlobal ? GLOBAL_STATUS_LABEL[kind] : undefined) || STATUS_LABEL[kind]
+  // A blocker over real output is a partial result; over nothing it's a dead run.
+  const blockedTone: RunCompleteStatusTone = input.producedWork ? 'warning' : 'danger'
+
+  if (input.exitCode === 130) {
+    return {
+      kind: 'cancelled',
+      label: label('cancelled'),
+      srLabel: label('cancelled'),
+      tone: 'neutral',
+      detail: ''
+    }
+  }
+  if (input.exitCode !== 0) {
+    return {
+      kind: 'exit-failure',
+      label: input.isGlobal ? label('exit-failure') : `Task ended (code ${input.exitCode})`,
+      srLabel: input.isGlobal ? label('exit-failure') : `Task ended with code ${input.exitCode}`,
+      tone: blockedTone,
+      detail: ''
+    }
+  }
+  const blocker = input.blockers?.[0]
+  if (blocker) {
+    return {
+      kind: blocker.kind,
+      label: label(blocker.kind),
+      srLabel: label(blocker.kind),
+      tone: blockedTone,
+      // Every blocker's evidence, worst first — the detail the banner carried.
+      detail: (input.blockers || [])
+        .map((entry) => entry.detail)
+        .filter(Boolean)
+        .join(' ')
+    }
+  }
+  if (input.awaitingAnswer) {
+    return {
+      kind: 'awaiting-answer',
+      label: label('awaiting-answer'),
+      srLabel: label('awaiting-answer'),
+      tone: 'neutral',
+      detail: ''
+    }
+  }
+  return {
+    kind: 'complete',
+    label: label('complete'),
+    srLabel: label('complete'),
+    tone: 'neutral',
+    detail: ''
+  }
 }
