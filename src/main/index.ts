@@ -1364,6 +1364,11 @@ import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from '
 import { splitPiWireModelId } from './pi/PiModels'
 import { PiKeyStore } from './pi/PiKeyStore'
 import { createPiIsolatedHome } from './pi/PiIsolatedHome'
+import {
+  enrichPiCerebrasRateLimitError,
+  normalizePiCerebrasMaxCompletionTokens,
+  writePiCerebrasCompletionCapOverride
+} from './pi/PiCerebrasCompletionCap'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
 import {
@@ -16227,7 +16232,12 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
     }
     const failed = evt.status !== 'success'
     if (failed && evt.text) {
-      sendAgentCompatError(state.sender, 'pi', evt.text, state)
+      sendAgentCompatError(
+        state.sender,
+        'pi',
+        enrichPiCerebrasRateLimitError(state.model, evt.text),
+        state
+      )
     }
     state.terminalResultFailed = failed
     state.completed = true
@@ -16260,7 +16270,7 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
         provider: 'pi',
         severity: 'warning',
         title: 'Pi',
-        message: evt.text
+        message: enrichPiCerebrasRateLimitError(state.model, evt.text)
       },
       state
     )
@@ -18805,6 +18815,13 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     return
   }
 
+  const cerebrasMaxCompletionTokens =
+    upstream === 'cerebras'
+      ? normalizePiCerebrasMaxCompletionTokens(
+          AppStore.getSettings().piCerebrasMaxCompletionTokens
+        )
+      : undefined
+
   // Pi has no MCP support; never let the prompt claim TaskWraith MCP tools.
   payload.taskWraithMcpAdvertised = false
   payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
@@ -18838,6 +18855,25 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   }
   if (!isolatedHome) return
   const isolatedHomeLease = isolatedHome
+
+  if (cerebrasMaxCompletionTokens !== undefined) {
+    try {
+      writePiCerebrasCompletionCapOverride({
+        isolatedHomeDir: isolatedHomeLease.path,
+        modelId: split.modelId,
+        maxCompletionTokens: cerebrasMaxCompletionTokens
+      })
+    } catch (error) {
+      isolatedHomeLease.cleanup()
+      failFast(
+        `Could not prepare Pi's Cerebras completion cap: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        false
+      )
+      return
+    }
+  }
 
   const args = buildPiRpcArgs({
     upstream: split.upstream,

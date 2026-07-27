@@ -46,6 +46,7 @@ import { sanitizeRendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRen
 import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
+import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import {
   coerceLiveProvider,
   isLiveSelectableProvider,
@@ -117,6 +118,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiBinaryPath',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'piCerebrasMaxCompletionTokens',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
@@ -1530,6 +1532,19 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('piCerebrasMaxCompletionTokens' in sanitized) {
+      if (sanitized.piCerebrasMaxCompletionTokens === null) {
+        // Explicit UI reset: serialize as absent so Pi returns to each model's
+        // advertised maximum instead of carrying a hidden old cap.
+        sanitized.piCerebrasMaxCompletionTokens = undefined
+      } else {
+        const cap = normalizePiCerebrasMaxCompletionTokens(
+          sanitized.piCerebrasMaxCompletionTokens
+        )
+        if (cap === undefined) delete sanitized.piCerebrasMaxCompletionTokens
+        else sanitized.piCerebrasMaxCompletionTokens = cap
+      }
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)

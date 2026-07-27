@@ -107,6 +107,18 @@ describe('provider dispatch integration', () => {
     expect(antigravity).toContain('settleVisibleProviderSetupFailure({')
   })
 
+  it('applies an explicit Cerebras completion cap only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    expect(pi).toContain("upstream === 'cerebras'")
+    expect(pi).toContain('normalizePiCerebrasMaxCompletionTokens(')
+    expect(pi).toContain('writePiCerebrasCompletionCapOverride({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiCerebrasCompletionCapOverride({')).toBeLessThan(
+      pi.indexOf('await runCliProviderProcess(')
+    )
+  })
+
   it('publishes the shared terminal exit when a Claude SDK budget abort blocks fallback', () => {
     const claudeProvider = sourceBetween(
       'async function runClaudeProvider(',

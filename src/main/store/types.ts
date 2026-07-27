@@ -2189,6 +2189,12 @@ export interface AppSettings {
   kimiApiKey?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
+  /**
+   * Optional, user-selected Pi/Cerebras completion ceiling. Unset retains the
+   * full model maximum; lower values help organizations whose Cerebras TPM
+   * ceiling is below Pi's bundled 40,960-token model maximum.
+   */
+  piCerebrasMaxCompletionTokens?: number | null
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
