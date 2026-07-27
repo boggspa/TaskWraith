@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import { invalidateRendererUsageRecords, loadRendererUsageRecords } from './lib/usageRecordsCache'
+import { resolveWithinDeadline } from './lib/backgroundHydration'
 import {
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
@@ -924,6 +925,7 @@ function summarizeAuditBundleVerification(result: ProductAuditBundleVerification
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
+const BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS = 1_000
 const CONTEXT_COMPACTION_PROGRESS_STALE_MS = 5 * 60 * 1000
 
 type ContextCompactionProgressState = ContextCompactionProgressEvent & {
@@ -8181,6 +8183,19 @@ function App(): React.JSX.Element {
       quotaOnly: options.quotaOnly === true,
       recordsInitialized: usageRecordsInitializedRef.current
     })
+    // Quota telemetry is optional launch decoration. A provider IPC request
+    // may be waiting on a keychain, CLI, or an upstream that never settles;
+    // it must not keep the global refresh lock held or delay the welcome UI.
+    // The underlying request is still allowed to warm its main-side cache,
+    // while this render uses empty quota slots until a later heartbeat reads it.
+    const loadQuotaInBackground = (load: () => Promise<any>): Promise<any> =>
+      resolveWithinDeadline(
+        Promise.resolve()
+          .then(load)
+          .catch(() => null),
+        null,
+        BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS
+      )
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
@@ -8190,12 +8205,14 @@ function App(): React.JSX.Element {
     const [codexSnap, claudeSnap, kimiSnap, cursorSnap, antigravitySnap, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
-          ? window.api.getCodexUsageSnapshot(quotaRefreshOptions).catch(() => null)
+          ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
           : Promise.resolve(null),
-        window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('antigravity', quotaRefreshOptions).catch(() => null),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
+        loadQuotaInBackground(() =>
+          window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
+        ),
         loadUsageRecords
           ? loadRendererUsageRecords('taskwraith', {
               force: options.force === true || options.forceUsageRecords === true

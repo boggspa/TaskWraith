@@ -1660,30 +1660,52 @@ export async function readClaudeCredentialsFile(): Promise<ClaudeOAuthCredential
 export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredential | null> {
   if (process.platform !== 'darwin') return null
   return new Promise((resolve) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    let proc: ChildProcess | null = null
+    const finish = (credential: ClaudeOAuthCredential | null, terminate = false): void => {
+      if (settled) return
+      settled = true
+      if (timeout) clearTimeout(timeout)
+      if (terminate) {
+        try {
+          proc?.kill()
+        } catch {
+          // The keychain helper already exited.
+        }
+      }
+      resolve(credential)
+    }
     try {
-      const proc = spawn('security', [
+      const securityProcess = spawn('security', [
         'find-generic-password',
         '-s',
         'Claude Code-credentials',
         '-w'
       ])
+      proc = securityProcess
+      // A locked/unavailable Keychain can leave `security` waiting without an
+      // exit event. Credential discovery is telemetry only, so never let it
+      // pin the main-process quota request (and thus app launch) indefinitely.
+      timeout = setTimeout(() => finish(null, true), 2_500)
+      timeout.unref?.()
       let out = ''
-      proc.stdout.on('data', (chunk: Buffer) => {
+      securityProcess.stdout.on('data', (chunk: Buffer) => {
         out += chunk.toString('utf8')
       })
-      proc.on('error', () => resolve(null))
-      proc.on('close', (code: number) => {
-        if (code !== 0) return resolve(null)
+      securityProcess.on('error', () => finish(null))
+      securityProcess.on('close', (code: number) => {
+        if (code !== 0) return finish(null)
         const raw = out.trim()
-        if (!raw) return resolve(null)
+        if (!raw) return finish(null)
         try {
           const parsed = JSON.parse(raw)
           const inner = parsed?.claudeAiOauth || parsed?.claude_ai_oauth || parsed
           const accessToken = String(inner?.accessToken || inner?.access_token || raw).trim()
-          if (!accessToken) return resolve(null)
+          if (!accessToken) return finish(null)
           const expiresAt = Number(inner?.expiresAt || inner?.expires_at || 0)
           if (Number.isFinite(expiresAt) && expiresAt > 0 && expiresAt < Date.now()) {
-            return resolve(null)
+            return finish(null)
           }
           const subscriptionType =
             String(
@@ -1693,17 +1715,17 @@ export async function readClaudeKeychainCredential(): Promise<ClaudeOAuthCredent
                 inner?.subscription_type ||
                 ''
             ).toLowerCase() || undefined
-          resolve({
+          finish({
             accessToken,
             subscriptionType,
             expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : undefined
           })
         } catch {
-          resolve({ accessToken: raw })
+          finish({ accessToken: raw })
         }
       })
     } catch {
-      resolve(null)
+      finish(null)
     }
   })
 }

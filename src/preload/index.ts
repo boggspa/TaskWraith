@@ -2020,6 +2020,14 @@ const api = {
     ipcRenderer.on('external-usage-updated', wrapped)
     return () => ipcRenderer.removeListener('external-usage-updated', wrapped)
   },
+  onWorkspaceActivityUpdated: (
+    callback: (payload: { workspacePath: string; dayCount: number }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { workspacePath: string; dayCount: number }): void =>
+      callback(payload)
+    ipcRenderer.on('workspace-activity-updated', wrapped)
+    return () => ipcRenderer.removeListener('workspace-activity-updated', wrapped)
+  },
   onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => {
     const wrapped = (_event: unknown, delivery: ChatUpdateDelivery): void => callback(delivery)
     ipcRenderer.on('chat-updated', wrapped)

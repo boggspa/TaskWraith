@@ -756,6 +756,11 @@ import {
 } from './ExternalProviderActivity'
 import { createExternalActivityWorkerDriver } from './ExternalActivityWorkerScan'
 import {
+  setWorkspaceActivityScanDriver,
+  setWorkspaceActivityUpdateListener
+} from './WorkspaceActivityBackground'
+import { createWorkspaceActivityWorkerDriver } from './WorkspaceActivityWorkerScan'
+import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
   collectExternalPathGrantsFromMetadata,
@@ -34126,6 +34131,21 @@ function installExternalUsageScanPipeline(): void {
   })
 }
 
+/** Keep workspace heatmap hydration in a utility process as well. A new
+ * workspace can be a large non-git tree, where even a bounded stat sweep can
+ * otherwise delay Electron main and every renderer IPC behind it. */
+function installWorkspaceActivityScanPipeline(): void {
+  setWorkspaceActivityScanDriver(
+    createWorkspaceActivityWorkerDriver(join(__dirname, 'workspaceActivityWorker.js'))
+  )
+  setWorkspaceActivityUpdateListener((snapshot) => {
+    mainWindow?.webContents.send('workspace-activity-updated', {
+      workspacePath: snapshot.workspacePath,
+      dayCount: snapshot.dayCount
+    })
+  })
+}
+
 function startExternalUsagePrewarmOnce(): void {
   if (externalUsagePrewarmStarted) return
   externalUsagePrewarmStarted = true
@@ -34783,13 +34803,14 @@ if (isGeminiMcpBridgeProcess) {
     //
     // The 90-day walk (measured 2026-07-19: 74.9GB across 3.8k Codex
     // rollouts, ~216s cold) runs in a utilityProcess so the main event loop
-    // never carries it; the duty-cycled in-process path survives only as a
-    // fallback when the worker dies. First paint still gates the start so
-    // disk I/O stays out of the renderer's first-frame window. Nothing
+    // never carries it. If that worker is unavailable, consumers receive
+    // empty/stale stats rather than an in-process fallback. First paint still
+    // gates the start so disk I/O stays out of the renderer's first-frame window. Nothing
     // depends on it being warm: every consumer goes through the
     // stale-while-revalidate front door, and cache upgrades ping the
     // renderer via 'external-usage-updated'.
     installExternalUsageScanPipeline()
+    installWorkspaceActivityScanPipeline()
     scheduleExternalUsagePrewarmAfterFirstPaint()
 
     /*

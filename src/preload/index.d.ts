@@ -2309,6 +2309,9 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => () => void
       onExternalUsageUpdated: (callback: () => void) => () => void
+      onWorkspaceActivityUpdated: (
+        callback: (payload: { workspacePath: string; dayCount: number }) => void
+      ) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */

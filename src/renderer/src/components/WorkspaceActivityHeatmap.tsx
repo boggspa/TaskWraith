@@ -8,6 +8,7 @@ import {
 } from '../lib/WorkspaceActivityHeatmap'
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20']
+const WORKSPACE_ACTIVITY_IPC_DEADLINE_MS = 1_000
 
 type IdleWindow = Window & {
   requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number
@@ -22,6 +23,52 @@ function scheduleWorkspaceActivityRefresh(callback: () => void): () => void {
   }
   const handle = window.setTimeout(callback, 0)
   return () => window.clearTimeout(handle)
+}
+
+function emptyWorkspaceActivitySnapshot(
+  workspacePath: string,
+  dayCount: number
+): WorkspaceActivitySnapshot {
+  return {
+    workspacePath,
+    dayCount,
+    generatedAt: Date.now(),
+    source: 'none',
+    truncated: false,
+    events: [],
+    stats: {
+      gitRepo: false,
+      commits: 0,
+      worktreeFiles: 0,
+      filesystemFiles: 0,
+      scannedFiles: 0,
+      scanLimit: 5_000
+    }
+  }
+}
+
+/** A renderer-side belt and braces for an interrupted/stale main process.
+ * The current main handler returns a cache placeholder immediately, but a
+ * heatmap must remain paintable even if an older IPC request never settles. */
+function loadWorkspaceActivityWithoutBlocking(
+  workspacePath: string,
+  dayCount: number
+): Promise<WorkspaceActivitySnapshot> {
+  const fallback = emptyWorkspaceActivitySnapshot(workspacePath, dayCount)
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (snapshot: WorkspaceActivitySnapshot): void => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      resolve(snapshot)
+    }
+    const timeout = window.setTimeout(() => finish(fallback), WORKSPACE_ACTIVITY_IPC_DEADLINE_MS)
+    window.api
+      .getWorkspaceActivity(workspacePath, dayCount)
+      .then((snapshot) => finish(snapshot))
+      .catch(() => finish(fallback))
+  })
 }
 
 function WorkspaceActivityCellTile({ cell }: { cell: WorkspaceActivityHeatmapCell }) {
@@ -65,24 +112,32 @@ export function WorkspaceActivityHeatmap({
 
   useEffect(() => {
     let cancelled = false
-    const cancelRefresh = scheduleWorkspaceActivityRefresh(() => {
-      if (cancelled) return
+    let requestId = 0
+    setSnapshot(null)
+
+    const loadSnapshot = () => {
+      const currentRequestId = ++requestId
       setLoading(true)
-      window.api
-        .getWorkspaceActivity(workspacePath, dayCount)
+      loadWorkspaceActivityWithoutBlocking(workspacePath, dayCount)
         .then((latest) => {
-          if (!cancelled) setSnapshot(latest)
-        })
-        .catch(() => {
-          if (!cancelled) setSnapshot(null)
+          if (!cancelled && currentRequestId === requestId) setSnapshot(latest)
         })
         .finally(() => {
-          if (!cancelled) setLoading(false)
+          if (!cancelled && currentRequestId === requestId) setLoading(false)
         })
+    }
+    const cancelRefresh = scheduleWorkspaceActivityRefresh(() => {
+      if (cancelled) return
+      loadSnapshot()
+    })
+    const unsubscribe = window.api.onWorkspaceActivityUpdated?.((payload) => {
+      if (payload.workspacePath !== workspacePath || payload.dayCount !== dayCount) return
+      loadSnapshot()
     })
     return () => {
       cancelled = true
       cancelRefresh()
+      unsubscribe?.()
     }
   }, [workspacePath, dayCount, refreshKey])
 

@@ -14,7 +14,6 @@ import {
 import { aggregateExternalUsageRecords } from '../shared/externalUsageBuckets'
 import {
   loadCursorIdeUsageEvents,
-  prewarmCursorIdeUsageCache,
   setCursorExternalActivityUpdateListener
 } from './cursor/CursorExternalActivity'
 import { CURSOR_TRANSCRIPT_CHUNK_SIZE } from './cursor/CursorExternalActivityCache'
@@ -199,11 +198,12 @@ export function buildExternalUsageRollup(
 let externalUsageCache: { records: UsageRecord[]; scannedAt: number } | null = null
 let cursorCacheListenerInstalled = false
 
-/** How a 90-day scan is executed. The default runs in-process (duty-cycled so
- * it cannot starve the main thread); index.ts swaps in the utility-process
- * driver at startup so the multi-GB walk leaves the main process entirely.
- * `onPartial` delivers the short-window cold partial (and any other
- * intermediate result) before the full window resolves. */
+/** How a 90-day scan is executed. Production installs a utility-process
+ * driver at startup; this front door deliberately has no main-process
+ * fallback. A cold history scan can read tens of GB, so serving empty/stale
+ * stats is always preferable to letting it contend with Electron's main
+ * event loop. `onPartial` delivers the short-window cold partial (and any
+ * other intermediate result) before the full window resolves. */
 export interface ExternalScanRequest {
   options: ExternalProviderActivityOptions
   /** When set, deliver a short-window partial via onPartial before resolving
@@ -243,24 +243,6 @@ function commitExternalUsageRecords(records: UsageRecord[]): void {
   } catch {
     // Listener failures must never poison the scan pipeline.
   }
-}
-
-/** In-process fallback driver: cold ordinary loads produce a short-window
- * partial first so the welcome heatmap unblocks in seconds, then expand to
- * the full 90-day window. */
-const inProcessScanDriver: ExternalScanDriver = async (
-  { options, partialLookbackDays },
-  onPartial
-) => {
-  if (partialLookbackDays) {
-    const partial = await loadExternalProviderUsageRecords({
-      ...options,
-      lookbackDays: partialLookbackDays,
-      force: false
-    })
-    onPartial(partial)
-  }
-  return loadExternalProviderUsageRecords(options)
 }
 
 function resolveCursorExternalCachePath(override?: string): string {
@@ -323,8 +305,8 @@ function replaceCachedCursorExternalRecords(
 }
 
 interface ExternalScanInFlight {
-  /** Resolves at the FIRST committed result (cold partial or full window) so
-   * cold IPC callers unblock in seconds without polling. */
+  /** Resolves at the first committed result (cold partial or full window).
+   * This is retained for test teardown; renderers never wait for it. */
   firstData: Promise<UsageRecord[]>
   /** Resolves with the full-window result. */
   complete: Promise<UsageRecord[]>
@@ -366,29 +348,28 @@ function startExternalScan(
   }
 
   const complete = (async () => {
+    const driver = externalScanDriver
+    if (!driver) {
+      // Startup wiring has not installed the utility-process driver yet. Do
+      // not quietly perform the same expensive walk on Electron main; the
+      // scheduled prewarm will retry after the pipeline is installed.
+      const fallback = externalUsageCache?.records ?? []
+      settleFirst(fallback)
+      return fallback
+    }
     try {
-      if (externalScanDriver) {
-        try {
-          return await runWith(externalScanDriver)
-        } catch (error) {
-          // Worker died or misbehaved: the data still matters, so degrade to
-          // the duty-cycled in-process walk rather than serving nothing.
-          console.error('[external-usage] worker scan failed, falling back in-process:', error)
-        }
-      }
-      return await runWith(inProcessScanDriver)
+      return await runWith(driver)
     } catch (error) {
-      // Both drivers failed. Unblock waiters with whatever we have.
-      settleFirst(externalUsageCache?.records ?? [])
-      throw error
+      // A worker failure is an empty/stale-data condition, not permission to
+      // move a multi-GB scan onto main. The next caller/prewarm can retry.
+      console.warn('[external-usage] background worker scan failed:', error)
+      const fallback = externalUsageCache?.records ?? []
+      settleFirst(fallback)
+      return fallback
     } finally {
       externalScanInFlight = null
     }
   })()
-  // The complete promise is intentionally awaited only by SWR background
-  // paths; keep an attached handler so a scan failure is not an unhandled
-  // rejection when every caller already settled on firstData.
-  complete.catch(() => {})
 
   externalScanInFlight = { firstData, complete }
   return externalScanInFlight
@@ -426,28 +407,16 @@ export async function getExternalUsageCached(
   }
 
   const force = options.force === true || options.maxAgeMs === 0
-  // Stale-while-revalidate: serve the last result immediately and refresh in
-  // the background. Only a true cold miss (or forced refresh) waits, and even
-  // then only until the first committed result — never the full 90-day walk.
-  const scan = startExternalScan(options, force)
-  if (cached && !force) {
-    return cached.records
-  }
-  return scan.firstData
+  // Stale-while-revalidate with a deliberately non-blocking cold path. A
+  // renderer must never wait for disk-history hydration: kick the worker and
+  // show empty stats until its pushed cache upgrade arrives.
+  startExternalScan(options, force)
+  return cached?.records ?? []
 }
 
-/** Kick off a background external-usage hydrate at app launch. Cursor IDE
- * scans are incremental + chunked; other providers use the in-memory cache. */
+/** Kick off a background external-usage hydrate at app launch. The worker
+ * owns every provider scan, including Cursor's incremental cache work. */
 export function prewarmExternalUsageCache(): void {
-  ensureCursorCacheListener()
-  const homeDir = os.homedir()
-  const sinceMs = Date.now() - DEFAULT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
-  prewarmCursorIdeUsageCache({
-    homeDir,
-    sinceMs,
-    cachePath: resolveCursorExternalCachePath(),
-    transcriptParseBudget: CURSOR_TRANSCRIPT_CHUNK_SIZE * 2
-  })
   void getExternalUsageCached()
 }
 
@@ -1096,13 +1065,20 @@ async function readCursorActivity(
 ): Promise<ExternalUsageEvent[]> {
   ensureCursorCacheListener()
   const force = options.force === true
-  return loadCursorIdeUsageEvents({
+  const cursorOptions = {
     homeDir,
     sinceMs,
     cachePath: resolveCursorExternalCachePath(options.cursorCachePath),
     force,
-    transcriptParseBudget: force ? 400 : CURSOR_TRANSCRIPT_CHUNK_SIZE * 2
-  })
+    // A utility process owns the external scan, so drain Cursor's bounded
+    // transcript set there rather than scheduling a second catch-up on main.
+    transcriptParseBudget: cursorRecordsForwarder
+      ? 400
+      : force
+        ? 400
+        : CURSOR_TRANSCRIPT_CHUNK_SIZE * 2
+  }
+  return loadCursorIdeUsageEvents(cursorOptions)
 }
 
 async function runSqliteQuery(dbPath: string, query: string): Promise<string[]> {

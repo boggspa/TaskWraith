@@ -53,10 +53,36 @@ interface GitResult {
 
 const snapshotCache = new Map<string, { cachedAt: number; snapshot: WorkspaceActivitySnapshot }>()
 
-function normalizeDayCount(value: number | undefined): number {
+export function normalizeWorkspaceActivityDayCount(value: number | undefined): number {
   const numeric = Number(value)
   if (!Number.isFinite(numeric) || numeric <= 0) return DEFAULT_DAY_COUNT
   return Math.max(1, Math.min(MAX_DAY_COUNT, Math.round(numeric)))
+}
+
+/** A lightweight placeholder for a workspace heatmap while its disk scan is
+ * running in a utility process. Keep this shape identical to a completed
+ * snapshot so renderers can paint an honest empty grid immediately. */
+export function createEmptyWorkspaceActivitySnapshot(
+  workspacePath: string,
+  dayCountInput = DEFAULT_DAY_COUNT,
+  generatedAt = Date.now()
+): WorkspaceActivitySnapshot {
+  return {
+    workspacePath,
+    dayCount: normalizeWorkspaceActivityDayCount(dayCountInput),
+    generatedAt,
+    source: 'none',
+    truncated: false,
+    events: [],
+    stats: {
+      gitRepo: false,
+      commits: 0,
+      worktreeFiles: 0,
+      filesystemFiles: 0,
+      scannedFiles: 0,
+      scanLimit: DEFAULT_SCAN_LIMIT
+    }
+  }
 }
 
 function windowBounds(nowMs: number, dayCount: number): { startMs: number; endMs: number } {
@@ -242,7 +268,7 @@ export async function getWorkspaceActivitySnapshot(
   dayCountInput = DEFAULT_DAY_COUNT,
   options: WorkspaceActivityOptions = {}
 ): Promise<WorkspaceActivitySnapshot> {
-  const dayCount = normalizeDayCount(dayCountInput)
+  const dayCount = normalizeWorkspaceActivityDayCount(dayCountInput)
   const nowMs = options.now ?? Date.now()
   const cacheTtlMs = options.cacheTtlMs ?? CACHE_TTL_MS
   const scanLimit = Math.max(

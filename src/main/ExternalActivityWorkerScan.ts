@@ -2,8 +2,8 @@
  * Main-process driver that runs the external-activity scan in an Electron
  * utilityProcess (out/main/externalActivityWorker.js) instead of on the main
  * event loop. One child per scan request: spawn, scan, exit — self-healing
- * and leak-proof. On any worker failure the front door in
- * ExternalProviderActivity falls back to the duty-cycled in-process walk.
+ * and leak-proof. A worker failure leaves the cache empty/stale; it never
+ * permits the same scan to run on Electron main.
  */
 import { utilityProcess } from 'electron'
 import type { UsageRecord } from './store/types'
