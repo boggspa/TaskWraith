@@ -1858,3 +1858,120 @@ describe('working-indicator context-pressure hint', () => {
     expect(html).not.toContain('working-context-pressure-hint')
   })
 })
+
+describe('settled ask_user_question tombstone', () => {
+  const MARKER_ID = 'agent-question-q7'
+  const REPLY_ID = 'agent-question-reply-q7'
+
+  const questionExchange: ChatMessage[] = [
+    {
+      id: MARKER_ID,
+      role: 'system',
+      content: 'Codex asked you to pick an option:',
+      timestamp: '2026-07-27T14:30:00.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q7',
+        agentQuestion: 'Do Channels replace General chats?',
+        agentQuestionOptions: ['Replace — all are channels', 'Sit alongside them'],
+        agentQuestionContext: 'Affects the v1 migration path.'
+      }
+    } as ChatMessage,
+    {
+      id: REPLY_ID,
+      role: 'user',
+      content: 'Replace — all are channels',
+      timestamp: '2026-07-27T14:32:00.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q7',
+        respondedToMessageId: MARKER_ID,
+        isCustomAnswer: false
+      }
+    } as ChatMessage,
+    {
+      id: 'assistant-after',
+      role: 'assistant',
+      content: 'Understood.',
+      timestamp: '2026-07-27T14:33:00.000Z'
+    } as ChatMessage
+  ]
+
+  function renderExchange(messages: ChatMessage[]): string {
+    return renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          messages
+        })}
+      />
+    )
+  }
+
+  it('keeps the question and the chosen answer visible after answering', () => {
+    const html = renderExchange(questionExchange)
+    // Before this feature the answered marker satisfied plainSystemNoticeMessage
+    // and the super-group fold swept the whole exchange into a one-liner.
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Do Channels replace General chats?')
+    expect(html).toContain('Affects the v1 migration path.')
+    // Both options are reported; only the chosen one is marked.
+    expect(html).toContain('Sit alongside them')
+    expect(html).toContain('is-chosen')
+    expect(html).toContain('Answered')
+  })
+
+  it('renders the answer ONCE — the duplicate reply row is emptied and zero-height', () => {
+    const html = renderExchange(questionExchange)
+    expect(html).toContain('is-row-hidden')
+    // Slice out just the reply row's block and assert the bubble is not there.
+    // A raw occurrence count would be wrong: the settled card deliberately
+    // repeats the answer inside an `sr-only` span, because the chosen-option
+    // tick is visual only.
+    const start = html.indexOf(`data-message-id="${REPLY_ID}"`)
+    expect(start).toBeGreaterThan(-1)
+    const rest = html.slice(start + 1)
+    const nextRow = rest.indexOf('data-message-id=')
+    const replyBlock = nextRow >= 0 ? rest.slice(0, nextRow) : rest
+    expect(replyBlock).not.toContain('Replace — all are channels')
+  })
+
+  it('does not fold the settled card into a collapsed one-liner', () => {
+    // Two adjacent foldable system notices would super-group; the question must
+    // not be eligible, so it keeps its card while the notice folds.
+    const html = renderExchange([
+      ...questionExchange,
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'System · @-mention: extra turn appended.',
+        timestamp: '2026-07-27T14:34:00.000Z'
+      } as ChatMessage,
+      {
+        id: 'sys-2',
+        role: 'system',
+        content: 'System · another notice.',
+        timestamp: '2026-07-27T14:35:00.000Z'
+      } as ChatMessage,
+      {
+        id: 'assistant-tail',
+        role: 'assistant',
+        content: 'Carrying on.',
+        timestamp: '2026-07-27T14:36:00.000Z'
+      } as ChatMessage
+    ])
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Do Channels replace General chats?')
+  })
+
+  it('shows a skipped question rather than leaving a bare header line', () => {
+    const html = renderExchange([questionExchange[0], questionExchange[2]])
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Skipped')
+    expect(html).toContain('Do Channels replace General chats?')
+    // Nothing to hide when there is no reply row.
+    expect(html).not.toContain('is-row-hidden')
+  })
+})

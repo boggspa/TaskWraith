@@ -52,6 +52,7 @@ const signature = (
   superGroupKey: '',
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
+  agentQuestionTombstoneKey: '',
   assistantRunModelKey: '',
   renameContinuityKey: '',
   auxiliaryKey: '',
@@ -192,6 +193,12 @@ describe('transcriptRowRenderCache', () => {
     )
     expect(
       transcriptRowRenderSignatureEqual(signature(), signature({ pendingAgentQuestionsKey: 'q1' }))
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature(),
+        signature({ agentQuestionTombstoneKey: 'answered|Replace|preset||shown' })
+      )
     ).toBe(false)
     expect(transcriptRowRenderSignatureEqual(signature(), signature({ virtualized: false }))).toBe(false)
     expect(

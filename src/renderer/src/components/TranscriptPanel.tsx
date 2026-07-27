@@ -120,6 +120,14 @@ import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import { isEnsembleFanoutResultMessage } from './EnsembleFanoutResultCardModel'
 import { AgentQuestionCard, type AgentQuestionState } from './AgentQuestionCard'
+import { AgentQuestionTombstoneCard } from './AgentQuestionTombstoneCard'
+import {
+  agentQuestionTombstoneKey,
+  buildAgentQuestionTombstone,
+  indexAgentQuestionReplies,
+  isAgentQuestionMarker,
+  type AgentQuestionTombstone
+} from '../lib/agentQuestionTombstone'
 import { isGuestParticipantReplyMessage } from './GuestParticipantReplyCardModel'
 import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
@@ -922,6 +930,13 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     msg.metadata?.kind !== 'providerRunFailure' &&
     msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
     msg.metadata?.kind !== 'ensembleBossmanPoll' &&
+    // An ANSWERED question keeps its full card (AgentQuestionTombstoneCard), so
+    // it must never fold. It used to: once the question left
+    // `pendingAgentQuestions` the marker satisfied every check here, and the
+    // super-group swept the whole exchange into "System · 2 system notices" —
+    // the question, its options and the user's choice all vanished. A decision
+    // the user made deserves the same standing as the agent's own message.
+    msg.metadata?.kind !== 'agentQuestion' &&
     !msg.metadata?.proposedPlan &&
     !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
     Boolean(msg.content && msg.content.trim())
@@ -3182,6 +3197,37 @@ export const TranscriptPanel = memo(
     // deltas), which would leave the virtualizer on per-type ESTIMATES for
     // every hidden row (phantom spacer height, scroll-position drift across
     // groups). Resolve their rowKeys so the height table can pin them to 0.
+    /**
+     * Settled `ask_user_question` cards, keyed by their marker row.
+     *
+     * Everything needed already sits in `chat.messages` — the question text,
+     * options and context on the marker; the answer on the reply row — so this
+     * only reads it back. A question that is still PENDING is excluded: the live
+     * card owns that state, and a frozen copy beside it would show a question
+     * the user can still answer.
+     */
+    const agentQuestionTombstones = useMemo(() => {
+      const pendingMarkerIds = new Set(pendingAgentQuestions.map((q) => q.messageId))
+      const map = new Map<string, AgentQuestionTombstone>()
+      const replies = indexAgentQuestionReplies(displayMessages)
+      for (const msg of displayMessages) {
+        if (!isAgentQuestionMarker(msg) || pendingMarkerIds.has(msg.id)) continue
+        const tombstone = buildAgentQuestionTombstone(msg, replies)
+        if (tombstone) map.set(msg.id, tombstone)
+      }
+      return map
+    }, [displayMessages, pendingAgentQuestions])
+
+    /** Reply rows the tombstone now speaks for — rendering both would print the
+     *  answer twice, back to back. */
+    const suppressedReplyMessageIds = useMemo(() => {
+      const ids = new Set<string>()
+      for (const tombstone of agentQuestionTombstones.values()) {
+        if (tombstone.replyMessageId) ids.add(tombstone.replyMessageId)
+      }
+      return ids
+    }, [agentQuestionTombstones])
+
     const superHiddenRowKeys = useMemo(() => {
       if (superGroupByMessageId.size === 0) return EMPTY_HIDDEN_ROW_KEYS
       const keys = new Set<string>()
@@ -3203,6 +3249,27 @@ export const TranscriptPanel = memo(
       }
       return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
     }, [superGroupByMessageId, expandedSuperGroups, foldingSuperGroups, projectedRowLookup])
+
+    /**
+     * Every row that renders to zero height, for the virtualizer's height table.
+     *
+     * Suppressed question replies join the super-group's hidden members here
+     * rather than being dropped from the row list: same rowKey, same row count,
+     * so gutter ordinals and scroll-spy are untouched. The measure pass skips
+     * non-positive slots, so a 0px row can never record its own height — pinning
+     * it here is REQUIRED or it sits on a phantom type estimate forever.
+     */
+    const hiddenRowKeys = useMemo(() => {
+      if (suppressedReplyMessageIds.size === 0) return superHiddenRowKeys
+      const keys = new Set(superHiddenRowKeys)
+      for (const messageId of suppressedReplyMessageIds) {
+        const row =
+          projectedRowLookup.byMessageId.get(messageId) ||
+          projectedRowLookup.byConstituentId.get(messageId)
+        if (row) keys.add(row.rowKey)
+      }
+      return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+    }, [superHiddenRowKeys, suppressedReplyMessageIds, projectedRowLookup])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -3257,7 +3324,7 @@ export const TranscriptPanel = memo(
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKey: liveMeasurementRowKey,
       expandedRowIds: expandedRowIdsWithLiveViewports,
-      hiddenRowKeys: superHiddenRowKeys
+      hiddenRowKeys
     })
     const virtualHeightOffsets = useMemo(
       () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -3792,6 +3859,11 @@ export const TranscriptPanel = memo(
             const superGroupHidden = Boolean(
               superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
             )
+            // The settled question card reports this answer already, so the
+            // user-reply row it was appended as renders to zero height rather
+            // than printing the same text again directly beneath the card.
+            const questionReplyHidden = suppressedReplyMessageIds.has(msg.id)
+            const questionTombstone = agentQuestionTombstones.get(msg.id) ?? null
             const superGroupKey = superGroup
               ? `${superGroup.leadId}:${superGroup.size}:${
                   superGroupExpanded ? 'open' : superGroupFoldPhase ? 'folding' : 'closed'
@@ -3966,6 +4038,10 @@ export const TranscriptPanel = memo(
               superGroupKey,
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
+              agentQuestionTombstoneKey: agentQuestionTombstoneKey(
+                questionTombstone,
+                questionReplyHidden
+              ),
               assistantRunModelKey,
               renameContinuityKey,
               auxiliaryKey: auxiliaryKeyWithToolActions,
@@ -4019,7 +4095,7 @@ export const TranscriptPanel = memo(
                   // "random gap below the merged one-liner" that scaled with
                   // member count. CSS zeroes it per rendering mode.
                   superGroupHidden ? ' is-super-hidden' : ''
-                }${
+                }${questionReplyHidden ? ' is-row-hidden' : ''}${
                   // Fold-out phase: member stays mounted while CSS transitions
                   // its height to 0; the hidden state commits ~300ms later on
                   // an already-invisible row.
@@ -4040,7 +4116,7 @@ export const TranscriptPanel = memo(
                 onFocus={() => onMessageSelectionCandidate?.(msg)}
                 ref={virtualizeEnabled ? virtualBlockRef : undefined}
               >
-                {superGroupHidden ? null : (
+                {superGroupHidden || questionReplyHidden ? null : (
                   <>
                     {isSuperLead && superGroup && superSummary ? (
                       <CollapsedTranscriptRow
@@ -4736,6 +4812,17 @@ export const TranscriptPanel = memo(
                         onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
                       />
                     )}
+                    {questionTombstone && (
+                      <AgentQuestionTombstoneCard
+                        tombstone={questionTombstone}
+                        provider={
+                          (msg.metadata?.ensembleProvider as ProviderId | undefined) ??
+                          currentProvider ??
+                          null
+                        }
+                        providerLabel={currentProviderLabel}
+                      />
+                    )}
                     {pendingQuestionsForRow.map((question) => (
                       <AgentQuestionCard
                         key={question.questionId}
@@ -4758,7 +4845,7 @@ export const TranscriptPanel = memo(
                 )}
                   </>
                 )}
-                {superGroupHidden ? null : (
+                {superGroupHidden || questionReplyHidden ? null : (
                 <TranscriptMessageFooter
                   message={msg}
                   label={footerLabel}
