@@ -123,7 +123,9 @@ describe('live activity aps body', () => {
   })
 
   it('a waiting run outranks a merely-running one', () => {
-    expect(JSON.parse(buildLiveActivityApsBody(payload({ needsUser: true }), 1)).aps['relevance-score']).toBe(2)
+    expect(
+      JSON.parse(buildLiveActivityApsBody(payload({ needsUser: true }), 1)).aps['relevance-score']
+    ).toBe(2)
     expect(JSON.parse(buildLiveActivityApsBody(payload(), 1)).aps['relevance-score']).toBe(1)
   })
 })

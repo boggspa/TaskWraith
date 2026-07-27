@@ -151,9 +151,7 @@ describe('Pi sub-provider palette', () => {
     for (const cls of hueClasses) {
       if (cls === 'qwen') continue // pre-existing `case "alibaba", "qwen"`
       const hex = cssHex(cls).slice(1)
-      expect(swift, `iOS accent missing for ${cls}`).toContain(
-        `case "${cls}": return 0x${hex}`
-      )
+      expect(swift, `iOS accent missing for ${cls}`).toContain(`case "${cls}": return 0x${hex}`)
     }
   })
 
