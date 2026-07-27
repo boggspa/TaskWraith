@@ -821,6 +821,74 @@ describe('RemoteThreadProjection', () => {
       expect(snap.rows[0].agentQuestion?.context).toBeUndefined()
     })
 
+    it('projects the answer, the custom flag and the reply row id once answered', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        ask(),
+        msg(2, {
+          id: 'agent-question-reply-q1',
+          role: 'user',
+          content: 'Postgres',
+          metadata: {
+            kind: 'agentQuestionReply',
+            questionId: 'q1',
+            respondedToMessageId: 'agent-question-q1',
+            isCustomAnswer: false
+          }
+        })
+      ])
+      expect(snap.rows[0].agentQuestion).toMatchObject({
+        answer: 'Postgres',
+        isCustomAnswer: false,
+        outcome: 'answered',
+        // Named explicitly so the phone drops that row instead of matching text.
+        replyRowId: 'agent-question-reply-q1'
+      })
+    })
+
+    it('says unanswered — NOT skipped — when no reply exists', () => {
+      // From the transcript alone the Mac cannot separate an open question from a
+      // dismissed or timed-out one: none of the three append a message. Claiming
+      // "skipped" here would libel a question the user is still looking at.
+      const snap = project({ kind: 'latestN', n: 10 }, [ask()])
+      expect(snap.rows[0].agentQuestion?.outcome).toBe('unanswered')
+      expect(snap.rows[0].agentQuestion?.answer).toBeUndefined()
+      expect(snap.rows[0].agentQuestion?.replyRowId).toBeUndefined()
+    })
+
+    it('keeps a typed answer flagged custom', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        ask(),
+        msg(2, {
+          id: 'agent-question-reply-q1',
+          role: 'user',
+          content: 'Neither — use DuckDB',
+          metadata: {
+            kind: 'agentQuestionReply',
+            questionId: 'q1',
+            respondedToMessageId: 'agent-question-q1',
+            isCustomAnswer: true
+          }
+        })
+      ])
+      expect(snap.rows[0].agentQuestion).toMatchObject({
+        answer: 'Neither — use DuckDB',
+        isCustomAnswer: true
+      })
+    })
+
+    it('resolves a reply that carries only questionId (older writer)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        ask(),
+        msg(2, {
+          id: 'agent-question-reply-q1',
+          role: 'user',
+          content: 'SQLite',
+          metadata: { kind: 'agentQuestionReply', questionId: 'q1' }
+        })
+      ])
+      expect(snap.rows[0].agentQuestion?.outcome).toBe('answered')
+    })
+
     it('caps options at 4 (the tool ceiling)', () => {
       const snap = project({ kind: 'latestN', n: 10 }, [
         ask({ agentQuestionOptions: ['a', 'b', 'c', 'd', 'e', 'f'] })

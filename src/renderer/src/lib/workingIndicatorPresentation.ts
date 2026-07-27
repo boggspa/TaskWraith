@@ -10,7 +10,7 @@ import type {
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
-import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
 
 export type WorkingIndicatorActivity = 'working' | 'compacting'
@@ -243,7 +243,10 @@ function workingPresentationForParticipant(
     tokenAccumulatorBase: participantTokenAccumulatorBase(participant),
     providerLabel: brand?.providerLabel || getProviderLabel(provider),
     provider,
-    providerClass: brand?.providerClass || provider,
+    // Pi wire ids include the actual upstream, just as Ollama model ids can.
+    // Keep the working animation on that display-brand hue rather than the
+    // neutral Pi seat colour (e.g. DeepSeek blue for a DeepSeek Pi run).
+    providerClass: resolveProviderHueClass(provider, model) || provider,
     roleLabel,
     modelBadge: modelDisplay ? modelBadgeForParticipant(modelDisplay) : null,
     activity: activityForParticipant(chat, participantId, contextCompactionProgress)

@@ -797,7 +797,15 @@ struct ThreadDetailView: View {
             pending.removeAll()
         }
 
+        // User-reply rows a settled question card already reports. Rendering both
+        // prints the answer twice, back to back — the desktop drops the same row
+        // for the same reason. Keyed on the id the MAC named (`replyRowId`), never
+        // on matching text: a user may legitimately send the same words again.
+        let suppressedReplyRowIds: Set<String> = Set(
+            rows.compactMap { $0.agentQuestion?.replyRowId }.filter { !$0.isEmpty })
+
         for row in rows {
+            if suppressedReplyRowIds.contains(row.id) { continue }
             guard twCanCollapseIntoStack(row) else {
                 flush()
                 out.append(.row(row))

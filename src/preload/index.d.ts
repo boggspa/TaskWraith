@@ -1113,6 +1113,14 @@ declare global {
         list: () => Promise<unknown[]>
         onEvent: (handler: (event: unknown) => void) => () => void
       }
+      meshCanvas: {
+        listForChat: (chatId: string) => Promise<unknown[]>
+        view: (chatId: string, sceneId: string) => Promise<unknown | null>
+        importUserModel: (chatId: string) => Promise<{ canceled: boolean; scene?: unknown }>
+        closePresentation: (chatId: string, sceneId: string) => Promise<unknown>
+        deleteScene: (chatId: string, sceneId: string) => Promise<unknown>
+        onEvent: (handler: (event: unknown) => void) => () => void
+      }
       onAgentQuestionRequested: (
         handler: (request: {
           questionId: string
@@ -2309,6 +2317,9 @@ declare global {
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => () => void
       onExternalUsageUpdated: (callback: () => void) => () => void
+      onWorkspaceActivityUpdated: (
+        callback: (payload: { workspacePath: string; dayCount: number }) => void
+      ) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
       /** Agent-set theme tokens changed in main; re-apply without a reload. */

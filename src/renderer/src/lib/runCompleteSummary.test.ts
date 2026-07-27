@@ -6,8 +6,10 @@ import {
   buildEnsembleRoundTokenDetails,
   buildRunCompleteSummaryRows,
   buildRunCompleteTokenDetails,
-  buildEscalationChips,
-  buildRoundOutcomeRows
+  buildRunCompleteBlockers,
+  buildRoundOutcomeRows,
+  resolveRunCompleteStatus,
+  runCompleteProducedWork
 } from './runCompleteSummary'
 import type { ComplexityEscalationSignal } from '../../../main/store/types'
 import type { RendererProviderRates } from './providerRateEstimate'
@@ -479,84 +481,203 @@ function chatWithSignals(
   } as unknown as ChatRecord
 }
 
-describe('buildEscalationChips', () => {
+describe('buildRunCompleteBlockers', () => {
   it('returns [] when there is no active round or no signals', () => {
-    expect(buildEscalationChips(null)).toEqual([])
-    expect(buildEscalationChips(chatWithSignals([], null))).toEqual([])
-    expect(buildEscalationChips(chatWithSignals([sig({ kind: 'stuck' })], null))).toEqual([])
-    expect(buildEscalationChips(chatWithParticipants([]))).toEqual([])
+    expect(buildRunCompleteBlockers(null)).toEqual([])
+    expect(buildRunCompleteBlockers(chatWithSignals([], null))).toEqual([])
+    expect(buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'stuck' })], null))).toEqual([])
+    expect(buildRunCompleteBlockers(chatWithParticipants([]))).toEqual([])
   })
 
-  it('maps kind + recommendedAction to label/action/tone for the current round', () => {
-    const chips = buildEscalationChips(
-      chatWithSignals(
-        [sig({ id: 's1', kind: 'looping', recommendedAction: 'pause-for-user' })],
-        'r1',
-        { continuationHops: 3, maxContinuationHops: 3 }
+  it('carries the signal evidence line as the blocker detail', () => {
+    expect(
+      buildRunCompleteBlockers(
+        chatWithSignals([sig({ kind: 'stuck', evidence: 'No participant answered.' })])
       )
-    )
-    expect(chips).toEqual([
-      {
-        id: 's1',
-        label: 'Handoff/Turns Exhausted',
-        action: 'Handoff/Turns reached their limit (3/3).',
-        tone: 'info'
-      }
-    ])
-  })
-
-  it('marks failure-shaped signals as attention tone', () => {
-    const chips = buildEscalationChips(
-      chatWithSignals([sig({ id: 's1', kind: 'stuck', recommendedAction: 'pause-for-user' })])
-    )
-    expect(chips[0].tone).toBe('attention')
-    expect(chips[0].label).toBe('Round stalled')
+    ).toEqual([{ kind: 'stuck', detail: 'No participant answered.' }])
   })
 
   it('only surfaces signals for the active round and de-dups by kind', () => {
-    const chips = buildEscalationChips(
+    const blockers = buildRunCompleteBlockers(
       chatWithSignals([
-        sig({ id: 'old', kind: 'stuck', roundId: 'r0' }), // previous round — excluded
-        sig({ id: 'a', kind: 'stuck' }),
-        sig({ id: 'b', kind: 'stuck' }) // dup kind — collapsed
+        sig({ id: 'old', kind: 'stuck', roundId: 'r0', evidence: 'stale' }), // previous round
+        sig({ id: 'a', kind: 'stuck', evidence: 'first' }),
+        sig({ id: 'b', kind: 'stuck', evidence: 'dup' }) // dup kind — collapsed
       ])
     )
-    expect(chips).toHaveLength(1)
-    expect(chips[0].id).toBe('a')
+    expect(blockers).toEqual([{ kind: 'stuck', detail: 'first' }])
   })
 
-  it('hides disagreement-unresolved because the transcript chip was noisy and ambiguous', () => {
-    const chips = buildEscalationChips(
-      chatWithSignals([
-        sig({ id: '1', kind: 'disagreement-unresolved', recommendedAction: 'call-synthesizer' })
-      ])
-    )
-    expect(chips).toEqual([])
-  })
-
-  // Named a failure with no next step the user could take, so it read as
-  // distrust in the model/harness rather than advice.
-  it('hides tool-error-cluster', () => {
-    const chips = buildEscalationChips(
-      chatWithSignals([
-        sig({ id: '1', kind: 'tool-error-cluster', recommendedAction: 'pause-for-user' }),
-        sig({ id: '2', kind: 'stuck', recommendedAction: 'extend-rounds' })
-      ])
-    )
-    expect(chips.map((chip) => chip.id)).toEqual(['2'])
-  })
-
-  it('renders the looping chip with the live continuation limit counters', () => {
-    const chips = buildEscalationChips(
-      chatWithSignals(
-        [sig({ id: '2', kind: 'looping', recommendedAction: 'pause-for-user' })],
-        'r1',
-        { continuationHops: 7, maxContinuationHops: 7 }
+  // Both were suppressed while they rendered as accusatory banners. As a
+  // status string they are just the round's outcome, so both are back.
+  it('revives the previously hidden disagreement-unresolved and tool-error-cluster kinds', () => {
+    expect(
+      buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'disagreement-unresolved' })])).map(
+        (b) => b.kind
       )
+    ).toEqual(['disagreement-unresolved'])
+    expect(
+      buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'tool-error-cluster' })])).map(
+        (b) => b.kind
+      )
+    ).toEqual(['tool-error-cluster'])
+  })
+
+  it('orders blockers worst-first so the title shows the most severe', () => {
+    const blockers = buildRunCompleteBlockers(
+      chatWithSignals([
+        sig({ id: '1', kind: 'disagreement-unresolved' }),
+        sig({ id: '2', kind: 'looping' }),
+        sig({ id: '3', kind: 'stuck' }),
+        sig({ id: '4', kind: 'tool-error-cluster' })
+      ])
     )
-    expect(chips[0]).toMatchObject({
-      label: 'Handoff/Turns Exhausted',
-      action: 'Handoff/Turns reached their limit (7/7).'
+    expect(blockers.map((b) => b.kind)).toEqual([
+      'stuck',
+      'tool-error-cluster',
+      'looping',
+      'disagreement-unresolved'
+    ])
+  })
+
+  it('prefers the live continuation counters over stored evidence for looping', () => {
+    const blockers = buildRunCompleteBlockers(
+      chatWithSignals([sig({ kind: 'looping', evidence: 'stored line' })], 'r1', {
+        continuationHops: 7,
+        maxContinuationHops: 7
+      })
+    )
+    expect(blockers[0].detail).toBe('Handoff/Turns reached their limit (7/7).')
+  })
+})
+
+describe('runCompleteProducedWork', () => {
+  it('counts file changes, assistant output, or any participant that answered', () => {
+    expect(runCompleteProducedWork({ chat: null, fileChangeCount: 1 })).toBe(true)
+    expect(
+      runCompleteProducedWork({ chat: null, fileChangeCount: 0, hadAssistantOutput: true })
+    ).toBe(true)
+    expect(
+      runCompleteProducedWork({
+        chat: chatWithParticipants([{ role: 'Worker', provider: 'codex', status: 'yielded' }]),
+        fileChangeCount: 0
+      })
+    ).toBe(true)
+  })
+
+  it('is false for a round that produced nothing', () => {
+    expect(
+      runCompleteProducedWork({
+        chat: chatWithParticipants([
+          { role: 'Worker', provider: 'codex', status: 'failed' },
+          { role: 'Reviewer', provider: 'claude', status: 'skipped' }
+        ]),
+        fileChangeCount: 0,
+        hadAssistantOutput: false
+      })
+    ).toBe(false)
+    expect(runCompleteProducedWork({ chat: null, fileChangeCount: 0 })).toBe(false)
+  })
+})
+
+describe('resolveRunCompleteStatus', () => {
+  const stalled = [{ kind: 'stuck' as const, detail: 'No participant answered.' }]
+
+  it('titles a clean run "Task complete" with no accent', () => {
+    expect(resolveRunCompleteStatus({ exitCode: 0, producedWork: true })).toMatchObject({
+      kind: 'complete',
+      label: 'Task complete',
+      tone: 'neutral'
     })
+  })
+
+  it('replaces the title with the blocker and tints it yellow when work was produced', () => {
+    expect(
+      resolveRunCompleteStatus({ exitCode: 0, blockers: stalled, producedWork: true })
+    ).toMatchObject({
+      kind: 'stuck',
+      label: 'Round stalled',
+      tone: 'warning',
+      detail: 'No participant answered.'
+    })
+  })
+
+  it('tints the blocker red when nothing at all was produced', () => {
+    expect(
+      resolveRunCompleteStatus({ exitCode: 0, blockers: stalled, producedWork: false })
+    ).toMatchObject({ kind: 'stuck', label: 'Round stalled', tone: 'danger' })
+  })
+
+  it('labels every revived blocker kind', () => {
+    const labelFor = (kind: 'looping' | 'disagreement-unresolved' | 'tool-error-cluster'): string =>
+      resolveRunCompleteStatus({
+        exitCode: 0,
+        blockers: [{ kind, detail: '' }],
+        producedWork: true
+      }).label
+    expect(labelFor('looping')).toBe('Handoff/turns exhausted')
+    expect(labelFor('disagreement-unresolved')).toBe('Unreconciled answers')
+    expect(labelFor('tool-error-cluster')).toBe('Tool errors clustered')
+  })
+
+  it('joins every blocker evidence line into the title tooltip, worst first', () => {
+    expect(
+      resolveRunCompleteStatus({
+        exitCode: 0,
+        blockers: [
+          { kind: 'stuck', detail: 'No answer.' },
+          { kind: 'tool-error-cluster', detail: '2 of 3 failed.' }
+        ],
+        producedWork: true
+      }).detail
+    ).toBe('No answer. 2 of 3 failed.')
+  })
+
+  // The user's own stop is not a failure of the round — titling a cancelled
+  // ensemble round "Round stalled" in red would blame the harness for a
+  // deliberate act.
+  it('lets an intentional cancel outrank a blocker and stay neutral', () => {
+    expect(
+      resolveRunCompleteStatus({ exitCode: 130, blockers: stalled, producedWork: false })
+    ).toMatchObject({ kind: 'cancelled', label: 'Run cancelled', tone: 'neutral' })
+  })
+
+  it('accents a non-zero exit by whether the run still produced work', () => {
+    expect(resolveRunCompleteStatus({ exitCode: 1, producedWork: true })).toMatchObject({
+      kind: 'exit-failure',
+      label: 'Task ended (code 1)',
+      srLabel: 'Task ended with code 1',
+      tone: 'warning'
+    })
+    expect(resolveRunCompleteStatus({ exitCode: 1, producedWork: false }).tone).toBe('danger')
+  })
+
+  it('surfaces a non-ensemble intentional pause when a question is unanswered', () => {
+    expect(
+      resolveRunCompleteStatus({ exitCode: 0, producedWork: true, awaitingAnswer: true })
+    ).toMatchObject({ kind: 'awaiting-answer', label: 'Awaiting your answer', tone: 'neutral' })
+  })
+
+  it('ranks a blocker above an unanswered question', () => {
+    expect(
+      resolveRunCompleteStatus({
+        exitCode: 0,
+        blockers: stalled,
+        producedWork: true,
+        awaitingAnswer: true
+      }).kind
+    ).toBe('stuck')
+  })
+
+  it('keeps the stripped global-chat wording', () => {
+    expect(
+      resolveRunCompleteStatus({ exitCode: 0, isGlobal: true, producedWork: true }).label
+    ).toBe('Done')
+    expect(
+      resolveRunCompleteStatus({ exitCode: 130, isGlobal: true, producedWork: true }).label
+    ).toBe('Stopped')
+    expect(
+      resolveRunCompleteStatus({ exitCode: 1, isGlobal: true, producedWork: true })
+    ).toMatchObject({ label: "Couldn't finish", tone: 'warning' })
   })
 })

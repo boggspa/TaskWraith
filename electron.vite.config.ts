@@ -49,7 +49,11 @@ export default defineConfig(({ mode }) => {
             index: resolve('src/main/index.ts'),
             // utilityProcess entry: the 90-day external-activity scan runs
             // off the main event loop (see ExternalActivityWorkerScan.ts).
-            externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts')
+            externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts'),
+            // Workspace activity may need a cold git/filesystem walk too.
+            // Bundle it as its own utilityProcess entry so the renderer's
+            // 90-day heatmap only ever reads a main-process cache.
+            workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts')
           }
         }
       }

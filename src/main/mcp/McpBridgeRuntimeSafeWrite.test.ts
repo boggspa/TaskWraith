@@ -17,6 +17,7 @@ import {
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
+  GEMINI_MCP_MESH_DIRECT_ARG,
   McpBridgeRuntime,
   brokerRequest,
   handleMcpJsonRpcMessage,
@@ -1030,6 +1031,33 @@ describe('MCP bridge stream writes', () => {
     ])
   })
 
+  it('adds Mesh Canvas only for the participant-run mesh-direct gateway variant', () => {
+    const tools = [{ name: 'read_file' }, { name: 'mesh_scene_present' }, { name: 'video_encode_clip' }]
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => tools,
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        '/tmp/taskwraith.sock',
+        'token-1',
+        { jsonrpc: '2.0', id: 24, method: 'tools/list' },
+        'line'
+      )
+      return (JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }).result.tools.map(
+        (tool) => tool.name
+      )
+    }
+    expect(list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })).not.toContain('mesh_scene_present')
+    expect(
+      list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1', TASKWRAITH_MCP_MESH_DIRECT: '1' })
+    ).toContain('mesh_scene_present')
+  })
+
   it('allows a hidden read-only target through capability_invoke without unwrapping it', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'found' }))
     const chunks: string[] = []
@@ -1493,6 +1521,30 @@ describe('MCP bridge stream writes', () => {
 
     expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
     expect(args[args.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+  })
+
+  it('carries the mesh-direct catalogue receipt atomically beside the gateway profile', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      '/tmp/taskwraith.sock',
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    )
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_MESH_DIRECT_ARG)
+
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_MESH_DIRECT).toBe('1')
   })
 
   it('translates the gateway argv receipt into the child catalogue guard', () => {

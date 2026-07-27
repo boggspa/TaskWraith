@@ -3,6 +3,7 @@ import fs from 'fs'
 import {
   chunkTextForTest,
   chunkThoughtTextForTest,
+  filterGeminiApiMcpToolsForProfile,
   tryRunGeminiApi,
   type GeminiApiProviderDeps
 } from './GeminiApiProvider'
@@ -768,6 +769,16 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
   beforeEach(() => {
     fs.rmSync(userDataPath, { recursive: true, force: true })
     fs.mkdirSync(userDataPath, { recursive: true })
+  })
+
+  it('advertises only the compact Ensemble control shape to fresh API sessions', () => {
+    const tools = [makeMcpTool('ensemble_bossman_control'), makeMcpTool('ensemble_control')]
+    expect(filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v6').map((tool) => tool.name)).toEqual([
+      'ensemble_control'
+    ])
+    expect(filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v5').map((tool) => tool.name)).toEqual([
+      'ensemble_bossman_control'
+    ])
   })
 
   it('passes function declarations on every generateContentStream call', async () => {

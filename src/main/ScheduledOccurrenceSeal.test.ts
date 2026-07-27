@@ -683,6 +683,7 @@ function effectivePermissions(
       mcpTools: 'ask',
       subThreadDelegation: 'deny',
       canvasInteraction: 'deny',
+      meshCanvas: 'deny',
       canvasEval: 'deny',
       crossThreadRead: 'deny',
       threadMessage: 'deny',

@@ -63,6 +63,8 @@ import {
   type ChatGitWorkflowState
 } from '../../../shared/chatGitWorkflow'
 import { chatGitWorkflowMarker, groupChatsByGitWorkflow } from '../lib/gitWorkflowSections'
+import { decodeSidebarGitIndicators } from '../lib/sidebarGitIndicators'
+import { SidebarGitIndicatorStrip } from './SidebarGitIndicatorStrip'
 import { isSubThreadChat } from '../lib/chatScope'
 import {
   primarySurfaceForSidebarTabChange,
@@ -272,6 +274,10 @@ interface SidebarProps {
   /** Workspace/branch identity ("TaskWraith/master") for the ACTIVE chat —
    * the selected row's label slowly cycles between title and this string. */
   activeChatIdentityTicker?: string | null
+  /** Encoded git status strip shown at the right of that identity face —
+   * built by `buildSidebarGitIndicators` and encoded so it crosses the memo
+   * comparators as a primitive. */
+  activeChatIdentityGitIndicators?: string | null
   /** Toggle the `archived` flag on a chat. Hides the chat from the main
    * sidebar lists; existing filters already drop archived chats so the
    * caller just needs to persist the flag. */
@@ -1478,19 +1484,26 @@ export function SidebarGitWorkflowIcon({
  */
 function SidebarTitleTicker({
   identity,
+  gitIndicators,
   className,
   children
 }: {
   identity: string
+  /** Encoded git status strip (see lib/sidebarGitIndicators). Rides the
+   * identity face, right-aligned, so it slides in and out with the branch
+   * name rather than becoming permanent row chrome. */
+  gitIndicators?: string | null
   className: string
   children: ReactNode
 }): ReactNode {
+  const indicators = decodeSidebarGitIndicators(gitIndicators)
   return (
     <span className={`sidebar-title-ticker ${className}`}>
       <span className="sidebar-title-ticker-strip">
         <span className="sidebar-title-ticker-seg">{children}</span>
         <span className="sidebar-title-ticker-seg sidebar-title-ticker-identity" aria-hidden>
-          {identity}
+          <span className="sidebar-title-ticker-identity-text">{identity}</span>
+          <SidebarGitIndicatorStrip indicators={indicators} />
         </span>
       </span>
     </span>
@@ -1520,6 +1533,9 @@ interface SidebarCompactChatRowProps {
    * slowly cycles to. null/undefined (every non-active row) renders the plain
    * label. Threaded as a primitive so the comparator can gate it. */
   identityTicker?: string | null
+  /** Encoded git status strip for the identity face — same primitive-prop
+   * contract as `identityTicker`. */
+  identityGitIndicators?: string | null
   /** Comparator proxies for the SSR-relevant fields of `dragHandlers`
    * (recents only). `dragHandlers` itself is a fresh object each render and
    * is intentionally NOT compared — these primitives gate re-render. */
@@ -1552,6 +1568,7 @@ function SidebarCompactChatRowInner({
   isEditing,
   query,
   identityTicker,
+  identityGitIndicators,
   dragHandlers,
   onSelect,
   onStartRename,
@@ -1603,7 +1620,11 @@ function SidebarCompactChatRowInner({
       <ProviderBrandLogoIcon provider={badgeId} />
       {gitMarker && <SidebarGitWorkflowIcon marker={gitMarker} />}
       {identityTicker && isSelected && !isEditing ? (
-        <SidebarTitleTicker identity={identityTicker} className={labelClass}>
+        <SidebarTitleTicker
+          identity={identityTicker}
+          gitIndicators={identityGitIndicators}
+          className={labelClass}
+        >
           {editableTitle}
         </SidebarTitleTicker>
       ) : (
@@ -1640,7 +1661,8 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.draggable === b.draggable &&
     a.isDragging === b.isDragging &&
     a.query === b.query &&
-    (a.identityTicker ?? null) === (b.identityTicker ?? null)
+    (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
+    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null)
   )
 }
 
@@ -1665,6 +1687,8 @@ interface SidebarChatRowProps {
   /** Workspace/branch identity the ACTIVE row's label slowly cycles to —
    * see SidebarCompactChatRowProps.identityTicker. */
   identityTicker?: string | null
+  /** See SidebarCompactChatRowProps.identityGitIndicators. */
+  identityGitIndicators?: string | null
   onSelect: (chat: ChatRecord) => void
   onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord) => void
   onToggleSubThreads: (
@@ -1701,6 +1725,7 @@ function SidebarChatRowInner({
   subThreadsExpanded,
   query,
   identityTicker,
+  identityGitIndicators,
   onSelect,
   onRowKeyDown,
   onToggleSubThreads,
@@ -1795,7 +1820,11 @@ function SidebarChatRowInner({
           )}
           {gitMarker && <SidebarGitWorkflowIcon marker={gitMarker} />}
           {identityTicker && isSelected && !isEditing ? (
-            <SidebarTitleTicker identity={identityTicker} className="sidebar-chat-title">
+            <SidebarTitleTicker
+              identity={identityTicker}
+              gitIndicators={identityGitIndicators}
+              className="sidebar-chat-title"
+            >
               <SidebarChatTitleEditable
                 chat={chat}
                 className="sidebar-chat-title"
@@ -1886,7 +1915,8 @@ export function sidebarChatRowPropsAreEqual(
     a.liveSubThreadCount === b.liveSubThreadCount &&
     a.subThreadsExpanded === b.subThreadsExpanded &&
     a.query === b.query &&
-    (a.identityTicker ?? null) === (b.identityTicker ?? null)
+    (a.identityTicker ?? null) === (b.identityTicker ?? null) &&
+    (a.identityGitIndicators ?? null) === (b.identityGitIndicators ?? null)
   )
 }
 
@@ -2963,6 +2993,7 @@ export function Sidebar({
   onSetChatHiddenFromMainList,
   onClearChatGitWorkflow,
   activeChatIdentityTicker,
+  activeChatIdentityGitIndicators,
   onToggleArchiveChat,
   onDeleteChat,
   onRenameChat,
@@ -5454,6 +5485,9 @@ export function Sidebar({
                         identityTicker={
                           selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
                         }
+                        identityGitIndicators={
+                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
+                        }
                         draggable={false}
                         isDragging={false}
                         onSelect={onSelectChat}
@@ -5537,6 +5571,9 @@ export function Sidebar({
                             identityTicker={
                               selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
                             }
+                            identityGitIndicators={
+                              selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
+                            }
                             draggable={false}
                             isDragging={false}
                             onSelect={onSelectChat}
@@ -5605,6 +5642,9 @@ export function Sidebar({
                         query={sidebarSearchQuery}
                         identityTicker={
                           selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
+                        identityGitIndicators={
+                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
                         draggable={dragHandlers.draggable}
                         isDragging={dragHandlers['data-dragging'] === 'true'}
@@ -6044,6 +6084,11 @@ export function Sidebar({
                                         ? activeChatIdentityTicker
                                         : null
                                     }
+                                    identityGitIndicators={
+                                      selectedChatId === chat.appChatId
+                                        ? activeChatIdentityGitIndicators
+                                        : null
+                                    }
                                     onSelect={onSelectChat}
                                     onRowKeyDown={handleChatRowKeyDown}
                                     onToggleSubThreads={toggleSubThreadsExpanded}
@@ -6129,6 +6174,9 @@ export function Sidebar({
                         query={sidebarSearchQuery}
                         identityTicker={
                           selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
+                        identityGitIndicators={
+                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
                         onSelect={onSelectChat}
                         onRowKeyDown={handleChatRowKeyDown}
@@ -6242,6 +6290,9 @@ export function Sidebar({
                         query={sidebarSearchQuery}
                         identityTicker={
                           selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
+                        identityGitIndicators={
+                          selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
                         onSelect={onSelectChat}
                         onRowKeyDown={handleChatRowKeyDown}

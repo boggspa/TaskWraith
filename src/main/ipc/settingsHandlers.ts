@@ -245,6 +245,7 @@ function rendererChatSettings(
       mcpTools: services.mcpTools,
       subThreadDelegation: services.subThreadDelegation,
       canvasInteraction: services.canvasInteraction,
+      ...(services.meshCanvas ? { meshCanvas: services.meshCanvas } : {}),
       canvasEval: services.canvasEval,
       ...(services.crossThreadRead ? { crossThreadRead: services.crossThreadRead } : {}),
       ...(services.threadMessage ? { threadMessage: services.threadMessage } : {}),

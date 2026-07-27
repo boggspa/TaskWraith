@@ -1,5 +1,6 @@
 import {
   MEDIA_EDITING_TOOLS,
+  MESH_SCENE_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
@@ -171,6 +172,7 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_send',
   'ensemble_fanout',
   'ensemble_fanout_all',
+  'ensemble_control',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   'ensemble_propose_goal_complete',
@@ -249,6 +251,7 @@ export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolNam
       tool === 'canvas_click' ||
       tool === 'canvas_fill' ||
       tool === 'canvas_sketch_update' ||
+      (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(tool) ||
       MEDIA_EDITING_TOOLS.has(tool)
   )
 )

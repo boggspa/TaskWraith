@@ -5,6 +5,7 @@ import {
   isAuthenticatedAgyRateLimitConnection
 } from './AntigravityCombinedModelCatalog'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
+import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
 import { antigravityGeminiApiStaticModels } from './AntigravityGeminiApiStaticModels'
 
 const optedIn = {
@@ -84,6 +85,10 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
           await new Promise((resolve) => setTimeout(resolve, 50))
           return [{ id: 'late-agy', label: 'Late AGY' }]
         },
+        resolveAgyBinary: async () => ({
+          binaryPath: '/Users/test/.local/bin/agy',
+          source: 'path'
+        }),
         discoverGeminiApi: async () => ({
           status: 'ok' as const,
           models: [
@@ -94,8 +99,26 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         timeoutMs: 5
       })
     ).resolves.toEqual([
+      ...antigravityAgyStaticModels(),
       { id: 'gemini-api:gemini-fast', label: 'Fast' }
     ])
+  })
+
+  it('does not surface the AGY floor when the official binary is absent', async () => {
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+        discoverAgy: () => new Promise(() => {}),
+        resolveAgyBinary: async () => ({ binaryPath: null, source: 'missing' }),
+        discoverGeminiApi: async () => ({
+          status: 'ok' as const,
+          models: [
+            { id: 'gemini-api:gemini-fast' as `gemini-api:${string}`, modelId: 'gemini-fast' }
+          ]
+        }),
+        getSecretStore: () => store,
+        timeoutMs: 5
+      })
+    ).resolves.toEqual([{ id: 'gemini-api:gemini-fast', label: 'Fast' }])
   })
 
   it('offers the configured key its static rows when the live catalogue cannot be verified', async () => {

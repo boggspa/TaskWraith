@@ -4560,6 +4560,20 @@ input:disabled, select:disabled, textarea:disabled {
   font-weight: 600;
 }
 
+/* Run-complete status accents. The card's title IS the status string, so an
+ * elevated status is signalled by tinting that string — no pill, no banner,
+ * no extra container. `warning` = a blocker on top of real work; `danger` =
+ * a blocker with nothing produced. A clean or intentionally-paused finish
+ * keeps the default primary text above. Mixed with --text-primary so the
+ * accent stays legible on light themes too. */
+.run-complete-metadata strong.tone-warning {
+  color: color-mix(in srgb, var(--warning, #f5a623) 88%, var(--text-primary));
+}
+
+.run-complete-metadata strong.tone-danger {
+  color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary));
+}
+
 .run-complete-time-row {
   display: inline-flex;
   align-items: center;

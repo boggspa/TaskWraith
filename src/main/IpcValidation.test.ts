@@ -142,6 +142,15 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('canvas:set-visible', ['canvas-1', 'false'])).toThrow(/boolean/)
   })
 
+  it('registers and shape-gates the main-window Mesh Canvas surface', () => {
+    expect(() => validateIpcArgs('mesh-scene:list-chat', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('mesh-scene:view', ['chat-1', 'scene-1'])).not.toThrow()
+    expect(() => validateIpcArgs('mesh-scene:import-user-model', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('mesh-scene:delete', ['chat-1', 'scene-1'])).not.toThrow()
+    expect(() => validateIpcArgs('mesh-scene:import-user-model', [''])).toThrow(/non-empty/)
+    expect(() => validateIpcArgs('mesh-scene:view', ['chat-1', ''])).toThrow(/non-empty/)
+  })
+
   // Explicit pin for the human-collaboration channels: the generic scan above
   // already catches an unregistered channel, but these 13 shipped unregistered
   // (feature DOA + red build), so we hard-pin them so a future drop is named.

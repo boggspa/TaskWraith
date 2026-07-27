@@ -330,6 +330,33 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-alibaba')
   })
 
+  it('uses the Pi upstream hue for an active Ensemble working indicator', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: activeEnsembleChat(
+            ensembleParticipant({
+              id: 'deepseek-scout',
+              provider: 'pi',
+              role: 'Scout',
+              model: 'deepseek/deepseek-v4-flash'
+            })
+          ),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
+  })
+
   it('prepends participant-style headers to live tool-call viewports', () => {
     const participant = ensembleParticipant({
       id: 'codex-reviewer',
@@ -1029,6 +1056,104 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
 
     expect(html).not.toContain('Task complete')
     expect(html).not.toContain('Awaiting your next prompt.')
+  })
+
+  // The run-complete card's title is the run's status. Blockers retitle and
+  // tint it instead of contradicting it from an advisory banner underneath.
+  describe('run-complete status title', () => {
+    function stalledEnsembleChat(participantStatus: string): ChatRecord {
+      const chat = activeEnsembleChat(ensembleParticipant())
+      const round = chat.ensemble!.activeRound!
+      return {
+        ...chat,
+        ensemble: {
+          ...chat.ensemble!,
+          activeRound: {
+            ...round,
+            participants: [{ ...round.participants[0], status: participantStatus }]
+          },
+          escalationSignals: [
+            {
+              id: 'round-1-esc-stuck',
+              chatId: 'ensemble-chat',
+              roundId: 'round-1',
+              kind: 'stuck',
+              evidence: 'Round completed but no participant produced an answer.',
+              recommendedAction: 'pause-for-user',
+              createdAt: '2026-07-01T00:00:10.000Z'
+            }
+          ]
+        }
+      } as ChatRecord
+    }
+
+    const notice = { timestamp: '2026-07-01T00:00:10.000Z', exitCode: 0 }
+
+    it('titles a clean run "Task complete" with no accent class', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel {...makeProps({ virtualize: false, runCompleteNotice: notice })} />
+      )
+      expect(html).toContain('Task complete')
+      expect(html).toContain('Awaiting your next prompt.')
+      expect(html).not.toContain('tone-warning')
+      expect(html).not.toContain('tone-danger')
+    })
+
+    it('replaces the title with the blocker in red when the round produced nothing', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [],
+            runCompleteNotice: notice,
+            currentChat: stalledEnsembleChat('failed')
+          })}
+        />
+      )
+      expect(html).toContain(
+        '<strong class="tone-danger" title="Round completed but no participant produced an answer.">Round stalled</strong>'
+      )
+      expect(html).not.toContain('Task complete')
+      // The banner it replaced is gone, action copy and all.
+      expect(html).not.toContain('ensemble-escalation')
+      expect(html).not.toContain('Your input would help unblock this.')
+      // A stalled round is not awaiting a prompt.
+      expect(html).not.toContain('Awaiting your next prompt.')
+    })
+
+    it('tints the same blocker yellow once the round produced work', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [],
+            runCompleteNotice: notice,
+            currentChat: stalledEnsembleChat('failed'),
+            displayFileChangeSummaries: [{ path: 'src/a.ts', status: 'modified' }]
+          })}
+        />
+      )
+      expect(html).toContain('<strong class="tone-warning"')
+      expect(html).toContain('Round stalled')
+      expect(html).not.toContain('tone-danger')
+    })
+
+    it('keeps a cancelled run neutral even when the round flagged a blocker', () => {
+      const html = renderToStaticMarkup(
+        <TranscriptPanel
+          {...makeProps({
+            virtualize: false,
+            messages: [],
+            runCompleteNotice: { ...notice, exitCode: 130 },
+            currentChat: stalledEnsembleChat('failed')
+          })}
+        />
+      )
+      expect(html).toContain('Run cancelled')
+      expect(html).not.toContain('Round stalled')
+      expect(html).not.toContain('tone-danger')
+      expect(html).not.toContain('tone-warning')
+    })
   })
 
   it.each(
@@ -1731,5 +1856,122 @@ describe('working-indicator context-pressure hint', () => {
       />
     )
     expect(html).not.toContain('working-context-pressure-hint')
+  })
+})
+
+describe('settled ask_user_question tombstone', () => {
+  const MARKER_ID = 'agent-question-q7'
+  const REPLY_ID = 'agent-question-reply-q7'
+
+  const questionExchange: ChatMessage[] = [
+    {
+      id: MARKER_ID,
+      role: 'system',
+      content: 'Codex asked you to pick an option:',
+      timestamp: '2026-07-27T14:30:00.000Z',
+      metadata: {
+        kind: 'agentQuestion',
+        questionId: 'q7',
+        agentQuestion: 'Do Channels replace General chats?',
+        agentQuestionOptions: ['Replace — all are channels', 'Sit alongside them'],
+        agentQuestionContext: 'Affects the v1 migration path.'
+      }
+    } as ChatMessage,
+    {
+      id: REPLY_ID,
+      role: 'user',
+      content: 'Replace — all are channels',
+      timestamp: '2026-07-27T14:32:00.000Z',
+      metadata: {
+        kind: 'agentQuestionReply',
+        questionId: 'q7',
+        respondedToMessageId: MARKER_ID,
+        isCustomAnswer: false
+      }
+    } as ChatMessage,
+    {
+      id: 'assistant-after',
+      role: 'assistant',
+      content: 'Understood.',
+      timestamp: '2026-07-27T14:33:00.000Z'
+    } as ChatMessage
+  ]
+
+  function renderExchange(messages: ChatMessage[]): string {
+    return renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          currentProviderLabel: 'Codex',
+          currentProvider: 'codex',
+          messages
+        })}
+      />
+    )
+  }
+
+  it('keeps the question and the chosen answer visible after answering', () => {
+    const html = renderExchange(questionExchange)
+    // Before this feature the answered marker satisfied plainSystemNoticeMessage
+    // and the super-group fold swept the whole exchange into a one-liner.
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Do Channels replace General chats?')
+    expect(html).toContain('Affects the v1 migration path.')
+    // Both options are reported; only the chosen one is marked.
+    expect(html).toContain('Sit alongside them')
+    expect(html).toContain('is-chosen')
+    expect(html).toContain('Answered')
+  })
+
+  it('renders the answer ONCE — the duplicate reply row is emptied and zero-height', () => {
+    const html = renderExchange(questionExchange)
+    expect(html).toContain('is-row-hidden')
+    // Slice out just the reply row's block and assert the bubble is not there.
+    // A raw occurrence count would be wrong: the settled card deliberately
+    // repeats the answer inside an `sr-only` span, because the chosen-option
+    // tick is visual only.
+    const start = html.indexOf(`data-message-id="${REPLY_ID}"`)
+    expect(start).toBeGreaterThan(-1)
+    const rest = html.slice(start + 1)
+    const nextRow = rest.indexOf('data-message-id=')
+    const replyBlock = nextRow >= 0 ? rest.slice(0, nextRow) : rest
+    expect(replyBlock).not.toContain('Replace — all are channels')
+  })
+
+  it('does not fold the settled card into a collapsed one-liner', () => {
+    // Two adjacent foldable system notices would super-group; the question must
+    // not be eligible, so it keeps its card while the notice folds.
+    const html = renderExchange([
+      ...questionExchange,
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'System · @-mention: extra turn appended.',
+        timestamp: '2026-07-27T14:34:00.000Z'
+      } as ChatMessage,
+      {
+        id: 'sys-2',
+        role: 'system',
+        content: 'System · another notice.',
+        timestamp: '2026-07-27T14:35:00.000Z'
+      } as ChatMessage,
+      {
+        id: 'assistant-tail',
+        role: 'assistant',
+        content: 'Carrying on.',
+        timestamp: '2026-07-27T14:36:00.000Z'
+      } as ChatMessage
+    ])
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Do Channels replace General chats?')
+  })
+
+  it('shows a skipped question rather than leaving a bare header line', () => {
+    const html = renderExchange([questionExchange[0], questionExchange[2]])
+    expect(html).toContain('agent-question-card--settled')
+    expect(html).toContain('Skipped')
+    expect(html).toContain('Do Channels replace General chats?')
+    // Nothing to hide when there is no reply row.
+    expect(html).not.toContain('is-row-hidden')
   })
 })

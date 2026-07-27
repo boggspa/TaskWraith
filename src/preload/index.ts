@@ -811,6 +811,27 @@ const api = {
     }
   },
 
+  // Declarative 3D Mesh Canvas. Main resolves every request through the
+  // sender's current chat authority and returns tokenised local asset URLs only
+  // in a renderer projection; agents never receive this API or vault tokens.
+  meshCanvas: {
+    listForChat: (chatId: string): Promise<unknown[]> =>
+      ipcRenderer.invoke('mesh-scene:list-chat', chatId),
+    view: (chatId: string, sceneId: string): Promise<unknown | null> =>
+      ipcRenderer.invoke('mesh-scene:view', chatId, sceneId),
+    importUserModel: (chatId: string): Promise<{ canceled: boolean; scene?: unknown }> =>
+      ipcRenderer.invoke('mesh-scene:import-user-model', chatId),
+    closePresentation: (chatId: string, sceneId: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh-scene:close-presentation', chatId, sceneId),
+    deleteScene: (chatId: string, sceneId: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh-scene:delete', chatId, sceneId),
+    onEvent: (handler: (event: unknown) => void) => {
+      const wrapped = (_event: unknown, payload: unknown) => handler(payload)
+      ipcRenderer.on('mesh-scene-event', wrapped)
+      return () => ipcRenderer.removeListener('mesh-scene-event', wrapped)
+    }
+  },
+
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires
   // `agent-question-requested` when an agent calls the tool; renderer
   // responds via `answer-agent-question` (with the user's pick) or
@@ -2019,6 +2040,14 @@ const api = {
     const wrapped = (): void => callback()
     ipcRenderer.on('external-usage-updated', wrapped)
     return () => ipcRenderer.removeListener('external-usage-updated', wrapped)
+  },
+  onWorkspaceActivityUpdated: (
+    callback: (payload: { workspacePath: string; dayCount: number }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { workspacePath: string; dayCount: number }): void =>
+      callback(payload)
+    ipcRenderer.on('workspace-activity-updated', wrapped)
+    return () => ipcRenderer.removeListener('workspace-activity-updated', wrapped)
   },
   onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => {
     const wrapped = (_event: unknown, delivery: ChatUpdateDelivery): void => callback(delivery)

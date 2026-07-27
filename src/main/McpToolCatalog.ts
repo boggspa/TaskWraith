@@ -1745,6 +1745,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'mcpTools',
               'subThreadDelegation',
               'canvasInteraction',
+              'meshCanvas',
               'crossThreadRead',
               'mediaEditing',
               'mediaRecording',
@@ -2550,6 +2551,34 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           }
         },
         required: ['to', 'message']
+      }
+    },
+    {
+      name: 'ensemble_control',
+      description:
+        'Portable Boss/Captain Ensemble control. Set action plus its fields in params (or flat). Prefer this compact tool over ensemble_bossman_control.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description:
+              'Boss/Captain action, such as set_round_plan or summon_participant.'
+          },
+          params: {
+            type: 'object',
+            description:
+              'Only the fields for action, for example {"goal":"Review."} or {"targetParticipantId":"...","reason":"..."}.'
+          }
+        },
+        required: ['action'],
+        additionalProperties: true
       }
     },
     {
@@ -4047,6 +4076,227 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: { canvasId: { type: 'string' } },
         required: ['canvasId']
+      }
+    },
+    {
+      name: 'mesh_scene_create',
+      description:
+        'Create a chat-owned Mesh Canvas scene. The scene is declarative and local: use mesh_scene_apply for primitives/transforms, mesh_scene_import for GLB/glTF/OBJ workspace assets, then mesh_scene_present to show it to the user. Gated via the dedicated Mesh Canvas service.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Optional human-readable scene title.' },
+          backgroundColor: { type: 'string', description: 'Optional #RGB or #RRGGBB background.' }
+        }
+      }
+    },
+    {
+      name: 'mesh_scene_list',
+      description:
+        'List Mesh Canvas scenes owned by the active chat. Returns summaries only; use mesh_scene_inspect for nodes, materials, and scene settings. Read-only.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: { type: 'object', properties: {} }
+    },
+    {
+      name: 'mesh_scene_inspect',
+      description:
+        'Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, material overrides, camera, presentation metadata, and typed dependency graph. It never returns filesystem paths or private asset URLs. Read-only.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { sceneId: { type: 'string' } },
+        required: ['sceneId']
+      }
+    },
+    {
+      name: 'mesh_scene_import',
+      description:
+        'Import a GLB, glTF, or OBJ model from a path inside the active workspace into a Mesh Canvas scene. OBJ MTL files and declared texture dependencies, and glTF buffers/images, are copied into TaskWraith’s private asset vault; no source path is exposed to the viewer. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          sourcePath: { type: 'string', description: 'Workspace-relative model path (.glb, .gltf, or .obj).' },
+          name: { type: 'string' },
+          transform: {
+            type: 'object',
+            properties: {
+              position: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
+              rotation: { type: 'object', description: 'Euler degrees.', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
+              scale: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } }
+            }
+          }
+        },
+        required: ['sceneId', 'sourcePath']
+      }
+    },
+    {
+      name: 'mesh_scene_apply',
+      description:
+        'Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere, plane, cylinder, or torus. `update_node` changes a node’s name/transform/material/visibility. `remove_node` removes a node. `set_scene` changes title, #RGB/#RRGGBB background, studio/sunset/neutral lighting, or camera. `upsert_object_data` merges a typed object-fact map; `bind_node_property` makes one known node property react to an object-data fact or another node property (numeric fields may use scale + offset); `unbind_node_property` removes that edge. The main process resolves the acyclic graph after every mutation and the presented viewer refreshes from the resulting scene event. Rotation is Euler degrees; materials use PBR baseColor, metallic, roughness, opacity, emissive, and doubleSided. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          operation: {
+            type: 'string',
+            enum: [
+              'add_primitive',
+              'update_node',
+              'remove_node',
+              'set_scene',
+              'upsert_object_data',
+              'bind_node_property',
+              'unbind_node_property'
+            ]
+          },
+          primitive: { type: 'string', enum: ['box', 'sphere', 'plane', 'cylinder', 'torus'] },
+          nodeId: { type: 'string' },
+          name: { type: 'string' },
+          visible: { type: 'boolean' },
+          title: { type: 'string' },
+          backgroundColor: { type: 'string' },
+          transform: { type: 'object' },
+          material: { type: 'object' },
+          lighting: { type: 'object' },
+          camera: { type: 'object' },
+          sourceId: {
+            type: 'string',
+            description: 'Stable object-data source id for upsert_object_data.'
+          },
+          values: {
+            type: 'object',
+            description: 'Bounded map of string, finite-number, or boolean object facts to merge into sourceId.'
+          },
+          property: {
+            type: 'string',
+            enum: [
+              'transform.position.x',
+              'transform.position.y',
+              'transform.position.z',
+              'transform.rotation.x',
+              'transform.rotation.y',
+              'transform.rotation.z',
+              'transform.scale.x',
+              'transform.scale.y',
+              'transform.scale.z',
+              'visible',
+              'material.baseColor',
+              'material.metallic',
+              'material.roughness',
+              'material.opacity',
+              'material.emissive',
+              'material.doubleSided'
+            ]
+          },
+          source: {
+            type: 'object',
+            description:
+              'For bind_node_property: { kind: "object_data", sourceId, key } or { kind: "node_property", nodeId, property }.'
+          },
+          numericTransform: {
+            type: 'object',
+            description: 'Optional numeric-only affine mapping: { scale?, offset? }.'
+          }
+        },
+        required: ['sceneId', 'operation']
+      }
+    },
+    {
+      name: 'mesh_scene_set_material',
+      description:
+        'Set a PBR material override on a Mesh Canvas node. Supply material fields (baseColor, metallic, roughness, opacity, emissive, doubleSided); optionally give a workspace-relative `texturePath` for PNG/JPEG/WebP/GIF/BMP, which TaskWraith copies into the scene’s private vault. Imported models retain their original materials until overridden. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sceneId: { type: 'string' },
+          nodeId: { type: 'string' },
+          material: { type: 'object' },
+          texturePath: { type: 'string', description: 'Optional workspace-relative image texture path.' }
+        },
+        required: ['sceneId', 'nodeId', 'material']
+      }
+    },
+    {
+      name: 'mesh_scene_present',
+      description:
+        'Mark a chat-owned Mesh Canvas scene as presented to the user. The renderer opens/selects it in the Mesh Canvas dock and displays its interactive 3D viewer. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { sceneId: { type: 'string' }, title: { type: 'string' } },
+        required: ['sceneId']
+      }
+    },
+    {
+      name: 'mesh_scene_close',
+      description:
+        'Close the current user presentation for a Mesh Canvas scene without deleting the durable scene or its imported assets. It can be presented again later. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { sceneId: { type: 'string' } },
+        required: ['sceneId']
+      }
+    },
+    {
+      name: 'mesh_scene_delete',
+      description:
+        'Delete a chat-owned Mesh Canvas scene and remove any private imported assets no remaining scene references. This cannot affect another chat’s scenes. Gated via Mesh Canvas.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: { sceneId: { type: 'string' } },
+        required: ['sceneId']
       }
     },
     {

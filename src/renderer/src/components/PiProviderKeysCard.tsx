@@ -1,4 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import {
+  PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS,
+  PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS,
+  normalizePiCerebrasMaxCompletionTokens
+} from '../../../shared/piCerebrasCompletionCap'
 import { PillButton } from './PillButton'
 
 /**
@@ -22,6 +27,9 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
   { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' }
 ]
 
+const CEREBRAS_RATE_LIMITS_URL = 'https://inference-docs.cerebras.ai/support/rate-limits'
+const CEREBRAS_PROJECTS_URL = 'https://inference-docs.cerebras.ai/console/projects'
+
 export interface PiKeyCardStatus {
   encryptionAvailable: boolean
   configuredUpstreams: string[]
@@ -34,9 +42,16 @@ export interface PiProviderKeysCardViewProps {
   drafts: Record<string, string>
   busyUpstream: string | null
   error: string | null
+  cerebrasMaxCompletionTokens: number | null
+  cerebrasCapDraft: string
+  cerebrasCapBusy: boolean
+  cerebrasCapError: string | null
   onDraftChange: (upstream: string, value: string) => void
   onSave: (upstream: string) => void
   onClear: (upstream: string) => void
+  onCerebrasCapDraftChange: (value: string) => void
+  onSaveCerebrasCap: () => void
+  onClearCerebrasCap: () => void
 }
 
 export function PiProviderKeysCardView({
@@ -45,9 +60,16 @@ export function PiProviderKeysCardView({
   drafts,
   busyUpstream,
   error,
+  cerebrasMaxCompletionTokens,
+  cerebrasCapDraft,
+  cerebrasCapBusy,
+  cerebrasCapError,
   onDraftChange,
   onSave,
-  onClear
+  onClear,
+  onCerebrasCapDraftChange,
+  onSaveCerebrasCap,
+  onClearCerebrasCap
 }: PiProviderKeysCardViewProps): React.JSX.Element {
   const configured = new Set(status?.configuredUpstreams ?? [])
   const configuredCount = configured.size
@@ -144,6 +166,67 @@ export function PiProviderKeysCardView({
           )
         })}
       </div>
+      <div className="settings-pi-upstream-row">
+        <label className="settings-pi-upstream-name" htmlFor="pi-cerebras-completion-cap">
+          <strong>Cerebras completion cap</strong>
+          <span className="settings-pi-upstream-hint">
+            {cerebrasMaxCompletionTokens === null
+              ? `Optional — Pi default: ${PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()} tokens`
+              : `Active: ${cerebrasMaxCompletionTokens.toLocaleString()} max output tokens`}
+          </span>
+        </label>
+        <div className="settings-pi-upstream-controls">
+          <input
+            id="pi-cerebras-completion-cap"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS}
+            step={1}
+            aria-label="Cerebras maximum completion tokens"
+            value={cerebrasCapDraft}
+            disabled={cerebrasCapBusy}
+            onChange={(event) => onCerebrasCapDraftChange(event.target.value)}
+          />
+          <PillButton
+            size="compact"
+            variant="primary"
+            disabled={cerebrasCapBusy || !cerebrasCapDraft.trim()}
+            onClick={onSaveCerebrasCap}
+          >
+            Apply cap
+          </PillButton>
+          <PillButton
+            size="compact"
+            variant="danger"
+            disabled={cerebrasCapBusy || cerebrasMaxCompletionTokens === null}
+            onClick={onClearCerebrasCap}
+          >
+            Use Pi default
+          </PillButton>
+        </div>
+      </div>
+      <p className="settings-provider-auth-footnote">
+        Cerebras reserves prompt tokens plus Pi&apos;s requested completion budget before each call.
+        Pi&apos;s Cerebras models default to{' '}
+        {PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()} tokens, so an effective 30,000
+        TPM project allocation returns a 429 before usage is recorded. Cerebras checks the API
+        key&apos;s project allocation as well as the organization ceiling, so this can happen even
+        when All Projects shows a higher limit. Apply{' '}
+        {PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS.toLocaleString()} as a conservative
+        starting point; lower it further for unusually large prompts. This cap affects only
+        Pi&apos;s Cerebras models. For the project allocation details and full model ceiling,{' '}
+        <a href={CEREBRAS_PROJECTS_URL} target="_blank" rel="noreferrer">
+          Cerebras explains its two-level project quotas
+        </a>{' '}
+        and{' '}
+        <a href={CEREBRAS_RATE_LIMITS_URL} target="_blank" rel="noreferrer">
+          Cerebras says a first Pay As You Go credit purchase moves an organization to its Developer
+          tier
+        </a>{' '}
+        — adding a card and receiving the initial $5 trial credit is not that purchase.
+      </p>
+      {cerebrasCapError && <p className="settings-provider-auth-footnote">{cerebrasCapError}</p>}
       <p className="settings-provider-auth-footnote">
         Keys are encrypted with the system keychain and injected only into the matching Pi
         process — never shown again, never sent anywhere else.
@@ -162,10 +245,22 @@ export function PiProviderKeysCard({
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busyUpstream, setBusyUpstream] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [cerebrasMaxCompletionTokens, setCerebrasMaxCompletionTokens] = useState<number | null>(
+    null
+  )
+  const [cerebrasCapDraft, setCerebrasCapDraft] = useState(
+    String(PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS)
+  )
+  const [cerebrasCapBusy, setCerebrasCapBusy] = useState(false)
+  const [cerebrasCapError, setCerebrasCapError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    try {
-      const next = await window.api.getPiKeyStatus()
+    const [keyStatus, settings] = await Promise.allSettled([
+      window.api.getPiKeyStatus(),
+      window.api.getSettings()
+    ])
+    if (keyStatus.status === 'fulfilled') {
+      const next = keyStatus.value
       setStatus({
         encryptionAvailable: next.encryptionAvailable === true,
         configuredUpstreams: Array.isArray(next.configuredUpstreams)
@@ -173,8 +268,15 @@ export function PiProviderKeysCard({
           : [],
         recordUnreadable: next.recordUnreadable === true
       })
-    } catch {
+    } else {
       setStatus(null)
+    }
+    if (settings.status === 'fulfilled') {
+      const cap = normalizePiCerebrasMaxCompletionTokens(
+        settings.value.piCerebrasMaxCompletionTokens
+      )
+      setCerebrasMaxCompletionTokens(cap ?? null)
+      setCerebrasCapDraft(String(cap ?? PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS))
     }
   }, [])
 
@@ -218,6 +320,41 @@ export function PiProviderKeysCard({
     [drafts]
   )
 
+  const saveCerebrasCap = useCallback(async () => {
+    const cap = normalizePiCerebrasMaxCompletionTokens(Number(cerebrasCapDraft))
+    if (cap === undefined) {
+      setCerebrasCapError(
+        `Enter a whole number from 1 to ${PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()}.`
+      )
+      return
+    }
+    setCerebrasCapBusy(true)
+    setCerebrasCapError(null)
+    try {
+      await window.api.updateSettings({ piCerebrasMaxCompletionTokens: cap })
+      setCerebrasMaxCompletionTokens(cap)
+      setCerebrasCapDraft(String(cap))
+    } catch {
+      setCerebrasCapError('Could not save the Cerebras completion cap.')
+    } finally {
+      setCerebrasCapBusy(false)
+    }
+  }, [cerebrasCapDraft])
+
+  const clearCerebrasCap = useCallback(async () => {
+    setCerebrasCapBusy(true)
+    setCerebrasCapError(null)
+    try {
+      await window.api.updateSettings({ piCerebrasMaxCompletionTokens: null })
+      setCerebrasMaxCompletionTokens(null)
+      setCerebrasCapDraft(String(PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS))
+    } catch {
+      setCerebrasCapError('Could not restore Pi’s default Cerebras completion limit.')
+    } finally {
+      setCerebrasCapBusy(false)
+    }
+  }, [])
+
   return (
     <PiProviderKeysCardView
       status={status}
@@ -225,11 +362,18 @@ export function PiProviderKeysCard({
       drafts={drafts}
       busyUpstream={busyUpstream}
       error={error}
+      cerebrasMaxCompletionTokens={cerebrasMaxCompletionTokens}
+      cerebrasCapDraft={cerebrasCapDraft}
+      cerebrasCapBusy={cerebrasCapBusy}
+      cerebrasCapError={cerebrasCapError}
       onDraftChange={(upstream, value) =>
         setDrafts((prev) => ({ ...prev, [upstream]: value }))
       }
       onSave={(upstream) => void mutate(upstream, 'save')}
       onClear={(upstream) => void mutate(upstream, 'clear')}
+      onCerebrasCapDraftChange={setCerebrasCapDraft}
+      onSaveCerebrasCap={() => void saveCerebrasCap()}
+      onClearCerebrasCap={() => void clearCerebrasCap()}
     />
   )
 }

@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
 import { invalidateRendererUsageRecords, loadRendererUsageRecords } from './lib/usageRecordsCache'
+import { resolveWithinDeadline } from './lib/backgroundHydration'
 import {
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
@@ -396,6 +397,10 @@ import {
 import { summarizeChecks } from './components/GitStatusChips'
 import { repoNameFromRemote } from './components/GitHubSatellitePopover'
 import {
+  buildSidebarGitIndicators,
+  encodeSidebarGitIndicators
+} from './lib/sidebarGitIndicators'
+import {
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
 } from './components/Sidebar'
@@ -661,6 +666,10 @@ import {
   type RightDockTab
 } from './lib/rightDockState'
 import {
+  getPendingMeshCanvasOpenRequest,
+  subscribeMeshCanvasOpenRequests
+} from './lib/meshCanvasLaunch'
+import {
   readDockSurface,
   resolveDockSurfaceContext,
   writeDockSurface
@@ -924,6 +933,7 @@ function summarizeAuditBundleVerification(result: ProductAuditBundleVerification
 
 const FX_BURST_DURATION_MS = 1150
 const CHAT_SWITCH_USAGE_REFRESH_INTERVAL_MS = 30_000
+const BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS = 1_000
 const CONTEXT_COMPACTION_PROGRESS_STALE_MS = 5 * 60 * 1000
 
 type ContextCompactionProgressState = ContextCompactionProgressEvent & {
@@ -2382,6 +2392,8 @@ function App(): React.JSX.Element {
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
   const usageRecordsRefreshPendingRef = useRef(false)
+  const lateQuotaRefreshQueuedRef = useRef(false)
+  const lateQuotaRefreshTimerRef = useRef<number | null>(null)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
@@ -2916,6 +2928,25 @@ function App(): React.JSX.Element {
     if (!name) return null
     const branch = primaryGitSnapshot?.branch?.trim()
     return branch ? `${name}/${branch}` : name
+  })()
+
+  // Git status icons riding the right of that identity face. Two independent
+  // sources: the workspace's LIVE pull request, and the thread's own durable
+  // `gitWorkflow` marker ("the PR THIS session shipped") — so a thread whose
+  // #10 landed can show purple beside the branch's current green #12.
+  // Encoded to a primitive because the sidebar row memo comparators only gate
+  // primitives; a fresh array each render would churn or, worse, never update.
+  const activeChatSidebarGitIndicators = ((): string | null => {
+    if (!activeChatSidebarIdentity) return null
+    return (
+      encodeSidebarGitIndicators(
+        buildSidebarGitIndicators({
+          snapshot: primaryGitSnapshot,
+          pr: primaryPr,
+          workflow: currentChat?.gitWorkflow
+        })
+      ) || null
+    )
   })()
 
   // Bounded, visibility-gated CI poll. CI transitions (pending → pass/fail) on
@@ -3580,6 +3611,34 @@ function App(): React.JSX.Element {
       })
       .catch(() => {})
       .finally(completeUsageRefresh)
+  }
+  /** A quota response that missed the UI deadline is still useful data. Once
+   * it lands, re-read the now-warm provider caches promptly instead of making
+   * a meter wait for the 90-second heartbeat. Debouncing coalesces the five
+   * providers' late completions into one lightweight quota-only projection. */
+  const queueLateQuotaRefresh = () => {
+    if (lateQuotaRefreshQueuedRef.current) return
+    lateQuotaRefreshQueuedRef.current = true
+
+    const run = () => {
+      lateQuotaRefreshTimerRef.current = null
+      if (usageRefreshInFlightRef.current) {
+        lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
+        return
+      }
+
+      lateQuotaRefreshQueuedRef.current = false
+      usageRefreshInFlightRef.current = true
+      usageRefreshLastFiredAtRef.current = Date.now()
+      void refreshUsageSummaryRef
+        .current(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
+          quotaOnly: true
+        })
+        .catch(() => {})
+        .finally(completeUsageRefresh)
+    }
+
+    lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
   }
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
@@ -5680,6 +5739,12 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return modelId.startsWith('grok')
     if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
+    if (provider === 'pi') {
+      return getProviderModelOptions('pi').some((model) => model.id === modelId)
+    }
+    if (provider === 'mistral') {
+      return getProviderModelOptions('mistral').some((model) => model.id === modelId)
+    }
     if (provider === 'antigravity') {
       return configuredAntigravityModels.some((model) => model.id === modelId)
     }
@@ -8181,6 +8246,18 @@ function App(): React.JSX.Element {
       quotaOnly: options.quotaOnly === true,
       recordsInitialized: usageRecordsInitializedRef.current
     })
+    // Quota telemetry is optional launch decoration. A provider IPC request
+    // may be waiting on a keychain, CLI, or an upstream that never settles;
+    // it must not keep the global refresh lock held or delay the welcome UI.
+    // The underlying request is still allowed to warm its main-side cache;
+    // a late resolution coalesces into an immediate quota-only repaint.
+    const loadQuotaInBackground = (load: () => Promise<any>): Promise<any> =>
+      resolveWithinDeadline(
+        Promise.resolve().then(load),
+        null,
+        BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS,
+        { onLateResolve: queueLateQuotaRefresh }
+      )
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
@@ -8190,12 +8267,14 @@ function App(): React.JSX.Element {
     const [codexSnap, claudeSnap, kimiSnap, cursorSnap, antigravitySnap, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
-          ? window.api.getCodexUsageSnapshot(quotaRefreshOptions).catch(() => null)
+          ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
           : Promise.resolve(null),
-        window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
-        window.api.getAgentRateLimits('antigravity', quotaRefreshOptions).catch(() => null),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
+        loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
+        loadQuotaInBackground(() =>
+          window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
+        ),
         loadUsageRecords
           ? loadRendererUsageRecords('taskwraith', {
               force: options.force === true || options.forceUsageRecords === true
@@ -24392,6 +24471,34 @@ function App(): React.JSX.Element {
     openRightDockPanel(id)
     setRightDockTab(id)
   }
+  // `mesh_scene_present` is an explicit request to put a 3D scene in front of
+  // the user. Focus the active chat's existing Canvas surface; an event for a
+  // different chat never steals the user's current context. CanvasDockPanel
+  // rehydrates the presented scene from main once it mounts.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    const api = window.api?.meshCanvas
+    if (!chatId || !api?.onEvent) return
+    return api.onEvent((event) => {
+      const record = event as { chatId?: unknown; kind?: unknown } | null
+      if (record?.chatId !== chatId || record.kind !== 'scene.presented') return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    })
+  }, [currentChat?.appChatId])
+  // Human composer request: open the active chat's dock before any model has
+  // presented a scene. CanvasDockPanel consumes the one-shot request and
+  // selects its Mesh Canvas surface once it mounts.
+  useEffect(() => {
+    const openRequestedMeshCanvas = (): void => {
+      const request = getPendingMeshCanvasOpenRequest()
+      if (!request || request.chatId !== currentChat?.appChatId) return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    }
+    openRequestedMeshCanvas()
+    return subscribeMeshCanvasOpenRequests(openRequestedMeshCanvas)
+  }, [currentChat?.appChatId])
   // Single toggle entry point for the glass-pill rim buttons. Opening goes
   // through the exclusive dock lifecycle (close siblings, open, select) so
   // surfaces REPLACE each other instead of stacking; closing collapses EVERY
@@ -29630,6 +29737,7 @@ function App(): React.JSX.Element {
     handleSetChatHiddenFromMainList,
     handleClearChatGitWorkflow,
     activeChatSidebarIdentity,
+    activeChatSidebarGitIndicators,
     handleTogglePinWorkspace,
     handleTogglePinWorkspaceBoard,
     handleToggleWorkflowEnabled,

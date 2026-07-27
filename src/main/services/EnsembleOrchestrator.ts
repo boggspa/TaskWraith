@@ -20,6 +20,7 @@ import {
   providerLabel,
   resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
+import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import type {
   ActiveGoal,
@@ -12441,7 +12442,11 @@ export class EnsembleOrchestrator {
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode
       })
-      const promptWithDiscordContext = `${prompt}${formatDiscordContextPromptAppendix(
+      const shellRoutingPrompt = buildProviderShellRoutingPrompt({
+        provider: participant.provider,
+        effectivePermissions: permissions
+      })
+      const promptWithDiscordContext = `${prompt}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       const resumeFallbackPrompt =
@@ -12457,7 +12462,7 @@ export class EnsembleOrchestrator {
               slimTurn: false,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode
-            })}${formatDiscordContextPromptAppendix(
+            })}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
           : undefined
@@ -13819,7 +13824,11 @@ export class EnsembleOrchestrator {
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode
       })
-      const promptWithDiscordContext = `${promptText}${formatDiscordContextPromptAppendix(
+      const shellRoutingPrompt = buildProviderShellRoutingPrompt({
+        provider: participant.provider,
+        effectivePermissions: permissions
+      })
+      const promptWithDiscordContext = `${promptText}${shellRoutingPrompt}${formatDiscordContextPromptAppendix(
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       // Mirror the serial path: thread per-participant reasoning/thinking into

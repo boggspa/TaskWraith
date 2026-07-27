@@ -31,6 +31,10 @@ export interface TranscriptRowRenderSignature {
   superGroupKey: string
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
+  /** Settled ask_user_question card: outcome + answer + whether this row is the
+   *  suppressed reply. Without it the cache serves a card that still shows the
+   *  question as unanswered after the user answers it. */
+  agentQuestionTombstoneKey: string
   assistantRunModelKey: string
   renameContinuityKey: string
   auxiliaryKey: string
@@ -243,6 +247,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.superGroupKey !== next.superGroupKey) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
+  if (prev.agentQuestionTombstoneKey !== next.agentQuestionTombstoneKey) return false
   if (prev.assistantRunModelKey !== next.assistantRunModelKey) return false
   if (prev.renameContinuityKey !== next.renameContinuityKey) return false
   if (prev.auxiliaryKey !== next.auxiliaryKey) return false

@@ -4425,85 +4425,13 @@
   box-shadow: none;
 }
 
-/* ============================================================
- * ENSEMBLE ESCALATION ADVISORY CHIPS — 1.0.7 (M5 surfacing)
- * --------------------------------------------------------------
- * The orchestrator's complexity-escalation heuristic computes a
- * signal at each round's close (stuck / looping /
- * disagreement-unresolved / tool-error-cluster) and persists it on
- * `chat.ensemble.escalationSignals`. These were dark-shipped —
- * computed + broadcast but rendered nowhere. This surfaces them as
- * a low-key advisory row tucked inside the run-complete card,
- * right under "Run details".
- *
- * Advisory ONLY: nothing here acts on a signal. The copy makes a
- * tradeoff VISIBLE so the user decides; it never frames a
- * multi-seat panel as waste. Tones are deliberately gentle —
- * `attention` for failure-shaped signals, `info` for advisories —
- * so the chip informs without alarming.
- * ============================================================ */
-
-.ensemble-escalation-advisory {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin-top: var(--space-sm);
-}
-
-.ensemble-escalation-chip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 8px;
-  padding: 8px 12px;
-  border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  transition:
-    border-color 160ms ease,
-    background-color 160ms ease;
-}
-
-.ensemble-escalation-chip.tone-attention {
-  border-color: color-mix(in srgb, var(--warning, #d98324) 34%, transparent);
-  background: color-mix(in srgb, var(--warning, #d98324) 10%, transparent);
-}
-
-.ensemble-escalation-chip-label {
-  position: relative;
-  padding-left: 14px;
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  font-weight: 650;
-}
-
-/* Leading dot keeps the label scannable without an icon dependency. */
-.ensemble-escalation-chip-label::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.45em;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--accent) 70%, var(--text-primary));
-}
-
-.ensemble-escalation-chip.tone-attention .ensemble-escalation-chip-label::before {
-  background: color-mix(in srgb, var(--warning, #d98324) 78%, var(--text-primary));
-}
-
-.ensemble-escalation-chip-action {
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-}
-
-/* Respect the reduce-motion preference — drop the hover/state
- * transition so the chip never animates when the user opted out. */
-[data-reduce-motion="true"] .ensemble-escalation-chip {
-  transition: none;
-}
+/* The ensemble escalation-advisory chip strip that used to live inside the
+ * run-complete card is gone. The signals it rendered (stuck / looping /
+ * disagreement-unresolved / tool-error-cluster) now retitle the card itself —
+ * see `resolveRunCompleteStatus` in lib/runCompleteSummary.ts and the
+ * `.run-complete-metadata strong.tone-*` accents in shard 04. A banner that
+ * named a blocker with no next step read as inactionable anxiety; the status
+ * alone was the useful part. */
 
 /* ============================================================
  * Native default shell — liquid-glass above-row instrument

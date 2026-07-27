@@ -22,6 +22,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
@@ -67,6 +68,9 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // Canvas actuation (canvas_click/fill) mutates the app surface — denied under
   // read_only; approval-queued under `plan`.
   canvasInteraction: 'deny',
+  // Mesh scene authoring/import is a dedicated visual-workspace mutation. It
+  // stays denied on Recon, independently of generic MCP or web-canvas grants.
+  meshCanvas: 'deny',
   // Cross-thread reads are denied under read-only — no reaching into other
   // threads'/workspaces' run history from a read-only seat. (Not an instrument;
   // stays DENY under `plan` too.)
@@ -102,6 +106,9 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   subThreadDelegation: 'ask',
   // Instrument: canvas actuation permitted under plan via human approval.
   canvasInteraction: 'ask',
+  // Instrument: Mesh Canvas creation/import/presentation is permitted under
+  // plan only with a human decision for each action.
+  meshCanvas: 'ask',
   // Not an instrument — cross-thread history reads stay denied under plan.
   crossThreadRead: 'deny',
   // Not an instrument either, and a write rather than a read — stays denied.
@@ -178,6 +185,9 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // DELIBERATELY no mediaRecording here — capture is non-grantable and
       // stays at its default-deny.
       mediaEditing: 'allow',
+      // Chat-owned Mesh Canvas authoring/import is workspace bounded: source
+      // assets are jailed to this workspace and copied into TaskWraith's vault.
+      meshCanvas: 'allow',
       externalPublish: 'allow'
     }
   },
@@ -192,6 +202,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
+      meshCanvas: 'allow',
       // Cross-thread reads are grantable; Full access auto-allows them.
       crossThreadRead: 'allow',
       // Queued thread messages are grantable; Full access auto-allows them. A WAKE
@@ -230,6 +241,7 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing'
@@ -244,7 +256,7 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
 // (subThreadDelegation is deliberately absent — it was already ASK + grantable
 // under `plan` before the split, so grant-immunity there would be a regression.)
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
-  new Set<AgenticServiceId>(['canvasInteraction', 'mediaEditing'])
+  new Set<AgenticServiceId>(['canvasInteraction', 'meshCanvas', 'mediaEditing'])
 
 const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>(['externalPublish'])
@@ -404,6 +416,7 @@ function servicesFromSettings(
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
+    meshCanvas: normalizePolicy(settings?.meshCanvas, 'ask'),
     crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),
     // Thread messages default to 'ask' (grantable, like crossThreadRead).
     threadMessage: normalizePolicy(settings?.threadMessage, 'ask'),

@@ -1576,6 +1576,29 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let question: String?
             public let options: [String]?
             public let context: String?
+            /// Settled state, so a finished question keeps a full card instead of
+            /// collapsing to a muted one-liner with the answer stranded in a
+            /// separate user bubble below it. Mirrors the desktop tombstone.
+            public let answer: String?
+            public let isCustomAnswer: Bool?
+            /// Row id of the user-reply this card reports. The transcript drops
+            /// that row so the answer is not printed twice — named by the Mac
+            /// rather than matched on text, because a user could legitimately
+            /// send the same words again later.
+            public let replyRowId: String?
+            /// `answered` | `unanswered` — a plain String, never an enum, so a
+            /// value a newer Mac invents degrades instead of failing to decode.
+            ///
+            /// `unanswered` does NOT mean skipped: the Mac cannot tell an open
+            /// question from a dismissed one (neither appends a message). Only
+            /// this device knows, from whether the parked tool is still in
+            /// `model.questions` — see AgentQuestionRow.
+            public let outcome: String?
+
+            /// True once the Mac has confirmed an answer reached the agent.
+            public var isAnswered: Bool {
+                outcome == "answered" || (answer?.isEmpty == false)
+            }
         }
         public let agentQuestion: AgentQuestion?
         /// Ensemble fan-out lane identity — the desktop EnsembleFanoutResult

@@ -8,8 +8,12 @@ import {
   TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
+  isMeshCanvasDirectTaskWraithMcpProfile,
   isGatewayV2TaskWraithMcpProfile,
   isTaskWraithMcpProfileId,
   isTaskWraithMcpProfileReceiptForSession,
@@ -39,7 +43,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
-      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID)
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)
     }
   })
 
@@ -104,7 +108,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('defaults every fresh tool-capable provider to gateway-v2', () => {
+  it('defaults every fresh tool-capable provider to the newest gateway profile', () => {
     for (const provider of ['codex', 'kimi', 'cursor', 'ollama'] as const) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -128,7 +132,10 @@ describe('resolveTaskWraithMcpProfile', () => {
       TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
       // Load-bearing: this predicate drives the gateway-subset launch arg and
@@ -141,6 +148,52 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(false)
+  })
+
+  it('selects the mesh-direct catalogue only for a fresh pre-authorised participant run', () => {
+    expect(
+      resolveTaskWraithMcpProfile({
+        provider: 'codex',
+        meshCanvasParticipantGranted: true
+      })
+    ).toEqual({
+      profileId: TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
+      source: 'fresh_gateway_mesh_participant'
+    })
+    expect(
+      resolveTaskWraithMcpProfile({
+        provider: 'codex',
+        meshCanvasParticipantGranted: false
+      })
+    ).toEqual({
+      profileId: TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
+      source: 'fresh_gateway_default'
+    })
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(
+      true
+    )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)).toBe(
+      false
+    )
+  })
+
+  it('never lets participant authority override a persisted session receipt', () => {
+    const receipt = createTaskWraithMcpProfileReceipt({
+      provider: 'claude',
+      providerSessionId: 'existing-session',
+      profileId: TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
+    })
+    expect(
+      resolveTaskWraithMcpProfile({
+        provider: 'claude',
+        providerSessionId: 'existing-session',
+        receipt,
+        meshCanvasParticipantGranted: true
+      })
+    ).toEqual({ profileId: TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID, source: 'pinned_receipt' })
   })
 
   it('does not claim a gateway surface for headless or toolless Grok runs', () => {

@@ -46,6 +46,7 @@ import { sanitizeRendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRen
 import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
+import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
 import {
   coerceLiveProvider,
   isLiveSelectableProvider,
@@ -88,6 +89,7 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
+  meshCanvas: 'ask',
   crossThreadRead: 'ask',
   threadMessage: 'ask',
   mediaEditing: 'ask',
@@ -105,6 +107,7 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'meshCanvas',
   'crossThreadRead',
   'threadMessage',
   'mediaEditing'
@@ -117,6 +120,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiBinaryPath',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'piCerebrasMaxCompletionTokens',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
@@ -1330,6 +1334,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.canvasInteraction,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasInteraction
             ),
+            meshCanvas: sanitizeAgenticServicePolicy(
+              input.agenticServices.meshCanvas,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.meshCanvas ?? 'ask'
+            ),
             crossThreadRead: sanitizeAgenticServicePolicy(
               input.agenticServices.crossThreadRead,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.crossThreadRead ?? 'ask'
@@ -1531,6 +1539,19 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
     }
+    if ('piCerebrasMaxCompletionTokens' in sanitized) {
+      if (sanitized.piCerebrasMaxCompletionTokens === null) {
+        // Explicit UI reset: serialize as absent so Pi returns to each model's
+        // advertised maximum instead of carrying a hidden old cap.
+        sanitized.piCerebrasMaxCompletionTokens = undefined
+      } else {
+        const cap = normalizePiCerebrasMaxCompletionTokens(
+          sanitized.piCerebrasMaxCompletionTokens
+        )
+        if (cap === undefined) delete sanitized.piCerebrasMaxCompletionTokens
+        else sanitized.piCerebrasMaxCompletionTokens = cap
+      }
+    }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)
     }
@@ -1614,6 +1635,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
           services.canvasInteraction,
           current.canvasInteraction
         ),
+        meshCanvas: sanitizeAgenticServicePolicy(services.meshCanvas, current.meshCanvas ?? 'ask'),
         crossThreadRead: sanitizeAgenticServicePolicy(
           services.crossThreadRead,
           current.crossThreadRead ?? 'ask'

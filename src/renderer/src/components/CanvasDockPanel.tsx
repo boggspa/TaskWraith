@@ -15,6 +15,12 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { CanvasPane } from './CanvasPane'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { friendlyCanvasError } from './CanvasComposerButton'
+import {
+  consumeMeshCanvasOpenRequest,
+  getPendingMeshCanvasOpenRequest,
+  subscribeMeshCanvasOpenRequests
+} from '../lib/meshCanvasLaunch'
+import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
 
 export type CanvasDockSessionKind = 'web' | 'sketch'
 
@@ -244,6 +250,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<'web' | 'sketch' | null>(null)
   const [showLauncher, setShowLauncher] = useState(false)
+  const [showMesh, setShowMesh] = useState(false)
   // Async completions race chat switches; compare-and-drop stale ones.
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
@@ -274,6 +281,56 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
     void refresh()
   }, [refresh])
 
+  // A presentation may have been made while this dock was closed. On the next
+  // mount, restore that explicit user-facing intent from the chat-owned scene
+  // summaries; this is deliberately not provider/session state.
+  useEffect(() => {
+    const api = window.api?.meshCanvas
+    let cancelled = false
+    setShowMesh(false)
+    if (!api) return () => {
+      cancelled = true
+    }
+    void api
+      .listForChat(chatId)
+      .then((records) => {
+        if (cancelled || chatIdRef.current !== chatId) return
+        if (records.map(toMeshSceneSummary).some((scene) => scene?.presentedAt)) {
+          setShowMesh(true)
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [chatId])
+
+  // The composer can explicitly open Mesh Canvas before any scene exists. Keep
+  // that one-shot renderer request long enough for this dock to mount, then
+  // consume it so ordinary dock reopens preserve the user's last surface.
+  useEffect(() => {
+    let consumeTimer: number | null = null
+    const showRequestedMesh = (): void => {
+      const request = getPendingMeshCanvasOpenRequest()
+      if (!request || request.chatId !== chatId) return
+      setShowMesh(true)
+      // Defer consumption by one task. React development Strict Mode runs
+      // mount effects twice; consuming synchronously would make the second
+      // pass reset `showMesh` to its normal default before the dock paints.
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
+      consumeTimer = window.setTimeout(() => {
+        consumeTimer = null
+        consumeMeshCanvasOpenRequest(request.id)
+      }, 0)
+    }
+    showRequestedMesh()
+    const unsubscribe = subscribeMeshCanvasOpenRequests(showRequestedMesh)
+    return () => {
+      unsubscribe()
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
+    }
+  }, [chatId])
+
   // Live refresh: every canvas action broadcasts an audit event carrying its
   // chatId — agent opens/closes/navigations show up without polling.
   useEffect(() => {
@@ -294,6 +351,18 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       if (timer !== null) window.clearTimeout(timer)
     }
   }, [chatId, refresh])
+
+  // `mesh_scene_present` is an explicit agent request to show the human a
+  // scene. When the Canvas dock is already open, switch its local surface to
+  // Mesh Canvas immediately; no provider/session state is involved.
+  useEffect(() => {
+    const api = window.api?.meshCanvas
+    if (!api?.onEvent) return
+    return api.onEvent((event) => {
+      const record = event as { chatId?: unknown; kind?: unknown } | null
+      if (record?.chatId === chatId && record.kind === 'scene.presented') setShowMesh(true)
+    })
+  }, [chatId])
 
   const runOpen = async (
     mode: 'web' | 'sketch',
@@ -409,7 +478,7 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
   return (
     <div className="canvas-dock-panel" aria-label="Canvas panel">
       <div className="canvas-dock-toolbar">
-        {sessions.length ? (
+        {!showMesh && sessions.length ? (
           <div className="canvas-dock-tabs" role="tablist" aria-label="Open canvases">
             {sessions.map((session) => {
               const summary = ownedSummaries.get(session.canvasId)
@@ -438,9 +507,21 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             })}
           </div>
         ) : (
-          <span className="canvas-dock-toolbar-title">Canvas</span>
+          <span className="canvas-dock-toolbar-title">{showMesh ? 'Mesh Canvas' : 'Canvas'}</span>
         )}
-        {sessions.length > 0 && (
+        <button
+          type="button"
+          className={`canvas-dock-mesh${showMesh ? ' is-active' : ''}`}
+          onClick={() => {
+            setShowMesh((current) => !current)
+            setShowLauncher(false)
+          }}
+          aria-label="Show Mesh Canvas"
+          title="Show Mesh Canvas"
+        >
+          3D
+        </button>
+        {!showMesh && sessions.length > 0 && (
           <button
             type="button"
             className={`canvas-dock-new${launcherVisible ? ' is-active' : ''}`}
@@ -453,6 +534,10 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
         )}
       </div>
 
+      {showMesh ? (
+        <MeshCanvasPanel chatId={chatId} />
+      ) : (
+        <>
       {launcherVisible && (
         <div className="canvas-dock-launcher">
           <div className="canvas-dock-launcher-group">
@@ -544,6 +629,8 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
             are off-screen.
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   )

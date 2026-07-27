@@ -534,6 +534,77 @@ export interface RemoteAgentQuestion {
   question: string
   options?: string[]
   context?: string
+  /**
+   * SETTLED state, so the phone can render the same tombstone the desktop does
+   * once the question is over: the question, its options with the chosen one
+   * ticked, and the outcome.
+   *
+   * Resolved MAC-SIDE rather than paired on the phone, because `buildRow` sees
+   * one message at a time and the answer lives on a SEPARATE reply row — and
+   * the wire has no `agentQuestionReply` row kind for the phone to pair on.
+   * `outcome` is a plain string, never an enum, so a value a newer Mac invents
+   * degrades instead of failing to decode.
+   */
+  answer?: string
+  isCustomAnswer?: boolean
+  /** Row id of the user-reply this card now reports, so the phone can stop
+   *  rendering the answer twice. Named explicitly rather than matched on text —
+   *  a user could legitimately send the same words again. */
+  replyRowId?: string
+  /**
+   * `answered` | `unanswered`. Deliberately NOT `pending`/`skipped`: from the
+   * transcript alone the Mac cannot tell an open question from a dismissed or
+   * timed-out one — neither appends a message. The PHONE makes that call, since
+   * its parked-tool registry knows whether the question is still live.
+   *
+   * Absent on older Macs; a value a newer one invents must degrade rather than
+   * fail to decode, which is why this is a string and not an enum.
+   */
+  outcome?: string
+}
+
+/** Answer + custom flag, keyed by the ASKING message id. Built once per
+ *  projection because a row builder cannot see its siblings. */
+export type RemoteAgentQuestionAnswers = ReadonlyMap<
+  string,
+  { answer: string; isCustomAnswer: boolean; replyRowId: string }
+>
+
+/**
+ * Index `agentQuestionReply` rows by the marker they answered.
+ *
+ * Mirrors `indexAgentQuestionReplies` in the renderer's agentQuestionTombstone
+ * lib — the two must agree or the phone and the desktop disagree about whether
+ * a question was answered. Keys on `respondedToMessageId` with the
+ * `agent-question-<id>` shape as a fallback, since older replies carry only
+ * `questionId`.
+ */
+export function indexRemoteAgentQuestionAnswers(
+  messages: readonly ChatMessage[]
+): RemoteAgentQuestionAnswers {
+  const byMarker = new Map<
+    string,
+    { answer: string; isCustomAnswer: boolean; replyRowId: string }
+  >()
+  for (const message of messages) {
+    const metadata = message.metadata as Record<string, unknown> | undefined
+    if (metadata?.kind !== 'agentQuestionReply') continue
+    const answer = stringField(message.content, 600)
+    if (!answer) continue
+    const entry = {
+      answer,
+      isCustomAnswer: metadata.isCustomAnswer === true,
+      replyRowId: message.id
+    }
+    const marker =
+      typeof metadata.respondedToMessageId === 'string'
+        ? metadata.respondedToMessageId.trim()
+        : ''
+    if (marker) byMarker.set(marker, entry)
+    const questionId = typeof metadata.questionId === 'string' ? metadata.questionId.trim() : ''
+    if (questionId) byMarker.set(`agent-question-${questionId}`, entry)
+  }
+  return byMarker
 }
 
 /** Structured identity for an ensemble FAN-OUT lane result — the desktop
@@ -1544,7 +1615,10 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
  * registry questionId — the inline card resolves the same parked tool the banner
  * does. Options are capped at 4 (the tool's ceiling).
  */
-function buildAgentQuestion(message: ChatMessage): RemoteAgentQuestion | undefined {
+function buildAgentQuestion(
+  message: ChatMessage,
+  answers?: RemoteAgentQuestionAnswers
+): RemoteAgentQuestion | undefined {
   const metadata = message.metadata as Record<string, unknown> | undefined
   if (message.role !== 'system' || metadata?.kind !== 'agentQuestion') return undefined
   const promptId = typeof metadata.questionId === 'string' ? metadata.questionId.trim() : ''
@@ -1561,6 +1635,22 @@ function buildAgentQuestion(message: ChatMessage): RemoteAgentQuestion | undefin
   }
   const context = stringField(metadata.agentQuestionContext, 600)
   if (context) result.context = context
+  // Absent index (older callers) leaves outcome undefined, which the phone
+  // reads as pending — the behaviour before this field existed.
+  if (answers) {
+    const settled = answers.get(message.id)
+    if (settled) {
+      result.answer = settled.answer
+      result.isCustomAnswer = settled.isCustomAnswer
+      result.replyRowId = settled.replyRowId
+      result.outcome = 'answered'
+    } else {
+      // No reply row: either still open, dismissed, or timed out. Dismissal and
+      // the timeout both append nothing, so the transcript cannot separate the
+      // three — say only what is true here and let the phone's registry decide.
+      result.outcome = 'unanswered'
+    }
+  }
   return result
 }
 
@@ -1724,7 +1814,8 @@ function buildRow(
   message: ChatMessage,
   previewMax: number,
   attentionKind: RemoteAttentionKind | null,
-  fallbackPooledAgentIdentity?: RemotePooledAgentIdentity
+  fallbackPooledAgentIdentity?: RemotePooledAgentIdentity,
+  questionAnswers?: RemoteAgentQuestionAnswers
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
@@ -1848,7 +1939,7 @@ function buildRow(
   }
   const proposedPlan = buildProposedPlan(message)
   if (proposedPlan) row.proposedPlan = proposedPlan
-  const agentQuestion = buildAgentQuestion(message)
+  const agentQuestion = buildAgentQuestion(message, questionAnswers)
   if (agentQuestion) row.agentQuestion = agentQuestion
   const fanoutResult = buildFanoutResult(message)
   if (fanoutResult) row.fanoutResult = fanoutResult
@@ -2604,6 +2695,9 @@ export function projectRemoteThread(
     .map((run) => summarizeRun(run, opts.costDisplay, all))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
   const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)
+  // Built once over the WHOLE message list: buildRow sees one message at a
+  // time, and a question's answer lives on a separate reply row.
+  const questionAnswers = indexRemoteAgentQuestionAnswers(all)
   const pinnedRows = capRowThumbnails(
     all
       .filter(
@@ -2616,7 +2710,9 @@ export function projectRemoteThread(
           Number((a.metadata as Record<string, unknown>).pinnedAt)
       )
       .slice(0, 12)
-      .map((message) => buildRow(message, previewMax, null, fallbackPooledAgentIdentity)),
+      .map((message) =>
+        buildRow(message, previewMax, null, fallbackPooledAgentIdentity, questionAnswers)
+      ),
     MAX_PINNED_THUMBNAIL_BASE64
   )
 
@@ -2665,7 +2761,13 @@ export function projectRemoteThread(
       message.id === latestAssistantRowId
         ? Math.max(previewMax, REMOTE_IOS_ROW_EXPAND_MAX)
         : previewMax
-    const row = buildRow(message, rowPreviewMax, att, fallbackPooledAgentIdentity)
+    const row = buildRow(
+      message,
+      rowPreviewMax,
+      att,
+      fallbackPooledAgentIdentity,
+      questionAnswers
+    )
     const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker
     return row

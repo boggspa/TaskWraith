@@ -796,7 +796,10 @@
   )
   .run-complete-card
   :is(
-    .run-complete-metadata strong,
+    /* Excluded: the run-complete title carries its own status accent
+     * (.tone-warning / .tone-danger) and this !important would flatten an
+     * elevated status back to plain ink. */
+    .run-complete-metadata strong:not(.tone-warning):not(.tone-danger),
     .run-complete-summary-header strong,
     .file-change-summary-header strong,
     .run-complete-summary-item strong

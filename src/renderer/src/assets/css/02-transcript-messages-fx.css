@@ -4330,10 +4330,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * an in-flow zero-height child still occupies — display:none removes it from
  * gap accounting, and that path performs no measurement.
  */
-.transcript-inner:not(.transcript-virtualized) > .transcript-message-block.is-super-hidden {
+/* `.is-row-hidden` is the same mechanism for a row hidden for a reason OTHER
+ * than super-group membership — today, an ask_user_question reply whose answer
+ * the settled tombstone already reports, so it would otherwise print twice. It
+ * shares these rules rather than restating them: any future fix to the
+ * measurement subtleties above must apply to both, and a second copy would
+ * drift. Rows hidden this way still occupy their slot in the row list, so
+ * ordinals and scroll-spy are unaffected. */
+.transcript-inner:not(.transcript-virtualized) > .transcript-message-block.is-super-hidden,
+.transcript-inner:not(.transcript-virtualized) > .transcript-message-block.is-row-hidden {
   display: none;
 }
-.transcript-inner.transcript-virtualized > .transcript-message-block.is-super-hidden {
+.transcript-inner.transcript-virtualized > .transcript-message-block.is-super-hidden,
+.transcript-inner.transcript-virtualized > .transcript-message-block.is-row-hidden {
   margin-bottom: 0;
 }
 
@@ -7642,6 +7651,102 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .agent-question-card-dismiss:hover {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
+}
+
+/* Settled question tombstone ------------------------------------------------
+ * What an ask_user_question leaves behind once answered or skipped. Inherits
+ * the live card's chrome (including the per-provider rim above) so it reads as
+ * the same object at rest; everything here only tones it down and swaps the
+ * option BUTTONS for a reported list.
+ *
+ * Deliberately still a full card, not a one-liner: this row is excluded from
+ * the settled/super-group fold, because a decision the user made is worth the
+ * same standing in the transcript as the agent's own message. */
+.agent-question-card--settled {
+  --agent-question-rim: rgb(var(--agent-accent-rgb) / 0.14);
+  box-shadow: inset 0 0 0 1px rgb(var(--agent-accent-rgb) / 0.04);
+  background: rgba(255, 255, 255, 0.022);
+  gap: 6px;
+}
+
+.agent-question-card-settled-kicker {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-question-card--settled .agent-question-card-question {
+  color: var(--text-primary);
+}
+
+.agent-question-card-settled-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.agent-question-card-settled-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--font-size-xs);
+  /* Unchosen options stay legible but clearly secondary — they are the shape of
+   * the decision, not the decision. */
+  color: var(--text-muted);
+  padding: 2px 0;
+}
+
+.agent-question-card-settled-option.is-chosen {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.agent-question-card-settled-tick {
+  color: var(--diff-stat-add-color);
+  flex: 0 0 auto;
+}
+
+.agent-question-card-settled-custom {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+}
+
+.agent-question-card-settled-custom-label {
+  color: var(--text-tertiary);
+}
+
+.agent-question-card-settled-custom-text {
+  color: var(--text-primary);
+  font-weight: 600;
+  /* A typed answer is free text and can be long or contain newlines. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-question-card-settled-footer {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
+.agent-question-card-settled-outcome.is-skipped {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.agent-question-card-settled-stamp {
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
 }
 
 /* Adaptive assistant reveal -------------------------------------------------

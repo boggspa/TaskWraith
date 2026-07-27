@@ -18,6 +18,7 @@
 // than a hardcoded list, so the NEXT provider added to the live set inherits
 // the guard for free instead of repeating the same afternoon.
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import { getStaticProviderModels } from '../../../main/providers/StaticProviderModels'
@@ -229,6 +230,27 @@ describe('composer model dispatch fallthrough', () => {
         `${provider}: main and the picker would seed different models`
       ).toBe(getStaticProviderDefaultModel(provider))
     }
+  })
+
+  it('keeps Pi and Mistral selections in their own composer catalogues', () => {
+    // This predicate is intentionally local to App because it closes over the
+    // live, key-filtered Pi model list. Exercise the actual source rather than
+    // duplicating a second predicate in the test: without these branches valid
+    // Pi/Mistral ids fall through to `isGeminiModelId`, then silently become
+    // their provider's default at dispatch time.
+    const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+    const predicateStart = appSource.indexOf('const isValidModelForProvider =')
+    const predicateEnd = appSource.indexOf('const rememberOllamaInstalledModels =')
+    const predicate = appSource.slice(predicateStart, predicateEnd)
+
+    expect(predicate).toContain("if (provider === 'pi')")
+    expect(predicate).toContain(
+      "return getProviderModelOptions('pi').some((model) => model.id === modelId)"
+    )
+    expect(predicate).toContain("if (provider === 'mistral')")
+    expect(predicate).toContain(
+      "return getProviderModelOptions('mistral').some((model) => model.id === modelId)"
+    )
   })
 
   it('THROWS on an unhandled provider instead of returning a plausible wrong value', () => {

@@ -425,6 +425,10 @@ export type AgenticServiceId =
   // the generic `mcpTools` service can't silently auto-allow app-mutating canvas
   // interactions (the P1-review exfil concern).
   | 'canvasInteraction'
+  // Declarative, chat-owned 3D scenes and their imported local assets. This is
+  // deliberately separate from canvasInteraction: granting control of a web
+  // preview must not grant scene authoring/import, and vice versa.
+  | 'meshCanvas'
   // Canvas arbitrary `eval` (RCE in the previewed page). Its OWN service so it is
   // STRICTER than canvasInteraction: signed-elevated — never auto-allowed by any
   // preset, grant, or session-YOLO (every eval is individually human-approved),
@@ -603,6 +607,9 @@ export interface AgenticServicesSettings {
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before Mesh Canvas. It is
+  // grantable and defaults to 'ask' in the sanitizer/resolver.
+  meshCanvas?: AgenticServicePolicy
   canvasEval: AgenticServicePolicy
   // Optional for back-compat with settings persisted before cross-thread recall;
   // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
@@ -758,12 +765,20 @@ export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer' | 'background'
  */
 export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
+  | 'taskwraith-full-v2'
   | 'taskwraith-core-v1'
+  | 'taskwraith-core-v2'
   | 'taskwraith-gateway-v1'
   | 'taskwraith-gateway-v2'
   | 'taskwraith-gateway-v3'
   | 'taskwraith-gateway-v4'
   | 'taskwraith-gateway-v5'
+  | 'taskwraith-gateway-v6'
+  // v7 makes the Mesh Canvas specialist family discoverable. The separate
+  // mesh-direct snapshot is selected only from a participant's current
+  // effective run posture; its catalogue receipt is never an authority grant.
+  | 'taskwraith-gateway-v7'
+  | 'taskwraith-gateway-v7-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -1788,7 +1803,7 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / canvasEval / crossThreadRead / threadMessage /
+  // canvasInteraction / meshCanvas / canvasEval / crossThreadRead / threadMessage /
   // mediaEditing / mediaRecording are approval-grant buckets, not
   // provider-capability contract rows — excluded like subThreadDelegation. (The
   // media tools are already advertised under the MCP/tool surface; they don't get
@@ -1798,6 +1813,7 @@ export type ProviderToolingCapabilityId =
       AgenticServiceId,
       | 'subThreadDelegation'
       | 'canvasInteraction'
+      | 'meshCanvas'
       | 'canvasEval'
       | 'crossThreadRead'
       | 'threadMessage'
@@ -2186,6 +2202,12 @@ export interface AppSettings {
   kimiApiKey?: string
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
+  /**
+   * Optional, user-selected Pi/Cerebras completion ceiling. Unset retains the
+   * full model maximum; lower values help organizations whose Cerebras TPM
+   * ceiling is below Pi's bundled 40,960-token model maximum.
+   */
+  piCerebrasMaxCompletionTokens?: number | null
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).

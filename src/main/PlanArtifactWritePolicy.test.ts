@@ -16,6 +16,7 @@ const readOnlyPermissions: EffectiveRunPermissions = {
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
+    meshCanvas: 'deny',
     crossThreadRead: 'deny',
     threadMessage: 'deny',
     mediaEditing: 'deny',

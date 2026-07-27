@@ -1,6 +1,6 @@
 {
   "name": "taskwraith",
-  "version": "1.8.9",
+  "version": "1.9.0",
   "description": "TaskWraith desktop workspace",
   "main": "./out/main/index.js",
   "bin": {
@@ -118,6 +118,7 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "three": "^0.181.0",
     "ws": "^8.21.0"
   },
   "overrides": {

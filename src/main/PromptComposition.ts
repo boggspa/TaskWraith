@@ -127,7 +127,12 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
 // bump makes existing resumable sessions re-inject the corrected wording once;
 // after that the preamble is first-turn-only again for history-bearing
 // providers.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v6'
+//
+// Bumped v6 -> v7 so resumed sessions receive the native-shell-to-governed-MCP
+// routing rule. A native terminal refusal can be a containment boundary, not a
+// rejection of a user-granted shell operation; the exact host-mediated tool is
+// now named before a model can dead-end on the native refusal.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v7'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -346,11 +351,13 @@ function buildTaskWraithRuntimePreamble(args: {
   const statusTool = taskWraithToolNameForProvider(args.provider, 'git_status')
   const taskTool = taskWraithToolNameForProvider(args.provider, 'run_task')
   const questionTool = taskWraithToolNameForProvider(args.provider, 'ask_user_question')
+  const shellTool = taskWraithToolNameForProvider(args.provider, 'run_shell_command')
   const followupProvider = exampleDelegationProvider(args.provider)
   const lines = [
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
-    `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
+    `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${shellTool}, ${taskTool}, ${delegateTool}.`,
+    `For tests, builds, Git, npm, and other shell work, call ${shellTool} when it is listed. A native Bash/Shell/terminal refusal can be a containment route rather than a denial of the current shell permission: do not retry the native tool; call ${shellTool} once. Only if that MCP call is unavailable or denied should you report the exact blocker.`,
     ...(args.coreMcpProfile ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE] : []),
     ...(args.gatewayMcpProfile ? [TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE] : []),
     ...(!args.coreMcpProfile &&
@@ -361,11 +368,6 @@ function buildTaskWraithRuntimePreamble(args: {
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native multi-agent orchestration paths.`,
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
-    ...(args.provider === 'grok'
-      ? [
-          'Use TaskWraith MCP for edits and shell commands. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
-        ]
-      : []),
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
   ]
 

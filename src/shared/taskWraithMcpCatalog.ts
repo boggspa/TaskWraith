@@ -7,6 +7,18 @@
 // architecture guard's `sharedUpwardRuntimeEdges` budget stays []. Lifted
 // verbatim from src/main/TaskWraithMcpTools.ts (137a7a8b7 introduced the sole
 // shared -> main runtime edge this extract removes). Keep it dependency-free.
+export const MESH_SCENE_MCP_TOOL_NAMES = [
+  'mesh_scene_create',
+  'mesh_scene_list',
+  'mesh_scene_inspect',
+  'mesh_scene_import',
+  'mesh_scene_apply',
+  'mesh_scene_set_material',
+  'mesh_scene_present',
+  'mesh_scene_close',
+  'mesh_scene_delete'
+] as const
+
 export const TASKWRAITH_MCP_TOOLS = [
   'run_shell_command',
   'write_file',
@@ -145,6 +157,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // one top-level chat hands a message to another. Gated by its OWN agentic
   // service (`threadMessage`), never by the generic mcpTools grant.
   'thread_message',
+  // Compact, provider-neutral front door for the overloaded Boss/Captain
+  // controller. It canonicalizes to ensemble_bossman_control at execution so
+  // authority, approval, and audit semantics remain exactly the same.
+  'ensemble_control',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   // 1.0.4-AN — peer-openable BINDING goal-complete poll. Any eligible-at-open
@@ -223,6 +239,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // gated via the canvasEval service (never auto-allowed), egress-cut while running.
   'canvas_eval',
   'canvas_close',
+  // Mesh Canvas — declarative, provider-agnostic 3D scene construction and
+  // presentation. Normal gateway seats discover this specialist surface with
+  // capability_search; a fresh mesh-authorised participant can receive it
+  // directly. Catalog visibility is never itself a grant.
+  ...MESH_SCENE_MCP_TOOL_NAMES,
   // Agent-accessed appearance. A DATA channel over an allowlist of typed theme
   // tokens (see shared/agentThemeTokens) — never CSS text, never a selector, and
   // never a token that could move the approval chrome or restyle a provider's
@@ -343,9 +364,11 @@ export const TASKWRAITH_MCP_TOOLS = [
 
 export type TaskWraithMcpToolName = (typeof TASKWRAITH_MCP_TOOLS)[number]
 
+export type MeshSceneMcpToolName = (typeof MESH_SCENE_MCP_TOOL_NAMES)[number]
+
 export const TASKWRAITH_MCP_TOOL_LIST = TASKWRAITH_MCP_TOOLS.join(', ')
 
-export function canonicalTaskWraithToolName(toolName: string): string {
+function normalizeTaskWraithToolName(toolName: string): string {
   let normalized = (toolName || '').trim().toLowerCase()
   if (normalized.startsWith('mcp__')) {
     const idx = normalized.indexOf('__', 5)
@@ -373,7 +396,42 @@ export function canonicalTaskWraithToolName(toolName: string): string {
   if (normalized.startsWith('taskwraith__')) {
     normalized = normalized.slice('taskwraith__'.length)
   }
+  return normalized
+}
+
+/**
+ * `ensemble_control` is the small, provider-portable invocation shape for the
+ * existing Bossman authority primitive. Keep this predicate separate from the
+ * canonicalizer so profile-fenced transports can reject an unadvertised alias
+ * without weakening the canonical authority path.
+ */
+export function isPortableEnsembleControlToolName(toolName: string): boolean {
+  return normalizeTaskWraithToolName(toolName) === 'ensemble_control'
+}
+
+/**
+ * Lets constrained function-call transports use a small, declared envelope
+ * while MCP-capable callers may keep sending the action fields flat. The
+ * envelope is deliberately unwrapped before the legacy authority executor,
+ * schema preflight, approval, and audit paths run.
+ */
+export function normalizePortableEnsembleControlArguments(
+  toolName: string,
+  value: unknown
+): unknown {
+  if (!isPortableEnsembleControlToolName(toolName)) return value
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value
+  const outer = value as Record<string, unknown>
+  const params = outer.params
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return value
+  const { params: _params, ...flat } = outer
+  return { ...(params as Record<string, unknown>), ...flat }
+}
+
+export function canonicalTaskWraithToolName(toolName: string): string {
+  const normalized = normalizeTaskWraithToolName(toolName)
   if (normalized.replace(/[\s_-]+/g, '') === 'askuserquestion') return 'ask_user_question'
+  if (normalized === 'ensemble_control') return 'ensemble_bossman_control'
   return normalized
 }
 

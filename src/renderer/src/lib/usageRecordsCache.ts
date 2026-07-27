@@ -10,6 +10,12 @@ const DEFAULT_MAX_AGE_MS: Record<RendererUsageSource, number> = {
   external: 30 * 60_000
 }
 
+// IPC should be a cache refresh, never a renderer liveness dependency. This
+// is especially important for a released main process that is still draining
+// an older external-history request: give the UI its cached/empty data back
+// promptly and let a later push/retry replace it.
+const USAGE_RECORDS_REQUEST_DEADLINE_MS = 1_000
+
 const usageRecordsCache = new Map<
   RendererUsageSource,
   { records: UsageRecord[]; loadedAt: number }
@@ -76,17 +82,32 @@ export function loadRendererUsageRecords(
   const loader = loaderForUsageSource(source, options.force === true)
   if (!loader) return Promise.resolve(cached?.records ?? [])
 
-  const request = loader()
-    .then((records) => {
-      const normalized = Array.isArray(records) ? records : []
-      setCachedRendererUsageRecords(source, normalized)
-      return normalized
-    })
-    .finally(() => {
-      if (usageRecordsInFlight.get(source) === request) {
-        usageRecordsInFlight.delete(source)
-      }
-    })
-  usageRecordsInFlight.set(source, request)
-  return request
+  const fallback = cached?.records ?? []
+  const request = Promise.resolve().then(loader)
+  const visibleRequest = new Promise<UsageRecord[]>((resolve) => {
+    let settled = false
+    const finish = (records: UsageRecord[]): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(records)
+    }
+    const timeout = setTimeout(() => finish(fallback), USAGE_RECORDS_REQUEST_DEADLINE_MS)
+    request
+      .then((records) => {
+        const normalized = Array.isArray(records) ? records : []
+        // Keep a late-but-successful result for the next consumer even after
+        // the current render escaped through its deadline fallback.
+        setCachedRendererUsageRecords(source, normalized)
+        finish(normalized)
+      })
+      .catch(() => finish(fallback))
+  })
+  const trackedRequest = visibleRequest.finally(() => {
+    if (usageRecordsInFlight.get(source) === trackedRequest) {
+      usageRecordsInFlight.delete(source)
+    }
+  })
+  usageRecordsInFlight.set(source, trackedRequest)
+  return trackedRequest
 }

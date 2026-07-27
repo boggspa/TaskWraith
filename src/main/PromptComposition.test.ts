@@ -681,6 +681,7 @@ describe('composeRunPrompt sub-thread returns', () => {
 
     expect(result.contextualPrompt).toContain('TaskWraith runtime note')
     expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
+    expect(result.contextualPrompt).toContain('taskwraith__run_shell_command')
     expect(result.contextualPrompt).toContain('native Cursor tools')
     expect(result.contextualPrompt).toContain('Create a test file.')
   })
@@ -701,9 +702,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
     expect(result.contextualPrompt).toContain('TaskWraith__apply_patch')
+    expect(result.contextualPrompt).toContain('TaskWraith__run_shell_command')
     expect(result.contextualPrompt).toContain('TaskWraith__ask_user_question')
     expect(result.contextualPrompt).not.toContain('taskwraith-broker__ask_user_question')
-    expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
+    expect(result.contextualPrompt).toContain('containment route rather than a denial')
   })
 
   it('keeps the compact runtime contract intact across providers', () => {

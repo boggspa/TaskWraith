@@ -49,6 +49,8 @@ describe('RendererIpcPolicy', () => {
     'attach-window:pick',
     'canvas:open-embedded',
     'canvas:set-bounds',
+    'mesh-scene:import-user-model',
+    'mesh-scene:view',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',
     'execution-graphs:diagnostics',

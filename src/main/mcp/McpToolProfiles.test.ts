@@ -7,8 +7,10 @@ import { gatewayToolDefinitions } from './McpToolGateway'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
   CORE_MCP_ADVERTISE_TOOLS,
+  CORE_V2_MCP_ADVERTISE_TOOLS,
   CORE_MCP_TOOL_BUDGET,
   FULL_MCP_ADVERTISE_TOOLS,
+  FULL_V2_MCP_ADVERTISE_TOOLS,
   GATEWAY_MCP_ADVERTISE_TOOLS,
   GATEWAY_MCP_DIRECT_TOOLS,
   GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
@@ -19,10 +21,20 @@ import {
   GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES,
   GATEWAY_V5_ADDED_TOOL_NAMES,
   GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V6_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V6_MCP_DIRECT_TOOLS,
+  GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V7_ADDED_TOOL_NAMES,
+  GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V7_MCP_DIRECT_TOOLS,
+  GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V7_MESH_MCP_DIRECT_TOOLS,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
+  taskWraithGatewayDirectToolNamesForProfile,
   taskWraithGatewayHiddenToolNamesForProfile,
   taskWraithMcpAdvertisedToolNamesForProfile,
   shouldUseCoreMcpProfile
@@ -36,14 +48,25 @@ describe('immutable v1 MCP profile snapshots', () => {
   it('freezes every exported membership array at runtime', () => {
     for (const profile of [
       FULL_MCP_ADVERTISE_TOOLS,
+      FULL_V2_MCP_ADVERTISE_TOOLS,
       CORE_MCP_ADVERTISE_TOOLS,
+      CORE_V2_MCP_ADVERTISE_TOOLS,
       GATEWAY_MCP_DIRECT_TOOLS,
       GATEWAY_MCP_ADVERTISE_TOOLS,
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES,
-      GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V6_MCP_DIRECT_TOOLS,
+      GATEWAY_V6_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V7_ADDED_TOOL_NAMES,
+      GATEWAY_V7_MCP_DIRECT_TOOLS,
+      GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V7_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -173,6 +196,18 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
+  it('replaces the wide Ensemble control only on the fresh gateway-v6 surface', () => {
+    expect(GATEWAY_MCP_DIRECT_TOOLS).not.toContain('ensemble_control')
+    expect(GATEWAY_MCP_DIRECT_TOOLS).toContain('ensemble_bossman_control')
+    expect(GATEWAY_V6_MCP_DIRECT_TOOLS).toContain('ensemble_control')
+    expect(GATEWAY_V6_MCP_DIRECT_TOOLS).not.toContain('ensemble_bossman_control')
+    expect(GATEWAY_V6_MCP_ADVERTISE_TOOLS).toContain('ensemble_control')
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v6')).toBe(
+      GATEWAY_V6_MCP_ADVERTISE_TOOLS
+    )
+    expect(GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES)
+  })
+
   it('moves specialized and less frequent families behind discovery', () => {
     for (const tool of [
       'git_push',
@@ -199,6 +234,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       }).length
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
+    const freshGatewayChars = serializedChars(
+      GATEWAY_V6_MCP_DIRECT_TOOLS,
+      gatewayToolDefinitions()
+    )
 
     // Measured 2026-07-19 baseline after correcting delegation's advertised
     // runtime-admission, active-recall queueing, and typed-terminal semantics.
@@ -241,10 +280,14 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // `{executed: false, refusalReason: 'stale_target'}` with no description
     // retries the same action, which is the exact destructive loop the underlying
     // change exists to stop, so buying the bytes back here would re-open it.
-    expect(fullChars).toBe(136_306)
+    // Re-measured 2026-07-27: +13 full from the `meshCanvas` approval-status
+    // enum member. Mesh definitions remain behind v7 discovery on the normal
+    // gateway profile, so no direct gateway transport bytes are spent.
+    expect(fullChars).toBe(136_319)
     expect(gatewayChars).toBe(39_406)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
+    expect(freshGatewayChars).toBeLessThan(40_000)
   })
 })
 
@@ -364,9 +407,15 @@ describe('catalogue reachability', () => {
     // test existed — nothing failed, which is exactly the problem.
     const reachable = new Set<string>([
       ...FULL_MCP_ADVERTISE_TOOLS,
+      ...FULL_V2_MCP_ADVERTISE_TOOLS,
       ...CORE_MCP_ADVERTISE_TOOLS,
+      ...CORE_V2_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_MCP_ADVERTISE_TOOLS,
-      ...GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V6_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V7_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -386,6 +435,11 @@ describe('catalogue reachability', () => {
     expect(GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES).toEqual([
       ...GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V5_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V7_ADDED_TOOL_NAMES
     ])
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
@@ -414,10 +468,42 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v5')).toBe(
       GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v6')).toBe(
+      GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
       GATEWAY_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v6')).toBe(
+      GATEWAY_V6_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS
+    )
+  })
+
+  it('keeps Mesh Canvas discoverable normally and direct only for the run-authorised variant', () => {
+    for (const tool of GATEWAY_V7_ADDED_TOOL_NAMES) {
+      expect(GATEWAY_V7_MCP_DIRECT_TOOLS).not.toContain(tool)
+      expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
+      expect(GATEWAY_V7_MESH_MCP_DIRECT_TOOLS).toContain(tool)
+    }
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v7')).toBe(
+      GATEWAY_V7_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
+      GATEWAY_V7_MESH_MCP_DIRECT_TOOLS
     )
   })
 })

@@ -82,6 +82,12 @@ export interface GitPrSummary {
   headRefOid?: string
   baseRefName?: string
   mergeStateStatus?: string
+  /**
+   * Auto-merge is armed on this PR (`gh pr view --json autoMergeRequest`):
+   * GitHub has accepted it for merge but it has NOT landed yet — it is waiting
+   * on required checks or its turn in the merge queue. Distinct from merged.
+   */
+  autoMergeEnabled?: boolean
   checks?: Array<{
     name?: string
     status?: string
@@ -956,7 +962,7 @@ export class GitService {
         'view',
         ...(selector ? [selector] : []),
         '--json',
-        'number,url,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,statusCheckRollup'
+        'number,url,state,isDraft,headRefName,headRefOid,baseRefName,mergeStateStatus,autoMergeRequest,statusCheckRollup'
       ],
       repoRoot
     )
@@ -1695,6 +1701,10 @@ function parsePullRequestSummary(output: string): GitPrSummary {
     headRefOid: stringField(parsed.headRefOid),
     baseRefName: stringField(parsed.baseRefName),
     mergeStateStatus: stringField(parsed.mergeStateStatus),
+    // `autoMergeRequest` is an object when armed and null otherwise — its
+    // presence is the whole signal, so it collapses to a boolean here rather
+    // than widening the summary with fields nothing reads.
+    autoMergeEnabled: isRecord(parsed.autoMergeRequest) ? true : undefined,
     checks
   }
 }

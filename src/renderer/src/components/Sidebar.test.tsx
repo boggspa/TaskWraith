@@ -200,6 +200,7 @@ function renderSidebar(
     updateSnapshot?: UpdateStateSnapshot | null
     onQuickUpdate?: () => void
     activeChatIdentityTicker?: string | null
+    activeChatIdentityGitIndicators?: string | null
     onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
     onClearChatGitWorkflow?: (chatId: string) => void
   } = {}
@@ -251,6 +252,7 @@ function renderSidebar(
       updateSnapshot={options.updateSnapshot}
       onQuickUpdate={options.onQuickUpdate}
       activeChatIdentityTicker={options.activeChatIdentityTicker}
+      activeChatIdentityGitIndicators={options.activeChatIdentityGitIndicators}
       onSetChatHiddenFromMainList={options.onSetChatHiddenFromMainList}
       onClearChatGitWorkflow={options.onClearChatGitWorkflow}
     />
@@ -2041,5 +2043,49 @@ describe('git workflow markers', () => {
     })
 
     expect(html).not.toContain('sidebar-title-ticker')
+  })
+
+  // Git status icons ride the right of the identity face — see
+  // lib/sidebarGitIndicators.ts for the model.
+  it('renders the git status strip on the identity face of the ACTIVE row', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'active-thread', title: 'Active thread' }),
+        makeChat({ appChatId: 'idle-thread', title: 'Idle thread' })
+      ],
+      {
+        activeChatId: 'active-thread',
+        activeChatIdentityTicker: 'TaskWraith/tw-tui',
+        activeChatIdentityGitIndicators: 'pushed:|pr-open:14|pr-merged:10:own'
+      }
+    )
+
+    expect(html).toContain('sidebar-git-indicators')
+    expect(html).toContain('sidebar-git-indicator kind-pushed tone-synced')
+    expect(html).toContain('sidebar-git-indicator kind-pr-open tone-open')
+    // Merged is purple, never green — the tone name carries that.
+    expect(html).toContain('sidebar-git-indicator kind-pr-merged tone-merged')
+    expect(html).toContain('title="this thread&#x27;s PR #10 merged"')
+    // Only the active row gets a strip.
+    expect(html.split('sidebar-git-indicators').length - 1).toBe(1)
+  })
+
+  it('renders no strip when the active chat has no git state (e.g. detached)', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar([makeChat({ appChatId: 'active-thread', title: 'Active thread' })], {
+      activeChatId: 'active-thread',
+      activeChatIdentityTicker: 'TaskWraith/tw-tui',
+      activeChatIdentityGitIndicators: null
+    })
+
+    expect(html).toContain('sidebar-title-ticker')
+    expect(html).not.toContain('sidebar-git-indicators')
   })
 })

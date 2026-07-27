@@ -1104,7 +1104,7 @@ describe('getExternalUsageCached front door', () => {
       timestamp
     }) as UsageRecord
 
-  it('resolves cold callers at the first partial and upgrades to the full window', async () => {
+  it('serves an empty cold cache immediately and upgrades in the background', async () => {
     const partial = [usageRecord('p1', 'codex', Date.now())]
     const full = [...partial, usageRecord('f1', 'claude', Date.now() - 1000)]
     const updates: UsageRecord[][] = []
@@ -1118,13 +1118,15 @@ describe('getExternalUsageCached front door', () => {
       return full
     })
 
-    // Cold caller unblocks at the partial — it must NOT wait for the full walk.
+    // A cold caller does not wait for even the short partial: it paints an
+    // empty grid while the worker hydrates and later pushes both upgrades.
     const first = await getExternalUsageCached()
-    expect(first).toEqual(partial)
+    expect(first).toEqual([])
     expect(captured[0]?.partialLookbackDays).toBe(14)
 
     // Full window lands afterwards; both commits notified the listener.
     await vi.waitFor(() => expect(updates.length).toBe(2))
+    await settleExternalScansForTests()
     expect(updates[0]).toEqual(partial)
     expect(updates[1]).toEqual(full)
 
@@ -1141,37 +1143,29 @@ describe('getExternalUsageCached front door', () => {
       return full
     })
 
-    await getExternalUsageCached({ maxAgeMs: 0 })
+    await expect(getExternalUsageCached({ maxAgeMs: 0 })).resolves.toEqual([])
+    await settleExternalScansForTests()
     expect(requests[0]?.partialLookbackDays).toBeNull()
     expect(requests[0]?.options.force).toBe(true)
 
     // Cache is warm now; a forced refresh again requests no partial (a
     // partial would transiently shrink what is already on screen).
-    await getExternalUsageCached({ force: true })
+    await expect(getExternalUsageCached({ force: true })).resolves.toEqual(full)
+    await settleExternalScansForTests()
     expect(requests[1]?.partialLookbackDays).toBeNull()
   })
 
-  it('falls back to the in-process scan when the worker driver fails', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-frontdoor-'))
-    try {
-      setExternalScanDriver(async () => {
-        throw new Error('worker exploded')
-      })
-      // Empty homeDir → in-process scan yields no records, but it must
-      // RESOLVE (the worker failure is not surfaced to callers).
-      const records = await getExternalUsageCached({
-        homeDir,
-        externalFileCachePath: join(homeDir, 'file-cache.jsonl'),
-        cursorCachePath: join(homeDir, 'cursor-cache.json')
-      })
-      expect(records).toEqual([])
-    } finally {
-      // The await above resolved at the partial commit; the fallback's
-      // full-window walk is still writing caches into homeDir. Settle it
-      // before removal, and retry the rm in case anything else races.
-      await settleExternalScansForTests()
-      await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
-    }
+  it('does not fall back to an in-process scan when the worker fails', async () => {
+    const updates: UsageRecord[][] = []
+    setExternalUsageUpdateListener((records) => updates.push(records))
+    setExternalScanDriver(async () => {
+      throw new Error('worker exploded')
+    })
+
+    await expect(getExternalUsageCached()).resolves.toEqual([])
+    await settleExternalScansForTests()
+
+    expect(updates).toEqual([])
   })
 
   it('merges forwarded cursor records without clobbering other providers', async () => {
@@ -1180,6 +1174,7 @@ describe('getExternalUsageCached front door', () => {
     const cursorNew = { ...usageRecord('cu-new', 'cursor', Date.now()), totalTokens: 40 }
     setExternalScanDriver(async () => [codex, cursorOld])
     await getExternalUsageCached()
+    await settleExternalScansForTests()
 
     const updates: UsageRecord[][] = []
     setExternalUsageUpdateListener((records) => updates.push(records))

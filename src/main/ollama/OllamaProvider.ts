@@ -2,7 +2,11 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
-import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
+import {
+  canonicalTaskWraithToolName,
+  isPortableEnsembleControlToolName,
+  normalizePortableEnsembleControlArguments
+} from '../TaskWraithMcpTools'
 import {
   gatewayToolDefinitions,
   isCapabilityGatewayToolName,
@@ -1142,13 +1146,15 @@ export function parseOllamaToolRequest(text: string): OllamaToolRequest | null {
     if (!wrapper) continue
     const rawName = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
     const name = canonicalTaskWraithToolName(rawName)
-    if (!isOllamaCallableToolName(name)) {
+    const portableEnsembleControl = isPortableEnsembleControlToolName(rawName)
+    if (!isOllamaCallableToolName(name) && !portableEnsembleControl) {
       continue
     }
     const args = recordFromUnknown(wrapper.arguments) || recordFromUnknown(wrapper.args) || {}
     return {
-      toolName: name,
-      arguments: args
+      toolName: name as OllamaCallableToolName,
+      arguments:
+        recordFromUnknown(normalizePortableEnsembleControlArguments(rawName, args)) || args
     }
   }
   return null
@@ -1467,6 +1473,24 @@ function ollamaNativeToolParameters(
         },
         required: ['provider', 'intent']
       }
+    case 'ensemble_control':
+    case 'ensemble_bossman_control':
+      return {
+        description:
+          'Boss/Captain Ensemble control. Set action and put only that action\'s fields in params.',
+        properties: {
+          action: {
+            ...STRING,
+            description: compact ? 'Boss action.' : 'Boss/Captain action, such as set_round_plan.'
+          },
+          params: {
+            type: 'object',
+            description:
+              'Action fields, for example {"goal":"Review."} or {"targetParticipantId":"...","reason":"..."}.'
+          }
+        },
+        required: ['action']
+      }
     default:
       return {
         description: `Invoke the TaskWraith ${toolName} tool using its documented MCP argument schema.`,
@@ -1484,7 +1508,7 @@ export function ollamaNativeToolDefinitions(
   options?: { compact?: boolean; networkAccess?: string | null; readOnly?: boolean }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  // Advertise the immutable gateway-v1 direct set as native function defs (not
+  // Advertise the immutable gateway-v6 direct set as native function defs (not
   // the full catalogue). The tail remains executable through capability_invoke
   // and discoverable through the gateway or legacy tool_help. A read-only
   // posture receives the exact intersection with the shared safe advertise set.
@@ -1547,7 +1571,8 @@ export function ollamaNativeToolDefinitions(
 export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): OllamaToolRequest | null {
   const rawName = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
   const name = canonicalTaskWraithToolName(rawName)
-  if (!isOllamaCallableToolName(name)) {
+  const portableEnsembleControl = isPortableEnsembleControlToolName(rawName)
+  if (!isOllamaCallableToolName(name) && !portableEnsembleControl) {
     return null
   }
   const rawArgs = call.function?.arguments
@@ -1557,7 +1582,10 @@ export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): Ollam
   } else if (typeof rawArgs === 'string' && rawArgs.trim()) {
     args = recordFromUnknown(parseJsonObjectLoose(rawArgs)) || {}
   }
-  return { toolName: name, arguments: args }
+  return {
+    toolName: name as OllamaCallableToolName,
+    arguments: recordFromUnknown(normalizePortableEnsembleControlArguments(rawName, args)) || args
+  }
 }
 
 export function ollamaToolResultFollowUpPrompt(input: {

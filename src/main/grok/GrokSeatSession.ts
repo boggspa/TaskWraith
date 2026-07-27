@@ -314,7 +314,7 @@ export class GrokSeatSession {
             turn.deniedPromptRpcId = undefined
             turn.onEvent({
               type: 'provider_warning',
-              text: 'Grok cancelled after a denied native tool; continuing without the denied tool.'
+              text: 'Grok cancelled after a refused native tool; continuing with clarified routing guidance.'
             })
             turn.promptRpcId = this.nextRpcId++
             this.sendPrompt(turn, GROK_DENIED_TOOL_RECOVERY_PROMPT)

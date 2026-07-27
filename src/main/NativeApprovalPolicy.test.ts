@@ -33,6 +33,7 @@ const effectivePermissions = (
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
+    meshCanvas: 'deny',
     crossThreadRead: 'deny',
     threadMessage: 'deny',
     mediaEditing: 'deny',
@@ -113,6 +114,22 @@ describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
     // Distinct from canvasInteraction: eval is non-grantable / never-auto-allowed.
     expect(taskWraithToolAgenticService('canvas_eval')).toBe('canvasEval')
     expect(taskWraithToolAgenticService('canvas_eval')).not.toBe('canvasInteraction')
+  })
+
+  it('routes every Mesh Canvas operation through the participant-run meshCanvas service', () => {
+    for (const tool of [
+      'mesh_scene_create',
+      'mesh_scene_list',
+      'mesh_scene_inspect',
+      'mesh_scene_import',
+      'mesh_scene_apply',
+      'mesh_scene_set_material',
+      'mesh_scene_present',
+      'mesh_scene_close',
+      'mesh_scene_delete'
+    ]) {
+      expect(taskWraithToolAgenticService(tool)).toBe('meshCanvas')
+    }
   })
 })
 
@@ -332,6 +349,7 @@ describe('effectiveAgenticSettings', () => {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
+      meshCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'ask',

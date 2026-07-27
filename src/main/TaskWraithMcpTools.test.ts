@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
+import {
+  canonicalTaskWraithToolName,
+  normalizePortableEnsembleControlArguments,
+  TASKWRAITH_MCP_TOOLS
+} from './TaskWraithMcpTools'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 
 describe('TaskWraith MCP tool registry', () => {
@@ -39,6 +43,31 @@ describe('TaskWraith MCP tool registry', () => {
       ])
     )
     expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_poll_response')
+  })
+
+  it('offers a compact portable control front door without duplicating authority logic', () => {
+    const portable = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_control'
+    )
+    expect(portable?.inputSchema).toMatchObject({
+      type: 'object',
+      required: ['action'],
+      additionalProperties: true,
+      properties: { action: { type: 'string' }, params: { type: 'object' } }
+    })
+    expect(Object.keys((portable?.inputSchema?.properties || {}) as object)).toEqual([
+      'action',
+      'params'
+    ])
+    expect(canonicalTaskWraithToolName('mcp__TaskWraith__ensemble_control')).toBe(
+      'ensemble_bossman_control'
+    )
+    expect(
+      normalizePortableEnsembleControlArguments('ensemble_control', {
+        action: 'set_round_plan',
+        params: { goal: 'Review.' }
+      })
+    ).toEqual({ action: 'set_round_plan', goal: 'Review.' })
   })
 
   it('does not expose a Session Activity Ledger write path to agents', () => {

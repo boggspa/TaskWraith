@@ -23,6 +23,7 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   mcpTools: 'Tool calls',
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
+  meshCanvas: 'Mesh Canvas',
   // canvasEval is NON-GRANTABLE (RCE / signed-elevated), so it is deliberately
   // ABSENT from WORKSPACE_POLICY_SERVICES below — no per-workspace grant row. The
   // label still exists for audit/ledger rendering of canvasEval rows.
@@ -52,6 +53,8 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   mcpTools: 'Use read/search/status tools without asking again.',
   subThreadDelegation: 'Spawn cross-provider sub-threads without asking again.',
   canvasInteraction: 'Click and fill elements in a Canvas preview without asking again.',
+  meshCanvas:
+    'Create, import, edit, and present chat-owned 3D scenes using workspace-local mesh assets without asking again.',
   // Non-grantable: shown for completeness only; canvas_eval always re-prompts.
   canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).',
   crossThreadRead:
@@ -99,6 +102,11 @@ export const WORKSPACE_POLICY_SERVICES: WorkspacePolicyService[] = [
     id: 'canvasInteraction',
     label: WORKSPACE_POLICY_SERVICE_LABELS.canvasInteraction,
     help: WORKSPACE_POLICY_SERVICE_HELP.canvasInteraction
+  },
+  {
+    id: 'meshCanvas',
+    label: WORKSPACE_POLICY_SERVICE_LABELS.meshCanvas,
+    help: WORKSPACE_POLICY_SERVICE_HELP.meshCanvas
   },
   {
     id: 'mediaEditing',

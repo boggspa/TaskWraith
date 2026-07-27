@@ -962,6 +962,24 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists an explicit Pi/Cerebras completion cap and permits an explicit reset', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(
+      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: 16_384 })
+        .piCerebrasMaxCompletionTokens
+    ).toBe(16_384)
+    expect(
+      sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: null })
+        .piCerebrasMaxCompletionTokens
+    ).toBeUndefined()
+    expect(
+      'piCerebrasMaxCompletionTokens' in
+        sanitizeSettingsPatch({ piCerebrasMaxCompletionTokens: 40_961 })
+    ).toBe(false)
+  })
+
   it('persists a valid appIconVariant and drops invalid ones (SETTINGS_PATCH_KEYS guard)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

@@ -784,6 +784,79 @@ describe('GitService', () => {
     expect(calls.find((call) => call.command === 'gh')?.env).toEqual({ GH_PROMPT_DISABLED: '1' })
   })
 
+  // `autoMergeRequest` is how a PR reports "accepted for merge, not landed
+  // yet" (merge queue / auto-merge armed) — the sidebar's orange state.
+  it('requests autoMergeRequest and collapses it to a boolean on the PR summary', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tw-git-automerge-'))
+    spawnSync('git', ['init'], { cwd: repo })
+    const prViewArgs: string[][] = []
+    const runner: GitCommandRunner = async (command, args, options) => {
+      if (command === 'gh') {
+        if (args.join(' ') === 'auth status') {
+          return { stdout: 'Logged in to github.com\n', stderr: '', code: 0 }
+        }
+        if (args[0] === 'pr' && args[1] === 'view') {
+          prViewArgs.push(args)
+          return {
+            stdout: JSON.stringify({
+              number: 7,
+              state: 'OPEN',
+              mergeStateStatus: 'CLEAN',
+              autoMergeRequest: { enabledAt: '2026-07-27T10:00:00Z', mergeMethod: 'SQUASH' }
+            }),
+            stderr: '',
+            code: 0
+          }
+        }
+        if (args[0] === 'run') return { stdout: '[]', stderr: '', code: 0 }
+      }
+      const git = spawnSync(command, args, {
+        cwd: options.cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      return { stdout: git.stdout || '', stderr: git.stderr || '', code: git.status ?? 0 }
+    }
+
+    const result = await new GitService({ run: runner }).ciStatus({ repoPath: repo })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(prViewArgs[0]?.join(' ')).toContain('autoMergeRequest')
+    expect(result.data.binding.pr?.autoMergeEnabled).toBe(true)
+  })
+
+  it('leaves autoMergeEnabled unset when auto-merge is not armed', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'tw-git-no-automerge-'))
+    spawnSync('git', ['init'], { cwd: repo })
+    const runner: GitCommandRunner = async (command, args, options) => {
+      if (command === 'gh') {
+        if (args.join(' ') === 'auth status') {
+          return { stdout: 'Logged in to github.com\n', stderr: '', code: 0 }
+        }
+        if (args[0] === 'pr' && args[1] === 'view') {
+          return {
+            stdout: JSON.stringify({ number: 7, state: 'OPEN', autoMergeRequest: null }),
+            stderr: '',
+            code: 0
+          }
+        }
+        if (args[0] === 'run') return { stdout: '[]', stderr: '', code: 0 }
+      }
+      const git = spawnSync(command, args, {
+        cwd: options.cwd,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      return { stdout: git.stdout || '', stderr: git.stderr || '', code: git.status ?? 0 }
+    }
+
+    const result = await new GitService({ run: runner }).ciStatus({ repoPath: repo })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.data.binding.pr?.autoMergeEnabled).toBeUndefined()
+  })
+
   it('returns a blocked CI status when gh is not authenticated', async () => {
     const result = await new GitService({
       run: async (command, args, options) => {

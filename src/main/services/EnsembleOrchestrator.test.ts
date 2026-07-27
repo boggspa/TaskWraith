@@ -11297,6 +11297,9 @@ Next action:
     expect(codexPayload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
     expect(codexPayload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
     expect(codexPayload.effectivePermissions?.workspaceGrantServiceIds).toEqual([])
+    expect(codexPayload.prompt).toContain('TaskWraith shell-routing (effective grant)')
+    expect(codexPayload.prompt).toContain('TaskWraith__run_shell_command')
+    expect(codexPayload.prompt).toContain('already allowed shell commands')
   })
 
   // Slice C extension (1.0.3) — ensemble_yield(target:) reorders the

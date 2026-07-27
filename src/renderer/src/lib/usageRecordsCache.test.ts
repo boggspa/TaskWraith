@@ -96,4 +96,26 @@ describe('usageRecordsCache', () => {
     await expect(loadRendererUsageRecords('external')).resolves.toBe(records)
     expect(getExternalUsage).toHaveBeenCalledWith(undefined)
   })
+
+  it('releases a stuck IPC load with empty stats so a later request can retry', async () => {
+    vi.useFakeTimers()
+    const getExternalUsage = vi.fn(() => new Promise<UsageRecord[]>(() => {}))
+    vi.stubGlobal('window', {
+      api: {
+        getExternalUsage,
+        getUsage: vi.fn()
+      },
+      setTimeout,
+      clearTimeout
+    })
+
+    const first = loadRendererUsageRecords('external')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(first).resolves.toEqual([])
+
+    const second = loadRendererUsageRecords('external')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(second).resolves.toEqual([])
+    expect(getExternalUsage).toHaveBeenCalledTimes(2)
+  })
 })

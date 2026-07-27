@@ -237,6 +237,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // ensemble coordination artifacts (non-workspace-mutating)
   'create_handoff_card',
   'agent_delegation_role',
+  'ensemble_control',
   'ensemble_bossman_control',
   'ensemble_roster_edit',
   'ensemble_brief_update',
@@ -276,6 +277,11 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'canvas_screenshot',
   'canvas_resize',
   'canvas_close',
+  // Mesh Canvas reads are metadata-only and token-free; creation/import/
+  // mutation/presentation fall through to workspace_write. Their dedicated
+  // meshCanvas service still governs whether a participant may inspect them.
+  'mesh_scene_list',
+  'mesh_scene_inspect',
   // P1: annotate overlays a Set-of-Mark layer for the human — authoring, not an
   // app mutation. canvas_click / canvas_fill DO mutate the app and fall through
   // to workspace_write (read-only-DENY) by the default below.

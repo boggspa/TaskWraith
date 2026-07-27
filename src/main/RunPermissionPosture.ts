@@ -557,6 +557,7 @@ const EFFECTIVE_RUN_AGENTIC_SERVICE_ID_RECORD = {
   mcpTools: true,
   subThreadDelegation: true,
   canvasInteraction: true,
+  meshCanvas: true,
   canvasEval: true,
   crossThreadRead: true,
   threadMessage: true,
