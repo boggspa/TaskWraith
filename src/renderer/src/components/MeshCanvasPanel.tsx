@@ -478,6 +478,26 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     }
   }
 
+  const importUserScenePackage = async (): Promise<void> => {
+    const api = window.api?.meshCanvas
+    if (!api?.importUserScenePackage || importing) return
+    setImporting(true)
+    setIssue(null)
+    try {
+      const imported = await api.importUserScenePackage(chatId)
+      if (imported.canceled) return
+      const summary = toMeshSceneSummary(imported.scene)
+      await refresh()
+      if (summary) setActiveSceneId(summary.sceneId)
+    } catch (error) {
+      setIssue(
+        meshCanvasIssueMessage(error, 'Could not import the selected Mesh Canvas scene package.')
+      )
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const dismissPresentation = async (): Promise<void> => {
     const api = window.api?.meshCanvas
     if (!api || !activeSceneId) return
@@ -529,6 +549,15 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
             disabled={importing}
           >
             {importing ? 'Opening picker…' : 'Import 3D scene or model'}
+          </button>
+          <button
+            type="button"
+            className="mesh-canvas-import"
+            title="Choose a folder containing taskwraith.mesh-scene.json"
+            onClick={() => void importUserScenePackage()}
+            disabled={importing}
+          >
+            {importing ? 'Opening picker…' : 'Import scene package'}
           </button>
           {view?.presentation && (
             <button

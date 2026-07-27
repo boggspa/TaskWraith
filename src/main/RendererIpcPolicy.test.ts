@@ -50,6 +50,7 @@ describe('RendererIpcPolicy', () => {
     'canvas:open-embedded',
     'canvas:set-bounds',
     'mesh-scene:import-user-model',
+    'mesh-scene:import-user-package',
     'mesh-scene:view',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',

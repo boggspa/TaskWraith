@@ -322,11 +322,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:close-chat': ['nonEmptyString', 'nonEmptyString'],
   'canvas:list': [],
   'canvas:list-chat': ['nonEmptyString'],
-  // Mesh Canvas is a main-window dock. The picker supplies any external model
-  // path in main; the renderer passes only its canonical chat/scene identity.
+  // Mesh Canvas is a main-window dock. Native pickers supply external model or
+  // scene-package paths in main; the renderer passes only its canonical chat/
+  // scene identity.
   'mesh-scene:list-chat': ['nonEmptyString'],
   'mesh-scene:view': ['nonEmptyString', 'nonEmptyString'],
   'mesh-scene:import-user-model': ['nonEmptyString'],
+  'mesh-scene:import-user-package': ['nonEmptyString'],
   'mesh-scene:close-presentation': ['nonEmptyString', 'nonEmptyString'],
   'mesh-scene:delete': ['nonEmptyString', 'nonEmptyString'],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg

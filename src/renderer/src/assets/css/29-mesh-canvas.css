@@ -70,7 +70,9 @@
 .mesh-canvas-actions {
   display: flex;
   flex-shrink: 0;
+  flex-wrap: wrap;
   gap: 6px;
+  justify-content: flex-end;
 }
 
 .mesh-canvas-delete {

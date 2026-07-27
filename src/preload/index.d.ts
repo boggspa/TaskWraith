@@ -1117,6 +1117,7 @@ declare global {
         listForChat: (chatId: string) => Promise<unknown[]>
         view: (chatId: string, sceneId: string) => Promise<unknown | null>
         importUserModel: (chatId: string) => Promise<{ canceled: boolean; scene?: unknown }>
+        importUserScenePackage: (chatId: string) => Promise<{ canceled: boolean; scene?: unknown }>
         closePresentation: (chatId: string, sceneId: string) => Promise<unknown>
         deleteScene: (chatId: string, sceneId: string) => Promise<unknown>
         onEvent: (handler: (event: unknown) => void) => () => void

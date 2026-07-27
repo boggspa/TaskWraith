@@ -49,6 +49,8 @@ describe('MeshCanvasPanel (static render)', () => {
     expect(html).toContain('Mesh Canvas')
     expect(html).toContain('Human and agent-built 3D scenes stay local to this chat.')
     expect(html).toContain('Import 3D scene or model')
+    expect(html).toContain('Import scene package')
+    expect(html).toContain('taskwraith.mesh-scene.json')
     expect(html).toContain('No Mesh Canvas scene has been created in this chat yet.')
     expect(html).not.toContain('twmesh://')
   })

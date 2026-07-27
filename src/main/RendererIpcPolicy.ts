@@ -298,6 +298,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'mesh-scene:list-chat',
   'mesh-scene:view',
   'mesh-scene:import-user-model',
+  'mesh-scene:import-user-package',
   'mesh-scene:close-presentation',
   'mesh-scene:delete',
 

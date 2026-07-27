@@ -146,8 +146,10 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('mesh-scene:list-chat', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('mesh-scene:view', ['chat-1', 'scene-1'])).not.toThrow()
     expect(() => validateIpcArgs('mesh-scene:import-user-model', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('mesh-scene:import-user-package', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('mesh-scene:delete', ['chat-1', 'scene-1'])).not.toThrow()
     expect(() => validateIpcArgs('mesh-scene:import-user-model', [''])).toThrow(/non-empty/)
+    expect(() => validateIpcArgs('mesh-scene:import-user-package', [''])).toThrow(/non-empty/)
     expect(() => validateIpcArgs('mesh-scene:view', ['chat-1', ''])).toThrow(/non-empty/)
   })
 

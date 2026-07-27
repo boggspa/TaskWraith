@@ -12,10 +12,11 @@ describe('registerMeshSceneHandlers', () => {
     } as unknown as IpcMain
     const controller = {
       listForChat: vi.fn(() => [{ sceneId: 'scene-a' }]),
-      viewForChat: vi.fn(() => ({ id: 'scene-a', assetUrls: {} })),
+      viewForChat: vi.fn(() => ({ id: 'scene-a', assetUrls: {}, modelUrls: {} })),
       closePresentation: vi.fn(() => ({ id: 'scene-a' })),
       remove: vi.fn(() => 'scene-a'),
-      importUserSelectedModel: vi.fn()
+      importUserSelectedModel: vi.fn(),
+      importUserSelectedScenePackage: vi.fn()
     }
     const resolveContext = vi.fn((_event: IpcMainInvokeEvent, chatId: string) => ({
       chatId,
@@ -34,7 +35,8 @@ describe('registerMeshSceneHandlers', () => {
     ])
     expect(await handlers.get('mesh-scene:view')?.(event, 'chat-a', 'scene-a')).toEqual({
       id: 'scene-a',
-      assetUrls: {}
+      assetUrls: {},
+      modelUrls: {}
     })
     expect(await handlers.get('mesh-scene:close-presentation')?.(event, 'chat-a', 'scene-a')).toEqual({
       id: 'scene-a'
@@ -64,7 +66,8 @@ describe('registerMeshSceneHandlers', () => {
       viewForChat: vi.fn(),
       closePresentation: vi.fn(),
       remove: vi.fn(),
-      importUserSelectedModel: vi.fn()
+      importUserSelectedModel: vi.fn(),
+      importUserSelectedScenePackage: vi.fn()
     }
     registerMeshSceneHandlers(ipcMain, {
       controller: controller as never,
@@ -101,7 +104,8 @@ describe('registerMeshSceneHandlers', () => {
         nodes: [{ kind: 'import' }],
         backgroundColor: '#171a21',
         updatedAt: '2026-07-27T12:00:00.000Z'
-      }))
+      })),
+      importUserSelectedScenePackage: vi.fn()
     }
     const resolveContext = vi.fn((_event: IpcMainInvokeEvent, chatId: string) => ({
       chatId,
@@ -154,6 +158,76 @@ describe('registerMeshSceneHandlers', () => {
       }
     })
     expect(JSON.stringify(imported)).not.toContain('/Users/artist/Downloads/world.glb')
+    expect(resolveContext).toHaveBeenCalledTimes(2)
+  })
+
+  it('imports only the fixed manifest inside a native-picker-selected package directory', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, handler)
+      })
+    } as unknown as IpcMain
+    const controller = {
+      listForChat: vi.fn(),
+      viewForChat: vi.fn(),
+      closePresentation: vi.fn(),
+      remove: vi.fn(),
+      importUserSelectedModel: vi.fn(),
+      importUserSelectedScenePackage: vi.fn(() => ({
+        id: 'scene-package',
+        title: 'Gallery export',
+        nodes: [{ kind: 'import' }, { kind: 'import' }],
+        backgroundColor: '#171a21',
+        updatedAt: '2026-07-27T12:00:00.000Z'
+      }))
+    }
+    const resolveContext = vi.fn((_event: IpcMainInvokeEvent, chatId: string) => ({
+      chatId,
+      workspacePath: '/workspace'
+    }))
+    const window = {} as BrowserWindow
+    const showOpenDialog = vi.fn(async () => ({
+      canceled: false,
+      filePaths: ['/Users/artist/Downloads/gallery-package']
+    }))
+    registerMeshSceneHandlers(ipcMain, {
+      controller: controller as never,
+      resolveContext,
+      getRequestingWindow: vi.fn(() => window),
+      showOpenDialog
+    })
+
+    const imported = await handlers.get('mesh-scene:import-user-package')?.(
+      {} as IpcMainInvokeEvent,
+      'chat-a'
+    )
+
+    expect(showOpenDialog).toHaveBeenCalledWith(
+      window,
+      expect.objectContaining({
+        title: 'Import a Mesh Canvas scene package',
+        buttonLabel: 'Choose scene package folder',
+        properties: ['openDirectory']
+      })
+    )
+    expect(controller.importUserSelectedScenePackage).toHaveBeenCalledWith(
+      { manifestPath: '/Users/artist/Downloads/gallery-package/taskwraith.mesh-scene.json' },
+      { chatId: 'chat-a', workspacePath: '/workspace' }
+    )
+    expect(imported).toEqual({
+      canceled: false,
+      scene: {
+        sceneId: 'scene-package',
+        title: 'Gallery export',
+        nodeCount: 2,
+        importCount: 2,
+        primitiveCount: 0,
+        backgroundColor: '#171a21',
+        updatedAt: '2026-07-27T12:00:00.000Z'
+      }
+    })
+    expect(JSON.stringify(imported)).not.toContain('/Users/artist/Downloads/gallery-package')
     expect(resolveContext).toHaveBeenCalledTimes(2)
   })
 })
