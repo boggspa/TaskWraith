@@ -45167,7 +45167,7 @@ if (isGeminiMcpBridgeProcess) {
       gitService,
       gitSnapshotPublisher,
       externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),
-      openExternal: (url) => shell.openExternal(url),
+      openSafeShellTarget,
       watchPr: {
         setWatchedPr: async (chatId, descriptor) => {
           try {

@@ -172,7 +172,9 @@ function createDeps() {
         vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['publishSnapshot']>()
     },
     externalPublishReceipts: undefined as GitHandlersDeps['externalPublishReceipts'],
-    openExternal: vi.fn<GitHandlersDeps['openExternal']>(async (_url: string) => undefined),
+    openSafeShellTarget: vi.fn<GitHandlersDeps['openSafeShellTarget']>(
+      async (_url: unknown) => ({ ok: true })
+    ),
     assertSenderScope: vi.fn<GitHandlersDeps['assertSenderScope']>()
   } satisfies GitHandlersDeps
 
@@ -1100,7 +1102,7 @@ describe('registerGitHandlers', () => {
     expect(deps.gitService.snapshot).toHaveBeenCalledWith('/real/repo')
   })
 
-  it('create-github-pr preserves openExternal gating and success/raw result behavior', async () => {
+  it('create-github-pr preserves safe shell-open gating and success/raw result behavior', async () => {
     const { deps } = createDeps()
     deps.findRegisteredWorkspace.mockReturnValue({ id: 'ws-1' })
     registerGitHandlers(deps)
@@ -1111,19 +1113,19 @@ describe('registerGitHandlers', () => {
       ok: true,
       url: 'https://example.test/pr/1'
     })
-    expect(deps.openExternal).toHaveBeenCalledWith('https://example.test/pr/1')
+    expect(deps.openSafeShellTarget).toHaveBeenCalledWith('https://example.test/pr/1')
 
-    deps.openExternal.mockClear()
+    deps.openSafeShellTarget.mockClear()
     await handlerFor('create-github-pr')({}, { workspacePath: '/repo' })
-    expect(deps.openExternal).toHaveBeenCalledWith('https://example.test/pr/1')
+    expect(deps.openSafeShellTarget).toHaveBeenCalledWith('https://example.test/pr/1')
 
-    deps.openExternal.mockClear()
+    deps.openSafeShellTarget.mockClear()
     await handlerFor('create-github-pr')({}, { workspacePath: '/repo', openInBrowser: false })
-    expect(deps.openExternal).not.toHaveBeenCalled()
+    expect(deps.openSafeShellTarget).not.toHaveBeenCalled()
 
     deps.gitService.createPullRequest.mockResolvedValueOnce({ ok: true, data: {} as any })
     await handlerFor('create-github-pr')({}, { workspacePath: '/repo' })
-    expect(deps.openExternal).not.toHaveBeenCalled()
+    expect(deps.openSafeShellTarget).not.toHaveBeenCalled()
 
     deps.gitService.createPullRequest.mockResolvedValueOnce({ ok: false, error: 'failed' })
     await expect(handlerFor('create-github-pr')({}, { workspacePath: '/repo' })).resolves.toEqual({
@@ -1215,8 +1217,9 @@ describe('registerGitHandlers', () => {
       events.push('create-pr')
       return { ok: true, data: { url: 'https://example.test/pr/1' } }
     })
-    deps.openExternal.mockImplementationOnce(async () => {
+    deps.openSafeShellTarget.mockImplementationOnce(async () => {
       events.push('open-external')
+      return { ok: true }
     })
     deps.externalPublishReceipts = {
       begin: vi.fn(async (input) => {

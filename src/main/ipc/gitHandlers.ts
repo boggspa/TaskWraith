@@ -90,7 +90,7 @@ export interface GitHandlersDeps {
     'subscribe' | 'unsubscribe' | 'unsubscribeWebContents' | 'invalidatePath' | 'publishSnapshot'
   >
   externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
-  openExternal: (url: string) => Promise<unknown>
+  openSafeShellTarget: (url: unknown) => Promise<{ ok: boolean; error?: string }>
   /**
    * Slice-6 "watch PR" (A1d) wiring, provided by main's poller composition.
    * Optional so existing handler tests constructed without a poller stay valid.
@@ -803,7 +803,7 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
       if (result.ok) {
         const url = result.data.url
         if (url && payload?.openInBrowser !== false) {
-          void deps.openExternal(url).catch(() => {})
+          void deps.openSafeShellTarget(url).catch(() => {})
         }
         return { ok: true, ...result.data }
       }
