@@ -17,6 +17,8 @@ import {
   discoverAuthenticatedAgyModels,
   type AuthenticatedAgyModelDiscoveryDependencies
 } from './AntigravityModelDiscovery'
+import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import { resolveAgyCliBinary } from './AntigravityCli'
 
 export interface AntigravityCombinedCatalogModel {
   readonly id: string
@@ -30,6 +32,13 @@ export interface AntigravityCombinedModelCatalogDependencies {
   readonly discoverGeminiApi?: typeof discoverAuthenticatedAntigravityGeminiApiModels
   readonly getSecretStore: () => Pick<AntigravityGeminiApiSecretStore, 'loadApiKey'> | null
   readonly agyDependencies?: AuthenticatedAgyModelDiscoveryDependencies
+  /**
+   * Presence-only check for the consented AGY fallback. It runs alongside
+   * model discovery so a slow `agy models` cannot erase the CLI lane before
+   * the picker deadline. Omit it with a custom discoverAgy seam to keep tests
+   * and alternate callers conservative unless they explicitly opt in.
+   */
+  readonly resolveAgyBinary?: typeof resolveAgyCliBinary
   readonly geminiApiLoadSdk?: Parameters<
     typeof discoverAuthenticatedAntigravityGeminiApiModels
   >[1]['loadSdk']
@@ -125,8 +134,16 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     deps.discoverAgy ?? ((value) => discoverAuthenticatedAgyModels(value, deps.agyDependencies))
   const discoverGeminiApi =
     deps.discoverGeminiApi ?? discoverAuthenticatedAntigravityGeminiApiModels
+  // `agy models` is an authenticated CLI round-trip and can take longer than
+  // the bounded picker probe (it takes roughly 2.4s on the currently installed
+  // official CLI). Resolve the local binary concurrently so a timeout can use
+  // the consented static floor without ever exposing it on a machine where agy
+  // is absent. A custom `discoverAgy` owns its own binary gate unless it also
+  // explicitly supplies this resolver.
+  const resolveAgyBinary =
+    deps.resolveAgyBinary ?? (deps.discoverAgy ? undefined : resolveAgyCliBinary)
 
-  const [agy, api] = await Promise.all([
+  const [agy, api, agyBinary] = await Promise.all([
     agyAdmitted
       ? boundedLane(() => discoverAgy(settings), timeoutMs)
       : Promise.resolve({ status: 'ok' as const, value: [] as AntigravityCombinedCatalogModel[] }),
@@ -142,7 +159,10 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
       : Promise.resolve({
           status: 'ok' as const,
           value: { status: 'keyUnavailable' as const, models: [] as const }
-        })
+        }),
+    agyAdmitted && resolveAgyBinary
+      ? boundedLane(() => resolveAgyBinary(), timeoutMs)
+      : Promise.resolve({ status: 'ok' as const, value: null })
   ])
 
   const liveApiRows =
@@ -164,7 +184,18 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
 
   const rows: AntigravityCombinedCatalogModel[] = []
   const seen = new Set<string>()
-  for (const model of agy.status === 'ok' ? agy.value : []) {
+  // A timed-out AGY model list previously contributed no rows at all, even
+  // after the user had accepted the ban-risk warning and the official binary
+  // was present. That made every picker show only the separately billed Gemini
+  // API rows. Keep the live result when it arrives; otherwise the verified
+  // binary-presence result admits the static CLI floor.
+  const agyRows =
+    agy.status === 'ok'
+      ? agy.value
+      : agyBinary.status === 'ok' && Boolean(agyBinary.value?.binaryPath)
+        ? antigravityAgyStaticModels()
+        : []
+  for (const model of agyRows) {
     if (!isSafeModelRow(model) || seen.has(model.id)) continue
     seen.add(model.id)
     rows.push({ id: model.id, label: model.label })

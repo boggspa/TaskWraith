@@ -5682,6 +5682,12 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return modelId.startsWith('grok')
     if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
+    if (provider === 'pi') {
+      return getProviderModelOptions('pi').some((model) => model.id === modelId)
+    }
+    if (provider === 'mistral') {
+      return getProviderModelOptions('mistral').some((model) => model.id === modelId)
+    }
     if (provider === 'antigravity') {
       return configuredAntigravityModels.some((model) => model.id === modelId)
     }
