@@ -2015,10 +2015,11 @@ same-UID residual boundaries when reconciling the final clean tip.
     while work is outstanding, one reconciliation release, retained durable
     intent, no duplicate holds, and a successful fresh retry.
   - Exact-candidate validation passed the focused lifecycle suites plus the
-    complete repository gate: 1,283 test files and 16,364 tests passed, with
-    both TypeScript projects, lint, architecture, provider-intent, doctrine,
-    iOS plist, formatting ratchet, bundled-secret guard, dependency signatures,
-    zero production audit findings, and the native PTY smoke check green.
+    complete repository gate at `f756e8a74`: 1,284 test files and 16,365 tests
+    passed, with both TypeScript projects, lint, architecture, provider-intent,
+    doctrine, iOS plist, formatting ratchet, bundled-secret guard, dependency
+    signatures, zero production audit findings, and the native PTY smoke check
+    green.
 - **Release disposition:** The 1.9.0 block is cleared on this exact candidate.
   Keep the delayed-sink matrix and completion-aware release boundary
   load-bearing; releasing a hold before its continuation settles or allowing a
