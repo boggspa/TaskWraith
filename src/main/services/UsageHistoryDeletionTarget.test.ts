@@ -130,6 +130,21 @@ describe('UsageHistoryDeletionTarget', () => {
     )
   })
 
+  it('can release a fully reconciled timed-out attempt without claiming an outer commit', () => {
+    const endHistoryMutation = vi.fn(() => true)
+    const target = new UsageHistoryDeletionTarget({
+      beginHistoryMutation: vi.fn(() => ({ id: 'hold-a' })),
+      purgeHistoryStrict: vi.fn(),
+      endHistoryMutation
+    })
+    const outer = preparation()
+    const hold = target.acquire(outer)
+
+    target.releaseAfterCompletion(outer, hold)
+
+    expect(endHistoryMutation).toHaveBeenCalledWith({ id: 'hold-a' })
+  })
+
   it('requires a workspace id before creating a store-side intent', () => {
     const beginHistoryMutation = vi.fn()
     const target = new UsageHistoryDeletionTarget({

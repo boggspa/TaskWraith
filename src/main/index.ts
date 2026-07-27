@@ -43788,7 +43788,7 @@ if (isGeminiMcpBridgeProcess) {
         )
       },
       endUsageHistoryMutation: (preparation, hold) => {
-        usageHistoryDeletionTarget.releaseAfterCommit(
+        usageHistoryDeletionTarget.releaseAfterCompletion(
           preparation,
           hold as UsageHistoryDeletionHold<UsageHistoryMutationHold>
         )

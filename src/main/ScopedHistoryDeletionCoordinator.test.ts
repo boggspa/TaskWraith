@@ -93,9 +93,55 @@ function createDeps(
     terminateProviderRun: vi.fn(async () => undefined),
     clearExecutionGraph: vi.fn(async () => undefined),
     clearTranscriptMedia: vi.fn(async () => undefined),
+    endBackgroundProcessDeletion: vi.fn(),
     ...overrides
   }
 }
+
+const delayedSinkCases: Array<{
+  name: string
+  overrides: (gate: ReturnType<typeof deferred>) => Partial<ScopedHistoryDeletionCoordinatorDeps>
+}> = [
+  {
+    name: 'Ensemble cancellation',
+    overrides: (gate) => ({ beginEnsembleClear: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'provider termination',
+    overrides: (gate) => ({ terminateProviderRun: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'maintenance compaction',
+    overrides: (gate) => ({
+      listMaintenanceCompactions: vi.fn(() => [
+        { id: 'compaction-a', provider: 'codex', chatId: 'chat-a' }
+      ]),
+      beginMaintenanceCompactionDeletion: vi.fn(() => ({ id: 'maintenance-hold' })),
+      cancelAndJoinMaintenanceCompaction: vi.fn(() => gate.promise),
+      endMaintenanceCompactionDeletion: vi.fn()
+    })
+  },
+  {
+    name: 'Canvas closure',
+    overrides: (gate) => ({ beginCanvasClear: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'execution-graph deletion',
+    overrides: (gate) => ({ clearExecutionGraph: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'usage-history purge',
+    overrides: (gate) => ({ purgeUsageHistoryStrict: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'Project-reference purge',
+    overrides: (gate) => ({ clearProjectReferenceArtifacts: vi.fn(() => gate.promise) })
+  },
+  {
+    name: 'transcript-media purge',
+    overrides: (gate) => ({ clearTranscriptMedia: vi.fn(() => gate.promise) })
+  }
+]
 
 describe('ScopedHistoryDeletionCoordinator', () => {
   it('durably prepares, then raises every synchronous authority before awaiting sinks', async () => {
@@ -548,10 +594,7 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     expect(deps.commitDelete).toHaveBeenCalledOnce()
   })
 
-  it('bounds the quiescence wait so a sink that never quiesces cannot park the run gate', async () => {
-    // Reproduces the 2026-07-26 stall: a sink whose close never settles left the
-    // durable intent on disk, and `durableHistoryDeletionBlocks` reads that file
-    // — so every new run was refused until the app restarted.
+  it('bounds the caller wait without releasing holds around an unsettled sink', async () => {
     const neverCloses = deferred()
     const deps = createDeps({
       quiescenceDeadlineMs: 25,
@@ -560,16 +603,17 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     const coordinator = new ScopedHistoryDeletionCoordinator(deps)
 
     await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/did not quiesce within 25ms/)
-    // Rejecting is what lets the caller roll back its holds, including the
-    // admission gate. Nothing durable may have been touched.
+    // The underlying close is still live. Releasing any hold here would admit a
+    // writer while that continuation can still mutate the frozen scope.
     expect(deps.commitDelete).not.toHaveBeenCalled()
     expect(deps.commitTruncate).not.toHaveBeenCalled()
+    expect(deps.endBackgroundProcessDeletion).not.toHaveBeenCalled()
+    expect(deps.endCanvasClear).not.toHaveBeenCalled()
+    await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/still reconciling/)
+    expect(deps.beginCanvasClear).toHaveBeenCalledOnce()
   })
 
-  it('refuses to commit when a sink quiesces AFTER the deadline released the holds', async () => {
-    // The deadline cannot cancel the awaits, so a slow sink can still arrive at
-    // the commit — by which point the caller has rolled back every hold.
-    // Committing there would erase history with nothing holding it.
+  it('reconciles a late sink without committing, then supports a clean same-process retry', async () => {
     const slowClose = deferred()
     const deps = createDeps({
       quiescenceDeadlineMs: 25,
@@ -579,12 +623,61 @@ describe('ScopedHistoryDeletionCoordinator', () => {
 
     await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/did not quiesce/)
     expect(deps.commitDelete).not.toHaveBeenCalled()
+    expect(deps.endBackgroundProcessDeletion).not.toHaveBeenCalled()
+    expect(deps.endCanvasClear).not.toHaveBeenCalled()
 
-    // The sink finally closes, long after the operation was abandoned.
+    // The sink finally closes. The late continuation reaches the commit
+    // boundary under its retained holds, refuses the commit, then releases
+    // exactly those holds while leaving the durable intent available.
     slowClose.resolve()
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await vi.waitFor(() => expect(deps.endBackgroundProcessDeletion).toHaveBeenCalledOnce())
     expect(deps.commitDelete).not.toHaveBeenCalled()
+    expect(deps.endUsageHistoryMutation).toHaveBeenCalledOnce()
+    expect(deps.endProjectReferenceMutation).toHaveBeenCalledOnce()
+    expect(deps.endTranscriptMediaMutation).toHaveBeenCalledOnce()
+    expect(deps.endCanvasClear).toHaveBeenCalledOnce()
+    expect(deps.getPending()).not.toBeNull()
+
+    await coordinator.run('chat', 'chat-a')
+    expect(deps.commitDelete).toHaveBeenCalledOnce()
+    expect(deps.beginCanvasClear).toHaveBeenCalledTimes(2)
+    expect(deps.endCanvasClear).toHaveBeenCalledTimes(2)
+    expect(deps.endBackgroundProcessDeletion).toHaveBeenCalledTimes(2)
   })
+
+  it.each(delayedSinkCases)(
+    'reconciles late $name without a late commit or duplicated holds',
+    async ({ overrides }) => {
+      const gate = deferred()
+      const deps = createDeps({
+        quiescenceDeadlineMs: 20,
+        ...overrides(gate)
+      })
+      const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+
+      await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/did not quiesce/)
+      expect(deps.commitDelete).not.toHaveBeenCalled()
+      expect(deps.endCanvasClear).not.toHaveBeenCalled()
+      await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/still reconciling/)
+      expect(deps.beginCanvasClear).toHaveBeenCalledOnce()
+
+      gate.resolve()
+      await vi.waitFor(() => expect(deps.endCanvasClear).toHaveBeenCalledOnce())
+      expect(deps.commitDelete).not.toHaveBeenCalled()
+      expect(deps.getPending()).not.toBeNull()
+
+      await coordinator.run('chat', 'chat-a')
+      expect(deps.commitDelete).toHaveBeenCalledOnce()
+      expect(deps.beginCanvasClear).toHaveBeenCalledTimes(2)
+      expect(deps.endCanvasClear).toHaveBeenCalledTimes(2)
+      expect(deps.beginUsageHistoryMutation).toHaveBeenCalledTimes(2)
+      expect(deps.endUsageHistoryMutation).toHaveBeenCalledTimes(2)
+      expect(deps.beginProjectReferenceMutation).toHaveBeenCalledTimes(2)
+      expect(deps.endProjectReferenceMutation).toHaveBeenCalledTimes(2)
+      expect(deps.beginTranscriptMediaMutation).toHaveBeenCalledTimes(2)
+      expect(deps.endTranscriptMediaMutation).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it('leaves the backstop off when a caller supplies its own bound', async () => {
     // A non-positive deadline disables the race entirely; proves the guard is

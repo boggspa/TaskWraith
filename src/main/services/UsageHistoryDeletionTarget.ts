@@ -77,8 +77,11 @@ function assertMatchesPreparation<THold>(
  * await. `purgeStrict` preserves the exact returned promise, so the caller can
  * write the durable `usage:*` receipt only after every checkpoint, journal,
  * spill, claimed input, archive, quarantine, and corrupt-backup rewrite has
- * settled. The caller owns the outer commit boundary and must invoke
- * `releaseAfterCommit` only afterwards.
+ * settled. The caller owns the outer commit boundary. It normally invokes
+ * `releaseAfterCommit` afterwards. A scoped coordinator uses
+ * `releaseAfterCompletion`, which also covers a timed-out attempt after every
+ * late sink continuation has settled and its outer commit was explicitly
+ * refused.
  */
 export class UsageHistoryDeletionTarget<THold> {
   constructor(private readonly store: UsageHistoryDeletionStore<THold>) {}
@@ -101,10 +104,25 @@ export class UsageHistoryDeletionTarget<THold> {
     preparation: HistoryDeletionPreparation,
     acquired: UsageHistoryDeletionHold<THold>
   ): void {
+    this.release(preparation, acquired, 'after commit')
+  }
+
+  releaseAfterCompletion(
+    preparation: HistoryDeletionPreparation,
+    acquired: UsageHistoryDeletionHold<THold>
+  ): void {
+    this.release(preparation, acquired, 'after coordinator completion')
+  }
+
+  private release(
+    preparation: HistoryDeletionPreparation,
+    acquired: UsageHistoryDeletionHold<THold>,
+    phase: string
+  ): void {
     assertMatchesPreparation(preparation, acquired)
     if (!this.store.endHistoryMutation(acquired.storeHold)) {
       throw new Error(
-        `Usage history deletion hold for ${preparation.operationId} was not active after commit.`
+        `Usage history deletion hold for ${preparation.operationId} was not active ${phase}.`
       )
     }
   }

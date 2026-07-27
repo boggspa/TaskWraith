@@ -33,7 +33,7 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
   recordQuiesced: (operationId: string, targetIds: string[]) => void
   commitDelete: (rootChatId: string) => void
   commitTruncate: (rootChatId: string) => ChatRecord | null
-  /** Raises the transcript-media admission hold synchronously through commit. */
+  /** Raises the transcript-media admission hold synchronously through completion. */
   beginTranscriptMediaMutation: (
     kind: ScopedHistoryDeletionKind,
     chatIds: readonly string[]
@@ -54,7 +54,7 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
     kind: ScopedHistoryDeletionKind,
     chatIds: readonly string[]
   ) => ScopedHistoryBackgroundProcessHold
-  /** Releases the process admission hold only after the outer commit. */
+  /** Releases the process admission hold after commit or a reconciled deadline abort. */
   endBackgroundProcessDeletion?: (hold: ScopedHistoryBackgroundProcessHold) => void
   /** Persists the correlated usage intent and raises append admission synchronously. */
   /** Upper bound on the quiescence phase; defaults to
@@ -65,7 +65,7 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
   beginUsageHistoryMutation: (preparation: HistoryDeletionPreparation) => unknown
   /** Resolves only after every usage artifact in the frozen scope is purged. */
   purgeUsageHistoryStrict: (preparation: HistoryDeletionPreparation, hold: unknown) => Promise<void>
-  /** Releases the usage intent only after the outer store commit. */
+  /** Releases the usage intent after commit or a fully reconciled deadline abort. */
   endUsageHistoryMutation: (preparation: HistoryDeletionPreparation, hold: unknown) => void
   /** Raises the Project-reference ownership admission hold synchronously. */
   beginProjectReferenceMutation: (
@@ -77,7 +77,7 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
     appChatIds: readonly string[]
     runIds: readonly string[]
   }) => Promise<void>
-  /** Releases the Project-reference hold only after the outer commit. */
+  /** Releases the Project-reference hold after commit or a reconciled deadline abort. */
   endProjectReferenceMutation: (hold: unknown) => void
   /** Raises the Canvas admission/generation hold synchronously before returning. */
   beginCanvasClear: (chatId: string) => void | Promise<void>
@@ -108,10 +108,23 @@ interface RetainedOperation {
   maintenanceCompactionHold?: { value: unknown }
   backgroundProcessHold?: { value: ScopedHistoryBackgroundProcessHold }
   usageHistoryHold?: { value: unknown }
-  /** Set once the quiescence deadline has fired for this operation. The awaits
-   *  it was blocked on are NOT cancelled — they may still settle later — so the
-   *  commit re-checks this before touching anything durable. */
-  deadlineExceeded?: boolean
+  /** A timed-out attempt keeps its exact holds until every outstanding await
+   * settles. While reconciliation is pending, a retry must not start a second
+   * destructive pass against the same frozen scope. */
+  reconcilingAfterDeadline?: boolean
+}
+
+interface ScopedHistoryDeletionAttempt {
+  deadlineExceeded: boolean
+}
+
+class ScopedHistoryDeletionLateCompletionError extends Error {
+  constructor() {
+    super(
+      'Scoped history deletion quiesced after its deadline; refusing the late commit while retained holds reconcile.'
+    )
+    this.name = 'ScopedHistoryDeletionLateCompletionError'
+  }
 }
 
 /**
@@ -125,13 +138,13 @@ interface RetainedOperation {
  * 2026-07-26 — an intent whose `completedQuiescenceTargetIds` never advanced
  * past empty.
  *
- * The bound converts a hang into a rejection, which the caller already handles:
- * it rolls back every acquired hold, including the admission gate, so runs are
- * admitted again. Fail-closed admission is the correct default for a
- * destructive operation; the defect was the unbounded wait in front of it, not
- * the gate. Generous on purpose — a legitimate global clear closes canvases and
- * cancels ensemble rounds, and a deadline that fires during honest work would
- * be worse than the stall it prevents.
+ * The bound returns control to the caller without pretending an in-flight sink
+ * was cancelled. The exact holds remain active until the late continuation
+ * settles. A fully quiesced late continuation is refused at the commit boundary,
+ * then every hold is released exactly once while the durable intent remains
+ * available for a fresh retry. Generous on purpose — a legitimate global clear
+ * closes canvases and cancels ensemble rounds, and a deadline that fires during
+ * honest work would be worse than the stall it prevents.
  */
 export const DEFAULT_QUIESCENCE_DEADLINE_MS = 120_000
 
@@ -266,6 +279,13 @@ export class ScopedHistoryDeletionCoordinator {
       }
       this.retainedByOperation.set(preparation.operationId, retained)
     } else {
+      if (retained.reconcilingAfterDeadline) {
+        return Promise.reject(
+          new Error(
+            `History deletion ${preparation.operationId} is still reconciling its timed-out attempt; retry after its sinks settle.`
+          )
+        )
+      }
       retained.preparation = preparation
     }
 
@@ -397,33 +417,39 @@ export class ScopedHistoryDeletionCoordinator {
     // the first provider/Canvas/graph/media await.
     for (const chatId of preparation.chatIds) this.deps.revokeChatAuthority(chatId)
 
+    const attempt: ScopedHistoryDeletionAttempt = { deadlineExceeded: false }
     return this.withQuiescenceDeadline(
       retained,
-      this.settleAndCommit(kind, rootChatId, retained, completed, canvasTargetsByChat)
+      attempt,
+      this.settleAndCommit(kind, rootChatId, retained, completed, canvasTargetsByChat, attempt)
     )
   }
 
   /**
-   * Bound the quiescence phase. A hang becomes a rejection, which the caller
-   * already knows how to handle — it rolls back every acquired hold, releasing
-   * the admission gate so runs are admitted again instead of being refused
-   * until the next app launch.
+   * Bound the quiescence phase. A hang becomes a caller-visible rejection, but
+   * the underlying destructive work and its holds remain paired until every
+   * outstanding await settles.
    *
    * Deliberately does NOT cancel the underlying work: these are external sinks
    * mid-close, and abandoning them half-way is worse than letting them finish
-   * unobserved. `deadlineExceeded` is what keeps that safe — the commit re-reads
-   * it, so a sink that quiesces late can never erase history against holds that
-   * have already been rolled back.
+   * unobserved. The attempt-local deadline bit keeps a late continuation from
+   * committing. Once it reaches that boundary, the coordinator releases the
+   * still-retained holds and forgets only its process-local state; the durable
+   * intent remains for a clean same-process or startup retry.
    */
   private withQuiescenceDeadline(
     retained: RetainedOperation,
+    attempt: ScopedHistoryDeletionAttempt,
     settle: Promise<ScopedHistoryDeletionResult>
   ): Promise<ScopedHistoryDeletionResult> {
     const deadlineMs = this.deps.quiescenceDeadlineMs ?? DEFAULT_QUIESCENCE_DEADLINE_MS
     if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) return settle
     return new Promise<ScopedHistoryDeletionResult>((resolve, reject) => {
+      let timedOut = false
       const timer = setTimeout(() => {
-        retained.deadlineExceeded = true
+        timedOut = true
+        attempt.deadlineExceeded = true
+        retained.reconcilingAfterDeadline = true
         const pending = retained.preparation.quiescenceTargets
           .filter(
             (target) => !retained.preparation.completedQuiescenceTargetIds.includes(target.id)
@@ -445,7 +471,28 @@ export class ScopedHistoryDeletionCoordinator {
         },
         (error) => {
           clearTimeout(timer)
-          reject(error)
+          if (!timedOut) {
+            reject(error)
+            return
+          }
+          if (error instanceof ScopedHistoryDeletionLateCompletionError) {
+            const releaseErrors = this.releaseRetainedHolds(retained)
+            this.retainedByOperation.delete(retained.preparation.operationId)
+            if (releaseErrors.length > 0) {
+              console.error(
+                '[scoped-history-deletion] deadline reconciliation left one or more process-local holds unreleased:',
+                new AggregateError(
+                  releaseErrors,
+                  'Scoped history deletion timed out and reconciled without committing, but one or more admission holds could not be released.'
+                )
+              )
+            }
+          } else {
+            // A sink rejected after the caller-visible deadline. Its promise has
+            // now settled, so a retry can safely reuse the retained holds and
+            // recreate only the rejected attempt.
+            retained.reconcilingAfterDeadline = false
+          }
         }
       )
     })
@@ -456,7 +503,8 @@ export class ScopedHistoryDeletionCoordinator {
     rootChatId: string,
     retained: RetainedOperation,
     completed: Set<string>,
-    canvasTargetsByChat: Map<string, HistoryDeletionQuiescenceTarget & { chatId: string }>
+    canvasTargetsByChat: Map<string, HistoryDeletionQuiescenceTarget & { chatId: string }>,
+    attempt: ScopedHistoryDeletionAttempt
   ): Promise<ScopedHistoryDeletionResult> {
     const preparation = retained.preparation
     const pendingKind = (kindToMatch: HistoryDeletionQuiescenceTarget['kind']) =>
@@ -467,6 +515,7 @@ export class ScopedHistoryDeletionCoordinator {
       // A receipt is durable evidence, never an optimistic start marker.
       this.deps.recordQuiesced(preparation.operationId, [target.id])
       completed.add(target.id)
+      preparation.completedQuiescenceTargetIds = [...completed].sort()
     }
 
     try {
@@ -600,21 +649,44 @@ export class ScopedHistoryDeletionCoordinator {
       )
     }
 
-    // The deadline rejects the caller but cannot cancel the awaits above, so a
-    // late-quiescing sink can still arrive here — after the caller has already
-    // rolled back every hold, including the admission gate. Committing then
-    // would erase history with no holds standing. Re-check rather than trust
-    // that reaching this line means the operation is still authorised.
-    if (retained.deadlineExceeded) {
-      throw new Error(
-        'Scoped history deletion quiesced after its deadline; refusing to commit against rolled-back holds.'
-      )
-    }
+    // The deadline rejects the caller but cannot cancel the awaits above. The
+    // exact holds are still standing here, but a caller-visible timeout must
+    // not turn into a surprising late deletion. Refuse this attempt; its
+    // wrapper will release the fully reconciled holds while preserving the
+    // durable intent for an explicit retry.
+    if (attempt.deadlineExceeded) throw new ScopedHistoryDeletionLateCompletionError()
 
     let truncated: ChatRecord | null = null
     if (kind === 'truncate') truncated = this.deps.commitTruncate(rootChatId)
     else this.deps.commitDelete(rootChatId)
 
+    const releaseErrors = this.releaseRetainedHolds(retained)
+    this.retainedByOperation.delete(preparation.operationId)
+    if (releaseErrors.length > 0) {
+      const diagnostic = new AggregateError(
+        releaseErrors,
+        'Scoped history deletion committed, but one or more admission holds could not be released.'
+      )
+      try {
+        if (this.deps.reportPostCommitReleaseError) {
+          this.deps.reportPostCommitReleaseError(diagnostic)
+        } else {
+          console.error('[scoped-history-deletion] post-commit hold release failed:', diagnostic)
+        }
+      } catch (reportError) {
+        // The durable intent and payload are already gone. Diagnostics must not
+        // turn a committed deletion into a retryable-looking caller rejection.
+        console.error(
+          '[scoped-history-deletion] post-commit hold release diagnostic failed:',
+          new AggregateError([diagnostic, reportError], 'History-deletion diagnostics failed.')
+        )
+      }
+    }
+    return { chatIds: [...preparation.chatIds], truncated }
+  }
+
+  private releaseRetainedHolds(retained: RetainedOperation): unknown[] {
+    const preparation = retained.preparation
     const releaseErrors: unknown[] = []
     if (retained.usageHistoryHold) {
       const hold = retained.usageHistoryHold.value
@@ -679,27 +751,7 @@ export class ScopedHistoryDeletionCoordinator {
     retained.canvasHoldCounts.clear()
     retained.canvasAttempts.clear()
     retained.ensembleAttempts.clear()
-    this.retainedByOperation.delete(preparation.operationId)
-    if (releaseErrors.length > 0) {
-      const diagnostic = new AggregateError(
-        releaseErrors,
-        'Scoped history deletion committed, but one or more admission holds could not be released.'
-      )
-      try {
-        if (this.deps.reportPostCommitReleaseError) {
-          this.deps.reportPostCommitReleaseError(diagnostic)
-        } else {
-          console.error('[scoped-history-deletion] post-commit hold release failed:', diagnostic)
-        }
-      } catch (reportError) {
-        // The durable intent and payload are already gone. Diagnostics must not
-        // turn a committed deletion into a retryable-looking caller rejection.
-        console.error(
-          '[scoped-history-deletion] post-commit hold release diagnostic failed:',
-          new AggregateError([diagnostic, reportError], 'History-deletion diagnostics failed.')
-        )
-      }
-    }
-    return { chatIds: [...preparation.chatIds], truncated }
+    retained.reconcilingAfterDeadline = false
+    return releaseErrors
   }
 }
