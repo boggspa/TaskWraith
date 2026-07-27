@@ -4,6 +4,7 @@
  * and never evaluates provider-supplied scene code.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { meshCanvasIssueMessage } from '../lib/meshCanvasAvailability'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
@@ -184,7 +185,10 @@ function disposeObject(object: THREE.Object3D): void {
     const materials = Array.isArray(candidate.material) ? candidate.material : [candidate.material]
     for (const material of materials) {
       for (const value of Object.values(material)) {
-        if (value instanceof THREE.Texture) value.dispose()
+        if (value && typeof value === 'object' && value instanceof THREE.Texture) {
+          const texture = value as THREE.Texture
+          texture.dispose()
+        }
       }
       material.dispose()
     }
@@ -380,7 +384,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       })
     } catch (error) {
       if (chatIdRef.current === chatId) {
-        setIssue(error instanceof Error ? error.message : 'Mesh Canvas could not be refreshed.')
+        setIssue(meshCanvasIssueMessage(error, 'Mesh Canvas could not be refreshed.'))
       }
     }
   }, [chatId])
@@ -429,7 +433,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       .catch((error) => {
         if (!cancelled && chatIdRef.current === chatId) {
           setView(null)
-          setIssue(error instanceof Error ? error.message : 'The Mesh Canvas scene is unavailable.')
+          setIssue(meshCanvasIssueMessage(error, 'The Mesh Canvas scene is unavailable.'))
         }
       })
     return () => {
@@ -449,7 +453,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       await refresh()
       if (summary) setActiveSceneId(summary.sceneId)
     } catch (error) {
-      setIssue(error instanceof Error ? error.message : 'Could not import the selected 3D model.')
+      setIssue(meshCanvasIssueMessage(error, 'Could not import the selected 3D model.'))
     } finally {
       setImporting(false)
     }
@@ -463,7 +467,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       await refresh()
     } catch (error) {
       setIssue(
-        error instanceof Error ? error.message : 'Could not close the Mesh Canvas presentation.'
+        meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.')
       )
     }
   }
@@ -485,7 +489,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       setView(null)
       await refresh()
     } catch (error) {
-      setIssue(error instanceof Error ? error.message : 'Could not delete the Mesh Canvas scene.')
+      setIssue(meshCanvasIssueMessage(error, 'Could not delete the Mesh Canvas scene.'))
     }
   }
 
