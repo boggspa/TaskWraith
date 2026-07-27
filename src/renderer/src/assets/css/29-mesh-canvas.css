@@ -1,0 +1,191 @@
+/* Local, declarative Three.js viewer in the Canvas dock. */
+
+.canvas-dock-mesh {
+  flex-shrink: 0;
+  min-width: 28px;
+  height: 22px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font:
+    700 9px/1 system-ui,
+    sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.canvas-dock-mesh:hover,
+.canvas-dock-mesh.is-active {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.mesh-canvas-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text-primary);
+}
+
+.mesh-canvas-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 8px;
+}
+
+.mesh-canvas-title {
+  font:
+    650 12px/1.25 system-ui,
+    sans-serif;
+}
+
+.mesh-canvas-subtitle,
+.mesh-canvas-caption {
+  margin-top: 2px;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
+  opacity: 0.58;
+}
+
+.mesh-canvas-dismiss {
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: 4px 7px;
+  font:
+    11px/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+
+.mesh-canvas-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.mesh-canvas-delete {
+  border: 1px solid color-mix(in srgb, var(--status-failed, #e5484d) 46%, transparent);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--status-failed, #e5484d);
+  padding: 4px 7px;
+  font:
+    11px/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+
+.mesh-canvas-delete:hover {
+  background: color-mix(in srgb, var(--status-failed, #e5484d) 15%, transparent);
+}
+
+.mesh-canvas-dismiss:hover {
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.mesh-canvas-tabs {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 0 12px 8px;
+  scrollbar-width: none;
+}
+
+.mesh-canvas-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.mesh-canvas-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 180px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: 4px 7px;
+  font:
+    11px/1.2 system-ui,
+    sans-serif;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.mesh-canvas-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesh-canvas-tab i {
+  color: var(--status-succeeded, #30a46c);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.mesh-canvas-tab:hover,
+.mesh-canvas-tab.is-active {
+  opacity: 1;
+  border-color: var(--border-subtle, rgba(127, 127, 127, 0.32));
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.mesh-canvas-stage {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 180px;
+  padding: 0 10px 10px;
+}
+
+.mesh-scene-viewer {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.25));
+  border-radius: 8px;
+  background: #171a21;
+}
+
+.mesh-scene-viewer canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.mesh-canvas-caption {
+  padding: 6px 2px 0;
+}
+
+.mesh-canvas-empty,
+.mesh-canvas-issue {
+  margin: 12px;
+  padding: 10px;
+  border: 1px dashed var(--border-subtle, rgba(127, 127, 127, 0.3));
+  border-radius: 7px;
+  font:
+    11px/1.45 system-ui,
+    sans-serif;
+  opacity: 0.7;
+}
+
+.mesh-canvas-issue {
+  margin-top: 0;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--status-failed, #e5484d) 45%, transparent);
+  color: var(--status-failed, #e5484d);
+  opacity: 1;
+}

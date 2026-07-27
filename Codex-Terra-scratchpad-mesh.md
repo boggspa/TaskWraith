@@ -1,6 +1,6 @@
 # Codex Terra — Mesh Canvas scratchpad
 
-Status: active implementation. Keep this compact and update it at meaningful slice boundaries so the work survives context refreshes.
+Status: implementation complete. Retained as a compact context handoff for future Mesh Canvas work.
 
 ## Objective
 
@@ -28,4 +28,10 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 
 - Slice 1 — shared mesh contracts; private model/texture vault; durable chat-owned scene service; focused service tests; Three.js dependency.
 - Slice 2 — governed MCP/profile/participant authority; token-gated asset protocol; history lifecycle; local fixture coverage; permission/catalogue integration.
-- Slice 3 (in progress) — preload and renderer dock viewer, user presentation routing, visual tests, and final completion checks.
+- Slice 3 — preload and renderer dock viewer; explicit user-presentation routing; mesh surface styling; focused renderer coverage; final real-asset verification.
+
+## Final verification
+
+- Node and web TypeScript checks passed.
+- Focused mesh/governance/settings coverage passed (328 tests), as did the dock/component tests (18 tests).
+- The supplied large Wavefront OBJ with its MTL sidecar and the local `world.glb` fixture both imported successfully without modifying their source files.

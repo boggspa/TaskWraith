@@ -811,6 +811,25 @@ const api = {
     }
   },
 
+  // Declarative 3D Mesh Canvas. Main resolves every request through the
+  // sender's current chat authority and returns tokenised local asset URLs only
+  // in a renderer projection; agents never receive this API or vault tokens.
+  meshCanvas: {
+    listForChat: (chatId: string): Promise<unknown[]> =>
+      ipcRenderer.invoke('mesh-scene:list-chat', chatId),
+    view: (chatId: string, sceneId: string): Promise<unknown | null> =>
+      ipcRenderer.invoke('mesh-scene:view', chatId, sceneId),
+    closePresentation: (chatId: string, sceneId: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh-scene:close-presentation', chatId, sceneId),
+    deleteScene: (chatId: string, sceneId: string): Promise<unknown> =>
+      ipcRenderer.invoke('mesh-scene:delete', chatId, sceneId),
+    onEvent: (handler: (event: unknown) => void) => {
+      const wrapped = (_event: unknown, payload: unknown) => handler(payload)
+      ipcRenderer.on('mesh-scene-event', wrapped)
+      return () => ipcRenderer.removeListener('mesh-scene-event', wrapped)
+    }
+  },
+
   // QMOD (1.0.3) — `ask_user_question` MCP tool bridge. Main fires
   // `agent-question-requested` when an agent calls the tool; renderer
   // responds via `answer-agent-question` (with the user's pick) or

@@ -24444,6 +24444,21 @@ function App(): React.JSX.Element {
     openRightDockPanel(id)
     setRightDockTab(id)
   }
+  // `mesh_scene_present` is an explicit request to put a 3D scene in front of
+  // the user. Focus the active chat's existing Canvas surface; an event for a
+  // different chat never steals the user's current context. CanvasDockPanel
+  // rehydrates the presented scene from main once it mounts.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    const api = window.api?.meshCanvas
+    if (!chatId || !api?.onEvent) return
+    return api.onEvent((event) => {
+      const record = event as { chatId?: unknown; kind?: unknown } | null
+      if (record?.chatId !== chatId || record.kind !== 'scene.presented') return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    })
+  }, [currentChat?.appChatId])
   // Single toggle entry point for the glass-pill rim buttons. Opening goes
   // through the exclusive dock lifecycle (close siblings, open, select) so
   // surfaces REPLACE each other instead of stacking; closing collapses EVERY

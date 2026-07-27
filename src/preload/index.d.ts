@@ -1113,6 +1113,13 @@ declare global {
         list: () => Promise<unknown[]>
         onEvent: (handler: (event: unknown) => void) => () => void
       }
+      meshCanvas: {
+        listForChat: (chatId: string) => Promise<unknown[]>
+        view: (chatId: string, sceneId: string) => Promise<unknown | null>
+        closePresentation: (chatId: string, sceneId: string) => Promise<unknown>
+        deleteScene: (chatId: string, sceneId: string) => Promise<unknown>
+        onEvent: (handler: (event: unknown) => void) => () => void
+      }
       onAgentQuestionRequested: (
         handler: (request: {
           questionId: string
