@@ -22,6 +22,7 @@ import { PillButton } from './PillButton'
  *   Claude — Anthropic: curl -fsSL https://claude.ai/install.sh | bash (code.claude.com/docs/en/setup)
  *   Kimi   — Moonshot:  curl -LsSf https://code.kimi.com/install.sh    (code.kimi.com)
  *   Grok   — xAI:       curl -fsSL https://x.ai/cli/install.sh | bash  (x.ai/cli)
+ *   Mistral — Mistral:  curl -LsSf https://mistral.ai/vibe/install.sh | bash (docs.mistral.ai)
  *   Ollama — Ollama:    curl -fsSL https://ollama.com/install.sh | sh  (ollama.com)
  * (npm commands need Node 20+; the curl installers are self-contained.)
  */

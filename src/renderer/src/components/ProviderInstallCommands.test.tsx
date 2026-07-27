@@ -4,6 +4,14 @@ import type { TaskWraithPluginActivatedProviderSetup } from '../../../shared/plu
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 
 describe('ProviderInstallCommands', () => {
+  it('lists the official Mistral Vibe installer for the first-class Vibe seat', () => {
+    const html = renderToStaticMarkup(<ProviderInstallCommands providerSetup={[]} />)
+
+    expect(html).toContain('data-provider="mistral"')
+    expect(html).toContain('Mistral Vibe')
+    expect(html).toContain('curl -LsSf https://mistral.ai/vibe/install.sh | bash')
+  })
+
   it('renders activated plugin provider setup recipes', () => {
     const providerSetup: TaskWraithPluginActivatedProviderSetup[] = [
       {

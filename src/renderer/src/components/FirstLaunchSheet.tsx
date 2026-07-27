@@ -10,6 +10,7 @@ import type {
 import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
+  summariseMistralVibeStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
@@ -90,6 +91,10 @@ export interface FirstLaunchSheetProps {
    * static tests can omit them. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
+  /** Mistral Vibe ACP runtime status. The status probe deliberately does not
+   * read Vibe's private credential store, so this only drives truthful setup
+   * guidance rather than a guessed sign-in state. */
+  mistralStatus?: unknown
   /** Ollama local mode has no sign-in; this only reflects whether
    * TaskWraith can see a local Ollama runtime/service. */
   ollamaProviderAvailable?: boolean
@@ -137,6 +142,9 @@ interface ProviderRowSpec {
   reportingOnly?: boolean
   /** Local setup rows do not show provider-owned sign-in / sign-out actions. */
   localOnly?: boolean
+  /** The provider has no bounded CLI logout command. Keep the setup action
+   * visible without promising a sign-out operation TaskWraith cannot perform. */
+  logoutUnsupported?: boolean
   /** Local-first rows (Ollama) that still expose an OPTIONAL cloud sign-in
    * button (e.g. `ollama signin` for ollama.com) without the generic sign-out
    * (which is driven by run status, not cloud auth). */
@@ -276,6 +284,7 @@ export function FirstLaunchSheet({
   kimiAuthStatus,
   cursorProviderAvailable = false,
   grokProviderAvailable = false,
+  mistralStatus,
   ollamaProviderAvailable = false,
   antigravityProviderOffered = false,
   usageSummary,
@@ -370,6 +379,7 @@ export function FirstLaunchSheet({
     'Grok',
     'Authenticate the Grok CLI (in `~/.grok/bin`) in your shell, then launch Grok runs.'
   )
+  const mistralSummary = summariseMistralVibeStatus(mistralStatus)
 
   const baseProviderRows: ProviderRowSpec[] = [
     {
@@ -425,6 +435,15 @@ export function FirstLaunchSheet({
       optional: true,
       localOnly: true,
       cloudSignIn: true
+    },
+    {
+      id: 'mistral',
+      label: 'Mistral',
+      description:
+        'Mistral Vibe coding agent over ACP. Set up your Mistral plan or Vibe credential in the official Vibe wizard; this first-class seat is separate from Pi’s metered Mistral API-key route.',
+      ...mistralSummary,
+      optional: true,
+      logoutUnsupported: true
     },
     ...(antigravityProviderOffered
       ? [
@@ -622,7 +641,10 @@ export function FirstLaunchSheet({
             Turbo and private models. <strong>Cursor</strong> and Grok auth stay inside their CLIs,
             so TaskWraith may ask you to finish login in Terminal (<code>cursor-agent login</code>
             / Grok CLI). Cursor runs use the real ~/.cursor login under a contained --sandbox argv.{' '}
-            <strong>Pi</strong> uses the upstream key and model you configure in Settings.
+            <strong>Pi</strong> uses the upstream key and model you configure in Settings.{' '}
+            <strong>Mistral</strong> opens Vibe&apos;s own Terminal setup wizard, where you choose
+            your Mistral plan access or a Vibe API key; it stays separate from Pi&apos;s Mistral
+            API-key lane.
             AntiGravity remains absent until the host confirms that an authorized conditional lane
             is ready.
           </p>
@@ -1078,17 +1100,20 @@ function ProviderCard({
               {row.cloudSignIn ? 'Sign in to Cloud' : 'Sign in'}
             </button>
           )}
-          {row.variant === 'signed-in' && !row.localOnly && onProviderLogout && (
-            <button
-              type="button"
-              className="segmented-control-action segmented-control-action--compact"
-              onClick={() => onProviderLogout(row.id)}
-              aria-label={`Sign out of ${row.label}`}
-              title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
-            >
-              Sign out
-            </button>
-          )}
+          {row.variant === 'signed-in' &&
+            !row.localOnly &&
+            !row.logoutUnsupported &&
+            onProviderLogout && (
+              <button
+                type="button"
+                className="segmented-control-action segmented-control-action--compact"
+                onClick={() => onProviderLogout(row.id)}
+                aria-label={`Sign out of ${row.label}`}
+                title={`Open the ${row.label} sign-out flow. Future runs may require signing in again.`}
+              >
+                Sign out
+              </button>
+            )}
           <button
             type="button"
             className="segmented-control-action segmented-control-action--compact segmented-control-action--primary"

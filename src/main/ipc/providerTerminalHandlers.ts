@@ -41,6 +41,9 @@ const KIMI_USER_OWNED_SETUP_NOTICE =
 const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
   'This opens the official user-installed agy CLI for a user-owned sign-in. TaskWraith does not read, copy, or store Google or AntiGravity OAuth or keyring credentials. Completing sign-in does not make AntiGravity available for managed runs until its runtime support is available.'
 
+const MISTRAL_USER_OWNED_SETUP_NOTICE =
+  'This opens the official Mistral Vibe setup wizard for a user-owned plan or API-key sign-in. TaskWraith does not read, copy, or store Vibe credentials. After setup, managed Mistral runs use the separate `vibe-acp` runtime.'
+
 export interface ProviderTerminalHandlersDeps {
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
   getUserDataPath: () => string
@@ -200,6 +203,30 @@ async function openProviderAuthTerminal(
           resolved.binaryPath || 'ollama',
           action === 'logout' ? 'signout' : 'signin'
         ]
+      }
+    } else if (provider === 'mistral') {
+      label = 'Mistral Vibe'
+      if (action === 'logout') {
+        // `vibe` has a bounded setup flow but no bounded logout verb. Never
+        // replace the requested account action with its interactive TUI: that
+        // would open an unbounded provider session and would not reliably sign
+        // the user out.
+        return {
+          ok: false,
+          error:
+            'Mistral Vibe does not expose a bounded logout command. No Vibe process was started; manage account credentials using the documented Mistral or Vibe account controls instead.',
+          scope: 'user-owned-provider-setup',
+          managedRunReady: false,
+          notice: MISTRAL_USER_OWNED_SETUP_NOTICE
+        }
+      }
+      if (action === 'upgrade') {
+        rawCommand = 'curl -LsSf https://mistral.ai/vibe/install.sh | bash'
+      } else {
+        // The interactive `vibe` binary owns plan / API-key setup. Managed
+        // TaskWraith turns still use `vibe-acp`, never this terminal TUI.
+        setupNotice = MISTRAL_USER_OWNED_SETUP_NOTICE
+        commandParts = ['vibe', '--setup']
       }
     } else {
       return { ok: false, error: `No terminal ${action} for ${provider}.` }

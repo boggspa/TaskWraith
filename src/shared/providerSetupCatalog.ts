@@ -44,6 +44,13 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     source: 'xAI'
   },
   {
+    id: 'mistral',
+    label: 'Mistral Vibe',
+    command: 'curl -LsSf https://mistral.ai/vibe/install.sh | bash',
+    source: 'Mistral',
+    platform: 'macOS / Linux'
+  },
+  {
     id: 'pi',
     label: 'Pi',
     command: 'npm i -g @earendil-works/pi-coding-agent',

@@ -409,6 +409,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleToggleWorkflowEnabled: MainAppLayoutSidebarProps['handleToggleWorkflowEnabled']
   handleTriggerClaudeLogin: any
   handleUpdateWorkspaceBoardCard: any
+  handleProviderLogin: any
   handleUpgradeProviderCli: any
   handleWorkspaceSidebarResizeKeyDown: MainAppLayoutSidebarProps['handleWorkspaceSidebarResizeKeyDown']
   handoffCards: any

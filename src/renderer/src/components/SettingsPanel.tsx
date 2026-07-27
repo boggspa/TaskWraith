@@ -45,6 +45,7 @@ import { getDashboardStatsByGroup, isDashboardStatVisible } from '../lib/dashboa
 import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
+  summariseMistralVibeStatus,
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
@@ -326,6 +327,10 @@ interface SettingsPanelProps {
   activeProvider: ProviderId
   providerCapabilities?: ProviderCapabilityContract | null
   providerCapabilitiesByProvider?: Partial<Record<ProviderId, ProviderCapabilityContract | null>>
+  /** Latest runtime probes. These are deliberately separate from static MCP
+   * capability contracts: Pi and Mistral are first-class seats, so their
+   * provider-card state follows their runtime instead of a per-run MCP policy. */
+  providerStatusByProvider?: Partial<Record<ProviderId, unknown>>
   mcpStatusByProvider?: Partial<Record<ProviderId, any>>
   userMcpServers?: AppSettings['userMcpServers']
   runtimeProfiles?: RuntimeProfile[]
@@ -3816,6 +3821,7 @@ export function SettingsPanel({
   activeProvider,
   providerCapabilities,
   providerCapabilitiesByProvider,
+  providerStatusByProvider,
   mcpStatusByProvider,
   userMcpServers = [],
   runtimeProfiles: runtimeProfilesProp,
@@ -4817,6 +4823,7 @@ export function SettingsPanel({
         statusText: 'Local setup optional',
         hint: 'Install Ollama and pull a model, or sign in to ollama.com to use cloud models.'
       }
+  const mistralAuthSummary = summariseMistralVibeStatus(providerStatusByProvider?.mistral)
   const providerUpgradeState = (provider: ProviderId): ProviderCliUpgradeState =>
     providerCliUpgradeState[provider] || 'idle'
   const renderProviderUpgradeButton = (provider: ProviderId) => {
@@ -4857,6 +4864,17 @@ export function SettingsPanel({
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
     const status = mcpStatusByProvider?.[provider]
+    const runtimeStatus = providerStatusByProvider?.[provider]
+    const runtimeRecord =
+      runtimeStatus && typeof runtimeStatus === 'object'
+        ? (runtimeStatus as Record<string, unknown>)
+        : null
+    const runtimeAvailable =
+      typeof runtimeRecord?.available === 'boolean' ? runtimeRecord.available : null
+    // Pi and Mistral are both live TaskWraith seats. Their broker attachment
+    // can be conditional per run, but that must not turn their static runtime
+    // status into a misleading "delegated" or policy "gated" label.
+    const firstClassRuntimeProvider = provider === 'pi' || provider === 'mistral'
     // Grok and Cursor can attach the brokered TaskWraith MCP surface at run
     // launch. Cursor also retains its sandbox-bounded native tools. These blocks
     // only seed the card BEFORE the contract has loaded; the static card cannot
@@ -4892,19 +4910,28 @@ export function SettingsPanel({
     // registration is enabled; Cursor's static provider status remains
     // provider-managed because it cannot probe a particular run attachment.
     const providerManaged =
-      mcp?.source === 'provider-managed' ||
-      mcp?.source === 'taskwraith web bridge' ||
-      mcp?.source === 'unsupported' ||
-      Boolean(provisionalFallback?.providerManaged)
-    const available = Boolean(mcp?.available ?? status?.available)
+      !firstClassRuntimeProvider &&
+      (mcp?.source === 'provider-managed' ||
+        mcp?.source === 'taskwraith web bridge' ||
+        mcp?.source === 'unsupported' ||
+        Boolean(provisionalFallback?.providerManaged))
+    const available = firstClassRuntimeProvider
+      ? runtimeAvailable ?? Boolean(contract?.availability?.available)
+      : Boolean(mcp?.available ?? status?.available)
     const enabled = Boolean(mcp?.enabled ?? available)
     // HARD RULE: never fabricate "installed" from mere availability for a
     // provider-managed fallback surface. Bridge-backed providers report installed
     // from their capability contract.
-    const installed = providerManaged
-      ? Boolean(mcp?.installed)
-      : Boolean(mcp?.installed ?? available)
-    const state = mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
+    const installed = firstClassRuntimeProvider
+      ? available
+      : providerManaged
+        ? Boolean(mcp?.installed)
+        : Boolean(mcp?.installed ?? available)
+    const state = firstClassRuntimeProvider
+      ? available
+        ? 'available'
+        : 'unavailable'
+      : mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
     const rawToolCount = countMcpStatusTools(status)
     const rawServerCount = countMcpStatusServers(status)
     const taskwraithBridgeToolCount =
@@ -4915,8 +4942,9 @@ export function SettingsPanel({
       Array.isArray(mcp?.tools) && provider !== 'codex' ? mcp.tools.length : 0,
       provisionalFallback?.toolCount ?? 0
     )
-    const source =
-      provider === 'codex' && enabled
+    const source = firstClassRuntimeProvider
+      ? 'first-class runtime'
+      : provider === 'codex' && enabled
         ? 'bridge'
         : mcp?.source ||
           provisionalFallback?.source ||
@@ -4925,8 +4953,15 @@ export function SettingsPanel({
       provider === 'codex' && rawToolCount > toolCount
         ? ` Codex app-server also reports ${rawServerCount} MCP server${rawServerCount === 1 ? '' : 's'} with ${pluralizeCount(rawToolCount, 'total tool')}.`
         : ''
-    const messageBase =
-      provider === 'codex' && enabled
+    const messageBase = firstClassRuntimeProvider
+      ? provider === 'pi'
+        ? available
+          ? 'Pi is a first-class TaskWraith provider. Its fixed Ensemble coordination extension is attached only after the per-run readiness receipt; this card reports the Pi runtime, not generic MCP injection.'
+          : 'Pi is a first-class TaskWraith provider, but its local runtime is unavailable. Install Pi and configure at least one upstream API key in Settings.'
+        : available
+          ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
+          : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
+      : provider === 'codex' && enabled
         ? 'TaskWraith registers the MCP bridge for Codex runs.'
         : mcp?.message ||
           provisionalFallback?.message ||
@@ -4944,10 +4979,17 @@ export function SettingsPanel({
       providerManaged,
       state,
       source,
-      serverName:
-        mcp?.serverName ||
-        provisionalFallback?.serverName ||
-        (available ? 'TaskWraith' : 'not connected'),
+      serverName: firstClassRuntimeProvider
+        ? available
+          ? provider === 'pi'
+            ? 'Pi runtime'
+            : 'Mistral Vibe ACP'
+          : runtimeAvailable === null
+            ? 'checking runtime'
+            : 'not available'
+        : mcp?.serverName ||
+          provisionalFallback?.serverName ||
+          (available ? 'TaskWraith' : 'not connected'),
       toolCount,
       message: messageBase + codexInventoryNote
     }
@@ -7207,6 +7249,41 @@ export function SettingsPanel({
                       Ollama credential; auth stays inside the Ollama CLI.
                     </p>
                     {renderProviderPauseControls('ollama')}
+                  </SettingsProviderAuthCard>
+                  <SettingsProviderAuthCard
+                    provider="mistral"
+                    label="Mistral"
+                    summary={mistralAuthSummary}
+                    description="Mistral Vibe over managed ACP. Set up your Mistral plan (including Free / Pro where Vibe offers it) or Vibe credential in its official wizard; this is separate from Pi’s metered Mistral API-key route."
+                    optional
+                  >
+                    <div className="settings-provider-auth-command">
+                      <code>vibe --setup</code>
+                      <span>
+                        Run once in Terminal to complete Mistral Vibe&apos;s own plan or API-key
+                        setup. Managed TaskWraith runs use the separate <code>vibe-acp</code>{' '}
+                        transport afterwards.
+                      </span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={() => onProviderLogin?.('mistral')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </PillButton>
+                      {renderProviderUpgradeButton('mistral')}
+                    </div>
+                    <p className="settings-provider-auth-footnote">
+                      TaskWraith stores no Mistral plan credential; Vibe owns it. Pi&apos;s Mistral
+                      key remains a distinct metered upstream route. Vibe keeps its credentials
+                      private, so runtime discovery can confirm the CLI but cannot guess whether
+                      setup has finished.
+                      {renderProviderUpgradeHint('mistral')}
+                    </p>
+                    {renderProviderPauseControls('mistral')}
                   </SettingsProviderAuthCard>
                   <PiProviderKeysCard />
                   <MistralQuotaCard />

@@ -284,6 +284,35 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Open Terminal to sign in')
   })
 
+  it('renders the Mistral Vibe plan setup card separately from Pi API keys', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          providerStatusByProvider: {
+            mistral: { available: true, authState: 'unknown' }
+          },
+          onProviderLogin: () => {},
+          onProviderUpgrade: () => {}
+        })}
+      />
+    )
+
+    const mistralStart = html.indexOf('provider-mistral')
+    expect(mistralStart).toBeGreaterThanOrEqual(0)
+    const nextProviderCard = html.indexOf(
+      '<article class="settings-provider-auth-card',
+      mistralStart + 'provider-mistral'.length
+    )
+    const card = html.slice(mistralStart, nextProviderCard === -1 ? undefined : nextProviderCard)
+    expect(card).toContain('Mistral Vibe over managed ACP')
+    expect(card).toContain('vibe --setup')
+    expect(card).toContain('Mistral plan')
+    expect(card).toContain('Pi’s metered Mistral API-key route')
+    expect(card).toContain('Open Terminal to sign in')
+    expect(card).toContain('Upgrade CLI…')
+    expect(card).not.toContain('Sign out')
+  })
+
   it('buries the AntiGravity risk-consent card after Ollama', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
@@ -316,6 +345,65 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('settings-mcp-server-card provider-gemini')
     // Live providers still get their connected-surface cards.
     expect(html).toContain('settings-mcp-server-card provider-claude')
+  })
+
+  it('reports Pi and Mistral as first-class runtime availability, not delegated MCP seats', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          providerStatusByProvider: {
+            pi: { available: true },
+            mistral: { available: true }
+          },
+          providerCapabilitiesByProvider: {
+            pi: {
+              mcp: {
+                state: 'gated',
+                source: 'taskwraith',
+                available: true,
+                enabled: true,
+                installed: true,
+                tools: ['ensemble_yield'],
+                message: 'Per-run Pi coordination extension.'
+              }
+            } as any,
+            mistral: {
+              mcp: {
+                state: 'delegated',
+                source: 'bridge',
+                available: true,
+                enabled: true,
+                installed: true,
+                tools: [],
+                message: 'Per-run Vibe broker.'
+              }
+            } as any
+          }
+        })}
+      />
+    )
+    const card = (provider: string) => {
+      const marker = `settings-mcp-server-card provider-${provider}`
+      const start = html.indexOf(marker)
+      expect(start).toBeGreaterThanOrEqual(0)
+      const end = html.indexOf('settings-mcp-server-card provider-', start + marker.length)
+      return html.slice(start, end === -1 ? undefined : end)
+    }
+
+    const pi = card('pi')
+    const mistral = card('mistral')
+    for (const surface of [pi, mistral]) {
+      expect(surface).toContain('<span class="settings-mcp-state-pill">available</span>')
+      expect(surface).toContain('<span>first-class runtime</span>')
+      expect(surface).not.toContain('>delegated</span>')
+      expect(surface).not.toContain('>gated</span>')
+      expect(surface).not.toContain('Provider-managed MCP')
+    }
+    expect(pi).toContain('Pi runtime')
+    expect(pi).toContain('first-class TaskWraith provider')
+    expect(mistral).toContain('Mistral Vibe ACP')
+    expect(mistral).toContain('first-class Mistral Vibe ACP provider')
   })
 
   it('offers direct MCP server management actions from Provider Tools', () => {

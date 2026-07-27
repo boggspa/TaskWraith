@@ -149,7 +149,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   pi:
     'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.',
   mistral:
-    "Mistral's Vibe CLI agent over ACP. Sign in with your Mistral plan on the Mac — no API key required."
+    "Mistral's Vibe CLI agent over ACP. Use your Mistral plan on the Mac through Vibe; its optional Vibe API-key setup remains separate from Pi's metered Mistral upstream."
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -166,7 +166,8 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   // Opt-in provider; not in PROVIDER_ORDER, so this placeholder is not surfaced.
   antigravity: '',
   pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.',
-  mistral: 'On your Mac, install the Vibe CLI (vibe-acp) if needed, then sign in with your Mistral plan.'
+  mistral:
+    'On your Mac, install Mistral Vibe if needed, then run `vibe --setup` to sign in with your Mistral plan or finish Vibe’s own API-key setup. This is separate from Pi’s Mistral upstream key.'
 }
 
 export function buildRemoteFirstLaunchState(

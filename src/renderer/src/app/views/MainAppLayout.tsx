@@ -340,6 +340,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleToggleWorkflowEnabled,
   handleTriggerClaudeLogin,
   handleUpdateWorkspaceBoardCard,
+  handleProviderLogin,
   handleUpgradeProviderCli,
   handleWorkspaceSidebarResizeKeyDown,
   handoffCards,
@@ -1441,12 +1442,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               activeProvider={currentProvider}
               providerCapabilities={currentProviderCapabilities}
               providerCapabilitiesByProvider={providerCapabilitiesByProvider}
+              providerStatusByProvider={agentStatusByProvider}
               mcpStatusByProvider={{
                 codex: codexMcpStatus,
                 gemini: agentMcpStatusByProvider.gemini,
                 claude: agentMcpStatusByProvider.claude,
                 kimi: agentMcpStatusByProvider.kimi,
-                ollama: agentMcpStatusByProvider.ollama
+                cursor: agentMcpStatusByProvider.cursor,
+                grok: agentMcpStatusByProvider.grok,
+                ollama: agentMcpStatusByProvider.ollama,
+                pi: agentMcpStatusByProvider.pi,
+                mistral: agentMcpStatusByProvider.mistral
               }}
               userMcpServers={settings?.userMcpServers}
               geminiMcpBridgeEnabled={geminiMcpBridgeEnabled}
@@ -1483,9 +1489,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onClearKimiApiKey={() => void handleClearKimiApiKey()}
               onProviderUpgrade={(provider) => void handleUpgradeProviderCli(provider)}
               onProviderLogin={(provider) => {
-                void window.api.openProviderLoginTerminal(provider).then((r) => {
-                  if (!r?.ok) console.warn('[provider sign-in] could not open Terminal:', r?.error)
-                })
+                void handleProviderLogin(provider)
               }}
               onProviderLogout={(provider) => {
                 void window.api.openProviderLogoutTerminal(provider).then((r) => {

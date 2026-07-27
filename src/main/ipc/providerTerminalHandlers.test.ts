@@ -384,6 +384,61 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.writeFileSync).not.toHaveBeenCalled()
     expect(deps.openPath).not.toHaveBeenCalled()
   })
+
+  it('opens the bounded Mistral Vibe setup wizard instead of the ACP server', async () => {
+    const { deps, loginDir } = createDeps()
+    const commandFile = join(loginDir, 'mistral-login.command')
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'mistral')).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/official Mistral Vibe setup wizard/i)
+    })
+
+    // Setup is owned by `vibe`; `vibe-acp` is deliberately only the managed
+    // stdio transport used after the user has finished this flow.
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+    expect(deps.writeFileSync).toHaveBeenCalledWith(
+      commandFile,
+      expect.stringContaining("'vibe' '--setup'"),
+      { mode: 0o755 }
+    )
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('managed Mistral runs use the separate `vibe-acp` runtime')
+    expect(script).not.toContain("'vibe-acp'")
+    expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+  })
+
+  it('rejects Mistral logout without opening an unbounded Vibe session', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'mistral')).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/bounded logout command.*No Vibe process was started/i),
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/official Mistral Vibe setup wizard/i)
+    })
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+    expect(deps.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.openPath).not.toHaveBeenCalled()
+  })
+
+  it('opens the official Mistral Vibe installer for an explicit upgrade', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'mistral')).resolves.toEqual({
+      ok: true
+    })
+
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('curl -LsSf https://mistral.ai/vibe/install.sh | bash')
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+  })
 })
 
 describe('codex upgrade targets the install it actually runs', () => {

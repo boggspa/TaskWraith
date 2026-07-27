@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import { summariseCodexStatus, summariseProviderApiKeyStatus } from './providerAuthSummary'
+import {
+  summariseCodexStatus,
+  summariseMistralVibeStatus,
+  summariseProviderApiKeyStatus
+} from './providerAuthSummary'
+
+describe('summariseMistralVibeStatus', () => {
+  it('does not claim a resolved Vibe binary is signed in', () => {
+    expect(summariseMistralVibeStatus({ available: true, authState: 'unknown' })).toEqual({
+      variant: 'partial',
+      statusText: 'Vibe CLI ready · setup unverified',
+      hint: expect.stringContaining('vibe --setup')
+    })
+  })
+
+  it('distinguishes a missing Vibe CLI from credential setup', () => {
+    expect(summariseMistralVibeStatus({ available: false })).toMatchObject({
+      variant: 'not-available',
+      statusText: 'Mistral Vibe CLI not found'
+    })
+  })
+
+  it('honours an explicit future authentication observation without inventing one', () => {
+    expect(summariseMistralVibeStatus({ available: true, authState: 'oauth' })).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Mistral Vibe configured'
+    })
+  })
+})
 
 describe('summariseProviderApiKeyStatus — Kimi', () => {
   it('recognises an admitted OAuth-only runtime', () => {

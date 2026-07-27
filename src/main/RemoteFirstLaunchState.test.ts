@@ -129,6 +129,14 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toBe(true)
     expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(true)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
+    expect(state.providerCards.find((card) => card.id === 'mistral')).toMatchObject({
+      setupHint: expect.stringContaining('vibe --setup')
+    })
+    expect(
+      state.providerCards
+        .find((card) => card.id === 'mistral')
+        ?.setupCommands.some((entry) => entry.id === 'mistral')
+    ).toBe(true)
   })
 
   it('projects a present but unqualified Kimi runtime as managed-runtime unavailable', () => {

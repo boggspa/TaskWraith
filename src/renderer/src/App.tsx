@@ -171,6 +171,7 @@ import type {
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
 import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
+import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
 import { shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
@@ -6666,19 +6667,18 @@ function App(): React.JSX.Element {
     const initialProvider =
       s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
     void refreshProviderMetadata(initialProvider)
-    // Warm EVERY live seat's catalog, not a hand-listed subset. This was
-    // ['codex','claude','kimi','ollama'], so a seat added later was only ever
-    // fetched if the user switched the active provider to it — while the
-    // GROUPED picker lists every provider at once and therefore rendered the
-    // missing ones as empty. That is precisely how Pi appeared to have no
-    // models despite three stored upstream keys.
+    // Warm EVERY live seat's discovery snapshot, not a hand-listed subset.
+    // The picker needs model catalogs, while Settings → Provider Tools needs
+    // binary/auth/bridge status. Previously only the active seat refreshed the
+    // latter, so a successfully installed or signed-in provider could still
+    // look dead until the user found and pressed its manual Refresh button.
     //
-    // `refreshProviderModelCatalog` already no-ops for anything outside the
-    // live set, so deriving the list here cannot outrun that gate, and seats
-    // whose picker rows come from static constants simply cache a value nobody
-    // reads. Cheap insurance against the next seat repeating this.
+    // `refreshProviderMetadata` refreshes capabilities, runtime status, MCP
+    // status, and models together; it no-ops for anything outside the live set.
+    // Keeping the source of truth here means a future live seat gets background
+    // discovery at app launch by construction.
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]) {
-      if (provider !== initialProvider) void refreshProviderModelCatalog(provider)
+      if (provider !== initialProvider) void refreshProviderMetadata(provider)
     }
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
     // registry includes 'grok' only when the experimental gate is on).
@@ -7426,6 +7426,33 @@ function App(): React.JSX.Element {
       setProviderUpgradeState(provider, 'error')
       setTimeout(() => setProviderUpgradeState(provider, 'idle'), 5000)
     }
+  }
+
+  const refreshProviderAfterInteractiveLogin = (provider: ProviderId): void => {
+    if (provider === 'codex') {
+      // Codex's TaskWraith-owned home has a deliberate auth cache. Ask main to
+      // recycle it before the ordinary metadata pass so a completed browser
+      // login is visible without a manual Settings refresh.
+      void window.api
+        .getAgentStatus('codex', { refreshAuth: true })
+        .catch((error) => {
+          console.warn('[provider sign-in] could not recycle Codex auth status:', error)
+        })
+        .finally(() => refreshProviderAfterCliUpgrade(provider))
+      return
+    }
+    refreshProviderAfterCliUpgrade(provider)
+  }
+
+  const handleProviderLogin = (provider: ProviderId): Promise<boolean> => {
+    if (typeof window.api.openProviderLoginTerminal !== 'function') return Promise.resolve(false)
+    return openInteractiveProviderLogin(provider, {
+      openTerminal: (target) => window.api.openProviderLoginTerminal(target),
+      refresh: refreshProviderAfterInteractiveLogin,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      onOpenError: (error) =>
+        console.warn('[provider sign-in] could not open Terminal:', error || 'unknown error')
+    })
   }
 
   const buildQueuedProviderChange = useCallback(
@@ -29743,6 +29770,7 @@ function App(): React.JSX.Element {
     handleToggleWorkflowEnabled,
     handleTriggerClaudeLogin,
     handleUpdateWorkspaceBoardCard,
+    handleProviderLogin,
     handleUpgradeProviderCli,
     handleWorkspaceSidebarResizeKeyDown,
     handoffCards,
@@ -30105,9 +30133,7 @@ function App(): React.JSX.Element {
           setShowSettings(true)
         }}
         onProviderLogin={(provider) => {
-          void window.api.openProviderLoginTerminal(provider).then((r) => {
-            if (!r?.ok) console.warn('[provider sign-in] could not open Terminal:', r?.error)
-          })
+          void handleProviderLogin(provider)
         }}
         onProviderLogout={(provider) => {
           void window.api.openProviderLogoutTerminal(provider).then((r) => {
@@ -30119,6 +30145,7 @@ function App(): React.JSX.Element {
         kimiAuthStatus={kimiAuthStatus}
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
+        mistralStatus={agentStatusByProvider.mistral}
         antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes(
           'antigravity'
         )}

@@ -71,6 +71,30 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('data-provider="kimi"')
     expect(html).toContain('data-provider="ollama"')
     expect(html).toContain('data-provider="pi"')
+    expect(html).toContain('data-provider="mistral"')
+  })
+
+  it('offers Mistral Vibe setup separately from Pi API-key setup', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        onProviderLogout={() => {}}
+        codexStatus={null}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+        mistralStatus={{ available: true, authState: 'unknown' }}
+      />
+    )
+
+    const card = providerCardMarkup(html, 'mistral')
+    expect(card).toContain('Mistral Vibe')
+    expect(card).toContain('vibe --setup')
+    expect(card).toContain('Sign in')
+    expect(card).toContain('Pi’s metered Mistral API-key route')
+    expect(card).not.toContain('Sign out')
   })
 
   it('renders Welcome heading and the numbered onboarding sections', () => {
