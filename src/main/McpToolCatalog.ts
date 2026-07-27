@@ -4111,7 +4111,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'mesh_scene_inspect',
       description:
-        'Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, material overrides, camera, and presentation metadata. It never returns filesystem paths or private asset URLs. Read-only.',
+        'Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, material overrides, camera, presentation metadata, and typed dependency graph. It never returns filesystem paths or private asset URLs. Read-only.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -4155,7 +4155,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'mesh_scene_apply',
       description:
-        'Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere, plane, cylinder, or torus. `update_node` changes a node’s name/transform/material/visibility. `remove_node` removes a node. `set_scene` changes title, #RGB/#RRGGBB background, studio/sunset/neutral lighting, or camera. Rotation is Euler degrees; materials use PBR baseColor, metallic, roughness, opacity, emissive, and doubleSided. Gated via Mesh Canvas.',
+        'Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere, plane, cylinder, or torus. `update_node` changes a node’s name/transform/material/visibility. `remove_node` removes a node. `set_scene` changes title, #RGB/#RRGGBB background, studio/sunset/neutral lighting, or camera. `upsert_object_data` merges a typed object-fact map; `bind_node_property` makes one known node property react to an object-data fact or another node property (numeric fields may use scale + offset); `unbind_node_property` removes that edge. The main process resolves the acyclic graph after every mutation and the presented viewer refreshes from the resulting scene event. Rotation is Euler degrees; materials use PBR baseColor, metallic, roughness, opacity, emissive, and doubleSided. Gated via Mesh Canvas.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -4166,7 +4166,18 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           sceneId: { type: 'string' },
-          operation: { type: 'string', enum: ['add_primitive', 'update_node', 'remove_node', 'set_scene'] },
+          operation: {
+            type: 'string',
+            enum: [
+              'add_primitive',
+              'update_node',
+              'remove_node',
+              'set_scene',
+              'upsert_object_data',
+              'bind_node_property',
+              'unbind_node_property'
+            ]
+          },
           primitive: { type: 'string', enum: ['box', 'sphere', 'plane', 'cylinder', 'torus'] },
           nodeId: { type: 'string' },
           name: { type: 'string' },
@@ -4176,7 +4187,45 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           transform: { type: 'object' },
           material: { type: 'object' },
           lighting: { type: 'object' },
-          camera: { type: 'object' }
+          camera: { type: 'object' },
+          sourceId: {
+            type: 'string',
+            description: 'Stable object-data source id for upsert_object_data.'
+          },
+          values: {
+            type: 'object',
+            description: 'Bounded map of string, finite-number, or boolean object facts to merge into sourceId.'
+          },
+          property: {
+            type: 'string',
+            enum: [
+              'transform.position.x',
+              'transform.position.y',
+              'transform.position.z',
+              'transform.rotation.x',
+              'transform.rotation.y',
+              'transform.rotation.z',
+              'transform.scale.x',
+              'transform.scale.y',
+              'transform.scale.z',
+              'visible',
+              'material.baseColor',
+              'material.metallic',
+              'material.roughness',
+              'material.opacity',
+              'material.emissive',
+              'material.doubleSided'
+            ]
+          },
+          source: {
+            type: 'object',
+            description:
+              'For bind_node_property: { kind: "object_data", sourceId, key } or { kind: "node_property", nodeId, property }.'
+          },
+          numericTransform: {
+            type: 'object',
+            description: 'Optional numeric-only affine mapping: { scale?, offset? }.'
+          }
         },
         required: ['sceneId', 'operation']
       }

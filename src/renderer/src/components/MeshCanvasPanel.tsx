@@ -4,7 +4,11 @@
  * and never evaluates provider-supplied scene code.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { meshCanvasIssueMessage } from '../lib/meshCanvasAvailability'
+import {
+  MESH_CANVAS_NEEDS_SAVED_CHAT,
+  hasMeshCanvasChatAuthority,
+  meshCanvasIssueMessage
+} from '../lib/meshCanvasAvailability'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
@@ -366,6 +370,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
   const [view, setView] = useState<MeshSceneView | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
   const [importing, setImporting] = useState(false)
+  const [sceneRevision, setSceneRevision] = useState(0)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
 
@@ -373,6 +378,15 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     const api = window.api?.meshCanvas
     if (!api) return
     try {
+      const canonical = await hasMeshCanvasChatAuthority(chatId)
+      if (chatIdRef.current !== chatId) return
+      if (!canonical) {
+        setScenes([])
+        setActiveSceneId(null)
+        setView(null)
+        setIssue(MESH_CANVAS_NEEDS_SAVED_CHAT)
+        return
+      }
       const next = (await api.listForChat(chatId))
         .map(toMeshSceneSummary)
         .filter((scene): scene is MeshSceneSummary => scene !== null)
@@ -403,6 +417,10 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       if (record.kind === 'scene.presented' && typeof record.sceneId === 'string') {
         setActiveSceneId(record.sceneId)
       }
+      // Keep the visible Three scene in sync with a tool/graph update even
+      // when its selected tab id stays the same. The main service emits only
+      // after persisting the resolved graph transaction.
+      setSceneRevision((revision) => revision + 1)
       if (timer !== null) window.clearTimeout(timer)
       timer = window.setTimeout(() => {
         timer = null
@@ -439,7 +457,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     return () => {
       cancelled = true
     }
-  }, [activeSceneId, chatId])
+  }, [activeSceneId, chatId, sceneRevision])
 
   const importUserModel = async (): Promise<void> => {
     const api = window.api?.meshCanvas

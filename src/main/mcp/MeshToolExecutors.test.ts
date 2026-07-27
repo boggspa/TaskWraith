@@ -150,6 +150,41 @@ describe('MeshToolExecutors', () => {
     expect(rejected.text).toContain('textureAssetId is internal')
   })
 
+  it('accepts typed object data and dependency bindings through mesh_scene_apply', async () => {
+    const created = await execute('mesh_scene_create', {})
+    const sceneId = (created.structuredContent as { scene: { id: string } }).scene.id
+    const node = await execute('mesh_scene_apply', {
+      sceneId,
+      operation: 'add_primitive',
+      primitive: 'sphere'
+    })
+    const nodeId = (node.structuredContent as { scene: { nodes: Array<{ id: string }> } }).scene.nodes[0].id
+
+    const data = await execute('mesh_scene_apply', {
+      sceneId,
+      operation: 'upsert_object_data',
+      sourceId: 'measurement',
+      values: { radius: 3 }
+    })
+    expect(data.isError).not.toBe(true)
+
+    const bound = await execute('mesh_scene_apply', {
+      sceneId,
+      operation: 'bind_node_property',
+      nodeId,
+      property: 'transform.scale.x',
+      source: { kind: 'object_data', sourceId: 'measurement', key: 'radius' },
+      numericTransform: { scale: 0.5 }
+    })
+    expect(bound.structuredContent).toMatchObject({
+      ok: true,
+      scene: {
+        nodes: [{ id: nodeId, transform: { scale: { x: 1.5 } } }],
+        dependencies: { bindings: [{ targetNodeId: nodeId, targetProperty: 'transform.scale.x' }] }
+      }
+    })
+  })
+
   it('refuses out-of-workspace imports and cross-chat scene access', async () => {
     const outside = path.join(root, 'outside.obj')
     fs.writeFileSync(outside, 'v 0 0 0\n')

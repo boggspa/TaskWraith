@@ -16,6 +16,10 @@ import {
   type MeshTransform,
   type MeshVector3
 } from '../../shared/meshScene'
+import {
+  normalizeMeshSceneDependencyGraph,
+  resolveMeshSceneDependencyGraph
+} from './MeshSceneDependencyGraph'
 
 const SCENES_FILE = 'mesh-scenes.json'
 const MAX_SCENES = 200
@@ -145,6 +149,8 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
   const rawNodes = Array.isArray(value.nodes) ? value.nodes : []
   const nodes = rawNodes.map(asNode).filter((node): node is MeshSceneNode => node !== null)
   if (nodes.length !== rawNodes.length || nodes.length > MESH_MAX_SCENE_NODES) return null
+  const dependencies = normalizeMeshSceneDependencyGraph(value.dependencies, nodes)
+  if (!dependencies) return null
   const rawLighting = isRecord(value.lighting) ? value.lighting : {}
   const rawCamera = isRecord(value.camera) ? value.camera : {}
   const defaults = cloneDefaultCamera()
@@ -159,7 +165,7 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
           : {})
       }
     : undefined
-  return {
+  const scene: MeshSceneRecord = {
     schemaVersion: MESH_SCENE_SCHEMA_VERSION,
     id,
     ...(asString(value.chatId, 256) ? { chatId: asString(value.chatId, 256)! } : {}),
@@ -180,9 +186,16 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
       fieldOfView: asFinite(rawCamera.fieldOfView, defaults.fieldOfView, 15, 100)
     },
     nodes,
+    dependencies,
     createdAt,
     updatedAt,
     ...(presentation ? { presentation } : {})
+  }
+  try {
+    resolveMeshSceneDependencyGraph(scene)
+    return scene
+  } catch {
+    return null
   }
 }
 

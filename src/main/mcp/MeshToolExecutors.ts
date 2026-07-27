@@ -5,10 +5,15 @@ import {
   MESH_SCENE_MCP_TOOL_NAMES,
   type MeshSceneMcpToolName
 } from '../../shared/taskWraithMcpCatalog'
-import type { MeshPbrMaterial, MeshSceneLighting, MeshSceneRecord } from '../../shared/meshScene'
 import {
   isMeshPrimitiveKind,
-  type MeshPrimitiveKind
+  isMeshSceneDependencyProperty,
+  type MeshPbrMaterial,
+  type MeshPrimitiveKind,
+  type MeshSceneDependencySource,
+  type MeshSceneLighting,
+  type MeshSceneObjectDataValue,
+  type MeshSceneRecord
 } from '../../shared/meshScene'
 import type {
   MeshSceneCallContext,
@@ -102,6 +107,62 @@ function material(value: unknown): MeshPbrMaterial | undefined {
   return Object.keys(result).length ? result : undefined
 }
 
+function objectDataValues(value: unknown): Record<string, MeshSceneObjectDataValue> {
+  const raw = asRecord(value)
+  const entries = Object.entries(raw)
+  if (!entries.length) throw new Error('upsert_object_data requires a non-empty values map.')
+  const result: Record<string, MeshSceneObjectDataValue> = {}
+  for (const [key, entry] of entries) {
+    if (
+      !(
+        typeof entry === 'boolean' ||
+        (typeof entry === 'number' && Number.isFinite(entry)) ||
+        typeof entry === 'string'
+      )
+    ) {
+      throw new Error('Object data values must be strings, numbers, or booleans.')
+    }
+    result[key] = entry
+  }
+  return result
+}
+
+function dependencySource(value: unknown): MeshSceneDependencySource {
+  const raw = asRecord(value)
+  if (raw.kind === 'object_data') {
+    const sourceId = stringValue(raw.sourceId, 128)
+    const key = stringValue(raw.key, 128)
+    if (!sourceId || !key) throw new Error('Object-data dependencies require sourceId and key.')
+    return { kind: 'object_data', sourceId, key }
+  }
+  if (raw.kind === 'node_property') {
+    const nodeId = stringValue(raw.nodeId, 128)
+    if (!nodeId || !isMeshSceneDependencyProperty(raw.property)) {
+      throw new Error('Node-property dependencies require nodeId and a supported property.')
+    }
+    return { kind: 'node_property', nodeId, property: raw.property }
+  }
+  throw new Error('Dependency source must be object_data or node_property.')
+}
+
+function numericTransform(value: unknown): { scale?: number; offset?: number } | undefined {
+  if (value === undefined) return undefined
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('numericTransform must be an object with numeric scale and/or offset.')
+  }
+  const raw = asRecord(value)
+  const scale = numberValue(raw.scale)
+  const offset = numberValue(raw.offset)
+  if ((raw.scale !== undefined && scale === undefined) || (raw.offset !== undefined && offset === undefined)) {
+    throw new Error('numericTransform scale and offset must be finite numbers.')
+  }
+  const result = {
+    ...(scale !== undefined ? { scale } : {}),
+    ...(offset !== undefined ? { offset } : {})
+  }
+  return Object.keys(result).length ? result : undefined
+}
+
 function sceneId(args: Record<string, unknown>): string | undefined {
   return stringValue(args.sceneId, 128)
 }
@@ -178,6 +239,32 @@ function parseMutation(args: Record<string, unknown>): MeshSceneMutation {
     const nodeId = stringValue(args.nodeId, 128)
     if (!nodeId) throw new Error('remove_node requires nodeId.')
     return { operation, nodeId }
+  }
+  if (operation === 'upsert_object_data') {
+    const sourceId = stringValue(args.sourceId, 128)
+    if (!sourceId) throw new Error('upsert_object_data requires sourceId.')
+    return { operation, sourceId, values: objectDataValues(args.values) }
+  }
+  if (operation === 'bind_node_property') {
+    const nodeId = stringValue(args.nodeId, 128)
+    if (!nodeId || !isMeshSceneDependencyProperty(args.property)) {
+      throw new Error('bind_node_property requires nodeId and a supported property.')
+    }
+    const mapping = numericTransform(args.numericTransform)
+    return {
+      operation,
+      nodeId,
+      property: args.property,
+      source: dependencySource(args.source),
+      ...(mapping ? { numericTransform: mapping } : {})
+    }
+  }
+  if (operation === 'unbind_node_property') {
+    const nodeId = stringValue(args.nodeId, 128)
+    if (!nodeId || !isMeshSceneDependencyProperty(args.property)) {
+      throw new Error('unbind_node_property requires nodeId and a supported property.')
+    }
+    return { operation, nodeId, property: args.property }
   }
   if (operation === 'set_scene') {
     const lightingRaw = asRecord(args.lighting)

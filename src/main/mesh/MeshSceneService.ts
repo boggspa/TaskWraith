@@ -13,6 +13,7 @@ import {
   cloneDefaultCamera,
   cloneDefaultLighting,
   cloneDefaultTransform,
+  createEmptyMeshSceneDependencyGraph,
   isMeshPrimitiveKind,
   meshAssetUrl,
   meshSceneSummary,
@@ -20,13 +21,24 @@ import {
   type MeshPrimitiveKind,
   type MeshSceneCamera,
   type MeshSceneLighting,
+  type MeshSceneDependencyProperty,
+  type MeshSceneDependencySource,
   type MeshSceneNode,
+  type MeshSceneObjectDataValue,
   type MeshSceneRecord,
   type MeshSceneSummary,
   type MeshSceneView,
   type MeshTransform
 } from '../../shared/meshScene'
 import type { MeshAssetStore } from './MeshAssetStore'
+import {
+  bindMeshSceneNodeProperty,
+  cloneMeshSceneDependencyGraph,
+  removeMeshSceneNodeDependencies,
+  resolveMeshSceneDependencyGraph,
+  unbindMeshSceneNodeProperty,
+  upsertMeshSceneObjectData
+} from './MeshSceneDependencyGraph'
 import type { MeshSceneStore } from './MeshSceneStore'
 
 export interface MeshSceneCallContext {
@@ -85,6 +97,23 @@ export type MeshSceneMutation =
       backgroundColor?: string
       lighting?: Partial<MeshSceneLighting>
       camera?: MeshSceneCameraInput
+    }
+  | {
+      operation: 'upsert_object_data'
+      sourceId: string
+      values: Record<string, MeshSceneObjectDataValue>
+    }
+  | {
+      operation: 'bind_node_property'
+      nodeId: string
+      property: MeshSceneDependencyProperty
+      source: MeshSceneDependencySource
+      numericTransform?: { scale?: number; offset?: number }
+    }
+  | {
+      operation: 'unbind_node_property'
+      nodeId: string
+      property: MeshSceneDependencyProperty
     }
 
 export interface MeshSceneServiceDeps {
@@ -184,6 +213,7 @@ function cloneScene(scene: MeshSceneRecord): MeshSceneRecord {
       fieldOfView: scene.camera.fieldOfView
     },
     nodes: scene.nodes.map(cloneNode),
+    dependencies: cloneMeshSceneDependencyGraph(scene.dependencies),
     ...(scene.presentation ? { presentation: { ...scene.presentation } } : {})
   }
 }
@@ -271,6 +301,7 @@ export class MeshSceneService {
       lighting: cloneDefaultLighting(),
       camera: cloneDefaultCamera(),
       nodes: [],
+      dependencies: createEmptyMeshSceneDependencyGraph(),
       createdAt: now,
       updatedAt: now
     }
@@ -320,6 +351,7 @@ export class MeshSceneService {
           visible: true
         }
       ],
+      dependencies: createEmptyMeshSceneDependencyGraph(),
       createdAt: now,
       updatedAt: now
     }
@@ -421,9 +453,11 @@ export class MeshSceneService {
       }
     } else if (mutation.operation === 'remove_node') {
       const nodeId = nonEmpty(mutation.nodeId, 128)
+      if (!nodeId) throw new Error('Mesh Canvas node was not found.')
       const next = scene.nodes.filter((node) => node.id !== nodeId)
       if (next.length === scene.nodes.length) throw new Error('Mesh Canvas node was not found.')
       scene.nodes = next
+      removeMeshSceneNodeDependencies(scene, nodeId)
     } else if (mutation.operation === 'set_scene') {
       const nextTitle = nonEmpty(mutation.title, 200)
       const nextBackground = safeHexColor(mutation.backgroundColor)
@@ -453,7 +487,18 @@ export class MeshSceneService {
           fieldOfView: boundedNumber(mutation.camera.fieldOfView, scene.camera.fieldOfView, 15, 100)
         }
       }
+    } else if (mutation.operation === 'upsert_object_data') {
+      upsertMeshSceneObjectData(scene, mutation, this.deps.now())
+    } else if (mutation.operation === 'bind_node_property') {
+      bindMeshSceneNodeProperty(scene, mutation, this.deps.uuid, this.deps.now())
+    } else if (mutation.operation === 'unbind_node_property') {
+      unbindMeshSceneNodeProperty(scene, mutation)
     }
+    // A normal tool mutation may update a source node, while an object-data
+    // mutation updates an external fact. Either way, resolve all reachable
+    // descendants in one durable transaction before the renderer hears about
+    // the resulting scene.updated event.
+    resolveMeshSceneDependencyGraph(scene)
     scene.updatedAt = this.deps.now()
     const saved = this.persist(scene)
     this.emit('scene.updated', saved)
@@ -547,7 +592,7 @@ export class MeshSceneService {
       })
       if (url) assetUrls[assetId] = url
     }
-    const { workspacePath: _workspacePath, ...rendererScene } = cloneScene(scene)
+    const { workspacePath: _workspacePath, dependencies: _dependencies, ...rendererScene } = cloneScene(scene)
     return { ...rendererScene, assetUrls }
   }
 

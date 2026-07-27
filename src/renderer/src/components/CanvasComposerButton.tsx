@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
 import {
   MESH_CANVAS_NEEDS_SAVED_CHAT,
+  hasMeshCanvasChatAuthority,
   meshCanvasIssueMessage
 } from '../lib/meshCanvasAvailability'
 import { requestMeshCanvasOpen } from '../lib/meshCanvasLaunch'
@@ -136,8 +137,7 @@ export function CanvasComposerButton({
       // The renderer can briefly retain a just-reaped welcome draft after a
       // reload. Check main's canonical chat store before requesting a
       // chat-scoped canvas; never turn that stale renderer id into authority.
-      const canonicalChat = await window.api.getChat(chatId)
-      if (!canonicalChat) {
+      if (!(await hasMeshCanvasChatAuthority(chatId))) {
         setError(MESH_CANVAS_NEEDS_SAVED_CHAT)
         return
       }

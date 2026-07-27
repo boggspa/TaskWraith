@@ -146,6 +146,121 @@ describe('MeshSceneService', () => {
     expect(events.map((event) => event.kind)).toEqual(['scene.created', 'scene.updated'])
   })
 
+  it('reactively resolves object facts and chained node-property dependencies in one scene update', () => {
+    const scene = service.create({ title: 'Reactive layout' }, context())
+    const withLeader = service.apply(
+      scene.id,
+      { operation: 'add_primitive', primitive: 'box', name: 'Leader' },
+      context()
+    )
+    const leader = withLeader.nodes[0]
+    const withFollower = service.apply(
+      scene.id,
+      { operation: 'add_primitive', primitive: 'sphere', name: 'Follower' },
+      context()
+    )
+    const follower = withFollower.nodes[1]
+    if (!leader || !follower) throw new Error('expected two primitive nodes')
+
+    service.apply(
+      scene.id,
+      { operation: 'upsert_object_data', sourceId: 'telemetry', values: { span: 2 } },
+      context()
+    )
+    const boundLeader = service.apply(
+      scene.id,
+      {
+        operation: 'bind_node_property',
+        nodeId: leader.id,
+        property: 'transform.position.x',
+        source: { kind: 'object_data', sourceId: 'telemetry', key: 'span' },
+        numericTransform: { scale: 2, offset: 1 }
+      },
+      context()
+    )
+    expect(boundLeader.nodes.find((node) => node.id === leader.id)?.transform.position.x).toBe(5)
+
+    const chained = service.apply(
+      scene.id,
+      {
+        operation: 'bind_node_property',
+        nodeId: follower.id,
+        property: 'transform.position.x',
+        source: { kind: 'node_property', nodeId: leader.id, property: 'transform.position.x' }
+      },
+      context()
+    )
+    expect(chained.nodes.find((node) => node.id === follower.id)?.transform.position.x).toBe(5)
+
+    const updated = service.apply(
+      scene.id,
+      { operation: 'upsert_object_data', sourceId: 'telemetry', values: { span: 4 } },
+      context()
+    )
+    expect(updated.nodes.find((node) => node.id === leader.id)?.transform.position.x).toBe(9)
+    expect(updated.nodes.find((node) => node.id === follower.id)?.transform.position.x).toBe(9)
+    service.apply(
+      scene.id,
+      {
+        operation: 'unbind_node_property',
+        nodeId: leader.id,
+        property: 'transform.position.x'
+      },
+      context()
+    )
+    const directToolUpdate = service.apply(
+      scene.id,
+      {
+        operation: 'update_node',
+        nodeId: leader.id,
+        transform: { position: { x: 12 } }
+      },
+      context()
+    )
+    expect(directToolUpdate.nodes.find((node) => node.id === follower.id)?.transform.position.x).toBe(12)
+    expect(updated.dependencies).toMatchObject({
+      sources: [{ id: 'telemetry', values: { span: 4 } }],
+      bindings: [{ targetNodeId: leader.id }, { targetNodeId: follower.id }]
+    })
+    // The renderer gets only already-resolved scene nodes, not raw object facts.
+    expect(service.viewForChat(scene.id, 'chat-a')).not.toHaveProperty('dependencies')
+    expect(events.at(-1)).toMatchObject({ kind: 'scene.updated', sceneId: scene.id })
+  })
+
+  it('rejects cyclic property edges atomically', () => {
+    const scene = service.create({}, context())
+    const withFirst = service.apply(scene.id, { operation: 'add_primitive', primitive: 'box' }, context())
+    const first = withFirst.nodes[0]
+    const withSecond = service.apply(scene.id, { operation: 'add_primitive', primitive: 'sphere' }, context())
+    const second = withSecond.nodes[1]
+    if (!first || !second) throw new Error('expected two primitive nodes')
+
+    service.apply(
+      scene.id,
+      {
+        operation: 'bind_node_property',
+        nodeId: second.id,
+        property: 'transform.position.x',
+        source: { kind: 'node_property', nodeId: first.id, property: 'transform.position.x' }
+      },
+      context()
+    )
+
+    expect(() =>
+      service.apply(
+        scene.id,
+        {
+          operation: 'bind_node_property',
+          nodeId: first.id,
+          property: 'transform.position.x',
+          source: { kind: 'node_property', nodeId: second.id, property: 'transform.position.x' }
+        },
+        context()
+      )
+    ).toThrow(/contains a cycle/)
+    expect(service.inspect(scene.id, context()).dependencies.bindings).toHaveLength(1)
+  })
+
   it('purges scoped scene metadata and its private assets under the matching history authority', async () => {
     const source = path.join(workspace, 'fixture.glb')
     fs.writeFileSync(source, Buffer.from('glTF'))

@@ -10,6 +10,10 @@
 export const MESH_SCENE_SCHEMA_VERSION = 1 as const
 /** Bound durable scene complexity before an import can allocate a private asset bundle. */
 export const MESH_MAX_SCENE_NODES = 500
+/** Bound reactive object-information sources attached to one durable scene. */
+export const MESH_MAX_SCENE_OBJECT_DATA_SOURCES = 200
+/** One property has at most one incoming edge; this bounds graph evaluation cost. */
+export const MESH_MAX_SCENE_DEPENDENCY_BINDINGS = 1_000
 
 export const MESH_IMPORT_FORMATS = ['glb', 'gltf', 'obj'] as const
 export type MeshImportFormat = (typeof MESH_IMPORT_FORMATS)[number]
@@ -72,6 +76,60 @@ export interface MeshImportedNode {
 
 export type MeshSceneNode = MeshPrimitiveNode | MeshImportedNode
 
+/**
+ * The small, typed property vocabulary available to the reactive scene graph.
+ * No expressions or code cross this boundary: object information is mapped to
+ * a known field, and numeric fields may apply only scale + offset.
+ */
+export const MESH_SCENE_DEPENDENCY_PROPERTIES = [
+  'transform.position.x',
+  'transform.position.y',
+  'transform.position.z',
+  'transform.rotation.x',
+  'transform.rotation.y',
+  'transform.rotation.z',
+  'transform.scale.x',
+  'transform.scale.y',
+  'transform.scale.z',
+  'visible',
+  'material.baseColor',
+  'material.metallic',
+  'material.roughness',
+  'material.opacity',
+  'material.emissive',
+  'material.doubleSided'
+] as const
+
+export type MeshSceneDependencyProperty = (typeof MESH_SCENE_DEPENDENCY_PROPERTIES)[number]
+export type MeshSceneObjectDataValue = string | number | boolean
+
+/** A provider-neutral fact source, updated through a typed scene mutation. */
+export interface MeshSceneObjectDataSource {
+  id: string
+  values: Record<string, MeshSceneObjectDataValue>
+  updatedAt: string
+}
+
+export type MeshSceneDependencySource =
+  | { kind: 'object_data'; sourceId: string; key: string }
+  | { kind: 'node_property'; nodeId: string; property: MeshSceneDependencyProperty }
+
+export interface MeshSceneDependencyBinding {
+  id: string
+  targetNodeId: string
+  targetProperty: MeshSceneDependencyProperty
+  source: MeshSceneDependencySource
+  /** Optional affine mapping for numeric fields only: `value * scale + offset`. */
+  numericTransform?: { scale: number; offset: number }
+  createdAt: string
+}
+
+/** Durable, declarative graph evaluated by main after every scene mutation. */
+export interface MeshSceneDependencyGraph {
+  sources: MeshSceneObjectDataSource[]
+  bindings: MeshSceneDependencyBinding[]
+}
+
 export interface MeshSceneLighting {
   environment: 'studio' | 'sunset' | 'neutral'
   intensity: number
@@ -101,6 +159,7 @@ export interface MeshSceneRecord {
   lighting: MeshSceneLighting
   camera: MeshSceneCamera
   nodes: MeshSceneNode[]
+  dependencies: MeshSceneDependencyGraph
   createdAt: string
   updatedAt: string
   presentation?: MeshScenePresentation
@@ -124,7 +183,7 @@ export interface MeshSceneSummary {
  * data. Keeping it out of this projection makes the renderer boundary unable
  * to accidentally become a workspace-path disclosure channel.
  */
-export type MeshSceneView = Omit<MeshSceneRecord, 'workspacePath'> & {
+export type MeshSceneView = Omit<MeshSceneRecord, 'workspacePath' | 'dependencies'> & {
   assetUrls: Record<string, string>
 }
 
@@ -171,6 +230,13 @@ export function isMeshImportFormat(value: unknown): value is MeshImportFormat {
 
 export function isMeshPrimitiveKind(value: unknown): value is MeshPrimitiveKind {
   return typeof value === 'string' && (MESH_PRIMITIVE_KINDS as readonly string[]).includes(value)
+}
+
+export function isMeshSceneDependencyProperty(value: unknown): value is MeshSceneDependencyProperty {
+  return (
+    typeof value === 'string' &&
+    (MESH_SCENE_DEPENDENCY_PROPERTIES as readonly string[]).includes(value)
+  )
 }
 
 export function meshSceneSummary(scene: MeshSceneRecord): MeshSceneSummary {
@@ -236,4 +302,8 @@ export function cloneDefaultCamera(): MeshSceneCamera {
 
 export function cloneDefaultLighting(): MeshSceneLighting {
   return { ...MESH_DEFAULT_LIGHTING }
+}
+
+export function createEmptyMeshSceneDependencyGraph(): MeshSceneDependencyGraph {
+  return { sources: [], bindings: [] }
 }
