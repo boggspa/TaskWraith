@@ -497,6 +497,7 @@ public final class RemoteSessionModel: ObservableObject {
     @Published public private(set) var taskCards: [RemoteTaskCard] = [] {
         didSet {
             handleTaskCardCompletionTransitions(previous: oldValue)
+            syncRunActivities()
             flushPendingThreadSnapshotRequests()
         }
     }
@@ -603,9 +604,16 @@ public final class RemoteSessionModel: ObservableObject {
     /// Coalesces `@Published` streaming dict writes during token bursts (S3).
     private let streamingPublishGate = StreamingPublishGate()
     /// Live ensemble round state per thread (desktop roster-chip parity).
-    @Published public private(set) var ensembleStates: [String: RemoteEnsembleState] = [:]
+    @Published public private(set) var ensembleStates: [String: RemoteEnsembleState] = [:] {
+        didSet { syncRunActivities() }
+    }
     /// Latest run diff summary per thread (inspector diff tab + changes row).
-    @Published public private(set) var diffSummaries: [String: MobileDiffSummary] = [:]
+    /// Drives the Live Activity's ± counts, which is why it re-syncs: a diff can
+    /// change without the card changing, and the heartbeat only re-pushes the
+    /// state it already has.
+    @Published public private(set) var diffSummaries: [String: MobileDiffSummary] = [:] {
+        didSet { syncRunActivities() }
+    }
     /// Git status snapshots keyed by workspace id. Composer rows use this for
     /// branch/upstream/worktree parity with the desktop native composer.
     @Published public private(set) var gitSnapshots: [String: GitWorkspaceSnapshot] = [:]
@@ -736,9 +744,27 @@ public final class RemoteSessionModel: ObservableObject {
     private var apnsTokenRegistrationInFlight = false
     private var apnsTokenRetryTask: Task<Void, Never>? = nil
 
+    /// Whichever env the app delegate last reported. A Live Activity token has
+    /// to be registered against the SAME gateway as the device token or the Mac
+    /// pushes it to the wrong one and gets BadDeviceToken — the exact trap that
+    /// `forceEnv` defaulting to 'production' set on the Mac side.
+    private var lastReportedApnsEnv: String?
+    private var apnsEnvironment: String {
+        if let lastReportedApnsEnv { return lastReportedApnsEnv }
+        // An activity can start before the device token arrives, so fall back to
+        // the same build-config rule the app delegate uses rather than guessing
+        // production (which would strand every sandbox build).
+        #if DEBUG
+            return "sandbox"
+        #else
+            return "production"
+        #endif
+    }
+
     /// Called by the app delegate when iOS delivers the device token.
     public func handleApnsToken(_ hex: String, env: String) {
         pendingApnsToken = (hex, env)
+        lastReportedApnsEnv = env
         sendPendingApnsTokenIfReady()
     }
 
@@ -919,16 +945,86 @@ public final class RemoteSessionModel: ObservableObject {
         #endif
     }
 
+    /// Suppresses Live Activity churn while a host switch tears the projection
+    /// down field by field. Without it, clearing `ensembleStates` would re-plan
+    /// against a still-populated `taskCards` and briefly restate an activity we
+    /// are about to end anyway.
+    private var isTearingDownProjection = false
+
+    /// Reconciles the lock screen / Dynamic Island with the current projection.
+    ///
+    /// Deliberately NOT gated on `applicationState == .active`, unlike the
+    /// completion banner: a Live Activity's whole job is to be right after you
+    /// put the phone down, so the last update before the socket drops is the
+    /// most valuable one. Freshness past that point is handled by the staleDate
+    /// the controller stamps on every push, not by refusing to update here.
+    #if os(iOS)
+        /// Set once. The controller has no transport of its own, so it hands
+        /// tokens back through this and we ship them to the Mac.
+        private func bindRunActivityTokenSink() {
+            guard TWRunActivityController.shared.onPushToken == nil else { return }
+            TWRunActivityController.shared.onPushToken = { [weak self] ref, threadId, token in
+                guard let self else { return }
+                // Fire-and-forget: if it does not land, the card simply stays
+                // device-updated (and goes stale when the phone sleeps) rather
+                // than breaking. `silent` so a routine token registration never
+                // wakes the "Sent." toast.
+                self.send(
+                    BridgeAction.registerLiveActivityToken(
+                        activityRef: ref,
+                        token: token,
+                        threadId: threadId,
+                        env: self.apnsEnvironment),
+                    navigateOnAck: false,
+                    silent: true)
+            }
+            TWRunActivityController.shared.onPushToStartToken = { [weak self] token, accents in
+                guard let self else { return }
+                self.send(
+                    BridgeAction.registerLiveActivityStartToken(
+                        token: token, accents: accents, env: self.apnsEnvironment),
+                    navigateOnAck: false,
+                    silent: true)
+            }
+        }
+    #endif
+
+    private func syncRunActivities() {
+        guard !isTearingDownProjection else { return }
+        #if os(iOS)
+            bindRunActivityTokenSink()
+            TWRunActivityController.shared.sync(
+                cards: taskCards,
+                diffs: diffSummaries,
+                ensembles: ensembleStates,
+                isDemo: isDemo)
+        #endif
+    }
+
     #if canImport(UIKit)
+        /// SINGLE RENDER PATH: this defers to `CompletionBannerRenderer`, the same
+        /// pure renderer the Notification Service Extension uses for the background
+        /// push. It previously re-implemented the title/summary/diff logic inline
+        /// with different emoji and a different title shape, so the SAME run banner
+        /// looked different depending on whether the app happened to be foregrounded.
+        /// Do not re-inline it — add tokens to the renderer instead.
+        ///
+        /// `CompletionNotificationPolicy.shouldNotify` only passes cards whose status
+        /// is "success", so the status is pinned rather than derived.
         private func postCompletionBanner(for card: RemoteTaskCard) {
-            let name = (card.title?.isEmpty == false) ? card.title! : "TaskWraith"
+            let diff = diffSummaries[card.id]
+            let rendered = CompletionBannerRenderer.render(
+                CompletionBannerInput(
+                    title: card.title,
+                    failed: false,
+                    preview: card.preview,
+                    filesChanged: diff?.filesChanged ?? diff?.files?.count ?? 0,
+                    additions: diff?.additions ?? 0,
+                    deletions: diff?.deletions ?? 0,
+                    status: .success))
             let content = UNMutableNotificationContent()
-            content.title = name
-            var lines: [String] = []
-            if let summary = Self.bannerSentences(card.preview) { lines.append(summary) }
-            if let diff = diffBannerLine(forThread: card.id) { lines.append(diff) }
-            if lines.isEmpty { lines.append("Run finished.") }
-            content.body = lines.joined(separator: "\n")
+            content.title = rendered.title
+            content.body = rendered.body
             content.sound = .default
             content.userInfo = ["tw_rich_local": true, "threadId": card.id]
             let request = UNNotificationRequest(
@@ -936,50 +1032,7 @@ public final class RemoteSessionModel: ObservableObject {
                 content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
         }
-
-        /// "\u{1F4DD} 3 files \u{00B7} \u{1F7E2} +128 \u{00B7} \u{1F534} \u{2212}44" —
-        /// emoji is the only way to colour a plain-text banner. nil when nothing changed.
-        private func diffBannerLine(forThread threadId: String) -> String? {
-            guard let diff = diffSummaries[threadId] else { return nil }
-            let files = diff.filesChanged ?? diff.files?.count ?? 0
-            let adds = diff.additions ?? 0
-            let dels = diff.deletions ?? 0
-            guard files > 0 || adds > 0 || dels > 0 else { return nil }
-            var parts: [String] = []
-            if files > 0 { parts.append("\u{1F4DD} \(files) file\(files == 1 ? "" : "s")") }
-            if adds > 0 { parts.append("\u{1F7E2} +\(adds)") }
-            if dels > 0 { parts.append("\u{1F534} \u{2212}\(dels)") }
-            return parts.joined(separator: " \u{00B7} ")
-        }
     #endif
-
-    /// First 1–2 sentences of a card preview, flattened to one line + capped, for a
-    /// banner body. Pure + platform-agnostic (testable). nil for empty input.
-    static func bannerSentences(_ text: String?, maxSentences: Int = 2, cap: Int = 180) -> String? {
-        guard let raw = text?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else {
-            return nil
-        }
-        let flattened = raw.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).joined(separator: " ")
-        var assembled = ""
-        var sentences = 0
-        var pending = ""
-        for ch in flattened {
-            pending.append(ch)
-            if ch == "." || ch == "!" || ch == "?" {
-                assembled += pending
-                pending = ""
-                sentences += 1
-                if sentences >= maxSentences { break }
-            }
-        }
-        if assembled.isEmpty { assembled = pending }
-        var trimmed = assembled.trimmingCharacters(in: .whitespaces)
-        if trimmed.count > cap {
-            let end = trimmed.index(trimmed.startIndex, offsetBy: cap)
-            trimmed = String(trimmed[..<end]).trimmingCharacters(in: .whitespaces) + "\u{2026}"
-        }
-        return trimmed.isEmpty ? nil : trimmed
-    }
 
     /// Side-chat child that should open inside the inspector instead of
     /// replacing the split-view detail pane.
@@ -2066,6 +2119,15 @@ public final class RemoteSessionModel: ObservableObject {
     // (transcripts, streaming, usage, nav targets, suppression sets), reset it
     // HERE or it will silently bleed across hosts.
     private func clearCachedProjectionState() {
+        // A Live Activity that outlived its Mac would leave one host's run on
+        // the lock screen after the user switched to another — the same "leave
+        // nothing readable" rule the caches below follow. The flag holds off the
+        // per-field didSet re-syncs until the teardown has finished.
+        isTearingDownProjection = true
+        defer { isTearingDownProjection = false }
+        #if os(iOS)
+            TWRunActivityController.shared.endAll()
+        #endif
         threadSnapshots = [:]
         streamingTexts = [:]
         streamingSegments = [:]
@@ -3186,6 +3248,32 @@ public final class RemoteSessionModel: ObservableObject {
             else { return }
             providerModels = Dictionary(
                 uniqueKeysWithValues: message.providers.map { ($0.provider, $0.models) })
+        case "bridge.broadcastBannerTemplate":
+            // Persisted to the shared App Group, NOT held in memory: the reader
+            // that matters is the Notification Service Extension, a separate
+            // process that only runs when a push lands. A decode failure leaves
+            // the previously-stored template in place rather than reverting to
+            // the default — a malformed broadcast shouldn't silently discard a
+            // template the user already configured.
+            guard let message = try? JSONDecoder().decode(BannerTemplateMessage.self, from: params)
+            else {
+                print("[tw] DECODE FAILED: banner template")
+                return
+            }
+            TWBannerTemplateStore.save(message.template)
+            if let activity = message.activity {
+                // Absent ⇒ an older Mac that predates Live Activities. Leaving
+                // the stored appearance alone is right: rewriting it to defaults
+                // would silently undo the user's choice every time they paired
+                // with a Mac that has not been updated yet.
+                TWActivityPreferences.apply(activity)
+                #if os(iOS)
+                    // Existing activities keep the palette they were STARTED
+                    // with — ActivityKit attributes are immutable — so a colour
+                    // change lands on the next run, not this one.
+                    syncRunActivities()
+                #endif
+            }
         case "bridge.broadcastRemoteProjection":
             // Both low-latency one-offs and the host's oversized full-snapshot
             // fallback use this method. Batch/decode off-main; a following

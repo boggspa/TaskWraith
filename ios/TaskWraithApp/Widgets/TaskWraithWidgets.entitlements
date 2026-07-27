@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Same shared container as the app and the NSE. The widget does not read
+	     the paired-host store today, but Live Activity content arrives via
+	     ActivityKit rather than a decrypt step, so this is here for parity of
+	     provisioning only — do NOT start reading key material from the widget
+	     process. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.TaskWraith.companion</string>
+	</array>
+</dict>
+</plist>

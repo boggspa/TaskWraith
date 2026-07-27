@@ -66,8 +66,10 @@ public enum TWTheme {
     // ── Chroma accents (--theme-chroma-1/2/3) ─────────────────────────────────
     /** Primary accent (links, active states, send button). */
     @MainActor public static var chroma1: Color { TWThemeStore.shared.accentTheme.color }
+    @MainActor public static var chroma1Hex: UInt32 { TWThemeStore.shared.accentTheme.hex }
     /// The factory accent (pre-theming) — used as the 'System' accent.
-    public static let chroma1Default = Color(hex: 0x5A8CFF)
+    public static let chroma1DefaultHex: UInt32 = 0x5A8CFF
+    public static let chroma1Default = Color(hex: chroma1DefaultHex)
     /** Secondary accent (ensemble speakers, highlights). */
     public static let chroma2 = Color(hex: 0xBF7CFF)
     /** Tertiary accent (the ghost's cyan glow). */
@@ -75,7 +77,8 @@ public enum TWTheme {
 
     // ── Status colors (mirror the desktop run-status palette) ────────────────
     @MainActor public static var statusRunning: Color { chroma1 }
-    public static let statusAttention = Color(hex: 0xF5A623)
+    public static let statusAttentionHex: UInt32 = 0xF5A623
+    public static let statusAttention = Color(hex: statusAttentionHex)
     public static let statusFailed = Color(hex: 0xE5484D)
     public static let statusSuccess = Color(hex: 0x46A758)
 
@@ -83,8 +86,15 @@ public enum TWTheme {
     // Dedicated to DIFF surfaces (± counters, diff rows) so they can't drift
     // with run-status semantics; the desktop defines no light overrides, so
     // these are theme-invariant like the status palette above.
-    public static let diffStatAdd = Color(hex: 0x2DB777)
-    public static let diffStatDel = Color(hex: 0xEC3D35)
+    //
+    // Hex-first because these also travel OFF-PROCESS: the Live Activity widget
+    // links TaskWraithKit only (no TWTheme), so `TWRunActivityController` sends
+    // the resolved 0xRRGGBB on the wire. Declaring the number once and deriving
+    // the Color keeps that from becoming a second palette to hand-sync.
+    public static let diffStatAddHex: UInt32 = 0x2DB777
+    public static let diffStatDelHex: UInt32 = 0xEC3D35
+    public static let diffStatAdd = Color(hex: diffStatAddHex)
+    public static let diffStatDel = Color(hex: diffStatDelHex)
     public static let diffAddText = Color(hex: 0x6DDFA8)
     public static let diffDelText = Color(hex: 0xF08080)
     public static let diffAddBg = Color(hex: 0x4CC38A).opacity(0.10)
@@ -139,17 +149,25 @@ public enum TWTheme {
     // The desktop composer re-skins per provider; the phone mirrors the same
     // accent on the provider pill, placeholder, and send button.
     @MainActor public static func providerAccent(_ provider: String?) -> Color {
+        Color(hex: providerAccentHex(provider))
+    }
+
+    /// The accent table itself, as 0xRRGGBB. `providerAccent` is a thin wrapper
+    /// so there is exactly ONE catalogue: the Live Activity widget cannot link
+    /// TaskWraithUI (see TWRunActivity.swift), so it receives a resolved hex
+    /// rather than re-deriving one from a copied table.
+    @MainActor public static func providerAccentHex(_ provider: String?) -> UInt32 {
         switch provider?.lowercased() {
-        case "gemini": return Color(hex: 0x346EEC)
-        case "codex", "openai": return Color(hex: 0x705AFF)
-        case "claude": return Color(hex: 0xB16105)
-        case "kimi": return Color(hex: 0x0073E6)
-        case "cursor": return Color(hex: 0x8D7312)
-        case "ollama": return Color(hex: 0x1A8562)
-        case "antigravity", "google": return Color(hex: 0x308713)
-        case "pi": return Color(hex: 0x68768C)
-        case "ensemble": return Color(hex: 0x986781)
-        case "grok": return Color(hex: 0x757575)
+        case "gemini": return 0x346EEC
+        case "codex", "openai": return 0x705AFF
+        case "claude": return 0xB16105
+        case "kimi": return 0x0073E6
+        case "cursor": return 0x8D7312
+        case "ollama": return 0x1A8562
+        case "antigravity", "google": return 0x308713
+        case "pi": return 0x68768C
+        case "ensemble": return 0x986781
+        case "grok": return 0x757575
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
         // Runtime provider stays `ollama`; these spoofed brand classes let
         // local models wear their upstream brand hue. Mirrors theme.css
@@ -158,13 +176,13 @@ public enum TWTheme {
         // wears the retired Gemini blue. `qwen`/`ornith` retained as legacy
         // speaker heads but now alias to their canonical brand colors
         // (Alibaba / Deep Reinforce).
-        case "alibaba", "qwen": return Color(hex: 0x8C52EF)
-        case "deep-reinforce", "ornith": return Color(hex: 0xBE5809)
-        case "ibm": return Color(hex: 0x3079BC)
-        case "liquid": return Color(hex: 0xD72D82)
-        case "nvidia": return Color(hex: 0x538200)
-        case "openbmb": return Color(hex: 0xE22B17)
-        case "poolside": return Color(hex: 0x0C8194)
+        case "alibaba", "qwen": return 0x8C52EF
+        case "deep-reinforce", "ornith": return 0xBE5809
+        case "ibm": return 0x3079BC
+        case "liquid": return 0xD72D82
+        case "nvidia": return 0x538200
+        case "openbmb": return 0xE22B17
+        case "poolside": return 0x0C8194
         // ── Pi-backed BYOK upstream brands (--provider-*-color) ────────────
         // Runtime provider stays `pi`; the wire id names the upstream that
         // serves the run, so a Pi row wears that brand. Mirrors theme.css.
@@ -172,13 +190,13 @@ public enum TWTheme {
         // Qwen reads the same whether it arrives via Ollama or via Pi.
         // Groq wears its own published SECONDARY cyan and Z.ai an azure —
         // their primaries collided with Mistral's orange and DeepSeek's blue.
-        case "deepseek": return Color(hex: 0x4E6AEE)
-        case "zai": return Color(hex: 0x177DAA)
-        case "minimax": return Color(hex: 0xC044A4)
-        case "mistral": return Color(hex: 0xD44404)
-        case "cerebras": return Color(hex: 0xBB584A)
-        case "groq": return Color(hex: 0x088482)
-        default: return chroma1
+        case "deepseek": return 0x4E6AEE
+        case "zai": return 0x177DAA
+        case "minimax": return 0xC044A4
+        case "mistral": return 0xD44404
+        case "cerebras": return 0xBB584A
+        case "groq": return 0x088482
+        default: return chroma1Hex
         }
     }
 
@@ -188,9 +206,42 @@ public enum TWTheme {
     @MainActor public static func providerAccent(
         _ provider: String?, modelId: String?, modelLabel: String? = nil
     ) -> Color {
-        providerAccent(
+        Color(hex: providerAccentHex(provider, modelId: modelId, modelLabel: modelLabel))
+    }
+
+    @MainActor public static func providerAccentHex(
+        _ provider: String?, modelId: String?, modelLabel: String? = nil
+    ) -> UInt32 {
+        providerAccentHex(
             OllamaDisplayBrands.providerHueClass(
                 provider: provider, modelId: modelId, modelLabel: modelLabel))
+    }
+
+    /// Every key `providerAccentHex` answers for.
+    ///
+    /// Exists so the phone can hand the Mac its whole accent map: the Mac has no
+    /// provider-hex table of its own (Swift has this one, the desktop has
+    /// theme.css) and inventing one for push-to-start would be a THIRD copy —
+    /// the duplicate-catalogue drift class this codebase has been bitten by.
+    /// Instead the device that owns the table ships it, so it is in sync by
+    /// construction.
+    ///
+    /// A hand-list beside a switch is itself a drift risk, so
+    /// `providerPaletteContrast.test.ts` parses the switch out of this file and
+    /// asserts the two agree exactly. Add a case without adding the key and that
+    /// test fails.
+    public static let providerAccentKeys: [String] = [
+        "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
+        "google", "pi", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
+        "ibm", "liquid", "nvidia", "openbmb", "poolside", "deepseek", "zai", "minimax",
+        "mistral", "cerebras", "groq"
+    ]
+
+    /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
+    @MainActor public static func providerAccentMap() -> [String: UInt32] {
+        var map: [String: UInt32] = [:]
+        for key in providerAccentKeys { map[key] = providerAccentHex(key) }
+        return map
     }
 
     /// Black silhouette painted behind provider glyph linework in every theme.
@@ -445,16 +496,20 @@ public enum TWAccentTheme: String, CaseIterable, Identifiable {
         rawValue == "system" ? "System" : rawValue.prefix(1).uppercased() + rawValue.dropFirst()
     }
 
-    public var color: Color {
+    public var color: Color { Color(hex: hex) }
+
+    /// Hex-first for the same reason as the provider table: the Live Activity
+    /// palette is resolved app-side and sent as a number.
+    public var hex: UInt32 {
         switch self {
-        case .system: return TWTheme.chroma1Default
-        case .blue: return Color(hex: 0x4D8DFF)
-        case .purple: return Color(hex: 0xA86CFF)
-        case .pink: return Color(hex: 0xF562B5)
-        case .orange: return Color(hex: 0xF59442)
-        case .green: return Color(hex: 0x35C284)
-        case .red: return Color(hex: 0xEB5A5A)
-        case .yellow: return Color(hex: 0xE5C03E)
+        case .system: return TWTheme.chroma1DefaultHex
+        case .blue: return 0x4D8DFF
+        case .purple: return 0xA86CFF
+        case .pink: return 0xF562B5
+        case .orange: return 0xF59442
+        case .green: return 0x35C284
+        case .red: return 0xEB5A5A
+        case .yellow: return 0xE5C03E
         }
     }
 }

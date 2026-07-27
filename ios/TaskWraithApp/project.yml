@@ -27,6 +27,8 @@ targets:
         product: TaskWraithUI
       # The app DEPENDS on the NSE so XcodeGen embeds it into the app's PlugIns/.
       - target: TaskWraithNotificationService
+      # Same reason: embeds the Live Activity widget into PlugIns/.
+      - target: TaskWraithWidgets
     info:
       path: Generated/Info.plist
       properties:
@@ -51,6 +53,12 @@ targets:
         # visible alert pushes arrive (TestFlight blocker).
         UIBackgroundModes:
           - remote-notification
+        # Required for ActivityKit. Without it Activity.request() throws
+        # `unsupported` at runtime with no build-time warning at all.
+        NSSupportsLiveActivities: true
+        # Lets an activity keep updating while the phone is locked and the app
+        # is not running — the whole point for a long agent run.
+        NSSupportsLiveActivitiesFrequentUpdates: true
         # iPhone leads portrait but rotates (ba93d11ec adapts the composer to
         # short viewports); iPad rotates freely (split-view shell). Portrait is
         # FIRST on purpose — iOS treats the first entry as preferred.
@@ -153,6 +161,41 @@ targets:
         MARKETING_VERSION: '0.1.0'
         SWIFT_VERSION: '6.0'
         TARGETED_DEVICE_FAMILY: '1,2'
+  # Live Activity widget extension. Links TaskWraithKit ONLY (never
+  # TaskWraithUI) — an extension carrying UIKit/Runestone blows its memory
+  # budget, same rule as the NSE.
+  TaskWraithWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+    dependencies:
+      - package: TaskWraithKit
+        product: TaskWraithKit
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: TaskWraith Activities
+        CFBundleShortVersionString: '$(MARKETING_VERSION)'
+        CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: Widgets/TaskWraithWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.TaskWraith.companion
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.widgets
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: 8CZML8FK2D
+        # MUST track the app's version/build — App Store rejects a mismatch.
+        CURRENT_PROJECT_VERSION: '84'
+        MARKETING_VERSION: '0.1.0'
+        SWIFT_VERSION: '6.0'
+        TARGETED_DEVICE_FAMILY: '1,2'
+
   TaskWraithUITests:
     type: bundle.ui-testing
     platform: iOS

@@ -122,8 +122,38 @@ describe('provider palette contrast', () => {
 
   it('keeps the iOS provider and display-brand mirror in sync', () => {
     for (const [switchCase, hex] of IOS_PROVIDER_CASES) {
-      expect(iosTheme).toContain(`${switchCase}: return Color(hex: 0x${hex.slice(1)})`)
+      // The Swift table is HEX-FIRST (`providerAccentHex` returns the number and
+      // `providerAccent` wraps it in a Color) so the Live Activity widget — which
+      // cannot link TaskWraithUI — can be handed a resolved value instead of
+      // needing a second copy of this catalogue.
+      expect(iosTheme).toContain(`${switchCase}: return 0x${hex.slice(1)}`)
     }
+  })
+
+  /**
+   * `TWTheme.providerAccentKeys` is a hand-list sitting beside a switch, which
+   * is a drift risk in its own right — and it is load-bearing: the phone ships
+   * that map to the Mac so push-to-start can colour an activity without the Mac
+   * needing a provider table of its own. A key missing here means a run
+   * push-started from a closed phone wears the wrong brand.
+   */
+  it('keeps providerAccentKeys exactly in step with the accent switch', () => {
+    const fn = iosTheme.match(
+      /public static func providerAccentHex\(_ provider: String\?\) -> UInt32 \{([\s\S]*?)\n    \}/
+    )
+    expect(fn, 'providerAccentHex switch not found in Theme.swift').toBeTruthy()
+    const switchKeys = [...(fn as RegExpMatchArray)[1].matchAll(/case ("[^:]*"):/g)]
+      .flatMap((m) => m[1].split(',').map((k) => k.trim().replace(/"/g, '')))
+      .sort()
+
+    const list = iosTheme.match(/public static let providerAccentKeys: \[String\] = \[([\s\S]*?)\]/)
+    expect(list, 'providerAccentKeys not found in Theme.swift').toBeTruthy()
+    const listedKeys = [...(list as RegExpMatchArray)[1].matchAll(/"([^"]+)"/g)]
+      .map((m) => m[1])
+      .sort()
+
+    expect(switchKeys.length).toBeGreaterThan(20)
+    expect(listedKeys).toEqual(switchKeys)
   })
 
   it('keeps transcript and Agent Aura RGB mirrors in sync', () => {

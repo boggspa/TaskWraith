@@ -31,6 +31,10 @@
 	<string>TaskWraith uses the camera to scan the pairing QR code shown on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>TaskWraith connects to the pairing relay on your local network to reach your Mac.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

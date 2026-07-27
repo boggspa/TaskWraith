@@ -152,14 +152,14 @@ describe('Pi sub-provider palette', () => {
       if (cls === 'qwen') continue // pre-existing `case "alibaba", "qwen"`
       const hex = cssHex(cls).slice(1)
       expect(swift, `iOS accent missing for ${cls}`).toContain(
-        `case "${cls}": return Color(hex: 0x${hex})`
+        `case "${cls}": return 0x${hex}`
       )
     }
   })
 
   it('keeps the pi seat colour itself in sync across css and iOS', () => {
     const swift = readFileSync(IOS_THEME, 'utf8')
-    expect(swift).toContain(`case "pi": return Color(hex: 0x${cssHex('pi').slice(1)})`)
+    expect(swift).toContain(`case "pi": return 0x${cssHex('pi').slice(1)}`)
   })
 })
 

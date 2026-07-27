@@ -1875,6 +1875,48 @@ public enum BridgeAction {
         return encode(payload)
     }
 
+    /// Ship a Live Activity push token so the Mac can keep the lock-screen card
+    /// fresh once this device can no longer update it itself.
+    ///
+    /// `token: nil` means the activity ENDED here — the Mac must forget it
+    /// rather than keep pushing into a card that no longer exists.
+    ///
+    /// `threadId` is Mac-side routing ONLY. It deliberately never enters the
+    /// activity's attributes or content-state, so the push payload itself still
+    /// carries no link back to a conversation.
+    public static func registerLiveActivityToken(
+        activityRef: String, token: String?, threadId: String?, env: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "registerLiveActivityToken", "actionId": actionId,
+            "pairID": "transport", "activityRef": activityRef, "env": env,
+        ]
+        if let token, !token.isEmpty { payload["token"] = token }
+        if let threadId, !threadId.isEmpty { payload["threadId"] = threadId }
+        return encode(payload)
+    }
+
+    /// Ship the app-wide push-to-START token (iOS 17.2+) plus this device's
+    /// provider→accent map, so the Mac can raise a Live Activity for a run begun
+    /// while this app was not running.
+    ///
+    /// The accent map travels because the Mac has no provider-hex table of its
+    /// own; see `TWTheme.providerAccentKeys`.
+    public static func registerLiveActivityStartToken(
+        token: String, accents: [String: UInt32], env: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "registerLiveActivityToken", "actionId": actionId,
+            "pairID": "transport", "tokenKind": "start", "token": token, "env": env,
+            // Sent as decimal numbers rather than "#RRGGBB" strings — the Mac
+            // forwards them straight into the push payload, where the Swift side
+            // decodes a UInt32.
+            "providerAccents": accents.mapValues { Int($0) },
+        ])
+    }
+
     /// Ask the connected host (the "oracle") to enumerate the tailnet and report
     /// its OTHER TaskWraith machines. Read-only and param-less — the host derives
     /// everything (own identity, paired devices, stored OAuth credential). The
