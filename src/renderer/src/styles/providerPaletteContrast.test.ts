@@ -139,7 +139,7 @@ describe('provider palette contrast', () => {
    */
   it('keeps providerAccentKeys exactly in step with the accent switch', () => {
     const fn = iosTheme.match(
-      /public static func providerAccentHex\(_ provider: String\?\) -> UInt32 \{([\s\S]*?)\n    \}/
+      /public static func providerAccentHex\(_ provider: String\?\) -> UInt32 \{([\s\S]*?)\n {4}\}/
     )
     expect(fn, 'providerAccentHex switch not found in Theme.swift').toBeTruthy()
     const switchKeys = [...(fn as RegExpMatchArray)[1].matchAll(/case ("[^:]*"):/g)]
