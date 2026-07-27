@@ -4,17 +4,37 @@
 // Screen Watch / Goal): a bare icon-only trigger (composer-canvas-trigger) with a
 // hover/focus hint pill (composer-hint-pill + data-hint-label), and a portaled
 // picker popover (so the composer-surface's overflow:hidden can't clip it).
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
+import {
+  MESH_CANVAS_NEEDS_SAVED_CHAT,
+  meshCanvasIssueMessage
+} from '../lib/meshCanvasAvailability'
 import { requestMeshCanvasOpen } from '../lib/meshCanvasLaunch'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
+import { PillButton } from './PillButton'
 
 export interface CanvasComposerButtonProps {
   disabled?: boolean
   chatId?: string | null
   composerStyle?: string
 }
+
+/**
+ * One popover section: title + description on the left, the action pill beside
+ * them on the right. `minmax(0, 1fr)` lets the description shrink instead of
+ * forcing the popover wider, and `center` keeps a single-line pill optically
+ * level with a two-line text block.
+ */
+const CANVAS_SECTION_ROW: CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  columnGap: 10,
+  alignItems: 'center'
+}
+
+const CANVAS_SECTION_TEXT: CSSProperties = { display: 'grid', gap: 4, minWidth: 0 }
 
 /** A user-facing hint for the common embed failures (no server / bad url). */
 export function friendlyCanvasError(raw: string | undefined): string {
@@ -48,7 +68,7 @@ export function CanvasComposerButton({
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | null>(null)
+  const [busyMode, setBusyMode] = useState<'web' | 'sketch' | 'mesh' | null>(null)
   const canOpenSketch = sketchBridgeAvailable()
 
   // Clear any stale error when the popover closes, so reopening starts fresh.
@@ -105,14 +125,29 @@ export function CanvasComposerButton({
     }
   }
 
-  const handleOpenMesh = (): void => {
+  const handleOpenMesh = async (): Promise<void> => {
     setError(null)
     if (!chatId) {
-      setError('Mesh Canvas requires an active chat.')
+      setError(MESH_CANVAS_NEEDS_SAVED_CHAT)
       return
     }
-    requestMeshCanvasOpen(chatId)
-    setOpen(false)
+    setBusyMode('mesh')
+    try {
+      // The renderer can briefly retain a just-reaped welcome draft after a
+      // reload. Check main's canonical chat store before requesting a
+      // chat-scoped canvas; never turn that stale renderer id into authority.
+      const canonicalChat = await window.api.getChat(chatId)
+      if (!canonicalChat) {
+        setError(MESH_CANVAS_NEEDS_SAVED_CHAT)
+        return
+      }
+      requestMeshCanvasOpen(chatId)
+      setOpen(false)
+    } catch (error) {
+      setError(meshCanvasIssueMessage(error, 'Mesh Canvas could not be opened.'))
+    } finally {
+      setBusyMode(null)
+    }
   }
 
   // Anchor the popover above the trigger (mirrors ComposerPlusPicker), clamped
@@ -186,32 +221,26 @@ export function CanvasComposerButton({
               Canvas
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
-                  Mesh Canvas
+              {/* Text block and action share one row — the pill sits beside the
+                title/description rather than claiming a third line. Width and
+                alignment come from `.canvas-composer-popover
+                .segmented-control-action` (shard 03), which lines all three
+                Canvas actions up as one right-hand column at a shared width. */}
+              <div style={CANVAS_SECTION_ROW}>
+                <div style={CANVAS_SECTION_TEXT}>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                    Mesh Canvas
+                  </div>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                    Import a local GLB, glTF, or OBJ model into this chat.
+                  </div>
                 </div>
-                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  Import a local GLB, glTF, or OBJ model into this chat.
-                </div>
-                <button
-                  type="button"
-                  onClick={handleOpenMesh}
-                  disabled={!chatId}
-                  style={{
-                    width: '100%',
-                    border: '1px solid var(--border-subtle, rgba(127,127,127,0.32))',
-                    borderRadius: 6,
-                    background: 'var(--button-bg, rgba(127,127,127,0.12))',
-                    color: 'inherit',
-                    padding: '7px 10px',
-                    font: '12px/1.2 system-ui, sans-serif',
-                    textAlign: 'left',
-                    cursor: chatId ? 'pointer' : 'default',
-                    opacity: chatId ? 1 : 0.58
-                  }}
+                <PillButton
+                  onClick={() => void handleOpenMesh()}
+                  disabled={busyMode !== null || !chatId}
                 >
-                  Open Mesh Canvas
-                </button>
+                  {busyMode === 'mesh' ? 'Opening Mesh Canvas…' : 'Open Mesh Canvas'}
+                </PillButton>
               </div>
               <div
                 style={{
@@ -240,34 +269,23 @@ export function CanvasComposerButton({
                   background: 'var(--border-subtle, rgba(127,127,127,0.22))'
                 }}
               />
-              <div style={{ display: 'grid', gap: 6 }}>
-                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
-                  Sketch Canvas
+              <div style={CANVAS_SECTION_ROW}>
+                <div style={CANVAS_SECTION_TEXT}>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                    Sketch Canvas
+                  </div>
+                  <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                    {canOpenSketch
+                      ? 'Quick shapes, freehand marks, arrows, and text.'
+                      : 'Restart TaskWraith to load the Sketch Canvas bridge.'}
+                  </div>
                 </div>
-                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
-                  {canOpenSketch
-                    ? 'Quick shapes, freehand marks, arrows, and text.'
-                    : 'Restart TaskWraith to load the Sketch Canvas bridge.'}
-                </div>
-                <button
-                  type="button"
+                <PillButton
                   onClick={() => void handleOpenSketch()}
                   disabled={busyMode !== null || !canOpenSketch}
-                  style={{
-                    width: '100%',
-                    border: '1px solid var(--border-subtle, rgba(127,127,127,0.32))',
-                    borderRadius: 6,
-                    background: 'var(--button-bg, rgba(127,127,127,0.12))',
-                    color: 'inherit',
-                    padding: '7px 10px',
-                    font: '12px/1.2 system-ui, sans-serif',
-                    textAlign: 'left',
-                    cursor: busyMode || !canOpenSketch ? 'default' : 'pointer',
-                    opacity: canOpenSketch ? 1 : 0.58
-                  }}
                 >
                   Open sketch canvas
-                </button>
+                </PillButton>
               </div>
             </div>
             {error ? (

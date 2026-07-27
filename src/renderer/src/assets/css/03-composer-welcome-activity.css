@@ -6441,6 +6441,35 @@ button.composer-run-timecode.is-open {
   box-sizing: border-box;
 }
 
+/* Every Canvas action is a shared rim pill (PillButton), and the three line up
+   as one right-hand column. Each section is a two-column grid (text | action),
+   so the pill sits on the title/description row instead of claiming its own;
+   `justify-self: end` keeps it trailing whichever container it lands in, and the
+   shared min-width makes the three differing labels ("Open Mesh Canvas", "Open
+   web canvas", "Open sketch canvas") resolve to the same box. The web-canvas
+   pill is the odd one out — it lives in a flex row beside its URL field, where
+   it is already trailing — so it takes the width and ignores the justify-self,
+   which is what lines its right edge up with the other two.
+
+   `ch`, not px: --font-size-xs is rem-derived and each CSS shard re-scales it,
+   so a fixed pixel width would stop clearing the longest label as soon as the
+   type scale moved. 20ch sits comfortably past "Open sketch canvas" plus the
+   pill's own padding; if a label ever outgrows it the pills size to content and
+   merely stop matching, rather than clipping.
+
+   Scoped to the popover on purpose — CanvasPaneLauncher also renders in the
+   multiview empty pane and the Canvas dock, which keep their own widths. */
+.canvas-composer-popover .segmented-control-action {
+  justify-self: end;
+  min-width: 20ch;
+  /* The web-canvas pill is `compact` so it sits neatly beside its URL field
+     everywhere else; in this column that would leave it 2px shorter than its
+     neighbours. Re-assert the regular metrics here (higher specificity than
+     --compact) so the three read as one set. */
+  --segmented-action-height: 24px;
+  --segmented-action-padding: 0 10px;
+}
+
 .composer-schedule-popover-header,
 .composer-schedule-actions,
 .composer-schedule-presets {

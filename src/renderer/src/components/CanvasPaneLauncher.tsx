@@ -5,6 +5,7 @@
  * canvasId to this pane.
  */
 import { useState } from 'react'
+import { PillButton } from './PillButton'
 
 export interface CanvasPaneLauncherProps {
   onOpen: (url: string) => void
@@ -13,8 +14,8 @@ export interface CanvasPaneLauncherProps {
 
 export function CanvasPaneLauncher({ onOpen, defaultUrl }: CanvasPaneLauncherProps) {
   const [url, setUrl] = useState(defaultUrl ?? 'http://localhost:3000')
+  const trimmed = url.trim()
   const submit = (): void => {
-    const trimmed = url.trim()
     if (trimmed) onOpen(trimmed)
   }
   return (
@@ -31,9 +32,22 @@ export function CanvasPaneLauncher({ onOpen, defaultUrl }: CanvasPaneLauncherPro
         aria-label="Canvas URL"
         style={{ minWidth: 0, flex: 1 }}
       />
-      <button type="button" className="canvas-pane-launcher-open" onClick={submit}>
+      {/* Shared rim pill (PillButton → .segmented-control-action), not a bare
+        native button: this launcher renders in three places (multiview empty
+        pane, composer Canvas popover, Canvas dock) and each was showing the
+        browser default. `compact` matches the launcher's inline row height; the
+        popover additionally widens it to line up with its other Canvas actions
+        (see `.canvas-composer-popover .segmented-control-action`, shard 03). */}
+      <PillButton
+        size="compact"
+        className="canvas-pane-launcher-open"
+        onClick={submit}
+        // Submit already no-ops on an empty URL — disabling just makes that
+        // visible, using the shared disabled treatment.
+        disabled={!trimmed}
+      >
         Open web canvas
-      </button>
+      </PillButton>
     </div>
   )
 }
