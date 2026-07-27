@@ -29,8 +29,21 @@ describe('PiKeyStore', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  const makeStore = (safeStorage = fakeSafeStorage()): PiKeyStore =>
-    new PiKeyStore({ userDataPath: dir, safeStorage, now: () => new Date('2026-07-25T12:00:00.000Z') })
+  // Pin the platform. On Linux the store additionally requires an ENCRYPTED
+  // safeStorage backend, so a suite that inherits the runner's platform asserts
+  // the runner's keyring instead of this class: every classification below
+  // passed on macOS and returned `encryptionUnavailable` on headless Linux CI.
+  // The Linux backend gate gets its own explicit cases at the end of the file.
+  const makeStore = (
+    safeStorage = fakeSafeStorage(),
+    platform: NodeJS.Platform = 'darwin'
+  ): PiKeyStore =>
+    new PiKeyStore({
+      userDataPath: dir,
+      safeStorage,
+      platform,
+      now: () => new Date('2026-07-25T12:00:00.000Z')
+    })
 
   it('reports an empty status before anything is stored', () => {
     const status = makeStore().getStatus()
@@ -149,5 +162,44 @@ describe('PiKeyStore', () => {
     }
     writeFileSync(join(dir, PI_PROVIDER_KEYS_FILENAME), JSON.stringify(envelope) + '\n', 'utf8')
     expect(store.loadKeys()).toEqual({ status: 'corrupt' })
+  })
+
+  describe('Linux storage backend', () => {
+    // These were previously untested in both directions: the gate only ever ran
+    // when CI happened to be Linux, and there it made every other case fail for
+    // an unrelated reason rather than proving anything about the gate itself.
+    const linuxStore = (backend?: string): PiKeyStore =>
+      makeStore(
+        fakeSafeStorage({ getSelectedStorageBackend: backend ? () => backend : undefined }),
+        'linux'
+      )
+
+    it('accepts a real keyring backend', () => {
+      for (const backend of ['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6']) {
+        expect(linuxStore(backend).getStatus().encryptionAvailable, backend).toBe(true)
+      }
+    })
+
+    it('fails closed on a plaintext backend rather than storing a key in the clear', () => {
+      // `basic_text` is safeStorage's unencrypted fallback. Reporting encryption
+      // as available here would persist provider API keys in readable form.
+      const store = linuxStore('basic_text')
+      expect(store.getStatus().encryptionAvailable).toBe(false)
+      expect(store.loadKeys()).toEqual({ status: 'encryptionUnavailable' })
+      const result = store.setKey('deepseek', 'ds-key')
+      expect(result.ok).toBe(false)
+      expect(result.error).toBe('encryptionUnavailable')
+    })
+
+    it('fails closed when the backend cannot be determined at all', () => {
+      expect(linuxStore().getStatus().encryptionAvailable).toBe(false)
+    })
+
+    it('does not impose the backend requirement off Linux', () => {
+      // macOS Keychain and Windows DPAPI expose no backend selector; requiring
+      // one there would disable the store on both.
+      expect(makeStore(fakeSafeStorage(), 'darwin').getStatus().encryptionAvailable).toBe(true)
+      expect(makeStore(fakeSafeStorage(), 'win32').getStatus().encryptionAvailable).toBe(true)
+    })
   })
 })

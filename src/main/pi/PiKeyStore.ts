@@ -80,6 +80,16 @@ export interface PiKeyStoreOptions {
   readonly userDataPath: string
   readonly safeStorage: PiSafeStorage
   readonly now?: () => Date
+  /**
+   * Host platform, injectable for tests. Defaults to `process.platform`.
+   *
+   * This is a real dependency, not a convenience: on Linux the store demands an
+   * ENCRYPTED safeStorage backend and fails closed otherwise, so a suite that
+   * inherits the runner's platform tests the runner's keyring rather than this
+   * class. Left implicit, every classification assertion here passed on macOS
+   * and returned `encryptionUnavailable` on headless Linux CI.
+   */
+  readonly platform?: NodeJS.Platform
 }
 
 interface PersistedEnvelope {
@@ -124,7 +134,7 @@ export class PiKeyStore {
     this.secretPath = join(options.userDataPath, PI_PROVIDER_KEYS_FILENAME)
     this.safeStorage = options.safeStorage
     this.now = options.now ?? (() => new Date())
-    this.platform = process.platform
+    this.platform = options.platform ?? process.platform
   }
 
   getStatus(): PiKeyStoreStatus {
