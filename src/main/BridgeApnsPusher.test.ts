@@ -167,6 +167,68 @@ describe('createBridgeApnsPusher factory', () => {
     }
   })
 
+  // Regression (D3): TASKWRAITH_BRIDGE_APNS was read into a local that only fed
+  // the log line, so the documented override was inert. The fix must NOT default
+  // forceEnv to 'production' when the var is unset — that would override the
+  // per-device env captured at registration and strand every sandbox device.
+  describe('APNs environment forcing', () => {
+    async function makeCredentialedPusher(log: (line: string) => void) {
+      const { generateKeyPairSync } = await import('crypto')
+      const { mkdtempSync, writeFileSync, rmSync } = await import('fs')
+      const { join } = await import('path')
+      const { tmpdir } = await import('os')
+      const { privateKey } = generateKeyPairSync('ec', {
+        namedCurve: 'P-256',
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+        publicKeyEncoding: { type: 'spki', format: 'pem' }
+      })
+      const dir = mkdtempSync(join(tmpdir(), 'apns-forceenv-test-'))
+      const path = join(dir, 'AuthKey_K.p8')
+      writeFileSync(path, privateKey, 'utf-8')
+      try {
+        createBridgeApnsPusher({
+          log,
+          credentials: {
+            authKeyPath: path,
+            keyId: 'KEYID00000',
+            teamId: 'TEAM00ABCD',
+            bundleId: 'com.example.app'
+          }
+        })
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }
+
+    it('does NOT force an env when TASKWRAITH_BRIDGE_APNS is unset', async () => {
+      delete process.env.TASKWRAITH_BRIDGE_APNS
+      const log = vi.fn()
+      await makeCredentialedPusher(log)
+      const allLogs = log.mock.calls.map((c) => c[0] as string).join('\n')
+      expect(allLogs).toContain('env=per-device')
+      expect(allLogs).not.toContain('FORCED')
+    })
+
+    it('does NOT force an env when TASKWRAITH_BRIDGE_APNS is an unrecognised value', async () => {
+      process.env.TASKWRAITH_BRIDGE_APNS = 'yes-please'
+      const log = vi.fn()
+      await makeCredentialedPusher(log)
+      const allLogs = log.mock.calls.map((c) => c[0] as string).join('\n')
+      expect(allLogs).toContain('env=per-device')
+    })
+
+    it.each(['sandbox', 'production'] as const)(
+      'forces %s when TASKWRAITH_BRIDGE_APNS says so',
+      async (value) => {
+        process.env.TASKWRAITH_BRIDGE_APNS = value
+        const log = vi.fn()
+        await makeCredentialedPusher(log)
+        const allLogs = log.mock.calls.map((c) => c[0] as string).join('\n')
+        expect(allLogs).toContain(`env=FORCED:${value}`)
+      }
+    )
+  })
+
   it('falls back to NoopApnsPusher when credentials point at non-existent file', () => {
     const log = vi.fn()
     const pusher = createBridgeApnsPusher({

@@ -270,9 +270,16 @@ export interface BridgeApnsPusherOptions {
  */
 export function createBridgeApnsPusher(options: BridgeApnsPusherOptions = {}): BridgeApnsPusher {
   const log = options.log ?? (() => {})
-  // Read env if not explicitly provided.
+  // Forced env, if any. UNSET MUST STAY UNDEFINED: `forceEnv` overrides the
+  // per-device env captured at token registration, so defaulting it to
+  // 'production' here would force every sandbox (Debug/dev-build) device onto
+  // the production gateway, which answers BadDeviceToken for a perfectly live
+  // token. Only an explicit option or an explicit env var forces.
   const envVar = process.env.TASKWRAITH_BRIDGE_APNS
-  const env: BridgeApnsEnv = options.env ?? (envVar === 'sandbox' ? 'sandbox' : 'production')
+  const forcedEnv: BridgeApnsEnv | undefined =
+    options.env ??
+    (envVar === 'sandbox' ? 'sandbox' : envVar === 'production' ? 'production' : undefined)
+  const env: BridgeApnsEnv = forcedEnv ?? 'production'
   const dryRun =
     options.dryRun ??
     (process.env.TASKWRAITH_BRIDGE_APNS_DRY_RUN === '1' ||
@@ -302,11 +309,13 @@ export function createBridgeApnsPusher(options: BridgeApnsPusherOptions = {}): B
       keyId: creds.keyId,
       teamId: creds.teamId,
       bundleId: creds.bundleId,
-      forceEnv: options.env, // explicit option forces; otherwise per-device env wins
+      // Explicit option OR TASKWRAITH_BRIDGE_APNS forces; otherwise undefined so
+      // the per-device env from token registration wins (the normal path).
+      forceEnv: forcedEnv,
       log
     })
     log(
-      `[BridgeApnsPusher] using Http2ApnsPusher (keyId=${creds.keyId}, teamId=${creds.teamId}, bundleId=${creds.bundleId}, source=${creds.authKeyPem ? 'pem' : 'path'})`
+      `[BridgeApnsPusher] using Http2ApnsPusher (keyId=${creds.keyId}, teamId=${creds.teamId}, bundleId=${creds.bundleId}, source=${creds.authKeyPem ? 'pem' : 'path'}, env=${forcedEnv ? `FORCED:${forcedEnv}` : 'per-device'})`
     )
     return pusher
   } catch (err) {

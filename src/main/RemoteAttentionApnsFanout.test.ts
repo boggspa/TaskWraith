@@ -318,9 +318,33 @@ describe('RemoteAttentionApnsFanout', () => {
     expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(2)
   })
 
-  it('prunes APNs tokens Apple reports as dead', async () => {
+  it('prunes APNs tokens Apple reports as Unregistered', async () => {
     const tokenStore = makeTokenStore([
       { pairID: 'pair-dead', deviceToken: 'token-dead', env: 'production' as const }
+    ])
+    const pushRemoteAttentionToToken = vi.fn(async () => ({
+      delivered: false,
+      apnsId: '',
+      reason: 'Unregistered'
+    }))
+    const fanout = new RemoteAttentionApnsFanout({
+      getTokenStore: () => tokenStore as never,
+      getPusher: () => ({ pushRemoteAttentionToToken }),
+      isUserAtDesktop: () => false
+    })
+
+    fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-id' })
+    await flushFanout()
+
+    expect(tokenStore.remove).toHaveBeenCalledWith('pair-dead')
+  })
+
+  // Regression: this previously pruned. Both APNs gateways answer BadDeviceToken
+  // for a token minted by the other one, so an environment mismatch would delete
+  // a LIVE registration and silently kill push until the app re-registered.
+  it('keeps the token when Apple answers BadDeviceToken (environment mismatch)', async () => {
+    const tokenStore = makeTokenStore([
+      { pairID: 'pair-sandbox', deviceToken: 'token-sandbox', env: 'sandbox' as const }
     ])
     const pushRemoteAttentionToToken = vi.fn(async () => ({
       delivered: false,
@@ -336,6 +360,6 @@ describe('RemoteAttentionApnsFanout', () => {
     fanout.notify({ reason: 'approval', threadId: 'thread-id', approvalId: 'approval-id' })
     await flushFanout()
 
-    expect(tokenStore.remove).toHaveBeenCalledWith('pair-dead')
+    expect(tokenStore.remove).not.toHaveBeenCalled()
   })
 })

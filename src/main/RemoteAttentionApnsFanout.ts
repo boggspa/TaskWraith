@@ -145,6 +145,14 @@ export class RemoteAttentionApnsFanout {
             if (isDeadTokenReason(reason)) {
               this.log(`[APNs] pruning dead token for pairID=${entry.pairID}: ${reason}`)
               tokenStore.remove(entry.pairID)
+            } else if (/^BadDeviceToken$/i.test(reason)) {
+              // Kept, not pruned — see isDeadTokenReason. Name the likely cause
+              // so this isn't a silent dead-end when push "just stops working".
+              this.log(
+                `[APNs] BadDeviceToken for pairID=${entry.pairID} (registered env=${entry.env}) — ` +
+                  `token KEPT. Usually an APNs environment mismatch: a ${entry.env} token was sent ` +
+                  `to the other gateway. Check TASKWRAITH_BRIDGE_APNS and the app build's aps-environment.`
+              )
             } else if (reason && reason !== 'noop') {
               this.log(
                 `[APNs] remote attention push not delivered to pairID=${entry.pairID}: ${reason}`
@@ -161,8 +169,18 @@ export class RemoteAttentionApnsFanout {
   }
 }
 
+/** Apple's ONLY authoritative "this token is dead" signal is 410 Unregistered.
+ *
+ * BadDeviceToken deliberately does NOT belong here: the production and sandbox
+ * gateways each answer BadDeviceToken for a token minted by the *other* one, so
+ * an environment mismatch (a Debug/sandbox build reached by a pusher forced to
+ * production, or vice versa) returns it for a perfectly live token. Reaping on
+ * it deletes a good registration and pushes stay dead until the app happens to
+ * re-register — a silent, self-inflicted outage with no error surfaced anywhere.
+ * Http2ApnsPusher documents the same rule; this fanout previously diverged.
+ */
 function isDeadTokenReason(reason: string | undefined): boolean {
-  return /^Unregistered$|^BadDeviceToken$/i.test(reason ?? '')
+  return /^Unregistered$/i.test(reason ?? '')
 }
 
 function coalesceKey(
