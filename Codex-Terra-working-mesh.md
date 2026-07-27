@@ -1,9 +1,15 @@
 # Codex Terra — Mesh Canvas follow-up work session
 
-This marker means an active Codex Terra follow-up session is working on Mesh Canvas in this checkout. It will be deleted when the manual-import and QA demonstration work is complete.
+This marker records the just-completed Codex Terra Mesh Canvas follow-up session in this checkout. It will be deleted in the close-out commit.
 
-Scope: add a human-authorised native model picker to the Mesh Canvas dock, preserve the existing chat/participant authority boundary, validate it in the desktop QA app with local Documents/Downloads fixtures, and commit each verified slice. Expected touchpoints include `src/main/mesh/`, `src/main/ipc/`, preload contracts, the renderer dock, and focused tests.
+Scope: human-authorised scene/model picker; participant-governed Mesh Canvas tools; declarative, reactive scene dependencies; and QA using local Documents/Downloads fixtures in the renderer dock.
 
 Commits:
 
-- Pending — manual import surface and QA validation.
+- `bb7f3c5e5` scene persistence foundation
+- `9379f4b85` governed MCP scene service
+- `1ac08416d` dock viewer and presentation
+- `57fa9e371` native user model picker
+- `d324959b9` stale chat-authority recovery
+- `ced62c96e` reactive scene dependencies
+- `c379cd846` scene-import wording clarification
