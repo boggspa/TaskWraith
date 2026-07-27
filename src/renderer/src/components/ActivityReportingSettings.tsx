@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAppVersion } from '../hooks/useAppVersion'
+import { ACTIVITY_REPORTING_CONFIGURED } from '../lib/featureFlags'
 
 const REPORT_FIELDS = [
   ['schema', '1'],
@@ -22,7 +23,7 @@ export function ActivityReportingSettings(): React.JSX.Element {
   const [enabled, setEnabled] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const endpointConfigured = __TASKWRAITH_ACTIVITY_REPORTING_CONFIGURED__
+  const endpointConfigured = ACTIVITY_REPORTING_CONFIGURED
 
   useEffect(() => {
     let cancelled = false
