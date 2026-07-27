@@ -1,9 +1,13 @@
 # Human collaboration — two-Mac test runbook
 
 **Status:** written 2026-07-26, ahead of the first real two-instance exercise.
-Everything below is derived from the code paths, **not** from a completed run —
-the feature has only ever been loopback-tested. Treat each "expected" line as a
-prediction to check, not a guarantee. Correct this file as you go.
+Most of it is derived from the code paths, **not** from a completed run — treat
+each "expected" line as a prediction to check, and correct this file as you go.
+
+Actually verified 2026-07-27 (§2b only): two instances boot side by side under
+`TASKWRAITH_INSTANCE_ID`, take separate userData without evicting each other,
+and instance 1's embedded relay binds the offset port `:8789` while the release
+build keeps `:8787`. The **collaboration flow itself is still unexercised.**
 
 **Scenario this covers:** two Macs on **unrelated networks** — no shared LAN, no
 shared tailnet, no relationship between the two machines beyond the invite you
@@ -109,12 +113,25 @@ dials outward and never needs a relay of its own:
 TASKWRAITH_INSTANCE_ID=2 IOS_REMOTE_TRUE=0 npx electron .
 ```
 
-Instance 1 hosts, instance 2 joins. Because the only door is
-`ws://127.0.0.1:8789`, the invite is loopback-only — which the normal guard
-refuses, since a loopback door is useless to anyone off the machine. Click
-**"Copy same-Mac invite"** on the refusal to take it anyway. That escape hatch
-only appears once the guard has fired, so it can never be mistaken for a real
-remote invite.
+Instance 1 hosts, instance 2 joins.
+
+**Which button you get depends on what the relay can advertise.** Verified on a
+networked Mac 2026-07-27, instance 1 came up as:
+
+```
+[remote-bridge] embedded relay listening on :8789 — advertising ws://192.168.0.147:8789 → ws://100.99.131.73:8789 (lan+tailscale)
+```
+
+Both of those classify as **LAN** (`classifyRelayUrl` only calls a `ws://`
+tailnet IP "remote" if it is `wss:` or a `.ts.net` name), so the guard that
+fires is the LAN one and the button reads **"Copy LAN-only invite"**. That is
+fine — a LAN door resolves to this same machine, so instance 2 reaches it.
+
+**"Copy same-Mac invite"** is the fallback for when the relay has nothing but a
+loopback door: an offline machine, or one where the LAN/tailnet doors fail
+`selectAdvertisableRelayUrls`' reachability probe and get dropped from the
+invite. Both hatches only appear once their guard has fired, so neither can be
+mistaken for a real remote invite.
 
 Getting the invite between instances: they share one clipboard, so copy on
 instance 1 and paste into instance 2's join modal directly.

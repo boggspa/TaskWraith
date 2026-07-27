@@ -40237,8 +40237,13 @@ if (isGeminiMcpBridgeProcess) {
     // there is no door for a collaborator to dial. See devAppName.ts.
     const defaultIosRelayPort = (): number =>
       (app.isPackaged && !packagedDebugBuild ? 8787 : 8788) + devInstanceRelayPortOffset()
+    // Offset for the same reason as the relay port, but the stake is higher:
+    // `tailscale serve` config is HOST-level, not per-app, so an instance that
+    // reused the real serve port would rewrite the route the user's actual
+    // paired phone depends on. Creating a People invite calls enableTailscaleServe,
+    // so this is reachable from ordinary testing, not just from bridge startup.
     const defaultIosServeHttpsPort = (): number =>
-      app.isPackaged && !packagedDebugBuild ? 443 : 8443
+      (app.isPackaged && !packagedDebugBuild ? 443 : 8443) + devInstanceRelayPortOffset()
     const iosRemoteRelayPort = (): number =>
       Number(process.env.TASKWRAITH_RELAY_PORT || defaultIosRelayPort())
     const iosRemoteServeHttpsPort = (): number =>
