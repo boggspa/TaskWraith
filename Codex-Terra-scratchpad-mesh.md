@@ -55,3 +55,4 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 - Slice 2: main-owned manifest/package import that copies only allowlisted declared files into the private Mesh Canvas vault.
 - Slice 3: native picker support for a manifest root or package directory, followed by desktop QA.
 - Future adapters for Blender, Unity, Maya, 3ds Max, and Cinema 4D produce this manifest or a GLB/glTF export; TaskWraith will not execute native project scripts, extensions, or editor binaries during import.
+- 2026-07-27: Slice 2 committed as `52e1fd3ba`. Resolver rejects undeclared, remote/traversal, and symlinked sidecars before copying the declared package into one private vault bundle; a multi-root package produces independent renderer entry URLs while sharing that bundle.

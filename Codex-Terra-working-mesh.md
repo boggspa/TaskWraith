@@ -7,4 +7,5 @@ Scope: define a declarative scene-package manifest, resolve it only in Electron 
 Commits:
 
 - 5ebb3411e — declarative scene-package manifest foundation.
-- Pending — closed-bundle resolver, vault import, and multi-root scene projection.
+- 52e1fd3ba — closed-bundle resolver, vault import, and multi-root scene projection.
+- Pending — native scene-package picker and chat-owned package-import IPC.
