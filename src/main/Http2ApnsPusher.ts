@@ -1,6 +1,8 @@
 import { readFileSync } from 'fs'
 import type * as http2 from 'http2'
 import { ApnsClient } from '../shared/apns/apnsSendCore'
+import { buildLiveActivityApsBody } from '../shared/apns/liveActivityPayload'
+import type { LiveActivityPushPayload } from '../shared/apns/liveActivityPayload'
 import type {
   BridgeApnsEnv,
   BridgeApnsPusher,
@@ -212,6 +214,40 @@ export class Http2ApnsPusher implements BridgeApnsPusher {
       body,
       expirationSeconds: nowSec + 3600,
       collapseId: payload.approvalId || payload.questionId || payload.threadId
+    })
+  }
+
+  /**
+   * Start, update or end a Live Activity on a device.
+   *
+   * CONTAINMENT: `contentState` is NOT encrypted and cannot be. ActivityKit
+   * decodes the payload itself and hands the struct straight to the widget
+   * process — there is no Notification-Service-Extension hook to decrypt in the
+   * way there is for an alert push. So Apple (and, once the Tier-2 relay
+   * gateway lands, the relay operator) can read every field. Only pass what
+   * `makeContentState` on the Swift side allows: phase, counts, timestamps and
+   * provider names. Never a title, path, branch, prompt or thread id.
+   * `buildLiveActivityApsBody` re-asserts that with an explicit allowlist.
+   */
+  async pushLiveActivityToToken(
+    activityTokenHex: string,
+    env: BridgeApnsEnv,
+    payload: LiveActivityPushPayload
+  ): Promise<BridgeApnsPushResult> {
+    const nowSec = Math.floor(this.now().getTime() / 1000)
+    return this.client.send({
+      deviceTokenHex: activityTokenHex,
+      env,
+      pushType: 'liveactivity',
+      // 10 is billed against the frequent-update budget and is only justified
+      // when the user is waiting on the change. A routine count refresh is not.
+      priority: payload.event === 'update' && !payload.needsUser ? 5 : 10,
+      body: buildLiveActivityApsBody(payload, nowSec),
+      // An activity push is worthless once superseded — a five-minute-old
+      // "running" state delivered after the run finished would resurrect it.
+      expirationSeconds: nowSec + 300,
+      // Collapse on the activity, so a burst of updates leaves ONE queued.
+      collapseId: payload.collapseId
     })
   }
 

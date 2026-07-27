@@ -764,6 +764,8 @@ export class BridgeActionRouter {
         return this.executor.executeCanvasAction(payload)
       case 'registerApnsToken':
         return this.executor.executeRegisterApnsToken(payload)
+      case 'registerLiveActivityToken':
+        return this.executor.executeRegisterLiveActivityToken(payload)
       case 'ensemblePresetMutate':
         return this.executor.executeEnsemblePresetMutate(payload)
       case 'discoverTailnetHosts':
@@ -1406,6 +1408,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // (auth is the pair binding at the transport layer). discoverTailnetHosts
     // enumerates the tailnet on the phone's behalf; it touches no workspace.
     case 'registerApnsToken':
+    case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
     case 'fullProjectionResync':

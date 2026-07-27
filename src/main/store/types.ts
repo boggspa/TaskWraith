@@ -8,6 +8,7 @@ import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { ChatGitWorkflowSnapshot } from '../../shared/chatGitWorkflow'
+import type { ActivityArchetype, BannerTemplate } from '../../shared/bannerTemplate'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type {
   TaskWraithPluginResourceProvenance,
@@ -2498,6 +2499,20 @@ export interface AppSettings {
   /** Privacy-minimised, no-ID product activity check-in. Off until the user
    * affirmatively enables it; a build without an endpoint sends nothing. */
   activityReportingEnabled?: boolean
+  /** Settings -> Notifications: how the iOS completion banner is worded.
+   * Absent = the built-in default wording. Broadcast to paired devices over
+   * `bridge.broadcastBannerTemplate`; the phone stores it in the shared App
+   * Group where the Notification Service Extension reads it. Shape lives in
+   * src/shared/bannerTemplate.ts and MUST stay in lockstep with the Swift
+   * TWBannerTemplate. */
+  iosBannerTemplate?: BannerTemplate
+  /** Settings -> Notifications: which precompiled Live Activity layout the
+   * phone renders. Absent = 'diff'. An ensemble chat overrides this on-device —
+   * the other three layouts have nowhere to put per-seat state. */
+  iosActivityArchetype?: ActivityArchetype
+  /** Settings -> Notifications: Live Activities master switch. Absent = on.
+   * iOS's own per-app Live Activities toggle still outranks this. */
+  iosActivityEnabled?: boolean
   updateChannel: ProductUpdateChannel
   lastSeenChangelogVersion?: string
   pendingUpdateChangelog?: ProductUpdateChangelog

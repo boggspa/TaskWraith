@@ -207,7 +207,7 @@ export class ApnsClient {
     jwt: string
     deviceTokenHex: string
     env: ApnsEnv
-    pushType: 'alert' | 'background'
+    pushType: 'alert' | 'background' | 'liveactivity'
     priority: 5 | 10
     body: string
     expirationSeconds?: number
@@ -218,7 +218,13 @@ export class ApnsClient {
         ':method': 'POST',
         ':path': `/3/device/${args.deviceTokenHex}`,
         authorization: `bearer ${args.jwt}`,
-        'apns-topic': this.bundleId,
+        // Derived, never passed in. A Live Activity push goes to a dedicated
+        // topic; send it to the plain bundle topic and Apple answers 400
+        // TopicDisallowed.
+        'apns-topic':
+          args.pushType === 'liveactivity'
+            ? `${this.bundleId}.push-type.liveactivity`
+            : this.bundleId,
         'apns-push-type': args.pushType,
         'apns-priority': String(args.priority),
         'content-type': 'application/json',

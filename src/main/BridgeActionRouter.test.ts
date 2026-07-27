@@ -324,6 +324,10 @@ function makeStubExecutor(
       executed: true,
       message: 'registerApnsToken done'
     }),
+    executeRegisterLiveActivityToken: make('executeRegisterLiveActivityToken', {
+      executed: true,
+      message: 'registerLiveActivityToken done'
+    }),
     executeSetWatchedThread: make('executeSetWatchedThread', {
       executed: true,
       message: 'setWatchedThread done'

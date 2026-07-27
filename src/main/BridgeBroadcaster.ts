@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ChatRecord, ProviderId, WorkspaceRecord } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
+import type { BannerTemplateMessage } from '../shared/bannerTemplate'
 import type { AllowlistDecision, PrepareStartTurnEvaluation } from './RemoteWorkspaceAllowlist'
 import {
   capabilitiesForRemoteWorkspaceEntry,
@@ -185,7 +186,8 @@ export const BRIDGE_BROADCAST_METHODS = {
   usageRollup: 'bridge.broadcastUsageRollup',
   modelUsage: 'bridge.broadcastModelUsage',
   welcomeDashboard: 'bridge.broadcastWelcomeDashboard',
-  firstLaunchState: 'bridge.broadcastFirstLaunchState'
+  firstLaunchState: 'bridge.broadcastFirstLaunchState',
+  bannerTemplate: 'bridge.broadcastBannerTemplate'
 } as const
 
 /** Convert a `WorkspaceRecord` plus the chats living inside it to the
@@ -392,6 +394,22 @@ export class BridgeBroadcaster {
     const method = BRIDGE_BROADCAST_METHODS.firstLaunchState
     if (!this.shouldEmit(method)) return
     this.sendNotify(method, message)
+  }
+
+  /** Ship the user's notification banner template to paired devices.
+   *
+   * DELIBERATELY NOT THROTTLED. `shouldEmit` DROPS rather than coalesces, and
+   * this is a rare, user-initiated, last-write-wins config push with no retry
+   * behind it — a throttled save would leave the phone rendering a stale
+   * template indefinitely with nothing to correct it. The other broadcasters are
+   * high-frequency projections where dropping one is harmless because another
+   * follows; this one has no follow-up.
+   *
+   * The payload is the template ONLY — never user content. Mirrors the Swift
+   * `TWBannerTemplate`; the phone re-validates and falls back to its own default
+   * on any mismatch, so a version skew degrades wording rather than breaking. */
+  broadcastBannerTemplate(message: BannerTemplateMessage): void {
+    this.sendNotify(BRIDGE_BROADCAST_METHODS.bannerTemplate, message)
   }
 
   /** Ship the per-provider model catalogs (see ProviderModelsMessage). */

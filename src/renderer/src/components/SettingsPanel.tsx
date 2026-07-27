@@ -109,6 +109,7 @@ import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
+import { NotificationBannerSettings } from './NotificationBannerSettings'
 import { ModelUsageCard } from './ModelUsageCard'
 import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
 import { SettingsModelComparisonsTable } from './SettingsModelComparisonsTable'
@@ -2731,6 +2732,7 @@ export type SettingsTab =
   | 'pinned-messages'
   | 'model-usage'
   | 'local-servers'
+  | 'notification-banners'
 
 /**
  * Tab grouping discriminator. The settings sidebar renders user-facing
@@ -2998,6 +3000,14 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     scope: 'global'
   },
   {
+    id: 'notification-banners',
+    label: 'Notification banners',
+    group: 'data',
+    description: 'Wording of run-complete notifications on paired iPhone and iPad.',
+    aliases: ['notifications', 'banners', 'push', 'apns', 'ios', 'iphone', 'ipad', 'alerts'],
+    scope: 'global'
+  },
+  {
     id: 'pinned-messages',
     label: 'Pinned messages',
     group: 'data',
@@ -3027,7 +3037,9 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
 ]
 
 const FEATURE_GATED_SETTINGS_TABS = new Set<SettingsTab>([
-  ...(IOS_REMOTE_ENABLED ? [] : (['pairing'] as SettingsTab[]))
+  // Banner wording is meaningless without a paired device to render it, so it
+  // hides on the same signal as pairing itself.
+  ...(IOS_REMOTE_ENABLED ? [] : (['pairing', 'notification-banners'] as SettingsTab[]))
 ])
 
 export function isSettingsTabVisible(tab: SettingsTab): boolean {
@@ -10778,6 +10790,9 @@ export function SettingsPanel({
             )}
           </div>
         )}
+
+        {/* ── Notification banners ─────────────────────────────────────── */}
+        {activeTab === 'notification-banners' && <NotificationBannerSettings />}
 
         {/* ── Pinned Messages ──────────────────────────────────────────── */}
         {activeTab === 'pinned-messages' && (

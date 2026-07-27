@@ -8,7 +8,12 @@ import type { ClientHttp2Session } from 'http2'
  */
 
 export type ApnsEnv = 'production' | 'sandbox'
-export type ApnsPushType = 'alert' | 'background'
+/** `liveactivity` is NOT interchangeable with the others: Apple routes it to a
+ *  DIFFERENT topic (`<bundleId>.push-type.liveactivity`). The send-core derives
+ *  that topic from this field rather than taking it as a parameter — a
+ *  liveactivity push sent to the plain bundle topic is rejected with
+ *  `TopicDisallowed`, and there is no combination of the two worth allowing. */
+export type ApnsPushType = 'alert' | 'background' | 'liveactivity'
 export type ApnsPriority = 5 | 10
 
 export interface ApnsSendResult {

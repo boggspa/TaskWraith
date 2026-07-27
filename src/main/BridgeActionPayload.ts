@@ -534,6 +534,48 @@ export interface BridgeRegisterApnsTokenAction extends BridgeActionMetadata {
   agreePub?: string
 }
 
+/**
+ * A Live Activity push token, so the Mac can keep a lock-screen card fresh
+ * after the phone stops being able to talk to it.
+ *
+ * SEPARATE from `registerApnsToken` on purpose. That one is a per-device
+ * registration that rotates rarely and has retry logic wrapped around it; this
+ * one fires whenever an activity starts or its token rotates, which is per-run
+ * churn. Folding them together would make the registration retry loop fight
+ * with routine activity traffic.
+ *
+ * The token is NOT an APNs device token — it is issued per activity by
+ * ActivityKit and is only valid for that activity's topic.
+ */
+export interface BridgeRegisterLiveActivityTokenAction extends BridgeActionMetadata {
+  kind: 'registerLiveActivityToken'
+  pairID: string
+  /** `'update'` (default) addresses ONE activity and needs `activityRef`.
+   *  `'start'` is the app-wide push-to-start token (iOS 17.2+), which addresses
+   *  no activity yet — it is what lets the Mac raise a card for a run begun
+   *  while the phone app was not running. */
+  tokenKind?: 'update' | 'start'
+  /** Opaque per-activity handle the phone generated. Pairs a token with the
+   *  activity it can update, and lets a later `revoked` message find it.
+   *  Required for `update`, absent for `start`. */
+  activityRef?: string
+  /** `start` only: the phone's whole provider→0xRRGGBB accent table.
+   *
+   *  It travels because the MAC HAS NO SUCH TABLE — Swift's TWTheme has one and
+   *  theme.css has one, and inventing a third here to colour a push-started
+   *  activity is the duplicate-catalogue drift class this codebase has been
+   *  bitten by. The device that owns the table ships it, so it cannot drift. */
+  providerAccents?: Record<string, number>
+  /** Hex. Absent means the activity ENDED on-device and the Mac should forget
+   *  the token rather than keep pushing into a card that no longer exists. */
+  token?: string
+  /** Which thread this activity is showing. Mac-side only — it is deliberately
+   *  NOT in the activity's content-state or attributes, so the push payload
+   *  itself still carries no link back to a conversation. */
+  threadId?: string
+  env: 'production' | 'sandbox'
+}
+
 /** Save or delete an ensemble roster preset from a paired device (iOS Roster
  * page). GLOBAL — the preset store is renderer-local (localStorage), not
  * workspace-bound. The host forwards the mutation to the renderer (the source
@@ -968,6 +1010,7 @@ export type BridgeActionPayload =
   | BridgeProposedPlanDecisionAction
   | BridgeCanvasActionAction
   | BridgeRegisterApnsTokenAction
+  | BridgeRegisterLiveActivityTokenAction
   | BridgeEnsemblePresetMutateAction
   | BridgeDiscoverTailnetHostsAction
   | BridgeFullProjectionResyncAction
@@ -1117,6 +1160,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'workflowSetEnabled':
     case 'workflowRunNow':
     case 'registerApnsToken':
+    case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
     case 'fullProjectionResync':
@@ -1208,6 +1252,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
       // 'steer'), and any elevated per-participant permission is re-clamped at run
       // dispatch, so a preset write can't escalate privilege.
       // eslint-disable-next-line no-fallthrough
+    case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
     case 'discoverTailnetHosts':
     case 'fullProjectionResync':
@@ -1299,6 +1344,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'githubWatchPr':
     case 'githubCreatePr':
     case 'registerApnsToken':
+    case 'registerLiveActivityToken':
     case 'ensemblePresetMutate':
       return true
     case 'approvalReply':
@@ -1542,6 +1588,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isRegisterApnsToken(parsed)
         ? (parsed as unknown as BridgeRegisterApnsTokenAction)
         : { kind: 'unknown', rawKind: 'registerApnsToken', raw: parsed }
+    case 'registerLiveActivityToken':
+      return isRegisterLiveActivityToken(parsed)
+        ? (parsed as unknown as BridgeRegisterLiveActivityTokenAction)
+        : { kind: 'unknown', rawKind: 'registerLiveActivityToken', raw: parsed }
     case 'ensemblePresetMutate':
       return isEnsemblePresetMutate(parsed)
         ? (parsed as unknown as BridgeEnsemblePresetMutateAction)
@@ -2504,6 +2554,47 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
     /^[0-9a-fA-F]{64}$/.test(v.deviceToken) &&
     (v.env === 'production' || v.env === 'sandbox') &&
     (v.agreePub === undefined || typeof v.agreePub === 'string')
+  )
+}
+
+/** `{ "codex": 7363327 }` — bounded so a peer cannot push an unbounded map
+ *  (or a non-colour) into the payload the Mac forwards to Apple. */
+function isProviderAccentMap(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (entries.length === 0 || entries.length > 64) return false
+  return entries.every(
+    ([key, hex]) =>
+      key.length > 0 &&
+      key.length <= 40 &&
+      typeof hex === 'number' &&
+      Number.isInteger(hex) &&
+      hex >= 0 &&
+      hex <= 0xffffff
+  )
+}
+
+function isRegisterLiveActivityToken(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.pairID === 'string' &&
+    v.pairID.length > 0 &&
+    (v.tokenKind === undefined || v.tokenKind === 'update' || v.tokenKind === 'start') &&
+    // A start token addresses the app, not an activity, so it carries no ref.
+    // An update token without one could never be matched to anything.
+    (v.tokenKind === 'start'
+      ? v.activityRef === undefined
+      : typeof v.activityRef === 'string' &&
+        v.activityRef.length > 0 &&
+        v.activityRef.length <= 64) &&
+    (v.providerAccents === undefined || isProviderAccentMap(v.providerAccents)) &&
+    // Absent = "this activity ended, forget it". Present must be hex, but NOT
+    // the 64-char device-token length: an ActivityKit push token is its own
+    // thing and is routinely a different size, so pinning 64 here would reject
+    // every real token.
+    (v.token === undefined || (typeof v.token === 'string' && /^[0-9a-fA-F]{32,256}$/.test(v.token))) &&
+    (v.threadId === undefined || typeof v.threadId === 'string') &&
+    (v.env === 'production' || v.env === 'sandbox')
   )
 }
 

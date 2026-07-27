@@ -3,6 +3,8 @@ import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { normalizeAgentThemeTokenOverrides } from '../../shared/agentThemeTokens'
+import { ACTIVITY_ARCHETYPES, sanitizeBannerTemplate } from '../../shared/bannerTemplate'
+import type { ActivityArchetype } from '../../shared/bannerTemplate'
 import type {
   AgenticServiceId,
   AgenticWorkspaceGrant,
@@ -190,6 +192,9 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'codexReuseExistingLogin',
   'autoUpdateEnabled',
   'activityReportingEnabled',
+  'iosBannerTemplate',
+  'iosActivityArchetype',
+  'iosActivityEnabled',
   'updateChannel',
   'lastSeenChangelogVersion',
   'pendingUpdateChangelog',
@@ -1555,6 +1560,32 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('activityReportingEnabled' in sanitized) {
       if (typeof sanitized.activityReportingEnabled !== 'boolean') {
         delete sanitized.activityReportingEnabled
+      }
+    }
+    if ('iosBannerTemplate' in sanitized) {
+      // `null` is the explicit "reset to the built-in wording" signal, so it is
+      // preserved as a delete rather than sanitized into a default template.
+      if (sanitized.iosBannerTemplate === null || sanitized.iosBannerTemplate === undefined) {
+        sanitized.iosBannerTemplate = undefined
+      } else {
+        sanitized.iosBannerTemplate = sanitizeBannerTemplate(sanitized.iosBannerTemplate)
+      }
+    }
+    if ('iosActivityArchetype' in sanitized) {
+      // Same reset convention as the template above: null/undefined means "back
+      // to the built-in layout", which must survive as a delete rather than be
+      // coerced into the default id (the two are indistinguishable on the wire
+      // but not in the settings UI, which shows a preset as unselected).
+      const archetype = sanitized.iosActivityArchetype
+      if (archetype === null || archetype === undefined) {
+        sanitized.iosActivityArchetype = undefined
+      } else if (!ACTIVITY_ARCHETYPES.includes(archetype as ActivityArchetype)) {
+        delete sanitized.iosActivityArchetype
+      }
+    }
+    if ('iosActivityEnabled' in sanitized) {
+      if (typeof sanitized.iosActivityEnabled !== 'boolean') {
+        delete sanitized.iosActivityEnabled
       }
     }
     if ('userMcpServers' in sanitized) {

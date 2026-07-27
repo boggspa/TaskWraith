@@ -51,6 +51,7 @@ import type {
   BridgeQuestionRejectAction,
   BridgeQuestionReplyAction,
   BridgeRegisterApnsTokenAction,
+  BridgeRegisterLiveActivityTokenAction,
   BridgeEnsemblePresetMutateAction,
   BridgeDiscoverTailnetHostsAction,
   BridgeFullProjectionResyncAction,
@@ -229,6 +230,9 @@ export interface BridgeActionExecutor {
   executeCanvasAction(action: BridgeCanvasActionAction): Promise<BridgeActionExecutionResult>
   executeRegisterApnsToken(
     action: BridgeRegisterApnsTokenAction
+  ): Promise<BridgeActionExecutionResult>
+  executeRegisterLiveActivityToken(
+    action: BridgeRegisterLiveActivityTokenAction
   ): Promise<BridgeActionExecutionResult>
   executeEnsemblePresetMutate(
     action: BridgeEnsemblePresetMutateAction
@@ -515,6 +519,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeRegisterApnsTokenAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('registerApnsToken', action.pairID)
+  }
+  async executeRegisterLiveActivityToken(
+    action: BridgeRegisterLiveActivityTokenAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('registerLiveActivityToken', action.pairID)
   }
   async executeEnsemblePresetMutate(
     action: BridgeEnsemblePresetMutateAction
@@ -818,6 +827,10 @@ export interface MainProcessActionExecutorDependencies {
     /** base64 raw X25519 push-agreement public key of the Mac, returned so the
      * device can derive the static shared secret to decrypt rich pushes. */
     macAgreePub?: string
+  }>
+  registerLiveActivityTokenFn?: (action: BridgeRegisterLiveActivityTokenAction) => Promise<{
+    registered: boolean
+    reason?: string
   }>
   ensemblePresetMutateFn?: (action: BridgeEnsemblePresetMutateAction) => Promise<{
     ok: boolean
@@ -2158,6 +2171,37 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         executed: false,
         message: `APNs token registration failed: ${errMessage}`
       }
+    }
+  }
+
+  async executeRegisterLiveActivityToken(
+    action: BridgeRegisterLiveActivityTokenAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.registerLiveActivityTokenFn) {
+      return notWired('registerLiveActivityToken', action.pairID)
+    }
+    // The token itself is never logged. It is a live push credential for that
+    // activity, and the bridge log is not a secret store.
+    this.log(
+      `[BridgeActionExecutor] registerLiveActivityToken pairID=${action.pairID} ref=${action.activityRef} ${
+        action.token ? 'set' : 'cleared'
+      }`
+    )
+    try {
+      const result = await this.deps.registerLiveActivityTokenFn(action)
+      return result.registered
+        ? {
+            executed: true,
+            message: `Live Activity token ${action.token ? 'registered' : 'cleared'} for ref="${action.activityRef}"`
+          }
+        : {
+            executed: false,
+            message: `Live Activity token registration declined${result.reason ? `: ${result.reason}` : ''}`
+          }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] registerLiveActivityToken failed: ${errMessage}`)
+      return { executed: false, message: `Live Activity token registration failed: ${errMessage}` }
     }
   }
 

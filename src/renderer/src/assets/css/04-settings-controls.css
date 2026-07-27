@@ -7505,3 +7505,85 @@ input:disabled, select:disabled, textarea:disabled {
   min-width: 120px;
   max-width: 240px;
 }
+
+/* ── Notification banner settings ─────────────────────────────────────────
+   The preview approximates an iOS notification card so preset differences are
+   legible at a glance. Deliberately NOT a pixel-accurate iOS mock — a
+   near-miss reads as a bug, whereas an obviously-stylised card reads as a
+   preview.
+
+   Tokens here are limited to ones VERIFIED to be defined in styles/theme.css.
+   Note --border-subtle is referenced elsewhere in this file but is never
+   actually defined anywhere, so it is avoided rather than copied. */
+.settings-banner-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.settings-banner-preview__chrome {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-elevated-bg);
+}
+
+.settings-banner-preview__title {
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.settings-banner-preview__body {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  /* A long summary wraps rather than stretching the settings pane. */
+  overflow-wrap: anywhere;
+}
+
+.settings-banner-preview__statuses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-banner-preview__statuses button {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.settings-banner-preview__statuses button.is-selected {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.settings-banner-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.settings-banner-presets__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+
+.settings-banner-presets__option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

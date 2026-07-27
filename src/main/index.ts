@@ -450,6 +450,9 @@ import {
 } from './remote/relayAdvertise'
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
 import { type BridgeApnsPusher } from './BridgeApnsPusher'
+import type { Http2ApnsPusher } from './Http2ApnsPusher'
+import { LiveActivityTokenStore } from './LiveActivityTokenStore'
+import { LiveActivityPushFanout } from './LiveActivityPushFanout'
 import { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { RemoteAttentionApnsFanout } from './RemoteAttentionApnsFanout'
 import { RemoteTaskCompletionNotificationTracker } from './RemoteNotificationPolicy'
@@ -717,6 +720,12 @@ import {
   chatGitWorkflowInputFromObservation,
   deriveChatGitWorkflowState
 } from '../shared/chatGitWorkflow'
+import {
+  DEFAULT_ACTIVITY_ARCHETYPE,
+  sanitizeActivityAppearance,
+  sanitizeBannerTemplate
+} from '../shared/bannerTemplate'
+import { normalizeDiffStatColors } from '../shared/diffStatColors'
 import type { GitPrReadiness, GitPrSummary, GitRepositorySnapshot } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
 import { getCachedHostWeather } from './services/HostWeatherService'
@@ -2020,6 +2029,30 @@ const registerRemoteFirstLaunchStateTrigger = (trigger: () => void): void => {
 const registerRemoteProviderModelsTrigger = (fn: () => void): void => {
   remoteProviderModelsTrigger = fn
 }
+/** Ship the user's iOS banner template to every paired device.
+ *
+ * Called on SAVE and again on every device establish. The establish replay is
+ * not belt-and-braces: `bridge.broadcastBannerTemplate` is a fire-and-forget
+ * notify with no queue and no retry, so a phone that was asleep or unpaired
+ * when the user hit save would otherwise render the OLD wording forever with
+ * nothing to correct it. Cheap (a few hundred bytes, once per establish). */
+function broadcastBannerTemplateToRemote(): void {
+  const settings = AppStore.getSettings()
+  const diffColors = normalizeDiffStatColors(settings.diffStatColors)
+  bridgeBroadcasterRef?.broadcastBannerTemplate({
+    template: sanitizeBannerTemplate(settings.iosBannerTemplate),
+    // The Live Activity's success/failure pair IS the diff palette — the one
+    // red/green the user can define. The phone's theme store is local-only, so
+    // a customised pair reaches the lock screen only by riding along here.
+    activity: sanitizeActivityAppearance({
+      enabled: settings.iosActivityEnabled,
+      archetype: settings.iosActivityArchetype,
+      successColor: diffColors.additions,
+      failureColor: diffColors.deletions
+    })
+  })
+}
+
 const remoteTaskCompletionNotificationTracker = new RemoteTaskCompletionNotificationTracker()
 
 /**
@@ -2049,6 +2082,60 @@ function maybeNotifyRemoteTaskCompletion(taskCard: RemoteTaskCard): void {
       deletions: taskCard.diffSummary?.deletions ?? 0
     }
   })
+}
+
+/**
+ * Keep a phone's Live Activity fresh once it can no longer update its own.
+ *
+ * CONTAINMENT: unlike the completion push above, a Live Activity payload CANNOT
+ * be sealed — ActivityKit decodes it itself and there is no NSE hook. So NOTHING
+ * from `rich` may cross into it: no title, no preview, no path. Only the counts
+ * and status below, and `buildLiveActivityContentState` drops anything else.
+ *
+ * No-ops for every thread with no registered activity, which is nearly all of
+ * them — one Map miss per projected card.
+ */
+function maybeUpdateLiveActivity(taskCard: RemoteTaskCard): void {
+  // `runStartedAt` is the REAL run start, which beats the phone's "when I first
+  // noticed" — a phone that connected mid-run has been understating elapsed.
+  const startedAtMs = taskCard.runStartedAt ? Date.parse(taskCard.runStartedAt) : Number.NaN
+  liveActivityPushFanout.onTaskCard({
+    id: taskCard.id,
+    status: taskCard.status,
+    runId: taskCard.runId,
+    provider: taskCard.provider,
+    isEnsemble: taskCard.chatKind === 'ensemble',
+    startedAtUnix: Number.isFinite(startedAtMs) ? Math.floor(startedAtMs / 1000) : undefined,
+    filesChanged: taskCard.diffSummary?.filesChanged,
+    additions: taskCard.diffSummary?.additions,
+    deletions: taskCard.diffSummary?.deletions,
+    seats:
+      taskCard.chatKind === 'ensemble'
+        ? taskCard.ensembleState?.participants?.map((p) => ({
+            provider: p.provider,
+            phase: liveSeatPhase(p.status)
+          }))
+        : undefined
+  })
+}
+
+/** Mirrors `TWRunActivityPlanner.seatPhase(forParticipantStatus:)` on the phone.
+ *  A seat that has not started maps to `running` — "not finished" — which is
+ *  what the finished/total bar counts. */
+function liveSeatPhase(status: string | undefined): string {
+  switch (status) {
+    case 'completed':
+    case 'done':
+      return 'complete'
+    case 'failed':
+    case 'error':
+      return 'failed'
+    case 'skipped':
+    case 'cancelled':
+      return 'cancelled'
+    default:
+      return 'running'
+  }
 }
 
 /**
@@ -2500,6 +2587,40 @@ function taskwraithMcpBridgeArgs(
 // `getApnsTokenStore` deps it's constructed with.
 let bridgeApnsTokenStoreRef: BridgeApnsTokenStore | null = null
 let bridgeApnsPusherRef: BridgeApnsPusher | null = null
+
+/** Live Activity push tokens + the fanout that keeps a lock-screen card fresh
+ *  once the phone can no longer update it itself. Module-level for the same
+ *  reason `bridgeApnsPusherRef` is: the store is written from the bridge action
+ *  executor and read from the projection loop, which are different scopes.
+ *  In-memory only — a token outlives neither the app nor its activity. */
+const liveActivityTokenStore = new LiveActivityTokenStore()
+const liveActivityPushFanout = new LiveActivityPushFanout({
+  store: liveActivityTokenStore,
+  // A thunk, not a value: the pusher is rebuilt whenever the user changes their
+  // APNs credentials, and a captured reference would go on using the old key.
+  sender: () => {
+    const pusher = bridgeApnsPusherRef
+    return pusher && typeof (pusher as Partial<Http2ApnsPusher>).pushLiveActivityToToken ===
+      'function'
+      ? (pusher as Http2ApnsPusher)
+      : null
+  },
+  // Read fresh per push: flipping the master switch or recolouring diffs must
+  // take effect immediately, not at the next restart.
+  appearance: () => {
+    const settings = AppStore.getSettings()
+    const diff = normalizeDiffStatColors(settings.diffStatColors)
+    return {
+      enabled: settings.iosActivityEnabled !== false,
+      archetype: settings.iosActivityArchetype ?? DEFAULT_ACTIVITY_ARCHETYPE,
+      successHex: Number.parseInt(diff.additions.slice(1), 16),
+      failureHex: Number.parseInt(diff.deletions.slice(1), 16)
+    }
+  },
+  log: (line) => {
+    console.log(line)
+  }
+})
 let remoteAttentionApnsFanoutRef: RemoteAttentionApnsFanout | null = null
 /** The Mac's 32-byte identity seed (set when the bridge identity loads). Used to
  * seal per-device ENCRYPTED rich push content + to publish the Mac's agreement
@@ -36443,6 +36564,43 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
         },
+        registerLiveActivityTokenFn: async (action) => {
+          try {
+            if (action.tokenKind === 'start') {
+              // App-wide push-to-start token (iOS 17.2+), shipped with the
+              // phone's provider accent table because the Mac has none.
+              if (!action.token) return { registered: false, reason: 'start needs a token' }
+              liveActivityTokenStore.registerStartToken({
+                pairID: action.pairID,
+                token: action.token,
+                env: action.env,
+                providerAccents: action.providerAccents ?? {}
+              })
+              return { registered: true }
+            }
+            // The decoder rejects an update without a ref, so this is a
+            // belt-and-braces narrow rather than a real branch.
+            if (!action.activityRef) {
+              return { registered: false, reason: 'update needs an activityRef' }
+            }
+            if (action.token) {
+              liveActivityTokenStore.register({
+                pairID: action.pairID,
+                activityRef: action.activityRef,
+                token: action.token,
+                env: action.env,
+                threadId: action.threadId
+              })
+            } else {
+              // No token = the phone ended this activity. Forget it, or we keep
+              // pushing into a card nobody can see.
+              liveActivityTokenStore.forget(action.pairID, action.activityRef)
+            }
+            return { registered: true }
+          } catch (err) {
+            return { registered: false, reason: err instanceof Error ? err.message : String(err) }
+          }
+        },
         // Roster preset save/delete from a paired device. Presets are
         // renderer-local (localStorage), so forward the mutation to the
         // renderer (the source of truth); its existing subscribe re-syncs the
@@ -39552,6 +39710,7 @@ if (isGeminiMcpBridgeProcess) {
         const capabilities =
           taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
         maybeNotifyRemoteTaskCompletion(taskCard)
+        maybeUpdateLiveActivity(taskCard)
         envelopes.push(
           buildRemoteProjectionEnvelope({
             kind: 'taskCard',
@@ -40167,6 +40326,7 @@ if (isGeminiMcpBridgeProcess) {
           remoteUsageRollupTrigger?.()
           remoteModelUsageTrigger?.()
           remoteFirstLaunchStateTrigger?.()
+          broadcastBannerTemplateToRemote()
           // Rehydrate guard (Codex-diagnosed): the establish-time
           // broadcastSnapshot can fire while the store/allowlist state is
           // still settling after a Mac restart — the phone then accepts an
@@ -42392,6 +42552,21 @@ if (isGeminiMcpBridgeProcess) {
           if (sanitizedPatch.activityReportingEnabled !== undefined) {
             void activityReportingServiceRef?.checkNow()
             void activityReportingServiceRef?.refreshPresence()
+          }
+          if (
+            'iosBannerTemplate' in sanitizedPatch ||
+            'iosActivityArchetype' in sanitizedPatch ||
+            'iosActivityEnabled' in sanitizedPatch ||
+            // The diff palette is a general appearance setting that happens to
+            // also paint the Live Activity. Miss it here and a user who recolours
+            // their diffs sees the phone keep the old pair until the next
+            // unrelated notification save.
+            'diffStatColors' in sanitizedPatch
+          ) {
+            // `in` rather than `!== undefined`: clearing a setting back to its
+            // built-in value sanitizes to undefined, and that reset has to
+            // reach the phone too.
+            broadcastBannerTemplateToRemote()
           }
           if (
             sanitizedPatch.appIconVariant !== undefined ||
