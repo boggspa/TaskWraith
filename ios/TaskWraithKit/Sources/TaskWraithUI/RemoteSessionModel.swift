@@ -510,6 +510,18 @@ public final class RemoteSessionModel: ObservableObject {
     /// taps would otherwise flash the resolved card straight back.
     private var repliedApprovalToolCallIds: Set<String> = []
     private var repliedQuestionIds: Set<String> = []
+
+    /// True while this device has answered a question but the Mac has not yet
+    /// projected the answer back.
+    ///
+    /// The settled card needs it: the registry drops a question OPTIMISTICALLY on
+    /// reply, so for the round-trip window there is no live card AND no projected
+    /// answer — and a card that assumed "no answer means skipped" would flash
+    /// "Skipped — no answer sent" over an answer the user just gave. A query
+    /// method rather than exposing the set, so the only new surface is a read.
+    public func hasPendingLocalQuestionReply(_ questionId: String) -> Bool {
+        repliedQuestionIds.contains(questionId)
+    }
     private static let threadTitleMaxCharacters = 160
     private static let pendingThreadTitleRenameTTL: TimeInterval = 60
     private struct PendingThreadTitleRename {

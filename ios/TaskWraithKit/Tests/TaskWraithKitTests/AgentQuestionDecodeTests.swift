@@ -42,6 +42,63 @@ struct AgentQuestionDecodeTests {
         #expect(r.agentQuestion?.context == nil)
     }
 
+    @Test("settled fields decode, and isAnswered reads them")
+    func settledFields() throws {
+        let r = try row(
+            """
+            {"id":"agent-question-q3","role":"system",
+             "agentQuestion":{"promptId":"q3","question":"Replace or alongside?",
+               "options":["Replace","Alongside"],"answer":"Replace",
+               "isCustomAnswer":false,"outcome":"answered",
+               "replyRowId":"agent-question-reply-q3"}}
+            """)
+        let q = try #require(r.agentQuestion)
+        #expect(q.answer == "Replace")
+        #expect(q.isCustomAnswer == false)
+        #expect(q.outcome == "answered")
+        #expect(q.replyRowId == "agent-question-reply-q3")
+        #expect(q.isAnswered)
+    }
+
+    /// `unanswered` is NOT `skipped`. The Mac cannot tell an open question from a
+    /// dismissed one, so the card must not draw that conclusion from this field
+    /// alone — only from it PLUS the absence of a live parked-tool card.
+    @Test("an unanswered question is not treated as answered")
+    func unansweredIsNotAnswered() throws {
+        let r = try row(
+            """
+            {"id":"agent-question-q4","role":"system",
+             "agentQuestion":{"promptId":"q4","question":"Proceed?","outcome":"unanswered"}}
+            """)
+        #expect(r.agentQuestion?.isAnswered == false)
+        #expect(r.agentQuestion?.replyRowId == nil)
+    }
+
+    /// An older Mac sends no outcome at all. `isAnswered` must fall back to the
+    /// presence of an answer rather than assuming either state.
+    @Test("an answer with no outcome field still reads as answered")
+    func answerWithoutOutcome() throws {
+        let r = try row(
+            """
+            {"id":"agent-question-q5","role":"system",
+             "agentQuestion":{"promptId":"q5","question":"Proceed?","answer":"Yes"}}
+            """)
+        #expect(r.agentQuestion?.isAnswered == true)
+    }
+
+    /// A value a NEWER Mac invents must not fail the decode — the field is a
+    /// String, never an enum, precisely so the row still renders.
+    @Test("an unknown outcome decodes and reads as not-answered")
+    func unknownOutcome() throws {
+        let r = try row(
+            """
+            {"id":"agent-question-q6","role":"system",
+             "agentQuestion":{"promptId":"q6","question":"Proceed?","outcome":"deferred"}}
+            """)
+        #expect(r.agentQuestion?.outcome == "deferred")
+        #expect(r.agentQuestion?.isAnswered == false)
+    }
+
     @Test("a row from an older Mac (no agentQuestion field) decodes with a nil question")
     func olderMac() throws {
         let r = try row(#"{"id":"m1","role":"system","preview":"hi"}"#)
