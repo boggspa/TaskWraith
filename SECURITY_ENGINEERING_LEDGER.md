@@ -96,7 +96,7 @@ scripts, or weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-011 | Provider diagnostics exposed live broker bearer tokens and local prompt/path data | High | Remediated | TaskWraith maintainers — MCP bridge and Kimi ACP diagnostics | Source candidate and focused bridge suite accepted; whole-tree and exact packaged verification remain pending |
 | TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
-| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); rerun exact-candidate whole-tree gates, preserve the provider-native/same-UID boundaries, and clear the related TW-SEC-2026-020 timeout regression before any release-level erasure claim |
+| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); exact-candidate whole-tree gates and the related TW-SEC-2026-020 timeout remediation are now recorded, with provider-native/same-UID boundaries preserved |
 | TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Closed | TaskWraith maintainers — Release attestation | Closed by removal 2026-07-21: the hosted attestation apparatus was deleted by user decision (capability governance); fix preserved as provenance |
 | TW-SEC-2026-016 | Usage journals retain content and scope identifiers outside the history-erasure transaction | High | Remediated | TaskWraith maintainers — Usage privacy and data lifecycle | Source candidate accepted; run exact-candidate whole-tree gates before clearing the release block |
 | TW-SEC-2026-017 | `canvas_fill` typed values entered durable approval and run-event history despite the tool's non-retention contract | Medium | Remediated | TaskWraith maintainers — Canvas approval privacy | Forward-only source fix accepted; verify every approval ingress/durable sink and keep the existing-history disclosure before clearing the block |
@@ -106,8 +106,8 @@ scripts, or weaponized payloads to this file or its verification artifacts.
 
 ## v1.9.0 release-boundary update — 2026-07-26
 
-This release adds security-relevant surface and records three newly remediated
-consent/retention findings plus one open history-lifecycle blocker:
+This release adds security-relevant surface and records four remediated
+consent, retention, and history-lifecycle findings:
 
 - Isolated fan-out worktrees return durable candidates through explicit patch
   capture, comparison, and promotion contracts rather than silently merging a
@@ -223,13 +223,13 @@ consent/retention findings plus one open history-lifecycle blocker:
   approval/run-event projections now redact `canvas_fill` values while the
   transient human prompt still shows the exact proposed text; this fix is
   forward-only, so existing history is not rewritten.
-- The new scoped history-deletion deadline prevents a late sink from reaching
-  `commitDelete`/`commitTruncate` after the deadline fires, but it does not
-  perform the rollback its commit message and source comments cite. The scoped
-  coordinator's failure contract retains the durable intent and process-local
-  holds, and its production callers simply await the rejection. TW-SEC-2026-020
-  therefore remains an explicit 1.9.0 block; no release note claims the stalled
-  run gate is fixed.
+- The scoped history-deletion deadline now keeps every exact hold while an
+  uncancellable continuation remains live, refuses a late
+  `commitDelete`/`commitTruncate`, and releases those holds exactly once only
+  after the continuation has fully quiesced. The durable intent remains honest,
+  and a fresh same-process retry reacquires authority instead of inheriting the
+  expired attempt. TW-SEC-2026-020 records the complete delayed-sink matrix and
+  exact-candidate evidence that clear its 1.9.0 block.
 - Provider run management now records additive lifecycle assurance across all
   ten stable provider identities: immutable launch plans, isolated homes,
   launch evidence, cancellation/settlement, and signed-posture checks improve
@@ -238,10 +238,10 @@ consent/retention findings plus one open history-lifecycle blocker:
   set exhaustively; an unhandled provider fails its guard or type-check instead
   of inheriting retired Gemini behavior.
 
-No release gate was run or cleared by this documentation pass. Reconcile these
-claims against the final clean tip, run each finding's recorded verification,
-and preserve the provider-native and same-UID residual boundaries before
-clearing any release disposition.
+The TW-SEC-2026-020 exact-candidate matrix and complete repository gate are
+recorded in its finding below. Other findings retain their own explicit
+verification and release dispositions; preserve the provider-native and
+same-UID residual boundaries when reconciling the final clean tip.
 
 ## TW-SEC-2026-001 — Main was not authoritative for desktop mention routing
 
