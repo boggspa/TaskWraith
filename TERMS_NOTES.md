@@ -18,11 +18,21 @@
   CLIs, SDKs, APIs, accounts, and models they choose to use.
 - Runtime history, workspace state, approval ledgers, usage records, pairing
   state, and APNs token routing data are stored locally under the desktop app's
-  OS app-data directory by default. The iOS companion sends encrypted task projections and
-  actions through the relay; relay/APNs infrastructure may see routing metadata
-  such as pair, device, thread/run, reason, timestamps, and aggregate
-  added/deleted line counts, but not plaintext prompts, commands, diff contents
-  or hunks, file contents, or model output.
+  OS app-data directory by default. The iOS companion sends encrypted task
+  projections and actions through the relay. Ordinary alert/wake delivery may
+  expose routing metadata such as pair, device, thread/run, reason, timestamps,
+  and aggregate added/deleted line counts to relay/APNs infrastructure, but not
+  plaintext prompts, commands, diff contents or hunks, file contents, or model
+  output.
+- Live Activity attributes and content state are an explicit exception because
+  ActivityKit must decode them. Apple may receive only coarse phase and start
+  time; file, addition, and deletion counts; provider product names and bounded
+  provider/phase seat states; layout and colour values; and an opaque
+  per-activity reference that is not a thread or run id. No privacy-sensitive
+  value—including user-authored task/workspace content or a workspace- or
+  account-linkable identifier—may ever be seeded into those values. Expanding
+  that allowlist requires a fresh privacy, security, and disclosure review.
+  Per-activity and push-to-start tokens are held only in Mac process memory.
 - TaskWraith may use platform-provided aggregate GitHub and App Store statistics
   for product observation. Builds with a configured first-party activity
   endpoint may also offer a disabled-by-default, explicit-consent daily

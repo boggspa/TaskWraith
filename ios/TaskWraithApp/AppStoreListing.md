@@ -1,7 +1,7 @@
 # App Store listing — draft copy + reviewer notes
 
 Working draft for the App Store Connect listing (public release). Everything
-here is engineering-accurate as of 2026-07-18; items marked `[USER]` need an
+here is engineering-accurate as of 2026-07-27; items marked `[USER]` need an
 owner decision before submission. Companion docs: `AppStorePrivacyNotes.md`
 (privacy questionnaire answers), `PrivacyPolicy-DRAFT.md` (hostable policy
 text), README "App Store screenshots" (regenerating the screenshot set).
@@ -21,8 +21,8 @@ text), README "App Store screenshots" (regenerating the screenshot set).
 ## Promotional text (≤170 chars, editable without review)
 
 > Monitor, steer, and approve your Mac's coding agents from your phone —
-> end-to-end encrypted, private by architecture. Try the built-in demo, no
-> setup needed.
+> task content is end-to-end encrypted and private by architecture. Try the
+> built-in demo, no setup needed.
 
 ## Description (draft)
 
@@ -37,6 +37,8 @@ turns from anywhere.
 - **Approvals on your lock screen, when push is configured** — approve or deny
   an agent's request from the notification (Face ID / passcode required), or
   from the app with full context.
+- **Live Activities** — follow a run's coarse phase and change counts on the
+  Lock Screen or Dynamic Island, with Mac and iOS off switches.
 - **Answer questions mid-run** — agents that need a decision surface it as
   a card; reply from the phone and the run continues.
 - **Ensembles** — watch multi-agent rounds, edit the roster, steer
@@ -45,11 +47,14 @@ turns from anywhere.
   the desktop's diff palette and syntax highlighting.
 - **Private by architecture** — after QR pairing, task content is encrypted
   end to end between your phone and YOUR Mac. There is no TaskWraith
-  content server; the relay routes ciphertext.
+  content server; the relay routes ciphertext. Live Activity display state is
+  the disclosed exception ActivityKit must read and contains no task content.
 - **Demo mode** — explore the whole app with sample data before pairing.
 
 Requires TaskWraith on macOS for live use (pairing is a QR scan). Push
-notifications are optional and off until you pair.
+notifications are optional and off until you pair. Live Activities are enabled
+by default where supported after pairing and can be disabled in TaskWraith or
+iOS Settings.
 
 ## Keywords (≤100 chars, comma-separated, no spaces needed)
 
@@ -72,7 +77,11 @@ agent,coding,claude,codex,ai,developer,pair,remote,approve,diff,terminal,e2ee
 > TaskWraith Mac app and confirms a 6-digit code on both devices. After
 > pairing, all task content is end-to-end encrypted between the two devices;
 > our relay routes ciphertext and cannot read content. Push notifications are
-> requested only AFTER a successful pairing, never at first launch.
+> requested only AFTER a successful pairing, never at first launch. Live
+> Activity attributes/content state are the explicit exception ActivityKit
+> must decode: only coarse phase/time/counts, provider and bounded seat states,
+> layout/colour values, and an opaque per-activity reference—never task text,
+> titles, paths, repository/workspace names, or run/chat ids.
 
 ## Screenshot set
 
@@ -94,9 +103,10 @@ the raw captures are also acceptable as-is.
 1. Host the privacy policy (`PrivacyPolicy-DRAFT.md` → owner review → your
    domain) and put the URL in ASC → App Privacy.
 2. Fill the App Privacy questionnaire from `AppStorePrivacyNotes.md`
-   (data-not-collected posture except relay-visible routing metadata during
-   paired operation, plus the device token and APNs routing metadata if push is
-   enabled for the distribution).
+   using the actual distribution/retention architecture. Inventory
+   relay-visible transport metadata, the APNs device token and ordinary routing
+   metadata, and the readable Live Activity allowlist; do not assume a blanket
+   data-not-collected answer from the absence of a plaintext content backend.
 3. Export compliance: `ITSAppUsesNonExemptEncryption=false` is set; answer
    the questionnaire accordingly per build (decision recorded 2026-06-16).
 4. Support URL + marketing URL `[USER]`.

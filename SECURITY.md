@@ -77,9 +77,26 @@ affected component and contact request.
   replacement breaks paired-device trust and should remain release-blocking.
 - Pairing records store public-key metadata and routing state; APNs device
   tokens are local routing identifiers stored on the user's Mac.
-- APNs payloads must remain generic and routing-only: reason, pair/device, and
-  thread/run identifiers are acceptable; prompts, commands, paths, diffs,
-  summaries, model output, and user messages are not.
+- Ordinary alert/wake APNs bodies must remain generic and routing-only: reason,
+  pair/device, and thread/run identifiers are acceptable, and any richer
+  notification content must stay inside the existing per-device encrypted
+  blob. Prompts, commands, paths, diffs, summaries, model output, and user
+  messages do not belong in readable alert payloads.
+- Live Activity start/update/end pushes are the explicit exception to the
+  ordinary encrypted task projection: ActivityKit must decode their attributes
+  and content state, so Apple can read them. The only permitted values are a
+  coarse phase and start time; file, addition, and deletion counts; provider
+  product names and at most eight provider/phase seat pairs; the selected
+  compiled layout and colour values; and an opaque per-activity reference that
+  is not a thread or run identifier.
+- No privacy-sensitive value—including user-authored task or workspace content,
+  or a workspace- or account-linkable identifier—may ever be seeded into Live
+  Activity attributes or content state. Any proposed field expansion requires
+  a fresh privacy and security review and matching public disclosure.
+- Per-activity and push-to-start tokens are memory-only. APNs delivery must
+  retain each device's sandbox/production environment, and a stored device
+  token is pruned only after Apple's authoritative `410 Unregistered` response;
+  `BadDeviceToken` can be an environment mismatch and is not a deletion signal.
 - `TASKWRAITH_BRIDGE_PERMISSIVE` and similar bridge bypasses are dev/test-only
   switches. They should never be enabled in release builds or packaged app
   defaults.

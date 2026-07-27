@@ -2,7 +2,7 @@
 
 **Effective:** 27 July 2026
 
-**Version:** 1.2
+**Version:** 1.3
 
 ## The short version
 
@@ -166,6 +166,22 @@ profiles, or used to make automated decisions about a person.
   routing and status metadata, such as pair, device, thread/run, reason,
   timestamps, and aggregate added/deleted line counts, but not plaintext
   prompts, commands, file contents, diff contents, or model output.
+- **iOS Live Activities.** A Live Activity's push state is a deliberate
+  exception to that encrypted task projection because ActivityKit must decode
+  it before the widget can render. When Live Activities and APNs delivery are
+  enabled, Apple receives an opaque per-activity reference; a coarse run phase
+  and start time; file, addition, and deletion counts; provider product names
+  and up to eight provider/phase seat pairs; and the selected layout and colour
+  values. This state contains no prompt, response, summary, user message,
+  thread or run id, chat title, filename, path, branch, repository, or
+  workspace name. The Mac waits before starting a card remotely and stands down
+  if the phone has already created one. Live Activities can be switched off in
+  TaskWraith's Notifications settings or in iOS Settings. This is an
+  exhaustive boundary: no privacy-sensitive value—including user-authored task
+  or workspace content, or a workspace- or account-linkable identifier—may ever
+  be seeded into Live Activity attributes or content state. Adding a field
+  requires a fresh privacy and security review, not a silent expansion of
+  “status metadata.”
 - **Optional weather visuals.** When transcript sky weather effects are
   enabled, TaskWraith requests approximate location from `ipapi.co`, falling
   back to `ipwho.is`. It rounds the result to 0.1 degrees before requesting
@@ -181,6 +197,11 @@ profiles, or used to make automated decisions about a person.
 - Local chats, run history, approvals, settings, pairing state, and usage
   records remain on your device until you delete them or apply TaskWraith's
   local retention controls.
+- Live Activity tokens are held only in the running Mac process. A
+  per-activity token is discarded when its activity ends or an update fails;
+  push-to-start tokens are discarded when the paired device is forgotten or
+  TaskWraith exits. Apple applies its own handling to APNs and ActivityKit
+  delivery.
 - A valid activity report is aggregated immediately; the receiver does not keep
   a raw event table.
 - Live-presence lease values exist only in receiver memory, expire after 150
@@ -211,6 +232,12 @@ are bounded by the fixed no-content schema, the absence of a stable installation
 identifier, immediate aggregation, short retention, RAM-only live leases, and
 no advertising or profiling. Legitimate interests are not used to continue
 optional TaskWraith reporting after you withdraw consent.
+
+Live Activity delivery is separate from product observation. It operates only
+for a paired companion while the TaskWraith and iOS Live Activity controls
+allow it, and uses the coarse state above to provide the requested Lock Screen
+or Dynamic Island card. Turning Live Activities off stops future starts and
+updates without affecting ordinary paired-app use.
 
 TaskWraith's price and open-source licence are context for the maintenance
 purpose; they do not remove privacy rights, require you to share data, or

@@ -6,6 +6,9 @@ TaskWraith Companion is a paired remote shell for a user-controlled Mac. Task
 content, prompts, approvals, transcript projections, and actions are encrypted
 end to end after pairing between the iOS device and the Mac. The developer
 does not operate a plaintext task-content backend in the current architecture.
+Live Activity attributes/content state are the explicit exception because
+ActivityKit must decode them; the strict non-sensitive allowlist is documented
+below.
 
 The encrypted Mac-to-phone projection can include provider readiness labels,
 workspace counts and capability flags, setup-command labels, usage/quota
@@ -16,14 +19,25 @@ TaskWraith plaintext backend.
 
 Metadata is not the same as task content. The relay forwards encrypted frames
 but can observe transport metadata such as the session identifier, endpoint
-role, source IP, timing, and frame sizes. When push is enabled, APNs receives a
-device token and a routing/status payload that can include opaque pair,
-workspace, thread, run, tool-call, approval, question, wakeup, task, or
+role, source IP, timing, and frame sizes. For an ordinary alert/wake push, APNs
+receives a device token and a routing/status payload that can include opaque
+pair, workspace, thread, run, tool-call, approval, question, wakeup, task, or
 projection identifiers; a coarse reason or failure class; timestamps; and
 aggregate diff-addition/deletion counts. An optional richer notification blob
-is encrypted per device before it reaches APNs. APNs payloads must not include
-prompts, commands, diff contents or hunks, file paths, filenames, workspace
-names, model output, or user messages.
+is encrypted per device before it reaches APNs. Readable alert payloads must not
+include prompts, commands, diff contents or hunks, file paths, filenames,
+workspace names, model output, or user messages.
+
+Live Activity pushes are different: their attributes and content state cannot
+be end-to-end encrypted because ActivityKit decodes them. Apple receives only a
+coarse phase and Unix start time; file, addition, and deletion counts; provider
+product names and at most eight provider/phase seat states; the selected
+compiled layout and colour values; and an opaque per-activity reference that is
+not a thread or run id. This state contains no prompt, response, summary,
+message, title, filename, path, branch, repository/workspace name,
+account/user/install identifier, or other privacy-sensitive value. Nothing
+privacy-sensitive may ever be seeded into these values. Any field expansion
+requires a fresh privacy, security, and App Store disclosure review.
 
 Selected photos/images are transmitted only when the user attaches them to a
 prompt, and they travel over the same paired encrypted channel to the user's
@@ -52,17 +66,35 @@ delivered**. If a project-operated APNs gateway is enabled for a distribution,
 App Store answers and privacy copy must disclose APNs device tokens and routing
 triggers handled by that gateway.
 
-APNs payloads carry routing/status metadata only: opaque pair, workspace,
-thread, run, tool-call, approval, question, wakeup, task, and projection
-identifiers; a coarse reason or failure class; timestamps; and aggregate added
-or deleted line counts that a completion alert may display. They never include
-prompts, commands, diff contents or hunks, file paths, filenames, workspace
-names, model output, or user messages; optional richer content is encrypted per
-device before delivery.
+Ordinary alert/wake APNs payloads carry routing/status metadata only: opaque
+pair, workspace, thread, run, tool-call, approval, question, wakeup, task, and
+projection identifiers; a coarse reason or failure class; timestamps; and
+aggregate added or deleted line counts that a completion alert may display.
+They never include prompts, commands, diff contents or hunks, file paths,
+filenames, workspace names, model output, or user messages; optional richer
+content is encrypted per device before delivery. The separately disclosed Live
+Activity allowlist above is readable by ActivityKit.
 
-App Store Connect: declare push notifications; the data is the device token +
-routing metadata. For a consumer launch, do **not** feature push as a hero
-capability unless the Mac or distribution ships with push pre-configured —
+Live Activities are enabled by default on supported paired devices, with an
+in-app Mac switch and the iOS system switch available to turn them off.
+Per-activity and push-to-start tokens are held only in Mac process memory. APNs
+delivery retains the sandbox/production environment reported for each device;
+stored device tokens are removed only after Apple's authoritative
+`410 Unregistered` response.
+
+App Store Connect: declare push notifications and review the privacy answers
+against the actual distribution architecture. The minimum technical inventory
+is the APNs device token, ordinary routing/status metadata, and the Live
+Activity allowlist above, all used for app functionality—not analytics,
+advertising, profiling, or tracking. Do not assume “Data Not Collected” merely
+because there is no plaintext TaskWraith backend; document how each field,
+Apple service, and any project-operated gateway fits Apple's current
+“collected” definition and retention test. Apple's
+[App Privacy Details](https://developer.apple.com/app-store/app-privacy-details/)
+and
+[ActivityKit push documentation](https://developer.apple.com/documentation/ActivityKit/starting-and-updating-live-activities-with-activitykit-push-notifications)
+are the operator references. For a consumer launch, do **not** feature push as a
+hero capability unless the Mac or distribution ships with push pre-configured;
 present it as optional/advanced.
 
 ## Export compliance

@@ -15,7 +15,8 @@ Responsible for system-level operations:
 - Maintaining local run state, approval/audit ledgers, persistent thread goals,
   provider failover state, and model-usage summaries.
 - Hosting the optional iOS remote bridge: E2EE pairing, workspace allowlists,
-  remote projections, APNs token routing, and paired-device action validation.
+  remote projections, APNs token routing, paired-device action validation, and
+  the strict non-sensitive Live Activity display-state allowlist.
 
 ## Renderer Process (`src/renderer/`)
 

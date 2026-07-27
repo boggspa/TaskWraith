@@ -2,14 +2,17 @@
 
 SwiftUI app that pairs with TaskWraith on the Mac over the `taskwraith-e2ee-v1`
 relay transport and renders the remote task feed (approvals, questions, running
-agents) with action controls — all end-to-end encrypted.
+agents) with action controls. The ordinary task projection and actions are
+end-to-end encrypted. Live Activity attributes/content state are the explicit
+exception because ActivityKit must decode them; they are confined to the
+privacy-safe allowlist documented below.
 
 The app target is a thin wrapper; the substance lives in the `TaskWraithKit`
 Swift package next door (the companion itself is feature-rich — pairing,
 approvals/questions, global + side chats, ensemble roster, diff/file views,
 token streaming, composer shells, first-launch guide, full-screen settings,
 offline Demo Mode, workflow pause/resume/run-now controls, inline images, APNs
-actions):
+actions, configurable completion banners, and in-flight Live Activities):
 
 - **`TaskWraithKit`** — the CryptoKit port of `src/shared/e2ee` + the
   `RelayTransportClient` and Codable domain models. Validated byte-for-byte
@@ -179,6 +182,32 @@ work; no pushes delivered). APNs device tokens are local routing identifiers
 stored by the paired Mac. The relay does not send push. For a consumer App Store
 listing, don't market push as a hero feature unless the Mac ships with push
 pre-configured — see `AppStorePrivacyNotes.md`.
+
+On supported iOS versions, Live Activities are enabled by default for paired
+runs. The user can switch them off in the Mac's Notifications settings or in
+iOS Settings, and can choose among the compiled solo, diff, attention, and
+Ensemble layouts. A connected phone can maintain its card locally; configured
+Mac APNs credentials additionally allow updates after the relay connection
+drops and push-to-start on iOS 17.2+ after a grace period when the companion was
+closed.
+
+Live Activity pushes are not end-to-end encrypted: ActivityKit itself must
+decode their attributes and content state. Their exhaustive allowlist is:
+coarse phase and Unix start time; file, addition, and deletion counts; provider
+product names and at most eight provider/phase seat pairs; layout and colour
+values; and an opaque per-activity reference that is not a thread or run id.
+They contain no prompt, response, summary, message, title, filename, path,
+branch, repository/workspace name, account/user/install identifier, or other
+privacy-sensitive value. Nothing privacy-sensitive may ever be seeded into
+these values; adding a field requires a fresh privacy, security, and App Store
+disclosure review.
+
+Per-activity and push-to-start tokens stay in Mac process memory and are dropped
+when the activity/device is forgotten or the process exits. Each paired
+device's sandbox/production environment selects its APNs gateway. The Mac
+removes a stored device token only after Apple's `410 Unregistered` response;
+`BadDeviceToken` is retained because it can mean the wrong environment was
+used.
 
 ## Security
 

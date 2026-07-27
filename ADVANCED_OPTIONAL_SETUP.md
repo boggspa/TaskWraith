@@ -159,6 +159,16 @@ Push notifications are optional after pairing. They are useful for wake/alert
 flows, but basic paired-device testing should not require users to understand
 APNs signing material.
 
+On supported iPhones, in-flight Live Activities are enabled by default after
+pairing and can be switched off from the Mac's Notifications settings or iOS
+Settings. A connected phone can maintain its card locally; the same Mac-owned
+APNs credentials let the Mac update or end it after the relay drops and
+push-start one after a grace period while the companion is closed. ActivityKit
+must read that card state, so it is not end-to-end encrypted; it is restricted
+to the non-sensitive allowlist and hard privacy boundary in
+[`PRIVACY.md`](PRIVACY.md) and
+[`ios/TaskWraithApp/AppStorePrivacyNotes.md`](ios/TaskWraithApp/AppStorePrivacyNotes.md).
+
 ## Screen Watch
 
 Screen Watch is off until you explicitly attach a window. Use it when the agent

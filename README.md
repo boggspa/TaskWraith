@@ -25,9 +25,16 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 > the Mac's workspace allowlists and approval policy. Relay/APNs infrastructure
 > may see routing/status metadata (including aggregate added/deleted line
 > counts), not plaintext prompts, commands, diff contents or hunks, or model
-> output. Testers can also build it from this repository with their own Apple
-> Developer team. Push notifications are opt-in after pairing and require APNs
-> credentials on the Mac (see
+> output. Live Activities are the explicit exception to the ordinary encrypted
+> task projection: ActivityKit must decode their push state, so Apple receives
+> only an allowlisted coarse phase, provider names, start time, change counts,
+> bounded seat states, layout/palette, and an opaque per-card reference—never
+> task text, titles, paths, workspace/repository names, or run/chat ids. No
+> privacy-sensitive value may ever be seeded into that state; expanding the
+> allowlist requires a fresh privacy and security review. Testers can also build
+> it from this repository with their own Apple Developer team. Push
+> notifications are opt-in after pairing and require APNs credentials on the
+> Mac (see
 > `ios/TaskWraithApp/README.md`).
 
 ## Ensemble Threads
@@ -35,8 +42,8 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
 of living in separate tabs. A thread can include up to twenty named participants
-across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, and local Ollama, each
-with its own model, role, order, and permission posture.
+across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, Mistral Vibe, and
+local Ollama, each with its own model, role, order, and permission posture.
 
 Kimi seats additionally require runtime admission: structural checks (stable
 binary identity, bounded probes, the ACP-only posture) that are always
@@ -159,8 +166,8 @@ user choices, and the exact data boundary.
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
 - **Provider Runs**: Integrated run surfaces for Codex, Claude, AntiGravity
-  (bring-your-own Gemini API key), Kimi, Cursor, Grok, Pi, and **local Ollama**
-  (curated Qwen, Gemma, GPT-OSS, and Poolside presets).
+  (bring-your-own Gemini API key), Kimi, Cursor, Grok, Pi, Mistral Vibe, and
+  **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside presets).
   Kimi's integrated surface is admission-dependent: every build applies
   structural identity, bounded-probe, and ACP-posture checks. The current
   source-ahead reviewed roster is empty, so structurally admitted runs are
@@ -170,7 +177,7 @@ user choices, and the exact data boundary.
   Ensembles, and delegated runs with native tools plus TaskWraith tools. The
   historical standalone Gemini provider remains readable but retired for new
   runs; it is distinct from the live, opt-in AntiGravity integration.
-  Run management is provider-neutral: the lifecycle inventory covers all nine
+  Run management is provider-neutral: the lifecycle inventory covers all ten
   stable provider identities and every admitted turn crosses the shared signed
   posture boundary. Availability remains a separate product decision; missing
   broker, provenance, or scheduled-seal evidence is reported as a limited or
@@ -247,7 +254,9 @@ user choices, and the exact data boundary.
   first-launch/provider readiness, usage snapshots, approvals, questions,
   transcript streaming, thread renaming, inline images, remote file/diff
   inspection, home search and pin/rename/archive, scheduled sending, and
-  transcript export.
+  transcript export. Source-ahead builds also offer configurable completion
+  banner presets and Live Activities for in-flight runs on the Lock Screen and
+  Dynamic Island, with the separately disclosed coarse APNs state above.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
