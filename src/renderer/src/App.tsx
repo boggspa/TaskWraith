@@ -2384,6 +2384,8 @@ function App(): React.JSX.Element {
   const usageRefreshInFlightRef = useRef(false)
   const usageRefreshLastFiredAtRef = useRef<number | null>(null)
   const usageRecordsRefreshPendingRef = useRef(false)
+  const lateQuotaRefreshQueuedRef = useRef(false)
+  const lateQuotaRefreshTimerRef = useRef<number | null>(null)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
@@ -3582,6 +3584,34 @@ function App(): React.JSX.Element {
       })
       .catch(() => {})
       .finally(completeUsageRefresh)
+  }
+  /** A quota response that missed the UI deadline is still useful data. Once
+   * it lands, re-read the now-warm provider caches promptly instead of making
+   * a meter wait for the 90-second heartbeat. Debouncing coalesces the five
+   * providers' late completions into one lightweight quota-only projection. */
+  const queueLateQuotaRefresh = () => {
+    if (lateQuotaRefreshQueuedRef.current) return
+    lateQuotaRefreshQueuedRef.current = true
+
+    const run = () => {
+      lateQuotaRefreshTimerRef.current = null
+      if (usageRefreshInFlightRef.current) {
+        lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
+        return
+      }
+
+      lateQuotaRefreshQueuedRef.current = false
+      usageRefreshInFlightRef.current = true
+      usageRefreshLastFiredAtRef.current = Date.now()
+      void refreshUsageSummaryRef
+        .current(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
+          quotaOnly: true
+        })
+        .catch(() => {})
+        .finally(completeUsageRefresh)
+    }
+
+    lateQuotaRefreshTimerRef.current = window.setTimeout(run, 250)
   }
   const currentWorkspacePathRef = useRef<string | null>(null)
   const workspaceTrustGenerationRef = useRef(0)
@@ -8192,15 +8222,14 @@ function App(): React.JSX.Element {
     // Quota telemetry is optional launch decoration. A provider IPC request
     // may be waiting on a keychain, CLI, or an upstream that never settles;
     // it must not keep the global refresh lock held or delay the welcome UI.
-    // The underlying request is still allowed to warm its main-side cache,
-    // while this render uses empty quota slots until a later heartbeat reads it.
+    // The underlying request is still allowed to warm its main-side cache;
+    // a late resolution coalesces into an immediate quota-only repaint.
     const loadQuotaInBackground = (load: () => Promise<any>): Promise<any> =>
       resolveWithinDeadline(
-        Promise.resolve()
-          .then(load)
-          .catch(() => null),
+        Promise.resolve().then(load),
         null,
-        BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS
+        BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS,
+        { onLateResolve: queueLateQuotaRefresh }
       )
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage

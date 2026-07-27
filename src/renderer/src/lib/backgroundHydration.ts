@@ -7,7 +7,8 @@
 export function resolveWithinDeadline<T>(
   request: Promise<T>,
   fallback: T,
-  deadlineMs: number
+  deadlineMs: number,
+  options: { onLateResolve?: (value: T) => void } = {}
 ): Promise<T> {
   return new Promise((resolve) => {
     let settled = false
@@ -18,6 +19,14 @@ export function resolveWithinDeadline<T>(
       resolve(value)
     }
     const timeout = setTimeout(() => finish(fallback), deadlineMs)
-    request.then(finish).catch(() => finish(fallback))
+    request
+      .then((value) => {
+        if (settled) {
+          options.onLateResolve?.(value)
+          return
+        }
+        finish(value)
+      })
+      .catch(() => finish(fallback))
   })
 }

@@ -13,13 +13,16 @@ describe('resolveWithinDeadline', () => {
       resolveRequest = resolve
     })
 
-    const result = resolveWithinDeadline(request, 'empty', 100)
+    const onLateResolve = vi.fn()
+    const result = resolveWithinDeadline(request, 'empty', 100, { onLateResolve })
     await vi.advanceTimersByTimeAsync(100)
     await expect(result).resolves.toBe('empty')
+    expect(onLateResolve).not.toHaveBeenCalled()
 
-    // A late provider result is harmless once the current render has escaped.
+    // The late result stays available to the caller's cache/repaint hook.
     resolveRequest('late')
     await Promise.resolve()
+    expect(onLateResolve).toHaveBeenCalledWith('late')
   })
 
   it('returns a prompt result before the deadline', async () => {
