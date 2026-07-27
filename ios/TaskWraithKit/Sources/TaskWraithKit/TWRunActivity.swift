@@ -49,8 +49,8 @@ public enum TWActivityArchetype: String, Codable, Sendable, CaseIterable {
 /// Notifications settings tab can sync a choice over the existing
 /// `bridge.broadcastBannerTemplate` channel without new plumbing.
 ///
-/// The picker itself is NOT built yet — this is only the reader, so the control
-/// can be added without touching the lifecycle. Until then every activity uses
+/// The Mac Notifications picker sends this preference through the existing
+/// appearance projection. Until a choice arrives, every activity uses
 /// `TWActivityArchetype.fallback` (or `.ensemble`, forced by the chat kind).
 public enum TWActivityPreferences {
     static let archetypeKey = "tw.activityArchetype.v1"

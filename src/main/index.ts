@@ -4973,10 +4973,10 @@ function userIsAtDesktop(): boolean {
  * un-configured (the factory returns `NoopApnsPusher` which doesn't
  * expose `pushApprovalToToken`).
  *
- * Token cleanup: when Apple replies with `Unregistered` /
- * `BadDeviceToken`, the device token is permanently invalid; we prune
- * it from `BridgeApnsTokenStore` so subsequent approvals don't waste a
- * request on a dead phone.
+ * Token cleanup: only Apple's `Unregistered` response proves that a device
+ * token is permanently invalid, so the fan-out prunes only that reason.
+ * `BadDeviceToken` can be an APNs environment mismatch; the live token is
+ * retained and the mismatch is logged.
  *
  * Call sites: every place a `pendingXxxApprovals.set(approvalId, ...)`
  * happens — host commands, Codex permissions/elicitation/userInput,

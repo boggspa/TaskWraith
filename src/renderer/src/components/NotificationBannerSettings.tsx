@@ -165,8 +165,10 @@ export function NotificationBannerSettings(): React.JSX.Element {
         own Settings &rsaquo; TaskWraith &rsaquo; Live Activities switch still has the final say.
       </p>
       <p className="settings-description">
-        Updates only reach the card while your phone can talk to this Mac. If it loses contact the
-        card says so rather than leaving a timer running.
+        A connected phone updates the card directly. With Mac APNs configured, updates can continue
+        after the relay drops and can start a card for a run that began while the app was closed.
+        Without either path, the phone marks the card disconnected rather than leaving a timer
+        running.
       </p>
 
       <label className="settings-toggle">

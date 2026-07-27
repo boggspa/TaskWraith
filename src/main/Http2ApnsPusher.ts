@@ -33,9 +33,10 @@ export { derEcdsaToConcat } from '../shared/apns/apnsSendCore'
  * `BridgeActionPayload.registerApnsToken`) picks which Apple host to target per
  * push.
  *
- * Token cleanup: when Apple returns `:status 410 Unregistered` or
- * `400 BadDeviceToken`, the device token is permanently invalid and should be
- * removed from `BridgeApnsTokenStore`. The send result reports the reason; the
+ * Token cleanup: only Apple's `:status 410 Unregistered` proves that a device
+ * token is permanently invalid. `400 BadDeviceToken` can mean the live token
+ * reached the wrong sandbox/production gateway, so callers retain it and
+ * surface the environment mismatch. The send result reports the reason; the
  * caller decides whether to delete.
  */
 
