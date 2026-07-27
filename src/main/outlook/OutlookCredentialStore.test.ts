@@ -89,7 +89,11 @@ describe('save / load / status', () => {
     })
     store.save(CREDENTIALS)
     const filePath = join(userData, OUTLOOK_CREDENTIAL_FILENAME)
-    expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX mode bits — NTFS reports 0666 whatever chmod asked
+    // for — so the owner-only claim is only assertable where it is enforceable.
+    if (process.platform !== 'win32') {
+      expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    }
     const raw = readFileSync(filePath, 'utf8')
     const envelope = JSON.parse(raw)
     expect(envelope.purpose).toBe('taskwraith:outlook-graph-credentials-envelope:v1')

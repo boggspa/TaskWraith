@@ -81,7 +81,17 @@ function evidenceDeps(providerCalls?: string[]): AntigravitySealEvidenceDeps {
   }
 }
 
-function createAgyFixture(contents = '#!/bin/sh\nexit 0\n'): {
+/**
+ * A shebang names an interpreter that the attestation then resolves and
+ * hashes, so the fixture has to name one that actually EXISTS on the running
+ * platform. `/bin/sh` does not exist on Windows — `realpath` resolves it to
+ * `D:\bin\sh` and the whole block fails ENOENT — so point at this runner's own
+ * node binary there. The attestation only cares that the interpreter resolves
+ * to a real file, not which one it is.
+ */
+const FIXTURE_INTERPRETER = process.platform === 'win32' ? process.execPath : '/bin/sh'
+
+function createAgyFixture(contents = `#!${FIXTURE_INTERPRETER}\nexit 0\n`): {
   binaryPath: string
   facts: AntigravityOfficialAgySealEvidenceFacts
 } {
@@ -382,7 +392,7 @@ describe('official agy scheduled launch evidence', () => {
         antigravityOptInAcceptedAt: 1_700_000_000_001
       }
     })
-    const binary = createAgyFixture('#!/bin/sh\nprintf changed\n')
+    const binary = createAgyFixture(`#!${FIXTURE_INTERPRETER}\nprintf changed\n`)
     variants.push(binary.facts)
     const posture = createAgyFixture()
     variants.push({

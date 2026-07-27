@@ -137,7 +137,13 @@ describe('ProviderBrandLogo', () => {
       ]
 
       for (const runtimeCopy of runtimeCopies) {
-        expect(readFileSync(runtimeCopy), runtimeCopy).toEqual(designAsset)
+        // `toEqual` on Buffers walks vitest's structural differ byte by byte,
+        // which costs ~2s for this set on fast hardware and timed the test out
+        // at 5s on the slower macOS Intel runner — and the asset list grows
+        // with every provider. `equals` is a native memcmp asserting the same
+        // byte-identity; the path stays in the message so a mismatch still
+        // names the offending copy.
+        expect(readFileSync(runtimeCopy).equals(designAsset), runtimeCopy).toBe(true)
       }
     }
   })

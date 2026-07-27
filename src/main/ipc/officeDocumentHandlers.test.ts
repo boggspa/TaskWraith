@@ -1,3 +1,4 @@
+import { resolve } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
@@ -316,13 +317,20 @@ describe('registerOfficeDocumentHandlers', () => {
         workspacePath: '/ws',
         filePath: 'docs/brief.docx'
       })
-      expect(deps.showItemInFolder).toHaveBeenCalledWith('/registered/ws/docs/brief.docx')
+      // resolveWorkspaceChild resolves, so the separator and drive prefix are
+      // platform-dependent: this is `D:\registered\ws\docs\brief.docx` on
+      // Windows. Expect the resolver's output, never a literal POSIX path.
+      expect(deps.showItemInFolder).toHaveBeenCalledWith(
+        resolve('/registered/ws', 'docs/brief.docx')
+      )
 
       await handlerFor('office:open-document-in-default-app')(fakeEvent, {
         workspacePath: '/ws',
         filePath: 'docs/brief.docx'
       })
-      expect(deps.openPathInDefaultApp).toHaveBeenCalledWith('/registered/ws/docs/brief.docx')
+      expect(deps.openPathInDefaultApp).toHaveBeenCalledWith(
+        resolve('/registered/ws', 'docs/brief.docx')
+      )
     })
 
     it('refuses to hand non-office files to the OS', async () => {
