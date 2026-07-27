@@ -1,4 +1,12 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -71,8 +79,17 @@ describe('Pi isolated home', () => {
   it('refuses to attest or recursively remove an identity-swapped directory', () => {
     const lease = create('identity-swap')
     const path = lease.path
+    // The swap has to land on a DIFFERENT inode or there is nothing for a
+    // device+inode check to notice. Removing the directory and recreating it in
+    // place does not guarantee that: Linux filesystems routinely hand the
+    // just-freed inode straight back, so the "replacement" was byte-for-byte
+    // the same identity and the expected throw never came — green on APFS,
+    // red on the Linux runner. Allocating the replacement while the original
+    // still exists forces a distinct inode, then rename swaps it in.
+    const replacement = join(TEMP_ROOT, 'identity-swap-replacement')
+    mkdirSync(replacement, { mode: 0o700 })
     rmSync(path, { recursive: true, force: true })
-    mkdirSync(path, { mode: 0o700 })
+    renameSync(replacement, path)
 
     expect(() => verifyPiIsolatedHome(lease)).toThrow(/identity/i)
     expect(lease.cleanup()).toMatchObject({ ok: false })
