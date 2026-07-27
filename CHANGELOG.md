@@ -301,9 +301,23 @@ silently promoted into a unique-user count. They are used only to understand
 adoption, prioritise supported platforms, and verify release/update health,
 never for advertising or individual profiling.
 
-New doctrine-integrity and formatting-ratchet
-gates keep future agent work from turning documentation or unrelated source
-into collateral churn.
+### The workshop closes without loose ends
+
+A timed-out history deletion now stays honest about what is still happening.
+TaskWraith returns control without pretending a slow sink was cancelled, keeps
+the exact scope fenced until that continuation settles, and refuses a surprise
+late erase. Once the late work is fully reconciled, every hold is released
+exactly once and the durable intent remains available for a clean retry in the
+same process.
+
+GitHub pull-request links now pass through the same allowlisted shell-opening
+policy as every other external link. The transitive HTTP adapter used by the
+provider tool bridge is pinned to its patched line too, with registry
+signatures, an end-to-end MCP transport exercise, and a zero-finding production
+dependency audit behind it.
+
+New doctrine-integrity and formatting-ratchet gates keep future agent work from
+turning documentation or unrelated source into collateral churn.
 
 ## 1.8.9 - 2026-07-24
 

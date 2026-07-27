@@ -316,6 +316,9 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('keeps first-party observation off')
     expect(entry.releaseNotes).toContain('Share minimal activity')
     expect(entry.releaseNotes).toContain('neither choice removes a feature')
+    expect(entry.releaseNotes).toContain('The workshop closes without loose ends')
+    expect(entry.releaseNotes).toContain('refuses a surprise')
+    expect(entry.releaseNotes).toContain('same allowlisted shell-opening')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
