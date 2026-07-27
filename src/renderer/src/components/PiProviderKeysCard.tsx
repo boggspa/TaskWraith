@@ -28,6 +28,7 @@ export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHi
 ]
 
 const CEREBRAS_RATE_LIMITS_URL = 'https://inference-docs.cerebras.ai/support/rate-limits'
+const CEREBRAS_PROJECTS_URL = 'https://inference-docs.cerebras.ai/console/projects'
 
 export interface PiKeyCardStatus {
   encryptionAvailable: boolean
@@ -208,11 +209,17 @@ export function PiProviderKeysCardView({
       <p className="settings-provider-auth-footnote">
         Cerebras reserves prompt tokens plus Pi&apos;s requested completion budget before each call.
         Pi&apos;s Cerebras models default to{' '}
-        {PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()} tokens, so a 30,000 TPM
-        organization returns a 429 before usage is recorded. If your organization cannot raise that
-        limit, apply {PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS.toLocaleString()} as a
-        conservative starting point; lower it further for unusually large prompts. This cap affects
-        only Pi&apos;s Cerebras models. For the full model ceiling,{' '}
+        {PI_CEREBRAS_MODEL_MAX_COMPLETION_TOKENS.toLocaleString()} tokens, so an effective 30,000
+        TPM project allocation returns a 429 before usage is recorded. Cerebras checks the API
+        key&apos;s project allocation as well as the organization ceiling, so this can happen even
+        when All Projects shows a higher limit. Apply{' '}
+        {PI_CEREBRAS_30K_TPM_RECOMMENDED_MAX_COMPLETION_TOKENS.toLocaleString()} as a conservative
+        starting point; lower it further for unusually large prompts. This cap affects only
+        Pi&apos;s Cerebras models. For the project allocation details and full model ceiling,{' '}
+        <a href={CEREBRAS_PROJECTS_URL} target="_blank" rel="noreferrer">
+          Cerebras explains its two-level project quotas
+        </a>{' '}
+        and{' '}
         <a href={CEREBRAS_RATE_LIMITS_URL} target="_blank" rel="noreferrer">
           Cerebras says a first Pay As You Go credit purchase moves an organization to its Developer
           tier

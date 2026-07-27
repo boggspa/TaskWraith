@@ -60,6 +60,7 @@ describe('enrichPiCerebrasRateLimitError', () => {
     )
     expect(enriched).toContain('16,384')
     expect(enriched).toContain('30,000 TPM')
+    expect(enriched).toContain('project allocation')
     expect(enrichPiCerebrasRateLimitError('groq/openai/gpt-oss-120b', '429 status code')).toBe(
       '429 status code'
     )

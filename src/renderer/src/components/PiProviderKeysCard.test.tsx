@@ -113,10 +113,13 @@ describe('PiProviderKeysCardView', () => {
     expect(html).toContain('Cerebras completion cap')
     expect(html).toContain('40,960')
     expect(html).toContain('30,000 TPM')
+    expect(html).toContain('project allocation')
+    expect(html).toContain('All Projects')
     expect(html).toContain('16,384')
     expect(html).toContain('Apply cap')
     expect(html).toContain('Use Pi default')
     expect(html).toContain('Developer tier')
+    expect(html).toContain('inference-docs.cerebras.ai/console/projects')
     expect(html).toContain('inference-docs.cerebras.ai/support/rate-limits')
 
     const active = render({ cerebrasMaxCompletionTokens: 16_384 })
