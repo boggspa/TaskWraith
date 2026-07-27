@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
+import { requestMeshCanvasOpen } from '../lib/meshCanvasLaunch'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 
 export interface CanvasComposerButtonProps {
@@ -104,6 +105,16 @@ export function CanvasComposerButton({
     }
   }
 
+  const handleOpenMesh = (): void => {
+    setError(null)
+    if (!chatId) {
+      setError('Mesh Canvas requires an active chat.')
+      return
+    }
+    requestMeshCanvasOpen(chatId)
+    setOpen(false)
+  }
+
   // Anchor the popover above the trigger (mirrors ComposerPlusPicker), clamped
   // into the viewport so it never overflows at narrow widths / in split panes.
   useEffect(() => {
@@ -175,6 +186,39 @@ export function CanvasComposerButton({
               Canvas
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.74 }}>
+                  Mesh Canvas
+                </div>
+                <div style={{ font: '11px/1.35 system-ui, sans-serif', opacity: 0.58 }}>
+                  Import a local GLB, glTF, or OBJ model into this chat.
+                </div>
+                <button
+                  type="button"
+                  onClick={handleOpenMesh}
+                  disabled={!chatId}
+                  style={{
+                    width: '100%',
+                    border: '1px solid var(--border-subtle, rgba(127,127,127,0.32))',
+                    borderRadius: 6,
+                    background: 'var(--button-bg, rgba(127,127,127,0.12))',
+                    color: 'inherit',
+                    padding: '7px 10px',
+                    font: '12px/1.2 system-ui, sans-serif',
+                    textAlign: 'left',
+                    cursor: chatId ? 'pointer' : 'default',
+                    opacity: chatId ? 1 : 0.58
+                  }}
+                >
+                  Open Mesh Canvas
+                </button>
+              </div>
+              <div
+                style={{
+                  height: 1,
+                  background: 'var(--border-subtle, rgba(127,127,127,0.22))'
+                }}
+              />
               <div
                 style={{
                   display: 'grid',

@@ -15,6 +15,11 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { CanvasPane } from './CanvasPane'
 import { CanvasPaneLauncher } from './CanvasPaneLauncher'
 import { friendlyCanvasError } from './CanvasComposerButton'
+import {
+  consumeMeshCanvasOpenRequest,
+  getPendingMeshCanvasOpenRequest,
+  subscribeMeshCanvasOpenRequests
+} from '../lib/meshCanvasLaunch'
 import { MeshCanvasPanel, toMeshSceneSummary } from './MeshCanvasPanel'
 
 export type CanvasDockSessionKind = 'web' | 'sketch'
@@ -297,6 +302,32 @@ export function CanvasDockPanel({ chatId }: CanvasDockPanelProps) {
       .catch(() => undefined)
     return () => {
       cancelled = true
+    }
+  }, [chatId])
+
+  // The composer can explicitly open Mesh Canvas before any scene exists. Keep
+  // that one-shot renderer request long enough for this dock to mount, then
+  // consume it so ordinary dock reopens preserve the user's last surface.
+  useEffect(() => {
+    let consumeTimer: number | null = null
+    const showRequestedMesh = (): void => {
+      const request = getPendingMeshCanvasOpenRequest()
+      if (!request || request.chatId !== chatId) return
+      setShowMesh(true)
+      // Defer consumption by one task. React development Strict Mode runs
+      // mount effects twice; consuming synchronously would make the second
+      // pass reset `showMesh` to its normal default before the dock paints.
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
+      consumeTimer = window.setTimeout(() => {
+        consumeTimer = null
+        consumeMeshCanvasOpenRequest(request.id)
+      }, 0)
+    }
+    showRequestedMesh()
+    const unsubscribe = subscribeMeshCanvasOpenRequests(showRequestedMesh)
+    return () => {
+      unsubscribe()
+      if (consumeTimer !== null) window.clearTimeout(consumeTimer)
     }
   }, [chatId])
 

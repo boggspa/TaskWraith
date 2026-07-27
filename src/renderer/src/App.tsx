@@ -662,6 +662,10 @@ import {
   type RightDockTab
 } from './lib/rightDockState'
 import {
+  getPendingMeshCanvasOpenRequest,
+  subscribeMeshCanvasOpenRequests
+} from './lib/meshCanvasLaunch'
+import {
   readDockSurface,
   resolveDockSurfaceContext,
   writeDockSurface
@@ -24458,6 +24462,19 @@ function App(): React.JSX.Element {
       setIsCanvasDockPanelOpen(true)
       setRightDockTab('canvas')
     })
+  }, [currentChat?.appChatId])
+  // Human composer request: open the active chat's dock before any model has
+  // presented a scene. CanvasDockPanel consumes the one-shot request and
+  // selects its Mesh Canvas surface once it mounts.
+  useEffect(() => {
+    const openRequestedMeshCanvas = (): void => {
+      const request = getPendingMeshCanvasOpenRequest()
+      if (!request || request.chatId !== currentChat?.appChatId) return
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    }
+    openRequestedMeshCanvas()
+    return subscribeMeshCanvasOpenRequests(openRequestedMeshCanvas)
   }, [currentChat?.appChatId])
   // Single toggle entry point for the glass-pill rim buttons. Opening goes
   // through the exclusive dock lifecycle (close siblings, open, select) so
