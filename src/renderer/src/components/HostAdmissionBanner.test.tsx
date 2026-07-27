@@ -42,7 +42,7 @@ describe('HostAdmissionBanner', () => {
         onDismiss={() => {}}
       />
     )
-    expect(html).toContain('reconnecting to this shared chat')
+    expect(html).toContain('reconnecting to this People chat')
     expect(html).not.toContain('654321')
     expect(html).not.toContain('Reject')
     expect(html).toContain('aria-label="Dismiss"')
