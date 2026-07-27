@@ -248,6 +248,79 @@ describe('buildPendingSubThreadResultContextBlock', () => {
   })
 })
 
+describe('composeRunPrompt — peer thread messages', () => {
+  const threadMessage = (id: string, body = 'Byte pin is red on master.') => ({
+    id,
+    schemaVersion: 1 as const,
+    fromChatId: 'chat-a',
+    fromChatTitle: 'Provider ToS audit',
+    toChatId: 'chat-b',
+    origin: 'agent' as const,
+    body,
+    requestedDelivery: 'queue' as const,
+    createdAt: 1_700_000_000_000,
+    trust: 'untrusted-thread-message' as const
+  })
+
+  const compose = (overrides: Record<string, unknown> = {}) =>
+    composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Carry on.',
+      messages: [],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      taskWraithMcpAdvertised: true,
+      ...overrides
+    })
+
+  it('carries a pending message into the prompt and reports its id', () => {
+    const result = compose({ pendingThreadMessages: [threadMessage('thread-msg-1')] })
+    expect(result.contextualPrompt).toContain('Pending thread messages:')
+    expect(result.contextualPrompt).toContain('Byte pin is red on master.')
+    expect(result.threadMessageIdsApplied).toEqual(['thread-msg-1'])
+  })
+
+  it('reports nothing when there are no pending messages', () => {
+    expect(compose().threadMessageIdsApplied).toBeUndefined()
+    expect(compose({ pendingThreadMessages: [] }).threadMessageIdsApplied).toBeUndefined()
+  })
+
+  // EXACTLY-ONCE: a verbatim slash dispatch returns the prompt untouched, so the
+  // bodies never reach the provider. Reporting ids here would consume messages the
+  // seat never saw — the acknowledgement must follow the prompt, not the intent.
+  it('reports no ids for a verbatim slash dispatch, leaving the inbox pending', () => {
+    const result = compose({
+      finalPrompt: '/compact',
+      verbatimPrompt: true,
+      pendingThreadMessages: [threadMessage('thread-msg-1')]
+    })
+    expect(result.contextualPrompt).toBe('/compact')
+    expect(result.contextualPrompt).not.toContain('Pending thread messages:')
+    expect(result.threadMessageIdsApplied).toBeUndefined()
+  })
+
+  it('keeps the sub-thread block and the thread-message block both present', () => {
+    const result = compose({
+      messages: [
+        message({ role: 'assistant', content: 'Delegated.' }),
+        subThreadReturn('All tests passed.')
+      ],
+      pendingThreadMessages: [threadMessage('thread-msg-1')]
+    })
+    expect(result.contextualPrompt).toContain('Pending sub-thread result context')
+    expect(result.contextualPrompt).toContain('Pending thread messages:')
+  })
+
+  it('reports only the ids that fitted in the turn', () => {
+    const many = Array.from({ length: 8 }, (_x, index) => threadMessage(`m-${index}`))
+    const applied = compose({ pendingThreadMessages: many }).threadMessageIdsApplied
+    expect(applied).toEqual(['m-0', 'm-1', 'm-2', 'm-3', 'm-4'])
+  })
+})
+
 describe('composeRunPrompt sub-thread returns', () => {
   it('injects pending sub-thread results even when provider session history is authoritative', () => {
     const result = composeRunPrompt({
@@ -1474,78 +1547,5 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     })
     expect(result.contextualPrompt).toBe('/compact')
-  })
-})
-
-describe('composeRunPrompt — peer thread messages', () => {
-  const threadMessage = (id: string, body = 'Byte pin is red on master.') => ({
-    id,
-    schemaVersion: 1 as const,
-    fromChatId: 'chat-a',
-    fromChatTitle: 'Provider ToS audit',
-    toChatId: 'chat-b',
-    origin: 'agent' as const,
-    body,
-    requestedDelivery: 'queue' as const,
-    createdAt: 1_700_000_000_000,
-    trust: 'untrusted-thread-message' as const
-  })
-
-  const compose = (overrides: Record<string, unknown> = {}) =>
-    composeRunPrompt({
-      provider: 'claude',
-      finalPrompt: 'Carry on.',
-      messages: [],
-      chatContextTurns: 6,
-      codexHandoffsApplied: [],
-      isGlobalRun: false,
-      approvalMode: 'default',
-      providerLabel: 'Claude',
-      taskWraithMcpAdvertised: true,
-      ...overrides
-    })
-
-  it('carries a pending message into the prompt and reports its id', () => {
-    const result = compose({ pendingThreadMessages: [threadMessage('thread-msg-1')] })
-    expect(result.contextualPrompt).toContain('Pending thread messages:')
-    expect(result.contextualPrompt).toContain('Byte pin is red on master.')
-    expect(result.threadMessageIdsApplied).toEqual(['thread-msg-1'])
-  })
-
-  it('reports nothing when there are no pending messages', () => {
-    expect(compose().threadMessageIdsApplied).toBeUndefined()
-    expect(compose({ pendingThreadMessages: [] }).threadMessageIdsApplied).toBeUndefined()
-  })
-
-  // EXACTLY-ONCE: a verbatim slash dispatch returns the prompt untouched, so the
-  // bodies never reach the provider. Reporting ids here would consume messages the
-  // seat never saw — the acknowledgement must follow the prompt, not the intent.
-  it('reports no ids for a verbatim slash dispatch, leaving the inbox pending', () => {
-    const result = compose({
-      finalPrompt: '/compact',
-      verbatimPrompt: true,
-      pendingThreadMessages: [threadMessage('thread-msg-1')]
-    })
-    expect(result.contextualPrompt).toBe('/compact')
-    expect(result.contextualPrompt).not.toContain('Pending thread messages:')
-    expect(result.threadMessageIdsApplied).toBeUndefined()
-  })
-
-  it('keeps the sub-thread block and the thread-message block both present', () => {
-    const result = compose({
-      messages: [
-        message({ role: 'assistant', content: 'Delegated.' }),
-        subThreadReturn('All tests passed.')
-      ],
-      pendingThreadMessages: [threadMessage('thread-msg-1')]
-    })
-    expect(result.contextualPrompt).toContain('Pending sub-thread result context')
-    expect(result.contextualPrompt).toContain('Pending thread messages:')
-  })
-
-  it('reports only the ids that fitted in the turn', () => {
-    const many = Array.from({ length: 8 }, (_x, index) => threadMessage(`m-${index}`))
-    const applied = compose({ pendingThreadMessages: many }).threadMessageIdsApplied
-    expect(applied).toEqual(['m-0', 'm-1', 'm-2', 'm-3', 'm-4'])
   })
 })
