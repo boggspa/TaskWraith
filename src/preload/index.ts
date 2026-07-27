@@ -819,6 +819,8 @@ const api = {
       ipcRenderer.invoke('mesh-scene:list-chat', chatId),
     view: (chatId: string, sceneId: string): Promise<unknown | null> =>
       ipcRenderer.invoke('mesh-scene:view', chatId, sceneId),
+    importUserModel: (chatId: string): Promise<{ canceled: boolean; scene?: unknown }> =>
+      ipcRenderer.invoke('mesh-scene:import-user-model', chatId),
     closePresentation: (chatId: string, sceneId: string): Promise<unknown> =>
       ipcRenderer.invoke('mesh-scene:close-presentation', chatId, sceneId),
     deleteScene: (chatId: string, sceneId: string): Promise<unknown> =>

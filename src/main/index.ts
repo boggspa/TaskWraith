@@ -5176,7 +5176,9 @@ registerMeshSceneHandlers(ipcMain, {
       throw new Error('Mesh Canvas chat authority is unavailable.')
     }
     return { chatId, workspacePath: chat.workspacePath }
-  }
+  },
+  getRequestingWindow: (event) => BrowserWindow.fromWebContents(event.sender),
+  showOpenDialog: (window, options) => dialog.showOpenDialog(window, options)
 })
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.

@@ -53,6 +53,7 @@
   opacity: 0.58;
 }
 
+.mesh-canvas-import,
 .mesh-canvas-dismiss {
   flex-shrink: 0;
   border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
@@ -88,8 +89,14 @@
   background: color-mix(in srgb, var(--status-failed, #e5484d) 15%, transparent);
 }
 
+.mesh-canvas-import:hover,
 .mesh-canvas-dismiss:hover {
   background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.mesh-canvas-import:disabled {
+  cursor: wait;
+  opacity: 0.6;
 }
 
 .mesh-canvas-tabs {

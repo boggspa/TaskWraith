@@ -279,6 +279,61 @@ export class MeshSceneService {
     return cloneScene(saved)
   }
 
+  /**
+   * Import a model selected by the human through TaskWraith's native file
+   * picker. Unlike `importModel`, this deliberately does not accept an
+   * agent-supplied workspace path: the picker selection itself is the only
+   * authority for a Documents/Downloads-style source. The copied vault asset
+   * and resulting scene remain chat-owned, so agents can subsequently inspect
+   * and edit it through their ordinary Mesh Canvas grant.
+   */
+  importUserSelectedModel(
+    input: { sourcePath: string; title?: string },
+    ctx: MeshSceneCallContext
+  ): MeshSceneRecord {
+    if (this.blocked(ctx))
+      throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
+    const chatId = this.requireChat(ctx)
+    const asset = this.deps.assets.importModel(input.sourcePath).manifest
+    const now = this.deps.now()
+    const displayName =
+      path.basename(asset.entryPath, path.extname(asset.entryPath)) || 'Imported mesh'
+    const scene: MeshSceneRecord = {
+      schemaVersion: MESH_SCENE_SCHEMA_VERSION,
+      id: this.deps.uuid(),
+      chatId,
+      ...(nonEmpty(ctx.runId, 256) ? { runId: nonEmpty(ctx.runId, 256)! } : {}),
+      ...(nonEmpty(ctx.workspacePath, 4_096) ? { workspacePath: ctx.workspacePath } : {}),
+      title: nonEmpty(input.title, 200) ?? displayName,
+      backgroundColor: '#171a21',
+      lighting: cloneDefaultLighting(),
+      camera: cloneDefaultCamera(),
+      nodes: [
+        {
+          id: this.deps.uuid(),
+          kind: 'import',
+          name: asset.entryPath,
+          assetId: asset.id,
+          format: asset.format!,
+          entryPath: asset.entryPath,
+          transform: cloneDefaultTransform(),
+          visible: true
+        }
+      ],
+      createdAt: now,
+      updatedAt: now
+    }
+    let saved: MeshSceneRecord
+    try {
+      saved = this.persist(scene)
+    } catch (error) {
+      this.deps.assets.remove([asset.id])
+      throw error
+    }
+    this.emit('scene.created', saved)
+    return cloneScene(saved)
+  }
+
   list(ctx: MeshSceneCallContext): MeshSceneSummary[] {
     const chatId = this.requireChat(ctx)
     return this.deps.store

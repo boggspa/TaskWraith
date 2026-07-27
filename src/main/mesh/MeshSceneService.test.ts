@@ -116,6 +116,36 @@ describe('MeshSceneService', () => {
     expect(() => service.inspect(scene.id, context('chat-b'))).toThrow(/does not belong/)
   })
 
+  it('imports a human-selected external model as a chat-owned scene agents can edit', () => {
+    const downloads = path.join(root, 'Downloads')
+    fs.mkdirSync(downloads)
+    const selected = path.join(downloads, 'manual-fixture.obj')
+    fs.writeFileSync(selected, 'v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n')
+
+    const scene = service.importUserSelectedModel({ sourcePath: selected }, context())
+    const node = scene.nodes[0]
+    if (!node || node.kind !== 'import') throw new Error('expected imported node')
+
+    expect(scene).toMatchObject({
+      chatId: 'chat-a',
+      title: 'manual-fixture',
+      nodes: [{ kind: 'import', name: 'manual-fixture.obj', entryPath: 'manual-fixture.obj' }]
+    })
+    expect(JSON.stringify(scene)).not.toContain(selected)
+    expect(service.list(context())).toEqual([
+      expect.objectContaining({ sceneId: scene.id, importCount: 1, nodeCount: 1 })
+    ])
+
+    const edited = service.apply(
+      scene.id,
+      { operation: 'update_node', nodeId: node.id, name: 'Edited by agent' },
+      context()
+    )
+    expect(edited.nodes[0]).toMatchObject({ name: 'Edited by agent' })
+    expect(assets.get(node.assetId)).not.toBeNull()
+    expect(events.map((event) => event.kind)).toEqual(['scene.created', 'scene.updated'])
+  })
+
   it('purges scoped scene metadata and its private assets under the matching history authority', async () => {
     const source = path.join(workspace, 'fixture.glb')
     fs.writeFileSync(source, Buffer.from('glTF'))

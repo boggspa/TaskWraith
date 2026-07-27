@@ -1,6 +1,6 @@
 # Codex Terra — Mesh Canvas scratchpad
 
-Status: implementation complete. Retained as a compact context handoff for future Mesh Canvas work.
+Status: active follow-up. Retained as compact context for the manual-import and QA demonstration extension.
 
 ## Objective
 
@@ -10,7 +10,7 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 
 - Use Three.js as the renderer substrate; keep agent control declarative rather than script/eval based.
 - First-class import formats: GLB, glTF, and OBJ with local MTL/texture dependencies copied into a private vault. USD/USDC and DCC project files remain explicit future importers rather than pretending to parse them.
-- Mesh tools stay hidden behind `capability_search` / `capability_invoke` in ordinary gateway sessions. A new immutable fresh profile will expose them directly only when the *current participant/run* starts with mesh authority; a provider session's pinned catalogue never constitutes or retains that grant, and dispatch still gates every call against the current signed posture.
+- Mesh tools stay hidden behind `capability_search` / `capability_invoke` in ordinary gateway sessions. A new immutable fresh profile will expose them directly only when the _current participant/run_ starts with mesh authority; a provider session's pinned catalogue never constitutes or retains that grant, and dispatch still gates every call against the current signed posture.
 - Mesh gets its own `meshCanvas` permission service, distinct from surface-scoped `canvasInteraction`.
 - Mesh assets are bounded to a 512 MiB total bundle and reclaimed on scene deletion, history deletion, scene replacement, and 200-scene retention eviction when no retained scene references them.
 - User test assets remain read-only in Documents/Downloads. Known examples include a 103 MB OBJ, FinalBaseMesh OBJ, and GLB files under Documents.
@@ -23,6 +23,7 @@ Implement TaskWraith Mesh Canvas end to end: sandboxed 3D scene viewer, provider
 - User clarification: grants belong to actual run participants, not sessions. Profile selection must use the current participant's effective run permissions; profile pinning is catalogue-compatibility only.
 - Added token-gated `twmesh://` asset serving, chat-scoped renderer IPC, a Three.js dock viewer, explicit presentation routing, and a user-confirmed delete path.
 - Verified the opt-in fixture import against the supplied 99 MB Wavefront OBJ (including its material-library sidecar) and local `world.glb`; sources stayed read-only.
+- Follow-up requested: add a user-facing native model picker in the Mesh Canvas dock so a human can import a Documents/Downloads asset into a chat-owned scene that agents can list and edit, then exercise it visibly in the desktop QA app.
 
 ## Commit log
 

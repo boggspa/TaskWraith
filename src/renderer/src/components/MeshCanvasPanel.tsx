@@ -361,6 +361,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
   const [activeSceneId, setActiveSceneId] = useState<string | null>(null)
   const [view, setView] = useState<MeshSceneView | null>(null)
   const [issue, setIssue] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const chatIdRef = useRef(chatId)
   chatIdRef.current = chatId
 
@@ -436,6 +437,24 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
     }
   }, [activeSceneId, chatId])
 
+  const importUserModel = async (): Promise<void> => {
+    const api = window.api?.meshCanvas
+    if (!api?.importUserModel || importing) return
+    setImporting(true)
+    setIssue(null)
+    try {
+      const imported = await api.importUserModel(chatId)
+      if (imported.canceled) return
+      const summary = toMeshSceneSummary(imported.scene)
+      await refresh()
+      if (summary) setActiveSceneId(summary.sceneId)
+    } catch (error) {
+      setIssue(error instanceof Error ? error.message : 'Could not import the selected 3D model.')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const dismissPresentation = async (): Promise<void> => {
     const api = window.api?.meshCanvas
     if (!api || !activeSceneId) return
@@ -475,9 +494,19 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       <div className="mesh-canvas-toolbar">
         <div>
           <div className="mesh-canvas-title">Mesh Canvas</div>
-          <div className="mesh-canvas-subtitle">Agent-built 3D scenes stay local to this chat.</div>
+          <div className="mesh-canvas-subtitle">
+            Human and agent-built 3D scenes stay local to this chat.
+          </div>
         </div>
         <div className="mesh-canvas-actions">
+          <button
+            type="button"
+            className="mesh-canvas-import"
+            onClick={() => void importUserModel()}
+            disabled={importing}
+          >
+            {importing ? 'Opening picker…' : 'Import 3D model'}
+          </button>
           {view?.presentation && (
             <button
               type="button"
