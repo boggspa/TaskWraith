@@ -29,6 +29,7 @@ Capture replacements are being made against latest-source development apps. Use 
 ## Needs Canvas or media content
 
 - `canvas-and-previews__canvas-multiview-pane`
+- `canvas-and-previews__mesh-canvas` — capture a redacted exported scene; do not show local source paths or vault URLs.
 - `media-audio-and-video__chat-media-dock`
 - `media-audio-and-video__inline-transcript-media`
 - `media-audio-and-video__multiview-media-pane`

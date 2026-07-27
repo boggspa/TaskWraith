@@ -33,6 +33,7 @@ The current refresh uses latest-source development apps, not an installed releas
 |---|---|---|---|
 | `canvas-and-previews__canvas-composer-button.png` | Electron | Canvas composer button in the telemetry row | It's an icon-only button in the composer's telemetry row (the footer icon cluster), next to the Multiview layout picker. |
 | `canvas-and-previews__canvas-multiview-pane.png` | Electron | Canvas multiview pane showing an embedded preview | Switch to a split multiview layout (2/3/4 panes) from the composer's Plus Tools menu. |
+| `canvas-and-previews__mesh-canvas.png` | Electron | Mesh Canvas dock with direct-model and scene-package import actions | Open the composer's **Canvas** menu, choose **Open Mesh Canvas**, then use the right-dock toolbar. |
 | `canvas-and-previews__ios-canvas-preview.png` | iOS | iOS canvas preview card in the companion app | Open a chat in the companion app that has an open Canvas on the desktop. |
 
 ### chats-and-threads
