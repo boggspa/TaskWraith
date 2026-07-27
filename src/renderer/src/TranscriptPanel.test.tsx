@@ -330,6 +330,33 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('provider-alibaba')
   })
 
+  it('uses the Pi upstream hue for an active Ensemble working indicator', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: activeEnsembleChat(
+            ensembleParticipant({
+              id: 'deepseek-scout',
+              provider: 'pi',
+              role: 'Scout',
+              model: 'deepseek/deepseek-v4-flash'
+            })
+          ),
+          currentProviderLabel: 'Ensemble',
+          currentProvider: 'codex',
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null,
+          thinkingModelBadge: null
+        })}
+      />
+    )
+
+    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('--message-working-accent:var(--provider-deepseek-color, var(--accent))')
+  })
+
   it('prepends participant-style headers to live tool-call viewports', () => {
     const participant = ensembleParticipant({
       id: 'codex-reviewer',

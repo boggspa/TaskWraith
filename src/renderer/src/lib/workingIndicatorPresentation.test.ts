@@ -102,6 +102,28 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
     })
   })
 
+  it('uses the Pi upstream hue class for a working participant', () => {
+    expect(
+      deriveActiveEnsembleWorkingPresentation(
+        ensembleChat([
+          participant({
+            id: 'deepseek-scout',
+            provider: 'pi',
+            role: 'Scout',
+            model: 'deepseek/deepseek-v4-flash'
+          })
+        ])
+      )
+    ).toMatchObject({
+      providerLabel: 'Pi',
+      provider: 'pi',
+      providerClass: 'deepseek',
+      roleLabel: 'Scout',
+      modelBadge: 'deepseek/deepseek-v4-flash',
+      activity: 'working'
+    })
+  })
+
   it('prefers the frozen round participant display over a next-round roster edit', () => {
     const chat = ensembleChat([participant({ role: 'WriteSwift' })])
     chat.ensemble!.participants = chat.ensemble!.participants.map((item) =>
