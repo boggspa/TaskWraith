@@ -1,13 +1,10 @@
 import { createHash } from 'node:crypto'
-import {
-  chmodSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+// The product resolves evidence paths with the ASYNC fs/promises realpath.
+// On Windows that expands 8.3 short names (RUNNER~1 -> runneradmin) while
+// the sync variant does not, so comparing against realpathSync failed on the
+// Windows runner alone. Assert with the same function the code under test uses.
+import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -288,7 +285,7 @@ describe('official agy scheduled launch evidence', () => {
     const outcome = requireEvidence(
       await buildAntigravitySealEvidence(evidenceDeps(), fixture.facts)
     )
-    expect(outcome.effectiveBinary).toBe(realpathSync(fixture.binaryPath))
+    expect(outcome.effectiveBinary).toBe(await realpath(fixture.binaryPath))
     expect(outcome.effectivePersistence).toBe('ephemeral')
     expect(outcome.resolvedEnv).not.toHaveProperty('GEMINI_API_KEY')
     expect(outcome.resolvedEnv).not.toHaveProperty('GOOGLE_APPLICATION_CREDENTIALS')
@@ -430,12 +427,12 @@ describe('Gemini API scheduled launch evidence', () => {
     const outcome = requireEvidence(
       await buildAntigravitySealEvidence(evidenceDeps(), fixture.facts)
     )
-    expect(outcome.effectiveBinary).toBe(realpathSync(fixture.facts.hostExecutablePath))
+    expect(outcome.effectiveBinary).toBe(await realpath(fixture.facts.hostExecutablePath))
     expect(outcome.effectivePersistence).toBe('reusable')
     expect(outcome.evidence.runtime).toMatchObject({
       kind: 'in-process-sdk',
-      sdkPackageJsonRealPath: realpathSync(fixture.facts.sdkPackageJsonPath),
-      sdkEntrypointRealPath: realpathSync(fixture.facts.sdkEntrypointPath)
+      sdkPackageJsonRealPath: await realpath(fixture.facts.sdkPackageJsonPath),
+      sdkEntrypointRealPath: await realpath(fixture.facts.sdkEntrypointPath)
     })
     expect(outcome.evidence.controls).toMatchObject({
       transport: 'gemini-api-sdk',

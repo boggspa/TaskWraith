@@ -29,14 +29,21 @@ describe('PiKeyStore', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  // Pin the platform. On Linux the store additionally requires an ENCRYPTED
-  // safeStorage backend, so a suite that inherits the runner's platform asserts
-  // the runner's keyring instead of this class: every classification below
-  // passed on macOS and returned `encryptionUnavailable` on headless Linux CI.
-  // The Linux backend gate gets its own explicit cases at the end of the file.
+  // Neutralise ONLY the Linux backend gate. On Linux the store additionally
+  // requires an ENCRYPTED safeStorage backend, so a suite that inherits the
+  // runner's platform asserts the runner's keyring instead of this class —
+  // every classification below passed on macOS and returned
+  // `encryptionUnavailable` on headless Linux CI.
+  //
+  // But do NOT pin a single platform either: the store also branches on
+  // `win32` for `O_NOFOLLOW` and mode enforcement, so telling a Windows runner
+  // it is darwin makes it attempt POSIX operations Windows cannot satisfy and
+  // `setKey` starts returning false. Substitute darwin only where the gate
+  // would otherwise fire; everywhere else run as the real host.
+  const HOST_PLATFORM: NodeJS.Platform = process.platform === 'linux' ? 'darwin' : process.platform
   const makeStore = (
     safeStorage = fakeSafeStorage(),
-    platform: NodeJS.Platform = 'darwin'
+    platform: NodeJS.Platform = HOST_PLATFORM
   ): PiKeyStore =>
     new PiKeyStore({
       userDataPath: dir,

@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   canonicalCursorGlobalBrokerRegistryResource,
@@ -22,7 +23,9 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-const REGISTRY = '/Users/person/.cursor/mcp.json'
+// The lease resolves its registry path, so a literal POSIX string never
+// matches on Windows — it comes back as `D:\Users\person\.cursor\mcp.json`.
+const REGISTRY = resolve('/Users/person/.cursor/mcp.json')
 
 function verifiedInstallFailureContract() {
   return {

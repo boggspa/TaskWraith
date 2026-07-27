@@ -85,7 +85,20 @@ function fsAdapter(hooks?: {
     openSync: (path, flags, mode) => nodeFs.openSync(path, flags, mode),
     writeFileSync: (file, data, options) => nodeFs.writeFileSync(file, data, options),
     fchmodSync: (file, mode) => nodeFs.fchmodSync(file, mode),
-    fsyncSync: (file) => nodeFs.fsyncSync(file),
+    // These tests force `fsyncDirectory: true` to exercise the durability
+    // branch, but fsync on a DIRECTORY handle is EPERM on Windows — which is
+    // why production defaults the flag to `process.platform !== 'win32'` and
+    // never takes this path there. Tolerate the same errnos the codebase's
+    // other directory-fsync helpers already swallow, so the branch stays under
+    // test everywhere instead of failing for a reason no user can hit.
+    fsyncSync: (file) => {
+      try {
+        nodeFs.fsyncSync(file)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (code !== 'EPERM' && code !== 'EINVAL' && code !== 'EISDIR') throw error
+      }
+    },
     closeSync: (file) => nodeFs.closeSync(file),
     renameSync: (from, to) => {
       renameCount += 1
