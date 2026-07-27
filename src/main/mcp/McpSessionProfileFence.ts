@@ -9,15 +9,18 @@ import type {
 // mutate an existing mapping: mint a new id for any membership/schema change so
 // a resumable native provider session retains the surface it observed at birth.
 export const TASKWRAITH_FULL_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v1'
+export const TASKWRAITH_FULL_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v2'
 export const TASKWRAITH_CORE_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v1'
+export const TASKWRAITH_CORE_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v2'
 export const TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v1'
 export const TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v2'
 export const TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v3'
 export const TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v4'
 export const TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v5'
+export const TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v6'
 /** Current birth profile for a fresh, persistently fenceable gateway session. */
 export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
 /** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
@@ -56,12 +59,15 @@ function isProviderId(value: unknown): value is ProviderId {
 export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcpProfileId {
   return (
     value === TASKWRAITH_FULL_MCP_PROFILE_ID ||
+    value === TASKWRAITH_FULL_V2_MCP_PROFILE_ID ||
     value === TASKWRAITH_CORE_MCP_PROFILE_ID ||
+    value === TASKWRAITH_CORE_V2_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID ||
-    value === TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID
+    value === TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
   )
 }
 
@@ -385,7 +391,10 @@ export function taskWraithMcpRunStartedWithPinnedReceipt(input: {
 export function isCoreTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
-  return profileId === TASKWRAITH_CORE_MCP_PROFILE_ID
+  return (
+    profileId === TASKWRAITH_CORE_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_CORE_V2_MCP_PROFILE_ID
+  )
 }
 
 export function isGatewayTaskWraithMcpProfile(
@@ -396,7 +405,22 @@ export function isGatewayTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
+  )
+}
+
+/**
+ * Only fresh v2/v6 catalogues may advertise the compact portable Bossman
+ * front door. Older receipted sessions retain their exact visible surface.
+ */
+export function isPortableEnsembleControlMcpProfile(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): boolean {
+  return (
+    profileId === TASKWRAITH_FULL_V2_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_CORE_V2_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
   )
 }
 

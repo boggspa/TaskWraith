@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
-import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { RunManager } from '../RunManager'
 import {
@@ -2481,7 +2481,7 @@ describe('runOllamaProvider streaming', () => {
     const enumNames: string[] = format?.properties?.taskwraith_tool?.properties?.name?.enum
     expect(Array.isArray(enumNames)).toBe(true)
     expect(enumNames).toEqual([
-      ...GATEWAY_MCP_DIRECT_TOOLS,
+      ...GATEWAY_V6_MCP_DIRECT_TOOLS,
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       'tool_help'
     ])
@@ -3413,16 +3413,27 @@ describe('ollamaNativeToolDefinitions', () => {
     expect(compact.length).toBeLessThan(full.length)
     expect(compact).not.toContain('maxResults')
   })
-  it('exposes the exact gateway-v1 canonical surface plus virtual helpers', () => {
+  it('exposes the exact fresh gateway-v6 canonical surface plus virtual helpers', () => {
     const defs = ollamaNativeToolDefinitions('read_only')
     const names = defs.map((def) => def.function.name)
-    expect(names.slice(0, GATEWAY_MCP_DIRECT_TOOLS.length)).toEqual([
-      ...GATEWAY_MCP_DIRECT_TOOLS
+    expect(names.slice(0, GATEWAY_V6_MCP_DIRECT_TOOLS.length)).toEqual([
+      ...GATEWAY_V6_MCP_DIRECT_TOOLS
     ])
-    expect(names.slice(GATEWAY_MCP_DIRECT_TOOLS.length)).toEqual([
+    expect(names.slice(GATEWAY_V6_MCP_DIRECT_TOOLS.length)).toEqual([
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       'tool_help'
     ])
+  })
+
+  it('declares a compact action-plus-params shape for portable Ensemble control', () => {
+    const portable = ollamaNativeToolDefinitions('provider_parity').find(
+      (definition) => definition.function.name === 'ensemble_control'
+    )
+    expect(portable?.function.parameters.required).toEqual(['action'])
+    expect(portable?.function.parameters.properties).toMatchObject({
+      action: { type: 'string' },
+      params: { type: 'object' }
+    })
   })
 
   it('omits native web schemas when the resolved run posture denies network access', () => {
@@ -3462,6 +3473,20 @@ describe('normalizeOllamaNativeToolCall', () => {
     ).toEqual({ toolName: 'read_file', arguments: { path: 'README.md' } })
   })
 
+  it('unwraps the portable Ensemble parameter envelope before dispatch', () => {
+    expect(
+      normalizeOllamaNativeToolCall({
+        function: {
+          name: 'ensemble_control',
+          arguments: { action: 'set_round_plan', params: { goal: 'Review.' } }
+        }
+      })
+    ).toEqual({
+      toolName: 'ensemble_bossman_control',
+      arguments: { action: 'set_round_plan', goal: 'Review.' }
+    })
+  })
+
   it('rejects hidden canonical native calls', () => {
     expect(
       normalizeOllamaNativeToolCall({
@@ -3491,7 +3516,7 @@ describe('Ollama tool surface (tier retired)', () => {
     expect(normalizeOllamaToolControlTier('bad-value')).toBe('read_only')
     const readOnly = ollamaToolNamesForTier('read_only')
     expect(readOnly).toEqual(ollamaToolNamesForTier('provider_parity'))
-    expect(readOnly).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
+    expect(readOnly).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
   })
@@ -3508,7 +3533,7 @@ describe('Ollama tool surface (tier retired)', () => {
 
   it('keeps every legacy tier value on the same compact direct profile', () => {
     const tools = ollamaToolNamesForTier('provider_parity')
-    expect(tools).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
+    expect(tools).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
     expect(ollamaToolNamesForTier('read_only')).toEqual(tools)
   })
 })

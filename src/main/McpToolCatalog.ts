@@ -2553,6 +2553,34 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_control',
+      description:
+        'Portable Boss/Captain Ensemble control. Set action plus its fields in params (or flat). Prefer this compact tool over ensemble_bossman_control.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            description:
+              'Boss/Captain action, such as set_round_plan or summon_participant.'
+          },
+          params: {
+            type: 'object',
+            description:
+              'Only the fields for action, for example {"goal":"Review."} or {"targetParticipantId":"...","reason":"..."}.'
+          }
+        },
+        required: ['action'],
+        additionalProperties: true
+      }
+    },
+    {
       name: 'ensemble_bossman_control',
       description:
         'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Non-authority callers and stale round/run/participant ids are rejected and audited.',

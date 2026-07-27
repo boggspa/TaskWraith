@@ -1052,12 +1052,15 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
     value,
     [
       'taskwraith-full-v1',
+      'taskwraith-full-v2',
       'taskwraith-core-v1',
+      'taskwraith-core-v2',
       'taskwraith-gateway-v1',
       'taskwraith-gateway-v2',
       'taskwraith-gateway-v3',
       'taskwraith-gateway-v4',
-      'taskwraith-gateway-v5'
+      'taskwraith-gateway-v5',
+      'taskwraith-gateway-v6'
     ],
     'TaskWraith MCP profile'
   )

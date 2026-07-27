@@ -758,12 +758,15 @@ export type EnsembleStageRole = 'scout' | 'worker' | 'reviewer' | 'background'
  */
 export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
+  | 'taskwraith-full-v2'
   | 'taskwraith-core-v1'
+  | 'taskwraith-core-v2'
   | 'taskwraith-gateway-v1'
   | 'taskwraith-gateway-v2'
   | 'taskwraith-gateway-v3'
   | 'taskwraith-gateway-v4'
   | 'taskwraith-gateway-v5'
+  | 'taskwraith-gateway-v6'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

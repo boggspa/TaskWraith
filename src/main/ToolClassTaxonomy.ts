@@ -237,6 +237,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // ensemble coordination artifacts (non-workspace-mutating)
   'create_handoff_card',
   'agent_delegation_role',
+  'ensemble_control',
   'ensemble_bossman_control',
   'ensemble_roster_edit',
   'ensemble_brief_update',

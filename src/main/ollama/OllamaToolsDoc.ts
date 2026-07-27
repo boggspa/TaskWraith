@@ -2,9 +2,9 @@ import {
   createTaskWraithMcpToolDefinitions,
   type TaskWraithMcpToolDefinition
 } from '../McpToolCatalog'
-import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 
-const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_MCP_DIRECT_TOOLS)
+const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_V6_MCP_DIRECT_TOOLS)
 
 /**
  * Reproducible generator for `resources/Tools.md` — a full, drift-checked
@@ -151,7 +151,7 @@ export function buildOllamaToolsMarkdown(): string {
     '{"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}',
     '```',
     '',
-    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
+    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_V6_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
     ''
   ]
   for (const def of defs) {

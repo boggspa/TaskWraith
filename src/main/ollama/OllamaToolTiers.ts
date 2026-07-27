@@ -1,6 +1,6 @@
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { OllamaToolControlTier } from '../store/types'
 
 export type OllamaToolName = TaskWraithMcpToolName
@@ -74,12 +74,12 @@ export const OLLAMA_KNOWN_TOOL_NAMES = new Set<OllamaToolName>(TASKWRAITH_MCP_TO
 
 /**
  * Ollama shares the exact immutable direct membership of
- * `taskwraith-gateway-v1`. Keep this as an alias, not a copied list: the profile
- * declaration is the single authority for the 38 canonical tools every fresh
+ * `taskwraith-gateway-v6`. Keep this as an alias, not a copied list: the profile
+ * declaration is the single authority for the compact tools every fresh
  * gateway session sees. The full catalogue remains callable through the two
  * capability gateway tools, with Ollama's legacy `tool_help` kept alongside.
  */
-export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_MCP_DIRECT_TOOLS
+export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V6_MCP_DIRECT_TOOLS
 
 const OLLAMA_ADVERTISED_TOOL_NAME_SET = new Set<OllamaToolName>(OLLAMA_ADVERTISED_TOOL_NAMES)
 const READ_ONLY_MCP_ADVERTISE_TOOL_SET = new Set<OllamaToolName>(

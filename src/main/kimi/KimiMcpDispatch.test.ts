@@ -70,6 +70,27 @@ describe('createKimiMcpDispatch', () => {
     expect(dispatchBrokerRequest).not.toHaveBeenCalled()
   })
 
+  it('exposes only the compact Ensemble control declaration for a fresh profile', async () => {
+    const dispatch = createKimiMcpDispatch({
+      route: { appRunId: 'kimi-run-compact', appChatId: 'chat-compact' },
+      taskWraithMcpProfileId: 'taskwraith-gateway-v6',
+      appVersion: '1.8.4',
+      brokerToken: 'broker-token',
+      getMcpToolDefinitions: () => [
+        { name: 'ensemble_control' },
+        { name: 'ensemble_bossman_control' }
+      ],
+      dispatchBrokerRequest: vi.fn()
+    })
+
+    const response = await dispatch({ jsonrpc: '2.0', id: 88, method: 'tools/list' })
+    const names = ((response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []).map(
+      (tool) => tool.name
+    )
+    expect(names).toContain('ensemble_control')
+    expect(names).not.toContain('ensemble_bossman_control')
+  })
+
   it('returns null for notifications without touching the broker', async () => {
     const dispatchBrokerRequest = vi.fn()
     const dispatch = createKimiMcpDispatch({

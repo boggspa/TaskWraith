@@ -10,8 +10,9 @@ import {
 } from './ClaudeTaskWraithMcp'
 import {
   CORE_MCP_ADVERTISE_TOOLS,
-  GATEWAY_MCP_ADVERTISE_TOOLS
+  GATEWAY_V6_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
+import { GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG } from './mcp/McpBridgeRuntime'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID
@@ -130,15 +131,18 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
-    expect(taskWraith.args.at(-1)).toBe(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+    expect(taskWraith.args).toContain(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
+    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
     expect(taskWraith.args).not.toContain('--core-subset')
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(GATEWAY_V6_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_V6_MCP_ADVERTISE_TOOLS) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
+    expect(allowed).toContain('ensemble_control')
+    expect(allowed).not.toContain('ensemble_bossman_control')
     expect(allowed).not.toContain('image_generate')
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
   })

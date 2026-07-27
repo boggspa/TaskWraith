@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 170 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 171 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -876,6 +876,15 @@ Send a message to ANOTHER top-level TaskWraith thread. This is the only push dir
 - Optional args: wake, idempotencyKey
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"thread_message","arguments":{"to":"text","message":"text"}}}}`
 
+## ensemble_control
+
+Portable Boss/Captain Ensemble control. Set action plus its fields in params (or flat). Prefer this compact tool over ensemble_bossman_control.
+
+- Access: governed by your run permission role
+- Required args: action
+- Optional args: params
+- Example: `{"taskwraith_tool":{"name":"ensemble_control","arguments":{"action":"text"}}}`
+
 ## ensemble_bossman_control
 
 In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Non-authority callers and stale round/run/participant ids are rejected and audited.
@@ -883,7 +892,7 @@ In Ensemble Mode, allows the assigned Boss participant, or Captain only after Bo
 - Access: governed by your run permission role
 - Required args: action
 - Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
-- Example: `{"taskwraith_tool":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}`
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}}`
 
 ## ensemble_poll_response
 

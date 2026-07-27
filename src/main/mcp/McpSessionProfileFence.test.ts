@@ -8,6 +8,7 @@ import {
   TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
   isGatewayV2TaskWraithMcpProfile,
@@ -39,7 +40,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
-      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID)
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID)
     }
   })
 
@@ -104,7 +105,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('defaults every fresh tool-capable provider to gateway-v2', () => {
+  it('defaults every fresh tool-capable provider to the newest gateway profile', () => {
     for (const provider of ['codex', 'kimi', 'cursor', 'ollama'] as const) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -128,7 +129,8 @@ describe('resolveTaskWraithMcpProfile', () => {
       TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
       // Load-bearing: this predicate drives the gateway-subset launch arg and
@@ -141,6 +143,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID)).toBe(false)
   })
 
   it('does not claim a gateway surface for headless or toolless Grok runs', () => {

@@ -85,11 +85,14 @@ import type {
   ChatRecord,
   GeminiAuthProfile,
   ProviderId,
+  TaskWraithMcpProfileId,
   UsageRecord
 } from './store/types'
 import type { RunManager, RunSessionStatus } from './RunManager'
 import { buildGeminiFunctionDeclarations } from './GeminiApiToolDeclarations'
 import { buildGeminiTurnContents, type GeminiContentPart } from './GeminiApiHistoryAdapter'
+import { isPortableEnsembleControlMcpProfile } from './mcp/McpSessionProfileFence'
+import { normalizePortableEnsembleControlArguments } from './TaskWraithMcpTools'
 
 /** Hard cap on how many tool-call rounds we permit inside a single
  *  Gemini turn. Each round adds one model response + at least one tool
@@ -144,6 +147,19 @@ export interface GeminiApiMcpToolDescriptor {
   name?: string
   description?: string
   inputSchema?: unknown
+}
+
+/** Keep API-native function declarations aligned with the receipted MCP shape. */
+export function filterGeminiApiMcpToolsForProfile(
+  definitions: ReadonlyArray<GeminiApiMcpToolDescriptor>,
+  profileId?: TaskWraithMcpProfileId | null
+): GeminiApiMcpToolDescriptor[] {
+  const portableEnsembleControl = isPortableEnsembleControlMcpProfile(profileId)
+  return definitions.filter((tool) =>
+    portableEnsembleControl
+      ? tool.name !== 'ensemble_bossman_control'
+      : tool.name !== 'ensemble_control'
+  )
 }
 
 export interface GeminiApiMcpExecutionResult {
@@ -1072,7 +1088,10 @@ export async function tryRunGeminiApi(
     // shape ONCE per run (the tool list is stable across rounds, and the
     // converter is pure so the cost is trivial anyway). Empty array
     // disables function calling — model can only emit text.
-    const mcpTools = deps.getMcpToolDefinitions()
+    const mcpTools = filterGeminiApiMcpToolsForProfile(
+      deps.getMcpToolDefinitions(),
+      payload.taskWraithMcpProfileId
+    )
     const functionDeclarations = mcpTools.length ? buildGeminiFunctionDeclarations(mcpTools) : []
     const generateConfig = {
       abortSignal: controller.signal,
@@ -1231,7 +1250,11 @@ export async function tryRunGeminiApi(
         }
         let result: GeminiApiMcpExecutionResult
         try {
-          result = await deps.executeMcpTool(call.name, call.args, normalizedRoute)
+          result = await deps.executeMcpTool(
+            call.name,
+            normalizePortableEnsembleControlArguments(call.name, call.args),
+            normalizedRoute
+          )
         } catch (error) {
           // Defensive: a thrown executor never happens in production
           // (executeGeminiMcpTool catches everything), but tests and

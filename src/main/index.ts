@@ -1246,8 +1246,10 @@ import {
 } from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
+  TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
+  isPortableEnsembleControlMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpProfileReceiptForSession,
@@ -2571,6 +2573,7 @@ interface TaskWraithMcpBridgeArgOptions {
   planSubset?: boolean
   coreSubset?: boolean
   gatewaySubset?: boolean
+  portableEnsembleControl?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -2582,7 +2585,8 @@ function taskwraithMcpBridgeArgs(
     options.safeSubset === true,
     options.planSubset === true,
     options.coreSubset === true,
-    options.gatewaySubset === true
+    options.gatewaySubset === true,
+    options.portableEnsembleControl === true
   )
 }
 
@@ -15211,7 +15215,9 @@ async function ensureGeminiAuthProfileMaterialized(
           mcp: {
             serverName: GEMINI_MCP_SERVER_NAME,
             command: bridgeCommandStatus.command,
-            args: taskwraithMcpBridgeArgs(geminiMcpSocketPath()),
+            args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+              portableEnsembleControl: true
+            }),
             includeTools: [...TASKWRAITH_MCP_TOOLS]
           }
         }
@@ -18538,7 +18544,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           safeSubset: cursorBrokerPolicy.safeSubset,
           planSubset: cursorBrokerPolicy.planSubset,
           coreSubset: cursorBrokerPolicy.coreSubset,
-          gatewaySubset: cursorBrokerPolicy.gatewaySubset
+          gatewaySubset: cursorBrokerPolicy.gatewaySubset,
+          portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+            payload.taskWraithMcpProfileId
+          )
         }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
@@ -19138,7 +19147,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         safeSubset,
         planSubset: grokPlanSeat,
         coreSubset,
-        gatewaySubset
+        gatewaySubset,
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       grokMcpServers = [
         {
@@ -20024,7 +20036,10 @@ async function runMistralAcpProvider(
         safeSubset,
         planSubset: mistralPlanSeat,
         coreSubset,
-        gatewaySubset
+        gatewaySubset,
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       mistralMcpServers = [
         {
@@ -20928,6 +20943,7 @@ async function runKimiAcpProvider(
         const bridge = await startKimiHttpMcpBridge({
           dispatch: createKimiMcpDispatch({
             route,
+            taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
             workspace: payload.scope === 'global' ? undefined : payload.workspace,
             appVersion: app.getVersion(),
             brokerToken: geminiMcpBrokerToken,
@@ -21404,7 +21420,8 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
       enabled: taskWraithBridgeEnabled,
       bridgeBinaryPath: bridgeCommandStatus.command,
       bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-        gatewaySubset: true
+        gatewaySubset: true,
+        portableEnsembleControl: true
       }),
       parentProvider: 'codex',
       userMcpServers
@@ -24064,6 +24081,7 @@ async function compactKimiProviderContext(payload: {
           const bridge = await startKimiHttpMcpBridge({
             dispatch: createKimiMcpDispatch({
               route: compactionRoute,
+              taskWraithMcpProfileId: TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
               workspace,
               appVersion: app.getVersion(),
               brokerToken: geminiMcpBrokerToken,

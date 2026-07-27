@@ -9,6 +9,8 @@ import { dirname, join, resolve } from 'path'
 import type { WebContents } from 'electron'
 import {
   canonicalTaskWraithToolName,
+  isPortableEnsembleControlToolName,
+  normalizePortableEnsembleControlArguments,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
@@ -89,6 +91,10 @@ export const GEMINI_MCP_CORE_SUBSET_ARG = '--core-subset'
 // gateway tools. Hidden first-party tools remain reachable only through the
 // gateway and retain their underlying host-side approval and routing policy.
 export const GEMINI_MCP_GATEWAY_SUBSET_ARG = '--gateway-subset'
+// Portable Bossman-control profile flag. The compact `ensemble_control` tool
+// is deliberately gated independently from the generic gateway flag so a
+// receipted v1–v5 session cannot gain a new visible tool mid-session.
+export const GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG = '--portable-ensemble-control'
 // Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
 // safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
 // also advertises the audit_* tool namespace. The bootstrap translates this arg
@@ -112,6 +118,9 @@ export function applyMcpBridgeProfileArgvToEnv(
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_GATEWAY_SUBSET_ARG)) env.TASKWRAITH_MCP_GATEWAY_SUBSET = '1'
+  if (argv.includes(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)) {
+    env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
+  }
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
 
@@ -789,12 +798,20 @@ function isBridgeAuditMcpToolName(value: string): boolean {
   return (AUDIT_MCP_TOOL_NAMES as readonly string[]).includes(value)
 }
 
-function isCoreMcpAdvertisedForSeat(name: string): boolean {
-  return isCoreMcpAdvertisedTool(name)
+function isCoreMcpAdvertisedForSeat(name: string, portableEnsembleControl = false): boolean {
+  return (
+    (isCoreMcpAdvertisedTool(name) &&
+      (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
+    (portableEnsembleControl && name === 'ensemble_control')
+  )
 }
 
-function isGatewayMcpAdvertisedForSeat(name: string): boolean {
-  return isGatewayMcpAdvertisedTool(name)
+function isGatewayMcpAdvertisedForSeat(name: string, portableEnsembleControl = false): boolean {
+  return (
+    (isGatewayMcpAdvertisedTool(name) &&
+      (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
+    (portableEnsembleControl && name === 'ensemble_control')
+  )
 }
 
 type GatewayInvocationTarget =
@@ -1016,6 +1033,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
+  GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1517,20 +1535,28 @@ export function handleMcpJsonRpcMessage(
     const gatewaySubsetOnly =
       (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
         process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const portableEnsembleControl =
+      (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
+        process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
     // run, so non-audit runs never see these tools. tools/call is NOT gated here
     // (audit tools route via the registered audit context in the broker).
     const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
-    const allTools = deps.getMcpToolDefinitions()
+    const allTools = deps.getMcpToolDefinitions().filter((tool) =>
+      portableEnsembleControl
+        ? tool.name !== 'ensemble_bossman_control'
+        : tool.name !== 'ensemble_control'
+    )
     const directTools =
       safeSubsetOnly || coreSubsetOnly || gatewaySubsetOnly
         ? allTools.filter(
             (tool) =>
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
-              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name)) &&
-              (!gatewaySubsetOnly || isGatewayMcpAdvertisedForSeat(tool.name))
+              (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
+              (!gatewaySubsetOnly ||
+                isGatewayMcpAdvertisedForSeat(tool.name, portableEnsembleControl))
           )
         : allTools
     const baseTools = gatewaySubsetOnly
@@ -1543,11 +1569,42 @@ export function handleMcpJsonRpcMessage(
   if (method === 'tools/call') {
     const params = isRecord(request.params) ? request.params : {}
     const rawName = params.name
+    const rawArgs = params.arguments || {}
     const name = canonicalTaskWraithToolName(String(rawName || ''))
-    const args = params.arguments || {}
+    const args =
+      name === 'capability_invoke' &&
+      isRecord(rawArgs) &&
+      isPortableEnsembleControlToolName(String(rawArgs.name || ''))
+        ? {
+            ...rawArgs,
+            arguments: normalizePortableEnsembleControlArguments(
+              String(rawArgs.name),
+              rawArgs.arguments
+            )
+          }
+        : normalizePortableEnsembleControlArguments(String(rawName || ''), rawArgs)
+    const portableEnsembleControlRequested =
+      isPortableEnsembleControlToolName(String(rawName || '')) ||
+      (name === 'capability_invoke' &&
+        isRecord(rawArgs) &&
+        isPortableEnsembleControlToolName(String(rawArgs.name || '')))
     const gatewaySubsetOnly =
       (deps.env?.TASKWRAITH_MCP_GATEWAY_SUBSET ??
         process.env.TASKWRAITH_MCP_GATEWAY_SUBSET) === '1'
+    const portableEnsembleControl =
+      (deps.env?.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL ??
+        process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
+    if (portableEnsembleControlRequested && !portableEnsembleControl) {
+      writeMcpError(
+        id,
+        -32601,
+        `Tool '${String(rawName || 'ensemble_control')}' is available only in a fresh TaskWraith MCP profile. Use ensemble_bossman_control in this session.`,
+        transport,
+        stdout
+      )
+      return
+    }
+    const advertisedToolName = portableEnsembleControlRequested ? 'ensemble_control' : String(name)
     const gatewayToolRequested = isCapabilityGatewayToolName(name)
     const gatewayInvocationTarget =
       name === 'capability_invoke' ? resolveBridgeGatewayInvocationTarget(args) : null
@@ -1633,7 +1690,7 @@ export function handleMcpJsonRpcMessage(
     if (
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
-      !isGatewayMcpAdvertisedForSeat(String(name)) &&
+      !isGatewayMcpAdvertisedForSeat(advertisedToolName, portableEnsembleControl) &&
       !auditToolRequested
     ) {
       bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
@@ -1653,7 +1710,7 @@ export function handleMcpJsonRpcMessage(
       (deps.env?.TASKWRAITH_MCP_CORE_SUBSET ?? process.env.TASKWRAITH_MCP_CORE_SUBSET) === '1'
     if (
       coreSubsetOnly &&
-      !isCoreMcpAdvertisedForSeat(String(name)) &&
+      !isCoreMcpAdvertisedForSeat(advertisedToolName, portableEnsembleControl) &&
       !auditToolRequested
     ) {
       bridgeLog(`tools/call rejected scope=core tool=${safeLogName}`)
@@ -1897,7 +1954,8 @@ export class McpBridgeRuntime {
     safeSubset = false,
     planSubset = false,
     coreSubset = false,
-    gatewaySubset = false
+    gatewaySubset = false,
+    portableEnsembleControl = false
   ): string[] {
     const logEpochPath = join(
       os.homedir(),
@@ -1933,7 +1991,10 @@ export class McpBridgeRuntime {
       // Progressive-disclosure profile. Kept in argv so the child process owns
       // a fixed profile for its entire lifetime; provider env forwarding is not
       // part of the profile boundary.
-      ...(gatewaySubset ? [GEMINI_MCP_GATEWAY_SUBSET_ARG] : [])
+      ...(gatewaySubset ? [GEMINI_MCP_GATEWAY_SUBSET_ARG] : []),
+      // The compact Bossman front door is independently profile-fenced so
+      // old receipted gateway sessions retain their original tool list.
+      ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : [])
     ]
   }
 

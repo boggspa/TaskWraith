@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   isOllamaToolControlTier,
@@ -12,20 +12,21 @@ import {
 } from './OllamaToolTiers'
 
 describe('Ollama tool surface governance', () => {
-  it('uses the exact immutable gateway-v1 direct membership', () => {
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_MCP_DIRECT_TOOLS)
-    // 39 → 38 on 2026-07-24: ensemble_continue removed with Work Session.
+  it('uses the exact immutable fresh gateway-v6 direct membership', () => {
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V6_MCP_DIRECT_TOOLS)
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(38)
-    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
-    for (const name of GATEWAY_MCP_DIRECT_TOOLS) {
+    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
+    for (const name of GATEWAY_V6_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)
     }
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toContain('ensemble_control')
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).not.toContain('ensemble_bossman_control')
     expect(isOllamaAdvertisedTool('video_thumbnail')).toBe(false)
   })
 
   it('intersects the gateway set with the shared safe set for read-only runs', () => {
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
-    const expected = GATEWAY_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name))
+    const expected = GATEWAY_V6_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name))
     const actual = ollamaAdvertisedToolNames({ readOnly: true })
     expect(actual).toEqual(expected)
     expect(actual).toContain('read_file')
@@ -61,7 +62,7 @@ describe('Ollama tool surface governance', () => {
     expect(edits).toEqual(readOnly)
     expect(shell).toEqual(readOnly)
     expect(parity).toEqual(readOnly)
-    expect(readOnly).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
+    expect(readOnly).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
   })

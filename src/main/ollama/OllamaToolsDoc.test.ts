@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 
 import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
-import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
 const generated = buildOllamaToolsMarkdown()
@@ -38,7 +38,7 @@ describe('resources/Tools.md', () => {
   })
 
   it('uses direct examples only for the compact profile and gateway examples for the tail', () => {
-    const directNames = new Set<string>(GATEWAY_MCP_DIRECT_TOOLS)
+    const directNames = new Set<string>(GATEWAY_V6_MCP_DIRECT_TOOLS)
     for (const name of TASKWRAITH_MCP_TOOLS) {
       expect(generated).toContain(
         directNames.has(name)

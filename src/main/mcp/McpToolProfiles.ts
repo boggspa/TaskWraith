@@ -182,6 +182,18 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
 /**
+ * Immutable membership snapshot for `taskwraith-full-v2`.
+ *
+ * v2 replaces the legacy wide `ensemble_bossman_control` declaration with the
+ * compact `ensemble_control` front door. Execution still reaches the exact
+ * same legacy authority handler after transport normalization.
+ */
+export const FULL_V2_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...FULL_MCP_ADVERTISE_TOOLS.filter((tool) => tool !== 'ensemble_bossman_control'),
+  'ensemble_control'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+/**
  * The Cursor-hosted Grok 4.5 catalogue rejects large MCP surfaces before a turn
  * starts. Managed Cursor Path-B runs therefore use this named core profile for
  * those constrained models when the governed broker attaches; compatible
@@ -272,6 +284,12 @@ export const CORE_MCP_ADVERTISE_TOOLS = Object.freeze([
   'blackboard_delete'
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
+/** Immutable successor to core-v1 with the portable Ensemble control shape. */
+export const CORE_V2_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...CORE_MCP_ADVERTISE_TOOLS.filter((tool) => tool !== 'ensemble_bossman_control'),
+  'ensemble_control'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
 const CORE_MCP_TOOL_SET: ReadonlySet<string> = new Set(CORE_MCP_ADVERTISE_TOOLS)
 
 export function isCoreMcpAdvertisedTool(name: string): boolean {
@@ -335,6 +353,22 @@ export const GATEWAY_MCP_DIRECT_TOOLS = Object.freeze([
 
 export const GATEWAY_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...GATEWAY_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+/**
+ * Gateway-v6 keeps the same size as v1 while replacing the overloaded legacy
+ * Bossman declaration with its compact portable front door. Earlier gateway
+ * arrays remain frozen because native provider sessions can resume with their
+ * original catalogue receipt.
+ */
+export const GATEWAY_V6_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_MCP_DIRECT_TOOLS.filter((tool) => tool !== 'ensemble_bossman_control'),
+  'ensemble_control'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V6_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V6_MCP_DIRECT_TOOLS,
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
@@ -439,6 +473,14 @@ export const GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V5_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+/**
+ * v6 changes only the direct surface. Its hidden universe is deliberately the
+ * exact v5 universe; `ensemble_control` is direct, not a discovered target.
+ */
+export const GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -451,6 +493,7 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v6') return GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v5') return GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v4') return GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v3') return GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
@@ -460,7 +503,9 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 
 const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-full-v1': FULL_MCP_ADVERTISE_TOOLS,
+  'taskwraith-full-v2': FULL_V2_MCP_ADVERTISE_TOOLS,
   'taskwraith-core-v1': CORE_MCP_ADVERTISE_TOOLS,
+  'taskwraith-core-v2': CORE_V2_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v1': GATEWAY_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v2': GATEWAY_MCP_ADVERTISE_TOOLS,
   // v3 advertises the same tiny direct surface as v1/v2 — only the hidden
@@ -470,7 +515,9 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // await/lane-result graph primitives.
   'taskwraith-gateway-v4': GATEWAY_MCP_ADVERTISE_TOOLS,
   // v5 likewise: direct surface unchanged; hidden universe adds thread_message.
-  'taskwraith-gateway-v5': GATEWAY_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v5': GATEWAY_MCP_ADVERTISE_TOOLS,
+  // v6 adds only the compact portable Ensemble control to the direct surface.
+  'taskwraith-gateway-v6': GATEWAY_V6_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,
   readonly TaskWraithMcpAdvertisedToolName[]
