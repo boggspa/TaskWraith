@@ -15,7 +15,7 @@ disclosure, and TW-SEC-2026-014 moved from `Open` to `Remediated` after its
 multi-store completeness pass. Those dated notes are provenance, not the
 current release pointer.
 
-**2026-07-26 v1.9.0 paperwork boundary:** the latest published baseline is
+**2026-07-27 v1.9.0 paperwork boundary:** the latest published baseline is
 **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
 release-paperwork commits following it. The requested first refresh reached
@@ -25,8 +25,21 @@ refresh-paperwork commits interleaved). This second paperwork pass opened at
 paperwork tip `d46229e8a`), after surface-scoped Canvas grants, durable
 `canvas_fill` value redaction, per-call theme consent, Mistral UI/live-lane
 evidence, Pi attribution, and a scoped history-deletion deadline attempt
-landed. No foreign ship-hold marker was present at that opening snapshot; two
-unrelated working-tree paths and this pass's own marker kept the tree dirty.
+landed. The final paperwork reconciliation opened at `37c60cfeb` (**261
+commits** past the tag, 21 commits after second-pass paperwork tip `4089a9637`).
+That late committed range adds repair-oriented Ensemble skip reasons, an
+opt-in Codex credential lease, consent-gated product observation and volatile
+presence, exhaustive provider selection, complete usage/rate-table projection,
+a normal two-seat Ensemble floor, clearer People collaboration diagnostics,
+and official provider identity assets. No foreign ship-hold marker was present
+at that opening snapshot; 51 unrelated working-tree paths plus this pass's own
+marker kept the tree dirty. During the pass the committed tip advanced through
+`dd27996e6` (**267 commits** past the tag), adding per-device APNs environment
+repair, guarded build-time feature flags, one completion-banner renderer, and
+local/APNs-updated Live Activities including delayed push-to-start. At that
+late-refresh snapshot the foreign working tree had cooled to two paths plus
+this pass's marker, with no foreign ship hold. The tracked changelog and public
+privacy-policy slices then reached `4f2e87fec` (**269 commits** past the tag).
 This is still a mutable source-ahead snapshot, not a freeze: every per-entry
 verify/`Block` disposition stays in force, and the exact integrated candidate
 must be re-recorded and verified before a release claim. References use stable
@@ -109,6 +122,59 @@ consent/retention findings plus one open history-lifecycle blocker:
   production wiring until session-mode acknowledgement and the final
   provider-visible steered prompt are bound. Do not translate that receipt
   into provider removal.
+- Codex can now borrow the user's existing `~/.codex` sign-in only after the
+  user enables the dedicated provider setting. The credential is leased into
+  TaskWraith's isolated Codex home for one app-server lifetime rather than
+  copied as a second independent refresh token; rotation is committed back
+  monotonically, a concurrent borrower is refused, and release removes only
+  the borrowed credential. No credential or no available lease degrades to the
+  existing isolated behavior instead of failing an otherwise viable launch.
+  Re-run `CodexOAuthCredentialLease.test.ts` and
+  `CodexAppServerCredentialLease.test.ts` on the exact candidate.
+- First-party product observation is an affirmative-choice surface, not a
+  condition of using the app. Until the user selects Share, the stored
+  preference stays off and no check-in or presence request is made. An enabled
+  daily check-in has one fixed no-content schema and no stable installation
+  identifier; the random live-presence lease is process-only, renewed while
+  running, and specified to exist only in receiver memory for 150 seconds.
+  Builds without an endpoint send nothing, and withdrawing consent stops
+  renewals without disabling a feature. The complete field, retention,
+  network-metadata, and purpose contract is public in `PRIVACY.md`; exact-tip
+  verification must include `ActivityReportingService.test.ts`,
+  `AppStoreSettings.test.ts`, and the first-launch choice tests.
+- The normal Ensemble UI now treats two seats as the live panel floor: enabling
+  Ensemble tops up a solo thread, while removing from a two-seat panel returns
+  the thread to the surviving solo seat. Explicit agent-authored and saved
+  one-seat rosters remain exempt, preserving stated user/agent intent instead
+  of silently rewriting it.
+- Human-collaboration surfaces are now labelled People and expose distinct
+  invite/live/offline state plus the host audit timeline for admission,
+  rejection, deduplication, and draft insertion. The new loopback invitation
+  escape is confined to unpackaged, separately identified same-Mac rehearsal
+  instances and appears only after the ordinary remote-reachability guard has
+  refused the invite; it is not a packaged remote-access bypass or evidence
+  that the unrelated-network exercise has passed.
+- iOS Live Activities are an explicit, bounded exception to the paired
+  companion's ordinary end-to-end-encrypted task projection. ActivityKit must
+  decode attributes/content state, so Apple can read the strict allowlist:
+  coarse phase and Unix start time; file, addition, and deletion counts;
+  provider product names and no more than eight provider/phase seat pairs;
+  compiled layout and colour values; and an opaque per-activity reference that
+  is not a thread/run id. No privacy-sensitive value—including user-authored
+  task/workspace content or a workspace/account-linkable identifier—may ever be
+  seeded into this state. Any new field requires a fresh privacy/security and
+  public-disclosure review, not a silent “status metadata” expansion.
+  Per-activity and push-to-start tokens stay in Mac process memory. APNs
+  delivery preserves the device's sandbox/production environment and deletes a
+  stored device token only after `410 Unregistered`, not `BadDeviceToken`.
+  Exact-tip verification must include `liveActivityPayload.test.ts`,
+  `LiveActivityPushFanout.test.ts`, `TWRunActivityTests.swift`,
+  `TWRunActivityPlannerTests.swift`, and `TWActivityPreferencesTests.swift`.
+- Completion banners now share one closed/versioned rendering contract between
+  the foreground app and Notification Service Extension, with preset fixture
+  parity across TypeScript and Swift. Re-run
+  `CompletionBannerRendererTests.swift`, `TWBannerFixtureTests.swift`, and the
+  matching renderer fixture tests on the exact candidate.
 - Office codecs operate on bounded document formats, while Outlook device-code
   access is limited to reading mail/calendar context, saving drafts, and
   creating personal time blocks. Release prose must not imply send-mail or
@@ -149,7 +215,10 @@ consent/retention findings plus one open history-lifecycle blocker:
 - Provider run management now records additive lifecycle assurance across all
   ten stable provider identities: immutable launch plans, isolated homes,
   launch evidence, cancellation/settlement, and signed-posture checks improve
-  receipts without being used as a provider-admission gate.
+  receipts without being used as a provider-admission gate. Production adapter
+  registration and renderer/default-model selection now walk that identity
+  set exhaustively; an unhandled provider fails its guard or type-check instead
+  of inheriting retired Gemini behavior.
 
 No release gate was run or cleared by this documentation pass. Reconcile these
 claims against the final clean tip, run each finding's recorded verification,

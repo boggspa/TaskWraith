@@ -150,7 +150,7 @@ Rules, in priority order:
    `isLiveSelectableProvider(p) || (p === '<id>' && <condition>)`, so promoting
    one short-circuits its condition and silently deletes the wall.
 5. **Run management is additive assurance, never provider admission.** Measure
-   lifecycle and signed-posture coverage across all nine stable `ProviderId`
+   lifecycle and signed-posture coverage across all ten stable `ProviderId`
    identities, independently of whether a provider is live, conditional, or
    retired. Missing broker mediation, launch-seal evidence, provenance, or
    another stronger management layer must produce an honest per-run
