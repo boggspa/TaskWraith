@@ -102,7 +102,7 @@ scripts, or weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-017 | `canvas_fill` typed values entered durable approval and run-event history despite the tool's non-retention contract | Medium | Remediated | TaskWraith maintainers — Canvas approval privacy | Forward-only source fix accepted; verify every approval ingress/durable sink and keep the existing-history disclosure before clearing the block |
 | TW-SEC-2026-018 | A Canvas interaction grant applied beyond the exact surface the user approved | High | Remediated | TaskWraith maintainers — Canvas and approval authority | Verify surface identity on request, response, run-attached, fallback, and legacy-grant paths before clearing the block |
 | TW-SEC-2026-019 | Theme writes could inherit an unrelated MCP grant, while writable spacing influenced consent-control adjacency | High | Remediated | TaskWraith maintainers — Appearance and consent surfaces | Verify every-call human prompting and the structural consent-row guard on the exact candidate before clearing the block |
-| TW-SEC-2026-020 | The scoped history-deletion deadline rejects without retiring the durable intent or releasing retained holds | High | Open | TaskWraith maintainers — Data lifecycle and history erasure | **Block 1.9.0:** prove a stalled scoped deletion converges to a safe resumable/aborted state, restores intended run admission, and still refuses every late commit |
+| TW-SEC-2026-020 | The scoped history-deletion deadline rejects without retiring the durable intent or releasing retained holds | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | **Permit 1.9.0:** exact-candidate delayed-sink matrix and whole-tree gates prove no late commit, exact hold reconciliation, retained durable intent, and a clean same-process retry |
 
 ## v1.9.0 release-boundary update — 2026-07-26
 
@@ -1945,7 +1945,7 @@ clearing any release disposition.
 ## TW-SEC-2026-020 — Scoped deletion timeout retains its blocking authority
 
 - **Date:** 2026-07-26
-- **Severity/status:** High / `Open`
+- **Severity/status:** High / `Remediated`
 - **Owner:** TaskWraith maintainers — Data lifecycle, history erasure, and run
   admission
 - **Evidence:**
@@ -1992,9 +1992,37 @@ clearing any release disposition.
      deadline, settle late, and assert: zero late commit, exact once-only hold
      reconciliation, honest durable-intent state, intended run admission, and
      safe retry/restart behavior.
-- **Release disposition:** `Block` 1.9.0 until the exact candidate contains
-  that convergence path and the focused plus whole-tree lifecycle gates are
-  green, or the informed user explicitly accepts this residual for the release.
+- **2026-07-27 remediation and exact-candidate evidence:**
+  - Commit `55ead7220` replaces the operation-wide permanent deadline bit with
+    attempt-local authority. A timed-out attempt keeps every exact hold while
+    its uncancellable continuation is live, and an overlapping retry is
+    rejected before it can duplicate teardown or authority.
+  - A late continuation that successfully quiesces every sink is still refused
+    at the commit boundary. Only then are usage, maintenance, background
+    process, Project-reference, transcript-media, and Canvas holds exhausted
+    exactly once. The process-local retained operation is retired, while the
+    outer durable intent and its honest receipts remain for an explicit retry.
+  - A fresh same-process retry no longer inherits the expired attempt. It
+    reacquires process-local holds and strictly re-purges usage,
+    Project-reference, and transcript-media state before committing. The
+    production usage adapter now has an explicit completion-aware release path,
+    so a reconciled timeout does not falsely claim the outer deletion committed.
+  - [`ScopedHistoryDeletionCoordinator.test.ts`](src/main/ScopedHistoryDeletionCoordinator.test.ts)
+    crosses the deadline independently for background-process join, Ensemble
+    cancellation, provider termination, maintenance compaction, Canvas close,
+    execution-graph deletion, usage purge, Project-reference purge, and
+    transcript-media purge. Every case proves zero late commit, no release
+    while work is outstanding, one reconciliation release, retained durable
+    intent, no duplicate holds, and a successful fresh retry.
+  - Exact-candidate validation passed the focused lifecycle suites plus the
+    complete repository gate: 1,283 test files and 16,364 tests passed, with
+    both TypeScript projects, lint, architecture, provider-intent, doctrine,
+    iOS plist, formatting ratchet, bundled-secret guard, dependency signatures,
+    zero production audit findings, and the native PTY smoke check green.
+- **Release disposition:** The 1.9.0 block is cleared on this exact candidate.
+  Keep the delayed-sink matrix and completion-aware release boundary
+  load-bearing; releasing a hold before its continuation settles or allowing a
+  late commit reopens this finding.
 
 ## Combined AntiGravity/Gemini API certification contract
 
