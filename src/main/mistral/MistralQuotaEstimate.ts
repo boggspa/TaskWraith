@@ -1,51 +1,66 @@
 /**
- * The Mistral seat's quota ESTIMATOR — a pure model of a budget Mistral neither
- * publishes nor exposes.
+ * The Mistral seat's quota model — vendor figures where we can get them, a
+ * hedged estimate where we cannot.
  *
  * WHY THIS EXISTS. Every other TaskWraith seat can be metered from a number the
  * vendor hands us: a window with a `resetAt`, a percentage, a remaining count.
- * Mistral hands us nothing. Three separate doors are shut:
+ * For a Free/Pro/Team Mistral seat, nothing in the run lane reports one:
  *
  *   1. The Vibe CLI never asks. The whole package speaks to exactly two
  *      endpoints — `/v1/messages` and `/v1/datalake/events` (telemetry). It
- *      fetches no entitlement, balance or budget.
- *   2. The Admin API, which does expose usage metrics, is Enterprise-only
- *      (Preview) and needs a dedicated admin key. Closed to Pro and Team.
- *   3. Mistral publishes no figure to hardcode. Their own pricing page says
- *      Free is "Limited coding sessions" and Pro is "All-day coding in the CLI,
- *      IDE, and on web". No dollars, no tokens, no message count.
+ *      fetches no entitlement, balance or budget, and — see MistralUsage.ts —
+ *      reports no token usage over ACP either. Our per-turn spend is projected
+ *      from CHARACTER COUNTS, so it is an order-of-magnitude signal at best.
+ *   2. The Admin API DOES expose exactly the right figure
+ *      (`GET /v1/admin/usage`, with a `vibe_usage` category), but it is Preview
+ *      and Enterprise-only, and needs a dedicated key from backoffice.mistral.ai
+ *      — a standard API key never grants admin access. See MistralAdminUsage.ts:
+ *      when a key IS present the reading below becomes `reported` and none of
+ *      the guesswork applies.
+ *   3. The allowance is not published. mistral.ai/pricing lists plan prices and
+ *      feature blurbs but no credit figure; the only place the number appears is
+ *      the user's OWN console at admin.mistral.ai/subscription, which shows an
+ *      "Included monthly usage" bar (observed 2026-07-27 on Free: €0.28 of
+ *      €8.50, explicitly shared across "Studio, Vibe Code, or API").
+ *      That is why {@link MistralQuotaAnchor} exists — the user can read the two
+ *      numbers off their own console and hand them to us, which beats any
+ *      heuristic and works on every plan.
  *
  * Mistral have said a Vibe usage view is on the roadmap (mistralai/mistral-vibe
  * issue #305, where the maintainer wrote "I can assure you that this is on the
- * roadmap"). Until it lands, a seat with no meter at all would sail silently
- * into a monthly wall — the exact failure this module exists to prevent. When
- * that view ships, this estimator should be replaced by it, not layered under it.
+ * roadmap"). When that view ships, it should REPLACE the estimator below, not
+ * be layered under it.
  *
- * DESIGN — seed low, accumulate, then learn:
+ * SOURCE LADDER — strongest wins, per number, independently:
  *
- *   SEED       Anchor the ceiling to the plan PRICE as API-equivalent value,
- *              because it is the only real number in the whole arrangement.
- *              Deliberately biased LOW (see PLAN_SEED_USD): an underestimate
- *              warns early, which is merely noisy; an overestimate warns late,
- *              which is the surprise wall we are trying to avoid.
- *   ACCUMULATE Sum locally observed spend across the billing cycle. The ACP
- *              `usage_update` carries a running `cost {amount, currency}`, and
- *              each turn's `stopReason` carries token counts we can price from
- *              the local catalog.
- *   CALIBRATE  Remember the spend level at which a limit was ACTUALLY hit and
- *              carry it forward as the learned ceiling. Equally, a cycle that
- *              sails past the estimate untouched is evidence the seed was too
- *              low, so raise it. After one full cycle the estimate stops being
- *              a guess and starts being a measurement.
+ *   reported    The Admin API answered. Vendor truth.
+ *   anchored    The user read their console and typed it in. Vendor truth as of
+ *               a timestamp; local accumulation resumes ON TOP of the reading
+ *               (see `localSpentUsdAtAnchor`) so the bar keeps moving between
+ *               visits without double-counting what the reading already covered.
+ *   learned     A real limit event was observed — whatever had been spent when
+ *               the wall arrived IS the ceiling.
+ *   calibrating Some local observation, no vendor figure and no wall yet.
+ *   seeded      Plan-price guess, nothing observed. Deliberately biased LOW: an
+ *               underestimate warns early, which is merely noisy; an
+ *               overestimate warns late, which is the surprise wall we are
+ *               trying to avoid.
+ *
+ * The numerator and the ceiling are resolved SEPARATELY and carry their own
+ * confidences, because the strongest source for each is often different: the
+ * Admin API's usage endpoint reports spend but no entitlement, so a reading can
+ * legitimately be `reported` spend against an `anchored` ceiling.
  *
  * PURITY. Every function here is total and side-effect-free, and `now` is always
- * a parameter — never read from the clock. Persistence, IPC and rendering all
- * live with the caller. This mirrors ProviderQuotaWallClassifier.ts, which is
- * likewise a pure classifier with a fully-unit-tested surface.
+ * a parameter — never read from the clock. Persistence, IPC, currency conversion
+ * and rendering all live with the caller; amounts arriving here are ALREADY
+ * normalised to USD (the renderer converts using its live FX table before the
+ * anchor crosses IPC) and the original figures ride along only as provenance.
+ * This mirrors ProviderQuotaWallClassifier.ts, likewise a pure classifier.
  *
- * THE NUMBERS BELOW ARE GUESSWORK, AND SAY SO. `confidence` is part of the
- * output for exactly that reason: a seeded estimate must never be rendered with
- * the authority of a measured one.
+ * WHERE THE NUMBERS ARE STILL GUESSWORK, THEY SAY SO. `confidence` is part of
+ * the output for exactly that reason: a seeded estimate must never be rendered
+ * with the authority of a measured one.
  */
 
 /** Which Mistral plan the user believes they are on. `unknown` is honest and is
@@ -58,7 +73,7 @@ export type MistralPlanId = 'free' | 'pro' | 'team' | 'unknown'
  *  precision we do not have. */
 export type MistralQuotaBand = 'quiet' | 'moderate' | 'heavy' | 'near-limit' | 'exceeded'
 
-/** How much the ceiling is worth believing. */
+/** How much a figure is worth believing. See the source ladder in the header. */
 export type MistralQuotaConfidence =
   /** Price-anchored guess, no observations yet. */
   | 'seeded'
@@ -66,27 +81,117 @@ export type MistralQuotaConfidence =
   | 'calibrating'
   /** A real limit event has been observed and recorded. */
   | 'learned'
+  /** The user read the figure off their own Mistral console and entered it. */
+  | 'anchored'
+  /** The Admin API reported it. */
+  | 'reported'
+
+/** True when a figure came from Mistral rather than from our own inference. */
+export function isVendorReportedConfidence(confidence: MistralQuotaConfidence): boolean {
+  return confidence === 'anchored' || confidence === 'reported'
+}
 
 /**
- * Plan price expressed as an assumed monthly API-equivalent budget, in USD.
+ * Figures the user read off admin.mistral.ai/subscription and entered by hand.
  *
- * Rationale, stated plainly because it is a guess: the subscription price is the
- * only hard number Mistral gives us, and a coding plan that returned materially
- * less inference value than its price would not be a coding plan. Using price
- * 1:1 (rather than a generous multiple) biases the first cycle toward warning
- * EARLY. Calibration corrects upward on evidence; nothing here stays wrong for
- * more than one cycle of real use.
+ * This is the highest-quality source available to a non-Enterprise seat, and the
+ * only one that yields an ALLOWANCE — Mistral publish the number nowhere else.
+ * Amounts are USD, already converted by the caller.
+ */
+export interface MistralQuotaAnchor {
+  /** "Included monthly usage" ceiling, in USD. */
+  readonly allowanceUsd: number
+  /** Spend the console showed at `observedAt`, in USD. */
+  readonly spentUsd: number
+  /**
+   * `cycle.spentUsd` at the instant the anchor was taken.
+   *
+   * The reading already accounts for everything spent up to that moment, so
+   * only accumulation ABOVE this watermark may be added on top. Without it a
+   * fresh anchor would be double-counted against the whole cycle's local total.
+   */
+  readonly localSpentUsdAtAnchor: number
+  /** When the user took the reading. */
+  readonly observedAt: string
+  /**
+   * The reset the console showed. Mistral's cycle follows the account's own
+   * anniversary, NOT the 1st of the month (observed: a 27 Jul reading said
+   * "Resets in 4 days"), so this is the only way to get the date right.
+   */
+  readonly cycleResetsAt?: string
+  /** Exactly what the user typed, before conversion — provenance for the UI. */
+  readonly declared?: {
+    readonly allowance: number
+    readonly spent: number
+    readonly currency: string
+  }
+}
+
+/** Figures returned by the Admin API. Amounts are USD, converted by the caller. */
+export interface MistralQuotaReport {
+  /** Spend for the reported period, in USD. */
+  readonly spentUsd: number
+  /**
+   * Entitlement, when the response carries one. The documented usage endpoint
+   * reports CONSUMPTION only, so expect this to be absent and the ceiling to
+   * fall through to the anchor or the seed.
+   */
+  readonly allowanceUsd?: number
+  readonly fetchedAt: string
+  readonly periodStart?: string
+  readonly periodEnd?: string
+  /** The raw vendor figure, before conversion — provenance for the UI. */
+  readonly declared?: {
+    readonly spent: number
+    readonly currency: string
+  }
+}
+
+/**
+ * Assumed monthly included-usage allowance per plan, in USD.
  *
- * `free` has no price to anchor to. $5 is arbitrary and conservative — a
- * placeholder that exists only to give the first cycle a scale, and which
- * calibration is expected to replace immediately.
+ * These are no longer price guesses. Both figures below were read off a real
+ * admin.mistral.ai/subscription console on 2026-07-27, from the "Included
+ * monthly usage" bar that Mistral describes as usable across "Studio, Vibe Code,
+ * or API":
+ *
+ *   Free  €8.50   (subscription €0)
+ *   Pro   €25.50  (subscription €14.99)
+ *
+ * Note what that kills: the old "anchor the ceiling to the plan PRICE" doctrine
+ * had Pro at 14.99, but Pro's real allowance is **€25.50 — 1.7x its price**. The
+ * price was never a proxy for the allowance, and using it under-read Pro's
+ * ceiling by 41%. Erring low warns early rather than late, so the old value
+ * failed safe, but it was wrong.
+ *
+ * USD values carry the EUR figures at roughly 1.09 USD/EUR. The EUR numbers are
+ * the source of truth — re-derive from them, don't drift the USD.
+ *
+ * `team` is NOT observed. It is seeded at Pro's allowance as a FLOOR ("Team
+ * cannot plausibly include less than Pro"), which is safe reasoning, rather than
+ * extrapolating a specific larger number, which would be invention.
+ *
+ * All of these are per-account readings from one console, and the allowance
+ * appears nowhere in Mistral's public pricing — so they are better DEFAULTS, not
+ * facts. An {@link MistralQuotaAnchor} outranks them the moment one exists.
  */
 const PLAN_SEED_USD: Readonly<Record<MistralPlanId, number>> = {
-  free: 5,
-  pro: 14.99,
-  team: 24.99,
-  unknown: 14.99
+  free: 9.25,
+  pro: 27.8,
+  team: 27.8,
+  unknown: 9.25
 }
+
+/**
+ * `unknown` seeds at the FREE allowance rather than the Pro price.
+ *
+ * The plan is undetectable from the lane, so `unknown` is the default every user
+ * starts on — and seeding it at 14.99 meant the common case (a Free seat that
+ * never told us its plan) was metered against a ceiling 62% too high, the exact
+ * late-warning failure PLAN_SEED_USD exists to avoid. Seeding low is the whole
+ * doctrine; `unknown` must follow it too.
+ */
+export const MISTRAL_UNKNOWN_PLAN_SEEDS_AS: MistralPlanId = 'free'
 
 /** Band thresholds as a fraction of the estimated ceiling. */
 const BAND_THRESHOLDS: readonly { readonly atOrAbove: number; readonly band: MistralQuotaBand }[] =
@@ -133,6 +238,35 @@ export interface MistralQuotaCycle {
   readonly learnedCeilingUsd?: number
   /** Whether a limit event has ever been recorded (drives `confidence`). */
   readonly sawLimitEvent: boolean
+  /**
+   * The user's console reading for THIS cycle. Dropped at rollover — it
+   * described a period that has ended.
+   */
+  readonly anchor?: MistralQuotaAnchor
+  /** The most recent Admin API answer. Dropped at rollover, same reasoning. */
+  readonly report?: MistralQuotaReport
+  /**
+   * Allowance carried ACROSS cycles once a vendor source has told us one. The
+   * allowance is a property of the plan, not of the month, so re-anchoring every
+   * cycle would be busywork — a user who reads their console once keeps the
+   * right ceiling until they change plan.
+   */
+  readonly knownAllowanceUsd?: number
+  /**
+   * The real reset instant, carried across cycles and advanced monthly. Mistral
+   * bills on the account anniversary, so once we learn the true date we keep it
+   * rather than re-deriving from when we happened to start watching.
+   */
+  readonly knownResetAt?: string
+}
+
+/** Where one number in the reading came from. */
+export interface MistralQuotaFigureSource {
+  readonly confidence: MistralQuotaConfidence
+  /** The vendor's own figure and currency, when the source had one. */
+  readonly declared?: { readonly amount: number; readonly currency: string }
+  /** When the underlying reading was taken (anchor) or fetched (report). */
+  readonly asOf?: string
 }
 
 /** What the meter renders. */
@@ -143,24 +277,115 @@ export interface MistralQuotaEstimate {
   readonly usedPercent: number
   readonly spentUsd: number
   readonly estimatedCeilingUsd: number
+  /**
+   * Confidence in the SPEND figure — the number the user actually watches.
+   * Kept as `confidence` (not renamed) so existing callers keep working.
+   */
   readonly confidence: MistralQuotaConfidence
+  /**
+   * Confidence in the CEILING, resolved independently. The Admin API reports
+   * consumption but no entitlement, so `reported` spend against a `seeded`
+   * ceiling is a normal, expected combination.
+   */
+  readonly ceilingConfidence: MistralQuotaConfidence
+  /** Provenance for each half, for tooltips that must explain themselves. */
+  readonly spentSource: MistralQuotaFigureSource
+  readonly ceilingSource: MistralQuotaFigureSource
+  /**
+   * True when BOTH halves came from Mistral — the only case in which the meter
+   * may drop its hedging and render a plain percentage.
+   */
+  readonly vendorReported: boolean
   /** Short at-a-glance phrasing for the sidebar. Verbal, never falsely precise. */
   readonly label: string
   /** ISO timestamp the cycle is assumed to reset. */
   readonly cycleResetsAt: string
 }
 
-/** A fresh cycle starting at `now`. */
+/**
+ * A fresh cycle starting at `now`.
+ *
+ * The per-cycle observations (`anchor`, `report`) are deliberately NOT carried:
+ * each described a period that has ended, and re-showing last month's console
+ * reading against this month's burn would be a lie. What DOES carry is the
+ * plan-level knowledge behind them — the allowance and the real reset date.
+ */
 export function startCycle(now: Date, carryOver?: MistralQuotaCycle): MistralQuotaCycle {
   const learned = carryOver?.learnedCeilingUsd
+  const allowance = carryOver?.knownAllowanceUsd ?? carryOver?.anchor?.allowanceUsd
+  const knownReset = carryOver?.knownResetAt ?? carryOver?.anchor?.cycleResetsAt
+  const advancedReset = knownReset ? advanceResetPast(knownReset, now) : undefined
   return {
     cycleStartedAt: now.toISOString(),
     spentUsd: 0,
     totalTokens: 0,
     turns: 0,
     ...(typeof learned === 'number' ? { learnedCeilingUsd: learned } : {}),
+    ...(typeof allowance === 'number' && allowance > 0 ? { knownAllowanceUsd: allowance } : {}),
+    ...(advancedReset ? { knownResetAt: advancedReset } : {}),
     sawLimitEvent: false
   }
+}
+
+/**
+ * Attach a console reading to the cycle.
+ *
+ * `localSpentUsdAtAnchor` is stamped from the cycle's CURRENT local total, which
+ * is what makes anchor-then-accumulate correct: everything already accumulated
+ * is, by definition, part of what the console was showing, so only later turns
+ * may be added on top.
+ */
+export function applyAnchor(
+  cycle: MistralQuotaCycle,
+  reading: {
+    readonly allowanceUsd: number
+    readonly spentUsd: number
+    readonly observedAt: string
+    readonly cycleResetsAt?: string
+    readonly declared?: MistralQuotaAnchor['declared']
+  }
+): MistralQuotaCycle {
+  const allowanceUsd = positiveOrZero(reading.allowanceUsd)
+  const spentUsd = positiveOrZero(reading.spentUsd)
+  const anchor: MistralQuotaAnchor = {
+    allowanceUsd,
+    spentUsd,
+    localSpentUsdAtAnchor: cycle.spentUsd,
+    observedAt: reading.observedAt,
+    ...(reading.cycleResetsAt ? { cycleResetsAt: reading.cycleResetsAt } : {}),
+    ...(reading.declared ? { declared: reading.declared } : {})
+  }
+  return {
+    ...cycle,
+    anchor,
+    ...(allowanceUsd > 0 ? { knownAllowanceUsd: allowanceUsd } : {}),
+    ...(reading.cycleResetsAt ? { knownResetAt: reading.cycleResetsAt } : {})
+  }
+}
+
+/** Drop the console reading, falling back to local accumulation. */
+export function clearAnchor(cycle: MistralQuotaCycle): MistralQuotaCycle {
+  if (!cycle.anchor) return cycle
+  const next = { ...cycle }
+  delete (next as { anchor?: MistralQuotaAnchor }).anchor
+  return next
+}
+
+/** Attach the Admin API's answer. Replaces any previous report outright. */
+export function applyReport(
+  cycle: MistralQuotaCycle,
+  report: MistralQuotaReport
+): MistralQuotaCycle {
+  const allowanceUsd = positiveOrZero(report.allowanceUsd ?? 0)
+  return {
+    ...cycle,
+    report,
+    ...(allowanceUsd > 0 ? { knownAllowanceUsd: allowanceUsd } : {})
+  }
+}
+
+function positiveOrZero(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0
 }
 
 /**
@@ -210,7 +435,10 @@ export function recordLimitEvent(cycle: MistralQuotaCycle): MistralQuotaCycle {
 export function rolloverIfElapsed(cycle: MistralQuotaCycle, now: Date): MistralQuotaCycle {
   const started = new Date(cycle.cycleStartedAt)
   if (Number.isNaN(started.getTime())) return startCycle(now)
-  if (now.getTime() < nextResetAt(started).getTime()) return cycle
+  // Deliberately `cycleEndsAt`, NOT `resolveResetAt`: the latter advances past
+  // `now` for display, which would make this comparison permanently false and
+  // freeze the cycle forever.
+  if (now.getTime() < cycleEndsAt(cycle).getTime()) return cycle
 
   if (!cycle.sawLimitEvent && cycle.spentUsd > MIN_CREDIBLE_CEILING_USD) {
     const floor = cycle.spentUsd * UNTOUCHED_CYCLE_HEADROOM
@@ -220,12 +448,88 @@ export function rolloverIfElapsed(cycle: MistralQuotaCycle, now: Date): MistralQ
   return startCycle(now, cycle)
 }
 
-/** One month on from `from`, which is what "monthly budget tied to the billing
- *  cycle" means in the absence of a real cycle anchor from Mistral. */
-function nextResetAt(from: Date): Date {
-  const next = new Date(from.getTime())
-  next.setMonth(next.getMonth() + 1)
-  return next
+/**
+ * The instant that ENDS the current cycle — not advanced past `now`.
+ *
+ * Mistral bills on the ACCOUNT'S OWN anniversary, not the 1st of the month: a
+ * console read on 27 Jul said "Resets in 4 days", i.e. the 31st. So a known real
+ * reset (learned from an anchor) always wins.
+ *
+ * Falling back to `cycleStartedAt + 1 month` is the old behaviour and is
+ * knowingly approximate — it anchors to the moment TaskWraith first saw the
+ * seat, which has nothing to do with the billing anniversary and can be most of
+ * a month out. That is precisely why the anchor carries `cycleResetsAt`.
+ */
+function cycleEndsAt(cycle: MistralQuotaCycle): Date {
+  const known = cycle.knownResetAt ?? cycle.anchor?.cycleResetsAt
+  if (known) {
+    const parsed = new Date(known)
+    if (!Number.isNaN(parsed.getTime())) return parsed
+  }
+  const started = new Date(cycle.cycleStartedAt)
+  return addMonthsUtc(Number.isNaN(started.getTime()) ? new Date() : started, 1)
+}
+
+/** The next reset the UI should show: the cycle end, rolled forward past `now`
+ *  so a cycle that has not been rolled over yet still displays a future date. */
+function resolveResetAt(cycle: MistralQuotaCycle, now: Date): Date {
+  const known = cycle.knownResetAt ?? cycle.anchor?.cycleResetsAt
+  if (known) {
+    const parsed = new Date(known)
+    if (!Number.isNaN(parsed.getTime())) return new Date(advanceResetPast(known, now))
+  }
+  const started = new Date(cycle.cycleStartedAt)
+  return addMonthsUtc(Number.isNaN(started.getTime()) ? now : started, 1)
+}
+
+/**
+ * Roll a known reset instant forward by whole months until it is in the future.
+ *
+ * Each candidate is computed from the ORIGINAL anchor date rather than by
+ * repeatedly stepping the previous result. That matters for a month-end
+ * anniversary: stepping 31 Jul → 31 Aug → (no 31 Sep) → 30 Sep would then give
+ * 30 Oct, permanently losing the 31st. Recomputing from the anchor keeps
+ * 31 Jul → 30 Sep → 31 Oct.
+ *
+ * Bounded rather than a bare `while`: a corrupt far-past date must not spin the
+ * main process. 480 months is 40 years, far beyond any real drift.
+ */
+function advanceResetPast(iso: string, now: Date): string {
+  const anchor = new Date(iso)
+  if (Number.isNaN(anchor.getTime())) return addMonthsUtc(now, 1).toISOString()
+  if (anchor.getTime() > now.getTime()) return anchor.toISOString()
+  for (let months = 1; months <= 480; months += 1) {
+    const candidate = addMonthsUtc(anchor, months)
+    if (candidate.getTime() > now.getTime()) return candidate.toISOString()
+  }
+  return addMonthsUtc(now, 1).toISOString()
+}
+
+/**
+ * Add whole months in UTC, clamping to the target month's last day.
+ *
+ * `Date.prototype.setMonth` is LOCAL-time and overflows rather than clamping —
+ * on a BST machine it turned a 31 Jul UTC reset into 1 Nov 01:00 UTC, drifting
+ * both the day and the hour. Everything here is a stored UTC instant, so the
+ * arithmetic has to be UTC too.
+ */
+function addMonthsUtc(from: Date, months: number): Date {
+  const year = from.getUTCFullYear()
+  const month = from.getUTCMonth()
+  const day = from.getUTCDate()
+  // Day 0 of the following month is the last day of the target month.
+  const lastDayOfTarget = new Date(Date.UTC(year, month + months + 1, 0)).getUTCDate()
+  return new Date(
+    Date.UTC(
+      year,
+      month + months,
+      Math.min(day, lastDayOfTarget),
+      from.getUTCHours(),
+      from.getUTCMinutes(),
+      from.getUTCSeconds(),
+      from.getUTCMilliseconds()
+    )
+  )
 }
 
 function bandFor(fraction: number): MistralQuotaBand {
@@ -235,11 +539,20 @@ function bandFor(fraction: number): MistralQuotaBand {
   return 'quiet'
 }
 
-function labelFor(band: MistralQuotaBand, confidence: MistralQuotaConfidence): string {
-  const hedge = confidence === 'learned' ? '' : ' (estimated)'
+/**
+ * Phrasing. Hedged unless BOTH halves came from Mistral — a real spend against a
+ * guessed ceiling is still a guessed percentage, so it must still read as one.
+ */
+function labelFor(
+  band: MistralQuotaBand,
+  spent: MistralQuotaConfidence,
+  ceiling: MistralQuotaConfidence
+): string {
+  const measured = isVendorReportedConfidence(spent) && isVendorReportedConfidence(ceiling)
+  const hedge = measured || (spent === 'learned' && ceiling === 'learned') ? '' : ' (estimated)'
   switch (band) {
     case 'exceeded':
-      return `Past the usual monthly limit${hedge}`
+      return measured ? 'Past the monthly limit' : `Past the usual monthly limit${hedge}`
     case 'near-limit':
       return `Close to the monthly limit${hedge}`
     case 'heavy':
@@ -252,36 +565,132 @@ function labelFor(band: MistralQuotaBand, confidence: MistralQuotaConfidence): s
 }
 
 /**
+ * Resolve the SPEND half.
+ *
+ * Precedence is report > anchor > local accumulation. The anchor case is the
+ * interesting one: the console reading is the floor, and only local spend
+ * accumulated ABOVE the watermark stamped at anchor time is added on top — so
+ * the bar keeps moving between console visits without re-counting turns the
+ * reading already included.
+ */
+function resolveSpend(cycle: MistralQuotaCycle): {
+  spentUsd: number
+  source: MistralQuotaFigureSource
+} {
+  const report = cycle.report
+  if (report && Number.isFinite(report.spentUsd)) {
+    return {
+      spentUsd: Math.max(0, report.spentUsd),
+      source: {
+        confidence: 'reported',
+        ...(report.declared
+          ? { declared: { amount: report.declared.spent, currency: report.declared.currency } }
+          : {}),
+        asOf: report.fetchedAt
+      }
+    }
+  }
+  const anchor = cycle.anchor
+  if (anchor && Number.isFinite(anchor.spentUsd)) {
+    const sinceAnchor = Math.max(0, cycle.spentUsd - anchor.localSpentUsdAtAnchor)
+    return {
+      spentUsd: Math.max(0, anchor.spentUsd + sinceAnchor),
+      source: {
+        confidence: 'anchored',
+        ...(anchor.declared
+          ? { declared: { amount: anchor.declared.spent, currency: anchor.declared.currency } }
+          : {}),
+        asOf: anchor.observedAt
+      }
+    }
+  }
+  return {
+    spentUsd: Math.max(0, cycle.spentUsd),
+    source: { confidence: cycle.turns > 0 ? 'calibrating' : 'seeded' }
+  }
+}
+
+/** Resolve the CEILING half: report > anchor > carried allowance > learned > seed. */
+function resolveCeiling(
+  cycle: MistralQuotaCycle,
+  seeded: number
+): { ceilingUsd: number; source: MistralQuotaFigureSource } {
+  const reported = cycle.report?.allowanceUsd
+  if (typeof reported === 'number' && reported > 0) {
+    return {
+      ceilingUsd: reported,
+      source: { confidence: 'reported', asOf: cycle.report?.fetchedAt }
+    }
+  }
+  const anchored = cycle.anchor?.allowanceUsd
+  if (typeof anchored === 'number' && anchored > 0) {
+    return {
+      ceilingUsd: anchored,
+      source: {
+        confidence: 'anchored',
+        ...(cycle.anchor?.declared
+          ? {
+              declared: {
+                amount: cycle.anchor.declared.allowance,
+                currency: cycle.anchor.declared.currency
+              }
+            }
+          : {}),
+        asOf: cycle.anchor?.observedAt
+      }
+    }
+  }
+  // Carried from a previous cycle's vendor source — still a vendor figure, just
+  // not re-read this month.
+  if (typeof cycle.knownAllowanceUsd === 'number' && cycle.knownAllowanceUsd > 0) {
+    return { ceilingUsd: cycle.knownAllowanceUsd, source: { confidence: 'anchored' } }
+  }
+  if (typeof cycle.learnedCeilingUsd === 'number' && cycle.learnedCeilingUsd > 0) {
+    return { ceilingUsd: cycle.learnedCeilingUsd, source: { confidence: 'learned' } }
+  }
+  return { ceilingUsd: seeded, source: { confidence: 'seeded' } }
+}
+
+/**
  * Produce the meter reading. `plan` only matters while the ceiling is still
- * seeded; once learned, observation outranks the price anchor entirely.
+ * seeded; any vendor source outranks the plan default entirely.
  */
 export function estimateQuota(
   cycle: MistralQuotaCycle,
   plan: MistralPlanId,
   now: Date
 ): MistralQuotaEstimate {
-  const seeded = PLAN_SEED_USD[plan] ?? PLAN_SEED_USD.unknown
-  const ceiling = cycle.learnedCeilingUsd ?? seeded
-  const safeCeiling = ceiling > 0 ? ceiling : seeded
+  const effectivePlan = plan === 'unknown' ? MISTRAL_UNKNOWN_PLAN_SEEDS_AS : plan
+  const seeded = PLAN_SEED_USD[effectivePlan] ?? PLAN_SEED_USD.unknown
 
-  const confidence: MistralQuotaConfidence = cycle.sawLimitEvent
-    ? 'learned'
-    : typeof cycle.learnedCeilingUsd === 'number' || cycle.turns > 0
-      ? 'calibrating'
-      : 'seeded'
+  const { spentUsd, source: spentSource } = resolveSpend(cycle)
+  const { ceilingUsd, source: ceilingSource } = resolveCeiling(cycle, seeded)
+  const safeCeiling = ceilingUsd > 0 ? ceilingUsd : seeded
 
-  const fraction = cycle.spentUsd / safeCeiling
+  // A recorded wall outranks a merely-accumulating spend reading, but never a
+  // vendor figure: the vendor knows what it charged better than we know when it
+  // stopped us.
+  const spentConfidence: MistralQuotaConfidence =
+    !isVendorReportedConfidence(spentSource.confidence) && cycle.sawLimitEvent
+      ? 'learned'
+      : spentSource.confidence
+
+  const fraction = spentUsd / safeCeiling
   const band = bandFor(fraction)
-  const started = new Date(cycle.cycleStartedAt)
-  const resetsAt = Number.isNaN(started.getTime()) ? nextResetAt(now) : nextResetAt(started)
 
   return {
     band,
     usedPercent: Math.max(0, Math.min(100, Math.round(fraction * 100))),
-    spentUsd: cycle.spentUsd,
+    spentUsd,
     estimatedCeilingUsd: safeCeiling,
-    confidence,
-    label: labelFor(band, confidence),
-    cycleResetsAt: resetsAt.toISOString()
+    confidence: spentConfidence,
+    ceilingConfidence: ceilingSource.confidence,
+    spentSource: { ...spentSource, confidence: spentConfidence },
+    ceilingSource,
+    vendorReported:
+      isVendorReportedConfidence(spentConfidence) &&
+      isVendorReportedConfidence(ceilingSource.confidence),
+    label: labelFor(band, spentConfidence, ceilingSource.confidence),
+    cycleResetsAt: resolveResetAt(cycle, now).toISOString()
   }
 }

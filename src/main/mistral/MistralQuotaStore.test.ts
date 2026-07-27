@@ -154,7 +154,7 @@ describe('MistralQuotaStore — debounced flush', () => {
     const second = makeStore()
     const snapshot = await second.currentEstimate()
     expect(snapshot?.plan).toBe('team')
-    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(24.99, 6)
+    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
   })
 })
 
@@ -244,7 +244,7 @@ describe('MistralQuotaStore — corrupt-file tolerance', () => {
     )
     const snapshot = await makeStore().currentEstimate()
     expect(snapshot?.plan).toBe('unknown')
-    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(14.99, 6)
+    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(9.25, 6)
   })
 
   it('drops a zero/negative stored ceiling rather than banding everything exceeded', async () => {
@@ -252,11 +252,11 @@ describe('MistralQuotaStore — corrupt-file tolerance', () => {
       JSON.stringify({
         version: MISTRAL_QUOTA_SCHEMA_VERSION,
         plan: 'pro',
-        cycle: { ...startCycle(T0), spentUsd: 3, learnedCeilingUsd: 0 }
+        cycle: { ...startCycle(T0), spentUsd: 7, learnedCeilingUsd: 0 }
       })
     )
     const snapshot = await makeStore().currentEstimate()
-    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(14.99, 6)
+    expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
     expect(snapshot?.estimate.band).toBe('moderate')
   })
 

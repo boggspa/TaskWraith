@@ -45,8 +45,10 @@ import {
   rolloverIfElapsed,
   startCycle,
   type MistralPlanId,
+  type MistralQuotaAnchor,
   type MistralQuotaCycle,
-  type MistralQuotaEstimate
+  type MistralQuotaEstimate,
+  type MistralQuotaReport
 } from './MistralQuotaEstimate'
 
 export const MISTRAL_QUOTA_SCHEMA_VERSION = 1
@@ -122,6 +124,7 @@ function decodeCycle(value: unknown): MistralQuotaCycle | null {
     return null
   }
   const learned = record.learnedCeilingUsd
+  const allowance = record.knownAllowanceUsd
   return {
     cycleStartedAt,
     spentUsd: record.spentUsd,
@@ -129,7 +132,87 @@ function decodeCycle(value: unknown): MistralQuotaCycle | null {
     turns: record.turns,
     // A zero/negative stored ceiling is dropped here; estimateQuota also guards.
     ...(finiteAtLeastZero(learned) && learned > 0 ? { learnedCeilingUsd: learned } : {}),
+    // Vendor knowledge that outlives the cycle. Decoded permissively: a missing
+    // or malformed value just falls back to the seed, which is the pre-anchor
+    // behaviour, so a partial record degrades rather than being discarded.
+    ...(finiteAtLeastZero(allowance) && allowance > 0 ? { knownAllowanceUsd: allowance } : {}),
+    ...(isIsoTimestamp(record.knownResetAt) ? { knownResetAt: record.knownResetAt } : {}),
+    ...(decodeAnchor(record.anchor) ? { anchor: decodeAnchor(record.anchor)! } : {}),
+    ...(decodeReport(record.report) ? { report: decodeReport(record.report)! } : {}),
     sawLimitEvent: record.sawLimitEvent
+  }
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && !Number.isNaN(new Date(value).getTime())
+}
+
+function decodeDeclared(value: unknown, amountKeys: string[]): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (typeof record.currency !== 'string' || !record.currency.trim()) return null
+  for (const key of amountKeys) {
+    if (!finiteAtLeastZero(record[key])) return null
+  }
+  return record
+}
+
+/**
+ * A console reading is only usable if BOTH money figures and the watermark
+ * survived. A half-decoded anchor would either lose the watermark (and so
+ * double-count local spend on top of the reading) or lose the allowance (and so
+ * band a real spend against a seed) — both worse than having no anchor at all.
+ */
+function decodeAnchor(value: unknown): MistralQuotaAnchor | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (
+    !finiteAtLeastZero(record.allowanceUsd) ||
+    !finiteAtLeastZero(record.spentUsd) ||
+    !finiteAtLeastZero(record.localSpentUsdAtAnchor) ||
+    !isIsoTimestamp(record.observedAt)
+  ) {
+    return null
+  }
+  const declared = decodeDeclared(record.declared, ['allowance', 'spent'])
+  return {
+    allowanceUsd: record.allowanceUsd,
+    spentUsd: record.spentUsd,
+    localSpentUsdAtAnchor: record.localSpentUsdAtAnchor,
+    observedAt: record.observedAt,
+    ...(isIsoTimestamp(record.cycleResetsAt) ? { cycleResetsAt: record.cycleResetsAt } : {}),
+    ...(declared
+      ? {
+          declared: {
+            allowance: declared.allowance as number,
+            spent: declared.spent as number,
+            currency: (declared.currency as string).trim()
+          }
+        }
+      : {})
+  }
+}
+
+function decodeReport(value: unknown): MistralQuotaReport | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (!finiteAtLeastZero(record.spentUsd) || !isIsoTimestamp(record.fetchedAt)) return null
+  const declared = decodeDeclared(record.declared, ['spent'])
+  const allowance = record.allowanceUsd
+  return {
+    spentUsd: record.spentUsd,
+    fetchedAt: record.fetchedAt,
+    ...(finiteAtLeastZero(allowance) && allowance > 0 ? { allowanceUsd: allowance } : {}),
+    ...(typeof record.periodStart === 'string' ? { periodStart: record.periodStart } : {}),
+    ...(typeof record.periodEnd === 'string' ? { periodEnd: record.periodEnd } : {}),
+    ...(declared
+      ? {
+          declared: {
+            spent: declared.spent as number,
+            currency: (declared.currency as string).trim()
+          }
+        }
+      : {})
   }
 }
 
