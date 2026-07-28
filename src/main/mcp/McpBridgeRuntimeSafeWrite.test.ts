@@ -28,6 +28,8 @@ import {
   writeMcpPayload
 } from './McpBridgeRuntime'
 
+const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
+
 function privateBridgeTestDirectory(prefix: string): string {
   const path = fs.mkdtempSync(join(tmpdir(), prefix))
   fs.chmodSync(path, 0o700)
@@ -129,7 +131,7 @@ describe('MCP bridge stream writes', () => {
     const runtimeModuleUrl = pathToFileURL(bundledRuntimePath).href
     const sentinels = {
       token: '__PERSISTED_TOKEN_SENTINEL__',
-      socket: '/tmp/__PERSISTED_SOCKET_SENTINEL__.sock',
+      socket: join(home, '__PERSISTED_SOCKET_SENTINEL__.sock'),
       cwd: '/tmp/__PERSISTED_CWD_SENTINEL__',
       workspace: '/tmp/__PERSISTED_WORKSPACE_SENTINEL__',
       app: '/Applications/__PERSISTED_APP_SENTINEL__.app/Contents/app.asar',
@@ -158,6 +160,7 @@ describe('MCP bridge stream writes', () => {
           '--taskwraith-gemini-mcp-bridge',
           '--socket', ${JSON.stringify(sentinels.socket)},
           '--token', ${JSON.stringify(sentinels.token)},
+          '--instance-epoch', ${JSON.stringify(TEST_INSTANCE_EPOCH)},
           '--bridge-log-epoch', '0'
         ],
         env: {
@@ -213,7 +216,7 @@ describe('MCP bridge stream writes', () => {
       const code = await new Promise<number | null>((resolve) => child.once('exit', resolve))
       expect(code, stderr).toBe(0)
 
-      const logPath = join(canonicalBridgeLogDirectory(home), 'bridge-subprocess.log')
+      const logPath = join(home, 'bridge-logs', 'bridge-subprocess.log')
       const persisted = fs.readFileSync(logPath, 'utf8')
       expect(persisted).toContain('--token')
       expect(persisted).toContain('<redacted>')
@@ -809,11 +812,13 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool
     } as never)
 
     await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'read_file',
       arguments: { path: 'README.md' },
       parentProvider: 'grok',
@@ -880,6 +885,7 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool,
       resolveBrokerParentProviderFromRunId: () => 'grok'
     } as never)
@@ -905,6 +911,7 @@ describe('MCP bridge stream writes', () => {
 
     const rejectedSharedToken = await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'ensemble_yield',
       arguments: { target: 'Reviewer' },
       parentProvider: 'pi',
@@ -921,12 +928,14 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool,
       resolveBrokerParentProviderFromRunId: () => 'grok'
     } as never)
 
     await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'read_file',
       arguments: { path: 'README.md' },
       parentProvider: 'cursor',
@@ -954,6 +963,7 @@ describe('MCP bridge stream writes', () => {
     const runtime = new McpBridgeRuntime({
       getGeminiMcpSocketPath: () => socketPath,
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool: vi.fn(async () => {
         throw new Error(rejectionSentinel)
       })
@@ -964,6 +974,7 @@ describe('MCP bridge stream writes', () => {
       const executorResponse = await brokerRequest(socketPath, {
         id: 72,
         token: 'token-1',
+        instanceEpoch: TEST_INSTANCE_EPOCH,
         tool: 'read_file',
         arguments: { path: 'README.md' },
         parentProvider: 'kimi'
@@ -993,11 +1004,13 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool
     } as never)
 
     await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'mcp__TaskWraith__AskUserQuestion',
       arguments: { question: 'Continue?' },
       parentProvider: 'claude',
@@ -1018,12 +1031,14 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool
     } as never)
     const args = { name: 'video_encode_clip', arguments: { path: 'clip.mp4' } }
 
     await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'capability_invoke',
       arguments: args,
       parentProvider: 'codex',
@@ -1553,11 +1568,13 @@ describe('MCP bridge stream writes', () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'recorded' }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
       executeGeminiMcpTool
     } as never)
 
     await runtime.handleGeminiMcpBrokerRequest({
       token: 'token-1',
+      instanceEpoch: TEST_INSTANCE_EPOCH,
       tool: 'audit_record_finding',
       arguments: { claim: 'Finding' },
       parentProvider: 'grok',
@@ -1633,16 +1650,28 @@ describe('MCP bridge stream writes', () => {
   })
 
   it('translates the gateway argv receipt into the child catalogue guard', () => {
+    const explicitFullProfile = {
+      TASKWRAITH_MCP_SAFE_SUBSET: '0',
+      TASKWRAITH_MCP_PLAN_SUBSET: '0',
+      TASKWRAITH_MCP_CORE_SUBSET: '0',
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
+      TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
+      TASKWRAITH_MCP_MESH_DIRECT: '0',
+      TASKWRAITH_MCP_AUDIT: '0'
+    }
     const gatewayEnv: Record<string, string | undefined> = {}
     applyMcpBridgeProfileArgvToEnv(
       ['taskwraith', GEMINI_MCP_GATEWAY_SUBSET_ARG],
       gatewayEnv
     )
-    expect(gatewayEnv).toEqual({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(gatewayEnv).toEqual({
+      ...explicitFullProfile,
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1'
+    })
 
     const fullEnv: Record<string, string | undefined> = {}
     applyMcpBridgeProfileArgvToEnv(['taskwraith'], fullEnv)
-    expect(fullEnv).toEqual({})
+    expect(fullEnv).toEqual(explicitFullProfile)
   })
 
   it('rejects retired Kimi global MCP registration without invoking the provider CLI', async () => {

@@ -17,6 +17,8 @@ class FakeReadable extends EventEmitter {
 
 class FakeChild extends EventEmitter {
   pid = 4321
+  exitCode: number | null = null
+  signalCode: NodeJS.Signals | null = null
   stdout = new FakeReadable()
   stderr = new FakeReadable()
 }
@@ -48,7 +50,13 @@ function target(workspacePath: string, overrides: Partial<LaunchTarget> = {}): L
   }
 }
 
-function managerFixture(storagePath: string, workspacePath: string) {
+function managerFixture(
+  storagePath: string,
+  workspacePath: string,
+  options: {
+    resolveProcessStartedAt?: (pid: number) => Promise<string | null>
+  } = {}
+) {
   const child = new FakeChild()
   const approvals: unknown[] = []
   const tracked: unknown[] = []
@@ -69,6 +77,7 @@ function managerFixture(storagePath: string, workspacePath: string) {
     spawnProcess,
     requestApproval,
     createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
+    resolveProcessStartedAt: options.resolveProcessStartedAt,
     trackSpawn: (spawn) => tracked.push(spawn),
     untrackSpawn: (pid) => untracked.push(pid),
     killProcess,
@@ -90,38 +99,476 @@ function managerFixture(storagePath: string, workspacePath: string) {
 
 describe('LaunchManager — self-launch refusal', () => {
   /**
-   * TaskWraith is uniquely self-hostile as a launch target: a packaged build
-   * ignores the multi-instance lane (it is gated behind `!app.isPackaged`), so a
-   * child copy hits the single-instance lock and quits in milliseconds. That is
-   * indistinguishable from a crash to whatever started it, so a QA agent retries
-   * forever. These pin the refusal AND the false-positive boundary — a guard that
-   * blocks unrelated projects is worse than the loop it prevents.
+   * A primary-profile child would hit TaskWraith's single-instance lock and
+   * quit in milliseconds, which looks like a transient crash to a QA agent.
+   * Only the exact executable receives a fresh isolated-profile selector after
+   * approval; wrappers remain refused, and unrelated projects stay unblocked.
    */
   const OWN_ROOT = '/Applications/TaskWraith.app/Contents/Resources/app.asar'
   const OWN_EXE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
 
-  function selfAwareFixture(storagePath: string, workspacePath: string) {
+  interface SelfAwareFixtureOptions {
+    createIsolatedInstanceId?: () => string
+    appRootPath?: string
+    appExecutablePath?: string
+    platform?: NodeJS.Platform
+    createEnv?: (extra: Record<string, string>) => Record<string, string>
+  }
+
+  function selfAwareFixture(
+    storagePath: string,
+    workspacePath: string,
+    options: SelfAwareFixtureOptions = {}
+  ) {
     const base = managerFixture(storagePath, workspacePath)
     return {
       ...base,
       manager: new LaunchManager({
         store: new LaunchAttemptStore(storagePath),
-        platform: 'darwin',
+        platform: options.platform || 'darwin',
         now: () => new Date('2026-06-21T12:00:00.000Z'),
         spawnProcess: base.spawnProcess,
         requestApproval: base.requestApproval,
-        createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
-        appRootPath: () => OWN_ROOT,
-        appExecutablePath: () => OWN_EXE,
+        createEnv: options.createEnv || ((extra) => ({ PATH: '/usr/bin', ...extra })),
+        appRootPath: () => options.appRootPath || OWN_ROOT,
+        appExecutablePath: () => options.appExecutablePath || OWN_EXE,
+        isPackagedApp: () => true,
+        createIsolatedInstanceId: options.createIsolatedInstanceId,
         killProcess: base.killProcess
       })
     }
   }
 
-  it('refuses to spawn a second copy of itself, and never reaches spawn or approval', async () => {
+  it('launches an exact own executable only after approval, with a fresh isolated profile', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-'))
     const storagePath = await tempFile()
+    const isolatedInstanceId = 'a'.repeat(32)
+    const mintIsolatedInstanceId = vi.fn(() => isolatedInstanceId)
+    const fixture = selfAwareFixture(storagePath, workspacePath, {
+      createIsolatedInstanceId: mintIsolatedInstanceId
+    })
+    const callerSuppliedId = 'caller-supplied-id'
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        label: 'TaskWraith',
+        command: {
+          raw: `${OWN_EXE} --qa --taskwraith-isolated-instance=${callerSuppliedId}`,
+          argv: [
+            OWN_EXE,
+            '--qa',
+            `--taskwraith-isolated-instance=${callerSuppliedId}`,
+            '--taskwraith-isolated-instance',
+            'second-caller-supplied-id',
+            '--taskwraith-package-smoke',
+            '--taskwraith-package-smoke-user-data=/tmp/taskwraith-tui-package-smoke-caller',
+            '--taskwraith-package-smoke-user-data',
+            '/tmp/taskwraith-tui-package-smoke-second-caller',
+            '--taskwraith-gemini-mcp-bridge',
+            '--taskwraith-mcp-route-from-env'
+          ],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    expect(mintIsolatedInstanceId).toHaveBeenCalledTimes(1)
+    expect(fixture.requestApproval).toHaveBeenCalledWith(
+      null,
+      'codex',
+      'shellCommands',
+      workspacePath,
+      expect.objectContaining({
+        forcePrompt: true,
+        body: expect.stringMatching(
+          /new isolated TaskWraith profile with no existing chats or pairings/i
+        ),
+        preview: expect.objectContaining({
+          isolatedProfile: {
+            created: true,
+            disclosure: 'New isolated profile; no existing chats or pairings.'
+          }
+        })
+      })
+    )
+    expect(fixture.spawnProcess).toHaveBeenCalledWith(
+      OWN_EXE,
+      ['--qa', `--taskwraith-isolated-instance=${isolatedInstanceId}`],
+      expect.objectContaining({ shell: false })
+    )
+    const persisted = new LaunchAttemptStore(storagePath).list()[0]
+    expect(persisted).toMatchObject({
+      isolatedInstanceId,
+      commandRaw: `${OWN_EXE} --qa`,
+      argv: [OWN_EXE, '--qa'],
+      targetSnapshot: expect.objectContaining({
+        command: expect.objectContaining({ argv: [OWN_EXE, '--qa'] })
+      })
+    })
+    expect(JSON.stringify(persisted)).not.toContain(callerSuppliedId)
+    expect(JSON.stringify(persisted)).not.toContain('second-caller-supplied-id')
+    expect(JSON.stringify(persisted)).not.toContain('taskwraith-tui-package-smoke')
+    expect(JSON.stringify(persisted)).not.toContain('taskwraith-gemini-mcp-bridge')
+    expect(JSON.stringify(persisted)).not.toContain('taskwraith-mcp-route-from-env')
+  })
+
+  it('recognizes canonical, relative, and symlink aliases of the packaged executable', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-alias-'))
+    const packageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-package-'))
+    const ownExecutable = path.join(
+      packageRoot,
+      'TaskWraith.app',
+      'Contents',
+      'MacOS',
+      'TaskWraith'
+    )
+    const ownRoot = path.join(packageRoot, 'TaskWraith.app', 'Contents', 'Resources', 'app.asar')
+    await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
+    await fs.writeFile(ownExecutable, '#!/bin/sh\n')
+    const symlinkAlias = path.join(workspacePath, 'TaskWraith-symlink')
+    await fs.symlink(ownExecutable, symlinkAlias)
+    const canonicalExecutable = await fs.realpath(ownExecutable)
+    const aliases = [
+      { label: 'canonical', argv0: ownExecutable },
+      { label: 'relative', argv0: path.relative(workspacePath, ownExecutable) },
+      { label: 'symlink', argv0: symlinkAlias }
+    ]
+
+    for (const [index, alias] of aliases.entries()) {
+      const storagePath = await tempFile()
+      const isolatedInstanceId = String(index + 1).repeat(32)
+      const mint = vi.fn(() => isolatedInstanceId)
+      const fixture = selfAwareFixture(storagePath, workspacePath, {
+        appRootPath: ownRoot,
+        appExecutablePath: ownExecutable,
+        createIsolatedInstanceId: mint
+      })
+
+      const result = await fixture.manager.startTarget({
+        sender: null,
+        provider: 'codex',
+        target: target(workspacePath, {
+          label: 'TaskWraith ' + alias.label,
+          command: {
+            raw: alias.argv0 + ' --qa',
+            argv: [alias.argv0, '--qa'],
+            cwd: workspacePath,
+            longRunning: true
+          }
+        })
+      })
+
+      expect(result.ok).toBe(true)
+      expect(mint).toHaveBeenCalledTimes(1)
+      expect(fixture.spawnProcess).toHaveBeenCalledWith(
+        canonicalExecutable,
+        ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+        expect.objectContaining({ shell: false })
+      )
+    }
+  })
+
+  it('uses the filesystem case identity instead of unconditional case folding', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-case-'))
+    const packageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-case-package-'))
+    const ownExecutable = path.join(
+      packageRoot,
+      'TaskWraith.app',
+      'Contents',
+      'MacOS',
+      'TaskWraith'
+    )
+    await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
+    await fs.writeFile(ownExecutable, '#!/bin/sh\n')
+    const caseAlias = path.join(path.dirname(ownExecutable), 'taskwraith')
+    let aliasesTheSameFile = false
+    try {
+      aliasesTheSameFile = (await fs.realpath(caseAlias)) === (await fs.realpath(ownExecutable))
+    } catch {
+      // A case-sensitive volume must not accidentally classify a nonexistent
+      // case variant as this app merely because the product is usually on macOS.
+    }
+    const isolatedInstanceId = 'c'.repeat(32)
+    const mint = vi.fn(() => isolatedInstanceId)
+    const fixture = selfAwareFixture(await tempFile(), workspacePath, {
+      appExecutablePath: ownExecutable,
+      createIsolatedInstanceId: mint
+    })
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: caseAlias + ' --qa',
+          argv: [caseAlias, '--qa'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    if (aliasesTheSameFile) {
+      expect(mint).toHaveBeenCalledTimes(1)
+      expect(fixture.spawnProcess).toHaveBeenCalledWith(
+        await fs.realpath(ownExecutable),
+        ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+        expect.anything()
+      )
+    } else {
+      expect(mint).not.toHaveBeenCalled()
+      expect(fixture.spawnProcess).toHaveBeenCalledWith(caseAlias, ['--qa'], expect.anything())
+    }
+  })
+
+  it('uses case-insensitive executable identity on Windows', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-win32-'))
+    const ownExecutable = 'C:\\Program Files\\TaskWraith\\TaskWraith.exe'
+    const lowerCaseAlias = 'c:\\program files\\taskwraith\\taskwraith.exe'
+    const isolatedInstanceId = 'f'.repeat(32)
+    const fixture = selfAwareFixture(await tempFile(), workspacePath, {
+      appRootPath: 'C:\\Program Files\\TaskWraith\\resources\\app.asar',
+      appExecutablePath: ownExecutable,
+      platform: 'win32',
+      createIsolatedInstanceId: () => isolatedInstanceId
+    })
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: lowerCaseAlias + ' --qa',
+          argv: [lowerCaseAlias, '--qa'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fixture.spawnProcess).toHaveBeenCalledWith(
+      lowerCaseAlias,
+      ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+      expect.objectContaining({ shell: false, detached: false })
+    )
+  })
+
+  it('does not infer self-launch from raw literals or path-prefix lookalikes', async () => {
+    const workspacePath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'taskwraith-launch-self-literal-')
+    )
+    const cases = [
+      {
+        label: 'argv literal',
+        source: 'package-script' as const,
+        command: {
+          raw: 'echo ' + OWN_EXE,
+          argv: ['echo', OWN_EXE],
+          cwd: workspacePath,
+          longRunning: false
+        },
+        expectedSpawn: ['echo', [OWN_EXE]] as const
+      },
+      {
+        label: 'shell literal',
+        source: 'vscode-task' as const,
+        command: {
+          raw: 'echo ' + OWN_EXE,
+          cwd: workspacePath,
+          longRunning: false,
+          shell: true
+        },
+        expectedSpawn: ['echo ' + OWN_EXE, []] as const
+      },
+      {
+        label: 'prefix lookalike',
+        source: 'package-script' as const,
+        command: {
+          raw: OWN_EXE + '-helper --qa',
+          argv: [OWN_EXE + '-helper', '--qa'],
+          cwd: workspacePath,
+          longRunning: true
+        },
+        expectedSpawn: [OWN_EXE + '-helper', ['--qa']] as const
+      }
+    ]
+
+    for (const item of cases) {
+      const mint = vi.fn(() => 'd'.repeat(32))
+      const fixture = selfAwareFixture(await tempFile(), workspacePath, {
+        createIsolatedInstanceId: mint
+      })
+      const result = await fixture.manager.startTarget({
+        sender: null,
+        provider: 'codex',
+        target: target(workspacePath, {
+          label: item.label,
+          source: item.source,
+          command: item.command
+        })
+      })
+
+      expect(result.ok).toBe(true)
+      expect(mint).not.toHaveBeenCalled()
+      expect(fixture.spawnProcess).toHaveBeenCalledWith(
+        item.expectedSpawn[0],
+        item.expectedSpawn[1],
+        expect.anything()
+      )
+      const approval = fixture.approvals[0] as { preview: Record<string, unknown> }
+      expect(approval.preview.isolatedProfile).toBeUndefined()
+    }
+  })
+
+  it('hard-refuses a literal shell wrapper around this app instead of losing isolation', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-shell-self-'))
+    const fixture = selfAwareFixture(await tempFile(), workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        source: 'vscode-task',
+        command: {
+          raw: "sh -c '" + OWN_EXE + " --qa'",
+          cwd: workspacePath,
+          longRunning: true,
+          shell: true
+        }
+      })
+    })
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/hard-refused/i) })
+    expect(fixture.requestApproval).not.toHaveBeenCalled()
+    expect(fixture.spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('strips target and inherited private helper or route environment before a self-launch', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-env-'))
+    const storagePath = await tempFile()
+    const isolatedInstanceId = 'e'.repeat(32)
+    const fixture = selfAwareFixture(storagePath, workspacePath, {
+      createIsolatedInstanceId: () => isolatedInstanceId,
+      createEnv: (extra) => ({
+        PATH: '/usr/bin',
+        TASKWRAITH_GEMINI_MCP_BRIDGE: 'inherited-helper',
+        TASKWRAITH_MCP_SOCKET_PATH: '/tmp/inherited.sock',
+        TASKWRAITH_MCP_BROKER_TOKEN: 'inherited-token',
+        taskwraith_mcp_instance_epoch: 'inherited-epoch',
+        TASKWRAITH_CUSTOM_INHERITED_SETTING: 'inherited-keep',
+        ...extra
+      })
+    })
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        label: 'TaskWraith',
+        command: {
+          raw: OWN_EXE + ' --qa',
+          argv: [OWN_EXE, '--qa'],
+          cwd: workspacePath,
+          longRunning: true,
+          env: {
+            TASKWRAITH_GEMINI_MCP_BRIDGE: 'target-helper',
+            TASKWRAITH_MCP_SOCKET_PATH: '/tmp/target.sock',
+            TASKWRAITH_MCP_BROKER_TOKEN: 'target-token',
+            TASKWRAITH_MCP_INSTANCE_EPOCH: 'target-epoch',
+            TASKWRAITH_MCP_BRIDGE_LOG_EPOCH: '19',
+            TASKWRAITH_MCP_ISOLATED_INSTANCE_ID: 'target-isolated-profile',
+            TASKWRAITH_PARENT_PROVIDER: 'cursor',
+            TASKWRAITH_RUN_ID: 'target-run',
+            TASKWRAITH_CHAT_ID: 'target-chat',
+            TASKWRAITH_WORKSPACE_PATH: '/private/target-route-workspace',
+            TASKWRAITH_MCP_SAFE_SUBSET: '1',
+            TASKWRAITH_INSTANCE_ID: 'ambient-dev-profile',
+            TASKWRAITH_RUNTIME_PROFILE_ID: 'target-runtime-profile',
+            TASKWRAITH_CUSTOM_TARGET_SETTING: 'target-keep',
+            VITE_PORT: '5173'
+          }
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    const approval = fixture.approvals[0] as {
+      preview: { envDeltas?: Record<string, string> }
+    }
+    expect(approval.preview.envDeltas).toEqual({
+      TASKWRAITH_CUSTOM_TARGET_SETTING: 'target-keep',
+      VITE_PORT: '5173'
+    })
+    const spawnedEnv = fixture.spawnProcess.mock.calls[0]?.[2]?.env as Record<string, string>
+    expect(spawnedEnv.TASKWRAITH_CUSTOM_INHERITED_SETTING).toBe('inherited-keep')
+    expect(spawnedEnv.TASKWRAITH_CUSTOM_TARGET_SETTING).toBe('target-keep')
+    expect(spawnedEnv.TASKWRAITH_GEMINI_MCP_BRIDGE).toBeUndefined()
+    expect(spawnedEnv.TASKWRAITH_MCP_SOCKET_PATH).toBeUndefined()
+    expect(spawnedEnv.TASKWRAITH_PARENT_PROVIDER).toBeUndefined()
+    expect(spawnedEnv.TASKWRAITH_RUNTIME_PROFILE_ID).toBeUndefined()
+    expect(spawnedEnv.VITE_PORT).toBe('5173')
+    expect(fixture.spawnProcess).toHaveBeenCalledWith(
+      OWN_EXE,
+      ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+      expect.anything()
+    )
+    const persisted = new LaunchAttemptStore(storagePath).list()[0]
+    expect(JSON.stringify(persisted)).not.toContain('target-helper')
+    expect(JSON.stringify(persisted)).not.toContain('/tmp/target.sock')
+    expect(JSON.stringify(persisted)).not.toContain('target-isolated-profile')
+    expect(JSON.stringify(persisted)).not.toContain('/private/target-route-workspace')
+  })
+
+  it('keeps an unpackaged exact executable on the hard-refusal path', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-dev-'))
+    const storagePath = await tempFile()
     const fixture = selfAwareFixture(storagePath, workspacePath)
+    const devManager = new LaunchManager({
+      store: new LaunchAttemptStore(storagePath),
+      platform: 'darwin',
+      now: () => new Date('2026-06-21T12:00:00.000Z'),
+      spawnProcess: fixture.spawnProcess,
+      requestApproval: fixture.requestApproval,
+      createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
+      appRootPath: () => OWN_ROOT,
+      appExecutablePath: () => OWN_EXE,
+      isPackagedApp: () => false,
+      createIsolatedInstanceId: () => 'b'.repeat(32),
+      killProcess: fixture.killProcess
+    })
+
+    const result = await devManager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: OWN_EXE,
+          argv: [OWN_EXE],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/hard-refused/i) })
+    expect(fixture.requestApproval).not.toHaveBeenCalled()
+    expect(fixture.spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('never mints or spawns an isolated self-launch when human approval is denied', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-denied-'))
+    const storagePath = await tempFile()
+    const mintIsolatedInstanceId = vi.fn(() => 'b'.repeat(32))
+    const fixture = selfAwareFixture(storagePath, workspacePath, {
+      createIsolatedInstanceId: mintIsolatedInstanceId
+    })
+    fixture.requestApproval.mockResolvedValueOnce(false)
 
     const result = await fixture.manager.startTarget({
       sender: null,
@@ -137,14 +584,12 @@ describe('LaunchManager — self-launch refusal', () => {
       })
     })
 
-    expect(result.ok).toBe(false)
-    expect(result.ok === false && result.error).toMatch(/cannot launch a second copy of itself/)
-    // The message has to tell an agent to stop, not just that something failed —
-    // an unbounded retry loop is the actual symptom being fixed.
-    expect(result.ok === false && result.error).toMatch(/do not retry/i)
-    // Refused before the human is ever asked, and before anything is spawned.
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'Launch denied by TaskWraith approval policy.'
+    })
+    expect(mintIsolatedInstanceId).not.toHaveBeenCalled()
     expect(fixture.spawnProcess).not.toHaveBeenCalled()
-    expect(fixture.requestApproval).not.toHaveBeenCalled()
   })
 
   it('also catches an electron-style launch of our own app root', async () => {
@@ -166,7 +611,33 @@ describe('LaunchManager — self-launch refusal', () => {
     })
 
     expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toMatch(/do not retry/i)
     expect(fixture.spawnProcess).not.toHaveBeenCalled()
+    expect(fixture.requestApproval).not.toHaveBeenCalled()
+  })
+
+  it('hard-refuses an open wrapper around this app bundle', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-open-'))
+    const storagePath = await tempFile()
+    const fixture = selfAwareFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: 'open -n /Applications/TaskWraith.app',
+          argv: ['open', '-n', '/Applications/TaskWraith.app'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toMatch(/hard-refused/i)
+    expect(fixture.spawnProcess).not.toHaveBeenCalled()
+    expect(fixture.requestApproval).not.toHaveBeenCalled()
   })
 
   it('does NOT block an unrelated project that merely mentions taskwraith', async () => {
@@ -316,6 +787,144 @@ describe('LaunchManager', () => {
     ])
   })
 
+  it('records a canonical birth receipt for the exact PID returned by spawn', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-receipt-'))
+    const storagePath = await tempFile()
+    const resolveProcessStartedAt = vi.fn(async (pid: number) => {
+      expect(pid).toBe(8765)
+      return 'procBSDInfo:1774843200123456'
+    })
+    const fixture = managerFixture(storagePath, workspacePath, { resolveProcessStartedAt })
+    fixture.child.pid = 8765
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      attempt: {
+        pid: 8765,
+        processStartedAt: 'procBSDInfo:1774843200123456',
+        status: 'running'
+      }
+    })
+    expect(resolveProcessStartedAt).toHaveBeenCalledTimes(1)
+    expect(resolveProcessStartedAt).toHaveBeenCalledWith(8765)
+    expect(new LaunchAttemptStore(storagePath).list()[0]).toMatchObject({
+      pid: 8765,
+      processStartedAt: 'procBSDInfo:1774843200123456'
+    })
+  })
+
+  it.each([
+    ['null receipt', async () => null],
+    ['non-canonical receipt', async () => 'procBSDInfo:0001774843200123456'],
+    ['resolver rejection', async () => Promise.reject(new Error('daemon unavailable'))]
+  ])(
+    'leaves a launch view-only when the birth receipt resolver returns %s',
+    async (_label, resolve) => {
+      const workspacePath = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'taskwraith-launch-receipt-none-')
+      )
+      const storagePath = await tempFile()
+      const fixture = managerFixture(storagePath, workspacePath, {
+        resolveProcessStartedAt: resolve
+      })
+
+      const result = await fixture.manager.startTarget({
+        sender: null,
+        provider: 'codex',
+        target: target(workspacePath)
+      })
+
+      expect(result).toMatchObject({ ok: true, attempt: { status: 'running', pid: 4321 } })
+      expect(result.attempt).not.toHaveProperty('processStartedAt')
+      expect(new LaunchAttemptStore(storagePath).list()[0]).not.toHaveProperty('processStartedAt')
+    }
+  )
+
+  it('does not resurrect an immediately exited child after receipt resolution', async () => {
+    const workspacePath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'taskwraith-launch-receipt-race-')
+    )
+    let enterResolver: (() => void) | undefined
+    const resolverEntered = new Promise<void>((resolve) => {
+      enterResolver = resolve
+    })
+    let settleReceipt: ((value: string | null) => void) | undefined
+    const receipt = new Promise<string | null>((resolve) => {
+      settleReceipt = resolve
+    })
+    const fixture = managerFixture(await tempFile(), workspacePath, {
+      resolveProcessStartedAt: async () => {
+        enterResolver?.()
+        return receipt
+      }
+    })
+
+    const starting = fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+    await resolverEntered
+    fixture.child.exitCode = 0
+    fixture.child.emit('close', 0, null)
+    settleReceipt?.('procBSDInfo:1774843200123456')
+
+    const result = await starting
+    expect(result).toMatchObject({ ok: true, attempt: { status: 'stopped', pid: 4321 } })
+    expect(result.attempt).not.toHaveProperty('processStartedAt')
+    expect(fixture.tracked).toEqual([])
+    expect(fixture.untracked).toEqual([4321])
+  })
+
+  it('does not bind a receipt after exit is observable before the close event', async () => {
+    const workspacePath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'taskwraith-launch-receipt-exit-state-')
+    )
+    let enterResolver: (() => void) | undefined
+    const resolverEntered = new Promise<void>((resolve) => {
+      enterResolver = resolve
+    })
+    let settleReceipt: ((value: string | null) => void) | undefined
+    const receipt = new Promise<string | null>((resolve) => {
+      settleReceipt = resolve
+    })
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath, {
+      resolveProcessStartedAt: async () => {
+        enterResolver?.()
+        return receipt
+      }
+    })
+
+    const starting = fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath)
+    })
+    await resolverEntered
+    fixture.child.exitCode = 0
+    settleReceipt?.('procBSDInfo:1774843200123456')
+
+    const result = await starting
+    expect(result).toMatchObject({ ok: true, attempt: { status: 'starting', pid: 4321 } })
+    expect(result.attempt).not.toHaveProperty('processStartedAt')
+    expect(fixture.tracked).toEqual([])
+    expect(new LaunchAttemptStore(storagePath).list()[0]).not.toHaveProperty('processStartedAt')
+
+    fixture.child.emit('close', 0, null)
+    expect(new LaunchAttemptStore(storagePath).list()[0]).toMatchObject({
+      status: 'stopped',
+      pid: 4321,
+      exitCode: 0
+    })
+  })
+
   it('persists bounded output and terminal state from the child process', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
     const storagePath = await tempFile()
@@ -430,7 +1039,9 @@ describe('LaunchManager', () => {
 
   it('does not collapse active targets with the same id across workspaces', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-a-'))
-    const otherWorkspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-b-'))
+    const otherWorkspacePath = await fs.mkdtemp(
+      path.join(os.tmpdir(), 'taskwraith-launch-workspace-b-')
+    )
     const storagePath = await tempFile()
     const fixture = managerFixture(storagePath, workspacePath)
 

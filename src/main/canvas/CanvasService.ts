@@ -28,6 +28,7 @@ import type {
   CanvasEventKind,
   CanvasEventRecord,
   CanvasFrame,
+  CanvasInspectInput,
   CanvasMark,
   CanvasNetworkEntry,
   CanvasOpenInput,
@@ -36,7 +37,8 @@ import type {
   CanvasSessionSummary,
   CanvasSketchDocument,
   CanvasSketchUpdateInput,
-  CanvasViewport
+  CanvasViewport,
+  CanvasWindowOpenTarget
 } from './canvasTypes'
 import { assertCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import {
@@ -57,6 +59,10 @@ export interface CanvasServiceDeps {
       embedded?: boolean
       /** Canonical main-owned chat authority for content-addressed image reads. */
       appChatId?: string
+      /** Canonical main-owned run authority for a native-window target. */
+      appRunId?: string
+      /** Opaque main-owned native-window lease; never sourced from canvas_open. */
+      windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
     }
@@ -118,7 +124,8 @@ const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
   'html',
   'image',
   'sketch',
-  'device'
+  'device',
+  'window'
 ])
 // Defence-in-depth cap so a hijacked agent (or a session-granted approval)
 // cannot machine-gun clicks/fills against a live app. Per live session.
@@ -126,6 +133,15 @@ const MAX_INTERACTIONS_PER_SESSION = 200
 // Eval is RCE and human-approved per call, but cap it anyway so a compromised
 // approve-loop can't run unbounded scripts. Separate, tighter budget.
 const MAX_EVALS_PER_SESSION = 50
+
+function canonicalAuthority(value: unknown): string | undefined {
+  return typeof value === 'string' && Boolean(value) && value.trim() === value ? value : undefined
+}
+
+function canonicalWindowTarget(value: unknown): CanvasWindowOpenTarget | undefined {
+  const leaseId = canonicalAuthority((value as Partial<CanvasWindowOpenTarget> | null)?.leaseId)
+  return leaseId ? Object.freeze({ leaseId }) : undefined
+}
 
 function toSummary(record: CanvasSessionRecord): CanvasSessionSummary {
   return {
@@ -153,13 +169,23 @@ function canvasOpenAuditError(error: unknown): { code: string; message: string }
   return { code, message: `Canvas open failed (${code}).` }
 }
 
-function canvasTargetAudit(args: { ref?: string; selector?: string }): Record<string, unknown> {
-  const digest = (value: string): string =>
-    createHash('sha256').update(value, 'utf8').digest('hex')
+function canvasTargetAudit(args: {
+  ref?: string
+  selector?: string
+  expectedObservationId?: string
+  expectedInputEpoch?: number
+}): Record<string, unknown> {
+  const digest = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex')
   return {
     targetKind: args.ref ? 'ref' : args.selector ? 'selector' : 'none',
     ...(args.ref ? { targetHash: digest(args.ref) } : {}),
-    ...(!args.ref && args.selector ? { targetHash: digest(args.selector) } : {})
+    ...(!args.ref && args.selector ? { targetHash: digest(args.selector) } : {}),
+    // Native actions require both conditions. They contain no typed value and
+    // make the strict pre-dispatch intent receipt reconstructible after a run.
+    ...(args.expectedObservationId ? { expectedObservationId: args.expectedObservationId } : {}),
+    ...(Number.isSafeInteger(args.expectedInputEpoch)
+      ? { expectedInputEpoch: args.expectedInputEpoch }
+      : {})
   }
 }
 
@@ -382,13 +408,21 @@ export class CanvasService implements CanvasController {
   }
 
   /**
-   * Chat-scoped ownership: a session is reachable only from the chat that
-   * opened it (sessions opened in a global-scope run share the no-chat scope).
-   * This stops an agent in chat A from inspecting/closing chat B's canvas even
-   * if it learns the id.
+   * Ordinary Canvas sessions remain chat-scoped for compatibility. A native
+   * window is an actuation capability and is reachable only from the exact
+   * canonical chat AND run that adopted it; legacy/incomplete window records
+   * therefore fail closed.
    */
   private owns(record: CanvasSessionRecord, ctx: CanvasCallContext): boolean {
-    return (record.chatId ?? null) === (ctx.chatId ?? null)
+    const sameChat = (record.chatId ?? null) === (ctx.chatId ?? null)
+    if (record.driver !== 'window') return sameChat
+    const chatId = canonicalAuthority(record.chatId)
+    const runId = canonicalAuthority(record.runId)
+    return (
+      Boolean(chatId && runId) &&
+      chatId === canonicalAuthority(ctx.chatId) &&
+      runId === canonicalAuthority(ctx.runId)
+    )
   }
 
   private require(canvasId: string, ctx: CanvasCallContext): LiveSession {
@@ -439,7 +473,27 @@ export class CanvasService implements CanvasController {
     let recordUrl: string
     let eventHost: string | undefined
     let imageAppChatId: string | undefined
-    if (driverKind === 'device') {
+    let windowAppChatId: string | undefined
+    let windowAppRunId: string | undefined
+    let windowTarget: CanvasWindowOpenTarget | undefined
+    if (driverKind === 'window') {
+      const chatId = canonicalAuthority(ctx.chatId)
+      const runId = canonicalAuthority(ctx.runId)
+      if (!chatId || !runId) {
+        throw new Error('The window driver requires canonical chat and run authority.')
+      }
+      windowAppChatId = chatId
+      windowAppRunId = runId
+      windowTarget = canonicalWindowTarget(input.windowTarget)
+      if (!windowTarget) {
+        throw new Error('The window driver requires an internal native-window lease target.')
+      }
+      // Persist only a one-way, secret-free correlation id. The opaque lease id
+      // remains in the factory dependency and never enters history or events.
+      const digest = createHash('sha256').update(windowTarget.leaseId).digest('hex').slice(0, 20)
+      recordUrl = `window://managed/${digest}`
+      eventHost = undefined
+    } else if (driverKind === 'device') {
       const bundleId = (input.bundleId || '').trim()
       if (!bundleId || !isValidBundleId(bundleId)) {
         throw new Error('The device driver requires a valid `bundleId` (e.g. "com.example.App").')
@@ -518,14 +572,16 @@ export class CanvasService implements CanvasController {
 
     // Embed is renderer-initiated (the multiview pane / right-dock canvas panel);
     // the agent's executor never sets it. Only the drivers with a live, hostable
-    // surface can embed — web and sketch; html/image/device have no surface.
+    // surface can embed — web and sketch; html/image/device/window have no surface.
     const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
     try {
       driver = this.deps.createDriver(driverKind, canvasId, {
         embedded,
-        appChatId: imageAppChatId,
+        appChatId: imageAppChatId ?? windowAppChatId,
+        ...(windowAppRunId ? { appRunId: windowAppRunId } : {}),
+        ...(windowTarget ? { windowTarget } : {}),
         initialSketchDocument: sketchScope
           ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
           : undefined,
@@ -572,7 +628,9 @@ export class CanvasService implements CanvasController {
     }
     this.pendingOpens.set(canvasId, pendingOpen)
     try {
-      const handle = await driver.open(input)
+      const handle = await driver.open(
+        driverKind === 'window' ? { driver: 'window', viewport } : input
+      )
       if (
         generation !== this.generation ||
         this.canvasGenerations.get(canvasId) !== generation ||
@@ -584,7 +642,9 @@ export class CanvasService implements CanvasController {
       const record: CanvasSessionRecord = {
         ...baseRecord,
         status: 'active',
-        url: redactUrlQuery(handle.url),
+        // Never trust a native bridge response to supply a durable URL. Its
+        // only record identity is the service-minted lease digest above.
+        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url),
         title: handle.title,
         viewport: handle.viewport,
         updatedAt: this.deps.now()
@@ -598,9 +658,13 @@ export class CanvasService implements CanvasController {
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
-        url: redactUrlQuery(handle.url)
+        url: driverKind === 'window' ? recordUrl : redactUrlQuery(handle.url)
       })
-      return { canvasId, ...handle }
+      return {
+        canvasId,
+        ...handle,
+        url: driverKind === 'window' ? recordUrl : handle.url
+      }
     } catch (err) {
       this.sessions.delete(canvasId)
       const auditError = canvasOpenAuditError(err)
@@ -709,7 +773,7 @@ export class CanvasService implements CanvasController {
 
   async inspect(
     canvasId: string,
-    args: { ref?: string; selector?: string; styles?: string[] },
+    args: CanvasInspectInput,
     ctx: CanvasCallContext
   ): Promise<CanvasElementDetail> {
     const session = this.require(canvasId, ctx)
@@ -811,18 +875,16 @@ export class CanvasService implements CanvasController {
 
   /**
    * Runs one page interaction under the canvas's serialization lock, auditing
-   * the OUTCOME before the post-await liveness assert.
+   * the INTENT before dispatch and an outcome only when execution is refused,
+   * unverified or throws.
    *
-   * The ordering matters and used to be wrong. `assertLiveAfterAwait` threw and
-   * skipped the audit whenever a history-clear hold was taken, the generation
-   * moved, or the session was swapped while we awaited the driver — but the
-   * interaction had ALREADY executed by then, so the result was an actuation
-   * with no durable record. `emit` independently refuses to write once the
-   * generation has moved on, so the assert was never what protected cleared
-   * history; it was only dropping records for actions that really happened.
-   * Auditing first closes that hole and changes nothing about the clear
-   * semantics, and the pre-flight assert means a canvas mid-clear is never
-   * touched in the first place.
+   * Ordinary-driver intent remains best-effort telemetry so it does not fsync a
+   * full JSON file per click. Native-window intent is a strict pre-dispatch
+   * receipt: persistence failure blocks actuation. Both run before `driver.act`,
+   * so a driver error or process crash cannot leave an attempted action
+   * represented only by an absent intent. The post-await assert remains after
+   * any outcome audit; `emit` independently refuses writes after a history
+   * generation moves, preserving clear semantics.
    */
   private interact(
     canvasId: string,
@@ -835,19 +897,55 @@ export class CanvasService implements CanvasController {
       const session = this.require(canvasId, ctx)
       this.chargeInteraction(session)
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
-      const result = await session.driver.act({ ...args, kind })
+      const targetAudit = canvasTargetAudit(args)
       // Audit records the target, NEVER the value typed.
-      this.emit(canvasId, 'interaction', ctx, {
+      const intentDetail = {
+        phase: 'intent',
         action: kind,
-        ...canvasTargetAudit(args),
-        found: result.found,
-        // Whether the interaction actually landed is the audit-relevant fact —
-        // `found` alone cannot distinguish a dispatch from a refused
-        // precondition.
-        executed: result.executed,
-        verified: result.verified,
-        ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
-      })
+        ...targetAudit
+      }
+      if (session.record.driver === 'window') {
+        try {
+          this.emitStrict(canvasId, 'interaction', ctx, intentDetail)
+        } catch {
+          throw new Error(
+            'Native window interaction was blocked because its pre-dispatch audit intent could not be persisted.'
+          )
+        }
+      } else {
+        this.emit(canvasId, 'interaction', ctx, intentDetail)
+      }
+      // A synchronous broadcast hook could have begun a clear while the intent
+      // was emitted. Re-check before invoking the driver.
+      this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+      let result: CanvasActResult
+      try {
+        result = await session.driver.act({ ...args, kind })
+      } catch (error) {
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          action: kind,
+          ...targetAudit,
+          outcome: 'driver_error',
+          dispatchStatus: 'unknown',
+          verified: 'unknown'
+        })
+        throw error
+      }
+      if (!result.ok || !result.executed || result.verified !== 'changed') {
+        this.emit(canvasId, 'interaction', ctx, {
+          phase: 'outcome',
+          action: kind,
+          ...targetAudit,
+          found: result.found,
+          // Whether the interaction actually landed is the audit-relevant fact —
+          // `found` alone cannot distinguish a dispatch from a refused
+          // precondition.
+          executed: result.executed,
+          verified: result.verified,
+          ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
+        })
+      }
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
       return result
     })

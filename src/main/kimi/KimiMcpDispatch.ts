@@ -8,6 +8,11 @@ import {
   isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile
 } from '../mcp/McpSessionProfileFence'
+import {
+  MCP_BRIDGE_ENDPOINT_ENV_KEYS,
+  MCP_BRIDGE_PROFILE_ENV_KEYS,
+  MCP_BRIDGE_ROUTE_ENV_KEYS
+} from '../mcp/McpBridgeRoute'
 import type { TaskWraithMcpProfileId } from '../store/types'
 
 export interface KimiMcpDispatchOptions {
@@ -17,9 +22,51 @@ export interface KimiMcpDispatchOptions {
   workspace?: string
   appVersion: string
   brokerToken: string
+  /** Explicit per-run audit profile; never inferred from the ambient process env. */
+  auditSubset?: boolean
+  /** Exact boot nonce required by the in-process broker authentication wall. */
+  instanceEpoch: string
   getMcpToolDefinitions: () => McpToolDefinition[]
   dispatchBrokerRequest: (request: unknown) => Promise<unknown>
   timeoutMs?: number
+}
+
+/**
+ * Kimi's HTTP bridge runs in the Electron process, so inheriting its ambient
+ * environment would let a stale provider launch widen or otherwise alter this
+ * run's catalogue. Keep every bridge route and profile selector explicit here;
+ * this mirrors the complete-zeroes posture of the stdio route builder.
+ */
+function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJS.ProcessEnv {
+  const portableEnsembleControl = isPortableEnsembleControlMcpProfile(
+    options.taskWraithMcpProfileId
+  )
+  const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
+
+  return {
+    // This legacy opt-in is not consumed by the bridge, but must not leak as a
+    // profile hint to code subsequently reached from the in-process dispatch.
+    TASKWRAITH_CORE_MCP_PROFILE: '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: '1',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: portableEnsembleControl ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: meshDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: options.auditSubset ? '1' : '0',
+    [MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]: 'kimi',
+    [MCP_BRIDGE_ROUTE_ENV_KEYS.runId]: options.route.appRunId || '',
+    [MCP_BRIDGE_ROUTE_ENV_KEYS.chatId]: options.route.appChatId || '',
+    [MCP_BRIDGE_ROUTE_ENV_KEYS.workspacePath]: options.workspace || '',
+    // Kimi dispatches directly to Electron main rather than a socket bridge.
+    // Explicit blank values prevent an inherited endpoint/profile from becoming
+    // ambient authority if this adapter later shares more runtime plumbing.
+    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: '',
+    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]: '',
+    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]: options.instanceEpoch,
+    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.bridgeLogEpoch]: '0',
+    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.isolatedInstanceId]: ''
+  }
 }
 
 /**
@@ -37,20 +84,7 @@ export function createKimiMcpDispatch(
     getMcpToolDefinitions: options.getMcpToolDefinitions,
     brokerRequest: (_socketPath: string, request: unknown) =>
       options.dispatchBrokerRequest(request),
-    env: {
-      ...process.env,
-      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
-      ...(isPortableEnsembleControlMcpProfile(options.taskWraithMcpProfileId)
-        ? { TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1' }
-        : {}),
-      ...(isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-        ? { TASKWRAITH_MCP_MESH_DIRECT: '1' }
-        : {}),
-      TASKWRAITH_PARENT_PROVIDER: 'kimi',
-      TASKWRAITH_RUN_ID: options.route.appRunId || '',
-      TASKWRAITH_CHAT_ID: options.route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: options.workspace || ''
-    } as NodeJS.ProcessEnv
+    env: buildKimiMcpDispatchEnvironment(options)
   }
 
   return (message) =>

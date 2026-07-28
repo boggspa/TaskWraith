@@ -5,7 +5,7 @@ import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
 import { createConnection, createServer, type Server as NetServer, type Socket } from 'net'
 import os from 'os'
-import { dirname, join, resolve } from 'path'
+import { dirname, isAbsolute, join, parse, resolve } from 'path'
 import type { WebContents } from 'electron'
 import {
   canonicalTaskWraithToolName,
@@ -35,6 +35,20 @@ import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
 import { isPiEnsembleCoordinationToolName } from '../pi/PiEnsembleCoordination'
+import {
+  buildMcpBridgeRouteEnv,
+  buildStaticMcpBridgeRegistrationArgv,
+  isDevStaticMcpBridgeProcessArgv,
+  isStaticMcpBridgeRegistrationArgv,
+  MCP_BRIDGE_ENTRY_ARG,
+  MCP_BRIDGE_ENDPOINT_ENV_KEYS,
+  MCP_BRIDGE_PROFILE_ENV_KEYS,
+  MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
+  parseMcpBridgeRouteFromEnv,
+  type McpBridgeProfileEnvironment,
+  type McpBridgeRouteEnvironmentVariables
+} from './McpBridgeRoute'
+import { isValidInstanceResourceEpoch } from '../InstanceResourceIdentity'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
@@ -55,7 +69,10 @@ import type {
 
 export const GEMINI_MCP_SERVER_NAME = 'TaskWraith' as const
 export const GEMINI_MCP_SERVER_NAME_LOWER = GEMINI_MCP_SERVER_NAME.toLowerCase()
-export const GEMINI_MCP_BRIDGE_ARG = '--taskwraith-gemini-mcp-bridge'
+// Route grammar is the canonical bridge-entry spelling. Keep the historical
+// runtime export as an alias so legacy direct launches and static helpers can
+// never silently drift to different entry switches.
+export const GEMINI_MCP_BRIDGE_ARG = MCP_BRIDGE_ENTRY_ARG
 // Mirrors geminiMcpConstants.GEMINI_MCP_BRIDGE_ENV — the second bridge-child
 // signal (set on self-test spawns) so a lost argv flag can't trigger a full-app
 // boot + recursive self-spawn. Keep the literal identical across both files.
@@ -66,6 +83,8 @@ export const GEMINI_MCP_BRIDGE_ENV = 'TASKWRAITH_GEMINI_MCP_BRIDGE'
 export const GEMINI_MCP_BRIDGE_ARG_SUFFIX = '-gemini-mcp-bridge'
 export const GEMINI_MCP_SOCKET_ARG = '--socket'
 export const GEMINI_MCP_TOKEN_ARG = '--token'
+/** Boot-only nonce that binds an explicit legacy bridge child to its main process. */
+export const GEMINI_MCP_INSTANCE_EPOCH_ARG = '--instance-epoch'
 /** Durable bridge-log generation captured when the provider seat is launched. */
 export const GEMINI_MCP_LOG_EPOCH_ARG = '--bridge-log-epoch'
 // Fail-closed read-only scope flag. Carried in the bridge ARGV (not env) so it
@@ -101,13 +120,10 @@ export const GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG = '--portable-ensemble-con
 // never dispatch authority: main checks the active participant/run posture on
 // every Mesh Canvas call.
 export const GEMINI_MCP_MESH_DIRECT_ARG = '--mesh-direct'
-// Audit scope flag. Carried in the bridge ARGV (atomic with the spawn, like
-// safe-subset) AND/OR inherited via env: a bridge launched for an audit role-run
-// also advertises the audit_* tool namespace. The bootstrap translates this arg
-// to TASKWRAITH_MCP_AUDIT=1 (the env tools/list reads); for stdio providers the
-// CLI sets the env directly and the bridge child inherits it. Unlike safe-subset
-// this does NOT restrict tools/call — audit tools route through the registered
-// audit context, and non-audit runs never set the flag.
+// Audit scope flag. Direct bridge children carry this in argv; static helpers
+// carry the complete profile receipt in their route environment. Unlike
+// safe-subset this does NOT restrict tools/call — audit tools route through the
+// registered audit context, and non-audit runs never set the flag.
 export const GEMINI_MCP_AUDIT_SUBSET_ARG = '--audit-subset'
 
 /**
@@ -120,6 +136,17 @@ export function applyMcpBridgeProfileArgvToEnv(
   argv: readonly string[],
   env: Record<string, string | undefined>
 ): void {
+  // Static route helpers authenticate a complete profile environment before
+  // bootstrap. Do not mutate that receipt here; malformed route shapes are
+  // rejected before handlers are attached by resolveMcpBridgeProcessLaunch.
+  if (argv.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)) return
+
+  // A legacy/direct helper may inherit a provider's ambient environment. Its
+  // catalogue must therefore be determined exclusively by its immutable argv,
+  // never by an old portable/mesh/subset/audit profile left on the parent.
+  for (const envKey of Object.values(MCP_BRIDGE_PROFILE_ENV_KEYS)) {
+    env[envKey] = '0'
+  }
   if (argv.includes(GEMINI_MCP_SAFE_SUBSET_ARG)) env.TASKWRAITH_MCP_SAFE_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_PLAN_SUBSET_ARG)) env.TASKWRAITH_MCP_PLAN_SUBSET = '1'
   if (argv.includes(GEMINI_MCP_CORE_SUBSET_ARG)) env.TASKWRAITH_MCP_CORE_SUBSET = '1'
@@ -265,11 +292,15 @@ export interface McpBridgeRuntimeDeps {
   updateSettings: (patch: Partial<AppSettings>) => void
   getGeminiMcpSocketPath: () => string
   getGeminiMcpBrokerToken: () => string
+  /** Per-boot opaque nonce; generic bridge calls must echo it to the broker. */
+  getInstanceEpoch: () => string
   getGeminiUserSettingsPath: () => string
   getAppPath: () => string
   getAppVersion: () => string
   isDev: () => boolean
   isPackaged: () => boolean
+  /** Private-profile argv inherited by direct process-local bridge children only. */
+  getProcessBootstrapArgs?: () => readonly string[]
   getProcessExecPath?: () => string
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
   captureProcessOutput: (
@@ -311,6 +342,20 @@ export interface McpBridgeRuntimeDeps {
     payload: unknown,
     route?: McpBridgeAgentRunRoute | null
   ) => void
+}
+
+/**
+ * The complete live environment a provider child needs when it launches the
+ * static route-from-env bridge. This is intentionally separate from persisted
+ * Gemini/Cursor registration argv: all endpoint authority stays per-run.
+ */
+export interface McpBridgeProviderRunEnvironmentInput {
+  route?: McpBridgeAgentRunRoute | null
+  parentProvider: ProviderId
+  workspacePath?: string | null
+  profile?: Partial<McpBridgeProfileEnvironment> | null
+  /** Empty/undefined means the primary profile; non-empty is argv-validated at bridge boot. */
+  isolatedInstanceId?: string | null
 }
 
 export interface GeminiMcpBridgePrepareOptions {
@@ -402,6 +447,12 @@ let bridgeLogHistoryClearHolds = 0
 let bridgeLogEpochPath: string | null = null
 let bridgeLogProcessEpoch: number | null = null
 let bridgeLogEpochPinnedByLaunch = false
+/**
+ * A bridge helper is bound to the exact userData parent of its socket. Main
+ * process callers leave this unset and use the legacy canonical path until
+ * index passes the runtime-owned socket path into a history-clear operation.
+ */
+let bridgeLogDirectoryOverride: string | null = null
 const bridgeLogDirectoryIdentities = new Map<string, BridgeFsIdentity>()
 const bridgeLogFileIdentities = new Map<string, BridgeFsIdentity>()
 const bridgeLogSensitiveValues = new Map<string, '<redacted>' | '<redacted-path>'>()
@@ -486,6 +537,58 @@ export function canonicalBridgeLogDirectory(home: string = os.homedir()): string
     return join(home, 'AppData', 'Local', 'TaskWraith', 'logs')
   }
   return join(home, '.local', 'state', 'TaskWraith', 'logs')
+}
+
+function normalizeMcpSocketPathForBridgeLog(socketPath: unknown): string {
+  if (typeof socketPath !== 'string' || !socketPath || !isAbsolute(socketPath)) {
+    throw new TypeError('MCP bridge socket path is invalid.')
+  }
+  const normalized = resolve(socketPath)
+  const parent = dirname(normalized)
+  if (
+    normalized !== socketPath ||
+    normalized === parse(normalized).root ||
+    parent === parse(parent).root
+  ) {
+    throw new TypeError('MCP bridge socket path is invalid.')
+  }
+  return normalized
+}
+
+function assertMcpSocketParentDirectory(socketPath: string): string {
+  const parent = dirname(socketPath)
+  const stat = fsSync.lstatSync(parent)
+  // The userData parent can be more permissive than the dedicated 0700 log
+  // leaf, but it must still be a direct directory rather than a symlinked
+  // redirect. The leaf's owner/mode/identity checks remain strict below.
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error('MCP bridge socket parent is not a trusted directory.')
+  }
+  return parent
+}
+
+/**
+ * Return the private bridge-log location associated with one exact broker
+ * socket. This is deterministic and performs no writes; bridge startup and
+ * history-clear paths validate the directory before mutating it.
+ */
+export function bridgeSubprocessLogPathForSocket(socketPath: string): string {
+  const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
+  const socketParent = dirname(normalizedSocketPath)
+  return join(socketParent, 'bridge-logs', 'bridge-subprocess.log')
+}
+
+export function bridgeSubprocessLogEpochPathForSocket(socketPath: string): string {
+  return `${bridgeSubprocessLogPathForSocket(socketPath)}.epoch`
+}
+
+function configureBridgeLogLocationForSocket(socketPath: string): void {
+  const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
+  const socketParent = assertMcpSocketParentDirectory(normalizedSocketPath)
+  bridgeLogDirectoryOverride = join(socketParent, 'bridge-logs')
+  bridgeLogPath = null
+  bridgeLogEpochPath = null
+  bridgeLogResolved = false
 }
 
 function ensurePrivateBridgeLogDirectory(path: string): BridgeFsIdentity {
@@ -1013,6 +1116,12 @@ export function parseBridgeTokenArg(argv: string[] = process.argv): string {
   return index >= 0 && argv[index + 1] ? argv[index + 1] : ''
 }
 
+export function parseBridgeInstanceEpochArg(argv: string[] = process.argv): string {
+  const index = argv.indexOf(GEMINI_MCP_INSTANCE_EPOCH_ARG)
+  const value = index >= 0 && argv[index + 1] ? argv[index + 1] : ''
+  return isValidInstanceResourceEpoch(value) ? value : ''
+}
+
 export function parseBridgeLogEpochArg(argv: string[] = process.argv): number | null {
   const index = argv.indexOf(GEMINI_MCP_LOG_EPOCH_ARG)
   if (index < 0 || !argv[index + 1]) return null
@@ -1022,6 +1131,7 @@ export function parseBridgeLogEpochArg(argv: string[] = process.argv): number | 
 
 const BRIDGE_SECRET_ARG_NAMES = new Set([
   GEMINI_MCP_TOKEN_ARG,
+  GEMINI_MCP_INSTANCE_EPOCH_ARG,
   '--api-key',
   '--auth-token',
   '--broker-token',
@@ -1045,6 +1155,7 @@ const BRIDGE_PATH_ARG_NAMES = new Set([
 ])
 const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_BRIDGE_ARG,
+  MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
   GEMINI_MCP_SAFE_SUBSET_ARG,
   GEMINI_MCP_PLAN_SUBSET_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
@@ -1232,9 +1343,12 @@ export function buildBridgeStartupLogMessage(input: {
 }
 
 /** Pin the child to the generation its parent captured before any log access. */
-export function configureBridgeLogProcessEpochFromLaunch(argv: string[] = process.argv): void {
+export function configureBridgeLogProcessEpochFromLaunch(
+  argv: string[] = process.argv,
+  explicitEpoch?: number | null
+): void {
   bridgeLogEpochPinnedByLaunch = true
-  bridgeLogProcessEpoch = parseBridgeLogEpochArg(argv)
+  bridgeLogProcessEpoch = explicitEpoch === undefined ? parseBridgeLogEpochArg(argv) : explicitEpoch
 }
 
 type SafeWritable = {
@@ -1300,7 +1414,7 @@ export function writeMcpError(
 }
 
 function resolveBridgeLogPathStrict(): string {
-  const logsDir = canonicalBridgeLogDirectory()
+  const logsDir = bridgeLogDirectoryOverride || canonicalBridgeLogDirectory()
   ensurePrivateBridgeLogDirectory(logsDir)
   const path = join(logsDir, 'bridge-subprocess.log')
   const epochPath = `${path}.epoch`
@@ -1496,7 +1610,11 @@ export function handleMcpJsonRpcMessage(
   socketPath: string,
   brokerToken: string,
   message: unknown,
-  transport: McpResponseTransport = 'framed'
+  transport: McpResponseTransport = 'framed',
+  instanceEpoch: string =
+    deps.env?.[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch] ||
+    process.env[MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch] ||
+    ''
 ): void {
   const stdout = deps.stdout || process.stdout
   const request = isRecord(message) ? message : {}
@@ -1749,6 +1867,7 @@ export function handleMcpJsonRpcMessage(
     requestBroker(socketPath, {
       id: id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       token: brokerToken,
+      instanceEpoch,
       tool: name,
       arguments: args,
       appRunId: deps.env?.TASKWRAITH_RUN_ID ?? process.env.TASKWRAITH_RUN_ID,
@@ -1805,16 +1924,110 @@ export function handleMcpJsonRpcMessage(
   writeMcpError(id, -32601, `Unsupported MCP method: ${method}`, transport, stdout)
 }
 
+interface ResolvedMcpBridgeProcessLaunch {
+  socketPath: string
+  brokerToken: string
+  instanceEpoch: string
+  bridgeLogEpoch: number
+  env: NodeJS.ProcessEnv
+}
+
+function profileEnvironmentForBridgeRoute(
+  profile: McpBridgeProfileEnvironment
+): McpBridgeRouteEnvironmentVariables {
+  return {
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: profile.safeSubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: profile.planSubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: profile.coreSubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: profile.gatewaySubset ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: profile.portableEnsembleControl
+      ? '1'
+      : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: profile.meshDirect ? '1' : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
+  }
+}
+
+/**
+ * Resolve a bridge helper's authority before it installs process/stdio
+ * handlers. Static registration mode is deliberately all-env: accepting a
+ * partial endpoint or a mixed argv would let a stale persisted config borrow
+ * another instance's broker.
+ */
+function resolveMcpBridgeProcessLaunch(
+  argv: string[],
+  env: NodeJS.ProcessEnv,
+  getDefaultSocketPath: () => string
+): ResolvedMcpBridgeProcessLaunch | null {
+  if (argv.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)) {
+    if (
+      !isStaticMcpBridgeRegistrationArgv(argv.slice(1)) &&
+      !isDevStaticMcpBridgeProcessArgv(argv)
+    ) {
+      return null
+    }
+    const parsed = parseMcpBridgeRouteFromEnv(env)
+    if (!parsed.ok) return null
+    const { endpoint, profile } = parsed.value
+    let expectedSocketPath = ''
+    try {
+      expectedSocketPath = normalizeMcpSocketPathForBridgeLog(getDefaultSocketPath())
+    } catch {
+      return null
+    }
+    if (endpoint.socketPath !== expectedSocketPath) return null
+    return {
+      socketPath: endpoint.socketPath,
+      brokerToken: endpoint.brokerToken,
+      instanceEpoch: endpoint.instanceEpoch,
+      bridgeLogEpoch: endpoint.bridgeLogEpoch,
+      env: {
+        ...env,
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: endpoint.socketPath,
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]: endpoint.brokerToken,
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]: endpoint.instanceEpoch,
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.bridgeLogEpoch]: String(endpoint.bridgeLogEpoch),
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.isolatedInstanceId]: endpoint.isolatedInstanceId || '',
+        ...profileEnvironmentForBridgeRoute(profile)
+      }
+    }
+  }
+
+  const socketPath = parseBridgeSocketArg(argv, getDefaultSocketPath())
+  const brokerToken = parseBridgeTokenArg(argv)
+  const instanceEpoch = parseBridgeInstanceEpochArg(argv)
+  const bridgeLogEpoch = parseBridgeLogEpochArg(argv)
+  if (!socketPath || !brokerToken || !instanceEpoch || bridgeLogEpoch === null) return null
+  const resolvedEnv = { ...env }
+  applyMcpBridgeProfileArgvToEnv(argv, resolvedEnv)
+  return { socketPath, brokerToken, instanceEpoch, bridgeLogEpoch, env: resolvedEnv }
+}
+
 export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): void {
   const argv = deps.argv || process.argv
   const env = deps.env || process.env
   const stdin = deps.stdin || process.stdin
   const stdout = deps.stdout || process.stdout
   const exit = deps.exit || ((code?: number) => process.exit(code))
-  const socketPath = parseBridgeSocketArg(argv, deps.getDefaultSocketPath())
-  const brokerToken = parseBridgeTokenArg(argv)
+  const launch = resolveMcpBridgeProcessLaunch(argv, env, deps.getDefaultSocketPath)
+  // Do not install event/stdio handlers or emit endpoint-bearing diagnostics
+  // for a stale static registration. The caller gets a generic non-zero exit.
+  if (!launch) {
+    exit(1)
+    return
+  }
+  try {
+    configureBridgeLogLocationForSocket(launch.socketPath)
+  } catch {
+    exit(1)
+    return
+  }
+  const bridgeDeps: GeminiMcpBridgeProcessDeps = { ...deps, env: launch.env }
+  const socketPath = launch.socketPath
+  const brokerToken = launch.brokerToken
+  const instanceEpoch = launch.instanceEpoch
   const cwd = deps.cwd?.() || process.cwd()
-  const workspacePath = env.TASKWRAITH_WORKSPACE_PATH || ''
+  const workspacePath = launch.env.TASKWRAITH_WORKSPACE_PATH || ''
   registerBridgeLogSensitiveValues([
     { value: brokerToken, replacement: '<redacted>' },
     { value: socketPath, replacement: '<redacted-path>' },
@@ -1822,13 +2035,13 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
     { value: workspacePath, replacement: '<redacted-path>' },
     ...bridgeStartupSensitiveArgValues(argv.slice(1))
   ])
-  configureBridgeLogProcessEpochFromLaunch(argv)
+  configureBridgeLogProcessEpochFromLaunch(argv, launch.bridgeLogEpoch)
   bridgeLog(
     buildBridgeStartupLogMessage({
       argv: argv.slice(1),
       cwd,
-      runId: env.TASKWRAITH_RUN_ID,
-      parentProvider: env.TASKWRAITH_PARENT_PROVIDER,
+      runId: launch.env.TASKWRAITH_RUN_ID,
+      parentProvider: launch.env.TASKWRAITH_PARENT_PROVIDER,
       workspacePath
     }),
     deps.pid?.() || process.pid
@@ -1861,7 +2074,14 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
         const body = buffer.subarray(bodyStart, bodyStart + contentLength).toString('utf8')
         buffer = buffer.subarray(bodyStart + contentLength)
         try {
-          handleMcpJsonRpcMessage(deps, socketPath, brokerToken, JSON.parse(body), 'framed')
+          handleMcpJsonRpcMessage(
+            bridgeDeps,
+            socketPath,
+            brokerToken,
+            JSON.parse(body),
+            'framed',
+            instanceEpoch
+          )
         } catch {
           bridgeLog('parse FAILED (framed): malformed JSON', deps.pid?.() || process.pid)
           writeMcpError(
@@ -1882,7 +2102,14 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
       buffer = buffer.subarray(lineBytes)
       if (!line) continue
       try {
-        handleMcpJsonRpcMessage(deps, socketPath, brokerToken, JSON.parse(line), 'line')
+        handleMcpJsonRpcMessage(
+          bridgeDeps,
+          socketPath,
+          brokerToken,
+          JSON.parse(line),
+          'line',
+          instanceEpoch
+        )
       } catch {
         bridgeLog('parse FAILED (line): malformed JSON', deps.pid?.() || process.pid)
         writeMcpError(
@@ -1990,6 +2217,64 @@ export class McpBridgeRuntime {
     }
   }
 
+  /**
+   * Persistable global registration argv. It is deliberately independent of
+   * this runtime's socket, token, boot nonce, log generation, MCP profile, and
+   * packaged isolated-profile identity. Provider launch code must pair it with
+   * `buildProviderRunMcpBridgeEnv` for each actual child process.
+   */
+  taskwraithMcpBridgeStaticRegistrationArgs(): string[] {
+    return [
+      ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
+      ...buildStaticMcpBridgeRegistrationArgv()
+    ]
+  }
+
+  /**
+   * Build the live authority environment for exactly one provider-run bridge
+   * helper. This is the only runtime API provider launch sites should use with
+   * a static Gemini/Cursor MCP registration.
+   */
+  buildProviderRunMcpBridgeEnv(
+    input: McpBridgeProviderRunEnvironmentInput
+  ): McpBridgeRouteEnvironmentVariables {
+    let instanceEpoch = ''
+    let socketPath = ''
+    let bridgeLogEpoch: number | null = null
+    try {
+      instanceEpoch = this.deps.getInstanceEpoch()
+      socketPath = normalizeMcpSocketPathForBridgeLog(this.deps.getGeminiMcpSocketPath())
+      assertMcpSocketParentDirectory(socketPath)
+      bridgeLogEpoch = readBridgeLogEpoch(bridgeSubprocessLogEpochPathForSocket(socketPath))
+    } catch {
+      throw new Error('TaskWraith MCP bridge route authority is unavailable.')
+    }
+    const result = buildMcpBridgeRouteEnv({
+      route: input.route,
+      parentProvider: input.parentProvider,
+      workspacePath: input.workspacePath || '',
+      endpoint: {
+        socketPath,
+        brokerToken: this.deps.getGeminiMcpBrokerToken(),
+        instanceEpoch,
+        bridgeLogEpoch,
+        ...(input.isolatedInstanceId ? { isolatedInstanceId: input.isolatedInstanceId } : {})
+      },
+      profile: input.profile
+    })
+    if (!result.ok) {
+      throw new Error('TaskWraith MCP bridge route authority is unavailable.')
+    }
+    return result.env
+  }
+
+  /** Exact instance-local diagnostic target for history-clear composition. */
+  getBridgeSubprocessLogPath(): string {
+    const socketPath = normalizeMcpSocketPathForBridgeLog(this.deps.getGeminiMcpSocketPath())
+    assertMcpSocketParentDirectory(socketPath)
+    return bridgeSubprocessLogPathForSocket(socketPath)
+  }
+
   taskwraithMcpBridgeArgs(
     socketPath: string = this.deps.getGeminiMcpSocketPath(),
     safeSubset = false,
@@ -1997,23 +2282,35 @@ export class McpBridgeRuntime {
     coreSubset = false,
     gatewaySubset = false,
     portableEnsembleControl = false,
-    meshDirect = false
+    meshDirect = false,
+    auditSubset = false
   ): string[] {
-    const logEpochPath = join(
-      os.homedir(),
-      'Library',
-      'Logs',
-      'TaskWraith',
-      'bridge-subprocess.log.epoch'
-    )
+    const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
+    const logEpochPath = bridgeSubprocessLogEpochPathForSocket(normalizedSocketPath)
     const logEpoch = readBridgeLogEpoch(logEpochPath)
+    let instanceEpoch = ''
+    try {
+      instanceEpoch = this.deps.getInstanceEpoch()
+    } catch {
+      instanceEpoch = ''
+    }
+    let bootstrapArgs: readonly string[] = []
+    try {
+      bootstrapArgs = this.deps.getProcessBootstrapArgs?.() ?? []
+    } catch {
+      bootstrapArgs = []
+    }
     return [
       ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
       GEMINI_MCP_BRIDGE_ARG,
       GEMINI_MCP_SOCKET_ARG,
-      socketPath,
+      normalizedSocketPath,
       GEMINI_MCP_TOKEN_ARG,
       this.deps.getGeminiMcpBrokerToken(),
+      // Legacy direct/process-local launches retain explicit endpoint argv,
+      // but every generic call still proves it belongs to this boot instance.
+      GEMINI_MCP_INSTANCE_EPOCH_ARG,
+      instanceEpoch,
       // Pin logging generation before the bridge child can emit its first line.
       // An invalid/missing epoch fails closed inside the child.
       GEMINI_MCP_LOG_EPOCH_ARG,
@@ -2037,12 +2334,14 @@ export class McpBridgeRuntime {
       // The compact Bossman front door is independently profile-fenced so
       // old receipted gateway sessions retain their original tool list.
       ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : []),
-      ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : [])
+      ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : []),
+      ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),
+      ...bootstrapArgs
     ]
   }
 
-  bridgeArgsMatchCurrentLaunch(args: string[], socketPath: string): boolean {
-    const expected = this.taskwraithMcpBridgeArgs(socketPath)
+  bridgeArgsMatchCurrentLaunch(args: string[], _socketPath: string): boolean {
+    const expected = this.taskwraithMcpBridgeStaticRegistrationArgs()
     return expected.length === args.length && expected.every((arg, index) => args[index] === arg)
   }
 
@@ -2053,13 +2352,31 @@ export class McpBridgeRuntime {
     return expected.length === actual.length && timingSafeEqual(expected, actual)
   }
 
+  isValidGeminiMcpBrokerInstanceEpoch(value: unknown): boolean {
+    if (typeof value !== 'string' || !isValidInstanceResourceEpoch(value)) return false
+    let expectedEpoch = ''
+    try {
+      expectedEpoch = this.deps.getInstanceEpoch()
+    } catch {
+      return false
+    }
+    if (!isValidInstanceResourceEpoch(expectedEpoch)) return false
+    const expected = Buffer.from(expectedEpoch, 'utf8')
+    const actual = Buffer.from(value, 'utf8')
+    return expected.length === actual.length && timingSafeEqual(expected, actual)
+  }
+
   async handleGeminiMcpBrokerRequest(request: unknown): Promise<unknown> {
     const brokerRequestRecord = isRecord(request) ? request : {}
     const piCredentialRoute =
       typeof brokerRequestRecord.token === 'string'
         ? this.piEnsembleCoordinationCredentials.get(brokerRequestRecord.token)
         : undefined
-    if (!piCredentialRoute && !this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token)) {
+    if (
+      !piCredentialRoute &&
+      (!this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token) ||
+        !this.isValidGeminiMcpBrokerInstanceEpoch(brokerRequestRecord.instanceEpoch))
+    ) {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
@@ -2568,13 +2885,13 @@ export class McpBridgeRuntime {
     return status
   }
 
-  buildGeminiMcpBridgeAddArgs(scope: GeminiMcpRegistrationScope, socketPath: string): string[] {
+  buildGeminiMcpBridgeAddArgs(scope: GeminiMcpRegistrationScope, _socketPath: string): string[] {
     return [
       'mcp',
       'add',
       GEMINI_MCP_SERVER_NAME,
       this.processExecPath(),
-      ...this.taskwraithMcpBridgeArgs(socketPath),
+      ...this.taskwraithMcpBridgeStaticRegistrationArgs(),
       '--scope',
       scope,
       '--trust',
@@ -2701,6 +3018,21 @@ export class McpBridgeRuntime {
   hasStaleGeminiMcpBridgeRegistration(raw: string, socketPath: string): boolean {
     if (!raw.toLowerCase().includes(GEMINI_MCP_SERVER_NAME_LOWER)) {
       return false
+    }
+    // Global Gemini registrations deliberately carry the static route switch,
+    // not this process's endpoint. A current packaged executable commonly
+    // lives under /Applications/TaskWraith.app, so the legacy bundle-path
+    // heuristic below would otherwise flag every valid static registration as
+    // stale and repair it on every status poll.
+    if (raw.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)) {
+      if (
+        this.deps.isDev() &&
+        raw.includes(GEMINI_MCP_BRIDGE_ARG) &&
+        !raw.includes(this.deps.getAppPath())
+      ) {
+        return true
+      }
+      return this.deps.isPackaged() && !raw.includes(this.processExecPath())
     }
     if (/\/Applications\/TaskWraith\.app\//i.test(raw)) {
       return true

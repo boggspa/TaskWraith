@@ -6,6 +6,12 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## Unreleased
+
+### Added
+
+- **Narrow managed-window QA lane (macOS).** A packaged TaskWraith build can now self-launch an exact isolated QA instance after human approval; global Gemini/Cursor MCP registrations stay instance-neutral while each managed child receives its exact route. For a current run-owned macOS 15.2+ window, the user separately chooses Screen Watch observation and View & Control. The native Canvas path is AX-only and lease-bound, refuses secrets, and asks the user to confirm every exact click; it is neither general desktop control nor a sandbox for the process under test.
+
 ## 1.9.0 - 2026-07-27
 
 If 1.8.9 gave every agent **room to work**, 1.9.0 connects those rooms into a

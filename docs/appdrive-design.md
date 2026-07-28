@@ -1,7 +1,7 @@
 # AppDrive — agent actuation over TaskWraith-owned surfaces
 
-**Status:** design, not started. Written 2026-07-26.
-**Scope of this document:** Tier 0–2 (harden what ships → lease-bound web actuation). Tiers 3–5 sketched only.
+**Status:** design for Tiers 0–2 and 5; a deliberately narrow Tier 4 managed-window QA path is implemented source-ahead. Written 2026-07-26; implementation status updated 2026-07-28.
+**Scope of this document:** Tiers 0–2 remain the web-actuation hardening/design plan. Tier 3 is cancelled, Tier 4 is shipped only within the exact contract in §12b, and Tier 5 remains out of scope.
 
 ---
 
@@ -31,7 +31,7 @@ The v1 instinct is right: restrict actuation to surfaces TaskWraith owns, and th
 
 The single exception is the `plan` preset, where `canvasInteraction` is grant-immune and re-prompts per call (`PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES`, [EffectiveRunPermissions.ts:246](../src/main/EffectiveRunPermissions.ts:246)). That is the mechanism we need, just not the default.
 
-**Fixing the grant key is the gating item for this whole feature.** Until a grant names a surface, "the user chose this window" is a UX story, not an invariant.
+**Fixing the grant key is the gating item for the web tiers.** Until a grant names a surface, "the user chose this window" is a UX story, not an invariant. The source-ahead Tier 4 path does not reuse that broad grant: it has its own exact run/window lease and independent user-consent flow (§12b).
 
 ### What the sandbox does and does not buy
 
@@ -342,7 +342,11 @@ The secondary threat that motivated the conditions is worth keeping even though 
 
 The lease answers "may you touch this surface". It cannot answer "should this particular click happen", and that is where judgment errors live.
 
-Before dispatch, evaluate a **destructive predicate** against the *resolved structured target* — accessible name, ARIA role, element type, enclosing form's method. Matches (delete / remove / send / publish / transfer / pay / confirm / submit-to-non-idempotent, plus `type=submit` inside a form with a payment or destructive intent hint) require a **per-call human confirmation** using the `canvasEval` mechanism verbatim:
+**Current Tier 4 status (source-ahead): every native click gets a one-use human confirmation.** The main-owned confirmation is bound to the frozen exact lease, AX ref, observation id, and input epoch, and shows only a value-free semantic target summary. Missing, declined, or errored confirmation fails closed before native dispatch. The user's View & Control consent is not a reusable click authorization, and there is no coordinate/pixel fallback.
+
+The destructive-keyword list (delete, remove, send, publish, transfer, pay, confirm, submit, and similar labels) is an advisory UI hint only; labels can be localized, icon-only, or misleading. It never authorizes a click: **every** native click independently prompts. TaskWraith revalidates the main-owned lease after the dialog and before dispatch. The accepted-confirmation/send boundary is the linearization point, so an accepted in-flight exact click may finish if detach races immediately afterward; the dialog discloses that result before the user accepts.
+
+For the broader future web/general AppDrive routes, evaluate a **destructive predicate** against the *resolved structured target* — accessible name, ARIA role, element type, enclosing form's method. Matches (delete / remove / send / publish / transfer / pay / confirm / submit-to-non-idempotent, plus `type=submit` inside a form with a payment or destructive intent hint) require the durable **per-call human confirmation** design below. That planned receipt/ledger mechanism is distinct from the shipped native one-click dialog.
 
 - mint a content-bound receipt at prompt-creation time from the exact resolved target the human is shown ([ApprovalOrchestration.ts:592](../src/main/run/ApprovalOrchestration.ts:592)), self-verify it immediately, fail closed on mint failure;
 - digest over UTF-16LE code units, not UTF-8 — unpaired surrogates alias to U+FFFD under UTF-8 and would let one receipt verify a different target ([CanvasEvalAudit.ts:29](../src/main/canvas/CanvasEvalAudit.ts:29));
@@ -376,6 +380,8 @@ observe (snapshot + inputEpoch)
 
 **New verbs** (`CanvasActVerb`): `key` (named-key whitelist only — Enter/Tab/Escape/arrows/Backspace/Delete/Home/End/PageUp/PageDown plus modifier combos; never arbitrary key codes), `type`, `scroll`, `hover`, `select`. Plus `wait_for` as a new driver method.
 
+**Shipped Tier 4 difference:** the native `window` driver is intentionally not this generic future-verb surface. Its structured input scope is AX-only `observe`, `inspect`, `click`, and `fill`, with a safety-screened capture path; it has no keyboard, coordinate/CGEvent, pixel, eval, network, console, reload, resize, annotate, or sketch path. A native action must follow a fresh observation and is followed by a required re-observation before another action (§12b).
+
 **Explicitly not in v1:** drag, right-click, double-click, file upload (already refused, [CanvasWebDriver.ts:225](../src/main/canvas/CanvasWebDriver.ts:225)), arbitrary key codes, multi-action batches.
 
 Today's verb set is click + fill only — no keyboard at all beyond setting an input value, no scroll, no hover ([CanvasWebDriver.ts:608](../src/main/canvas/CanvasWebDriver.ts:608)). Observation is ~90% built; actuation is ~40%.
@@ -404,14 +410,14 @@ When it does land, the governing rules are: one writer per surface (many observe
 | **1** | AppDrive Web, **loopback origins only** | Lease + verbs + observe-act-verify. The QA-lane product. |
 | **2** | AppDrive Web, any origin | Louder consent, credential protections, consequential-action confirmation mandatory. |
 | **3** | AppDrive Simulator | XCUITest/idb adapter behind `CanvasDeviceDriver`, which is `simctl`-only today with 11 verbs throwing ([CanvasDeviceDriver.ts:559](../src/main/canvas/CanvasDeviceDriver.ts:559)). Disposable (`simctl erase` is a real undo). |
-| **4** | AppDrive Native (managed window) | The declared-but-disabled `window` driver kind ([canvasTypes.ts:14](../src/main/canvas/canvasTypes.ts:14), absent from `SUPPORTED_DRIVERS` at [CanvasService.ts:102](../src/main/canvas/CanvasService.ts:102)). Run-owned PID + ScreenCaptureKit + AX-first. Covers AppKit/SwiftUI/Electron/Tauri/Rust builds. |
+| **4** | AppDrive Native (managed window) | **Source-ahead, narrow QA contract:** exact live Run-owned launch PID plus kernel process-birth receipt, user picker, separate View & Control consent, macOS 15.2+, action-time Accessibility trust, solo lease, and AX-first observe/inspect/click/fill only. It is not general desktop control; §12b is authoritative. |
 | **5** | General attached-window desktop control | Out of scope. Separate decision with its own risk acceptance. |
 
 **Xcode SwiftUI Preview is not a target** — no public control API, needs a running Xcode GUI + XPC, version churn. Already the recorded design conclusion; do not relitigate. For macOS QA, launch a dedicated build/test host and attach a PID-bound window driver.
 
 **Tiers 3 and 4 share more than they appear to:** XCUITest against a simulator and AX against a managed Mac app are the same idea against two different accessibility endpoints. Build one adapter abstraction.
 
-**Run processes are not sandboxed** (§2) and Canvas isolates the *rendered page*, not the dev server or native build behind it. Tier 1 QA sessions deserve explicit sandbox/test-profile work, or at minimum an honest statement that the process under test has the user's privileges.
+**Run processes are not sandboxed** (§2) and Canvas isolates the *rendered page*, not the dev server or native build behind it. A separate TaskWraith instance profile is likewise state isolation, not a seatbelt for either process. The process under test has the user's privileges; workspace cwd validation is not containment.
 
 ---
 
@@ -502,7 +508,7 @@ This codebase punishes incomplete seam sweeps — `canvasInteraction` and `canva
 
 - `threadMessage` is missing from the `tw_approvals_list` service enum ([McpToolCatalog.ts:1739](../src/main/McpToolCatalog.ts:1739)) — agents cannot filter for it.
 - `TaskWraithPluginAgenticServiceId` is missing `externalPublish` ([PluginTypes.ts:16](../src/shared/plugins/PluginTypes.ts:16)) although `PluginManifest.ts:104` accepts it.
-- `CanvasDriverKind` includes `'window'` with no implementing class anywhere.
+- The earlier `CanvasDriverKind: 'window'` gap is closed by `CanvasWindowDriver`; its narrow, consented contract is recorded in §12b rather than treated as a generic Canvas driver.
 
 ---
 
@@ -528,45 +534,55 @@ A retro-scrub was considered and rejected on grounds worth recording, because it
 
 So disclosure plus the existing history-clear is the correct remediation, not merely the cheap one.
 
-## 12b. The 1.9.1 self-launch incident, and what it revealed
+## 12b. The self-launch incident, and the narrow Tier 4 path now shipped source-ahead
 
-A seat with launch grants was asked to QA the app, spawned TaskWraith itself, and hit what looked like constant crashes. Diagnosed 2026-07-26; **the crash is fixed (`d79ab7f7c`), the two capabilities it implied are not, and are sized here.**
+A seat with launch grants was asked to QA TaskWraith itself and hit an instant-exit retry loop. The 2026-07-26 crash diagnosis was correct: packaged builds then shared the primary app profile and single-instance lock. The resulting work now supports a deliberately narrow QA route. It does **not** turn AppDrive into general computer use, a sandbox, or a way for an agent to select an arbitrary desktop window.
 
-### What actually happened — a bug, not an AppDrive gap
+### Supported packaged self-instancing is deliberately exact
 
-[devAppName.ts:111](../src/main/devAppName.ts:111) gates the entire multi-instance lane behind `!app.isPackaged`. A **packaged** build therefore ignores `TASKWRAITH_INSTANCE_ID` completely — same app name, same userData, same lock — so a child copy hits `app.requestSingleInstanceLock()` ([index.ts:35028](../src/main/index.ts:35028)) and quits in milliseconds. Provider- and grant-agnostic; launching any *other* app would have worked.
+`LaunchManager` supports a second TaskWraith instance only when the command is the exact packaged TaskWraith executable and the human has approved the launch. The manager mints a fresh opaque `--taskwraith-isolated-instance=<id>` argument after approval; packaged production ignores ambient `TASKWRAITH_INSTANCE_ID`. The child gets a separate, private TaskWraith state profile (no pre-existing chats or pairings), app identity, lock, and relay allocation.
 
-The cost was the **retry loop**, not the exit: an instant exit with no window and no useful stderr reads as transient. Fixed by refusing up front with a reason that says not to retry.
+This is not a generic "launch another copy" feature. Shell wrappers, `open -n`, Electron/wrapper forms, caller-provided isolated-instance flags, and unpackaged self-launches are refused with a do-not-retry reason. The profile is state isolation only: the launched process and the process under test still run with the user's normal host privileges. Cwd validation, stripped loader variables, and process-group tracking do not make either one sandboxed.
 
-**The process-parenting the incident seemed to call for already exists** — that is Run/`LaunchManager`: PID *and* process group tracked, killed via the negative pgid, start reservation held across approval, cwd jailed, `LD_PRELOAD`/`DYLD_*` stripped, surfaced in Active processes. What does not exist is any way to *drive* what it spawns.
+### Global MCP registrations are static; live routes are instance-bound
 
-### B — supported self-instancing. Larger than it looks; do not rush it.
+Gemini/Cursor global MCP registration now carries only instance-neutral bridge argv. The socket endpoint, broker token, boot instance epoch, profile bits, and run/chat/provider/workspace route are supplied only in the exact managed provider child environment. The runtime validates the token and boot epoch before handling requests; absent or malformed route material fails closed before tool handlers, rather than reconnecting a stale registration to another instance.
 
-Naively flipping the `!app.isPackaged` gate is unsafe. The broker socket is instance-scoped — `join(app.getPath('userData'), 'taskwraith-gemini-mcp.sock')` ([index.ts:30531](../src/main/index.ts:30531)) — but the provider-side registration that points at it is **not uniformly so**:
+This guarantees only the TaskWraith-managed Gemini/Cursor bridge children that receive the complete per-run environment. It does not fence an already-running native Cursor session that has not refreshed its global configuration; that visibility remains provider-scheduled. It also does not turn a manually copied static registration into a supported route.
 
-- **Claude** gets a **per-run** MCP config written to the OS temp dir plus `--mcp-config <path>` on argv ([index.ts:18399](../src/main/index.ts:18399)) — already instance-safe.
-- **Gemini** resolves `~/.gemini/settings.json` ([index.ts:30534](../src/main/index.ts:30534)) — user-global, one file, last writer wins. There is already a `repairKnownStaleGeminiMcpBridgeConfigs` path ([McpBridgeRuntime.ts:2683](../src/main/mcp/McpBridgeRuntime.ts:2683)) that shells out to `gemini mcp list` to detect staleness, which is direct evidence this has bitten before.
-- **Cursor** uses `~/.cursor/mcp.json`, same shape.
+### The user chooses observation; a separate consent chooses control
 
-So B is not one gate flip — it is **auditing MCP-bridge registration across the provider roster** and making the non-per-run ones instance-aware. Two instances otherwise means a CLI child launched by instance A can dial instance B's socket: precisely the known cross-instance write leak, which this would *widen*. **A half-done B is worse than no B.**
+Screen Watch attachment starts with the existing user-operated picker. The agent cannot enumerate or select desktop windows. A picked window grants observation only, including capture under Screen Watch's existing controls. Control is a second, explicit **View & Control** choice that identifies the provider and selected app/window, describes the limited verbs and expiry, and can instead remain View only or be cancelled.
 
-Also unresolved and worth deciding before building: should a *release* build ever run a second instance? An accidental `TASKWRAITH_INSTANCE_ID` gives a user an empty app with none of their chats. That argues for a distinct, explicit opt-in rather than reusing the dev variable.
+Control is offered only if the picked window is the exact current `LaunchManager` attempt for the same chat, run, provider, and workspace. The picked owner PID must equal the launched root PID and its kernel `proc_bsdinfo` process-birth receipt must equal the receipt captured immediately after spawn; PID or process-group equality alone is never authority. Attempts missing that receipt remain view-only. The app's own host PIDs are refused. A separately launched TaskWraith QA child is eligible because it is itself the exact launch root; helper/renderer descendants remain view-only unless a future bounded lineage receipt is implemented. Native control is currently solo-only (`participantId: null`) and tied to a single active attachment/lease.
 
-### C — the `window` driver. Gated on a consent flow, not on a driver class.
+The native control path requires macOS **15.2 or later**. A Screen Watch picker may be usable on an earlier supported macOS release, but it does not grant Tier 4 control. TaskWraith requests Accessibility only after the human chooses View & Control, and rechecks Accessibility trust at observation and action time; loss of trust denies the operation.
 
-The `window` kind is declared in `CanvasDriverKind` and absent from `SUPPORTED_DRIVERS`, which makes it look like a one-line enable. It is not.
+### AX-only actuation is an exact-target transaction
 
-- **Capture exists**: `swift/TaskWraithBridge` owns SCStream/`SCContentFilter` window capture with OCR, exposed as `appwatch_start` / `_stop` / `_status` / `_frames` / `_latest_frame`.
-- **The implementation is in Swift, over JSON-RPC** — there is no TS Appwatch service class to hang a driver off, so a `CanvasWindowDriver` needs a bridge client.
-- **Attachment requires a user picker.** `AttachedWindow.swift` sources its metadata by correlating `SCShareableContent` *against the picker's filter*. An agent cannot attach a window by itself.
+The driver uses Swift Accessibility APIs for bounded `observe`, `inspect`, `click`, and `fill`. It has no coordinate click, `CGEvent`, generic keyboard typing, pixel-input, or generic Canvas escape hatch. Fill is limited to settable text-field/text-area/combo-box AX values. The selected app must be frontmost and its selected window focused and visible.
 
-That last point is the important one, and it is a **feature, not an obstacle**: consent by construction. But it means C is really *"the user attaches a window, and an agent may then observe it as a canvas"* — an attach/adopt flow with UI, not a driver registration. Screenshot-only, following `CanvasDeviceDriver`'s pattern where structured verbs explicitly throw.
+Each action is bound to a fresh observation, the exact AX reference, and an unchanged physical-input epoch. One click/fill is followed by an observation before another action can proceed; human input, target drift, stale process identity, or loss of focus fails closed. The default control lease is 15 minutes and permits 20 click/fill **attempts** (not only successes). Observation and inspection do not consume that budget; after the twentieth permitted action, further control is revoked while read/verify authority remains until the ordinary lease lifecycle ends.
 
-### Actuation over a native window is blocked on a macOS permission
+### Native capture and secrets fail closed; clicks confirm one at a time
 
-Worth stating plainly so nobody re-scopes it optimistically: there is **zero actuation primitive anywhere in the tree** — no `AXUIElement`, no `CGEvent`, in TS or Swift — and the app has never declared or requested the Accessibility TCC permission. Native actuation therefore needs a new Swift input surface *and* a permission the user must grant in System Settings, which cannot be done programmatically.
+Native capture does not paint over a secret as the web Canvas renderer can. Before a native screenshot, the driver traverses the bounded AX tree and refuses capture if any secure field is present or its secure-field assessment is incomplete. Secure/password-like fields cannot be filled, their values are neither read nor returned, and there is no retry/workaround path.
 
-That is Tier 4, and it should be planned as a permission-and-consent feature that happens to involve input synthesis, not as a driver that happens to need a permission.
+Every native click requires the main-owned, one-use confirmation described in §7. It binds the exact lease, observed ref, observation id, and input epoch to a value-free semantic summary; a missing, declined, or failed prompt dispatches nothing. Consequential keywords are an advisory dialog hint only, not an authorization boundary. After revalidation, accepted confirmation and dispatch form the linearization point: an accepted in-flight click may finish if detach races immediately afterward, as the dialog warns. There is no pixel fallback.
+
+### `canvas_open_launch` is the only native Canvas entry point
+
+Raw `canvas_open` accepts web/device inputs only and cannot request a `window` driver. `canvas_open_launch` never starts a process; it first verifies an attempt owned by the canonical active chat/run and prefers a detected loopback URL for the web driver. Only when that route is absent may a live macOS attempt receive an opaque native-window target, after the exact ownership, picker, View & Control, Accessibility, and lease checks above.
+
+That opaque target is internal to the resolver: an agent never receives a picker handle, PID, bounds, or reusable desktop capability. An arbitrary external window, a stale/terminal attempt, a cross-chat/run/provider/workspace attempt, or an attachment that no longer matches is refused. For a macOS attempt missing attachment/control consent, `canvas_open_launch` returns guidance to ask the user to attach the launch in Screen Watch and approve View & Control; it does not fall back to an arbitrary screen. Other unsupported/non-native launch attempts retain the existing escaped-output-tail Canvas fallback.
+
+### Lease lifecycle and residual limits
+
+Control is revoked when the attachment is detached or replaced, the run or launch attempt becomes terminal, the lease expires, exact ownership/identity revalidation fails, the bridge daemon disappears, or the action budget is exhausted. Accessibility revocation is enforced at the next operation; do not claim a proactive automatic detach solely because the System Settings grant changed.
+
+Revocation stops new native-action admissions immediately. An action is admitted only when main revalidates the lease, consumes its one-use click receipt where applicable and one action-budget step, and synchronously enqueues the local bridge request. A click or fill already admitted to the FIFO bridge may still complete if detach, expiry, or terminal state races afterward. If revocation wins before the reply is projected, TaskWraith treats the result as indeterminate, never retries it, and requires a fresh attachment/control session.
+
+The process under test remains unsandboxed. An isolated TaskWraith profile contains TaskWraith state, not the child process or its native UI; this Tier 4 path therefore remains for user-approved QA of an exact managed build, not a security boundary for arbitrary applications.
 
 ## 13. Open questions for the next session
 

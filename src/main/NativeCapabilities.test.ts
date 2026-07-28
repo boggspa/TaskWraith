@@ -71,6 +71,85 @@ describe('NativeCapabilities', () => {
     })
     expect(snapshot.screenWatch).toMatchObject(snapshot.appwatch)
     expect(snapshot.ocr).toMatchObject(snapshot.appwatch)
+    expect(snapshot.appDrive).toEqual({
+      available: false,
+      reason: 'AppDrive requires macOS 15.2 or newer for exact picker window identity.'
+    })
+  })
+
+  it('reports structural AppDrive availability at the exact macOS 15.2 boundary', () => {
+    const snapshot = getNativeCapabilitySnapshot({
+      platform: 'darwin',
+      arch: 'arm64',
+      osRelease: '24.2.0',
+      macosVersion: '15.2',
+      binaryPath: '/tmp/TaskWraithBridgeDaemon',
+      binaryExists: true,
+      binaryArchs: ['arm64']
+    })
+
+    // Accessibility trust is runtime state: this static snapshot must not claim it.
+    expect(snapshot.appDrive).toEqual({ available: true })
+  })
+
+  it('fails AppDrive closed below macOS 15.2 while preserving bridge-backed observation', () => {
+    const snapshot = getNativeCapabilitySnapshot({
+      platform: 'darwin',
+      arch: 'arm64',
+      osRelease: '24.1.0',
+      macosVersion: '15.1.9',
+      binaryPath: '/tmp/TaskWraithBridgeDaemon',
+      binaryExists: true,
+      binaryArchs: ['arm64']
+    })
+
+    expect(snapshot.bridge.available).toBe(true)
+    expect(snapshot.screenWatch.available).toBe(true)
+    expect(snapshot.appwatch.available).toBe(true)
+    expect(snapshot.appDrive).toEqual({
+      available: false,
+      reason:
+        'AppDrive requires macOS 15.2 or newer for exact picker window identity; this Mac is running macOS 15.1.9.'
+    })
+  })
+
+  it.each(['unknown', '15.2-beta', '15..2'])(
+    'fails AppDrive closed when the injected macOS version is malformed (%s)',
+    (macosVersion) => {
+      const snapshot = getNativeCapabilitySnapshot({
+        platform: 'darwin',
+        arch: 'arm64',
+        osRelease: '24.2.0',
+        macosVersion,
+        binaryPath: '/tmp/TaskWraithBridgeDaemon',
+        binaryExists: true,
+        binaryArchs: ['arm64']
+      })
+
+      expect(snapshot.appDrive).toEqual({
+        available: false,
+        reason:
+          "AppDrive could not verify this Mac's OS version. Exact picker window identity requires macOS 15.2 or newer."
+      })
+    }
+  )
+
+  it('requires the native bridge even on a supported macOS version', () => {
+    const snapshot = getNativeCapabilitySnapshot({
+      platform: 'darwin',
+      arch: 'arm64',
+      osRelease: '24.2.0',
+      macosVersion: '15.2',
+      binaryPath: '/tmp/missing-TaskWraithBridgeDaemon',
+      binaryExists: false,
+      binaryArchs: ['arm64']
+    })
+
+    expect(snapshot.appDrive).toEqual({
+      available: false,
+      reason:
+        'AppDrive requires the TaskWraith native bridge. TaskWraithBridgeDaemon binary was not found.'
+    })
   })
 
   it('includes renderer-safe runtime feature gates', () => {

@@ -206,6 +206,18 @@ describe('B-mode global broker helpers', () => {
         TASKWRAITH_CHAT_ID: 'chat-a',
         TASKWRAITH_WORKSPACE_PATH: '/workspace-a',
         TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-a',
+        TASKWRAITH_INSTANCE_ID: 'ambient-instance-must-not-persist',
+        TASKWRAITH_MCP_SOCKET_PATH: '/live/socket',
+        TASKWRAITH_MCP_BROKER_TOKEN: 'live-token',
+        TASKWRAITH_MCP_INSTANCE_EPOCH: '0123456789abcdef0123456789abcdef',
+        TASKWRAITH_MCP_BRIDGE_LOG_EPOCH: '9',
+        TASKWRAITH_MCP_ISOLATED_INSTANCE_ID: 'isolated-profile',
+        TASKWRAITH_MCP_SAFE_SUBSET: '1',
+        TASKWRAITH_MCP_PLAN_SUBSET: '0',
+        TASKWRAITH_MCP_CORE_SUBSET: '0',
+        TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+        TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
+        TASKWRAITH_MCP_MESH_DIRECT: '1',
         TASKWRAITH_MCP_AUDIT: '1'
       }
     })
@@ -215,8 +227,7 @@ describe('B-mode global broker helpers', () => {
     // launches its own stdio broker child. Storing them globally would make a
     // concurrent seat's route replace this one before its tool call.
     expect(server.env).toEqual({
-      TASKWRAITH_GEMINI_MCP_BRIDGE: '1',
-      TASKWRAITH_PARENT_PROVIDER: 'cursor'
+      TASKWRAITH_GEMINI_MCP_BRIDGE: '1'
     })
   })
 

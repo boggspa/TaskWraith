@@ -142,6 +142,47 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('canvas:set-visible', ['canvas-1', 'false'])).toThrow(/boolean/)
   })
 
+  it('requires chat-scoped native-window IPC and an exact positive generation for detach', () => {
+    expect(() => validateIpcArgs('attach-window:pick', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('attach-window:status', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('attach-window:detach', ['chat-1', 7])).not.toThrow()
+
+    expect(() => validateIpcArgs('attach-window:pick', ['../settings'])).toThrow(/safe chat id/)
+    expect(() => validateIpcArgs('attach-window:status', [])).toThrow(/non-empty/)
+    for (const invalidGeneration of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => validateIpcArgs('attach-window:detach', ['chat-1', invalidGeneration])).toThrow(
+        /positive safe integer/
+      )
+    }
+    expect(() => validateIpcArgs('attach-window:detach', ['chat-1', 7, 'extra'])).toThrow(
+      /too many arguments/
+    )
+  })
+
+  it('accepts only display-only sticky AppWatch resume hints', () => {
+    const stash = {
+      chatId: 'chat-1',
+      windowMeta: {
+        title: 'Editor',
+        bundleID: 'com.example.Editor',
+        applicationName: 'Editor'
+      },
+      attachedAt: '2026-07-28T03:00:00.000Z',
+      wasStreaming: true
+    }
+    expect(() => validateIpcArgs('sticky-appwatch:get', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sticky-appwatch:stash', [stash])).not.toThrow()
+    expect(() => validateIpcArgs('sticky-appwatch:clear', ['chat-1'])).not.toThrow()
+    expect(() => validateIpcArgs('sticky-appwatch:stash', [{ ...stash, pid: 1234 }])).toThrow(
+      /unknown field pid/
+    )
+    expect(() =>
+      validateIpcArgs('sticky-appwatch:stash', [
+        { ...stash, windowMeta: { ...stash.windowMeta, windowID: 77 } }
+      ])
+    ).toThrow(/unknown field windowID/)
+  })
+
   it('registers and shape-gates the main-window Mesh Canvas surface', () => {
     expect(() => validateIpcArgs('mesh-scene:list-chat', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('mesh-scene:view', ['chat-1', 'scene-1'])).not.toThrow()

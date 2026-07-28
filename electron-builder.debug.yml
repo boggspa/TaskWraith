@@ -25,6 +25,8 @@ mac:
     NSDocumentsFolderUsageDescription: TaskWraith Debug requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: TaskWraith Debug requests access to the user's Downloads folder.
     NSLocalNetworkUsageDescription: TaskWraith Debug discovers and connects to your paired iPhone or iPad on your local network to stream live run events, approval requests, and tool outputs.
+    NSScreenCaptureUsageDescription: TaskWraith Debug captures the window you explicitly pick with the macOS screen-sharing picker for one-off screenshots or a live low-frame-rate Screen Watch stream. While Screen Watch is active, captured frames may leave your Mac for the hosted AI provider attached to your chat so it can interpret the app; stop Screen Watch or detach the window to end capture.
+    NSAppleEventsUsageDescription: TaskWraith Debug sends AppleScript automation commands to Final Cut Pro and Logic Pro on your behalf — only after you approve each action in the in-app modal. Every dispatch is auditable in the approval log.
     NSBonjourServices:
       - _taskwraith._tcp
       - _taskwraith-quic._udp

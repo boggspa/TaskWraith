@@ -140,7 +140,7 @@ mac:
   # resources. Each helper binary is intentionally single-arch and
   # identical in the x64/arm64 temp apps, so @electron/universal must
   # keep them as resources rather than trying to lipo them.
-  x64ArchFiles: '{**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/claude,**/node_modules/node-pty/prebuilds/darwin-*/*,**/node_modules/@napi-rs/canvas-darwin-*/*}'
+  x64ArchFiles: '{**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/claude,**/node_modules/node-pty/prebuilds/darwin-*/*,**/node_modules/@napi-rs/canvas-darwin-*/*,**/tui-runtime/darwin-*/node}'
   entitlementsInherit: build/entitlements.mac.plist
   sign: build/sign-with-identity-hash.cjs
   # extendInfo MUST be a flat dict, not a list-of-dicts. The list form
@@ -158,7 +158,7 @@ mac:
     NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
     NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
     NSLocalNetworkUsageDescription: TaskWraith discovers and connects to your paired iPhone or iPad on your local network to stream live run events, approval requests, and tool outputs.
-    NSScreenCaptureDescription: TaskWraith captures the window you pick with the macOS screen-sharing picker so the attached AI provider can see it as visual context. Captures are one frame at a time and only run while a window is attached.
+    NSScreenCaptureUsageDescription: TaskWraith captures the window you explicitly pick with the macOS screen-sharing picker for one-off screenshots or a live low-frame-rate Screen Watch stream. While Screen Watch is active, captured frames may leave your Mac for the hosted AI provider attached to your chat so it can interpret the app; stop Screen Watch or detach the window to end capture.
     # Phase K4 — AppleScript dispatch into creative apps (Final Cut Pro,
     # Logic Pro) sends AppleEvents from the TaskWraith process. Hardened-
     # runtime apps need this Info.plist string before the OS will route

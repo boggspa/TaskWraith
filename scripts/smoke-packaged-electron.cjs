@@ -58,6 +58,8 @@ async function main() {
   if (packageTarget.platform === 'darwin') {
     validateMacPackageBinaries(packageRoot, resourcesDir, expectedMacArchs)
     validateMacElectronFrameworkSignature(packageRoot, resourcesDir)
+    validateMacAppPermissionMetadata(packageRoot)
+    validateMacAppSignature(packageRoot)
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
   }
@@ -545,6 +547,163 @@ function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
     )
   }
   console.log('validated Electron Framework code signature')
+}
+
+function validateMacAppPermissionMetadata(packageRoot) {
+  if (process.platform !== 'darwin') return
+  const infoPlistPath = path.join(packageRoot, 'Contents', 'Info.plist')
+  assertFile(infoPlistPath, 'packaged app Info.plist')
+  const info = readPlistAsJson(infoPlistPath, 'packaged app Info.plist')
+  for (const key of ['NSScreenCaptureUsageDescription', 'NSAppleEventsUsageDescription']) {
+    if (typeof info[key] !== 'string' || info[key].trim().length === 0) {
+      fail(`Packaged app Info.plist is missing a non-empty ${key}.`)
+    }
+  }
+  if (Object.hasOwn(info, 'NSAccessibilityUsageDescription')) {
+    fail('Packaged app Info.plist contains unsupported NSAccessibilityUsageDescription.')
+  }
+  console.log('validated packaged macOS permission metadata')
+}
+
+function validateMacAppSignature(packageRoot) {
+  if (process.platform !== 'darwin') return
+  const verification = spawnSync(
+    '/usr/bin/codesign',
+    ['--verify', '--deep', '--strict', '--verbose=2', packageRoot],
+    { encoding: 'utf8' }
+  )
+  if (verification.status !== 0) {
+    const detail = [verification.stdout, verification.stderr].filter(Boolean).join('\n').trim()
+    fail(
+      `Packaged app code signature is invalid in ${path.relative(repoRoot, packageRoot)}.${
+        detail ? `\n${detail}` : ''
+      }`
+    )
+  }
+
+  const entitlements = readSignedEntitlements(packageRoot, true)
+  assertAppleEventsEntitlement(entitlements, 'Packaged app signature')
+  const bridgeDaemon = path.join(
+    packageRoot,
+    'Contents',
+    'Resources',
+    'bridge',
+    'TaskWraithBridgeDaemon'
+  )
+  assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
+  const bridgeEntitlements = readSignedEntitlements(bridgeDaemon, true)
+  assertAppleEventsEntitlement(bridgeEntitlements, 'TaskWraithBridgeDaemon signature')
+
+  const requiredEntitlementsByPath = new Map([
+    [packageRoot, entitlements],
+    [bridgeDaemon, bridgeEntitlements]
+  ])
+  for (const [codePath, requiredEntitlements] of requiredEntitlementsByPath) {
+    if (!requiredEntitlements) {
+      fail(`Required signed entitlements are absent from ${path.relative(packageRoot, codePath)}.`)
+    }
+  }
+
+  let signedEntitlementSets = 0
+  for (const candidate of findMacSignedCodeCandidates(packageRoot)) {
+    const candidateEntitlements =
+      requiredEntitlementsByPath.get(candidate) ?? readSignedEntitlements(candidate, false)
+    if (!candidateEntitlements) continue
+    signedEntitlementSets += 1
+    const privateEntitlements = Object.keys(candidateEntitlements).filter((key) =>
+      key.startsWith('com.apple.private.')
+    )
+    if (privateEntitlements.length > 0) {
+      fail(
+        `${path.relative(packageRoot, candidate) || path.basename(packageRoot)} contains private signed entitlements: ${privateEntitlements.join(', ')}`
+      )
+    }
+  }
+  console.log(
+    `validated packaged app signature and ${signedEntitlementSets} signed entitlement set(s)`
+  )
+}
+
+function assertAppleEventsEntitlement(entitlements, label) {
+  if (entitlements['com.apple.security.automation.apple-events'] !== true) {
+    fail(`${label} is missing com.apple.security.automation.apple-events.`)
+  }
+}
+
+function readPlistAsJson(plistPath, label) {
+  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    fail(`Could not read ${label}.${detail ? `\n${detail}` : ''}`)
+  }
+  try {
+    return JSON.parse(result.stdout)
+  } catch (error) {
+    fail(`${label} did not decode as JSON: ${error instanceof Error ? error.message : error}`)
+  }
+}
+
+function parsePlistBufferAsJson(plist, label) {
+  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', '-'], {
+    input: plist,
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    fail(`Could not decode ${label}.${detail ? `\n${detail}` : ''}`)
+  }
+  try {
+    return JSON.parse(result.stdout)
+  } catch (error) {
+    fail(`${label} did not decode as JSON: ${error instanceof Error ? error.message : error}`)
+  }
+}
+
+function readSignedEntitlements(codePath, required) {
+  const result = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', codePath], {
+    encoding: null
+  })
+  if (result.status !== 0 || !result.stdout?.length) {
+    if (!required) return null
+    const detail = [result.stdout, result.stderr]
+      .filter(Boolean)
+      .map((value) => value.toString())
+      .join('\n')
+      .trim()
+    fail(
+      `Could not read signed entitlements from ${path.relative(repoRoot, codePath) || codePath}.${
+        detail ? `\n${detail}` : ''
+      }`
+    )
+  }
+  return parsePlistBufferAsJson(
+    result.stdout,
+    `${path.relative(repoRoot, codePath) || codePath} signed entitlements`
+  )
+}
+
+function findMacSignedCodeCandidates(packageRoot) {
+  const candidates = new Set([packageRoot])
+  for (const bundlePath of findDirectories(
+    packageRoot,
+    (candidate) => /\.(?:app|framework|xpc|bundle)$/i.test(candidate),
+    16
+  )) {
+    candidates.add(bundlePath)
+  }
+  for (const filePath of findFiles(packageRoot, (candidate) => {
+    if (/\.(?:dylib|node)$/i.test(candidate)) return true
+    try {
+      return (fs.statSync(candidate).mode & 0o111) !== 0
+    } catch {
+      return false
+    }
+  })) {
+    candidates.add(filePath)
+  }
+  return [...candidates]
 }
 
 function validateMacNodePtyBindings(unpackedDir, expectedArchs) {

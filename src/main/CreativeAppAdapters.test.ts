@@ -30,11 +30,9 @@ describe('CreativeAppAdapters', () => {
   it('marks the matching user-attached window without enumerating other windows', () => {
     const snapshot = buildCreativeAppStatusSnapshot({
       attachedWindow: {
-        windowID: 42,
         title: 'My Scene.blend',
         bundleID: 'org.blenderfoundation.blender',
-        applicationName: 'Blender',
-        pid: 1234
+        applicationName: 'Blender'
       },
       fileExists: () => false
     })
@@ -43,7 +41,11 @@ describe('CreativeAppAdapters', () => {
     const logic = snapshot.apps.find((app) => app.id === 'logic-pro')
 
     expect(blender?.attached).toBe(true)
-    expect(blender?.attachedWindow?.windowID).toBe(42)
+    expect(blender?.attachedWindow).toEqual({
+      title: 'My Scene.blend',
+      bundleID: 'org.blenderfoundation.blender',
+      applicationName: 'Blender'
+    })
     expect(logic?.attached).toBe(false)
     expect(logic?.attachedWindow).toBeUndefined()
   })

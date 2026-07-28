@@ -156,9 +156,33 @@ describe('Multiview focused workspace presentation', () => {
       'const handleMultiviewPaneToggleScreenWatch =',
       'const openDiscordContextPickerForPane ='
     )
-    expect(screenWatch).toContain('attachedWindowOwnerChatIdRef.current === chatId')
+    expect(screenWatch).toContain('attachedWindow?.chatId === chatId')
     expect(screenWatch).toContain('handleDetachWindow(chatId)')
     expect(screenWatch).toContain('handleAttachWindow(chatId)')
+  })
+
+  it('synchronously hides a prior chat attachment and gates Screen Watch on its own capability', () => {
+    expect(source).toContain('const currentChatAttachedWindow =')
+    expect(source).toContain('attachedWindow?.chatId === currentChat?.appChatId')
+    expect(source).toContain('screenWatchUnavailableReason: nativeScreenWatchUnavailableReason')
+    expect(source).not.toContain('appDriveUnavailableReason')
+
+    const attachmentStatus = slice(
+      'useEffect(() => {\n    const chatId = currentChat?.appChatId',
+      '// triggerSendConfirmation moved INTO <Composer>'
+    )
+    expect(attachmentStatus).toContain('reconcileAttachedWindowStatus(chatId, status)')
+    expect(attachmentStatus).toContain('currentChatIdRef.current !== chatId')
+
+    const stickyProjection = slice('function stickyAppWatchStashInput(', 'function App()')
+    expect(stickyProjection).toContain('title: attachment.windowMeta.title')
+    expect(stickyProjection).toContain('bundleID: attachment.windowMeta.bundleID')
+    expect(stickyProjection).toContain('applicationName: attachment.windowMeta.applicationName')
+    for (const privateField of ['windowID', 'pid', 'handleID', 'scopeID', 'consentEpoch']) {
+      expect(stickyProjection).not.toContain(privateField)
+    }
+    expect(source).toContain('liveAttachedWindowRef.current?.chatId === chatId')
+    expect(source).toContain('.stickyAppWatchGet(chatId)')
   })
 
   it('invalidates registered Git and CI responses when workspace ownership changes', () => {

@@ -8,6 +8,8 @@ import {
   McpBridgeRuntime
 } from './McpBridgeRuntime'
 
+const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
@@ -286,6 +288,7 @@ describe('McpBridgeRuntime broker lifecycle', () => {
       const runtime = new McpBridgeRuntime({
         getGeminiMcpSocketPath: () => socketPath,
         getGeminiMcpBrokerToken: () => 'token-1',
+        getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
         executeGeminiMcpTool
       } as never)
 
@@ -302,6 +305,7 @@ describe('McpBridgeRuntime broker lifecycle', () => {
         await expect(
           brokerRequest(socketPath, {
             token: 'token-1',
+            instanceEpoch: TEST_INSTANCE_EPOCH,
             tool: 'read_file',
             arguments: { path: 'README.md' },
             parentProvider: 'kimi'

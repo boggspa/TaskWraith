@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CryptoKit
 // ScreenCaptureKit predates Swift 6 strict concurrency — `SCContentFilter`
 // isn't `Sendable` in the SDK, but the filter we pass between the picker
 // and the capture pipeline is only ever used in a fire-once, single-task
@@ -186,37 +187,1117 @@ dispatcher.register("closeout.summarize") { params in
     return try CloseoutSummarizer.summarize(params)
 }
 
-// MARK: - Attached window RPCs (Appshots-equivalent)
+// MARK: - Attached window RPCs (scoped consent leases)
 
-// In-memory handle table for windows the user has attached via the macOS
-// system picker. Never persisted — dropped on daemon exit so a stale handle
-// can never be used after restart. The AI side only ever sees the opaque
-// handle string returned by `attachedWindow.requestPick`; window enumeration
-// is contained within this daemon process.
 let attachedWindowStore = AttachedWindowStore()
 
-/// `attachedWindow.requestPick` — presents the macOS `SCContentSharingPicker`
-/// on the main actor and waits for the user to either pick a single window or
-/// cancel. Returns `{ handleID, windowMeta }` on success or
-/// `{ cancelled: true }` if the user dismissed the picker. The picker IS the
-/// security boundary: Apple's UI decides which windows the user can see and
-/// pick, and the resulting filter is the implicit grant.
-///
-/// Picker delivers `(meta, filter)`; we store the filter in the handle table
-/// so subsequent captures can call `SCScreenshotManager` directly without
-/// re-enumerating windows. The meta returned to the caller is for the
-/// renderer pill — pixels themselves require a separate `attachedWindow.capture`.
-dispatcher.register("attachedWindow.requestPick") { _ in
+// Request-pick is the one lifecycle method without an existing generation.
+// It receives new human consent scope data and returns the generation created.
+struct AttachedWindowRequestPickParams: Decodable {
+    let scopeID: String
+    let chatID: String
+    let consentEpoch: Int
+    let protectedOwners: ProtectedWindowOwners
+
+    var scope: AttachedWindowScope {
+        return AttachedWindowScope(
+            scopeID: scopeID,
+            chatID: chatID,
+            consentEpoch: consentEpoch
+        )
+    }
+}
+
+// This flat wire shape is required by every existing-attachment RPC. There is
+// no bare-handle compatibility path because it would reintroduce a global
+// attachment authority across chats.
+struct AttachedWindowAccessParams: Decodable {
+    let handleID: String
+    let scopeID: String
+    let chatID: String
+    let consentEpoch: Int
+    let generation: Int
+
+    var access: AttachedWindowAccess {
+        return AttachedWindowAccess(
+            handleID: handleID,
+            scope: AttachedWindowScope(
+                scopeID: scopeID,
+                chatID: chatID,
+                consentEpoch: consentEpoch
+            ),
+            generation: generation
+        )
+    }
+}
+
+func scopedAttachmentFields(_ lease: AttachedWindowLease) -> [String: Any] {
+    var fields = lease.scope.toJSONObject()
+    fields["handleID"] = lease.handleID
+    fields["generation"] = lease.generation
+    return fields
+}
+
+func scopedRequestFields(_ access: AttachedWindowAccess) -> [String: Any] {
+    var fields = access.scope.toJSONObject()
+    fields["handleID"] = access.handleID
+    fields["generation"] = access.generation
+    return fields
+}
+
+func mapAttachmentError(_ error: Error) -> JSONRPCError {
+    if let error = error as? AttachmentAuthorizationError {
+        switch error {
+        case .denied:
+            return JSONRPCError.attachmentDenied(error.localizedDescription)
+        case .revoked:
+            return JSONRPCError.attachmentRevoked(error.localizedDescription)
+        }
+    }
+    if let error = error as? AttachmentParameterError {
+        return JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: error.localizedDescription
+        )
+    }
+    return JSONRPCError(
+        code: JSONRPCErrorCode.internalError,
+        message: error.localizedDescription
+    )
+}
+
+func requestDictionary(_ params: Any, method: String) throws -> [String: Any] {
+    guard let dict = params as? [String: Any] else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "\(method) expects an object params payload."
+        )
+    }
+    return dict
+}
+
+func decodeScopedAccess(_ params: Any, method: String) throws -> AttachedWindowAccess {
+    do {
+        let parsed = try decodeParams(params, as: AttachedWindowAccessParams.self)
+        try parsed.access.validate()
+        return parsed.access
+    } catch let error as JSONRPCError {
+        throw error
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid \(method) params: \(error.localizedDescription)"
+        )
+    }
+}
+
+func resolveAuthorizedAttachment(_ access: AttachedWindowAccess) throws -> AuthorizedAttachment {
+    do {
+        return try runBlocking { @Sendable [attachedWindowStore, access] in
+            try await attachedWindowStore.authorize(access)
+        }
+    } catch {
+        throw mapAttachmentError(error)
+    }
+}
+
+func prepareAuthorizedAppwatch(_ access: AttachedWindowAccess) throws -> AuthorizedAttachment {
+    do {
+        return try runBlocking { @Sendable [attachedWindowStore, access] in
+            try await attachedWindowStore.prepareStream(access)
+        }
+    } catch {
+        throw mapAttachmentError(error)
+    }
+}
+
+func revalidateAttachment(_ lease: AttachedWindowLease) throws {
+    do {
+        try runBlocking { @Sendable [attachedWindowStore, lease] in
+            try await attachedWindowStore.revalidate(lease)
+        }
+    } catch {
+        throw mapAttachmentError(error)
+    }
+}
+
+func captureFilter(for lease: AttachedWindowLease) throws -> SCContentFilter {
+    guard let filter = lease.filter else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.internalError,
+            message: "Attached-window capture filter is unavailable."
+        )
+    }
+    return filter
+}
+
+// MARK: - Native window RPC state
+
+struct NativeWindowAdoptParams: Decodable {
+    let scoped: AttachedWindowAccessParams
+    let protectedHostPIDs: [Int]
+
+    var access: AttachedWindowAccess { scoped.access }
+
+    private enum CodingKeys: String, CodingKey {
+        case protectedHostPIDs
+    }
+
+    init(from decoder: Decoder) throws {
+        scoped = try AttachedWindowAccessParams(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        protectedHostPIDs = try container.decode([Int].self, forKey: .protectedHostPIDs)
+    }
+}
+
+struct NativeWindowObservedElementParams: Decodable {
+    let scoped: AttachedWindowAccessParams
+    let observationID: String
+    let inputEpoch: UInt64
+    let ref: String
+
+    var access: AttachedWindowAccess { scoped.access }
+
+    private enum CodingKeys: String, CodingKey {
+        case observationID = "observationId"
+        case inputEpoch
+        case ref
+    }
+
+    init(from decoder: Decoder) throws {
+        scoped = try AttachedWindowAccessParams(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        observationID = try container.decode(String.self, forKey: .observationID)
+        inputEpoch = try container.decode(UInt64.self, forKey: .inputEpoch)
+        ref = try container.decode(String.self, forKey: .ref)
+    }
+}
+
+struct NativeWindowFillParams: Decodable {
+    let element: NativeWindowObservedElementParams
+    let value: String
+
+    var access: AttachedWindowAccess { element.access }
+
+    private enum CodingKeys: String, CodingKey {
+        case value
+    }
+
+    init(from decoder: Decoder) throws {
+        element = try NativeWindowObservedElementParams(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        value = try container.decode(String.self, forKey: .value)
+    }
+}
+
+struct NativeWindowCaptureParams: Decodable {
+    let scoped: AttachedWindowAccessParams
+    let maxDimensionPx: Int?
+
+    var access: AttachedWindowAccess { scoped.access }
+
+    private enum CodingKeys: String, CodingKey {
+        case maxDimensionPx
+    }
+
+    init(from decoder: Decoder) throws {
+        scoped = try AttachedWindowAccessParams(from: decoder)
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        maxDimensionPx = try container.decodeIfPresent(Int.self, forKey: .maxDimensionPx)
+    }
+}
+
+/// Main uses this narrow daemon-local endpoint immediately after spawning a
+/// process, before it decides whether later IPC may address that process. It
+/// is deliberately not a general process inspector: one positive PID in,
+/// one proc_bsdinfo-backed birth receipt out.
+struct NativeWindowProcessIdentityParams: Decodable {
+    let pid: Int
+}
+
+final class NativeWindowRPCSession: @unchecked Sendable {
+    struct Active {
+        let access: AttachedWindowAccess
+        let target: WindowAccessibilityTargetIdentity
+        let adapter: WindowAccessibilityAdapter
+    }
+
+    private let lock = NSLock()
+    private let permissionAdapter: WindowAccessibilityAdapter
+    private var active: Active?
+
+    init(permissionAdapter: WindowAccessibilityAdapter = WindowAccessibilityAdapter()) {
+        self.permissionAdapter = permissionAdapter
+    }
+
+    func serialized<T>(_ operation: (inout Active?) throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try operation(&active)
+    }
+
+    func permissionStatus(prompt: Bool) -> WindowAccessibilityPermissionState {
+        serialized { active in
+            let adapter = active?.adapter ?? permissionAdapter
+            return prompt ? adapter.requestUserPrompt() : adapter.status()
+        }
+    }
+
+    func clearActive(_ active: inout Active?) {
+        guard let current = active else { return }
+        _ = current.adapter.release(target: current.target)
+        current.adapter.invalidateAllSnapshots()
+        active = nil
+    }
+
+    func clear() {
+        serialized { active in
+            clearActive(&active)
+        }
+    }
+}
+
+let nativeWindowRPCSession = NativeWindowRPCSession()
+
+/// A screenshot is only releasable when two complete, content-free AX safety
+/// walks agree around the asynchronous ScreenCaptureKit call. Keeping this as
+/// a small pure-ish seam lets regression tests prove that a refused safety
+/// check never invokes the capture executor.
+func validateNativeWindowCaptureSafety(
+    beforeCapture: WindowAccessibilityCaptureSafetyReceipt,
+    afterCapture: WindowAccessibilityCaptureSafetyReceipt
+) throws -> WindowAccessibilityCaptureSafetyReceipt {
+    guard beforeCapture.safe, afterCapture.safe else {
+        throw WindowAccessibilityFailure(
+            code: .secureFieldStatusUnknown,
+            message: "AppDrive capture safety could not be verified after frame acquisition."
+        )
+    }
+    guard beforeCapture.target == afterCapture.target else {
+        throw WindowAccessibilityFailure(
+            code: .windowIdentityMismatch,
+            message: "The selected window identity changed during native capture; the frame was discarded."
+        )
+    }
+    guard beforeCapture.inputEpoch == afterCapture.inputEpoch else {
+        throw WindowAccessibilityFailure(
+            code: .staleInputEpoch,
+            message: "The user interacted with the Mac during native capture; the frame was discarded."
+        )
+    }
+    guard
+        beforeCapture.nodesExamined == afterCapture.nodesExamined,
+        beforeCapture.validationFingerprint == afterCapture.validationFingerprint
+    else {
+        throw WindowAccessibilityFailure(
+            code: .elementChanged,
+            message: "The selected window changed during native capture; the frame was discarded."
+        )
+    }
+    return afterCapture
+}
+
+func performNativeWindowCapture(
+    adapter: WindowAccessibilityAdapter,
+    target: WindowAccessibilityTargetIdentity,
+    captureExecutor: () throws -> CapturedWindowFrame,
+    revalidateLease: () throws -> Void
+) throws -> (safety: WindowAccessibilityCaptureSafetyReceipt, frame: CapturedWindowFrame) {
+    // Keep the preflight immediately adjacent to ScreenCaptureKit work. The
+    // active native-window session serializes attachment revocation while AX
+    // mutations/capture are in flight.
+    let beforeCapture = try adapter.capture(target: target)
+    let frame = try captureExecutor()
+    let afterCapture = try adapter.capture(
+        target: target,
+        expectedInputEpoch: beforeCapture.inputEpoch
+    )
+    let safety = try validateNativeWindowCaptureSafety(
+        beforeCapture: beforeCapture,
+        afterCapture: afterCapture
+    )
+    try revalidateLease()
+    return (safety: safety, frame: frame)
+}
+
+/// All attachment revocations that can occur outside a native-window RPC are
+/// funneled through the same lock as AX mutations. That makes the lease held
+/// by `requireActiveNativeWindow` stable through the irreversible AXPress and
+/// AXValue calls, rather than relying on a best-effort recheck beforehand.
+func revokeAttachedWindowLease(_ lease: AttachedWindowLease) {
+    nativeWindowRPCSession.serialized { active in
+        try? runBlocking { @Sendable [attachedWindowStore, lease] in
+            await attachedWindowStore.revokeIfCurrent(lease)
+        }
+        if active?.access == lease.access {
+            nativeWindowRPCSession.clearActive(&active)
+        }
+    }
+}
+
+func shutdownAttachedWindowRuntime() {
+    nativeWindowRPCSession.serialized { active in
+        try? runBlocking { @Sendable [attachedWindowStore] in
+            await attachedWindowStore.shutdown()
+        }
+        nativeWindowRPCSession.clearActive(&active)
+    }
+}
+
+func decodeNativeWindowParams<T: Decodable>(
+    _ params: Any,
+    as type: T.Type,
+    method: String
+) throws -> T {
+    do {
+        return try decodeParams(params, as: type)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid \(method) params."
+        )
+    }
+}
+
+func validateNativeWindowAccess(
+    _ access: AttachedWindowAccess,
+    method: String
+) throws -> AttachedWindowAccess {
+    do {
+        try access.validate()
+        return access
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid \(method) scoped attachment access."
+        )
+    }
+}
+
+func deriveNativeWindowTarget(
+    from lease: AttachedWindowLease
+) throws -> WindowAccessibilityTargetIdentity {
+    let meta = lease.meta
+    guard meta.identityQuality == .exact else {
+        throw JSONRPCError.attachmentDenied(
+            "Native control requires exact picker window identity."
+        )
+    }
+    guard
+        let processIdentity = meta.processIdentity,
+        processIdentity.source == .procBSDInfo,
+        processIdentity.pid == meta.pid,
+        processIdentity.launchTimeMicros > 0,
+        let pid = Int32(exactly: meta.pid),
+        pid > 1,
+        meta.windowID > 0
+    else {
+        throw JSONRPCError.attachmentDenied(
+            "Native control requires exact process-start and window identity."
+        )
+    }
+    let bundleID = meta.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !bundleID.isEmpty, bundleID == meta.bundleID else {
+        throw JSONRPCError.attachmentDenied(
+            "Native control requires a canonical application bundle identity."
+        )
+    }
+    let bounds = meta.bounds
+    guard
+        bounds.x.isFinite,
+        bounds.y.isFinite,
+        bounds.width.isFinite,
+        bounds.height.isFinite,
+        bounds.width > 0,
+        bounds.height > 0
+    else {
+        throw JSONRPCError.attachmentDenied(
+            "Native control requires exact finite picker bounds."
+        )
+    }
+    return WindowAccessibilityTargetIdentity(
+        pid: pid,
+        windowID: UInt32(meta.windowID),
+        bundleID: bundleID,
+        processLaunchTimeMicros: processIdentity.launchTimeMicros,
+        expectedBounds: WindowAccessibilityRect(
+            CGRect(
+                x: bounds.x,
+                y: bounds.y,
+                width: bounds.width,
+                height: bounds.height
+            )
+        )
+    )
+}
+
+func nativeWindowProtectedPIDs(_ supplied: [Int]) throws -> Set<Int32> {
+    guard !supplied.isEmpty else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "nativeWindow.adopt requires non-empty protectedHostPIDs."
+        )
+    }
+    var protected = Set<Int32>()
+    for rawPID in supplied {
+        guard let pid = Int32(exactly: rawPID), pid > 0 else {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.invalidParams,
+                message: "protectedHostPIDs must contain positive process identifiers."
+            )
+        }
+        protected.insert(pid)
+    }
+    protected.insert(ProcessInfo.processInfo.processIdentifier)
+    return protected
+}
+
+func nativeWindowProcessIdentityResponse(pid: Int) throws -> [String: Any] {
+    guard let checkedPID = Int32(exactly: pid), checkedPID > 0 else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "nativeWindow.processIdentity requires a positive PID."
+        )
+    }
+    let normalizedPID = Int(checkedPID)
+    guard
+        let receipt = ProcessIdentityReceipt.resolve(pid: normalizedPID),
+        receipt.source == .procBSDInfo,
+        receipt.pid == normalizedPID,
+        receipt.launchTimeMicros > 0,
+        receipt.matchesLiveProcess()
+    else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.bridgeUnavailable,
+            message: "Requested process identity is unavailable."
+        )
+    }
+    // `toJSONObject` is intentionally exact: do not expose bundle, argv,
+    // parent/group, window, or liveness metadata on this internal lookup.
+    return receipt.toJSONObject()
+}
+
+func registerNativeWindowProcessIdentityRPC(on dispatcher: JSONRPCDispatcher) {
+    dispatcher.register("nativeWindow.processIdentity") { params in
+        try performNativeWindowRPC {
+            let dictionary = try requestDictionary(
+                params,
+                method: "nativeWindow.processIdentity"
+            )
+            guard dictionary.count == 1, dictionary["pid"] != nil else {
+                throw JSONRPCError(
+                    code: JSONRPCErrorCode.invalidParams,
+                    message: "nativeWindow.processIdentity expects exactly one PID."
+                )
+            }
+            let parsed = try decodeNativeWindowParams(
+                dictionary,
+                as: NativeWindowProcessIdentityParams.self,
+                method: "nativeWindow.processIdentity"
+            )
+            return try nativeWindowProcessIdentityResponse(pid: parsed.pid)
+        }
+    }
+}
+
+func requireActiveNativeWindow(
+    _ active: inout NativeWindowRPCSession.Active?,
+    access: AttachedWindowAccess
+) throws -> (NativeWindowRPCSession.Active, AttachedWindowLease) {
+    guard let current = active, current.access == access else {
+        throw JSONRPCError.attachmentRevoked(
+            "The native-window adoption is absent, stale, or belongs to another scope."
+        )
+    }
+    let attachment = try resolveAuthorizedAttachment(access)
+    let liveTarget = try deriveNativeWindowTarget(from: attachment.lease)
+    guard liveTarget == current.target else {
+        _ = current.adapter.release(target: current.target)
+        current.adapter.invalidateAllSnapshots()
+        active = nil
+        throw JSONRPCError.attachmentRevoked(
+            "The authorized native-window identity changed; adopt it again."
+        )
+    }
+    return (current, attachment.lease)
+}
+
+func mapNativeWindowAccessibilityFailure(
+    _ failure: WindowAccessibilityFailure
+) -> JSONRPCError {
+    var data: [String: String] = [
+        "kind": "nativeWindowFailure",
+        "errorCode": failure.code.rawValue,
+        "executionState": failure.executionState.rawValue
+    ]
+    let safeDetailKeys: Set<String> = [
+        "operation",
+        "axError",
+        "idleSeconds",
+        "requiredIdleSeconds",
+        "refusalReason",
+        "maxCharacters",
+        "maxUTF8Bytes"
+    ]
+    for (key, value) in failure.details where safeDetailKeys.contains(key) {
+        data[key] = value
+    }
+    return JSONRPCError(
+        code: failure.code == .invalidRequest
+            ? JSONRPCErrorCode.invalidParams
+            : JSONRPCErrorCode.bridgeUnavailable,
+        message: failure.message,
+        data: data
+    )
+}
+
+func mapNativeWindowRPCError(_ error: Error) -> JSONRPCError {
+    if let error = error as? JSONRPCError {
+        return error
+    }
+    if let failure = error as? WindowAccessibilityFailure {
+        return mapNativeWindowAccessibilityFailure(failure)
+    }
+    return JSONRPCError(
+        code: JSONRPCErrorCode.internalError,
+        message: "Native-window operation failed."
+    )
+}
+
+func encodedJSONObjectDictionary<T: Encodable>(_ value: T) throws -> [String: Any] {
+    guard let result = try encodeAsJSONObject(value) as? [String: Any] else {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.internalError,
+            message: "Native-window result encoding failed."
+        )
+    }
+    return result
+}
+
+func nativeWindowISO8601(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
+}
+
+func nativeWindowSHA256(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+func nativeWindowViewport(
+    _ bounds: WindowAccessibilityRect
+) -> [String: Any] {
+    [
+        "width": max(1, Int(bounds.width.rounded())),
+        "height": max(1, Int(bounds.height.rounded()))
+    ]
+}
+
+func nativeWindowCanvasTree(
+    observation: WindowAccessibilityObservation,
+    fallbackTitle: String
+) throws -> [String: Any] {
+    _ = try encodeAsJSONObject(observation)
+    let snapshot = observation.snapshot
+    var nodesByRef: [String: WindowAccessibilityNode] = [:]
+    for node in snapshot.nodes {
+        guard nodesByRef[node.ref] == nil else {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.internalError,
+                message: "Native AX observation contained duplicate refs."
+            )
+        }
+        nodesByRef[node.ref] = node
+    }
+
+    func buildNode(
+        _ ref: String,
+        visiting: inout Set<String>
+    ) throws -> [String: Any] {
+        guard let node = nodesByRef[ref], !visiting.contains(ref) else {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.internalError,
+                message: "Native AX observation tree is invalid."
+            )
+        }
+        visiting.insert(ref)
+        defer { visiting.remove(ref) }
+
+        var result: [String: Any] = [
+            "ref": node.ref,
+            "role": node.role,
+            "tag": (node.subrole?.isEmpty == false ? node.subrole! : node.role)
+        ]
+        let name = [node.label, node.title, node.identifier]
+            .compactMap { value -> String? in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .first
+        if let name {
+            result["name"] = name
+            result["text"] = name
+        }
+        if let value = node.value, !node.secure {
+            result["value"] = value
+        }
+        if let frame = node.frame {
+            result["bbox"] = [
+                frame.x - snapshot.target.expectedBounds.x,
+                frame.y - snapshot.target.expectedBounds.y,
+                frame.width,
+                frame.height
+            ]
+        }
+        if !node.childRefs.isEmpty {
+            result["children"] = try node.childRefs.map { childRef in
+                try buildNode(childRef, visiting: &visiting)
+            }
+        }
+        return result
+    }
+
+    var visiting = Set<String>()
+    let root = try buildNode(snapshot.rootRef, visiting: &visiting)
+    let rootNode = nodesByRef[snapshot.rootRef]
+    let title = [rootNode?.title, rootNode?.label, fallbackTitle]
+        .compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        .first ?? "Managed native window"
+    return [
+        "url": "window://native",
+        "title": title,
+        "viewport": nativeWindowViewport(snapshot.target.expectedBounds),
+        "capturedAt": nativeWindowISO8601(snapshot.createdAt),
+        "root": root,
+        "nodeCount": snapshot.nodes.count,
+        "truncated": snapshot.truncated,
+        "inputEpoch": snapshot.inputEpoch
+    ]
+}
+
+func nativeWindowObservationResponse(
+    _ observation: WindowAccessibilityObservation,
+    title: String
+) throws -> [String: Any] {
+    var response = try encodedJSONObjectDictionary(observation)
+    response.removeValue(forKey: "snapshot")
+    response.removeValue(forKey: "observationID")
+    response["observationId"] = observation.observationID
+    response["inputEpoch"] = observation.inputEpoch
+    response["tree"] = try nativeWindowCanvasTree(
+        observation: observation,
+        fallbackTitle: title
+    )
+    if let verification = observation.actionVerification {
+        response["actionVerification"] = [
+            "actionId": verification.actionID,
+            "verified": verification.verified.rawValue
+        ]
+    } else {
+        response.removeValue(forKey: "actionVerification")
+    }
+    return response
+}
+
+func nativeWindowInspectionResponse(
+    _ inspection: WindowAccessibilityInspection,
+    target: WindowAccessibilityTargetIdentity
+) throws -> [String: Any] {
+    var response = try encodedJSONObjectDictionary(inspection)
+    response.removeValue(forKey: "observationID")
+    response.removeValue(forKey: "node")
+    response["observationId"] = inspection.observationID
+    let node = inspection.node
+    var detail: [String: Any] = [
+        "found": true,
+        "ref": node.ref,
+        "role": node.role,
+        "tag": (node.subrole?.isEmpty == false ? node.subrole! : node.role)
+    ]
+    if let text = [node.label, node.title]
+        .compactMap({ $0?.isEmpty == false ? $0 : nil })
+        .first {
+        detail["text"] = text
+    }
+    if let frame = node.frame {
+        detail["bbox"] = [
+            frame.x - target.expectedBounds.x,
+            frame.y - target.expectedBounds.y,
+            frame.width,
+            frame.height
+        ]
+    }
+    response["detail"] = detail
+    return response
+}
+
+func nativeWindowActionResponse(
+    _ attempt: WindowAccessibilityActionAttempt
+) throws -> [String: Any] {
+    var response = try encodedJSONObjectDictionary(attempt)
+    response.removeValue(forKey: "observationID")
+    response.removeValue(forKey: "actionID")
+    response["observationId"] = attempt.observationID
+    response["actionId"] = attempt.actionID
+    return response
+}
+
+func nativeWindowScopedResponse(
+    _ response: [String: Any],
+    lease: AttachedWindowLease
+) -> [String: Any] {
+    var result = response
+    for (key, value) in scopedAttachmentFields(lease) {
+        result[key] = value
+    }
+    return result
+}
+
+func performNativeWindowRPC<T>(_ operation: () throws -> T) throws -> T {
+    do {
+        return try operation()
+    } catch {
+        throw mapNativeWindowRPCError(error)
+    }
+}
+
+registerNativeWindowProcessIdentityRPC(on: dispatcher)
+
+dispatcher.register("nativeWindow.accessibilityStatus") { _ in
+    try performNativeWindowRPC {
+        try encodeAsJSONObject(
+            nativeWindowRPCSession.permissionStatus(prompt: false)
+        )
+    }
+}
+
+dispatcher.register("nativeWindow.requestAccessibility") { _ in
+    try performNativeWindowRPC {
+        try encodeAsJSONObject(
+            nativeWindowRPCSession.permissionStatus(prompt: true)
+        )
+    }
+}
+
+dispatcher.register("nativeWindow.adopt") { params in
+    try performNativeWindowRPC {
+        let parsed = try decodeNativeWindowParams(
+            params,
+            as: NativeWindowAdoptParams.self,
+            method: "nativeWindow.adopt"
+        )
+        let access = try validateNativeWindowAccess(
+            parsed.access,
+            method: "nativeWindow.adopt"
+        )
+        let protectedHostPIDs = try nativeWindowProtectedPIDs(parsed.protectedHostPIDs)
+
+        return try nativeWindowRPCSession.serialized { active in
+            let attachment = try resolveAuthorizedAttachment(access)
+            let target = try deriveNativeWindowTarget(from: attachment.lease)
+            var configuration = WindowAccessibilityConfiguration()
+            configuration.protectedHostPIDs = protectedHostPIDs
+            let adapter = WindowAccessibilityAdapter(configuration: configuration)
+            do {
+                let receipt = try adapter.adopt(target: target)
+                try revalidateAttachment(attachment.lease)
+                var response = try encodedJSONObjectDictionary(receipt)
+                response["ok"] = true
+                response["pid"] = Int(receipt.target.pid)
+                response["viewport"] = nativeWindowViewport(receipt.viewport)
+                response = nativeWindowScopedResponse(response, lease: attachment.lease)
+
+                nativeWindowRPCSession.clearActive(&active)
+                active = NativeWindowRPCSession.Active(
+                    access: access,
+                    target: target,
+                    adapter: adapter
+                )
+                return response
+            } catch {
+                _ = adapter.release(target: target)
+                adapter.invalidateAllSnapshots()
+                throw error
+            }
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.observe") { params in
+    try performNativeWindowRPC {
+        let access = try decodeScopedAccess(params, method: "nativeWindow.observe")
+        return try nativeWindowRPCSession.serialized { active in
+            let (current, lease) = try requireActiveNativeWindow(&active, access: access)
+            let observation = try current.adapter.observe(target: current.target)
+            try revalidateAttachment(lease)
+            let response = try nativeWindowObservationResponse(
+                observation,
+                title: lease.meta.title
+            )
+            return nativeWindowScopedResponse(response, lease: lease)
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.inspect") { params in
+    try performNativeWindowRPC {
+        let parsed = try decodeNativeWindowParams(
+            params,
+            as: NativeWindowObservedElementParams.self,
+            method: "nativeWindow.inspect"
+        )
+        let access = try validateNativeWindowAccess(
+            parsed.access,
+            method: "nativeWindow.inspect"
+        )
+        return try nativeWindowRPCSession.serialized { active in
+            let (current, lease) = try requireActiveNativeWindow(&active, access: access)
+            let inspection = try current.adapter.inspect(
+                target: current.target,
+                observationID: parsed.observationID,
+                inputEpoch: parsed.inputEpoch,
+                ref: parsed.ref
+            )
+            try revalidateAttachment(lease)
+            let response = try nativeWindowInspectionResponse(
+                inspection,
+                target: current.target
+            )
+            return nativeWindowScopedResponse(response, lease: lease)
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.capture") { params in
+    try performNativeWindowRPC {
+        let parsed = try decodeNativeWindowParams(
+            params,
+            as: NativeWindowCaptureParams.self,
+            method: "nativeWindow.capture"
+        )
+        let access = try validateNativeWindowAccess(
+            parsed.access,
+            method: "nativeWindow.capture"
+        )
+        let maxDimensionPx = parsed.maxDimensionPx ?? 1_600
+        guard (1...4_096).contains(maxDimensionPx) else {
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.invalidParams,
+                message: "nativeWindow.capture maxDimensionPx must be between 1 and 4096."
+            )
+        }
+
+        return try nativeWindowRPCSession.serialized { active in
+            let (current, lease) = try requireActiveNativeWindow(&active, access: access)
+            let capture: (safety: WindowAccessibilityCaptureSafetyReceipt, frame: CapturedWindowFrame)
+            do {
+                let filter = try captureFilter(for: lease)
+                capture = try performNativeWindowCapture(
+                    adapter: current.adapter,
+                    target: current.target,
+                    captureExecutor: {
+                        try runBlocking { @Sendable [filter, maxDimensionPx] in
+                            try await AttachedWindowCapture.captureWindow(
+                                filter: filter,
+                                maxDimensionPx: maxDimensionPx
+                            )
+                        }
+                    },
+                    revalidateLease: {
+                        try revalidateAttachment(lease)
+                    }
+                )
+            } catch let error as JSONRPCError {
+                throw error
+            } catch let error as AttachedWindowError {
+                if case .windowGone = error {
+                    try? runBlocking { @Sendable [attachedWindowStore, lease] in
+                        await attachedWindowStore.revokeIfCurrent(lease)
+                    }
+                    nativeWindowRPCSession.clearActive(&active)
+                    throw JSONRPCError(
+                        code: JSONRPCErrorCode.bridgeUnavailable,
+                        message: error.localizedDescription
+                    )
+                }
+                throw JSONRPCError(
+                    code: JSONRPCErrorCode.internalError,
+                    message: error.localizedDescription
+                )
+            }
+
+            let capturedAt = Date()
+            let encodedSafety = try encodedJSONObjectDictionary(capture.safety)
+            var response: [String: Any] = [
+                "ok": true,
+                "captureSafety": encodedSafety,
+                "frame": [
+                    "mimeType": "image/png",
+                    "data": capture.frame.pngData.base64EncodedString(),
+                    "width": capture.frame.width,
+                    "height": capture.frame.height,
+                    "byteLength": capture.frame.pngData.count,
+                    "hash": nativeWindowSHA256(capture.frame.pngData),
+                    "capturedAt": nativeWindowISO8601(capturedAt),
+                    "secretsRedacted": 0
+                ]
+            ]
+            response["windowMeta"] = lease.meta.toJSONObject()
+            return nativeWindowScopedResponse(response, lease: lease)
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.click") { params in
+    try performNativeWindowRPC {
+        let parsed = try decodeNativeWindowParams(
+            params,
+            as: NativeWindowObservedElementParams.self,
+            method: "nativeWindow.click"
+        )
+        let access = try validateNativeWindowAccess(
+            parsed.access,
+            method: "nativeWindow.click"
+        )
+        return try nativeWindowRPCSession.serialized { active in
+            let (current, lease) = try requireActiveNativeWindow(&active, access: access)
+            let attempt = try current.adapter.click(
+                target: current.target,
+                observationID: parsed.observationID,
+                inputEpoch: parsed.inputEpoch,
+                ref: parsed.ref
+            )
+            let response = try nativeWindowActionResponse(attempt)
+            return nativeWindowScopedResponse(response, lease: lease)
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.fill") { params in
+    try performNativeWindowRPC {
+        let parsed = try decodeNativeWindowParams(
+            params,
+            as: NativeWindowFillParams.self,
+            method: "nativeWindow.fill"
+        )
+        let access = try validateNativeWindowAccess(
+            parsed.access,
+            method: "nativeWindow.fill"
+        )
+        return try nativeWindowRPCSession.serialized { active in
+            let (current, lease) = try requireActiveNativeWindow(&active, access: access)
+            let attempt = try current.adapter.fill(
+                target: current.target,
+                observationID: parsed.element.observationID,
+                inputEpoch: parsed.element.inputEpoch,
+                ref: parsed.element.ref,
+                value: parsed.value
+            )
+            let response = try nativeWindowActionResponse(attempt)
+            return nativeWindowScopedResponse(response, lease: lease)
+        }
+    }
+}
+
+dispatcher.register("nativeWindow.release") { params in
+    try performNativeWindowRPC {
+        let access = try decodeScopedAccess(params, method: "nativeWindow.release")
+        return try nativeWindowRPCSession.serialized { active in
+            guard let current = active, current.access == access else {
+                throw JSONRPCError.attachmentRevoked(
+                    "The exact native-window adoption is no longer active."
+                )
+            }
+
+            // Reauthorization is mandatory, but release remains available after
+            // the store has already revoked or replaced this exact attachment.
+            do {
+                let attachment = try resolveAuthorizedAttachment(access)
+                let target = try deriveNativeWindowTarget(from: attachment.lease)
+                guard target == current.target else {
+                    throw JSONRPCError.attachmentRevoked(
+                        "The native-window target identity changed before release."
+                    )
+                }
+            } catch {
+                // Exact stored access is sufficient only for local teardown.
+                // No target observation, capture, or actuation occurs here.
+            }
+
+            let receipt = current.adapter.release(target: current.target)
+            current.adapter.invalidateAllSnapshots()
+            active = nil
+            var response = try encodedJSONObjectDictionary(receipt)
+            response["ok"] = true
+            response["released"] = true
+            for (key, value) in scopedRequestFields(access) {
+                response[key] = value
+            }
+            return response
+        }
+    }
+}
+
+// attachedWindow.requestPick accepts:
+// { scopeID, chatID, consentEpoch, protectedOwners: { pids, windowIDs } }.
+// protected PIDs are resolved to launch-time receipts by the daemon itself.
+dispatcher.register("attachedWindow.requestPick") { params in
+    let parsed: AttachedWindowRequestPickParams
+    do {
+        parsed = try decodeParams(params, as: AttachedWindowRequestPickParams.self)
+        try parsed.scope.validate()
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid attachedWindow.requestPick params: \(error.localizedDescription)"
+        )
+    }
+
+    let protectedOwners: ResolvedProtectedWindowOwners
+    do {
+        protectedOwners = try parsed.protectedOwners.resolve()
+    } catch {
+        throw JSONRPCError.attachmentDenied(
+            "Protected host process identity validation failed: \(error.localizedDescription)"
+        )
+    }
+
+    do {
+        try runBlocking { @Sendable [attachedWindowStore, scope = parsed.scope] in
+            try await attachedWindowStore.beginPicker(scope: scope)
+        }
+    } catch {
+        throw mapAttachmentError(error)
+    }
+    defer {
+        try? runBlocking { @Sendable [attachedWindowStore, scope = parsed.scope] in
+            await attachedWindowStore.finishPicker(scope: scope)
+        }
+    }
+
+    let exclusions: PickerExclusions
+    do {
+        exclusions = try runBlocking { @Sendable [protectedOwners] in
+            try await protectedOwners.pickerExclusions()
+        }
+    } catch {
+        throw JSONRPCError.attachmentDenied(
+            "Protected host process identity could not be resolved: \(error.localizedDescription)"
+        )
+    }
+
     let picked: (meta: AttachedWindowMeta, filter: SCContentFilter)
     do {
         picked = try runBlockingOnMain { @MainActor @Sendable in
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(meta: AttachedWindowMeta, filter: SCContentFilter), Error>) in
+            try await withCheckedThrowingContinuation {
+                (continuation: CheckedContinuation<(meta: AttachedWindowMeta, filter: SCContentFilter), Error>) in
                 let picker = AttachedWindowPicker()
-                // Hold the picker alive until the observer callback fires.
-                // Captured in the closure; the closure clears the reference
-                // exactly once, in `finish()`, before the continuation fires.
+                // Keep the picker observer alive until its one completion.
                 var strongPicker: AttachedWindowPicker? = picker
-                picker.pick { result in
+                picker.pick(exclusions: exclusions, protectedOwners: protectedOwners) { result in
                     switch result {
                     case .success(let value):
                         continuation.resume(returning: value)
@@ -228,200 +1309,155 @@ dispatcher.register("attachedWindow.requestPick") { _ in
                 }
             }
         }
-    } catch let err as AttachedWindowError {
-        if case .cancelled = err {
-            return ["cancelled": true]
+    } catch let error as AttachedWindowError {
+        switch error {
+        case .cancelled:
+            return [
+                "cancelled": true,
+                "scopeID": parsed.scope.scopeID,
+                "chatID": parsed.scope.chatID,
+                "consentEpoch": parsed.scope.consentEpoch
+            ]
+        case .protectedWindowSelected:
+            throw JSONRPCError.attachmentDenied(error.localizedDescription)
+        default:
+            throw JSONRPCError(
+                code: JSONRPCErrorCode.internalError,
+                message: error.localizedDescription
+            )
         }
-        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: err.localizedDescription)
     } catch {
-        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.internalError,
+            message: error.localizedDescription
+        )
     }
-    let entry = try runBlocking { @Sendable [attachedWindowStore, picked] in
-        await attachedWindowStore.attach(meta: picked.meta, filter: picked.filter)
+
+    let lease: AttachedWindowLease
+    do {
+        lease = try nativeWindowRPCSession.serialized { active in
+            let replacement = try runBlocking {
+                @Sendable [attachedWindowStore, picked, scope = parsed.scope, protectedOwners] in
+                try await attachedWindowStore.attachReplacingCurrent(
+                    meta: picked.meta,
+                    filter: picked.filter,
+                    scope: scope,
+                    protectedOwners: protectedOwners
+                )
+            }
+            nativeWindowRPCSession.clearActive(&active)
+            return replacement
+        }
+    } catch {
+        throw mapAttachmentError(error)
     }
-    return [
-        "ok": true,
-        "handleID": entry.handleID,
-        "windowMeta": entry.meta.toJSONObject()
-    ]
+
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["windowMeta"] = lease.meta.toJSONObject()
+    return response
 }
 
-struct AttachedWindowCaptureParams: Decodable {
-    let handleID: String
-    let includeOCR: Bool?
-    let maxDimensionPx: Int?
-}
-
-/// `attachedWindow.capture` — captures one frame of the previously attached
-/// window via `SCScreenshotManager`, optionally runs local Vision OCR, and
-/// returns base64 PNG bytes plus structured OCR. No streaming; one call =
-/// one frame. The Electron side gates each call through its existing
-/// approval flow before forwarding here.
+// attachedWindow.capture accepts the flat scoped access fields plus optional
+// includeOCR and maxDimensionPx. It rechecks after capture and OCR work.
 dispatcher.register("attachedWindow.capture") { params in
-    let parsed: AttachedWindowCaptureParams
-    do {
-        parsed = try decodeParams(params, as: AttachedWindowCaptureParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid capture params: \(error.localizedDescription)"
-        )
-    }
-    let entry = try runBlocking { @Sendable [attachedWindowStore, handleID = parsed.handleID] in
-        await attachedWindowStore.entry(handleID: handleID)
-    }
-    guard let entry else {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidRequest,
-            message: "Attached window handle not found (already detached or never attached)."
-        )
-    }
-    let maxDim = parsed.maxDimensionPx ?? 1600
+    let dict = try requestDictionary(params, method: "attachedWindow.capture")
+    let access = try decodeScopedAccess(dict, method: "attachedWindow.capture")
+    let attachment = try resolveAuthorizedAttachment(access)
+    let lease = attachment.lease
+    let maxDimension = dict["maxDimensionPx"] as? Int ?? 1600
     let frame: CapturedWindowFrame
+
     do {
-        frame = try runBlocking { @Sendable [filter = entry.filter, maxDim] in
+        let filter = try captureFilter(for: lease)
+        frame = try runBlocking { @Sendable [filter, maxDimension] in
             try await AttachedWindowCapture.captureWindow(
                 filter: filter,
-                maxDimensionPx: maxDim
+                maxDimensionPx: maxDimension
             )
         }
-    } catch let err as AttachedWindowError {
-        if case .windowGone = err {
-            // Self-heal: drop the dead handle so the renderer's status pill
-            // clears on its next poll. The error code lets the Electron side
-            // surface a clean "window closed, please re-attach" message.
-            _ = try? runBlocking { @Sendable [attachedWindowStore, handleID = entry.handleID] in
-                await attachedWindowStore.detach(handleID: handleID)
-            }
+    } catch let error as JSONRPCError {
+        throw error
+    } catch let error as AttachedWindowError {
+        if case .windowGone = error {
+            revokeAttachedWindowLease(lease)
             throw JSONRPCError(
                 code: JSONRPCErrorCode.bridgeUnavailable,
-                message: err.localizedDescription
+                message: error.localizedDescription
             )
         }
-        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: err.localizedDescription)
-    } catch {
-        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.internalError,
+            message: error.localizedDescription
+        )
     }
 
-    var response: [String: Any] = [
-        "ok": true,
-        "pngBase64": frame.pngData.base64EncodedString(),
-        "byteLength": frame.pngData.count,
-        "width": frame.width,
-        "height": frame.height,
-        "windowMeta": entry.meta.toJSONObject(),
-        "capturedAt": ISO8601DateFormatter().string(from: Date())
-    ]
-    if parsed.includeOCR ?? true {
+    try revalidateAttachment(lease)
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["pngBase64"] = frame.pngData.base64EncodedString()
+    response["byteLength"] = frame.pngData.count
+    response["width"] = frame.width
+    response["height"] = frame.height
+    response["windowMeta"] = lease.meta.toJSONObject()
+    response["capturedAt"] = ISO8601DateFormatter().string(from: Date())
+
+    if dict["includeOCR"] as? Bool ?? true {
         do {
             let ocr = try runBlocking { @Sendable [pngData = frame.pngData] in
                 try await AttachedWindowOCR.recognize(pngData: pngData)
             }
+            try revalidateAttachment(lease)
             response["ocr"] = ocr.toJSONObject()
+        } catch let error as JSONRPCError {
+            throw error
         } catch {
-            // OCR failure isn't fatal — return the image without text. Surfaces
-            // the underlying error inline so the user can spot why text is
-            // missing from a capture without losing the frame entirely.
             response["ocrError"] = error.localizedDescription
         }
     }
+
+    try revalidateAttachment(lease)
     return response
 }
 
-struct AttachedWindowDetachParams: Decodable {
-    let handleID: String
-}
-
-/// `attachedWindow.detach` — releases the picker grant for a handle.
-/// Subsequent capture calls against that handle return a not-found error.
-/// Safe to call for unknown handles (returns `{ detached: false }`).
+// attachedWindow.detach requires the exact live scope/generation and stops
+// Appwatch before returning. A stale call gets attachmentRevoked.
 dispatcher.register("attachedWindow.detach") { params in
-    let parsed: AttachedWindowDetachParams
+    let access = try decodeScopedAccess(params, method: "attachedWindow.detach")
+    let detached: Bool
     do {
-        parsed = try decodeParams(params, as: AttachedWindowDetachParams.self)
+        detached = try nativeWindowRPCSession.serialized { active in
+            let didDetach = try runBlocking { @Sendable [attachedWindowStore, access] in
+                try await attachedWindowStore.detach(access)
+            }
+            if active?.access == access {
+                nativeWindowRPCSession.clearActive(&active)
+            }
+            return didDetach
+        }
     } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid detach params: \(error.localizedDescription)"
-        )
+        throw mapAttachmentError(error)
     }
-    let detached = try runBlocking { @Sendable [attachedWindowStore, handleID = parsed.handleID] in
-        await attachedWindowStore.detach(handleID: handleID)
-    }
-    return ["ok": true, "detached": detached]
+    var response = scopedRequestFields(access)
+    response["ok"] = true
+    response["detached"] = detached
+    return response
 }
 
-/// `attachedWindow.status` — lightweight status check. Returns whether any
-/// window is currently attached and, if so, just the title/bundle metadata
-/// the user already sees in the renderer pill. Used by the `attached_window_status`
-/// MCP tool, which is auto-allowed (no approval) precisely because this
-/// payload contains no enumeration and no pixel data.
-dispatcher.register("attachedWindow.status") { _ in
-    let current = try runBlocking { @Sendable [attachedWindowStore] in
-        await attachedWindowStore.current()
-    }
-    guard let current else {
-        return ["attached": false] as [String: Any]
-    }
-    return [
-        "attached": true,
-        "handleID": current.handleID,
-        "windowMeta": current.meta.toJSONObject(),
-        "attachedAt": ISO8601DateFormatter().string(from: current.createdAt)
-    ]
+// attachedWindow.status requires the exact live scope/generation so it cannot
+// disclose whether some other chat has an attachment.
+dispatcher.register("attachedWindow.status") { params in
+    let access = try decodeScopedAccess(params, method: "attachedWindow.status")
+    let attachment = try resolveAuthorizedAttachment(access)
+    try revalidateAttachment(attachment.lease)
+    var response = scopedAttachmentFields(attachment.lease)
+    response["attached"] = true
+    response["windowMeta"] = attachment.lease.meta.toJSONObject()
+    response["attachedAt"] = ISO8601DateFormatter().string(from: attachment.lease.createdAt)
+    return response
 }
 
-// MARK: - Appwatch RPCs (Phase M1)
-//
-// `appwatch.*` extends the single-shot `attachedWindow.capture` (Appshots)
-// flow with a low-fps SCStream into a small ring buffer. The agent gets
-// "the last frame" or "frames since T" without per-frame ScreenCaptureKit
-// overhead. M1 surface is the latest-frame pull only; M2 adds since/count
-// batch retrieval and per-frame OCR.
-//
-// Lifecycle:
-//   - `appwatch.start` requires a previously-attached handle (no auto-pick).
-//     Idempotent: a second start with the same handle returns the existing
-//     config without restarting the stream.
-//   - `appwatch.stop` tears the stream down and clears the ring.
-//   - 60s without a `appwatch.latestFrame` call auto-stops (idle timeout).
-//   - Stream is also stopped on `attachedWindow.detach` (handled inside the
-//     store) and on daemon exit.
-
-struct AppwatchStartParams: Decodable {
-    let handleID: String
-    let fps: Int?
-    let bufferSeconds: Int?
-    let maxDimensionPx: Int?
-}
-
-struct AppwatchFramesParams: Decodable {
-    let handleID: String
-    let since: String?
-    let count: Int?
-    let format: String?
-    let includeOCR: Bool?
-
-    enum CodingKeys: String, CodingKey {
-        case handleID
-        case since
-        case count
-        case format
-        case includeOCR
-        case includeOCRSnake = "include_ocr"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        handleID = try container.decode(String.self, forKey: .handleID)
-        since = try container.decodeIfPresent(String.self, forKey: .since)
-        count = try container.decodeIfPresent(Int.self, forKey: .count)
-        format = try container.decodeIfPresent(String.self, forKey: .format)
-        includeOCR =
-            try container.decodeIfPresent(Bool.self, forKey: .includeOCR)
-            ?? container.decodeIfPresent(Bool.self, forKey: .includeOCRSnake)
-    }
-}
+// MARK: - Appwatch RPCs (scoped attachment lease)
 
 @Sendable func appwatchISO8601(_ date: Date) -> String {
     let formatter = ISO8601DateFormatter()
@@ -441,9 +1477,6 @@ struct AppwatchFramesParams: Decodable {
     return ISO8601DateFormatter().date(from: value)
 }
 
-/// Build the `streaming` object the renderer pill (and the main-side snapshot)
-/// renders. Shared by `appwatch.start` and `appwatch.status` so both surfaces
-/// stay structurally identical — saves a renderer-side type fork.
 @Sendable func makeStreamingPayload(
     config: AppwatchStreamConfig,
     frameCount: Int
@@ -459,51 +1492,27 @@ struct AppwatchFramesParams: Decodable {
     ]
 }
 
-/// Look up an attached entry by handle, normalising the "no such handle"
-/// case into a structured JSON-RPC error so every appwatch handler returns
-/// the same shape. Used as the first line in each handler below.
-@Sendable func resolveAttachedEntry(
-    store: AttachedWindowStore,
-    handleID: String
-) throws -> AttachedWindowEntry {
-    let entry = try runBlocking { @Sendable [store, handleID] in
-        await store.entry(handleID: handleID)
-    }
-    guard let entry else {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidRequest,
-            message: "Attached window handle not found (already detached or never attached)."
-        )
-    }
-    return entry
-}
-
-/// `appwatch.start` — spin up the SCStream for an already-attached window.
-/// Requires a valid handleID. Idempotent: a second start returns the existing
-/// config without restarting the stream. Refuses if the configured buffer
-/// would exceed the 350 MB memory cap (memoryBudgetExceeded → -32001).
+// appwatch.start requires scoped access plus optional fps, bufferSeconds, and
+// maxDimensionPx. It confirms the generation after async stream startup.
 dispatcher.register("appwatch.start") { params in
-    let parsed: AppwatchStartParams
-    do {
-        parsed = try decodeParams(params, as: AppwatchStartParams.self)
-    } catch {
+    let dict = try requestDictionary(params, method: "appwatch.start")
+    let access = try decodeScopedAccess(dict, method: "appwatch.start")
+    let attachment = try prepareAuthorizedAppwatch(access)
+    let lease = attachment.lease
+    guard let stream = attachment.stream else {
         throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid appwatch.start params: \(error.localizedDescription)"
+            code: JSONRPCErrorCode.internalError,
+            message: "Failed to reserve the Appwatch stream."
         )
     }
-    let entry = try resolveAttachedEntry(store: attachedWindowStore, handleID: parsed.handleID)
-    let fps = parsed.fps ?? 5
-    let bufferSeconds = parsed.bufferSeconds ?? 8
-    let maxDimensionPx = parsed.maxDimensionPx ?? 1280
 
-    // Reuse the existing stream when present so the handler is idempotent;
-    // construct a fresh one on first start. The store's `setStream` will
-    // stop and replace if the agent ever passes us a brand-new stream.
-    let stream = entry.stream ?? AttachedWindowStream()
     let config: AppwatchStreamConfig
     do {
-        config = try runBlocking { @Sendable [stream, filter = entry.filter, fps, bufferSeconds, maxDimensionPx] in
+        let filter = try captureFilter(for: lease)
+        let fps = dict["fps"] as? Int ?? 5
+        let bufferSeconds = dict["bufferSeconds"] as? Int ?? 8
+        let maxDimensionPx = dict["maxDimensionPx"] as? Int ?? 1280
+        config = try runBlocking { @Sendable [stream, filter, fps, bufferSeconds, maxDimensionPx] in
             try await stream.start(
                 filter: filter,
                 fps: fps,
@@ -511,227 +1520,206 @@ dispatcher.register("appwatch.start") { params in
                 maxDimensionPx: maxDimensionPx
             )
         }
-    } catch let err as AppwatchError {
-        switch err {
+    } catch let error as AppwatchError {
+        try? runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            await attachedWindowStore.discardStream(stream, for: lease)
+        }
+        switch error {
         case .memoryBudgetExceeded:
-            // Distinct from -32001 (bridgeUnavailable / window gone) so
-            // the agent can retune bufferSeconds / fps / maxDimensionPx
-            // without us also clearing the attached-window state on
-            // the Electron side.
             throw JSONRPCError(
                 code: JSONRPCErrorCode.appwatchBudgetExceeded,
-                message: err.localizedDescription
+                message: error.localizedDescription
             )
         case .invalidConfig:
             throw JSONRPCError(
                 code: JSONRPCErrorCode.invalidParams,
-                message: err.localizedDescription
+                message: error.localizedDescription
             )
         default:
             throw JSONRPCError(
                 code: JSONRPCErrorCode.internalError,
-                message: err.localizedDescription
+                message: error.localizedDescription
             )
         }
+    } catch let error as JSONRPCError {
+        try? runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            await attachedWindowStore.discardStream(stream, for: lease)
+        }
+        throw error
     } catch {
+        try? runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            await attachedWindowStore.discardStream(stream, for: lease)
+        }
         throw JSONRPCError(
             code: JSONRPCErrorCode.internalError,
             message: error.localizedDescription
         )
     }
+
+    do {
+        try runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            try await attachedWindowStore.confirmStreamStarted(stream, for: lease)
+        }
+    } catch {
+        try? runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            await attachedWindowStore.discardStream(stream, for: lease)
+        }
+        throw mapAttachmentError(error)
+    }
+
     let frameCount = try runBlocking { @Sendable [stream] in
         await stream.status().frameCount
     }
-    if entry.stream == nil {
-        try runBlocking { @Sendable [attachedWindowStore, stream, handleID = parsed.handleID] in
-            await attachedWindowStore.setStream(stream, for: handleID)
-        }
-    }
-    return [
-        "ok": true,
-        "handleID": parsed.handleID,
-        "streaming": makeStreamingPayload(config: config, frameCount: frameCount)
-    ]
+    try revalidateAttachment(lease)
+
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["streaming"] = makeStreamingPayload(config: config, frameCount: frameCount)
+    return response
 }
 
-struct AppwatchHandleParams: Decodable {
-    let handleID: String
-}
-
-/// `appwatch.stop` — tear down the stream and clear the ring. Safe to call
-/// when not streaming (returns `{ ok: true, streaming: false }`).
+// appwatch.stop requires scoped access and clears only its own stream.
 dispatcher.register("appwatch.stop") { params in
-    let parsed: AppwatchHandleParams
-    do {
-        parsed = try decodeParams(params, as: AppwatchHandleParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid appwatch.stop params: \(error.localizedDescription)"
-        )
+    let access = try decodeScopedAccess(params, method: "appwatch.stop")
+    let attachment = try resolveAuthorizedAttachment(access)
+    let lease = attachment.lease
+    guard let stream = attachment.stream else {
+        try revalidateAttachment(lease)
+        var response = scopedAttachmentFields(lease)
+        response["ok"] = true
+        response["streaming"] = false
+        return response
     }
-    let entry = try resolveAttachedEntry(store: attachedWindowStore, handleID: parsed.handleID)
-    guard let stream = entry.stream else {
-        return [
-            "ok": true,
-            "handleID": parsed.handleID,
-            "streaming": false
-        ] as [String: Any]
-    }
+
     try runBlocking { @Sendable [stream] in
         await stream.stop()
     }
-    try runBlocking { @Sendable [attachedWindowStore, handleID = parsed.handleID] in
-        await attachedWindowStore.clearStream(for: handleID)
+    do {
+        try runBlocking { @Sendable [attachedWindowStore, stream, lease] in
+            try await attachedWindowStore.clearStream(stream, for: lease)
+        }
+    } catch {
+        throw mapAttachmentError(error)
     }
-    return [
-        "ok": true,
-        "handleID": parsed.handleID,
-        "streaming": false
-    ]
+    try revalidateAttachment(lease)
+
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["streaming"] = false
+    return response
 }
 
-/// `appwatch.status` — non-mutating read of the stream state. Does NOT bump
-/// the idle-timeout pull clock — the renderer pill polls this every second
-/// and we don't want a UI poll to keep the stream alive after the agent
-/// stopped pulling frames.
+// appwatch.status needs scoped access and never resets the stream idle clock.
 dispatcher.register("appwatch.status") { params in
-    let parsed: AppwatchHandleParams
-    do {
-        parsed = try decodeParams(params, as: AppwatchHandleParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid appwatch.status params: \(error.localizedDescription)"
-        )
+    let access = try decodeScopedAccess(params, method: "appwatch.status")
+    let attachment = try resolveAuthorizedAttachment(access)
+    let lease = attachment.lease
+    guard let stream = attachment.stream else {
+        try revalidateAttachment(lease)
+        var response = scopedAttachmentFields(lease)
+        response["ok"] = true
+        response["streaming"] = false
+        return response
     }
-    let entry = try resolveAttachedEntry(store: attachedWindowStore, handleID: parsed.handleID)
-    guard let stream = entry.stream else {
-        return [
-            "ok": true,
-            "handleID": parsed.handleID,
-            "streaming": false
-        ] as [String: Any]
-    }
+
     let status = try runBlocking { @Sendable [stream] in
         await stream.status()
     }
-    var payload: [String: Any] = [
-        "ok": true,
-        "handleID": parsed.handleID,
-        "streaming": status.streaming,
-        "fps": status.fps,
-        "bufferSeconds": status.bufferSeconds,
-        "frameCount": status.frameCount,
-        "frameCapacity": status.frameCapacity,
-        "estimatedMemoryMB": status.estimatedMemoryMB,
-        "memoryBudgetMB": status.memoryBudgetMB
-    ]
+    try revalidateAttachment(lease)
+
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["streaming"] = status.streaming
+    response["fps"] = status.fps
+    response["bufferSeconds"] = status.bufferSeconds
+    response["frameCount"] = status.frameCount
+    response["frameCapacity"] = status.frameCapacity
+    response["estimatedMemoryMB"] = status.estimatedMemoryMB
+    response["memoryBudgetMB"] = status.memoryBudgetMB
     if let oldest = status.oldestAt {
-        payload["oldestAt"] = appwatchISO8601(oldest)
+        response["oldestAt"] = appwatchISO8601(oldest)
     }
     if let newest = status.newestAt {
-        payload["newestAt"] = appwatchISO8601(newest)
+        response["newestAt"] = appwatchISO8601(newest)
     }
     if let pulled = status.lastPullAt {
-        payload["lastPullAt"] = appwatchISO8601(pulled)
+        response["lastPullAt"] = appwatchISO8601(pulled)
     }
     if let started = status.startedAt {
-        payload["startedAt"] = appwatchISO8601(started)
+        response["startedAt"] = appwatchISO8601(started)
     }
-    return payload
+    return response
 }
 
-/// `appwatch.latestFrame` — return the most recent BGRA frame from the ring
-/// as PNG bytes. M1 surface; M2 will add `since` / `count` for batch pulls.
-/// Bumps the idle-timeout pull clock so an active agent loop keeps the
-/// stream alive.
+// appwatch.latestFrame revalidates after the async ring read and after PNG
+// encoding, before returning any pixels.
 dispatcher.register("appwatch.latestFrame") { params in
-    let parsed: AppwatchHandleParams
-    do {
-        parsed = try decodeParams(params, as: AppwatchHandleParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid appwatch.latestFrame params: \(error.localizedDescription)"
-        )
-    }
-    let entry = try resolveAttachedEntry(store: attachedWindowStore, handleID: parsed.handleID)
-    guard let stream = entry.stream else {
+    let access = try decodeScopedAccess(params, method: "appwatch.latestFrame")
+    let attachment = try resolveAuthorizedAttachment(access)
+    let lease = attachment.lease
+    guard let stream = attachment.stream else {
         throw JSONRPCError(
             code: JSONRPCErrorCode.invalidRequest,
-            message: "Appwatch is not streaming for this handle (call appwatch.start first)."
+            message: "Appwatch is not streaming for this scoped attachment (call appwatch.start first)."
         )
     }
+
     let frame = try runBlocking { @Sendable [stream] in
         await stream.latestFrame()
     }
+    try revalidateAttachment(lease)
     guard let frame else {
-        // Stream is up but no frame has landed yet. Tell the renderer the
-        // truth (ok=true, frame=null) so it can show a "warming up" beat
-        // rather than a hard error.
-        return [
-            "ok": true,
-            "handleID": parsed.handleID,
-            "hasFrame": false
-        ] as [String: Any]
+        var response = scopedAttachmentFields(lease)
+        response["ok"] = true
+        response["hasFrame"] = false
+        return response
     }
+
     let pngData: Data
     do {
         pngData = try AppwatchFrameEncoder.encodePNG(frame: frame)
-    } catch let err as AppwatchError {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.internalError,
-            message: err.localizedDescription
-        )
-    } catch {
+    } catch let error as AppwatchError {
         throw JSONRPCError(
             code: JSONRPCErrorCode.internalError,
             message: error.localizedDescription
         )
     }
-    return [
-        "ok": true,
-        "handleID": parsed.handleID,
-        "hasFrame": true,
-        "pngBase64": pngData.base64EncodedString(),
-        "byteLength": pngData.count,
-        "width": frame.width,
-        "height": frame.height,
-        "capturedAt": appwatchISO8601(frame.capturedAt)
-    ]
+    try revalidateAttachment(lease)
+
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["hasFrame"] = true
+    response["pngBase64"] = pngData.base64EncodedString()
+    response["byteLength"] = pngData.count
+    response["width"] = frame.width
+    response["height"] = frame.height
+    response["capturedAt"] = appwatchISO8601(frame.capturedAt)
+    return response
 }
 
-/// `appwatch.frames` — return a chronological batch from the ring buffer,
-/// optionally newer than a fractional-second ISO timestamp. This powers
-/// M2 agent loops that want a small visual sequence instead of polling one
-/// latest frame repeatedly.
+// appwatch.frames accepts scoped access plus optional since, count, format,
+// includeOCR/include_ocr. Every OCR pass and the final payload are rechecked.
 dispatcher.register("appwatch.frames") { params in
-    let parsed: AppwatchFramesParams
-    do {
-        parsed = try decodeParams(params, as: AppwatchFramesParams.self)
-    } catch {
-        throw JSONRPCError(
-            code: JSONRPCErrorCode.invalidParams,
-            message: "Invalid appwatch.frames params: \(error.localizedDescription)"
-        )
-    }
-    let entry = try resolveAttachedEntry(store: attachedWindowStore, handleID: parsed.handleID)
-    guard let stream = entry.stream else {
+    let dict = try requestDictionary(params, method: "appwatch.frames")
+    let access = try decodeScopedAccess(dict, method: "appwatch.frames")
+    let attachment = try resolveAuthorizedAttachment(access)
+    let lease = attachment.lease
+    guard let stream = attachment.stream else {
         throw JSONRPCError(
             code: JSONRPCErrorCode.invalidRequest,
-            message: "Appwatch is not streaming for this handle (call appwatch.start first)."
+            message: "Appwatch is not streaming for this scoped attachment (call appwatch.start first)."
         )
     }
-    let includeOCR = parsed.includeOCR ?? false
-    let requestedCount = parsed.count ?? 5
-    let countLimit = includeOCR ? 5 : 20
-    let count = max(1, min(countLimit, requestedCount))
-    let format = (parsed.format ?? "jpeg").lowercased() == "png" ? "png" : "jpeg"
-    let since = parseAppwatchISO8601(parsed.since)
+
+    let includeOCR = (dict["includeOCR"] as? Bool) ?? (dict["include_ocr"] as? Bool) ?? false
+    let requestedCount = dict["count"] as? Int ?? 5
+    let count = max(1, min(includeOCR ? 5 : 20, requestedCount))
+    let format = ((dict["format"] as? String) ?? "jpeg").lowercased() == "png" ? "png" : "jpeg"
+    let since = parseAppwatchISO8601(dict["since"] as? String)
     let batch = try runBlocking { @Sendable [stream, since, count] in
         await stream.frames(since: since, count: count)
     }
+    try revalidateAttachment(lease)
 
     var framesPayload: [[String: Any]] = []
     framesPayload.reserveCapacity(batch.frames.count)
@@ -741,12 +1729,7 @@ dispatcher.register("appwatch.frames") { params in
             imageData = format == "png"
                 ? try AppwatchFrameEncoder.encodePNG(frame: frame)
                 : try AppwatchFrameEncoder.encodeJPEG(frame: frame)
-        } catch let err as AppwatchError {
-            throw JSONRPCError(
-                code: JSONRPCErrorCode.internalError,
-                message: err.localizedDescription
-            )
-        } catch {
+        } catch let error as AppwatchError {
             throw JSONRPCError(
                 code: JSONRPCErrorCode.internalError,
                 message: error.localizedDescription
@@ -767,31 +1750,35 @@ dispatcher.register("appwatch.frames") { params in
                 let ocr = try runBlocking { @Sendable [imageData] in
                     try await AttachedWindowOCR.recognize(pngData: imageData)
                 }
+                try revalidateAttachment(lease)
                 framePayload["ocr"] = ocr.toJSONObject()
+            } catch let error as JSONRPCError {
+                throw error
             } catch {
                 framePayload["ocrError"] = error.localizedDescription
             }
         }
+        try revalidateAttachment(lease)
         framesPayload.append(framePayload)
     }
 
-    var payload: [String: Any] = [
-        "ok": true,
-        "handleID": parsed.handleID,
-        "hasFrames": !framesPayload.isEmpty,
-        "returned": framesPayload.count,
-        "requested": requestedCount,
-        "count": count,
-        "format": format,
-        "includeOCR": includeOCR,
-        "availableCapturedAt": batch.availableCapturedAt.map { appwatchISO8601($0) },
-        "frames": framesPayload
-    ]
+    var response = scopedAttachmentFields(lease)
+    response["ok"] = true
+    response["hasFrames"] = !framesPayload.isEmpty
+    response["returned"] = framesPayload.count
+    response["requested"] = requestedCount
+    response["count"] = count
+    response["format"] = format
+    response["includeOCR"] = includeOCR
+    response["availableCapturedAt"] = batch.availableCapturedAt.map { appwatchISO8601($0) }
+    response["frames"] = framesPayload
     if let nextSince = batch.nextSince {
-        payload["nextSince"] = appwatchISO8601(nextSince)
+        response["nextSince"] = appwatchISO8601(nextSince)
     }
-    return payload
+    try revalidateAttachment(lease)
+    return response
 }
+
 
 // MARK: - VideoToolbox RPCs
 //
@@ -1409,11 +2396,18 @@ stdinReaderQueue.async {
             }
         }
     }
-    // stdin closed → parent terminated → tear down on the main thread so
-    // NSApplication's runloop can exit cleanly. The post-NSApp.run() code
-    // below performs the actual drain/flush sequence.
+    // stdin closed → parent terminated. First cancel a picker on the main
+    // actor so any handler waiting on its continuation can finish. Then a
+    // handler-queue barrier serializes terminal revocation with every native
+    // AX action before asking AppKit to leave its run loop.
     DispatchQueue.main.async {
-        NSApplication.shared.terminate(nil)
+        AttachedWindowPicker.cancelActivePicker()
+        handlerQueue.async(flags: .barrier) {
+            shutdownAttachedWindowRuntime()
+            DispatchQueue.main.async {
+                NSApplication.shared.terminate(nil)
+            }
+        }
     }
 }
 
@@ -1422,11 +2416,9 @@ stdinReaderQueue.async {
 // `terminate(nil)` from the reader thread is how this returns.
 NSApplication.shared.run()
 
-// NSApp.run() returned (terminate or unexpected exit). Drain in the same
-// order the prior in-place loop did:
-//   1. Wait for in-flight handlers so a ping issued right before EOF isn't
-//      silently dropped.
-//   2. Flush the stdout writer so the last batch of responses /
-//      notifications actually reaches the parent before the pipe closes.
+// NSApp.run() returned after the EOF barrier above (or unexpectedly). The
+// barrier has already completed terminal lease revocation on ordinary EOF;
+// repeat it defensively for an unexpected run-loop exit before flushing.
+shutdownAttachedWindowRuntime()
 handlerQueue.sync(flags: .barrier) {}
 stdoutWriter.flush()

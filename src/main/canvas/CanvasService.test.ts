@@ -47,10 +47,12 @@ class FakeDriver implements CanvasDriver {
   failOpen = false
   closeCalls = 0
   closeFailuresRemaining = 0
+  lastOpenInput?: CanvasOpenInput
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
     if (this.failOpen) throw new Error('boom')
     this.opened = true
+    this.lastOpenInput = input
     if (input.initialSketchDocument) this.sketchDoc = input.initialSketchDocument
     return {
       url: input.url || 'http://localhost:3000',
@@ -205,9 +207,54 @@ describe('CanvasService', () => {
   })
 
   it('rejects an unsupported driver', async () => {
-    await expect(service.open({ driver: 'window', url: 'http://localhost:3000' }, {})).rejects.toThrow(
+    await expect(service.open({ driver: 'future-driver' as never }, {})).rejects.toThrow(
       /not available/
     )
+  })
+
+  it('enables the window driver only for an internal target and canonical chat+run', async () => {
+    await expect(
+      service.open({ driver: 'window', windowTarget: { leaseId: 'lease-1' } }, { chatId: 'chat-a' })
+    ).rejects.toThrow(/canonical chat and run/)
+    await expect(
+      service.open(
+        { driver: 'window', windowTarget: { leaseId: 'lease-1' } },
+        { chatId: ' chat-a ', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/canonical chat and run/)
+    await expect(
+      service.open({ driver: 'window' }, { chatId: 'chat-a', runId: 'run-a' })
+    ).rejects.toThrow(/internal native-window lease target/)
+    expect(fake.opened).toBe(false)
+    expect(lastDriverOpts).toBeUndefined()
+  })
+
+  it('passes only the opaque window target to the factory and persists a digest URL', async () => {
+    const leaseId = 'private-main-owned-lease'
+    const opened = await service.open(
+      {
+        driver: 'window',
+        windowTarget: { leaseId, extra: 'must-be-dropped' } as never
+      },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+
+    expect(lastDriverOpts?.windowTarget).toEqual({ leaseId })
+    expect(Object.isFrozen(lastDriverOpts?.windowTarget)).toBe(true)
+    expect(fake.lastOpenInput).toEqual({
+      driver: 'window',
+      viewport: { width: 1280, height: 800 }
+    })
+    expect(JSON.stringify(fake.lastOpenInput)).not.toContain(leaseId)
+    expect(opened.url).toMatch(/^window:\/\/managed\/[a-f0-9]{20}$/)
+    expect(opened.url).not.toContain(leaseId)
+    expect(store.getSession(opened.canvasId)).toMatchObject({
+      driver: 'window',
+      url: opened.url,
+      chatId: 'chat-a',
+      runId: 'run-a'
+    })
+    expect(JSON.stringify(store.listEvents(opened.canvasId))).not.toContain(leaseId)
   })
 
   it('rejects a bad url before spawning a window', async () => {
@@ -433,12 +480,125 @@ describe('CanvasService', () => {
     expect(store.listSessions()).toEqual([])
   })
 
-  it('click/fill emit interaction events; the typed value never enters the audit', async () => {
+  it('emits each interaction intent before dispatch; typed values never enter the audit', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const dispatches: string[] = []
+    vi.spyOn(fake, 'act').mockImplementation(async (action) => {
+      const intents = store.listEvents(c.canvasId).filter(
+        (event) => event.kind === 'interaction' && event.detail?.phase === 'intent'
+      )
+      expect(intents.at(-1)?.detail).toMatchObject({
+        phase: 'intent',
+        action: action.kind,
+        targetKind: action.ref ? 'ref' : action.selector ? 'selector' : 'none'
+      })
+      dispatches.push(action.kind)
+      return {
+        ok: true,
+        action: action.kind,
+        found: true,
+        executed: true,
+        verified: 'changed'
+      }
+    })
+
     await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
     await service.fill(c.canvasId, { kind: 'fill', ref: 'e2', value: 'SECRET-VALUE' }, {})
-    expect(events.map((e) => e.kind)).toContain('interaction')
+
+    const interactions = events.filter((event) => event.kind === 'interaction')
+    expect(dispatches).toEqual(['click', 'fill'])
+    expect(interactions.map((event) => event.detail?.phase)).toEqual(['intent', 'intent'])
     expect(JSON.stringify(events)).not.toContain('SECRET-VALUE')
+  })
+
+  it('adds an outcome audit only when dispatch is refused or unverified', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    vi.spyOn(fake, 'act').mockResolvedValue({
+      ok: true,
+      action: 'click',
+      found: true,
+      executed: true,
+      verified: 'unchanged'
+    })
+
+    await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
+
+    const interactions = events.filter((event) => event.kind === 'interaction')
+    expect(interactions.map((event) => event.detail?.phase)).toEqual(['intent', 'outcome'])
+    expect(interactions[1]?.detail).toMatchObject({
+      action: 'click',
+      executed: true,
+      verified: 'unchanged'
+    })
+  })
+
+  it('retains intent and records an unknown-dispatch outcome when the driver throws', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    vi.spyOn(fake, 'act').mockRejectedValue(new Error('driver failed'))
+
+    await expect(service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})).rejects.toThrow(
+      'driver failed'
+    )
+
+    const interactions = events.filter((event) => event.kind === 'interaction')
+    expect(interactions.map((event) => event.detail?.phase)).toEqual(['intent', 'outcome'])
+    expect(interactions[1]?.detail).toMatchObject({
+      outcome: 'driver_error',
+      dispatchStatus: 'unknown',
+      verified: 'unknown'
+    })
+  })
+
+  it('blocks native-window actuation when its strict intent cannot persist', async () => {
+    const c = await service.open(
+      { driver: 'window', windowTarget: { leaseId: 'lease-strict-audit' } },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+    const act = vi.spyOn(fake, 'act')
+    vi.spyOn(store, 'appendEventStrict').mockImplementation(() => {
+      throw new Error('disk unavailable')
+    })
+
+    await expect(
+      service.fill(
+        c.canvasId,
+        { kind: 'fill', ref: 'ax2', value: 'SECRET-VALUE' },
+        { chatId: 'chat-a', runId: 'run-a' }
+      )
+    ).rejects.toThrow(/blocked.*pre-dispatch audit intent/)
+
+    expect(act).not.toHaveBeenCalled()
+    expect(JSON.stringify(events)).not.toContain('SECRET-VALUE')
+    expect(JSON.stringify(store.listEvents(c.canvasId))).not.toContain('SECRET-VALUE')
+  })
+
+  it('records exact native observation preconditions in the strict intent without the fill value', async () => {
+    const c = await service.open(
+      { driver: 'window', windowTarget: { leaseId: 'lease-audit-preconditions' } },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+
+    await service.fill(
+      c.canvasId,
+      {
+        kind: 'fill',
+        ref: 'ax2',
+        value: 'SECRET-VALUE',
+        expectedObservationId: 'observation-42',
+        expectedInputEpoch: 9
+      },
+      { chatId: 'chat-a', runId: 'run-a' }
+    )
+
+    const intent = store
+      .listEvents(c.canvasId)
+      .find((event) => event.kind === 'interaction' && event.detail?.phase === 'intent')
+    expect(intent?.detail).toMatchObject({
+      action: 'fill',
+      expectedObservationId: 'observation-42',
+      expectedInputEpoch: 9
+    })
+    expect(JSON.stringify(intent)).not.toContain('SECRET-VALUE')
   })
 
   it('serializes concurrent interactions so nothing runs between check and dispatch', async () => {
@@ -821,6 +981,33 @@ describe('CanvasService', () => {
     // Chat A still owns it.
     expect(service.list({ chatId: 'A' })).toHaveLength(1)
     expect(service.status(a.canvasId, { chatId: 'A' })?.status).toBe('active')
+  })
+
+  it('scopes native windows to exact chat+run while existing drivers remain chat-only', async () => {
+    const windowCanvas = await service.open(
+      { driver: 'window', windowTarget: { leaseId: 'lease-run-a' } },
+      { chatId: 'A', runId: 'run-a' }
+    )
+
+    expect(service.list({ chatId: 'A', runId: 'run-b' })).toEqual([])
+    expect(service.status(windowCanvas.canvasId, { chatId: 'A', runId: 'run-b' })).toBeNull()
+    await expect(
+      service.snapshot(windowCanvas.canvasId, { chatId: 'A', runId: 'run-b' })
+    ).rejects.toThrow(/No open canvas/)
+    await service.close(windowCanvas.canvasId, { chatId: 'A', runId: 'run-b' })
+    expect(fake.closed).toBe(false)
+    expect(service.status(windowCanvas.canvasId, { chatId: 'A', runId: 'run-a' })?.driver).toBe(
+      'window'
+    )
+
+    const webCanvas = await service.open(
+      { url: 'http://localhost:3000/run-compatible' },
+      { chatId: 'A', runId: 'run-a' }
+    )
+    expect(service.status(webCanvas.canvasId, { chatId: 'A', runId: 'run-b' })?.driver).toBe('web')
+    await expect(
+      service.snapshot(webCanvas.canvasId, { chatId: 'A', runId: 'run-b' })
+    ).resolves.toMatchObject({ title: 'Fake' })
   })
 
   it('a chat-only history clear preserves sibling Canvas state in the same workspace', async () => {

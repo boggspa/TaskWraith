@@ -149,9 +149,15 @@ import type {
 } from '../main/antigravity/AntigravityGeminiApiSecretStore'
 import type { AntigravityGeminiApiDiscoveryOutcome } from '../main/antigravity/AntigravityGeminiApiDiscoveryOutcome'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
+import type {
+  NativeWindowCoordinatorPickResult,
+  NativeWindowCoordinatorRendererEvent,
+  NativeWindowCoordinatorRendererStatus
+} from '../main/nativeWindow/NativeWindowCoordinator'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { MistralQuotaSnapshot } from '../main/mistral/MistralQuotaStore'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
+
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
 import type {
   ConsumeInviteResult,
@@ -503,6 +509,25 @@ interface WorkspaceFileListResult {
   entries: WorkspaceFileEntry[]
   truncated: boolean
 }
+
+type StickyAppWatchWindowMeta = Readonly<{
+  title: string
+  bundleID: string
+  applicationName: string
+}>
+type StickyAppWatchSnapshot = Readonly<{
+  chatId: string
+  windowMeta: StickyAppWatchWindowMeta
+  attachedAt: string
+  stashedAt: string
+  wasStreaming: boolean
+}>
+type StickyAppWatchStashInput = Readonly<{
+  chatId: string
+  windowMeta: StickyAppWatchWindowMeta
+  attachedAt: string
+  wasStreaming: boolean
+}>
 
 declare global {
   interface Window {
@@ -1449,107 +1474,19 @@ declare global {
       bridgeFinalizePairing: (sessionID: string, userConfirmed: boolean) => Promise<unknown>
       onBridgePairingResponseReceived: (callback: (params: unknown) => void) => () => void
 
-      // Attached-window picker. The renderer triggers `attachWindowPick`
-      // (button or hotkey), main forwards to the bridge daemon which
-      // presents the macOS system picker. Status events fire on
-      // pick/detach and on daemon exit so the renderer can keep its
-      // status pill in sync.
-      //
-      // Phase M1 — the snapshot can now carry an optional `streaming`
-      // block when Appwatch is running for the handle, so the pill can
-      // switch between its `attached` and `streaming` visual states
-      // without an extra IPC round-trip.
-      attachWindowPick: () => Promise<{
-        ok: boolean
-        cancelled?: boolean
-        error?: string
-        snapshot?: {
-          handleID: string
-          windowMeta: {
-            windowID: number
-            title: string
-            bundleID: string
-            applicationName: string
-            pid: number
-          }
-          attachedAt: string
-          streaming?: {
-            fps: number
-            bufferSeconds: number
-            frameCount: number
-            startedAt: string
-          }
-        }
-      }>
-      attachWindowDetach: () => Promise<{ ok: boolean }>
-      attachWindowStatus: () => Promise<{
-        snapshot: {
-          handleID: string
-          windowMeta: {
-            windowID: number
-            title: string
-            bundleID: string
-            applicationName: string
-            pid: number
-          }
-          attachedAt: string
-          streaming?: {
-            fps: number
-            bufferSeconds: number
-            frameCount: number
-            startedAt: string
-          }
-        } | null
-      }>
-      // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots.
-      stickyAppWatchGet: (chatId: string) => Promise<{
-        snapshot: {
-          chatId: string
-          windowMeta: {
-            windowID: number
-            title: string
-            bundleID: string
-            applicationName: string
-            pid: number
-          }
-          attachedAt: string
-          stashedAt: string
-          wasStreaming: boolean
-        } | null
-      }>
-      stickyAppWatchStash: (input: {
-        chatId: string
-        windowMeta: {
-          windowID: number
-          title: string
-          bundleID: string
-          applicationName: string
-          pid: number
-        }
-        attachedAt: string
-        wasStreaming: boolean
-      }) => Promise<{ ok: boolean }>
+      /** Chat-scoped safe projection; opaque native-window material stays in main. */
+      attachWindowPick: (chatId: string) => Promise<NativeWindowCoordinatorPickResult>
+      attachWindowDetach: (
+        chatId: string,
+        generation: number
+      ) => Promise<{ detached: boolean; status: NativeWindowCoordinatorRendererStatus }>
+      attachWindowStatus: (chatId: string) => Promise<NativeWindowCoordinatorRendererStatus>
+      /** Resume-only, chat-scoped display metadata; no native identity fields. */
+      stickyAppWatchGet: (chatId: string) => Promise<{ snapshot: StickyAppWatchSnapshot | null }>
+      stickyAppWatchStash: (input: StickyAppWatchStashInput) => Promise<{ ok: boolean }>
       stickyAppWatchClear: (chatId: string) => Promise<{ ok: boolean }>
       onAttachedWindowChanged: (
-        callback: (
-          snapshot: {
-            handleID: string
-            windowMeta: {
-              windowID: number
-              title: string
-              bundleID: string
-              applicationName: string
-              pid: number
-            }
-            attachedAt: string
-            streaming?: {
-              fps: number
-              bufferSeconds: number
-              frameCount: number
-              startedAt: string
-            }
-          } | null
-        ) => void
+        callback: (event: NativeWindowCoordinatorRendererEvent) => void
       ) => () => void
       // Begins a daemon-side pairing session. Returns the bootstrap
       // payload (PairingBootstrapPayload from the Swift daemon) so the

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createKimiMcpDispatch } from './KimiMcpDispatch'
 
+const INSTANCE_EPOCH = 'a'.repeat(48)
+
 describe('createKimiMcpDispatch', () => {
   it('routes Kimi tool calls directly to the in-process broker with the run identity', async () => {
     const dispatchBrokerRequest = vi.fn(async () => ({
@@ -13,6 +15,7 @@ describe('createKimiMcpDispatch', () => {
       workspace: '/workspace',
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => [
         {
           name: 'list_ensemble_participants',
@@ -36,7 +39,8 @@ describe('createKimiMcpDispatch', () => {
         appRunId: 'kimi-run-1',
         appChatId: 'chat-1',
         callerWorkspacePath: '/workspace',
-        parentProvider: 'kimi'
+        parentProvider: 'kimi',
+        instanceEpoch: INSTANCE_EPOCH
       })
     )
     expect(response).toMatchObject({
@@ -55,6 +59,7 @@ describe('createKimiMcpDispatch', () => {
       route: { appRunId: 'kimi-run-2', appChatId: 'chat-2' },
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => [
         { name: 'list_ensemble_participants' },
         { name: 'raw_provider_events' }
@@ -76,6 +81,7 @@ describe('createKimiMcpDispatch', () => {
       taskWraithMcpProfileId: 'taskwraith-gateway-v6',
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => [
         { name: 'ensemble_control' },
         { name: 'ensemble_bossman_control' }
@@ -84,11 +90,122 @@ describe('createKimiMcpDispatch', () => {
     })
 
     const response = await dispatch({ jsonrpc: '2.0', id: 88, method: 'tools/list' })
-    const names = ((response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []).map(
-      (tool) => tool.name
-    )
+    const names = (
+      (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+    ).map((tool) => tool.name)
     expect(names).toContain('ensemble_control')
     expect(names).not.toContain('ensemble_bossman_control')
+  })
+
+  it('uses only the selected Kimi profile when ambient MCP selectors are poisoned', async () => {
+    const poisonedSelectors = {
+      TASKWRAITH_CORE_MCP_PROFILE: '1',
+      TASKWRAITH_MCP_SAFE_SUBSET: '1',
+      TASKWRAITH_MCP_PLAN_SUBSET: '1',
+      TASKWRAITH_MCP_CORE_SUBSET: '1',
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
+      TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
+      TASKWRAITH_MCP_MESH_DIRECT: '1',
+      TASKWRAITH_MCP_AUDIT: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'cursor',
+      TASKWRAITH_RUN_ID: 'ambient-run',
+      TASKWRAITH_CHAT_ID: 'ambient-chat',
+      TASKWRAITH_WORKSPACE_PATH: '/ambient/workspace',
+      TASKWRAITH_MCP_SOCKET_PATH: '/ambient/socket',
+      TASKWRAITH_MCP_BROKER_TOKEN: 'ambient-token',
+      TASKWRAITH_MCP_INSTANCE_EPOCH: 'b'.repeat(48),
+      TASKWRAITH_MCP_BRIDGE_LOG_EPOCH: '99',
+      TASKWRAITH_MCP_ISOLATED_INSTANCE_ID: 'ambient-instance'
+    }
+    for (const [key, value] of Object.entries(poisonedSelectors)) vi.stubEnv(key, value)
+
+    try {
+      const dispatchBrokerRequest = vi.fn(async () => ({ ok: true, text: '{"ok":true}' }))
+      const dispatch = createKimiMcpDispatch({
+        route: { appRunId: 'kimi-profile-run', appChatId: 'kimi-profile-chat' },
+        workspace: '/kimi/workspace',
+        // v5 deliberately keeps the legacy Bossman declaration and does not
+        // directly expose Mesh Canvas.
+        taskWraithMcpProfileId: 'taskwraith-gateway-v5',
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
+        getMcpToolDefinitions: () => [
+          { name: 'write_file' },
+          { name: 'ensemble_propose_goal_complete' },
+          { name: 'ensemble_bossman_control' },
+          { name: 'ensemble_control' },
+          { name: 'mesh_scene_present' }
+        ],
+        dispatchBrokerRequest
+      })
+
+      const listResponse = await dispatch({ jsonrpc: '2.0', id: 90, method: 'tools/list' })
+      const listedNames = (
+        (listResponse?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+      ).map((tool) => tool.name)
+
+      // Ambient safe/plan/core controls cannot shrink this selected gateway
+      // profile, and ambient portable/mesh/audit controls cannot widen it.
+      expect(listedNames).toEqual(
+        expect.arrayContaining([
+          'write_file',
+          'ensemble_propose_goal_complete',
+          'ensemble_bossman_control',
+          'capability_search',
+          'capability_invoke'
+        ])
+      )
+      expect(listedNames).not.toContain('ensemble_control')
+      expect(listedNames).not.toContain('mesh_scene_present')
+      expect(listedNames).not.toContain('audit_record_finding')
+
+      await expect(
+        dispatch({
+          jsonrpc: '2.0',
+          id: 91,
+          method: 'tools/call',
+          params: { name: 'write_file', arguments: { path: 'selected.txt', content: 'selected' } }
+        })
+      ).resolves.toMatchObject({ result: { isError: false } })
+      await expect(
+        dispatch({
+          jsonrpc: '2.0',
+          id: 92,
+          method: 'tools/call',
+          params: { name: 'ensemble_propose_goal_complete', arguments: {} }
+        })
+      ).resolves.toMatchObject({ result: { isError: false } })
+      expect(dispatchBrokerRequest).toHaveBeenCalledTimes(2)
+      expect(dispatchBrokerRequest).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          appRunId: 'kimi-profile-run',
+          appChatId: 'kimi-profile-chat',
+          callerWorkspacePath: '/kimi/workspace',
+          parentProvider: 'kimi',
+          instanceEpoch: INSTANCE_EPOCH
+        })
+      )
+
+      for (const [id, name] of [
+        [93, 'ensemble_control'],
+        [94, 'mesh_scene_present'],
+        [95, 'audit_record_finding']
+      ] as const) {
+        await expect(
+          dispatch({
+            jsonrpc: '2.0',
+            id,
+            method: 'tools/call',
+            params: { name, arguments: {} }
+          })
+        ).resolves.toMatchObject({ error: { code: -32601 } })
+      }
+      expect(dispatchBrokerRequest).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('returns null for notifications without touching the broker', async () => {
@@ -97,6 +214,7 @@ describe('createKimiMcpDispatch', () => {
       route: {},
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => [],
       dispatchBrokerRequest
     })
@@ -113,6 +231,7 @@ describe('createKimiMcpDispatch', () => {
       route: {},
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => {
         throw new Error(sentinel)
       },
@@ -138,6 +257,7 @@ describe('createKimiMcpDispatch', () => {
       route: {},
       appVersion: '1.8.4',
       brokerToken: 'broker-token',
+      instanceEpoch: INSTANCE_EPOCH,
       getMcpToolDefinitions: () => [{ name: 'list_ensemble_participants' }],
       dispatchBrokerRequest: vi.fn(async () => {
         throw new Error(sentinel)
@@ -181,6 +301,7 @@ describe('createKimiMcpDispatch', () => {
         route: { appRunId: 'kimi-run-approval', appChatId: 'chat-approval' },
         appVersion: '1.8.4',
         brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
         getMcpToolDefinitions: () => [{ name: 'ensemble_roster_edit' }],
         dispatchBrokerRequest
       })

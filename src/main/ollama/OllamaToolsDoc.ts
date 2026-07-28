@@ -108,7 +108,7 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   // label: policy clamps it to one exact desktop-reviewed prompt per call, so
   // no grant or Trusted Session can make it automatic.
   if (def.name === 'canvas_eval') {
-    return 'signed-elevated — denied under Read-Only/Plan; prompts every call and requires exact desktop review'
+    return 'signed-elevated — denied under Read-Only; approval-gated under Plan and prompts every permitted call with exact desktop review'
   }
   if (annotations.readOnlyHint === true) return 'read-only (no approval needed)'
   if (annotations.destructiveHint === true) {

@@ -26,6 +26,11 @@ import {
 } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
+import {
+  MCP_BRIDGE_ENDPOINT_ENV_KEYS,
+  MCP_BRIDGE_PROFILE_ENV_KEYS,
+  MCP_BRIDGE_ROUTE_ENV_KEYS
+} from '../mcp/McpBridgeRoute'
 import type { CursorCliConfig } from './CursorWorkspaceConfig'
 
 /** Cursor's older Home MCP bridge used the plain `taskwraith` id for a web-only
@@ -52,11 +57,11 @@ export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
  * a later Cursor launch overwrite the identity used by an already-live seat.
  */
 const CURSOR_GLOBAL_BROKER_INHERITED_ROUTE_ENV = new Set([
-  'TASKWRAITH_RUN_ID',
-  'TASKWRAITH_CHAT_ID',
-  'TASKWRAITH_WORKSPACE_PATH',
+  ...Object.values(MCP_BRIDGE_ROUTE_ENV_KEYS),
+  ...Object.values(MCP_BRIDGE_ENDPOINT_ENV_KEYS),
+  ...Object.values(MCP_BRIDGE_PROFILE_ENV_KEYS),
   'TASKWRAITH_RUNTIME_PROFILE_ID',
-  'TASKWRAITH_MCP_AUDIT'
+  'TASKWRAITH_INSTANCE_ID'
 ])
 
 export const CURSOR_GATEWAY_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS
@@ -346,8 +351,8 @@ export function buildCursorReadOnlyMcpServerEntry(
 // so headless `-p` rejects its every tool call ("User rejected MCP"). GLOBALLY
 // registered servers DO reach "ready" (the user's `taskwraith` web server does).
 // So B-mode registers the broker(s) in the global `~/.cursor/mcp.json` and relies
-// on `cursor-agent mcp enable <name>` (approval is by NAME, so it survives the
-// per-launch token refresh below). The full broker (write seats) and the
+// on `cursor-agent mcp enable <name>` (approval is by NAME, while the durable
+// invocation stays instance-neutral). The full broker (write seats) and the
 // safe-subset broker (read-only seats) are distinct names so a seat only enables
 // the one it should have. The legacy `taskwraith` alias is deliberately NOT
 // registered globally — it collides with the user's own global `taskwraith` web
@@ -389,8 +394,8 @@ export function buildCursorBrokerMcpServerEntry(
  * {}). Unlike {@link mergeCursorMcpConfig} (workspace, which strips reserved
  * names), this PRESERVES every existing server — including the user's own global
  * `taskwraith` web server and `agbench` — and only adds/refreshes the exact
- * broker entries passed (repair-on-stale, since the socket token rotates each
- * launch). Optional removals are reserved for obsolete TaskWraith-owned aliases;
+ * broker entries passed (repair-on-stale if the canonical static invocation
+ * changes). Optional removals are reserved for obsolete TaskWraith-owned aliases;
  * callers must never pass user-owned server names. Pure.
  */
 export function mergeGlobalCursorMcpServers(
