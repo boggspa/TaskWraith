@@ -240,12 +240,15 @@ export function isReadOnlyAdvertisedTool(name: string): boolean {
 /**
  * Plan-tier instrument tools: the approval-gated instruments a `plan` seat may
  * reach that a `read_only` seat may not — canvas actuation (canvas_click /
- * canvas_fill) and media compute (the mediaEditing-service tools). CRITICAL
- * INVARIANT: none of these are in MCP_AUTO_ALLOWED_TOOLS, so every one still hits
- * the host approval gate (requestAgenticServiceApproval) when invoked. Advertising
- * them to a plan bridge seat makes them REACHABLE and approval-queued, NEVER
- * auto-run — the enforcement stays the main-side gate (canvasInteraction /
- * mediaEditing = 'ask' under the plan preset). A read_only seat never sees them.
+ * canvas_fill), structured Sketch edits (canvas_sketch_update), Mesh scene
+ * authoring (the meshCanvas-service tools), and media compute (the
+ * mediaEditing-service tools). CRITICAL INVARIANT: none of these are in
+ * MCP_AUTO_ALLOWED_TOOLS, so every one still hits the host approval gate
+ * (requestAgenticServiceApproval) when invoked. Advertising them to a plan
+ * bridge seat makes them REACHABLE and approval-queued, NEVER auto-run — the
+ * enforcement stays the main-side gate (canvasInteraction / sketchCanvas /
+ * meshCanvas / mediaEditing = 'ask' under the plan preset). A read_only seat
+ * never sees them.
  */
 export const PLAN_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(

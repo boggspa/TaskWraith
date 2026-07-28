@@ -1,20 +1,12 @@
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import type { ProviderId } from '../store/types'
 import type { TaskWraithMcpProfileId } from '../store/types'
-import {
-  MESH_SCENE_MCP_TOOL_NAMES,
-  type TaskWraithMcpToolName
-} from '../TaskWraithMcpTools'
-import {
-  CAPABILITY_GATEWAY_TOOL_NAMES,
-  type CapabilityGatewayToolName
-} from './McpToolGateway'
+import { MESH_SCENE_MCP_TOOL_NAMES, type TaskWraithMcpToolName } from '../TaskWraithMcpTools'
+import { CAPABILITY_GATEWAY_TOOL_NAMES, type CapabilityGatewayToolName } from './McpToolGateway'
 
 export { CAPABILITY_GATEWAY_TOOL_NAMES } from './McpToolGateway'
 export type { CapabilityGatewayToolName } from './McpToolGateway'
-export type TaskWraithMcpAdvertisedToolName =
-  | TaskWraithMcpToolName
-  | CapabilityGatewayToolName
+export type TaskWraithMcpAdvertisedToolName = TaskWraithMcpToolName | CapabilityGatewayToolName
 
 /**
  * Immutable membership snapshot for `taskwraith-full-v1`.
@@ -469,20 +461,28 @@ const GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
   mesh_scene_present: 'Present a scene in the Mesh Canvas dock. Gated.',
   mesh_scene_close: 'Close its presentation without deleting the scene. Gated.',
   mesh_scene_delete: 'Delete a chat-owned scene and unreferenced assets. Gated.',
-  canvas_sketch_open:
-    "Open/restore this chat's Sketch Canvas. Read-only-safe; returns canvasId.",
+  canvas_sketch_open: "Open/restore this chat's Sketch Canvas. Read-only-safe; returns canvasId.",
   canvas_sketch_get: 'Read Sketch elements and updatedAt. Read-only.',
   canvas_sketch_update:
     'Append/replace/clear/delete rect/ellipse/line/arrow/text/path elements. Respect expectedUpdatedAt; retry user_busy, reread on stale_document. Gated.'
 } satisfies Partial<Record<TaskWraithMcpToolName, string>>)
 
-function stripSchemaDescriptionFields(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripSchemaDescriptionFields)
+function stripSchemaDescriptionFields(value: unknown, inPropertyNameBag = false): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stripSchemaDescriptionFields(entry))
   if (!value || typeof value !== 'object') return value
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => key !== 'description')
-      .map(([key, nested]) => [key, stripSchemaDescriptionFields(nested)])
+      // Keys inside a properties/patternProperties bag are ARGUMENT NAMES, not
+      // schema annotations — an argument literally named `description` must
+      // survive compaction; only annotation `description` keys are stripped.
+      .filter(([key]) => inPropertyNameBag || key !== 'description')
+      .map(([key, nested]) => [
+        key,
+        stripSchemaDescriptionFields(
+          nested,
+          !inPropertyNameBag && (key === 'properties' || key === 'patternProperties')
+        )
+      ])
   )
 }
 
@@ -701,10 +701,7 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // the current participant-posture-selected Mesh family direct as well.
   'taskwraith-gateway-v8': GATEWAY_V8_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v8-mesh': GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
-} as const satisfies Record<
-  TaskWraithMcpProfileId,
-  readonly TaskWraithMcpAdvertisedToolName[]
->
+} as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */
 export function taskWraithMcpAdvertisedToolNamesForProfile(

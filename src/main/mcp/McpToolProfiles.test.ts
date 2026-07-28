@@ -161,9 +161,7 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
       ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
     ])
-    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).not.toContain(
-      ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
-    )
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).not.toContain(ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME)
     expect(
       createTaskWraithMcpToolDefinitions().filter(
         (definition) => definition.name === PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
@@ -268,10 +266,7 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       }).length
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
-    const freshGatewayChars = serializedChars(
-      GATEWAY_V8_MCP_DIRECT_TOOLS,
-      gatewayToolDefinitions()
-    )
+    const freshGatewayChars = serializedChars(GATEWAY_V8_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshMeshGatewayChars = serializedChars(
       GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
@@ -360,6 +355,37 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       expect(compact.description?.length).toBeLessThan(original.description?.length ?? 0)
     }
     expect(JSON.stringify(originals)).toBe(originalJson)
+  })
+
+  it('never strips a schema property literally named description', () => {
+    const definition = {
+      name: 'canvas_sketch_update',
+      description: 'long-form prose the transport compaction replaces',
+      inputSchema: {
+        type: 'object',
+        description: 'annotation that should be stripped',
+        properties: {
+          description: {
+            type: 'string',
+            description: 'annotation on the description argument'
+          },
+          nested: {
+            type: 'object',
+            properties: { description: { type: 'number' } }
+          }
+        },
+        required: ['description']
+      }
+    }
+    const [compacted] = compactGatewayV8MeshToolDefinitionsForTransport([definition])
+    expect(compacted.inputSchema).toEqual({
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        nested: { type: 'object', properties: { description: { type: 'number' } } }
+      },
+      required: ['description']
+    })
   })
 })
 
@@ -614,8 +640,6 @@ describe('catalogue reachability', () => {
       GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
     )
     expect(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS).toContain('ensemble_roster_edit')
-    expect(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(
-      GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES
-    )
+    expect(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)
   })
 })
