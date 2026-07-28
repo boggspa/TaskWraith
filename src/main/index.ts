@@ -1749,6 +1749,7 @@ import {
 } from './SubThreadRecall'
 import {
   bridgeTranscriptActivityIsLive,
+  bridgeTranscriptIsOwnedByFinalizer,
   CHAT_RUN_STALE_REASON,
   isActiveChatRunStatus,
   reconcileStaleChatRuns,
@@ -8559,6 +8560,17 @@ function isChatRunLive(runId: string | undefined | null): boolean {
   const session = runManager.get(id)
   if (session && isActiveRunSessionStatus(session.status)) return true
   const bridgeState = bridgeRunTranscripts.get(id)
+  // OWNERSHIP first, activity second. A transcript whose status has left
+  // 'running' has been CLAIMED by a finalizer whose terminal flush is still
+  // pending (it defers a tick behind an async run-diff capture), and that
+  // finalizer will seal the run itself. Activity age is the wrong question for
+  // it: a run that streamed its last token a minute before it finalized —
+  // trivial for a local model that answers fast and then takes its time
+  // closing out — decays past the grace window while a finalizer legitimately
+  // owns it. Settling there stamped a SUCCESSFUL run 'failed' and the purge
+  // below then destroyed the state, so the flush found nothing and the entire
+  // reply was lost (live-caught 2026-07-28, twice).
+  if (bridgeState && bridgeTranscriptIsOwnedByFinalizer(bridgeState.status)) return true
   if (bridgeState && bridgeTranscriptActivityIsLive(bridgeState.lastActivityAt, Date.now())) {
     return true
   }
@@ -8647,8 +8659,19 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
     // event could schedule a non-final flush that resurrects status 'running'
     // over the settlement, and the entry would re-arm the liveness probe once
     // touched. Settlement means nothing live owns the run — drop the entry.
+    //
+    // ONLY a genuinely leaked one, though. An entry whose status has left
+    // 'running' belongs to a finalizer whose terminal flush is still pending;
+    // purging that destroys the state the flush needs and the run's whole
+    // reply dies with it (the flush returns at its `!state` guard). The
+    // liveness probe now refuses to settle those at all, so reaching here with
+    // one is a bug — say so rather than compounding it by deleting.
     const leaked = bridgeRunTranscripts.get(settlement.runId)
-    if (leaked) {
+    if (leaked && bridgeTranscriptIsOwnedByFinalizer(leaked.status)) {
+      console.warn(
+        `[chat-run-reconciler] refusing to purge run=${settlement.runId}: a finalizer owns it (status=${leaked.status}); its terminal flush still needs this state`
+      )
+    } else if (leaked) {
       if (leaked.flushTimer) clearTimeout(leaked.flushTimer)
       bridgeRunTranscripts.delete(settlement.runId)
       releaseMainOwnedRunPersistenceHolds(settlement.runId)
@@ -10711,7 +10734,19 @@ function sealExecutionGraphRunTranscript(
 
 function flushBridgeRunTranscript(runId: string, final = false): void {
   const state = bridgeRunTranscripts.get(runId)
-  if (!state) return
+  if (!state) {
+    // A missing entry is routine for a LIVE flush (the terminal flush already
+    // cleaned up), but for a TERMINAL flush it means someone destroyed this
+    // finalizer's state before it could persist — the seal and the entire
+    // assistant reply are now unrecoverable. Silence here is what made the
+    // 2026-07-28 exit-path discard read as "the run simply failed".
+    if (final) {
+      console.warn(
+        `[bridge-run] terminal flush for run=${runId} found no transcript state; the seal and reply were lost (someone purged it before the finalizer ran)`
+      )
+    }
+    return
+  }
   // The TERMINAL flush must accept a terminal session: in-process lanes
   // (ollama) finish synchronously — result line → finalize (whose async diff
   // capture defers this flush a tick) → exit → runManager.finish — so by the
@@ -23295,12 +23330,37 @@ function sendAgentCompatExit(
     : !runFailed && (code ?? -1) === 0
       ? 'completed'
       : 'failed'
-  if (!providerRunPersistenceAuthorized(provider, routed)) {
+  // THIS IS THE TERMINAL BOUNDARY, so a terminal session is the expected state,
+  // not evidence of a stale run — hence allowTerminal. Without it, in-process
+  // lanes (ollama) failed the check at exactly the moment they legitimately
+  // ended (result → finalize → exit all land in one synchronous stretch, and
+  // the session is already terminal here), took the discard branch below, and
+  // DELETED the bridge transcript out from under the finalizer's still-pending
+  // terminal flush. That flush then returned at its `!state` guard, so the
+  // ChatRun never sealed and the whole assistant reply was dropped; the
+  // stale-run reconciler swept the unsealed record minutes later and a
+  // successful run surfaced as "Run failed" with an empty transcript.
+  // Live-caught 2026-07-28: a qwen3:4b run finalized status=success chars=6646
+  // and persisted NOTHING. Same defect family as the flusher fixes in
+  // 089375646 — this was its last unfixed door. The incarnation gate (history
+  // clear / reroute) still applies unchanged, so a genuinely stale run is
+  // still discarded here.
+  if (!providerRunPersistenceAuthorized(provider, routed, { allowTerminal: true })) {
     if (authorizedGraphExit && graphExitState) {
       recordExecutionGraphProviderTerminalCandidate(graphExitState, graphTerminalStatus)
     }
     if (routed.appRunId) {
       const bridgeState = bridgeRunTranscripts.get(routed.appRunId)
+      if (bridgeState || backgroundSubThreadTranscripts.has(routed.appRunId)) {
+        // Discarding a main-owned finalizer's state loses its seal and its
+        // reply — never do it silently again.
+        console.warn(
+          `[agent-exit] discarding the pending transcript for run=${routed.appRunId} (${provider}): ${explainProviderRunPersistenceDenial(
+            provider,
+            routed
+          )}`
+        )
+      }
       if (bridgeState?.flushTimer) clearTimeout(bridgeState.flushTimer)
       bridgeRunTranscripts.delete(routed.appRunId)
       const subThreadState = backgroundSubThreadTranscripts.get(routed.appRunId)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS,
   bridgeTranscriptActivityIsLive,
+  bridgeTranscriptIsOwnedByFinalizer,
   CHAT_RUN_STALE_EXIT_CODE,
   CHAT_RUN_STALE_REASON,
   CHAT_RUN_STALE_SETTLEMENT_STATUS,
@@ -291,6 +292,30 @@ describe('reconcileStaleChatRuns', () => {
       )
       expect(result.chats).toEqual([])
     })
+  })
+})
+
+describe('bridgeTranscriptIsOwnedByFinalizer', () => {
+  it('treats any non-running transcript status as finalizer-owned', () => {
+    expect(bridgeTranscriptIsOwnedByFinalizer('success')).toBe(true)
+    expect(bridgeTranscriptIsOwnedByFinalizer('failed')).toBe(true)
+    expect(bridgeTranscriptIsOwnedByFinalizer('cancelled')).toBe(true)
+  })
+
+  it('leaves a still-running transcript to the activity probe', () => {
+    expect(bridgeTranscriptIsOwnedByFinalizer('running')).toBe(false)
+    expect(bridgeTranscriptIsOwnedByFinalizer(undefined)).toBe(false)
+  })
+
+  // The live failure this rule exists for: a one-sentence local-model reply
+  // finishes streaming, the run stays open another minute, and by the time the
+  // finalizer claims it the activity window has long since decayed. Ownership
+  // has to outrank age or the sweep settles a successful run and purges the
+  // transcript its pending terminal flush needs.
+  it('outranks a decayed activity window once a finalizer has claimed the run', () => {
+    const lastActivity = NOW_MS - BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS - 5_000
+    expect(bridgeTranscriptActivityIsLive(lastActivity, NOW_MS)).toBe(false)
+    expect(bridgeTranscriptIsOwnedByFinalizer('success')).toBe(true)
   })
 })
 

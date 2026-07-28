@@ -118,6 +118,24 @@ export function bridgeTranscriptActivityIsLive(
   )
 }
 
+/**
+ * Whether a bridge transcript entry is CLAIMED by a finalizer whose terminal
+ * flush has not run yet — the run is live-owned, whatever its activity age.
+ *
+ * A transcript is created with status 'running' and only leaves it when a
+ * finalizer takes it, so any other status means "a seal is on its way". That
+ * ownership outranks the activity window above, because the two answer
+ * different questions: activity asks "is anything still happening?", ownership
+ * asks "is someone still responsible?". A run that streams its last token well
+ * before it finalizes — routine for a local model that answers in one sentence
+ * and then takes its time closing out — is quiet but very much owned, and
+ * settling it stamped a successful run 'failed', purged the transcript the
+ * pending flush needed, and lost the reply outright.
+ */
+export function bridgeTranscriptIsOwnedByFinalizer(status: string | undefined): boolean {
+  return typeof status === 'string' && status !== 'running'
+}
+
 export interface ChatRunTerminalSeal {
   status: 'success' | 'failed' | 'cancelled'
   endedAt: string
