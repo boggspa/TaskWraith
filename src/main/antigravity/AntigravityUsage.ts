@@ -131,15 +131,34 @@ function boundedLabel(value: string): string | null {
   return cleaned && cleaned.length <= MAX_LABEL_LENGTH ? cleaned : null
 }
 
-function isSupportedQuotaGroup(value: string): boolean {
+/** A pool header line — "GEMINI MODELS", "CLAUDE AND GPT MODELS". Used to
+ * bound a group's region so a sibling pool's sub-limits never leak in. The
+ * "Models within this group: …" description line is deliberately excluded. */
+function isGroupHeaderLine(value: string): boolean {
   const normalized = cleanPanelLine(value).toLowerCase()
-  // Gemini pools ONLY. The Claude + GPT pool is deliberately not surfaced:
-  // the resold first-party models were removed from the agy offer entirely
-  // (AntigravityAgyStaticModels — using third-party models through the
-  // ban-risk lane compounds the ToS exposure, mirroring the Pi
-  // anti-circumvention wall), so metering a pool the app never dispatches
-  // to would only advertise it.
-  return ['gemini', 'gemini model', 'gemini models'].includes(normalized)
+  if (!normalized || normalized.startsWith('models within')) return false
+  return /^[a-z0-9 .+&/-]{1,40}\bmodels?$/.test(normalized)
+}
+
+/** Gemini pools ONLY. The Claude + GPT pool is deliberately not surfaced: the
+ * resold first-party models were removed from the agy offer entirely
+ * (AntigravityAgyStaticModels — metering a pool the app never dispatches to
+ * would only advertise the extra-ToS-risk lane), so the region scan treats
+ * the Claude header purely as the Gemini region's END. */
+function isGeminiGroupHeader(value: string): boolean {
+  return isGroupHeaderLine(value) && /\bgemini\b/.test(cleanPanelLine(value).toLowerCase())
+}
+
+/** Within a Gemini pool the panel prints two sub-limits, each with its own
+ * bar and percentage: "Weekly Limit" and "Five Hour Limit". */
+function subLimitKind(value: string): 'weekly' | 'five-hour' | null {
+  const normalized = cleanPanelLine(value).toLowerCase()
+  if (!/\blimit\b/.test(normalized)) return null
+  if (/\bweekly\b/.test(normalized)) return 'weekly'
+  if (/\bfive[\s-]*hour\b/.test(normalized) || /\b5[\s-]*hour\b/.test(normalized)) {
+    return 'five-hour'
+  }
+  return null
 }
 
 function parseRemainingPercent(value: string): { value: number; display: string } | null {
@@ -150,6 +169,37 @@ function parseRemainingPercent(value: string): { value: number; display: string 
   const parsed = Number(match[1])
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return null
   return { value: parsed, display: `${match[1]}% remaining` }
+}
+
+/** Resolve one sub-limit block's remaining percentage. Precedence: the
+ * explicit "N% remaining" text (clearest semantics) > a "Quota available"
+ * status (a full window, 100%) > the bare percentage rendered on the progress
+ * bar itself (a full green bar is remaining, not used). Fails closed. */
+function parseSubLimitRemaining(
+  blockLines: readonly string[]
+): { value: number; display: string } | null {
+  for (const line of blockLines) {
+    const explicit = parseRemainingPercent(line)
+    if (explicit) return explicit
+  }
+  for (const line of blockLines) {
+    const normalized = cleanPanelLine(line).toLowerCase()
+    if (/\bquota\s+available\b/.test(normalized) || /^available$/.test(normalized)) {
+      return { value: 100, display: '100% remaining' }
+    }
+    if (/\b(?:quota\s+)?(?:exhausted|used\s+up|depleted)\b/.test(normalized)) {
+      return { value: 0, display: '0% remaining' }
+    }
+  }
+  for (const line of blockLines) {
+    const bar = cleanPanelLine(line).match(/(?:^|\s)(\d{1,3}(?:\.\d+)?)\s*%(?:\s|$)/)
+    if (!bar) continue
+    const parsed = Number(bar[1])
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+      return { value: parsed, display: `${bar[1]}% remaining` }
+    }
+  }
+  return null
 }
 
 function parseObservedReset(value: string): string | null {
@@ -169,46 +219,61 @@ function parsePlanType(lines: readonly string[]): string | undefined {
   return undefined
 }
 
-function quotaGroupId(label: string, index: number): string {
-  const slug = label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 72)
-  return `agy-${slug || `group-${index + 1}`}`
-}
-
 /**
- * Parse a documented `/usage` panel conservatively. The exact observed group,
- * percent, tier, and reset text are preserved; we do not infer a schedule or
- * manufacture a quota from an account tier.
+ * Parse a documented `/usage` panel conservatively. Verified against agy 1.1.8
+ * (2026-07-28): the panel groups models into pools ("GEMINI MODELS",
+ * "CLAUDE AND GPT MODELS"), and each pool carries TWO sub-limits with their own
+ * progress bars — a "Weekly Limit" and a "Five Hour Limit". Only the Gemini
+ * pool is surfaced; each of its sub-limits becomes one window (WK / 5H). The
+ * observed percent and reset text are preserved verbatim; no schedule is
+ * inferred and no quota is manufactured from an account tier.
  */
 export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
   const lines = stripAgyUsageTerminalControls(raw)
     .split('\n')
     .map(cleanPanelLine)
     .filter(Boolean)
-  const hasUsageHeading = lines.slice(0, 20).some((line) => /\b(?:usage|quota)\b/i.test(line))
+  const hasUsageHeading = lines
+    .slice(0, 20)
+    .some((line) => /\b(?:usage|quota)\b/i.test(line))
   if (!hasUsageHeading) return { windows: [] }
 
+  const planType = parsePlanType(lines)
+
+  // Bound the Gemini pool to its own region: from its header to the next pool
+  // header (the Claude pool) or the panel end. Nothing outside that region is
+  // read, so a Claude sub-limit can never be mislabelled as Gemini's.
+  const geminiStart = lines.findIndex((line) => isGeminiGroupHeader(line))
+  if (geminiStart === -1) return { planType, windows: [] }
+  let geminiEnd = lines.length
+  for (let index = geminiStart + 1; index < lines.length; index += 1) {
+    if (isGroupHeaderLine(lines[index])) {
+      geminiEnd = index
+      break
+    }
+  }
+  const region = lines.slice(geminiStart + 1, geminiEnd)
+
   const windows: NormalizedProviderUsageWindow[] = []
-  const seen = new Set<string>()
-  for (let index = 0; index < lines.length && windows.length < MAX_QUOTA_GROUPS; index += 1) {
-    const label = boundedLabel(lines[index])
-    if (!label || !isSupportedQuotaGroup(label)) continue
-
-    const nearby = lines.slice(index, Math.min(lines.length, index + 5))
-    const remainingLine = nearby.find((line) => parseRemainingPercent(line))
-    const remaining = remainingLine ? parseRemainingPercent(remainingLine) : null
+  const seenKinds = new Set<'weekly' | 'five-hour'>()
+  for (let index = 0; index < region.length; index += 1) {
+    const kind = subLimitKind(region[index])
+    if (!kind || seenKinds.has(kind)) continue
+    let blockEnd = region.length
+    for (let next = index + 1; next < region.length; next += 1) {
+      if (subLimitKind(region[next])) {
+        blockEnd = next
+        break
+      }
+    }
+    const block = region.slice(index, blockEnd)
+    const remaining = parseSubLimitRemaining(block)
     if (!remaining) continue
-
-    const id = quotaGroupId(label, windows.length)
-    if (seen.has(id)) continue
-    seen.add(id)
-    const reset = nearby.map(parseObservedReset).find((value): value is string => Boolean(value))
+    seenKinds.add(kind)
+    const reset = block.map(parseObservedReset).find((value): value is string => Boolean(value))
     windows.push({
-      id,
-      label,
+      id: kind === 'weekly' ? 'agy-gemini-weekly' : 'agy-gemini-5h',
+      label: kind === 'weekly' ? 'Gemini Weekly' : 'Gemini 5H',
       runs: 0,
       totalTokens: 0,
       limitLabel: [remaining.display, reset ? `refresh: ${reset}` : '']
@@ -221,8 +286,9 @@ export function parseAgyUsagePanel(raw: string): AgyQuotaObservation {
         ? { resetAt: reset }
         : {})
     })
+    if (windows.length >= MAX_QUOTA_GROUPS) break
   }
-  return { planType: parsePlanType(lines), windows }
+  return { planType, windows }
 }
 
 function captureAgyUsagePanel(
