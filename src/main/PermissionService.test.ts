@@ -366,7 +366,7 @@ describe('PermissionService', () => {
     expect(updateSettings).toHaveBeenCalledWith({
       agenticWorkspaceGrants: [
         expect.objectContaining({
-          provider: 'codex',
+          provider: 'agents',
           service: 'shellCommands',
           workspacePath: resolve('/repo'),
           expiresOn: 'workspace_revocation'
@@ -605,13 +605,13 @@ describe('PermissionService', () => {
           workspaceSettings
         ).decision
       ).toBe('ask')
-      // With grant → allow.
+      // With an 'agents' workspace grant → allow for any provider in that workspace.
       const withGrant: AppSettings = {
         ...workspaceSettings,
         agenticWorkspaceGrants: [
           {
             id: 'grant-delegation-2',
-            provider: 'gemini',
+            provider: 'agents',
             service: 'subThreadDelegation',
             workspacePath: '/repo',
             createdAt: '2026-05-16T00:00:00.000Z',
@@ -623,9 +623,13 @@ describe('PermissionService', () => {
         service.resolvePermission('gemini', 'subThreadDelegation', '/repo', undefined, withGrant)
           .decision
       ).toBe('allow')
+      expect(
+        service.resolvePermission('codex', 'subThreadDelegation', '/repo', undefined, withGrant)
+          .decision
+      ).toBe('allow')
     })
 
-    it('workspace grant is provider-scoped: a Gemini grant does not auto-allow Codex delegation', () => {
+    it('legacy per-provider workspace grants remain scoped to that provider', () => {
       const service = new PermissionService({
         runManager: new RunManager(),
         sessionGrants: new Set()
@@ -647,7 +651,7 @@ describe('PermissionService', () => {
           }
         ]
       }
-      // Gemini parent → allow (has grant matching its provider).
+      // Gemini parent → allow (legacy grant matches its provider).
       expect(
         service.resolvePermission(
           'gemini',
@@ -657,7 +661,7 @@ describe('PermissionService', () => {
           withGeminiGrant
         ).decision
       ).toBe('allow')
-      // Codex parent → ask (no Codex grant; orthogonal to the Gemini one).
+      // Codex parent → ask (legacy grant is scoped to Gemini).
       expect(
         service.resolvePermission(
           'codex',
@@ -688,7 +692,7 @@ describe('PermissionService', () => {
       ).toBe('ask')
     })
 
-    it("Claude workspace grant auto-allows subsequent Claude delegations (and only Claude's)", () => {
+    it("Claude-initiated workspace grant auto-allows all providers in that workspace", () => {
       const service = new PermissionService({
         runManager: new RunManager(),
         sessionGrants: new Set()
@@ -702,7 +706,7 @@ describe('PermissionService', () => {
         agenticWorkspaceGrants: [
           {
             id: 'grant-claude-delegation',
-            provider: 'claude',
+            provider: 'agents',
             service: 'subThreadDelegation',
             workspacePath: '/repo',
             createdAt: '2026-05-16T00:00:00.000Z',
@@ -720,7 +724,7 @@ describe('PermissionService', () => {
           withClaudeGrant
         ).decision
       ).toBe('allow')
-      // Gemini parent → still ask (provider-scoped grant).
+      // Gemini/Codex parents also → allow because the grant is 'agents'-scoped.
       expect(
         service.resolvePermission(
           'gemini',
@@ -729,8 +733,7 @@ describe('PermissionService', () => {
           undefined,
           withClaudeGrant
         ).decision
-      ).toBe('ask')
-      // Codex parent → still ask.
+      ).toBe('allow')
       expect(
         service.resolvePermission(
           'codex',
@@ -739,7 +742,7 @@ describe('PermissionService', () => {
           undefined,
           withClaudeGrant
         ).decision
-      ).toBe('ask')
+      ).toBe('allow')
     })
 
     // Phase I4 (Kimi initiator): with Kimi now able to spawn cross-
@@ -761,7 +764,7 @@ describe('PermissionService', () => {
       ).toBe('ask')
     })
 
-    it("Kimi workspace grant auto-allows subsequent Kimi delegations (and only Kimi's)", () => {
+    it("Kimi-initiated workspace grant auto-allows all providers in that workspace", () => {
       const service = new PermissionService({
         runManager: new RunManager(),
         sessionGrants: new Set()
@@ -775,7 +778,7 @@ describe('PermissionService', () => {
         agenticWorkspaceGrants: [
           {
             id: 'grant-kimi-delegation',
-            provider: 'kimi',
+            provider: 'agents',
             service: 'subThreadDelegation',
             workspacePath: '/repo',
             createdAt: '2026-05-16T00:00:00.000Z',
@@ -788,8 +791,7 @@ describe('PermissionService', () => {
         service.resolvePermission('kimi', 'subThreadDelegation', '/repo', undefined, withKimiGrant)
           .decision
       ).toBe('allow')
-      // Gemini parent → still ask (provider-scoped grant; Gemini grant
-      // does not auto-allow Kimi delegation in the same workspace).
+      // Other providers also → allow because the grant is 'agents'-scoped.
       expect(
         service.resolvePermission(
           'gemini',
@@ -798,13 +800,11 @@ describe('PermissionService', () => {
           undefined,
           withKimiGrant
         ).decision
-      ).toBe('ask')
-      // Codex parent → still ask.
+      ).toBe('allow')
       expect(
         service.resolvePermission('codex', 'subThreadDelegation', '/repo', undefined, withKimiGrant)
           .decision
-      ).toBe('ask')
-      // Claude parent → still ask.
+      ).toBe('allow')
       expect(
         service.resolvePermission(
           'claude',
@@ -813,44 +813,37 @@ describe('PermissionService', () => {
           undefined,
           withKimiGrant
         ).decision
-      ).toBe('ask')
+      ).toBe('allow')
     })
 
-    it('reverse-direction: a Gemini workspace grant does NOT auto-allow Kimi delegation', () => {
-      // Mirror of the "Claude grant doesn't auto-allow Gemini" test for
-      // the new Kimi parent provider. Phase I4 closes the matrix so
-      // every combination of grant-direction needs to be provider-scoped.
-      const service = new PermissionService({
-        runManager: new RunManager(),
-        sessionGrants: new Set()
-      })
-      const withGeminiGrant: AppSettings = {
+    it('upsertWorkspaceGrant stores an agents-scoped grant regardless of requesting provider', () => {
+      let persistedSettings: AppSettings = {
         ...settings,
         agenticServices: {
           ...settings.agenticServices,
           subThreadDelegation: 'workspace'
         },
-        agenticWorkspaceGrants: [
-          {
-            id: 'grant-gemini-for-kimi-test',
-            provider: 'gemini',
-            service: 'subThreadDelegation',
-            workspacePath: '/repo',
-            createdAt: '2026-05-16T00:00:00.000Z',
-            updatedAt: '2026-05-16T00:00:00.000Z'
-          }
-        ]
+        agenticWorkspaceGrants: []
       }
-      // Kimi parent → ask (no Kimi grant; provider-scoped).
+      const service = new PermissionService({
+        runManager: new RunManager(),
+        sessionGrants: new Set(),
+        getSettings: () => persistedSettings,
+        updateSettings: (partial) => {
+          persistedSettings = { ...persistedSettings, ...partial }
+        }
+      })
+      service.upsertWorkspaceGrant('gemini', '/repo', 'subThreadDelegation')
+      expect(persistedSettings.agenticWorkspaceGrants).toHaveLength(1)
+      expect(persistedSettings.agenticWorkspaceGrants[0].provider).toBe('agents')
       expect(
-        service.resolvePermission(
-          'kimi',
-          'subThreadDelegation',
-          '/repo',
-          undefined,
-          withGeminiGrant
-        ).decision
-      ).toBe('ask')
+        service.resolvePermission('gemini', 'subThreadDelegation', '/repo', undefined, persistedSettings)
+          .decision
+      ).toBe('allow')
+      expect(
+        service.resolvePermission('codex', 'subThreadDelegation', '/repo', undefined, persistedSettings)
+          .decision
+      ).toBe('allow')
     })
   })
 

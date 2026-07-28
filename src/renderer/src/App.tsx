@@ -113,6 +113,7 @@ import {
   PinnedMessageSummary,
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
+  AgenticWorkspaceGrantProviderId,
   AgenticServiceId,
   GeminiMcpBridgeStatus,
   CodexSandboxFallbackMode,
@@ -7304,7 +7305,7 @@ function App(): React.JSX.Element {
   }
 
   const handleRemoveAgenticWorkspaceGrant = async (
-    provider: ProviderId,
+    provider: AgenticWorkspaceGrantProviderId,
     workspacePath: string,
     service: AgenticServiceId
   ) => {

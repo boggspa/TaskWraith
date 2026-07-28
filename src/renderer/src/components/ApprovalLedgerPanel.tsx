@@ -61,17 +61,21 @@ const DATE_RANGES = [
 
 type DateRangeId = (typeof DATE_RANGES)[number]['id']
 
-const PROVIDER_LABELS: Record<ProviderId, string> = {
-  gemini: 'Gemini',
-  codex: 'Codex',
-  claude: 'Claude',
-  kimi: 'Kimi',
-  grok: 'Grok',
-  cursor: 'Cursor',
-  ollama: 'Ollama',
-  antigravity: 'Antigravity',
-  mistral: 'Mistral',
-  pi: 'Pi'
+function workspaceGrantProviderLabel(provider: ProviderId | 'agents'): string {
+  if (provider === 'agents') return 'All agents'
+  const labels: Record<ProviderId, string> = {
+    gemini: 'Gemini',
+    codex: 'Codex',
+    claude: 'Claude',
+    kimi: 'Kimi',
+    grok: 'Grok',
+    cursor: 'Cursor',
+    ollama: 'Ollama',
+    antigravity: 'Antigravity',
+    mistral: 'Mistral',
+    pi: 'Pi'
+  }
+  return labels[provider] ?? provider
 }
 
 export interface ApprovalLedgerPanelProps {
@@ -345,7 +349,7 @@ export function ApprovalLedgerPanel({
                 <li key={grant.id} className="approval-grant-row">
                   <div className="approval-grant-row-main">
                     <span className="approval-grant-row-title">
-                      {PROVIDER_LABELS[grant.provider]} ·{' '}
+                      {workspaceGrantProviderLabel(grant.provider)} ·{' '}
                       {getWorkspacePolicyServiceLabel(grant.service)}
                     </span>
                     <span className="approval-grant-row-meta" title={grant.workspacePath}>
@@ -495,7 +499,7 @@ export function ApprovalLedgerPanel({
               {bulkForgetPending.map((grant) => (
                 <li key={grant.id} className="approval-grant-bulk-list-row">
                   <span className="approval-grant-bulk-list-provider">
-                    {PROVIDER_LABELS[grant.provider]}
+                    {workspaceGrantProviderLabel(grant.provider)}
                   </span>
                   <span className="approval-grant-bulk-list-meta" title={grant.workspacePath}>
                     {workspaceBasename(grant.workspacePath)} · Granted{' '}

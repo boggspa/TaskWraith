@@ -124,6 +124,26 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
     expect(deps.getSettings).toHaveBeenCalledTimes(1)
   })
 
+  it('allows removing an agents-scoped workspace grant without provider assertion', () => {
+    const deps = createDeps()
+    const event = { sender: { id: 1 } }
+    registerAgenticWorkspaceGrantHandlers(deps)
+    const result = handlerFor('remove-agentic-workspace-grant')(
+      event,
+      'agents',
+      '/tmp/workspace-2',
+      'shellCommands'
+    ) as AppSettings
+
+    expect(deps.assertProviderId).not.toHaveBeenCalled()
+    expect(deps.permissionService.removeWorkspaceGrant).toHaveBeenCalledWith(
+      'agents',
+      '/tmp/workspace-2',
+      'shellCommands'
+    )
+    expect(result).toMatchObject({ bridgeDaemonEnabled: false })
+  })
+
   it('grants Cursor workspace Tool Grants with full provider parity', () => {
     // Cursor's B-mode TaskWraith MCP broker routes tool calls through the
     // central approval gate, where resolvePermission honors workspace grants —

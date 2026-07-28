@@ -8,6 +8,7 @@ import type {
   AgenticServicePolicy,
   AgenticServicesSettings,
   AgenticWorkspaceGrant,
+  AgenticWorkspaceGrantProviderId,
   AppearanceMode,
   CodexSandboxFallbackMode,
   AppSettings,
@@ -369,7 +370,7 @@ interface SettingsPanelProps {
   onProviderLogout?: (provider: ProviderId) => void
   onRefreshProviderStatus?: (provider: ProviderId) => void
   onRemoveAgenticWorkspaceGrant?: (
-    provider: ProviderId,
+    provider: AgenticWorkspaceGrantProviderId,
     workspacePath: string,
     service: AgenticServiceId
   ) => Promise<void> | void

@@ -5,6 +5,7 @@ import type {
   ChatRecord,
   EnsembleFanoutPolicy,
   ProviderId,
+  AgenticWorkspaceGrantProviderId,
   RunAnalystRequest,
   RunAnalystSnapshot,
   CloseoutSummaryRequest,
@@ -1284,8 +1285,11 @@ const api = {
   'prompt-cache:get-diagnostics': () => ipcRenderer.invoke('prompt-cache:get-diagnostics'),
   upsertAgenticWorkspaceGrant: (provider: ProviderId, workspacePath: string, service: string) =>
     ipcRenderer.invoke('upsert-agentic-workspace-grant', provider, workspacePath, service),
-  removeAgenticWorkspaceGrant: (provider: ProviderId, workspacePath: string, service: string) =>
-    ipcRenderer.invoke('remove-agentic-workspace-grant', provider, workspacePath, service),
+  removeAgenticWorkspaceGrant: (
+    provider: AgenticWorkspaceGrantProviderId,
+    workspacePath: string,
+    service: string
+  ) => ipcRenderer.invoke('remove-agentic-workspace-grant', provider, workspacePath, service),
   getRuntimeProfiles: (provider?: ProviderId) =>
     ipcRenderer.invoke('get-runtime-profiles', provider),
   saveRuntimeProfile: (profile: any, secretValues?: any) =>

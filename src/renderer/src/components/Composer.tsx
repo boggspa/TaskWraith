@@ -4117,10 +4117,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             : new Set(
                                 agenticWorkspaceGrants
                                   .filter((grant) => {
+                                    if (!grant || !grant.workspacePath) return false
+                                    // Workspace mutation grants are now scoped
+                                    // to 'agents' (all providers). Legacy
+                                    // per-provider grants still match only
+                                    // their own provider.
                                     if (
-                                      !grant ||
-                                      grant.provider !== effectiveProvider ||
-                                      !grant.workspacePath
+                                      grant.provider !== 'agents' &&
+                                      grant.provider !== effectiveProvider
                                     )
                                       return false
                                     // Match PermissionService's resolved path storage, not just

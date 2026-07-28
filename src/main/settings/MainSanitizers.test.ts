@@ -1485,6 +1485,16 @@ describe('MainSanitizers settings patches', () => {
       publishGrant
     ])
 
+    // The 'agents' wildcard provider is accepted for workspace-scoped mutation grants.
+    const agentsGrant = {
+      ...grant,
+      id: 'grant-agents-1',
+      provider: 'agents' as const
+    }
+    expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [agentsGrant] }).agenticWorkspaceGrants).toEqual([
+      agentsGrant
+    ])
+
     // Empty array is a valid revoke-all write.
     expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [] }).agenticWorkspaceGrants).toEqual([])
 

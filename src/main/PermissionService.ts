@@ -106,13 +106,12 @@ export class PermissionService {
     if (!workspacePath) return false
     const normalizedWorkspace = resolve(workspacePath)
     return (settings.agenticWorkspaceGrants || []).some((grant) => {
-      if (
-        !grant ||
-        grant.provider !== provider ||
-        grant.service !== service ||
-        !grant.workspacePath
-      )
-        return false
+      if (!grant || grant.service !== service || !grant.workspacePath) return false
+      // Workspace mutation grants are now scoped to 'agents' (all providers)
+      // rather than the requesting provider, so mid-round seat swaps don't
+      // lose permission. Legacy per-provider grants still match for the
+      // provider they were issued for.
+      if (grant.provider !== 'agents' && grant.provider !== provider) return false
       if (grant.expiresAt) {
         const expiresAt = Date.parse(grant.expiresAt)
         if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
@@ -122,7 +121,7 @@ export class PermissionService {
   }
 
   upsertWorkspaceGrant(
-    provider: ProviderId,
+    _provider: ProviderId,
     workspacePath: string | undefined,
     service: AgenticServiceId
   ): void {
@@ -130,19 +129,16 @@ export class PermissionService {
     const settings = this.getSettings()
     const normalizedWorkspace = resolve(workspacePath)
     const now = new Date().toISOString()
+    // Store the grant under the 'agents' wildcard so any provider participant
+    // in the workspace inherits it. The requesting provider argument is kept
+    // for API/audit compatibility but is no longer part of the grant key.
     const grants = (settings.agenticWorkspaceGrants || []).filter((grant) => {
-      if (
-        !grant ||
-        grant.provider !== provider ||
-        grant.service !== service ||
-        !grant.workspacePath
-      )
-        return true
+      if (!grant || grant.service !== service || !grant.workspacePath) return true
       return resolve(grant.workspacePath) !== normalizedWorkspace
     })
     grants.push({
       id: randomUUID(),
-      provider,
+      provider: 'agents',
       service,
       workspacePath: normalizedWorkspace,
       createdAt: now,
@@ -153,7 +149,7 @@ export class PermissionService {
   }
 
   removeWorkspaceGrant(
-    provider: ProviderId,
+    provider: ProviderId | 'agents',
     workspacePath: string | undefined,
     service: AgenticServiceId
   ): void {
@@ -161,13 +157,11 @@ export class PermissionService {
     const settings = this.getSettings()
     const normalizedWorkspace = resolve(workspacePath)
     const grants = (settings.agenticWorkspaceGrants || []).filter((grant) => {
-      if (
-        !grant ||
-        grant.provider !== provider ||
-        grant.service !== service ||
-        !grant.workspacePath
-      )
-        return true
+      if (!grant || grant.service !== service || !grant.workspacePath) return true
+      // Revoke the 'agents' grant for this workspace/service, and also clean
+      // up any legacy per-provider grant that happens to match (so the UI
+      // toggle stays coherent even if an older grant is present).
+      if (grant.provider !== 'agents' && grant.provider !== provider) return true
       return resolve(grant.workspacePath) !== normalizedWorkspace
     })
     this.updateSettings({ agenticWorkspaceGrants: grants })

@@ -1,10 +1,18 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import type { AppSettings, AgenticServiceId, ProviderId } from '../store/types'
+import type {
+  AgenticWorkspaceGrantProviderId,
+  AppSettings,
+  AgenticServiceId,
+  ProviderId
+} from '../store/types'
 import type { PermissionService } from '../PermissionService'
 import { rendererSafeSettings } from './settingsHandlers'
 
 export interface AgenticWorkspaceGrantHandlerDeps {
-  permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
+  permissionService: Pick<
+    PermissionService,
+    'upsertWorkspaceGrant' | 'removeWorkspaceGrant'
+  >
   getSettings: () => AppSettings
   assertProviderId: (provider: ProviderId) => ProviderId
   assertLiveProviderId: (provider: ProviderId) => ProviderId
@@ -45,8 +53,11 @@ export function registerAgenticWorkspaceGrantHandlers(
 
   ipcMain.handle(
     'remove-agentic-workspace-grant',
-    (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-      const validatedProvider = deps.assertProviderId(provider)
+    (event, provider: ProviderId | 'agents', workspacePath: string, service: AgenticServiceId) => {
+      // The 'agents' wildcard is a valid workspace-grant provider; legacy/live
+      // providers still pass through the normal provider assertion.
+      const validatedProvider: AgenticWorkspaceGrantProviderId =
+        provider === 'agents' ? 'agents' : deps.assertProviderId(provider)
       const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
       const validatedService = deps.assertAgenticServiceId(service)
       const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(

@@ -635,10 +635,12 @@ export interface AgenticServicesSettings {
   networkAccess: AgenticNetworkPolicy
 }
 
+export type AgenticWorkspaceGrantProviderId = ProviderId | 'agents'
+
 export interface AgenticWorkspaceGrant {
   id: string
   workspacePath: string
-  provider: ProviderId
+  provider: AgenticWorkspaceGrantProviderId
   service: AgenticServiceId
   createdAt: string
   updatedAt: string

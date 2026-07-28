@@ -8,6 +8,7 @@ import type { ActivityArchetype } from '../../shared/bannerTemplate'
 import type {
   AgenticServiceId,
   AgenticWorkspaceGrant,
+  AgenticWorkspaceGrantProviderId,
   AppSettings,
   AuditOrchestrationSettings,
   AuditRole,
@@ -81,6 +82,10 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'antigravity',
   'pi',
   'mistral'
+])
+const AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS = new Set<AgenticWorkspaceGrantProviderId>([
+  ...PROVIDER_IDS,
+  'agents'
 ])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
@@ -570,8 +575,9 @@ export function sanitizeAgenticWorkspaceGrants(
     const workspacePath =
       typeof entry.workspacePath === 'string' ? entry.workspacePath.trim() : ''
     const provider =
-      typeof entry.provider === 'string' && PROVIDER_IDS.has(entry.provider as ProviderId)
-        ? (entry.provider as ProviderId)
+      typeof entry.provider === 'string' &&
+      AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS.has(entry.provider as AgenticWorkspaceGrantProviderId)
+        ? (entry.provider as AgenticWorkspaceGrantProviderId)
         : null
     const service =
       typeof entry.service === 'string' &&

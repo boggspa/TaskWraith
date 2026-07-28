@@ -16,6 +16,7 @@ import {
   GeminiSessionListResult,
   GeminiWorktreeLaunchOption,
   ProviderId,
+  AgenticWorkspaceGrantProviderId,
   ChatScope,
   ChatWorkflowMode,
   ExternalPathGrant,
@@ -1627,7 +1628,7 @@ declare global {
         service: AgenticServiceId
       ) => Promise<AppSettings>
       removeAgenticWorkspaceGrant: (
-        provider: ProviderId,
+        provider: AgenticWorkspaceGrantProviderId,
         workspacePath: string,
         service: AgenticServiceId
       ) => Promise<AppSettings>
