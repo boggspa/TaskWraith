@@ -34,6 +34,13 @@ interface EnsembleFanoutResultCardProps {
   chat?: ChatRecord
   workspacePath?: string
   streamRunId?: string
+  /**
+   * This lane's seat is currently working. Drives the rim shimmer, which exists
+   * so a straggler is findable at a glance when several lanes run at once.
+   * Supplied by the caller from the working-indicator presentations so it turns
+   * off at exactly the moment the seat's "working…" row does.
+   */
+  working?: boolean
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
   compactDensity?: boolean
@@ -144,6 +151,7 @@ export function EnsembleFanoutResultCard({
   chat,
   workspacePath,
   streamRunId,
+  working = false,
   expanded,
   onExpandedChange,
   compactDensity = false,
@@ -218,7 +226,11 @@ export function EnsembleFanoutResultCard({
   const collapsedResult = !expandedResult
 
   return (
-    <article className={`ensemble-fanout-result-card provider-${hueClass}`} style={cardAccentStyle}>
+    <article
+      className={`ensemble-fanout-result-card provider-${hueClass}${working ? ' is-working' : ''}`}
+      style={cardAccentStyle}
+      data-lane-working={working ? 'true' : undefined}
+    >
       <header className="ensemble-fanout-result-header">
         <div className="ensemble-fanout-result-heading">
           <span aria-hidden="true" className="ensemble-fanout-result-glyph">

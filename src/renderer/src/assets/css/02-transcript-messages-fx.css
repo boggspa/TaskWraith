@@ -6470,6 +6470,100 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   padding: 0.78rem 0.9rem 0.9rem;
 }
 
+/* ============================================================
+ * Working-lane rim chase
+ * ------------------------------------------------------------
+ * While a fan-out lane's seat is busy, its card runs a slow
+ * shimmer around the rim. The job it does is practical rather
+ * than decorative: a fan-out puts several of these cards in the
+ * transcript at once, they finish at different times, and the
+ * lit one is the one still going — so the straggler is findable
+ * without reading each header.
+ *
+ * The card class is toggled from the SAME working-indicator
+ * presentations that drive the "working…" row, so the shimmer
+ * stops at the moment that seat's row disappears.
+ *
+ * Technique is the composer's `obsidian-rim-chase`: a conic
+ * gradient rotated through a registered @property angle, then
+ * masked with mask-composite so only the rim strip survives.
+ * Registering the angle is what makes it animatable at all — an
+ * unregistered custom property is a string and cannot tween. A
+ * SEPARATE property from the composer's on purpose: reusing an
+ * `--obsidian-*` token here would make this shard silently
+ * depend on the theme-picker shard's naming.
+ *
+ * Colour comes from the card's own per-participant --accent, so
+ * each lane shimmers in its own provider hue — including the
+ * brand-spoof overrides, where an Ollama-hosted Qwen chases
+ * Alibaba purple rather than Ollama green.
+ * ============================================================ */
+@property --fanout-lane-rim-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.ensemble-fanout-result-card {
+  /* One lap. Slow enough to read as "alive, still going" rather
+     than "alarm" — this sits in a transcript the user is reading. */
+  --fanout-lane-rim-duration: 3.6s;
+  --fanout-lane-rim-width: 1px;
+}
+
+.ensemble-fanout-result-card.is-working::after {
+  content: '';
+  position: absolute;
+  /* Sit ON the existing 1px border rather than inside it, so the
+     chase replaces the static rim instead of drawing a second
+     line just inboard of it. */
+  inset: calc(var(--fanout-lane-rim-width) * -1);
+  border-radius: calc(8px + var(--fanout-lane-rim-width));
+  padding: var(--fanout-lane-rim-width);
+  background: conic-gradient(
+    from var(--fanout-lane-rim-angle),
+    transparent 0deg,
+    transparent 186deg,
+    color-mix(in srgb, var(--accent) 26%, transparent) 268deg,
+    color-mix(in srgb, var(--accent) 62%, transparent) 330deg,
+    color-mix(in srgb, var(--accent) 92%, transparent) 353deg,
+    transparent 360deg
+  );
+  /* Keep the rim strip, punch out the middle. Without the xor the
+     gradient would wash the whole card and fog the transcript text. */
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: fanout-lane-rim-chase var(--fanout-lane-rim-duration) linear infinite;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@keyframes fanout-lane-rim-chase {
+  to {
+    --fanout-lane-rim-angle: 360deg;
+  }
+}
+
+/* Honour BOTH reduce-motion signals — the OS preference and the
+ * app's own setting. The rim stays lit at its rest angle rather
+ * than vanishing: the point is identifying the working lane, and
+ * that information should survive turning motion off. */
+@media (prefers-reduced-motion: reduce) {
+  .ensemble-fanout-result-card.is-working::after {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .ensemble-fanout-result-card.is-working::after {
+  animation: none;
+}
+
 .ensemble-fanout-result-header {
   display: flex;
   align-items: center;
