@@ -57,7 +57,7 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import icon from '../../resources/icon.png?asset'
 import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
-import { normalizeThreadTitle } from '../shared/threadTitles'
+import { isPlaceholderThreadTitle, normalizeThreadTitle } from '../shared/threadTitles'
 import {
   isTaskWraithHelperProcess,
   shouldSuppressMacAppPresentation
@@ -5664,13 +5664,18 @@ function prepareIosComposerPromptChat(args: {
   const timestamp = new Date(now).toISOString()
   const prompt = action.text.trim()
   let chat = AppStore.getChat(action.threadId)
+  if (chat && prompt.length > 0 && (chat.messages || []).length === 0 &&
+      isPlaceholderThreadTitle(chat.title)) {
+    // First prompt into a pre-created phone draft adopts the derived title.
+    // The desktop applies exactly this messages.length === 0 rule in its
+    // renderer submit path, which the phone's two-step createThread →
+    // composerPrompt flow never traverses — so without this, a chat born
+    // empty on the phone stays "New Chat" forever (F13). A title the user
+    // set on the phone before sending fails the placeholder check and wins.
+    chat = { ...chat, title: normalizeThreadTitle(prompt, chat.title || 'New Chat') }
+  }
   if (!chat) {
-    const title =
-      prompt.length > 0
-        ? prompt.length > 72
-          ? `${prompt.slice(0, 69).trimEnd()}...`
-          : prompt
-        : 'New Chat'
+    const title = prompt.length > 0 ? normalizeThreadTitle(prompt, 'New Chat') : 'New Chat'
     chat = {
       appChatId: action.threadId,
       scope: workspace ? 'workspace' : 'global',
