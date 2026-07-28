@@ -384,6 +384,31 @@ function renderHome(
   return lines
 }
 
+function renderEmptyThread(
+  thread: TaskWraithControlThread,
+  width: number,
+  height: number,
+  ansi: Ansi
+): string[] {
+  const lines = Array.from({ length: Math.max(1, height) }, () => '')
+  const center = Math.max(1, Math.floor(width / 2))
+  const start = Math.max(0, Math.floor(height / 2) - 3)
+  const place = (row: number, text: string, offset = 0) => {
+    if (row < 0 || row >= lines.length) return
+    const left = Math.max(0, center - Math.floor(visibleWidth(text) / 2) + offset)
+    lines[row] = fitAnsiLine(`${' '.repeat(left)}${text}`, width)
+  }
+  const kindLabel = thread.chatKind === 'ensemble' ? 'Ensemble' : 'Chat'
+  const identity = [terminalLabel(thread.title) || kindLabel, thread.provider.displayProvider]
+    .map(terminalLabel)
+    .filter(Boolean)
+    .join(' · ')
+  place(start, ansi.provider(identity, thread.provider.accent))
+  place(start + 2, ansi.dim('No messages yet'))
+  place(start + 4, ansi.dim('Ctrl+K threads · Ctrl+P commands'))
+  return lines
+}
+
 function renderTranscriptCanvas(
   state: TaskWraithTuiState,
   width: number,
@@ -405,7 +430,7 @@ function renderTranscriptCanvas(
       glyphs
     )
   )
-  if (!allLines.length) return renderHome(state, width, height, ansi, glyphs)
+  if (!allLines.length) return renderEmptyThread(snapshot.thread, width, height, ansi)
   const offset = Math.max(0, state.scrollOffset)
   const end = Math.max(0, allLines.length - offset)
   const start = Math.max(0, end - height)

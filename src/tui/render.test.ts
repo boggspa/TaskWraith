@@ -127,6 +127,30 @@ describe('TaskWraith TUI renderer', () => {
     }
   })
 
+  it('renders an empty-thread identity instead of the no-selection home state when a thread is selected but has no rows', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    if (!state.thread) throw new Error('Demo state is incomplete')
+    state.thread.rows = []
+    state.thread.thread.status = 'idle'
+    state.thread.thread.messageCount = 0
+    state.thread.thread.title = 'Empty Idle Thread'
+
+    const output = stripAnsi(
+      renderTaskWraithTui(state, {
+        width: 80,
+        height: 24,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false
+      })
+    )
+
+    expect(output).not.toContain('No thread selected')
+    expect(output).toContain('Empty Idle Thread')
+    expect(output).toContain('No messages yet')
+  })
+
   it('strips terminal control bytes from every dynamic presentation label', () => {
     const now = Date.UTC(2026, 6, 27, 4, 55, 37)
     const state = createTaskWraithTuiDemoState(now)
