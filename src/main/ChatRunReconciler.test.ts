@@ -3,13 +3,15 @@ import {
   BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS,
   bridgeTranscriptActivityIsLive,
   CHAT_RUN_STALE_EXIT_CODE,
+  CHAT_RUN_STALE_REASON,
   CHAT_RUN_STALE_SETTLEMENT_STATUS,
   isActiveChatRunStatus,
   reconcileStaleChatRuns,
   sealChatRunTerminalFields,
   settleStaleChatRun
 } from './ChatRunReconciler'
-import type { ChatRecord, ChatRun } from './store/types'
+import { staleRunSettlementNoticeId } from './RunFailureNotice'
+import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
 
 const NOW = '2026-07-20T12:00:00.000Z'
 const NOW_MS = Date.parse(NOW)
@@ -187,6 +189,108 @@ describe('reconcileStaleChatRuns', () => {
       NOW
     )
     expect(result).toEqual({ chats: [], settlements: [] })
+  })
+
+  describe('settlement transcript notice', () => {
+    it('appends an explanatory error row for every settled run', () => {
+      const result = reconcileStaleChatRuns(
+        [
+          chat('c1', [
+            run({ runId: 'stale-1', status: 'running', provider: 'ollama' }),
+            run({ runId: 'stale-2', status: 'queued', provider: 'ollama' })
+          ])
+        ],
+        () => false,
+        NOW
+      )
+      const messages = result.chats[0].messages
+      expect(messages.map((m) => m.id)).toEqual([
+        staleRunSettlementNoticeId('c1', 'stale-1'),
+        staleRunSettlementNoticeId('c1', 'stale-2')
+      ])
+      expect(messages.every((m) => m.role === 'error')).toBe(true)
+      expect(messages[0].runId).toBe('stale-1')
+      // The card kind both platforms already render (desktop
+      // ProviderRunFailureCard / iOS ProviderRunFailureCard).
+      expect(messages[0].metadata?.kind).toBe('providerRunFailure')
+      expect(messages[0].content).toContain('stale-1')
+      expect(messages[0].content).toContain('still marked running')
+      expect(messages[0].content).toContain(CHAT_RUN_STALE_REASON)
+      expect(messages[1].content).toContain('still marked queued')
+    })
+
+    it('inserts after the settled run own last row, not at the tail', () => {
+      const messages: ChatMessage[] = [
+        { id: 'u1', role: 'user', content: 'old prompt', timestamp: OLD, runId: 'stale-1' },
+        { id: 'a1', role: 'assistant', content: 'partial', timestamp: OLD, runId: 'stale-1' },
+        { id: 'u2', role: 'user', content: 'newer prompt', timestamp: NOW, runId: 'done-1' }
+      ]
+      const result = reconcileStaleChatRuns(
+        [
+          chat(
+            'c1',
+            [run({ runId: 'stale-1' }), run({ runId: 'done-1', status: 'success' })],
+            { messages }
+          )
+        ],
+        () => false,
+        NOW
+      )
+      // iOS anchors a run's completion card to that run's LAST row — a
+      // tail-appended notice would drag the old card below the newer turn.
+      expect(result.chats[0].messages.map((m) => m.id)).toEqual([
+        'u1',
+        'a1',
+        staleRunSettlementNoticeId('c1', 'stale-1'),
+        'u2'
+      ])
+    })
+
+    it('keeps existing transcript rows and appends after them', () => {
+      const existing: ChatMessage = {
+        id: 'u1',
+        role: 'user',
+        content: 'do the thing',
+        timestamp: OLD
+      }
+      const result = reconcileStaleChatRuns(
+        [chat('c1', [run({ runId: 'stale-1' })], { messages: [existing] })],
+        () => false,
+        NOW
+      )
+      expect(result.chats[0].messages).toHaveLength(2)
+      expect(result.chats[0].messages[0]).toEqual(existing)
+    })
+
+    it('does not duplicate a notice that is already in the transcript', () => {
+      const result = reconcileStaleChatRuns(
+        [
+          chat('c1', [run({ runId: 'stale-1' })], {
+            messages: [
+              {
+                id: staleRunSettlementNoticeId('c1', 'stale-1'),
+                role: 'error',
+                content: 'already explained',
+                timestamp: OLD
+              }
+            ]
+          })
+        ],
+        () => false,
+        NOW
+      )
+      expect(result.chats[0].messages).toHaveLength(1)
+      expect(result.chats[0].messages[0].content).toBe('already explained')
+    })
+
+    it('writes no notice when nothing was settled', () => {
+      const result = reconcileStaleChatRuns(
+        [chat('c1', [run({ runId: 'live', status: 'running' })])],
+        () => true,
+        NOW
+      )
+      expect(result.chats).toEqual([])
+    })
   })
 })
 

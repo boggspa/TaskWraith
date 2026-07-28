@@ -13,6 +13,10 @@ import {
   REMOTE_RUN_SUMMARY_MAX,
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
+import {
+  buildBridgeRunFailureMetadata,
+  buildStaleRunSettlementNotice
+} from './RunFailureNotice'
 
 function msg(i: number, overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -1347,6 +1351,59 @@ describe('RemoteThreadProjection', () => {
         msg(1, { id: 'e', role: 'error', content: 'plain error', metadata: { provider: 'claude' } })
       ])
       expect(snap.rows[0].runFailure).toBeUndefined()
+    })
+
+    // Shape contract: the reconciler settlement notice and the bridge lane's
+    // synthesized error both reuse this metadata precisely so they land as the
+    // failure CARD (which iOS refuses to fold into a settled stack) rather
+    // than as a bare error bubble. If buildRunFailure's gate ever changes, the
+    // main-process writers in RunFailureNotice.ts must change with it.
+    it('projects a main-authored settlement notice as the same card', () => {
+      const notice = buildStaleRunSettlementNotice({
+        chatId: THREAD,
+        run: {
+          runId: '1753700000000-abc',
+          provider: 'ollama',
+          startedAt: '2026-05-28T11:00:00.000Z',
+          status: 'failed',
+          exitCode: 1
+        },
+        previousStatus: 'running',
+        reason: 'Interrupted with no live RunManager session.',
+        settledAt: '2026-05-28T11:59:00.000Z'
+      })
+      const snap = project({ kind: 'latestN', n: 10 }, [{ ...notice }])
+      expect(snap.rows[0].kind).toBe('error')
+      expect(snap.rows[0].runFailure).toMatchObject({
+        provider: 'ollama',
+        headline: 'Ollama run interrupted',
+        exitCode: 1,
+        failureAt: '2026-05-28T11:59:00.000Z'
+      })
+      expect(snap.rows[0].runFailure?.lines[0].text).toContain('1753700000000-abc')
+      expect(snap.rows[0].runFailure?.hint).toContain('Re-send the prompt')
+    })
+
+    it('projects a synthesized bridge failure as the same card', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'bridge-error-app-chat-123-run-1',
+          role: 'error',
+          content: 'The provider ended this turn without a reply after 2 tool calls.',
+          metadata: buildBridgeRunFailureMetadata({
+            provider: 'ollama',
+            errorMessage: 'The provider ended this turn without a reply after 2 tool calls.',
+            failureAt: '2026-05-28T11:59:00.000Z',
+            exitCode: 1
+          })
+        })
+      ])
+      expect(snap.rows[0].runFailure).toMatchObject({
+        provider: 'ollama',
+        headline: 'Ollama failed · exit 1',
+        exitCode: 1
+      })
+      expect(snap.rows[0].runFailure?.lines).toHaveLength(1)
     })
   })
 

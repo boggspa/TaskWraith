@@ -122,3 +122,34 @@ extension TranscriptStackCollapseTests {
         #expect(summary.rowCount == 0)
     }
 }
+
+/// F7 (2026-07): a failed run must never leave the Task-complete card telling
+/// the reader to "see the transcript above" when the transcript above is bare.
+extension TranscriptStackCollapseTests {
+    @Test func runFailureExplanationFoundViaCardOrErrorRow() throws {
+        let card = try row(
+            #"{"id":"e1","role":"error","runId":"r1","preview":"boom","runFailure":{"headline":"Ollama failed","lines":[]}}"#
+        )
+        let plainError = try row(#"{"id":"e2","role":"error","runId":"r1","preview":"boom"}"#)
+        let errorByKind = try row(#"{"id":"e3","kind":"error","runId":"r1","preview":"boom"}"#)
+
+        #expect(twRunHasFailureExplanation(rows: [card], runId: "r1"))
+        #expect(twRunHasFailureExplanation(rows: [plainError], runId: "r1"))
+        #expect(twRunHasFailureExplanation(rows: [errorByKind], runId: "r1"))
+    }
+
+    @Test func runFailureExplanationIgnoresOtherRunsAndOrdinaryRows() throws {
+        let otherRunError = try row(#"{"id":"e1","role":"error","runId":"r2","preview":"boom"}"#)
+        let assistant = try row(#"{"id":"a1","role":"assistant","runId":"r1","preview":"hi"}"#)
+        let tools = try row(
+            #"{"id":"t1","role":"tool","runId":"r1","toolSummary":{"activityCount":3,"status":"error"}}"#
+        )
+
+        // A run whose only rows are prose and tool calls explains nothing —
+        // that is exactly the empty tail this predicate must report.
+        #expect(!twRunHasFailureExplanation(rows: [otherRunError, assistant, tools], runId: "r1"))
+        #expect(!twRunHasFailureExplanation(rows: [], runId: "r1"))
+        #expect(!twRunHasFailureExplanation(rows: [assistant], runId: nil))
+        #expect(!twRunHasFailureExplanation(rows: [assistant], runId: ""))
+    }
+}

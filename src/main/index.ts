@@ -1756,6 +1756,10 @@ import {
   settleStaleChatRun,
   type ChatRunTerminalSeal
 } from './ChatRunReconciler'
+import {
+  buildBridgeRunFailureMetadata,
+  describeUnexplainedBridgeRunFailure
+} from './RunFailureNotice'
 import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
 import { newProjectReferenceId } from '../shared/projects'
 import {
@@ -10827,7 +10831,16 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
       role: 'error',
       content: state.errorMessage,
       timestamp,
-      runId: state.runId
+      runId: state.runId,
+      // Presentation parity: a desktop-origin failure already renders as the
+      // ProviderRunFailureCard (App.tsx stamps this same kind). Without it a
+      // phone-dispatched failure was a bare red bubble on both platforms.
+      metadata: buildBridgeRunFailureMetadata({
+        provider: state.provider,
+        errorMessage: state.errorMessage,
+        failureAt: timestamp,
+        exitCode: 1
+      })
     }
     const existingErrorIndex = messages.findIndex((message) => message.id === errorMessageId)
     if (existingErrorIndex >= 0) {
@@ -10978,7 +10991,22 @@ function finalizeBridgeRunTranscript(
   state.status = resolvedStatus
   if (resolvedStatus === 'success' || resolvedStatus === 'cancelled') {
     state.errorMessage = undefined
-  } else if (resolvedErrorMessage) state.errorMessage = resolvedErrorMessage
+  } else {
+    // A failed run must never reach the transcript mute: the terminal flush
+    // only writes its `bridge-error-*` row when errorMessage is set, and the
+    // run-failed card on both platforms then points at an empty tail. Any real
+    // error wins; this is the last-resort generic.
+    state.errorMessage =
+      resolvedErrorMessage ||
+      state.errorMessage ||
+      // No exitCode: this lane never receives the provider's real one (the
+      // flush stamps a synthetic 1 on the run row), and quoting a made-up code
+      // in the sentence would read as provider evidence.
+      describeUnexplainedBridgeRunFailure({
+        toolCallCount: state.activities.length,
+        hasAssistantText: state.content.trim().length > 0
+      })
+  }
   // Chain link 3/3 (see registerBridgeRunTranscript).
   console.log(
     `[bridge-run] finalized run=${runId} status=${resolvedStatus} chars=${state.content.length}${resolvedErrorMessage ? ` error="${resolvedErrorMessage}"` : ''}`

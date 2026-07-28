@@ -7,8 +7,11 @@
 // Active section / thread spinner.
 //
 // This module is the pure BACKSTOP: given a liveness probe, settle every active
-// ChatRun with no live owner to 'failed'. I/O (AppStore writes, task-card /
-// thread-list / snapshot pushes) lives in index.ts so this stays unit-testable.
+// ChatRun with no live owner to 'failed', AND append the transcript row that
+// explains the settlement (see RunFailureNotice.ts — a settled run with an
+// empty tail is what makes the run-failed card's "see the transcript above"
+// point at nothing). I/O (AppStore writes, task-card / thread-list / snapshot
+// pushes) lives in index.ts so this stays unit-testable.
 //
 // Liveness is injected so the same logic covers:
 //   - RunManager sessions
@@ -19,7 +22,8 @@
 // Intentionally does NOT settle `sleeping` ensemble participant runs — those
 // are waiting on wakeups and may legitimately outlive a process session.
 
-import type { ChatRecord, ChatRun } from './store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
+import { buildStaleRunSettlementNotice } from './RunFailureNotice'
 
 /** Terminal status stamped onto a ChatRun settled by this reconciler. */
 export const CHAT_RUN_STALE_SETTLEMENT_STATUS = 'failed' as const
@@ -146,6 +150,41 @@ export function sealChatRunTerminalFields(run: ChatRun, seal: ChatRunTerminalSea
 }
 
 /**
+ * Insert each settlement's transcript row unless the chat already carries it.
+ * Without this the run just flips to 'failed' with an empty tail, and both the
+ * desktop run-complete card and the iOS TaskCompleteCard tell the user to
+ * "see the transcript above for details" when there is nothing above to see.
+ *
+ * Id-keyed rather than blindly appended so a re-run over a partially written
+ * chat can never stack duplicate notices.
+ *
+ * Positioned AFTER the run's own last row, not at the tail: a chat can carry a
+ * run wedged in an earlier session behind newer completed ones, and iOS anchors
+ * a run's completion card to that run's LAST row — a tail-appended notice would
+ * drag the old run's card to the bottom of the transcript.
+ */
+function withStaleRunSettlementNotices(
+  chat: ChatRecord,
+  notices: readonly ChatMessage[]
+): ChatMessage[] {
+  const base = Array.isArray(chat.messages) ? chat.messages : []
+  const existing = new Set(base.map((message) => message?.id))
+  let next = base
+  for (const notice of notices) {
+    if (existing.has(notice.id)) continue
+    let insertAfter = -1
+    for (let i = 0; i < next.length; i += 1) {
+      if (next[i]?.runId === notice.runId) insertAfter = i
+    }
+    next =
+      insertAfter >= 0
+        ? [...next.slice(0, insertAfter + 1), notice, ...next.slice(insertAfter + 1)]
+        : [...next, notice]
+  }
+  return next
+}
+
+/**
  * PURE wedge detector + settler. Returns only chats that changed; does NOT write.
  * Idempotent: already-terminal runs are skipped, so a second pass is a no-op.
  */
@@ -171,6 +210,7 @@ export function reconcileStaleChatRuns(
     if (runs.length === 0) continue
 
     let changed = false
+    const notices: ChatMessage[] = []
     const nextRuns = runs.map((run) => {
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
       if (!isActiveChatRunStatus(run.status)) return run
@@ -184,17 +224,29 @@ export function reconcileStaleChatRuns(
       }
 
       changed = true
+      const previousStatus = String(run.status)
       settlements.push({
         chatId: chat.appChatId,
         runId: run.runId,
-        previousStatus: String(run.status)
+        previousStatus
       })
-      return settleStaleChatRun(run, nowIso)
+      const settled = settleStaleChatRun(run, nowIso)
+      notices.push(
+        buildStaleRunSettlementNotice({
+          chatId: chat.appChatId,
+          run: settled,
+          previousStatus,
+          reason: CHAT_RUN_STALE_REASON,
+          settledAt: nowIso
+        })
+      )
+      return settled
     })
 
     if (changed) {
       out.push({
         ...chat,
+        messages: withStaleRunSettlementNotices(chat, notices),
         runs: nextRuns,
         updatedAt: updatedAtMs
       })

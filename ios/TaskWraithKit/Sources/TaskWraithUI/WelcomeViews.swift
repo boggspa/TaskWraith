@@ -49,6 +49,13 @@ struct TaskCompleteCard: View {
     /// Current ensemble roster, already enriched with model ids by the session
     /// model so provider marks and Ollama display branding stay accurate.
     var participants: [RemoteEnsembleState.Participant] = []
+    /// Whether the transcript above actually carries this run's failure
+    /// explanation (`twRunHasFailureExplanation`). A failed run used to be able
+    /// to reach the phone with an empty tail — a bridge run that finalized with
+    /// no errorMessage, or a run the stale-run reconciler settled — and this
+    /// card sent the user looking for details that were never written.
+    /// Defaults to the historical copy so fixtures/previews are unaffected.
+    var hasFailureDetail: Bool = true
 
     private var failed: Bool { run.status == "failed" || run.status == "error" }
 
@@ -102,6 +109,14 @@ struct TaskCompleteCard: View {
     private var hasFileChangeSummary: Bool { run.fileChanges != nil || diff != nil }
 
     private var title: String { failed ? "Run failed" : "Task complete" }
+
+    /// Never send the reader up a transcript that has nothing to find.
+    private var runFooterLine: String {
+        guard failed else { return "Awaiting your next prompt." }
+        return hasFailureDetail
+            ? "See the transcript above for details."
+            : "No failure details were recorded for this run."
+    }
 
     private var workedFor: String? {
         guard let ms = run.durationMs else { return nil }
@@ -383,7 +398,7 @@ struct TaskCompleteCard: View {
                     }
                 }
                 .font(.caption)
-                Text(failed ? "See the transcript above for details." : "Awaiting your next prompt.")
+                Text(runFooterLine)
                     .font(.caption)
                     .foregroundStyle(TWTheme.textMuted)
             }

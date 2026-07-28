@@ -1245,6 +1245,21 @@ struct ThreadDetailView: View {
         return !["idle", "completed", "cancelled", "failed", "error"].contains(status)
     }
 
+    /// Does the loaded window carry this run's failure explanation? Drives the
+    /// Task-complete card's footer so "See the transcript above for details."
+    /// is never printed over an empty tail.
+    private func runCardHasFailureDetail(_ summary: RemoteThreadSnapshot.RunSummary) -> Bool {
+        let rows = snapshot?.rows ?? []
+        if let roundId = summary.ensembleRoundId, !roundId.isEmpty {
+            // An ensemble card speaks for the whole round: any participant run
+            // that explained itself is detail the reader can find above.
+            return runSummaries
+                .filter { $0.ensembleRoundId == roundId }
+                .contains { twRunHasFailureExplanation(rows: rows, runId: $0.runId) }
+        }
+        return twRunHasFailureExplanation(rows: rows, runId: summary.runId)
+    }
+
     /// The terminal summary to show after this row, if it's a run's last row.
     private func runCardSummary(after row: RemoteThreadSnapshot.Row)
         -> RemoteThreadSnapshot.RunSummary?
@@ -1469,7 +1484,8 @@ struct ThreadDetailView: View {
                             run: runCard,
                             diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                             runSummaries: runSummaries,
-                            participants: transcriptParticipants
+                            participants: transcriptParticipants,
+                            hasFailureDetail: runCardHasFailureDetail(runCard)
                         )
                         .listRowInsets(
                             EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1519,7 +1535,8 @@ struct ThreadDetailView: View {
                                 run: runCard,
                                 diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
                                 runSummaries: runSummaries,
-                                participants: transcriptParticipants
+                                participants: transcriptParticipants,
+                                hasFailureDetail: runCardHasFailureDetail(runCard)
                             )
                             .listRowInsets(
                                 EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
@@ -1566,7 +1583,8 @@ struct ThreadDetailView: View {
                         run: run,
                         diff: diffSummary?.runId == run.runId ? diffSummary : nil,
                         runSummaries: runSummaries,
-                        participants: transcriptParticipants
+                        participants: transcriptParticipants,
+                        hasFailureDetail: runCardHasFailureDetail(run)
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)

@@ -25,6 +25,27 @@ private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
         || row.subThreadReturn != nil || row.fanoutResult != nil || row.runFailure != nil
 }
 
+/// True when the transcript window carries a row that explains why `runId`
+/// ended badly — the provider-failure card (bridge lane / stale-run settlement
+/// / desktop stderr snippet all project one) or any plain error row belonging
+/// to the run.
+///
+/// The Task-complete card's "See the transcript above for details." is only
+/// honest when this holds. The Mac now always writes an explanation for a
+/// failed run, but a run that failed under an OLDER build — or one whose
+/// explanation sits above the loaded window — still has none, and the card
+/// must say so rather than point at nothing.
+public func twRunHasFailureExplanation(
+    rows: [RemoteThreadSnapshot.Row], runId: String?
+) -> Bool {
+    guard let runId, !runId.isEmpty else { return false }
+    return rows.contains { row in
+        guard row.runId == runId else { return false }
+        if row.runFailure != nil { return true }
+        return row.role == "error" || row.kind == "error"
+    }
+}
+
 /// A row that carries ONLY a thinking trace (no answer body, no cards) —
 /// absorbable into a settled stack alongside tool rows.
 public func twIsThinkingOnlyRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
