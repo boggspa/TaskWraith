@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
-import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { PLAN_MCP_ADVERTISE_TOOLS, READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
+import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   isOllamaToolControlTier,
@@ -12,21 +12,42 @@ import {
 } from './OllamaToolTiers'
 
 describe('Ollama tool surface governance', () => {
-  it('uses the exact immutable fresh gateway-v6 direct membership', () => {
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V6_MCP_DIRECT_TOOLS)
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(38)
-    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
-    for (const name of GATEWAY_V6_MCP_DIRECT_TOOLS) {
+  it('uses the exact immutable fresh gateway-v8 direct membership', () => {
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_V8_MCP_DIRECT_TOOLS)
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(41)
+    expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_V8_MCP_DIRECT_TOOLS])
+    for (const name of GATEWAY_V8_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)
     }
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toEqual(
+      expect.arrayContaining(['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update'])
+    )
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toContain('ensemble_control')
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).not.toContain('ensemble_bossman_control')
     expect(isOllamaAdvertisedTool('video_thumbnail')).toBe(false)
   })
 
+  it('does not drift a pinned v7 Ollama receipt when v8 promotes Sketch', () => {
+    const v7 = ollamaAdvertisedToolNames({
+      taskWraithMcpProfileId: 'taskwraith-gateway-v7'
+    })
+    const v8 = ollamaAdvertisedToolNames({
+      taskWraithMcpProfileId: 'taskwraith-gateway-v8'
+    })
+    const v8Mesh = ollamaAdvertisedToolNames({
+      taskWraithMcpProfileId: 'taskwraith-gateway-v8-mesh'
+    })
+    for (const tool of ['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update']) {
+      expect(v7).not.toContain(tool)
+      expect(v8).toContain(tool)
+      expect(v8Mesh).toContain(tool)
+    }
+    expect(v8Mesh).not.toContain('mesh_scene_present')
+  })
+
   it('intersects the gateway set with the shared safe set for read-only runs', () => {
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
-    const expected = GATEWAY_V6_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name))
+    const expected = GATEWAY_V8_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name))
     const actual = ollamaAdvertisedToolNames({ readOnly: true })
     expect(actual).toEqual(expected)
     expect(actual).toContain('read_file')
@@ -35,6 +56,21 @@ describe('Ollama tool surface governance', () => {
     expect(actual).not.toContain('write_file')
     expect(actual).not.toContain('run_shell_command')
     expect(actual).not.toContain('ensemble_bossman_control')
+    expect(actual).toContain('canvas_sketch_open')
+    expect(actual).toContain('canvas_sketch_get')
+    expect(actual).not.toContain('canvas_sketch_update')
+  })
+
+  it('adds approval-gated Sketch mutation for Plan without exposing general writes', () => {
+    const planNames = new Set(PLAN_MCP_ADVERTISE_TOOLS)
+    const expected = GATEWAY_V8_MCP_DIRECT_TOOLS.filter((name) => planNames.has(name))
+    const actual = ollamaAdvertisedToolNames({ readOnly: true, plan: true })
+    expect(actual).toEqual(expected)
+    expect(actual).toContain('canvas_sketch_open')
+    expect(actual).toContain('canvas_sketch_get')
+    expect(actual).toContain('canvas_sketch_update')
+    expect(actual).not.toContain('write_file')
+    expect(actual).not.toContain('run_shell_command')
   })
 
   it('keeps the legacy tier parser tolerant for compatibility', () => {
@@ -62,7 +98,7 @@ describe('Ollama tool surface governance', () => {
     expect(edits).toEqual(readOnly)
     expect(shell).toEqual(readOnly)
     expect(parity).toEqual(readOnly)
-    expect(readOnly).toEqual([...GATEWAY_V6_MCP_DIRECT_TOOLS])
+    expect(readOnly).toEqual([...GATEWAY_V8_MCP_DIRECT_TOOLS])
     expect(readOnly).not.toContain('web_search')
     expect(readOnly).not.toContain('git_push')
   })

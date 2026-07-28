@@ -15,7 +15,12 @@ import {
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
-import type { AppSettings, OllamaToolControlTier, ProviderCapabilityContract } from '../store/types'
+import type {
+  AppSettings,
+  OllamaToolControlTier,
+  ProviderCapabilityContract,
+  TaskWraithMcpProfileId
+} from '../store/types'
 import {
   evaluateOllamaModelPreflight,
   ollamaModelPreflightKey,
@@ -375,6 +380,8 @@ export interface OllamaOpeningMessagesInput {
   toolControlTier: OllamaToolControlTier | string | undefined | null
   networkAccess?: string | null
   readOnly?: boolean
+  plan?: boolean
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
   model: string
   workspaceIndexBlock: string
   userPrompt: string
@@ -393,7 +400,9 @@ export function buildOllamaOpeningMessages(input: OllamaOpeningMessagesInput): O
           ollamaLocalToolSystemPrompt(input.toolControlTier, input.model, {
             intent: input.promptIntent,
             networkAccess: input.networkAccess,
-            readOnly: input.readOnly
+            readOnly: input.readOnly,
+            plan: input.plan,
+            taskWraithMcpProfileId: input.taskWraithMcpProfileId
           }),
           OLLAMA_CAPABILITY_GATEWAY_PROMPT
         ].join('\n')
@@ -1452,6 +1461,90 @@ function ollamaNativeToolParameters(
         },
         required: ['intent']
       }
+    case 'canvas_sketch_open':
+      return {
+        description: compact
+          ? 'Open/restore this chat’s Sketch Canvas.'
+          : 'Open or restore this chat’s structured Sketch Canvas. Read-only-safe; returns canvasId.',
+        properties: {
+          width: { type: 'number', description: 'Optional viewport width in CSS pixels.' },
+          height: { type: 'number', description: 'Optional viewport height in CSS pixels.' }
+        },
+        required: []
+      }
+    case 'canvas_sketch_get':
+      return {
+        description: compact
+          ? 'Read a Sketch Canvas document.'
+          : 'Read the title, viewport, updatedAt version, and structured elements in a Sketch Canvas.',
+        properties: {
+          canvasId: { ...STRING, description: 'Sketch Canvas id returned by canvas_sketch_open.' }
+        },
+        required: ['canvasId']
+      }
+    case 'canvas_sketch_update':
+      return {
+        description: compact
+          ? 'Edit structured Sketch elements. Gated.'
+          : 'Append, replace, clear, or delete structured Sketch elements. Plan asks the user; writable roles follow their Sketch policy. Retry user_busy and reread after stale_document.',
+        properties: {
+          canvasId: { ...STRING, description: 'Sketch Canvas id.' },
+          mode: {
+            ...STRING,
+            enum: ['append', 'replace', 'clear', 'delete'],
+            description: 'Mutation mode. Defaults to append.'
+          },
+          title: { ...STRING, description: 'Optional canvas title.' },
+          expectedUpdatedAt: {
+            ...STRING,
+            description: 'Optional updatedAt concurrency guard from canvas_sketch_get.'
+          },
+          elementIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Element ids for delete mode.'
+          },
+          elements: {
+            type: 'array',
+            description: 'Structured elements for append or replace.',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                kind: {
+                  type: 'string',
+                  enum: ['rect', 'ellipse', 'line', 'arrow', 'text', 'path']
+                },
+                x: { type: 'number' },
+                y: { type: 'number' },
+                width: { type: 'number' },
+                height: { type: 'number' },
+                x1: { type: 'number' },
+                y1: { type: 'number' },
+                x2: { type: 'number' },
+                y2: { type: 'number' },
+                points: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: { x: { type: 'number' }, y: { type: 'number' } },
+                    required: ['x', 'y']
+                  }
+                },
+                d: { type: 'string' },
+                text: { type: 'string' },
+                fill: { type: 'string' },
+                stroke: { type: 'string' },
+                strokeWidth: { type: 'number' },
+                fontSize: { type: 'number' },
+                opacity: { type: 'number' }
+              },
+              required: ['kind']
+            }
+          }
+        },
+        required: ['canvasId']
+      }
     case 'list_active_runs':
       return {
         description: compact ? 'List active runs.' : 'List TaskWraith-owned active runs and queued run jobs.',
@@ -1505,16 +1598,24 @@ function ollamaNativeToolParameters(
  * support (gpt-oss, qwen, etc.) emit structured `tool_calls` against these. */
 export function ollamaNativeToolDefinitions(
   _tier: OllamaToolControlTier | string | undefined | null,
-  options?: { compact?: boolean; networkAccess?: string | null; readOnly?: boolean }
+  options?: {
+    compact?: boolean
+    networkAccess?: string | null
+    readOnly?: boolean
+    plan?: boolean
+    taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+  }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  // Advertise the immutable gateway-v6 direct set as native function defs (not
+  // Advertise the immutable gateway-v8 direct set as native function defs (not
   // the full catalogue). The tail remains executable through capability_invoke
-  // and discoverable through the gateway or legacy tool_help. A read-only
-  // posture receives the exact intersection with the shared safe advertise set.
+  // and discoverable through the gateway or legacy tool_help. Read-only receives
+  // the shared safe set; Plan additionally receives its approval-gated instruments.
   const defs: OllamaNativeToolDefinition[] = ollamaAdvertisedToolNames({
     networkAccess: options?.networkAccess,
-    readOnly: options?.readOnly
+    readOnly: options?.readOnly,
+    plan: options?.plan,
+    taskWraithMcpProfileId: options?.taskWraithMcpProfileId
   }).map((toolName) => {
     const { description, properties, required } = ollamaNativeToolParameters(toolName, compact)
     return {
@@ -2457,6 +2558,7 @@ export async function runOllamaProvider(
         configuredNetworkAccess: settings.agenticServices?.networkAccess,
         effectiveNetworkAccess: payload.effectivePermissions?.networkAccess,
         readOnly: payload.effectivePermissions?.readOnly === true,
+        plan: payload.effectivePermissions?.presetId === 'plan',
         ollamaRunProfile: payload.ollamaRunProfile,
         taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
         taskWraithMcpProfileId: payload.taskWraithMcpProfileId,

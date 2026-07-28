@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
-import { GATEWAY_V6_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_TOOL_HELP_NAME,
   buildOllamaOpeningMessages,
@@ -16,10 +16,10 @@ describe('Ollama capability gateway exposure', () => {
   it('advertises both gateway functions with exact bounded schemas', () => {
     const definitions = ollamaNativeToolDefinitions('provider_parity')
     const names = definitions.map((definition) => definition.function.name)
-    expect(names.slice(0, GATEWAY_V6_MCP_DIRECT_TOOLS.length)).toEqual([
-      ...GATEWAY_V6_MCP_DIRECT_TOOLS
+    expect(names.slice(0, GATEWAY_V8_MCP_DIRECT_TOOLS.length)).toEqual([
+      ...GATEWAY_V8_MCP_DIRECT_TOOLS
     ])
-    expect(names).toHaveLength(GATEWAY_V6_MCP_DIRECT_TOOLS.length + 3)
+    expect(names).toHaveLength(GATEWAY_V8_MCP_DIRECT_TOOLS.length + 3)
     expect(names).toEqual(expect.arrayContaining([...CAPABILITY_GATEWAY_TOOL_NAMES]))
 
     const search = definitions.find(
@@ -68,10 +68,52 @@ describe('Ollama capability gateway exposure', () => {
     )
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
     expect(names).toEqual([
-      ...GATEWAY_V6_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name)),
+      ...GATEWAY_V8_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name)),
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       OLLAMA_TOOL_HELP_NAME
     ])
+  })
+
+  it('advertises Sketch mutation to Plan while keeping general writes out', () => {
+    const definitions = ollamaNativeToolDefinitions('read_only', {
+      readOnly: true,
+      plan: true
+    })
+    const names = definitions.map((definition) => definition.function.name)
+    expect(names).toContain('canvas_sketch_open')
+    expect(names).toContain('canvas_sketch_get')
+    expect(names).toContain('canvas_sketch_update')
+    expect(names).not.toContain('write_file')
+    expect(names).not.toContain('run_shell_command')
+    expect(
+      definitions.find((definition) => definition.function.name === 'canvas_sketch_update')
+        ?.function.parameters
+    ).toMatchObject({
+      required: ['canvasId'],
+      properties: {
+        canvasId: { type: 'string' },
+        mode: { enum: ['append', 'replace', 'clear', 'delete'] },
+        elements: {
+          type: 'array',
+          items: {
+            properties: {
+              kind: { enum: ['rect', 'ellipse', 'line', 'arrow', 'text', 'path'] }
+            },
+            required: ['kind']
+          }
+        }
+      }
+    })
+  })
+
+  it('keeps Sketch behind discovery for a pinned v7 native-tool receipt', () => {
+    const names = ollamaNativeToolDefinitions('provider_parity', {
+      taskWraithMcpProfileId: 'taskwraith-gateway-v7'
+    }).map((definition) => definition.function.name)
+    expect(names).not.toContain('canvas_sketch_open')
+    expect(names).not.toContain('canvas_sketch_get')
+    expect(names).not.toContain('canvas_sketch_update')
+    expect(names).toEqual(expect.arrayContaining([...CAPABILITY_GATEWAY_TOOL_NAMES]))
   })
 
   it.each([

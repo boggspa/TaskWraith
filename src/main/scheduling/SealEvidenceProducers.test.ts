@@ -778,9 +778,10 @@ describe('ollama seal evidence', () => {
         configuredNetworkAccess: 'deny',
         effectiveNetworkAccess: 'deny',
         readOnly: true,
+        plan: true,
         ollamaRunProfile: undefined,
         taskWraithMcpAdvertised: true,
-        taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+        taskWraithMcpProfileId: 'taskwraith-gateway-v8',
         chatId: 'chat-ollama-seal',
         ensemble: { enabled: false }
       },

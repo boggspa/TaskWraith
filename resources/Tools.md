@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 171 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 180 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -887,11 +887,11 @@ Portable Boss/Captain Ensemble control. Set action plus its fields in params (or
 
 ## ensemble_bossman_control
 
-In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Non-authority callers and stale round/run/participant ids are rejected and audited.
+In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly select the later-pass queue (or preserve it with skip_intervention), explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. The initial pass always preserves each participant. Non-authority callers and stale round/run/participant ids are rejected and audited.
 
 - Access: governed by your run permission role
 - Required args: action
-- Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
+- Optional args: roundId, targetParticipantId, targetRunId, participantIds, participantRoles, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}}`
 
 ## ensemble_poll_response
@@ -1133,12 +1133,12 @@ Open an existing Run-Button launch attempt in TaskWraith Canvas. Pass an `attemp
 
 ## canvas_sketch_open
 
-Open a bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Gated like canvas_open.
+Open or restore the chat-owned bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Opening is read-only-safe: it performs no navigation, fetch, or element mutation.
 
-- Access: governed by your run permission role
+- Access: read-only (no approval needed)
 - Required args: none
 - Optional args: width, height
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_open","arguments":{"width":0}}}}`
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_open","arguments":{"width":0}}}`
 
 ## canvas_sketch_get
 
@@ -1146,16 +1146,16 @@ Return the current Sketch Canvas document: title, viewport, and structured shape
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_get","arguments":{"canvasId":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_get","arguments":{"canvasId":"text"}}}`
 
 ## canvas_sketch_update
 
-Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.
+Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via the dedicated sketchCanvas policy: denied under read-only, per-call approval under Plan, and automatic under Default Approval, Workspace Write, and Trusted Session unless globally denied. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.
 
 - Access: governed by your run permission role
 - Required args: canvasId
 - Optional args: mode, title, expectedUpdatedAt, elementIds, elements
-- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}}`
+- Example: `{"taskwraith_tool":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}`
 
 ## canvas_list
 
@@ -1266,6 +1266,83 @@ Close a Canvas session and free its preview window. Gated.
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: canvasId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_close","arguments":{"canvasId":"text"}}}}`
+
+## mesh_scene_create
+
+Create a chat-owned Mesh Canvas scene. The scene is declarative and local: use mesh_scene_apply for primitives/transforms, mesh_scene_import for GLB/glTF/OBJ workspace assets, then mesh_scene_present to show it to the user. Gated via the dedicated Mesh Canvas service.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: title, backgroundColor
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_create","arguments":{"title":"text"}}}}`
+
+## mesh_scene_list
+
+List Mesh Canvas scenes owned by the active chat. Returns summaries only; use mesh_scene_inspect for nodes, materials, and scene settings. Read-only.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_list","arguments":{}}}}`
+
+## mesh_scene_inspect
+
+Return a chat-owned Mesh Canvas scene’s declarative nodes, transforms, material overrides, camera, presentation metadata, and typed dependency graph. It never returns filesystem paths or private asset URLs. Read-only.
+
+- Access: read-only (no approval needed)
+- Required args: sceneId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_inspect","arguments":{"sceneId":"text"}}}}`
+
+## mesh_scene_import
+
+Import a GLB, glTF, or OBJ model from a path inside the active workspace into a Mesh Canvas scene. OBJ MTL files and declared texture dependencies, and glTF buffers/images, are copied into TaskWraith’s private asset vault; no source path is exposed to the viewer. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId, sourcePath
+- Optional args: name, transform
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_import","arguments":{"sceneId":"text","sourcePath":"text"}}}}`
+
+## mesh_scene_apply
+
+Apply one declarative Mesh Canvas mutation. `add_primitive` supports box, sphere, plane, cylinder, or torus. `update_node` changes a node’s name/transform/material/visibility. `remove_node` removes a node. `set_scene` changes title, #RGB/#RRGGBB background, studio/sunset/neutral lighting, or camera. `upsert_object_data` merges a typed object-fact map; `bind_node_property` makes one known node property react to an object-data fact or another node property (numeric fields may use scale + offset); `unbind_node_property` removes that edge. The main process resolves the acyclic graph after every mutation and the presented viewer refreshes from the resulting scene event. Rotation is Euler degrees; materials use PBR baseColor, metallic, roughness, opacity, emissive, and doubleSided. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId, operation
+- Optional args: primitive, nodeId, name, visible, title, backgroundColor, transform, material, lighting, camera, sourceId, values, property, source, numericTransform
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_apply","arguments":{"sceneId":"text","operation":"text"}}}}`
+
+## mesh_scene_set_material
+
+Set a PBR material override on a Mesh Canvas node. Supply material fields (baseColor, metallic, roughness, opacity, emissive, doubleSided); optionally give a workspace-relative `texturePath` for PNG/JPEG/WebP/GIF/BMP, which TaskWraith copies into the scene’s private vault. Imported models retain their original materials until overridden. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId, nodeId, material
+- Optional args: texturePath
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_set_material","arguments":{"sceneId":"text","nodeId":"text","material":{}}}}}`
+
+## mesh_scene_present
+
+Mark a chat-owned Mesh Canvas scene as presented to the user. The renderer opens/selects it in the Mesh Canvas dock and displays its interactive 3D viewer. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId
+- Optional args: title
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_present","arguments":{"sceneId":"text"}}}}`
+
+## mesh_scene_close
+
+Close the current user presentation for a Mesh Canvas scene without deleting the durable scene or its imported assets. It can be presented again later. Gated via Mesh Canvas.
+
+- Access: governed by your run permission role
+- Required args: sceneId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_close","arguments":{"sceneId":"text"}}}}`
+
+## mesh_scene_delete
+
+Delete a chat-owned Mesh Canvas scene and remove any private imported assets no remaining scene references. This cannot affect another chat’s scenes. Gated via Mesh Canvas.
+
+- Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
+- Required args: sceneId
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"mesh_scene_delete","arguments":{"sceneId":"text"}}}}`
 
 ## theme_tokens_get
 

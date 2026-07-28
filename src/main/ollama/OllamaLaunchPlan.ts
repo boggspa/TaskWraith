@@ -56,6 +56,7 @@ export interface OllamaFinalLaunchPlan {
   readonly oneToolAtATime: boolean
   readonly networkAccess: AgenticNetworkPolicy
   readonly readOnly: boolean
+  readonly plan: boolean
   readonly nativeToolDefinitions: OllamaNativeToolDefinition[]
   readonly availableToolNames: string[]
   readonly formatToolNames: string[]
@@ -85,6 +86,7 @@ export interface ResolveOllamaFinalLaunchPlanInput {
   readonly configuredNetworkAccess: string | null | undefined
   readonly effectiveNetworkAccess: string | null | undefined
   readonly readOnly: boolean
+  readonly plan: boolean
   readonly ollamaRunProfile: OllamaRunProfileId | string | null | undefined
   readonly taskWraithMcpAdvertised: boolean | null | undefined
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null | undefined
@@ -105,6 +107,8 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     compact: boolean
     networkAccess: AgenticNetworkPolicy
     readOnly: boolean
+    plan: boolean
+    taskWraithMcpProfileId: TaskWraithMcpProfileId | null
   }): OllamaNativeToolDefinition[]
   getSessionMemory(chatId: string, memoryKey?: string): OllamaSessionMemory | null | undefined
   prepareEnsemblePrompt(input: {
@@ -124,6 +128,8 @@ export interface ResolveOllamaFinalLaunchPlanDeps {
     toolControlTier: OllamaToolControlTier
     networkAccess: AgenticNetworkPolicy
     readOnly: boolean
+    plan: boolean
+    taskWraithMcpProfileId: TaskWraithMcpProfileId | null
     model: string
     workspaceIndexBlock: string
     userPrompt: string
@@ -183,7 +189,9 @@ export async function resolveOllamaFinalLaunchPlan(
       ? deps.buildNativeToolDefinitions({
           compact: compactToolSchemas,
           networkAccess,
-          readOnly: input.readOnly
+          readOnly: input.readOnly,
+          plan: input.plan,
+          taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null
         })
       : []
   const availableToolNames =
@@ -193,7 +201,9 @@ export async function resolveOllamaFinalLaunchPlan(
         ? [
             ...ollamaAdvertisedToolNames({
               networkAccess,
-              readOnly: input.readOnly
+              readOnly: input.readOnly,
+              plan: input.plan,
+              taskWraithMcpProfileId: input.taskWraithMcpProfileId
             }),
             ...CAPABILITY_GATEWAY_TOOL_NAMES,
             OLLAMA_TOOL_HELP_NAME
@@ -235,6 +245,8 @@ export async function resolveOllamaFinalLaunchPlan(
     toolControlTier,
     networkAccess,
     readOnly: input.readOnly,
+    plan: input.plan,
+    taskWraithMcpProfileId: input.taskWraithMcpProfileId ?? null,
     model,
     workspaceIndexBlock,
     userPrompt,
@@ -304,6 +316,7 @@ export async function resolveOllamaFinalLaunchPlan(
     oneToolAtATime,
     networkAccess,
     readOnly: input.readOnly,
+    plan: input.plan,
     nativeToolDefinitions: cloneJson(nativeToolDefinitions),
     availableToolNames: [...availableToolNames],
     formatToolNames,

@@ -18,9 +18,10 @@ const BASE_INPUT: ResolveOllamaFinalLaunchPlanInput = {
   configuredNetworkAccess: 'allow',
   effectiveNetworkAccess: 'deny',
   readOnly: true,
+  plan: true,
   ollamaRunProfile: 'provider_parity',
   taskWraithMcpAdvertised: true,
-  taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+  taskWraithMcpProfileId: 'taskwraith-gateway-v8',
   chatId: 'chat-1',
   ensemble: {
     enabled: true,
@@ -72,18 +73,30 @@ describe('OllamaFinalLaunchPlan', () => {
         capabilities: ['completion', 'tools']
       }),
       modelLabel: (model) => `Label: ${model}`,
-      buildNativeToolDefinitions: ({ compact, networkAccess, readOnly }) => {
-        expect({ compact, networkAccess, readOnly }).toEqual({
+      buildNativeToolDefinitions: ({
+        compact,
+        networkAccess,
+        readOnly,
+        plan,
+        taskWraithMcpProfileId
+      }) => {
+        expect({ compact, networkAccess, readOnly, plan, taskWraithMcpProfileId }).toEqual({
           compact: true,
           networkAccess: 'deny',
-          readOnly: true
+          readOnly: true,
+          plan: true,
+          taskWraithMcpProfileId: 'taskwraith-gateway-v8'
         })
         return nativeDefinitions
       },
       getSessionMemory,
       prepareEnsemblePrompt: () => 'sealed ensemble prompt',
       buildWorkspaceIndexBlock: () => 'sealed workspace index',
-      buildOpeningMessages: () => openingMessages,
+      buildOpeningMessages: ({ plan, taskWraithMcpProfileId }) => {
+        expect(plan).toBe(true)
+        expect(taskWraithMcpProfileId).toBe('taskwraith-gateway-v8')
+        return openingMessages
+      },
       resolveNumCtx: () => 24_576
     })
 
@@ -94,12 +107,13 @@ describe('OllamaFinalLaunchPlan', () => {
       modelLabel: 'Label: qwen3:4b-instruct',
       toolProtocolEnabled: true,
       taskWraithMcpAdvertised: true,
-      taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+      taskWraithMcpProfileId: 'taskwraith-gateway-v8',
       nativeToolsSupported: true,
       compactToolSchemas: true,
       oneToolAtATime: false,
       networkAccess: 'deny',
       readOnly: true,
+      plan: true,
       availableToolNames: ['read_file'],
       formatToolNames: ['read_file'],
       temperature: 0.25,
