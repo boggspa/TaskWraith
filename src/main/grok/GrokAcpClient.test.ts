@@ -436,8 +436,11 @@ describe('runGrokAcpTurn', () => {
 
     const prompts = child.sent().filter((message) => message.method === 'session/prompt')
     expect(prompts).toHaveLength(2)
-    expect(JSON.stringify(prompts[1])).toContain('shell broker is unavailable for this turn')
-    expect(JSON.stringify(prompts[1])).not.toContain('TaskWraith__run_shell_command')
+    const recoveryPrompt = JSON.stringify(prompts[1])
+    expect(recoveryPrompt).toContain('shell broker is unavailable for this turn')
+    expect(recoveryPrompt).toContain('do not call, search for, or infer a replacement shell tool')
+    expect(recoveryPrompt).not.toContain('TaskWraith__run_shell_command')
+    expect(recoveryPrompt).not.toContain('taskwraith-grok__blackboard_post')
   })
 
   it('bounds denied-tool recovery to one follow-up prompt', async () => {
