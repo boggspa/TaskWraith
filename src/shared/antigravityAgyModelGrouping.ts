@@ -16,6 +16,8 @@
  * ever swaps which concrete id is selected.
  */
 
+import { ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX } from './antigravityGeminiApiModelNaming'
+
 export type AntigravityEffort = 'high' | 'medium' | 'low'
 
 /** Slider presentation order (matches the Grok/Cursor ladder, low → high). */
@@ -90,18 +92,31 @@ export function antigravityDisplayName(baseId: string): string {
 
 function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
   groupsByBase: Map<string, AntigravityVariantGroup>
-  orderedEntries: Array<{ kind: 'group'; baseId: string } | { kind: 'single'; id: string }>
+  orderedEntries: Array<
+    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
+  >
 } {
   const groupsByBase = new Map<string, AntigravityVariantGroup>()
   const orderedEntries: Array<
-    { kind: 'group'; baseId: string } | { kind: 'single'; id: string }
+    { kind: 'group'; baseId: string } | { kind: 'single'; id: string; label?: string }
   > = []
   for (const option of options) {
     const id = option.id
     if (id === 'custom') continue
+    // The Gemini API lane is a different namespace with its own CURATED
+    // labels (antigravityGeminiApiModelNaming) and no effort-suffix
+    // convention — those rows pass through completely untouched. Grouping
+    // and prettifying apply to the agy CLI lane's bare ids only.
+    if (id.startsWith(ANTIGRAVITY_GEMINI_API_MODEL_ID_PREFIX)) {
+      orderedEntries.push({ kind: 'single', id, label: option.label })
+      continue
+    }
     const effort = antigravityEffortForModelId(id)
     if (!effort) {
-      orderedEntries.push({ kind: 'single', id })
+      // A curated label (differing from the id) is authored — keep it.
+      const curated =
+        option.label && option.label !== id ? option.label : undefined
+      orderedEntries.push({ kind: 'single', id, label: curated })
       continue
     }
     const baseId = id.slice(0, id.length - effort.length - 1)
@@ -139,7 +154,7 @@ export function groupAntigravityModelRows(
   const { groupsByBase, orderedEntries } = collectGroups(options)
   return orderedEntries.map((entry) => {
     if (entry.kind === 'single') {
-      return { id: entry.id, label: antigravityDisplayName(entry.id) }
+      return { id: entry.id, label: entry.label ?? antigravityDisplayName(entry.id) }
     }
     const group = groupsByBase.get(entry.baseId)!
     const selected = selectedModelId

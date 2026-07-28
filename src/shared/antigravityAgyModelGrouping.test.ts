@@ -73,4 +73,31 @@ describe('antigravityModelGrouping', () => {
     expect(antigravityDisplayName('llama-scout-8b')).toBe('Llama Scout 8B')
     expect(antigravityDisplayName('claude-haiku-4-5')).toBe('Claude Haiku 4.5')
   })
+
+  it('passes gemini-api lane rows through untouched — curated labels win', () => {
+    // The API lane has its own curated naming and no effort-suffix
+    // convention; my prettifier mangled these live (2026-07-28 regression:
+    // "Gemini Api:gemini 3.5 Flash").
+    const mixed = [
+      { id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' },
+      { id: 'gemini-api:gemini-2.5-flash-lite', label: '2.5 Flash-Lite' },
+      ...CATALOGUE
+    ]
+    const rows = groupAntigravityModelRows(mixed)
+    expect(rows[0]).toEqual({ id: 'gemini-api:gemini-3.5-flash', label: '3.5 Flash' })
+    expect(rows[1]).toEqual({ id: 'gemini-api:gemini-2.5-flash-lite', label: '2.5 Flash-Lite' })
+    // The agy families still group after the api rows.
+    expect(rows.map((row) => row.label)).toContain('Gemini 3.6 Flash')
+    // An api id never joins a variant group even hypothetically.
+    expect(
+      antigravityVariantGroupForModel(mixed, 'gemini-api:gemini-3.5-flash')
+    ).toBeNull()
+  })
+
+  it('keeps a curated label on a suffix-less agy row', () => {
+    const rows = groupAntigravityModelRows([
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (Antigravity)' }
+    ])
+    expect(rows[0].label).toBe('Sonnet 4.6 (Antigravity)')
+  })
 })
