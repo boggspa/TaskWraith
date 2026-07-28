@@ -3469,9 +3469,11 @@ struct ContextCompactionSummaryCard: View {
 
 /// Header chrome for an ensemble fan-out lane result (desktop
 /// EnsembleFanoutResultCard parity): lane glyph, lane label, provider badge,
-/// role, model chip, participant order. HEADER only — the lane's prose and
-/// tool calls ride the ordinary row body beneath it, framed by
-/// ``TWFanoutCardChrome``.
+/// role, model chip, participant order. HEADER only — the lane's output
+/// renders beneath it inside the same ``TWFanoutCardChrome``: nested
+/// content/tool blocks in production order when the Mac shipped
+/// `fanoutResult.parts`, or the flat toolSummary + prose body when it
+/// didn't (older Mac, prose-only lane, byte-pressure degraded snapshot).
 ///
 /// The accent is the PARTICIPANT's, not the thread's: a fan-out round mixes
 /// seats, so a lane tinted with the pane provider would attribute one seat's
