@@ -4,7 +4,11 @@ import {
   planProviderSeatGeneration,
   planProviderSeatRuntime,
   providerSeatCanPrewarm,
-  recordProviderSeatCacheEvidence
+  providerSeatPosturePrefixComponents,
+  providerSeatRotationDropsContext,
+  providerSeatRotationNoticeText,
+  recordProviderSeatCacheEvidence,
+  storedSeatSessionRotationRequired
 } from './ProviderSeatGeneration'
 import type { PromptCacheCapability } from './store/types'
 
@@ -73,12 +77,17 @@ describe('ProviderSeatGeneration', () => {
       ...input(),
       systemPromptFingerprint: 'system-v2'
     })
+    // A CLI session carries the whole conversation: system-prefix drift keeps
+    // the session (no fresh-session rotation) and only re-tiers the cache.
     expect(system).toMatchObject({
-      freshSessionRequired: true,
+      freshSessionRequired: false,
       cacheImpact: 'partial',
       causes: ['system'],
       preservedCacheTiers: ['tools']
     })
+    expect(system.generation.id).toBe(first.id)
+    expect(system.generation.config.systemPromptFingerprint).toBe('system-v2')
+    expect(system.generation.cacheEvidence).toBeUndefined()
 
     const thinking = planProviderSeatGeneration(first, {
       ...input(),
@@ -92,6 +101,31 @@ describe('ProviderSeatGeneration', () => {
     })
     expect(thinking.generation.id).toBe(first.id)
     expect(thinking.generation.cacheEvidence).toBeUndefined()
+  })
+
+  it('still rotates history-replay transports on system-prefix changes', () => {
+    const api = { ...input(), transport: 'api-byok' as const }
+    const first = planProviderSeatGeneration(undefined, api).generation
+    const system = planProviderSeatGeneration(first, {
+      ...api,
+      systemPromptFingerprint: 'system-v2'
+    })
+
+    expect(system.freshSessionRequired).toBe(true)
+    expect(system.causes).toEqual(['system'])
+    expect(system.generation.ordinal).toBe(2)
+  })
+
+  it('never rotates a linked CLI session for system-prefix drift alone', () => {
+    const first = planProviderSeatGeneration(undefined, input('claude')).generation
+    const runtime = planProviderSeatRuntime(
+      first,
+      { ...input('claude'), systemPromptFingerprint: 'system-v2' },
+      { linkedProviderSessionId: 'claude-live-session' }
+    )
+
+    expect(runtime.transition.causes).toEqual(['system'])
+    expect(runtime.shouldRotateSession).toBe(false)
   })
 
   it('does not cold-cycle Claude or Codex continuity for effort-only changes', () => {
@@ -108,6 +142,153 @@ describe('ProviderSeatGeneration', () => {
       expect(next.causes).toEqual(['effort'])
       expect(next.generation.id).toBe(first.id)
     }
+  })
+
+  it('inherits unstated provider-mutable fields instead of flip-flopping across lanes', () => {
+    const stated = input('claude')
+    const first = planProviderSeatGeneration(undefined, stated).generation
+    const laneWithoutSoftFields = {
+      ...stated,
+      thinkingMode: undefined,
+      reasoningEffort: undefined,
+      serviceTier: undefined
+    }
+    const next = planProviderSeatGeneration(first, laneWithoutSoftFields)
+
+    expect(next.causes).toEqual([])
+    expect(next.generation.config.reasoningEffort).toBe('high')
+    expect(next.generation.config.thinkingMode).toBe('on')
+    expect(next.generation.config.serviceTier).toBe('standard')
+  })
+
+  it('normalizes absent posture to the clamp-derived preset for fingerprinting', () => {
+    const renderer = providerSeatPosturePrefixComponents({
+      approvalMode: 'default',
+      presetId: 'default',
+      readOnly: false
+    })
+    const remote = providerSeatPosturePrefixComponents({
+      approvalMode: 'default',
+      presetId: null,
+      readOnly: null
+    })
+    expect(remote).toEqual(renderer)
+    expect(remote).toEqual({ presetId: 'default', readOnly: false })
+
+    expect(
+      providerSeatPosturePrefixComponents({ approvalMode: 'plan', presetId: null, readOnly: null })
+    ).toEqual({ presetId: 'read_only', readOnly: true })
+    expect(
+      providerSeatPosturePrefixComponents({
+        approvalMode: 'default',
+        presetId: 'workspace_write',
+        readOnly: false
+      })
+    ).toEqual({ presetId: 'workspace_write', readOnly: false })
+  })
+
+  it('exempts pi from context-drop notices — its session is chat-deterministic', () => {
+    expect(providerSeatRotationDropsContext('claude', 'cli-opaque')).toBe(true)
+    expect(providerSeatRotationDropsContext('codex', 'cli-opaque')).toBe(true)
+    expect(providerSeatRotationDropsContext('pi', 'cli-opaque')).toBe(false)
+    expect(providerSeatRotationDropsContext('claude', 'api-byok')).toBe(false)
+  })
+
+  it('phrases real rotation notices by cause with model detail when known', () => {
+    expect(
+      providerSeatRotationNoticeText({
+        providerLabel: 'Kimi',
+        causes: ['model', 'effort'],
+        storedSessionMismatch: true,
+        previousModel: 'kimi-k2.7-code',
+        nextModel: 'kimi-k3'
+      })
+    ).toBe(
+      'Session context reset — the model changed (kimi-k2.7-code → kimi-k3). Kimi starts this turn without the previous conversation context.'
+    )
+    expect(
+      providerSeatRotationNoticeText({
+        providerLabel: 'Claude',
+        causes: ['tools'],
+        storedSessionMismatch: false
+      })
+    ).toBe(
+      'Session context reset — the tool profile changed. Claude starts this turn without the previous conversation context.'
+    )
+    expect(
+      providerSeatRotationNoticeText({
+        providerLabel: 'Claude',
+        causes: [],
+        storedSessionMismatch: true
+      })
+    ).toBe(
+      'Session context reset — the stored session no longer matches its recorded configuration. Claude starts this turn without the previous conversation context.'
+    )
+    expect(
+      providerSeatRotationNoticeText({
+        providerLabel: 'Codex',
+        causes: ['provider', 'model'],
+        storedSessionMismatch: false,
+        previousModel: 'gpt-5.5',
+        nextModel: 'gpt-5.5'
+      })
+    ).toBe(
+      'Session context reset — the provider changed, the model changed. Codex starts this turn without the previous conversation context.'
+    )
+  })
+
+  it('skips unrecorded fields when validating a stored session and spares CLI context', () => {
+    const stored = planProviderSeatGeneration(undefined, input('claude')).generation.config
+
+    const unknownObservation = {
+      provider: 'claude' as const,
+      transport: 'cli-opaque' as const,
+      model: undefined,
+      toolsFingerprint: undefined,
+      taskWraithMcpProfileId: undefined,
+      systemPromptFingerprint: undefined
+    }
+    expect(storedSeatSessionRotationRequired(stored, unknownObservation, true)).toBe(false)
+    expect(storedSeatSessionRotationRequired(undefined, unknownObservation, true)).toBe(false)
+
+    const fullMatch = {
+      provider: 'claude' as const,
+      transport: 'cli-opaque' as const,
+      model: stored.model,
+      toolsFingerprint: stored.toolsFingerprint,
+      taskWraithMcpProfileId: stored.taskWraithMcpProfileId,
+      systemPromptFingerprint: stored.systemPromptFingerprint
+    }
+    expect(storedSeatSessionRotationRequired(stored, fullMatch, true)).toBe(false)
+    expect(storedSeatSessionRotationRequired(stored, fullMatch, false)).toBe(false)
+
+    expect(
+      storedSeatSessionRotationRequired(stored, { ...fullMatch, model: 'claude-opus-4-7' }, true)
+    ).toBe(true)
+    expect(
+      storedSeatSessionRotationRequired(stored, { ...fullMatch, toolsFingerprint: 'tools-v2' }, true)
+    ).toBe(true)
+    expect(
+      storedSeatSessionRotationRequired(stored, { ...fullMatch, transport: 'api-byok' }, true)
+    ).toBe(true)
+
+    // System drift on a CLI seat re-generations without rotating; the same
+    // drift on a history-replay transport still rotates.
+    expect(
+      storedSeatSessionRotationRequired(
+        stored,
+        { ...fullMatch, systemPromptFingerprint: 'system-v2' },
+        true
+      )
+    ).toBe(false)
+    const apiStored = { ...stored, transport: 'api-byok' as const }
+    expect(
+      storedSeatSessionRotationRequired(
+        apiStored,
+        { ...fullMatch, transport: 'api-byok', systemPromptFingerprint: 'system-v2' },
+        true
+      )
+    ).toBe(true)
   })
 
   it('bootstraps an existing session and rotates it on the first observed model change', () => {
