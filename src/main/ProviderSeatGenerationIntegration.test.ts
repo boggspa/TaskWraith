@@ -40,6 +40,56 @@ describe('provider seat generation main-process integration', () => {
     expect(generationInput).not.toContain('payload.prompt')
   })
 
+  it('normalizes posture per lane and never validates a stored session from backfilled fields', () => {
+    const generationInput = sourceBetween(
+      'function providerSeatGenerationInputForPayload(',
+      'function saveProviderSeatGeneration('
+    )
+    // Both dispatch lanes must hash one semantic posture (renderer clamp
+    // resolves 'default'; signed remote lane leaves it for the gate) and the
+    // system tuple must come from the single shared helper.
+    expect(generationInput).toContain('providerSeatPosturePrefixComponents({')
+    expect(generationInput).toContain('providerSeatSystemPromptFingerprint({')
+    expect(generationInput).toContain('storedSeatSessionObservationForPayload(')
+
+    const seatApply = sourceBetween(
+      'function applyProviderSeatGeneration(',
+      'function refreshTaskWraithMcpProfileFenceStoreIdentity('
+    )
+    // The stored-session check compares recorded observations only; the old
+    // inline bootstrapInput comparison backfilled unrecorded fields from the
+    // current dispatch and rotated healthy CLI sessions (2026-07-28).
+    expect(seatApply).toContain('storedSeatSessionRotationRequired(')
+    expect(seatApply).toContain('storedSeatSessionObservationForPayload({')
+    expect(seatApply).not.toContain('!== bootstrapInput.systemPromptFingerprint')
+  })
+
+  it('surfaces real context-dropping rotations as a system transcript notice', () => {
+    const seatApply = sourceBetween(
+      'function applyProviderSeatGeneration(',
+      'function refreshTaskWraithMcpProfileFenceStoreIdentity('
+    )
+    // A legitimate rotation (model/tools/provider change) on a CLI seat drops
+    // the conversation — it must never be silent. API transports replay
+    // history, and pi's chat-deterministic session ignores the rotated id, so
+    // the notice gates on providerSeatRotationDropsContext (provider-aware).
+    expect(seatApply).toContain('shouldRotateSession &&')
+    expect(seatApply).toContain(
+      'providerSeatRotationDropsContext(args.payload.provider, capability.transport)'
+    )
+    expect(seatApply).toContain('appendProviderSeatRotationNotice({')
+
+    const notice = sourceBetween(
+      'function appendProviderSeatRotationNotice(',
+      'function saveProviderSeatGeneration('
+    )
+    expect(notice).toContain("role: 'system'")
+    expect(notice).toContain('providerSeatRotationNoticeText({')
+    expect(notice).toContain("kind: 'providerSeatRotation'")
+    // Idempotent per run id so a dispatch retry cannot duplicate the row.
+    expect(notice).toContain('chat.messages.some((message) => message.id === messageId)')
+  })
+
   it('persists provider-reported cache evidence from the terminal lifecycle seam', () => {
     const listener = sourceBetween(
       'runManager.onChange((event) => {',

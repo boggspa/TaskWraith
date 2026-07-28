@@ -1636,8 +1636,14 @@ import {
 import {
   fingerprintProviderSeatPrefix,
   planProviderSeatRuntime,
+  providerSeatPosturePrefixComponents,
+  providerSeatRotationDropsContext,
+  providerSeatRotationNoticeText,
   recordProviderSeatCacheEvidence,
-  type ProviderSeatGenerationInput
+  storedSeatSessionRotationRequired,
+  type ProviderSeatGenerationInput,
+  type ProviderSeatGenerationTransition,
+  type StoredSeatSessionObservation
 } from './ProviderSeatGeneration'
 import {
   canDisposeGrokSeatAfterCompaction,
@@ -1726,7 +1732,11 @@ import {
   normalizeNativeSubAgentPolicy,
   previewNativeSubAgentTask
 } from './NativeSubAgentPolicy'
-import { buildClaudeCliArgs, normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
+import {
+  buildClaudeCliArgs,
+  claudeDispatchPrompt,
+  normalizeClaudeEffortFlagForModel
+} from './ClaudeCliArgs'
 import {
   getSubThreadResumeSessionId,
   resolveSubThreadRecall
@@ -14715,30 +14725,42 @@ function providerSeatGenerationInputForPayload(args: {
   const { payload, previousRun } = args
   const metadata = previousRun?.providerMetadata
   const settings = AppStore.getSettings()
+  // Requested-first: generation configs are recorded from payload.model, so a
+  // bootstrap reconstruction must stay in that namespace. Provider-reported
+  // actualModel diverges by alias (claude '-1m', codex/kimi 'cli-default',
+  // antigravity 'gemini-api:') and would fabricate a 'model' transition.
   const model = normalizeCliProviderModel(
     payload.provider,
-    previousRun?.actualModel || previousRun?.requestedModel || payload.model
+    previousRun?.requestedModel || previousRun?.actualModel || payload.model
   )
   const approvalMode = previousRun?.approvalMode || payload.approvalMode || 'default'
   const workflowMode = previousRun?.workflowMode || payload.workflowMode || 'normal'
   const runtimeProfileId = previousRun?.runtimeProfileId || payload.runtimeProfileId || null
-  const permissionPresetId =
-    previousRun?.permissionPosture?.presetId || payload.effectivePermissions?.presetId || null
-  const readOnly =
-    previousRun?.permissionPosture?.readOnly ?? payload.effectivePermissions?.readOnly ?? null
-  const systemPromptFingerprint = fingerprintProviderSeatPrefix('system', [
-    TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
-    payload.provider,
-    payload.scope,
+  // Lane-normalized posture: the renderer boundary clamp resolves an unsigned
+  // default posture to the 'default' preset while the signed remote-composer
+  // lane defers effectivePermissions to gate-time resolution. Both shapes
+  // describe the same seat, so the fingerprint must not distinguish them
+  // (un-normalized, an iOS→Mac continuation read as a 'system' change and
+  // rotated the Claude session — total context loss, 2026-07-28).
+  const posture = providerSeatPosturePrefixComponents({
+    approvalMode,
+    presetId:
+      previousRun?.permissionPosture?.presetId ?? payload.effectivePermissions?.presetId ?? null,
+    readOnly:
+      previousRun?.permissionPosture?.readOnly ?? payload.effectivePermissions?.readOnly ?? null
+  })
+  const systemPromptFingerprint = providerSeatSystemPromptFingerprint({
+    provider: payload.provider,
+    scope: payload.scope,
     approvalMode,
     workflowMode,
-    permissionPresetId,
-    readOnly,
+    permissionPresetId: posture.presetId,
+    readOnly: posture.readOnly,
     runtimeProfileId,
-    payload.runtimeProfile?.updatedAt || null,
-    payload.ollamaRunProfile || null,
-    settings.nativeSubAgentRequests || null
-  ])
+    runtimeProfileUpdatedAt: payload.runtimeProfile?.updatedAt || null,
+    ollamaRunProfile: payload.ollamaRunProfile || null,
+    nativeSubAgentRequests: settings.nativeSubAgentRequests || null
+  })
   const toolsFingerprint = fingerprintProviderSeatPrefix('tools', [
     args.taskWraithMcpProfileId,
     args.taskWraithMcpAdvertised,
@@ -14770,6 +14792,145 @@ function providerSeatGenerationInputForPayload(args: {
     reasoningEffort,
     serviceTier
   }
+}
+
+/** Single source of the seat 'system' fingerprint component order. The strict
+ * stored-session reconstruction below hashes the same tuple from recorded run
+ * fields; adding a component here without threading it there re-opens the
+ * false-rotation class fixed on 2026-07-28. */
+function providerSeatSystemPromptFingerprint(args: {
+  provider: ProviderId
+  scope: AgentRunPayload['scope']
+  approvalMode: string
+  workflowMode: string
+  permissionPresetId: string
+  readOnly: boolean
+  runtimeProfileId: string | null
+  runtimeProfileUpdatedAt: unknown
+  ollamaRunProfile: unknown
+  nativeSubAgentRequests: unknown
+}): string {
+  return fingerprintProviderSeatPrefix('system', [
+    TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
+    args.provider,
+    args.scope,
+    args.approvalMode,
+    args.workflowMode,
+    args.permissionPresetId,
+    args.readOnly,
+    args.runtimeProfileId,
+    args.runtimeProfileUpdatedAt,
+    args.ollamaRunProfile,
+    args.nativeSubAgentRequests
+  ])
+}
+
+/** Reconstruct the stored session's configuration from what the previous run
+ * durably recorded — and nothing else. A field the run never persisted is
+ * returned as undefined (unknown) so the mismatch check skips it; backfilling
+ * it from the current dispatch is what used to rotate healthy sessions
+ * whenever the two dispatch lanes phrased the same configuration
+ * differently. */
+function storedSeatSessionObservationForPayload(args: {
+  payload: AgentRunPayload
+  transport: ProviderSeatGenerationInput['transport']
+  taskWraithMcpProfileId: NonNullable<AgentRunPayload['taskWraithMcpProfileId']>
+  taskWraithMcpAdvertised: boolean
+  previousRun?: ChatRun
+}): StoredSeatSessionObservation {
+  const { payload, previousRun } = args
+  const settings = AppStore.getSettings()
+  // Requested-model namespace ONLY: the stored generation's model was
+  // normalized from payload.model, so the observation must come from the same
+  // namespace. Provider-REPORTED actualModel diverges by alias for most
+  // providers (claude '-1m' variants, codex/kimi/grok/cursor 'cli-default',
+  // antigravity 'gemini-api:' ids) and is a serving detail, not a session
+  // identity change — comparing it here is what rotated healthy sessions.
+  const recordedModel = previousRun?.requestedModel
+  let systemPromptFingerprint: string | undefined
+  if (previousRun?.approvalMode) {
+    const posture = providerSeatPosturePrefixComponents({
+      approvalMode: previousRun.approvalMode,
+      presetId: previousRun.permissionPosture?.presetId ?? null,
+      readOnly: previousRun.permissionPosture?.readOnly ?? null
+    })
+    systemPromptFingerprint = providerSeatSystemPromptFingerprint({
+      provider: payload.provider,
+      scope: payload.scope,
+      approvalMode: previousRun.approvalMode,
+      workflowMode: previousRun.workflowMode || 'normal',
+      permissionPresetId: posture.presetId,
+      readOnly: posture.readOnly,
+      runtimeProfileId: previousRun.runtimeProfileId || null,
+      runtimeProfileUpdatedAt: payload.runtimeProfile?.updatedAt || null,
+      ollamaRunProfile: payload.ollamaRunProfile || null,
+      nativeSubAgentRequests: settings.nativeSubAgentRequests || null
+    })
+  }
+  return {
+    provider: payload.provider,
+    transport: args.transport,
+    model: recordedModel
+      ? normalizeCliProviderModel(payload.provider, recordedModel)
+      : undefined,
+    toolsFingerprint: fingerprintProviderSeatPrefix('tools', [
+      args.taskWraithMcpProfileId,
+      args.taskWraithMcpAdvertised,
+      payload.runtimeProfile?.mcpProfileId || null
+    ]),
+    taskWraithMcpProfileId: args.taskWraithMcpProfileId,
+    systemPromptFingerprint
+  }
+}
+
+/** Surface a REAL session rotation to the user as an ordinary system chat
+ * message (mirrors the context-compaction notice pattern). Only called for
+ * context-carrying (CLI) transports — API lanes replay history, so rotation
+ * there is invisible to the conversation. Idempotent per run id: the seat
+ * check can run again on retry without duplicating the row. */
+function appendProviderSeatRotationNotice(args: {
+  payload: AgentRunPayload
+  previousModel: string | null
+  nextModel: string | null
+  causes: ProviderSeatGenerationTransition['causes']
+  storedSessionMismatch: boolean
+}): void {
+  const appChatId = args.payload.appChatId
+  if (!appChatId) return
+  const chat = AppStore.getChat(appChatId)
+  if (!chat) return
+  const messageId = `seat-rotation-${args.payload.appRunId || Date.now()}`
+  if (chat.messages.some((message) => message.id === messageId)) return
+  const content = providerSeatRotationNoticeText({
+    providerLabel: providerLabel(args.payload.provider),
+    causes: args.causes,
+    storedSessionMismatch: args.storedSessionMismatch,
+    previousModel: args.previousModel,
+    nextModel: args.nextModel
+  })
+  const updated: ChatRecord = {
+    ...chat,
+    messages: [
+      ...chat.messages,
+      {
+        id: messageId,
+        role: 'system',
+        content,
+        timestamp: new Date().toISOString(),
+        ...(args.payload.appRunId ? { runId: args.payload.appRunId } : {}),
+        metadata: {
+          kind: 'providerSeatRotation',
+          provider: args.payload.provider,
+          ...(args.payload.ensembleRun?.participantId
+            ? { ensembleParticipantId: args.payload.ensembleRun.participantId }
+            : {})
+        }
+      }
+    ],
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
 }
 
 function saveProviderSeatGeneration(
@@ -14873,16 +15034,16 @@ function applyProviderSeatGeneration(args: {
     bootstrapInput
   })
   const { transition } = runtimePlan
-  const storedSessionConfigMismatch = Boolean(
-    (target.linkedProviderSessionId || args.payload.providerSessionId) &&
-    target.generation &&
-    bootstrapInput &&
-    (target.generation.config.provider !== bootstrapInput.provider ||
-      target.generation.config.model !== bootstrapInput.model ||
-      target.generation.config.transport !== bootstrapInput.transport ||
-      target.generation.config.toolsFingerprint !== bootstrapInput.toolsFingerprint ||
-      target.generation.config.taskWraithMcpProfileId !== bootstrapInput.taskWraithMcpProfileId ||
-      target.generation.config.systemPromptFingerprint !== bootstrapInput.systemPromptFingerprint)
+  const storedSessionConfigMismatch = storedSeatSessionRotationRequired(
+    target.generation?.config,
+    storedSeatSessionObservationForPayload({
+      payload: args.payload,
+      transport: capability.transport,
+      taskWraithMcpProfileId: args.actualTaskWraithMcpProfileId,
+      taskWraithMcpAdvertised: args.actualTaskWraithMcpAdvertised,
+      previousRun: target.lastRun
+    }),
+    Boolean(target.linkedProviderSessionId || args.payload.providerSessionId)
   )
   const shouldRotateSession = runtimePlan.shouldRotateSession || storedSessionConfigMismatch
   const shouldPersist =
@@ -14893,6 +15054,18 @@ function applyProviderSeatGeneration(args: {
     saveProviderSeatGeneration(target, transition.generation, shouldRotateSession)
   }
   if (shouldRotateSession) args.payload.providerSessionId = null
+  if (
+    shouldRotateSession &&
+    providerSeatRotationDropsContext(args.payload.provider, capability.transport)
+  ) {
+    appendProviderSeatRotationNotice({
+      payload: args.payload,
+      previousModel: target.generation?.config.model || null,
+      nextModel: transition.generation.config.model || null,
+      causes: transition.causes,
+      storedSessionMismatch: storedSessionConfigMismatch
+    })
+  }
   if (shouldPersist || shouldRotateSession) {
     try {
       appendDurableRunEventForRoute(
@@ -18024,7 +18197,9 @@ async function tryRunClaudeSdk(
     // the CLI after crossing this boundary, even when query() itself throws.
     sdkTransportAdopted = true
     const stream = query({
-      prompt: payload.prompt,
+      // Sessionless dispatch (incl. a seat rotation that nulled the session
+      // after composition) sends the full-context recovery prompt.
+      prompt: claudeDispatchPrompt(payload),
       options: {
         cwd: payload.workspace!,
         model: model === 'default' ? undefined : model,
@@ -18382,7 +18557,9 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const model = normalizeCliProviderModel('claude', payload.model)
   const buildBaseArgs = (): string[] => [
     ...buildClaudeCliArgs({
-      prompt: payload.prompt,
+      // Same selection as the SDK lane: a sessionless dispatch sends the
+      // full-context recovery prompt instead of the slim resume prompt.
+      prompt: claudeDispatchPrompt(payload),
       // Spike 8 note: UNLIKE the SDK path, recon seats keep native plan mode
       // here — this headless CLI path has no canUseTool callback, so plan
       // mode's own no-write behavior IS the containment. A recon turn that
@@ -39467,12 +39644,15 @@ if (isGeminiMcpBridgeProcess) {
             coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
             grokMcpAdvertised: provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
           })
-          const composed = composeRunPrompt({
+          const bridgePromptInput = {
             provider,
             finalPrompt: action.text,
             messages: priorMessages,
             chatContextTurns: bridgeSettings.chatContextTurns,
             ...(resumeSessionId ? { resumeSessionId } : {}),
+            // Same seed the desktop composer supplies: without it a bridge
+            // follow-up after a host compaction lost the summarized history.
+            contextCompactionSummary: chat.contextCompactionSummary || null,
             nextModel: inheritedModel,
             codexHandoffsApplied: [],
             isGlobalRun: isGlobalScope,
@@ -39488,7 +39668,20 @@ if (isGeminiMcpBridgeProcess) {
                   ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
                 }
               : {})
-          })
+          } satisfies Parameters<typeof composeRunPrompt>[0]
+          const composed = composeRunPrompt(bridgePromptInput)
+          // Rotation-safe recovery prompt: the provider seat check can null
+          // providerSessionId AFTER this composition. The Claude lanes
+          // (claudeDispatchPrompt) and the Codex fresh-exec path select
+          // resumeFallbackPrompt on a sessionless dispatch, so a rotated
+          // phone-origin follow-up is seeded instead of starting cold.
+          const bridgeResumeFallbackPrompt =
+            resumeSessionId && (provider === 'claude' || provider === 'codex')
+              ? composeRunPrompt({
+                  ...bridgePromptInput,
+                  resumeSessionId: undefined
+                }).contextualPrompt
+              : undefined
           if (composed.contextTurnsApplied > 0) {
             console.log(
               `[bridge-run] composed ${composed.contextTurnsApplied} context turns for run=${runId}`
@@ -39533,6 +39726,10 @@ if (isGeminiMcpBridgeProcess) {
             scope: isGlobalScope ? 'global' : 'workspace',
             ...(workspaceRecord ? { workspace: workspaceRecord.path } : {}),
             prompt: composed.contextualPrompt,
+            ...(bridgeResumeFallbackPrompt &&
+            bridgeResumeFallbackPrompt !== composed.contextualPrompt
+              ? { resumeFallbackPrompt: bridgeResumeFallbackPrompt }
+              : {}),
             ...(resumeSessionId ? { providerSessionId: resumeSessionId } : {}),
             appChatId: chat.appChatId,
             appRunId: runId,
