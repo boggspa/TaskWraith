@@ -253,7 +253,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
       preview?: unknown
       workspacePath?: string
       actions?: AgentApprovalAction[]
-      resolveAction?: (action: AgentApprovalAction) => void
+      resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
     }
   ): Promise<boolean> => {
     if (deps.isApprovalAdmissionBlocked?.(route?.appRunId, request.workspacePath, route?.appChatId))
@@ -338,6 +338,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       runId?: string
       forcePrompt?: boolean
       externalPathDetection?: PendingExternalPathDetection
+      resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
       /**
        * Main-process-only receipt hook. It exposes the generated prompt id to
        * the executor so signed-elevated operations can bind execution to the
@@ -713,6 +714,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         externalPathDetection,
         requestOnly,
         allowedActions: actions,
+        resolveAction: request.resolveAction,
         resolve: resolveApproval
       })
       if (registered === false) {

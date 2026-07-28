@@ -1705,6 +1705,15 @@ import {
   type GatewayTargetDispatchMarker
 } from './mcp/McpGatewayTargetDispatch'
 import {
+  TOOL_PERMISSION_RETRY_TOOL_NAME,
+  buildToolPermissionRetryInstruction,
+  isOneOffToolPermissionRetryForTarget,
+  oneOffToolPermissionRetryGuardError,
+  orchestrateToolPermissionRetry,
+  prepareToolPermissionRetryTarget,
+  type OneOffToolPermissionRetryMarker
+} from './mcp/ToolPermissionRetry'
+import {
   mcpToolAlwaysPrompts,
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute,
@@ -31221,6 +31230,12 @@ function gatewayCatalogDefinitions(context: GeminiToolContext) {
   return mcpToolDefinitions().filter((definition) => hidden.has(definition.name))
 }
 
+function toolPermissionRetryAvailable(context: GeminiToolContext): boolean {
+  return taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId).includes(
+    TOOL_PERMISSION_RETRY_TOOL_NAME
+  )
+}
+
 /**
  * Hidden targets available to this run. Read-only and plan seats retain their
  * existing hard ceilings, and network-disabled tools never appear in discovery
@@ -31388,7 +31403,8 @@ async function executeGeminiMcpTool(
   route?: AgentRunRoute | null,
   parentProvider: ProviderId = 'gemini',
   callerContext?: McpCallerContext,
-  gatewayDispatch?: GatewayTargetDispatchMarker
+  gatewayDispatch?: GatewayTargetDispatchMarker,
+  permissionRetry?: OneOffToolPermissionRetryMarker
 ): Promise<McpToolExecutionResult> {
   if (globalHistoryClearInProgress()) {
     return {
@@ -31638,6 +31654,35 @@ async function executeGeminiMcpTool(
     params: args,
     workspacePath: context.scope === 'global' ? undefined : workspacePath
   })
+  const exactOneOffPermissionRetry = isOneOffToolPermissionRetryForTarget(
+    permissionRetry,
+    toolName,
+    args
+  )
+  if (exactOneOffPermissionRetry) {
+    const retryNetworkBlockedTool = networkAccessBlockedToolName(
+      toolName,
+      context.effectivePermissions
+    )
+    const retryGuardError = oneOffToolPermissionRetryGuardError({
+      toolName,
+      networkError: retryNetworkBlockedTool
+        ? networkAccessBlockedMessage(retryNetworkBlockedTool)
+        : null,
+      externalPathDetected: Boolean(externalPathDetection),
+      alwaysPrompts: mcpToolAlwaysPrompts(toolName, context.scope)
+    })
+    if (retryGuardError) {
+      return {
+        ...mcpStructuredJsonResult({
+          ok: false,
+          tool: toolName,
+          error: retryGuardError
+        }),
+        isError: true
+      }
+    }
+  }
   const explicitUserRequestedRosterImport = resolveExplicitUserRequestedRosterImport(
     toolName,
     args,
@@ -31657,6 +31702,7 @@ async function executeGeminiMcpTool(
     // mcpTools gate would both double-prompt and imply the wrong authority.
     isThreadMessageMcpToolName(toolName) ||
     explicitUserRequestedRosterImport.allowed ||
+    exactOneOffPermissionRetry ||
     isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
   // gate denies file/shell under read_only, but a mutating tool that classifies
@@ -31699,6 +31745,9 @@ async function executeGeminiMcpTool(
   // Ollama-only `ollamaMustPrompt` forcePrompt (tier != provider_parity) is gone;
   // forcePrompt is now only the two universal exceptions below.
   let canvasEvalApproval: CanvasEvalApprovalReceipt | undefined
+  let genericApprovalResolution:
+    | { action: AgentApprovalAction; decisionSource: 'user' | 'system' }
+    | undefined
   const allowed = skipGenericApproval
     ? true
     : await requestAgenticServiceApproval(
@@ -31723,6 +31772,9 @@ async function executeGeminiMcpTool(
           // real mailbox. Without this, a standing grant or session-YOLO would
           // silence the mailbox prompts entirely.
           forcePrompt: mcpToolAlwaysPrompts(toolName, context.scope),
+          resolveAction: (action, decisionSource) => {
+            genericApprovalResolution = { action, decisionSource }
+          },
           ...(toolName === 'canvas_eval'
             ? {
                 onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) => {
@@ -31784,20 +31836,27 @@ async function executeGeminiMcpTool(
   // so main emits one canonical target row carrying `via_gateway` metadata.
   const emitMcpToolTranscriptEvent = shouldEmitCanonicalTargetTranscript(
     parentProvider,
-    Boolean(gatewayDispatch)
+    Boolean(gatewayDispatch || permissionRetry)
   )
     ? (payload: Record<string, unknown>) => {
         if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) return
+        const projectedPayload = gatewayDispatch
+          ? {
+              ...payload,
+              via_gateway: true,
+              gateway_tool_name: gatewayDispatch.gatewayToolName
+            }
+          : permissionRetry
+            ? {
+                ...payload,
+                via_permission_retry: true,
+                permission_request_tool_name: TOOL_PERMISSION_RETRY_TOOL_NAME
+              }
+            : payload
         sendAgentCompatLine(
           context.sender,
           parentProvider,
-          gatewayDispatch
-            ? {
-                ...payload,
-                via_gateway: true,
-                gateway_tool_name: gatewayDispatch.gatewayToolName
-              }
-            : payload,
+          projectedPayload,
           undefined,
           canvasEvalApproval
         )
@@ -31826,20 +31885,42 @@ async function executeGeminiMcpTool(
       isImageGenMcpToolName(toolName) ||
       isAudioMcpToolName(toolName) ||
       isFfmpegMcpToolName(toolName)
-    const deniedError = networkBlockedTool
-      ? networkAccessBlockedMessage(networkBlockedTool)
-      : mediaToolDenied
-        ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
-            toolName === 'image_generate'
-              ? ', and image generation must be enabled with an API key in TaskWraith Settings'
-              : ''
-          }.`
-        : `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.`
+    const explicitlyDeclinedByUser =
+      genericApprovalResolution?.decisionSource === 'user' &&
+      (genericApprovalResolution.action === 'decline' ||
+        genericApprovalResolution.action === 'declineExternalPath' ||
+        genericApprovalResolution.action === 'cancel')
+    const deniedError = explicitlyDeclinedByUser
+      ? `The user ${genericApprovalResolution?.action === 'cancel' ? 'cancelled' : 'declined'} the ${toolName} approval. Do not retry or request the same permission again.`
+      : networkBlockedTool
+        ? networkAccessBlockedMessage(networkBlockedTool)
+        : mediaToolDenied
+          ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
+              toolName === 'image_generate'
+                ? ', and image generation must be enabled with an API key in TaskWraith Settings'
+                : ''
+            }.`
+          : `${AGENTIC_SERVICE_LABELS[approvalPreview.service]} denied by TaskWraith.${
+              genericApprovalResolution?.decisionSource === 'system'
+                ? ' The approval timed out or was cancelled by the system.'
+                : ''
+            }`
+    const permissionRetryInstruction = buildToolPermissionRetryInstruction({
+      available: toolPermissionRetryAvailable(context),
+      toolName,
+      arguments: args,
+      failure: deniedError,
+      definitions: mcpToolDefinitions(),
+      isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
+    })
     const deniedResult = mcpStructuredJsonResult({
       ok: false,
       tool: toolName,
       service: approvalPreview.service,
-      error: deniedError
+      error: deniedError,
+      ...(permissionRetryInstruction
+        ? { permissionRetry: permissionRetryInstruction }
+        : {})
     })
     emitMcpToolTranscriptEvent({
       type: 'tool_result',
@@ -31859,6 +31940,8 @@ async function executeGeminiMcpTool(
     let text = ''
     let toolIsError = false
     let richResult: McpToolExecutionResult | null = null
+    let permissionRetryResult: McpToolExecutionResult | null = null
+    let permissionRetryTargetToolName: TaskWraithMcpToolName | null = null
     const applyRichResult = (result: McpToolExecutionResult) => {
       richResult = result
       pendingToolMediaPersistence = result.pendingToolMediaPersistence
@@ -31868,7 +31951,107 @@ async function executeGeminiMcpTool(
         (isRecord(result.structuredContent) && result.structuredContent.ok === false)
     }
 
-    if (toolName === 'run_shell_command') {
+    if (toolName === TOOL_PERMISSION_RETRY_TOOL_NAME) {
+      const retryExecution = await orchestrateToolPermissionRetry({
+        value: args,
+        definitions: mcpToolDefinitions(),
+        isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate),
+        providerLabel: providerDisplayName(parentProvider),
+        prepareTarget: (retryRequest) => {
+          const targetRouteGuard = validateMutatingMcpRoute(
+            retryRequest.toolName,
+            effectiveRoute
+          )
+          const targetWorkspaceGuard = validateMcpCallerWorkspace({
+            toolName: retryRequest.toolName,
+            caller: callerContext,
+            contextWorkspacePath: context.scope === 'global' ? undefined : workspacePath
+          })
+          const targetNetworkBlockedTool = networkAccessBlockedToolName(
+            retryRequest.toolName,
+            context.effectivePermissions
+          )
+          const targetExternalPathDetection = detectExternalPathForProviderApproval({
+            provider: parentProvider,
+            appChatId: context.appChatId,
+            appRunId: context.appRunId,
+            toolName: retryRequest.toolName,
+            method: `${parentProvider}-mcp/${retryRequest.toolName}`,
+            params: retryRequest.arguments,
+            workspacePath: context.scope === 'global' ? undefined : workspacePath
+          })
+          const unsupportedResult = isDesktopMcpToolName(retryRequest.toolName)
+            ? unsupportedNativeMcpToolResult(retryRequest.toolName)
+            : null
+          return prepareToolPermissionRetryTarget({
+            toolName: retryRequest.toolName,
+            routeError: targetRouteGuard.ok ? null : targetRouteGuard.error,
+            workspaceError: targetWorkspaceGuard.ok ? null : targetWorkspaceGuard.error,
+            networkError: targetNetworkBlockedTool
+              ? networkAccessBlockedMessage(targetNetworkBlockedTool)
+              : null,
+            externalPathDetected: Boolean(targetExternalPathDetection),
+            alwaysPrompts: mcpToolAlwaysPrompts(retryRequest.toolName, context.scope),
+            unsupportedResult,
+            buildTargetPreview: () => {
+              const targetCwd = resolveScopedDirectory(
+                context.scope,
+                baseCwd,
+                workspacePath,
+                String(
+                  retryRequest.arguments.cwd ||
+                    retryRequest.arguments.working_directory ||
+                    retryRequest.arguments.workdir ||
+                    ''
+                )
+              )
+              const targetPreview = previewForGeminiMcpTool(
+                retryRequest.toolName,
+                retryRequest.arguments,
+                targetCwd,
+                context,
+                parentProvider
+              )
+              applyMcpWriteLockApprovalContext(
+                targetPreview,
+                context,
+                retryRequest.toolName,
+                retryRequest.arguments,
+                targetCwd
+              )
+              return targetPreview.preview
+            }
+          })
+        },
+        requestApproval: (prompt, onDecision) =>
+          requestMainApproval(context.sender, parentProvider, effectiveRoute, {
+            ...prompt,
+            workspacePath: context.scope === 'global' ? undefined : workspacePath,
+            actions: ['accept', 'decline', 'cancel'],
+            resolveAction: (action, decisionSource) => {
+              onDecision({ action, decisionSource })
+            }
+          }),
+        executeTarget: (retryRequest, marker) => {
+          if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+            return Promise.resolve(staleProviderMcpResult(retryRequest.toolName))
+          }
+          return executeGeminiMcpTool(
+            retryRequest.toolName,
+            retryRequest.arguments,
+            effectiveRoute,
+            parentProvider,
+            callerContext,
+            undefined,
+            marker
+          )
+        }
+      })
+      text = retryExecution.text
+      toolIsError = retryExecution.isError
+      permissionRetryResult = retryExecution.targetResult || null
+      permissionRetryTargetToolName = retryExecution.targetToolName || null
+    } else if (toolName === 'run_shell_command') {
       const command = String(args.command || '').trim()
       if (!command) throw new Error('command is required.')
       const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd })
@@ -33901,6 +34084,7 @@ async function executeGeminiMcpTool(
     }
 
     const finalRichResult = richResult as McpToolExecutionResult | null
+    const finalPermissionRetryResult = permissionRetryResult as McpToolExecutionResult | null
     const trustedMediaRefs = finalRichResult?.trustedMediaRefs ?? []
     const hasPublishableTrustedMediaRef = trustedMediaRefs.some(
       (ref) =>
@@ -33951,12 +34135,23 @@ async function executeGeminiMcpTool(
       ? stripPendingToolMediaPersistence(finalRichResult)
       : null
     const projectMcpToolResult = (): McpToolExecutionResult => {
+      const transcriptOutput =
+        finalPermissionRetryResult && permissionRetryTargetToolName
+          ? mcpJson({
+              ok: !toolIsError,
+              tool: TOOL_PERMISSION_RETRY_TOOL_NAME,
+              retriedTool: permissionRetryTargetToolName,
+              message: toolIsError
+                ? `The approved one-shot retry of ${permissionRetryTargetToolName} completed with an error.`
+                : `The approved one-shot retry of ${permissionRetryTargetToolName} completed successfully.`
+            })
+          : text
       emitMcpToolTranscriptEvent({
         type: 'tool_result',
         tool_id: toolId,
         tool_name: toolName,
         status: toolIsError ? 'error' : 'success',
-        output: text,
+        output: transcriptOutput,
         ...(publicFinalRichResult?.content && !isCanvasMcpToolName(toolName)
           ? { content: publicFinalRichResult.content }
           : {}),
@@ -34073,6 +34268,7 @@ async function executeGeminiMcpTool(
           ...(toolIsError ? { isError: true } : {})
         }
       }
+      if (finalPermissionRetryResult) return finalPermissionRetryResult
       return {
         text,
         ...(canvasEvalApproval ? { canvasEvalApproval } : {}),

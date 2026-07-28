@@ -552,6 +552,7 @@ describe('ApprovalService — lifecycle cancellation', () => {
     const mainResolve = vi.fn()
     const mainResolveAction = vi.fn()
     const toolResolve = vi.fn()
+    const toolResolveAction = vi.fn()
     const kimiChild = { kill: vi.fn() } as never
 
     expect(
@@ -567,7 +568,8 @@ describe('ApprovalService — lifecycle cancellation', () => {
         provider: 'claude',
         service: 'mcpTools',
         runId: 'r-1',
-        resolve: toolResolve
+        resolve: toolResolve,
+        resolveAction: toolResolveAction
       })
     ).toBe(true)
     expect(
@@ -610,8 +612,9 @@ describe('ApprovalService — lifecycle cancellation', () => {
       kimi: 0,
       hostCommand: 0
     })
-    expect(mainResolveAction).toHaveBeenCalledWith('cancel')
+    expect(mainResolveAction).toHaveBeenCalledWith('cancel', 'system')
     expect(mainResolve).toHaveBeenCalledWith(false)
+    expect(toolResolveAction).toHaveBeenCalledWith('cancel', 'system')
     expect(toolResolve).toHaveBeenCalledWith(false)
     expect(spies.respondToKimiWireRequest).toHaveBeenCalledWith(
       kimiChild,
@@ -867,9 +870,26 @@ describe('ApprovalService — resolve dispatch', () => {
     const ok = await svc.resolve('native-1', 'useProviderNative')
 
     expect(ok).toBe(true)
-    expect(resolveAction).toHaveBeenCalledWith('useProviderNative')
+    expect(resolveAction).toHaveBeenCalledWith('useProviderNative', 'user')
     expect(spies.permissionService.isApprovedAction).not.toHaveBeenCalledWith('useProviderNative')
     expect(resolveFn).toHaveBeenCalledWith(true)
+  })
+
+  it('Gemini-tool approvals report the exact action and decision source to the caller', async () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolveAction = vi.fn()
+    svc.registerGeminiTool('tool-decline-1', {
+      provider: 'claude',
+      service: 'fileChanges',
+      runId: 'r-1',
+      resolveAction,
+      resolve: vi.fn()
+    })
+
+    await svc.resolve('tool-decline-1', 'decline', { decisionSource: 'user' })
+
+    expect(resolveAction).toHaveBeenCalledWith('decline', 'user')
   })
 
   it('Main: TaskWraith sub-thread action resolves false so provider-native tool is denied', async () => {

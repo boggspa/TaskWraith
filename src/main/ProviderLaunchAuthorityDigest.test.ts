@@ -316,6 +316,21 @@ describe('ProviderLaunchAuthorityDigest', () => {
     expect(providerLaunchAuthorityDigest(gatewayV2)).not.toBe(providerLaunchAuthorityDigest(codex))
   })
 
+  it('accepts the current gateway-v8 tool-surface identities', () => {
+    for (const taskWraithMcpProfileId of [
+      'taskwraith-gateway-v8',
+      'taskwraith-gateway-v8-mesh'
+    ] as const) {
+      const current = {
+        ...codex,
+        tools: { ...codex.tools, taskWraithMcpProfileId }
+      }
+      expect(buildProviderLaunchAuthority(current).tools.taskWraithMcpProfileId).toBe(
+        taskWraithMcpProfileId
+      )
+    }
+  })
+
   it('is deterministic across object insertion order', () => {
     const reordered = {
       controls: { ...codex.controls },

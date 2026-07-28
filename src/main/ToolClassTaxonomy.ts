@@ -96,6 +96,7 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   // shell / network), so a read-only run may do it. Mirrors the main-
   // participant behaviour for Codex / Claude / Kimi.
   'ask_user_question',
+  'request_tool_permission',
   'goal_read',
   'goal_update',
   'update_goal',
@@ -130,7 +131,7 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
   'open_workspace_file'
 ])
 
-const UI_ELICITATION_TOOLS = new Set<string>(['ask_user_question'])
+const UI_ELICITATION_TOOLS = new Set<string>(['ask_user_question', 'request_tool_permission'])
 
 const WEB_READ_TOOLS = new Set<string>([
   'web_search',

@@ -86,6 +86,11 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // The renderer modal IS the approval surface, so a second confirm
   // step would be silly. Universally auto-allowed.
   'ask_user_question',
+  // This capability only opens a one-shot, exact-call approval modal. It cannot
+  // execute its target until that main-authority prompt is accepted, and it
+  // never mints a standing grant. Auto-allowing the outer elicitation is what
+  // lets read-only/plan seats ask the human to override their posture once.
+  'request_tool_permission',
   // Persistent goal lifecycle is host UI coordination only. Tool schemas
   // prevent agents from replacing or clearing the user-owned objective.
   'goal_read',

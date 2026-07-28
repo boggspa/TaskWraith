@@ -779,6 +779,10 @@ export type TaskWraithMcpProfileId =
   // effective run posture; its catalogue receipt is never an authority grant.
   | 'taskwraith-gateway-v7'
   | 'taskwraith-gateway-v7-mesh'
+  // v8 adds one-shot permission retry through capability discovery. The mesh
+  // variant preserves v7's direct Mesh Canvas birth surface.
+  | 'taskwraith-gateway-v8'
+  | 'taskwraith-gateway-v8-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

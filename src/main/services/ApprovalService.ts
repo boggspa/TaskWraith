@@ -81,7 +81,7 @@ export interface PendingMainApproval {
   title?: string
   body?: string
   allowedActions?: AgentApprovalAction[]
-  resolveAction?: (action: AgentApprovalAction) => void
+  resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
   resolve: (allowed: boolean) => void
 }
 
@@ -118,6 +118,7 @@ export interface PendingGeminiToolApproval {
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
   allowedActions?: AgentApprovalAction[]
+  resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
   resolve: (allowed: boolean) => void
 }
 
@@ -836,7 +837,7 @@ export class ApprovalService {
       })
       this.pendingMain.delete(requestId)
       this.deps.runManager.clearApproval(requestId)
-      pendingMain.resolveAction?.(action)
+      pendingMain.resolveAction?.(action, decisionSource)
       const allowed =
         action === 'useProviderNative'
           ? true
@@ -915,6 +916,7 @@ export class ApprovalService {
         action: resolvedAction,
         ...(pendingGeminiTool.surfaceId ? { surfaceId: pendingGeminiTool.surfaceId } : {})
       })
+      pendingGeminiTool.resolveAction?.(resolvedAction, decisionSource)
       pendingGeminiTool.resolve(allowed)
       return true
     }
@@ -1326,7 +1328,7 @@ export class ApprovalService {
         appChatId: pending.appChatId,
         workspacePath: pending.workspacePath
       })
-      pending.resolveAction?.('cancel')
+      pending.resolveAction?.('cancel', 'system')
       pending.resolve(false)
     }
     for (const [approvalId, pending] of [...this.pendingGeminiTool]) {
@@ -1344,6 +1346,7 @@ export class ApprovalService {
         appRunId: pending.runId,
         workspacePath: pending.workspacePath
       })
+      pending.resolveAction?.('cancel', 'system')
       pending.resolve(false)
     }
     for (const [approvalId, pending] of [...this.pendingKimi]) {
