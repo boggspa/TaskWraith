@@ -1463,6 +1463,29 @@ struct ThreadDetailView: View {
 
     private func listCore(proxy: ScrollViewProxy) -> some View {
         ScrollView {
+            // Non-lazy shell around the lazy row stack. Its one job is to host
+            // `transcript-tail` below: a scroll TARGET that always resolves.
+            //
+            // `ScrollViewProxy.scrollTo` against an id INSIDE a LazyVStack is
+            // best-effort — an id outside the materialized band silently
+            // no-ops. Normally that never bites (the sentinel lives at the
+            // viewport), but when a layout event parks the offset beyond the
+            // content's end — the settled-stack fold shrinking a long
+            // transcript, a snapshot row-swap on send, presentation-transition
+            // churn while a popover opens mid-stream — the lazy band
+            // materializes ZERO rows, so every recovery path that scrolls to a
+            // lazy id (the follow pins, the jump-to-latest pill, the
+            // thread-open pin) goes dead at once: a blank transcript over live
+            // data that only a manual drag (which clamps the offset) could
+            // heal. The tail anchor is a plain child of this VStack, always in
+            // the layout tree, so those same paths now land from ANY state.
+            //
+            // The `transcript-bottom` sentinel stays inside the lazy stack on
+            // purpose: its onAppear/onDisappear feed auto-follow, and
+            // visibility-driven appear/disappear is exactly the lazy-container
+            // behavior — a non-lazy child fires them on mount/unmount instead.
+            // Sensor lazy, target non-lazy.
+            VStack(spacing: 0) {
             LazyVStack(alignment: .leading, spacing: 4) {
                 if earlierCount > 0 {
                     Button {
@@ -1716,6 +1739,14 @@ struct ThreadDetailView: View {
             .padding(.horizontal, 12)
             .frame(maxWidth: transcriptColumnMaxWidth ?? .infinity, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
+            // The always-resolvable scroll target (see the VStack comment
+            // above). Every programmatic bottom-scroll aims here, never at the
+            // lazy sentinel.
+            Color.clear
+                .frame(height: 1)
+                .id("transcript-tail")
+                .accessibilityHidden(true)
+            }
         }
         .background(TWTheme.appBg)
         // Observe-only touch tracker (never claims the gesture on iPhone):
@@ -1749,7 +1780,11 @@ struct ThreadDetailView: View {
                     Button {
                         autoFollow = true
                         withAnimation(.easeOut(duration: 0.25)) {
-                            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                            // Tail, not sentinel: from a wedged (beyond-end)
+                            // offset the lazy band is empty and a lazy-id
+                            // scroll no-ops — this tap used to do nothing at
+                            // exactly the moment it was the only way back.
+                            proxy.scrollTo("transcript-tail", anchor: .bottom)
                         }
                     } label: {
                         floatingTranscriptPill(systemName: "arrow.down")
@@ -2447,7 +2482,11 @@ struct ThreadDetailView: View {
         var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+            // Tail, not sentinel: the non-lazy anchor resolves from any scroll
+            // state, including the beyond-end wedge where the lazy band is
+            // empty and a scroll to the sentinel would silently no-op (the
+            // whole follow machinery went dead there — see listCore).
+            proxy.scrollTo("transcript-tail", anchor: .bottom)
         }
     }
 
