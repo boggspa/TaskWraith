@@ -1010,7 +1010,7 @@ export type ConcurrentLaneIntent = 'none' | 'read' | 'write'
 
 export type ConcurrentLaneWriteScopeKind = 'path' | 'glob' | 'workspace'
 
-export type ConcurrentLaneWriteScopeApprover = 'boss' | 'user-preflight'
+export type ConcurrentLaneWriteScopeApprover = 'boss' | 'captain' | 'user-preflight'
 
 /**
  * Approved mutation envelope for a concurrent writer lane. The lane may still
@@ -1112,8 +1112,9 @@ export interface EnsembleRoundState {
   /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string
-  /** Backup Boss captured at round start. This participant remains
-   * standby authority unless the primary Boss is unavailable. */
+  /** Backup Boss captured at round start. This participant remains standby
+   * for controlling authority unless the primary Boss is unavailable, but may
+   * independently invoke configured fan-out powers. */
   secondInCommandParticipantId?: string
   /** Participant ids present at the start of the round. Used to detect
    * replacement/addition commands that would exceed the round baseline. */
@@ -1625,9 +1626,9 @@ export interface EnsembleConfig {
   /** Optional user-designated Ensemble manager. No Boss is assigned by
    * default; controls are rejected unless the active run belongs to this id. */
   bossmanParticipantId?: string
-  /** Optional user-designated Captain. This seat uses Boss-like
-   * controls only when the primary Boss is missing, disabled, unreachable,
-   * or failed for the active round. */
+  /** Optional user-designated Captain. This seat may always use configured
+   * fan-out powers; other Boss-like controls remain available only when the
+   * primary Boss is missing, disabled, unreachable, or failed for the round. */
   secondInCommandParticipantId?: string
   /** Opt-in auto-approval preference. The current runtime only records and
    * surfaces this explicit consent; approval execution remains constrained by

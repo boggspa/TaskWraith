@@ -9462,7 +9462,12 @@ export class EnsembleOrchestrator {
       }
     }
 
-    if (mode === 'locked_writers' && !this.canRequestLockedWriterFanout(chat, runtime, run)) {
+    const fanoutAuthorityRole = this.fanoutAuthorityRoleForCaller(
+      chat,
+      runtime,
+      run.participant.id
+    )
+    if (mode === 'locked_writers' && !fanoutAuthorityRole) {
       const message = this.lockedWriterFanoutAuthorizationMessage(chat, runtime, run)
       this.appendRoundStatus(run.chatId, run.roundId, message)
       this.recordFanoutAuthorizationRejection(chat, run, {
@@ -9488,7 +9493,7 @@ export class EnsembleOrchestrator {
         mode,
         ...(targetStage ? { targetStage } : {}),
         message:
-          'ensemble_fanout: broad fan-out requires the configured Boss (or standby Captain). Use explicit targets for a narrow peer handoff.',
+          'ensemble_fanout: broad fan-out requires the configured Boss or Captain. Use explicit targets for a narrow peer handoff.',
         error: 'not_authorized'
       }
     }
@@ -9542,7 +9547,7 @@ export class EnsembleOrchestrator {
         runtime,
         resolvedTargets.targets,
         input.writeScopes,
-        'boss'
+        fanoutAuthorityRole === 'second_in_command' ? 'captain' : 'boss'
       )
       if (!resolvedScopes.ok) {
         return {
@@ -9686,7 +9691,7 @@ export class EnsembleOrchestrator {
    * dispatches concurrently, and each lane runs under the participant's OWN
    * normal-turn posture instead of a read-only clamp or locked-writer
    * scopes. What it deliberately does NOT bypass: caller authority (must be
-   * the configured Boss, or Captain in standby), the composer-directed
+   * the configured Boss or Captain), the composer-directed
    * one-seat round boundary (user intent), the Boss budget, the roster cap,
    * and every posture clamp inside resolveParticipantPermissions (the
    * unattended-round HMAC clamp in particular) — this tool mints no
@@ -9782,16 +9787,17 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
-    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
-    if (!authority.ok) {
-      const message =
-        authority.error === 'second_in_command_standby'
-          ? 'ensemble_fanout_all: the Captain may call this only while the Boss is unavailable.'
-          : 'ensemble_fanout_all: only the configured Boss (or Captain in standby) may fan out the full roster.'
+    const authorityRole = this.fanoutAuthorityRoleForCaller(
+      chat,
+      runtime,
+      run.participant.id
+    )
+    if (!authorityRole) {
       return {
         ok: false,
         tool: 'ensemble_fanout_all',
-        message,
+        message:
+          'ensemble_fanout_all: only the configured Boss or Captain may fan out the full roster.',
         error: 'not_authorized'
       }
     }
@@ -10411,6 +10417,27 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Fan-out is a deliberately shared Boss/Captain power. Unlike controlling
+   * authority, roster mutation, approvals, and goal closure, it does not put
+   * Captain on standby while Boss is healthy: either configured seat may
+   * dispatch parallel work, subject to the same policy, scope, budget, and
+   * user-targeted-round boundaries.
+   */
+  private fanoutAuthorityRoleForCaller(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    callerParticipantId: string
+  ): 'boss' | 'second_in_command' | undefined {
+    if (callerParticipantId === this.activeBossmanParticipantId(chat, runtime)) {
+      return 'boss'
+    }
+    if (callerParticipantId === this.activeSecondInCommandParticipantId(chat, runtime)) {
+      return 'second_in_command'
+    }
+    return undefined
+  }
+
   private isBossParticipant(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
@@ -10553,28 +10580,20 @@ export class EnsembleOrchestrator {
     return true
   }
 
-  private canRequestLockedWriterFanout(
-    chat: ChatRecord,
-    runtime: ActiveRoundRuntime,
-    run: ActiveParticipantRun
-  ): boolean {
-    return this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok
-  }
-
   private lockedWriterFanoutAuthorizationMessage(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun
   ): string {
+    if (this.fanoutAuthorityRoleForCaller(chat, runtime, run.participant.id)) {
+      return 'Locked writer fan-out authorized.'
+    }
     const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
     if (authority.ok) return 'Locked writer fan-out authorized.'
     if (authority.error === 'bossman_not_configured') {
       return 'Locked writer fan-out rejected: no Boss is assigned, so writer lanes require a user write-scope preflight before parallel mutation is allowed.'
     }
-    if (authority.error === 'second_in_command_standby') {
-      return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: the assigned Boss is still available, so Captain remains standby.`
-    }
-    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss, or Captain while Boss is unavailable, may authorize parallel writer lanes.`
+    return `Locked writer fan-out rejected from ${run.participant.role || providerLabel(run.participant.provider)}: only the assigned Boss or Captain may authorize parallel writer lanes.`
   }
 
   private recordFanoutAuthorizationRejection(
@@ -13798,17 +13817,20 @@ export class EnsembleOrchestrator {
     if (!ensemble) return false
     if (isBackgroundParticipant(run.participant)) return false
     const runtime = this.roundsByChatId.get(run.chatId)
-    if (runtime && this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok) {
+    if (runtime && this.fanoutAuthorityRoleForCaller(chat, runtime, run.participant.id)) {
       return true
     }
-    return ensemble.bossmanParticipantId === run.participant.id
+    return (
+      ensemble.bossmanParticipantId === run.participant.id ||
+      ensemble.secondInCommandParticipantId === run.participant.id
+    )
   }
 
   /**
    * Explicit BG routing reuses the normal fan-out lane executor, but automatic
    * @mention/yield launches are always read-only. This keeps shell/test/recon
    * useful while reserving asynchronous mutations for the existing
-   * Boss-authorized locked-writer path with explicit write scopes.
+   * Boss/Captain-authorized locked-writer path with explicit write scopes.
    */
   private async dispatchBackgroundParticipants(
     runtime: ActiveRoundRuntime,
