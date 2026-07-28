@@ -116,11 +116,13 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('video_decode_frame')).toBe('mediaEditing')
   })
 
-  it('keeps canvas mutation / eval / recall in their dedicated buckets', () => {
+  it('keeps web Canvas, Sketch mutation, eval, and recall in dedicated buckets', () => {
     expect(catalogToolAgenticService('canvas_click')).toBe('canvasInteraction')
     expect(catalogToolAgenticService('canvas_fill')).toBe('canvasInteraction')
-    expect(catalogToolAgenticService('canvas_sketch_update')).toBe('canvasInteraction')
+    expect(catalogToolAgenticService('canvas_sketch_update')).toBe('sketchCanvas')
+    expect(catalogToolAgenticService('canvas_sketch_update')).not.toBe('canvasInteraction')
     // reads stay on mcpTools
+    expect(catalogToolAgenticService('canvas_sketch_open')).toBe('mcpTools')
     expect(catalogToolAgenticService('canvas_sketch_get')).toBe('mcpTools')
     expect(catalogToolAgenticService('canvas_snapshot')).toBe('mcpTools')
     expect(catalogToolAgenticService('canvas_open_launch')).toBe('mcpTools')

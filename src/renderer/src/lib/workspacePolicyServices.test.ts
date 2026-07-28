@@ -13,6 +13,8 @@ describe('workspacePolicyServices', () => {
       'Tool calls',
       'Sub-thread delegation',
       'Canvas interaction',
+      'Sketch Canvas',
+      'Mesh Canvas',
       'Media editing'
     ])
   })
@@ -20,5 +22,6 @@ describe('workspacePolicyServices', () => {
   it('resolves service labels for approval admin surfaces', () => {
     expect(getWorkspacePolicyServiceLabel('mcpTools')).toBe('Tool calls')
     expect(getWorkspacePolicyServiceLabel('subThreadDelegation')).toBe('Sub-thread delegation')
+    expect(getWorkspacePolicyServiceLabel('sketchCanvas')).toBe('Sketch Canvas')
   })
 })

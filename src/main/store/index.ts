@@ -1947,6 +1947,7 @@ const defaultSettings: AppSettings = {
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    sketchCanvas: 'allow',
     crossThreadRead: 'ask',
     threadMessage: 'ask',
     mediaEditing: 'ask',

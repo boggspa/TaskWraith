@@ -124,6 +124,7 @@ function readOnlyPermissions(): EffectiveRunPermissions {
       mcpTools: 'ask',
       subThreadDelegation: 'deny',
       canvasInteraction: 'deny',
+      sketchCanvas: 'deny',
       meshCanvas: 'deny',
       canvasEval: 'deny',
       crossThreadRead: 'deny',

@@ -3690,9 +3690,9 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_sketch_open',
       description:
-        'Open a bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Gated like canvas_open.',
+        'Open or restore the chat-owned bidirectional Sketch Canvas for quick visual communication between the human and agent. It is a lightweight drawing surface for rectangles, ellipses, lines/arrows, freehand paths, SVG-style path data, and text. Use canvas_sketch_update to add/replace/delete structured primitives and canvas_sketch_get to read what the human drew. Opening is read-only-safe: it performs no navigation, fetch, or element mutation.',
       annotations: {
-        readOnlyHint: false,
+        readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: false,
         openWorldHint: false
@@ -3724,7 +3724,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_sketch_update',
       description:
-        'Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.',
+        'Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via the dedicated sketchCanvas policy: denied under read-only, per-call approval under Plan, and automatic under Default Approval, Workspace Write, and Trusted Session unless globally denied. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,

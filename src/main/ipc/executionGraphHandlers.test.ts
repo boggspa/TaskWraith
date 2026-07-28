@@ -168,6 +168,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
           mcpTools: 'ask',
           subThreadDelegation: 'ask',
           canvasInteraction: 'ask',
+          sketchCanvas: 'allow',
           meshCanvas: 'ask',
           crossThreadRead: 'ask',
           threadMessage: 'ask',

@@ -72,6 +72,9 @@ export function effectiveAgenticSettings(
         current.canvasInteraction,
         effective.canvasInteraction
       ),
+      // Sketch edits have their own ladder: Recon deny, Plan ask, and
+      // Default/Workspace Write/Trusted Session allow. Preserve global deny.
+      sketchCanvas: preserveCurrentDeny(current.sketchCanvas, effective.sketchCanvas),
       // Mesh Canvas is its own authoring/import service. Preserve a Recon
       // deny through this main-owned effective-policy rebuild.
       meshCanvas: preserveCurrentDeny(current.meshCanvas, effective.meshCanvas),
@@ -207,7 +210,8 @@ export function resolveNativeApprovalPreflightDecision(args: {
  * the Settings policy chip, and the display/audit normalizers all delegate to it
  * so the service a tool is ENFORCED under can never drift from the one it is
  * SHOWN under. The security-load-bearing routing (shell/externalPublish/media/
- * fileChanges/canvasInteraction/canvasEval/crossThreadRead) is documented there.
+ * fileChanges/canvasInteraction/sketchCanvas/canvasEval/crossThreadRead) is
+ * documented there.
  */
 export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {
   return catalogToolAgenticService(toolName)

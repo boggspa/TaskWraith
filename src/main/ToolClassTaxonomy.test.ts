@@ -169,7 +169,6 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'canvas_open_attachment',
         'canvas_open_launch',
         'canvas_render_html',
-        'canvas_sketch_open',
         'canvas_sketch_update',
         'create_directory',
         'creative_applescript_dispatch',
@@ -187,6 +186,13 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'image_generate',
         'launch_start',
         'launch_stop',
+        'mesh_scene_apply',
+        'mesh_scene_close',
+        'mesh_scene_create',
+        'mesh_scene_delete',
+        'mesh_scene_import',
+        'mesh_scene_present',
+        'mesh_scene_set_material',
         'move_path',
         // Draft creation mutates the mailbox, so read_only seats deny it.
         // The four Outlook READ tools classify as web_read instead.
@@ -307,6 +313,10 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('read_background_process', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_yield', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ask_user_question', ro)).toBe(false)
+    expect(classifyTool('canvas_sketch_open')).toBe('orchestration')
+    expect(isReadOnlyBlockedTool('canvas_sketch_open', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('canvas_sketch_get', ro)).toBe(false)
+    expect(isReadOnlyBlockedTool('canvas_sketch_update', ro)).toBe(true)
     expect(isReadOnlyBlockedTool('write_file', { readOnly: false })).toBe(false)
     expect(isReadOnlyBlockedTool('write_file', undefined)).toBe(false)
   })

@@ -24,6 +24,7 @@ function settings(
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      sketchCanvas: 'allow',
       canvasEval: 'ask',
       networkAccess: 'allow',
       ...over
@@ -42,6 +43,7 @@ function effectiveServices(
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
+    sketchCanvas: 'allow',
     meshCanvas: 'ask',
     crossThreadRead: 'ask',
     threadMessage: 'ask',

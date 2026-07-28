@@ -7,6 +7,7 @@ export const DEFAULT_AGENTIC_SERVICES: AgenticServicesSettings = {
   mcpTools: 'ask',
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
+  sketchCanvas: 'allow',
   crossThreadRead: 'ask',
   threadMessage: 'ask',
   mediaEditing: 'ask',

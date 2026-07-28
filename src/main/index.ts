@@ -12027,7 +12027,8 @@ function resolveNativeApprovalPreflight(args: {
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
     // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
     // externalPublish is grantable, but read_only / plan keep it approval-only.
-    // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+    // plan-preset instruments (canvasInteraction/sketchCanvas/mediaEditing) are
+    // approval-only:
     // a standing/session grant must not zero-click them under `plan` (W7-b rung).
     neverAutoAllow:
       args.service === 'canvasEval' ||
@@ -17439,12 +17440,14 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
   // Canvas click/fill get the dedicated grant bucket on the Claude canUseTool
   // gate too (it fires before previewForGeminiMcpTool), so a prior mcpTools
   // grant can't silently auto-allow app-mutating canvas interactions.
-  if (
-    normalized.includes('canvas_click') ||
-    normalized.includes('canvas_fill') ||
-    normalized.includes('canvas_sketch_update')
-  ) {
+  if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
     return 'canvasInteraction'
+  }
+  // Structured Sketch edits are deliberately independent of authenticated web
+  // Canvas control: Default Approval may auto-allow the former without silently
+  // granting click/fill authority.
+  if (normalized.includes('canvas_sketch_update')) {
+    return 'sketchCanvas'
   }
   // Arbitrary eval (RCE) gets its own signed-elevated bucket on the Claude gate
   // too — never auto-allowed by a grant/preset/YOLO.

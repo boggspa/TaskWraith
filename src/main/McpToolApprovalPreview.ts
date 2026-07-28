@@ -657,15 +657,24 @@ export function createMcpToolApprovalPreviewer(
       }
     }
 
-    if (
-      toolName === 'canvas_click' ||
-      toolName === 'canvas_fill' ||
-      toolName === 'canvas_sketch_update'
-    ) {
+    if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
       return {
         title: `Approve ${providerName} canvas interaction`,
         body: toolName,
         service: 'canvasInteraction',
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: args
+        }
+      }
+    }
+
+    if (toolName === 'canvas_sketch_update') {
+      return {
+        title: `Approve ${providerName} Sketch Canvas edit`,
+        body: toolName,
+        service: 'sketchCanvas',
         preview: {
           kind: 'tool',
           toolName,

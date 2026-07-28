@@ -425,6 +425,10 @@ export type AgenticServiceId =
   // the generic `mcpTools` service can't silently auto-allow app-mutating canvas
   // interactions (the P1-review exfil concern).
   | 'canvasInteraction'
+  // Structured edits to the chat-owned Sketch Canvas. Separate from web
+  // canvasInteraction so prompt-free sketching never grants click/fill control
+  // over an authenticated preview.
+  | 'sketchCanvas'
   // Declarative, chat-owned 3D scenes and their imported local assets. This is
   // deliberately separate from canvasInteraction: granting control of a web
   // preview must not grant scene authoring/import, and vice versa.
@@ -607,6 +611,10 @@ export interface AgenticServicesSettings {
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before first-class Sketch
+  // Canvas. Sketch edits default to 'allow'; run presets still clamp Recon to
+  // deny and Plan to per-invocation ask.
+  sketchCanvas?: AgenticServicePolicy
   // Optional for back-compat with settings persisted before Mesh Canvas. It is
   // grantable and defaults to 'ask' in the sanitizer/resolver.
   meshCanvas?: AgenticServicePolicy
@@ -1808,8 +1816,8 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / meshCanvas / canvasEval / crossThreadRead / threadMessage /
-  // mediaEditing / mediaRecording are approval-grant buckets, not
+  // canvasInteraction / sketchCanvas / meshCanvas / canvasEval / crossThreadRead /
+  // threadMessage / mediaEditing / mediaRecording are approval-grant buckets, not
   // provider-capability contract rows — excluded like subThreadDelegation. (The
   // media tools are already advertised under the MCP/tool surface; they don't get
   // their own contract row. Thread messaging is harness-owned and identical on
@@ -1818,6 +1826,7 @@ export type ProviderToolingCapabilityId =
       AgenticServiceId,
       | 'subThreadDelegation'
       | 'canvasInteraction'
+      | 'sketchCanvas'
       | 'meshCanvas'
       | 'canvasEval'
       | 'crossThreadRead'

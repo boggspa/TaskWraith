@@ -326,6 +326,7 @@ describe('createMcpToolApprovalPreviewer', () => {
 
   it.each([
     ['canvas_click', 'canvasInteraction'],
+    ['canvas_sketch_update', 'sketchCanvas'],
     ['canvas_eval', 'canvasEval'],
     ['mesh_scene_present', 'meshCanvas'],
     ['tw_recall_read', 'crossThreadRead'],

@@ -67,6 +67,7 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
+      sketchCanvas: 'allow',
       meshCanvas: 'allow',
       canvasEval: 'ask',
       crossThreadRead: 'allow',
@@ -137,6 +138,7 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
             mcpTools: 'ask',
             subThreadDelegation: 'ask',
             canvasInteraction: 'ask',
+            sketchCanvas: 'allow',
             canvasEval: 'ask',
             crossThreadRead: 'ask',
             threadMessage: 'ask',
@@ -176,6 +178,7 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
             mcpTools: 'allow',
             subThreadDelegation: 'allow',
             canvasInteraction: 'allow',
+            sketchCanvas: 'allow',
             canvasEval: 'ask',
             crossThreadRead: 'allow',
             threadMessage: 'allow',
@@ -302,6 +305,7 @@ describe('runtimeSettings', () => {
           mcpTools: 'deny',
           subThreadDelegation: 'allow',
           canvasInteraction: 'ask',
+          sketchCanvas: 'allow',
           canvasEval: 'ask',
           networkAccess: 'allow'
         }

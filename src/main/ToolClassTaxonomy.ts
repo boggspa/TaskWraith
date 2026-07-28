@@ -271,6 +271,9 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'canvas_status',
   'canvas_snapshot',
   'canvas_inspect',
+  // Opens/restores the chat-owned structured sketch document. Unlike
+  // canvas_open it cannot navigate or fetch, and it does not mutate elements.
+  'canvas_sketch_open',
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',

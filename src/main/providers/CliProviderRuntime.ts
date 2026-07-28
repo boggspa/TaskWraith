@@ -317,6 +317,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.canvasInteraction,
         profile.agenticServices.canvasInteraction
       ),
+      sketchCanvas: stricterServicePolicy(
+        base.agenticServices?.sketchCanvas,
+        profile.agenticServices.sketchCanvas
+      ),
       crossThreadRead: stricterServicePolicy(
         base.agenticServices?.crossThreadRead,
         profile.agenticServices.crossThreadRead

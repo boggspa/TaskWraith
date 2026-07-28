@@ -10,8 +10,8 @@ import type { EffectiveRunPermissions } from './store/types'
  * Read-Only/Recon turn into a plan-shaped turn. But the two presets are
  * NOT identical: after the posture split they resolve to DISTINCT service
  * maps (see `DEFAULT_PERMISSION_PRESETS` in EffectiveRunPermissions.ts) —
- * `plan` relaxes the instrument services (canvasInteraction / mediaEditing
- * / subThreadDelegation) to 'ask', while `read_only` denies them. 'plan'
+ * `plan` relaxes the instrument services (canvasInteraction / sketchCanvas /
+ * mediaEditing / subThreadDelegation) to 'ask', while `read_only` denies them. 'plan'
  * is still the canonical no-write wire value required by
  * `clampUntrustedRunPosture` (a trusted plan posture MUST carry
  * `readOnly: true`, and every fail-closed downgrade lands on the STRICT
