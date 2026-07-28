@@ -13,6 +13,7 @@
 
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
+import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
@@ -248,6 +249,14 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
     return isCursorGrok45ModelId(ctx.modelId)
       ? grokReasoningDisplayLabel(ctx.cursorReasoningEffort)
       : ''
+  }
+
+  if (provider === 'antigravity') {
+    // The reasoning level is encoded in the concrete wire id
+    // (gemini-3.6-flash-high); the picker groups families and the slider
+    // swaps variants, so the chip suffix reads straight off the id.
+    const effort = antigravityEffortForModelId(ctx.modelId)
+    return effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : ''
   }
 
   return ''

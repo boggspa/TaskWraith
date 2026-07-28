@@ -1,0 +1,162 @@
+/**
+ * AntiGravity picker grouping: the agy catalogue (live discovery AND the
+ * static floor) prints one bare wire id per reasoning variant —
+ * `gemini-3.6-flash-high/-medium/-low` — with labels equal to ids. The
+ * composer picker instead lists each HOST model once with a human-readable
+ * name and drives the variant through the shared reasoning slider.
+ *
+ * The grouping is PATTERN-based (an explicit `-high|-medium|-low` suffix),
+ * not a static relabel table, so live-discovered future variants group the
+ * same way and an unknown id degrades to a prettified passthrough row.
+ * `-thinking` is deliberately NOT an effort suffix — it names a distinct
+ * model. Dispatch, persistence, pricing and context-window accounting all
+ * keep seeing the CONCRETE variant id: the grouped row's id simply follows
+ * the currently-selected variant of its family (falling back to the
+ * catalogue-first variant), so selecting a row or moving the slider only
+ * ever swaps which concrete id is selected.
+ */
+
+export type AntigravityEffort = 'high' | 'medium' | 'low'
+
+/** Slider presentation order (matches the Grok/Cursor ladder, low → high). */
+export const ANTIGRAVITY_EFFORT_ORDER: readonly AntigravityEffort[] = ['low', 'medium', 'high']
+
+const EFFORT_SUFFIX = /-(high|medium|low)$/
+
+export function antigravityEffortForModelId(modelId: string): AntigravityEffort | null {
+  const match = EFFORT_SUFFIX.exec(modelId.trim())
+  return match ? (match[1] as AntigravityEffort) : null
+}
+
+export interface AntigravityVariantGroup {
+  baseId: string
+  displayName: string
+  /** Present variants in slider order (low → high). */
+  variants: Array<{ effort: AntigravityEffort; id: string }>
+  /** Catalogue-first variant — what a fresh click on the row selects. */
+  defaultId: string
+}
+
+export interface AntigravityGroupedModelRow {
+  id: string
+  label: string
+}
+
+interface CatalogueOptionLike {
+  id: string
+  label?: string
+}
+
+/** Human-readable name for a bare agy id ('gemini-3.6-flash' → 'Gemini 3.6
+ * Flash', 'claude-sonnet-4-6' → 'Claude Sonnet 4.6', 'gpt-oss-120b' →
+ * 'GPT-OSS 120B'). Generic word rules plus a tiny exception map; an unknown
+ * id still comes out readable. */
+export function antigravityDisplayName(baseId: string): string {
+  const tokens = baseId.trim().split('-').filter(Boolean)
+  const words: string[] = []
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]
+    const lower = token.toLowerCase()
+    if (lower === 'gpt' && tokens[i + 1]?.toLowerCase() === 'oss') {
+      words.push('GPT-OSS')
+      i += 1
+      continue
+    }
+    // Consecutive bare integers are a dotted version: sonnet-4-6 → 4.6.
+    if (/^\d+$/.test(token)) {
+      const parts = [token]
+      while (/^\d+$/.test(tokens[i + 1] || '')) {
+        parts.push(tokens[i + 1])
+        i += 1
+      }
+      words.push(parts.join('.'))
+      continue
+    }
+    // Parameter-size tokens keep their magnitude: 120b → 120B.
+    const sizeMatch = /^(\d+(?:\.\d+)?)b$/.exec(lower)
+    if (sizeMatch) {
+      words.push(`${sizeMatch[1]}B`)
+      continue
+    }
+    // Dotted versions pass through: 3.6 → 3.6.
+    if (/^\d+(?:\.\d+)+$/.test(token)) {
+      words.push(token)
+      continue
+    }
+    words.push(token.charAt(0).toUpperCase() + token.slice(1))
+  }
+  return words.join(' ')
+}
+
+function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
+  groupsByBase: Map<string, AntigravityVariantGroup>
+  orderedEntries: Array<{ kind: 'group'; baseId: string } | { kind: 'single'; id: string }>
+} {
+  const groupsByBase = new Map<string, AntigravityVariantGroup>()
+  const orderedEntries: Array<
+    { kind: 'group'; baseId: string } | { kind: 'single'; id: string }
+  > = []
+  for (const option of options) {
+    const id = option.id
+    if (id === 'custom') continue
+    const effort = antigravityEffortForModelId(id)
+    if (!effort) {
+      orderedEntries.push({ kind: 'single', id })
+      continue
+    }
+    const baseId = id.slice(0, id.length - effort.length - 1)
+    let group = groupsByBase.get(baseId)
+    if (!group) {
+      group = {
+        baseId,
+        displayName: antigravityDisplayName(baseId),
+        variants: [],
+        defaultId: id
+      }
+      groupsByBase.set(baseId, group)
+      orderedEntries.push({ kind: 'group', baseId })
+    }
+    if (!group.variants.some((variant) => variant.id === id)) {
+      group.variants.push({ effort, id })
+    }
+  }
+  for (const group of groupsByBase.values()) {
+    group.variants.sort(
+      (a, b) =>
+        ANTIGRAVITY_EFFORT_ORDER.indexOf(a.effort) - ANTIGRAVITY_EFFORT_ORDER.indexOf(b.effort)
+    )
+  }
+  return { groupsByBase, orderedEntries }
+}
+
+/** One picker row per host model, catalogue order preserved by first
+ * appearance. A grouped row's id follows the selected variant of its family
+ * so the picker's `id === selectedModelId` check works unchanged. */
+export function groupAntigravityModelRows(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  selectedModelId?: string
+): AntigravityGroupedModelRow[] {
+  const { groupsByBase, orderedEntries } = collectGroups(options)
+  return orderedEntries.map((entry) => {
+    if (entry.kind === 'single') {
+      return { id: entry.id, label: antigravityDisplayName(entry.id) }
+    }
+    const group = groupsByBase.get(entry.baseId)!
+    const selected = selectedModelId
+      ? group.variants.find((variant) => variant.id === selectedModelId)
+      : undefined
+    return { id: selected?.id ?? group.defaultId, label: group.displayName }
+  })
+}
+
+/** The variant family containing `modelId`, or null for suffix-less models. */
+export function antigravityVariantGroupForModel(
+  options: ReadonlyArray<CatalogueOptionLike>,
+  modelId: string
+): AntigravityVariantGroup | null {
+  const { groupsByBase } = collectGroups(options)
+  for (const group of groupsByBase.values()) {
+    if (group.variants.some((variant) => variant.id === modelId)) return group
+  }
+  return null
+}

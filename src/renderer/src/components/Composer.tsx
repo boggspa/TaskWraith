@@ -152,6 +152,11 @@ import {
   grokReasoningDisplayLabel
 } from '../lib/composerChipFormat'
 import {
+  antigravityEffortForModelId,
+  antigravityVariantGroupForModel,
+  groupAntigravityModelRows
+} from '../../../shared/antigravityAgyModelGrouping'
+import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
@@ -911,6 +916,27 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const buildPickerModelOptions = (
     targetProvider: ProviderId,
     models: CodexModelOption[],
+    includeCustom: boolean,
+    selectedModelId?: string
+  ): CombinedModelPickerModelOption[] => {
+    if (targetProvider === 'antigravity') {
+      // The agy catalogue lists one bare wire id per reasoning variant
+      // (gemini-3.6-flash-high/-medium/-low) with labels equal to ids. Group
+      // each family into ONE readable row; the reasoning slider swaps the
+      // concrete variant, and the row id follows the selected variant so the
+      // picker's own id === selectedModelId check works unchanged.
+      return [
+        ...groupAntigravityModelRows(models, selectedModelId),
+        ...(includeCustom && !models.some((model) => model.id === 'custom')
+          ? [{ id: 'custom', label: 'Custom…' }]
+          : [])
+      ]
+    }
+    return buildGenericPickerModelOptions(targetProvider, models, includeCustom)
+  }
+  const buildGenericPickerModelOptions = (
+    targetProvider: ProviderId,
+    models: CodexModelOption[],
     includeCustom: boolean
   ): CombinedModelPickerModelOption[] => [
     ...models.map((model) => {
@@ -965,7 +991,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return new Set<string>()
   }
   const buildUnifiedProviderModelGroups = (
-    includeCustom: boolean
+    includeCustom: boolean,
+    selectedModelId?: string
   ): CombinedModelPickerProviderGroup[] =>
     resolveProviderRows(
       grokProviderAvailable,
@@ -980,7 +1007,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       return {
         provider: row.id,
         label: row.label,
-        modelOptions: buildPickerModelOptions(row.id, models, includeCustom),
+        modelOptions: buildPickerModelOptions(row.id, models, includeCustom, selectedModelId),
         fastModeCapableModelIds: fastModeCapableModelIdsForProvider(row.id, models),
         ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
         ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
@@ -3459,10 +3486,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const combinedModelOptions = buildPickerModelOptions(
                             effectiveProvider,
                             effectiveModelOptionsRaw,
-                            !ensembleBinding
+                            !ensembleBinding,
+                            effectiveSelectedModel
                           )
                           const unifiedProviderGroups =
-                            buildUnifiedProviderModelGroups(!ensembleBinding)
+                            buildUnifiedProviderModelGroups(!ensembleBinding, effectiveSelectedModel)
 
                           let combinedReasoningOptions: CombinedModelPickerReasoningOption[] = []
                           let combinedSelectedReasoning = ''
@@ -3533,6 +3561,26 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             ]
                             combinedSelectedReasoning =
                               effectiveCursorReasoning || GROK_45_DEFAULT_REASONING_EFFORT
+                          } else if (effectiveProvider === 'antigravity') {
+                            // Effort lives IN the concrete wire id
+                            // (gemini-3.6-flash-high); the slider lists the
+                            // family's present variants and selecting one
+                            // swaps the selected model id (see
+                            // handleCombinedReasoningChange). Suffix-less
+                            // models (claude-sonnet-4-6) get no slider.
+                            const variantGroup = antigravityVariantGroupForModel(
+                              effectiveModelOptionsRaw,
+                              effectiveSelectedModel
+                            )
+                            if (variantGroup) {
+                              combinedReasoningOptions = variantGroup.variants.map((variant) => ({
+                                value: variant.effort,
+                                label:
+                                  variant.effort.charAt(0).toUpperCase() + variant.effort.slice(1)
+                              }))
+                              combinedSelectedReasoning =
+                                antigravityEffortForModelId(effectiveSelectedModel) || ''
+                            }
                           }
 
                           const handleCombinedModelChange = (nextModel: string) => {
@@ -3878,6 +3926,21 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               rememberCurrentChatComposerSelection({
                                 cursorReasoningEffort: value
                               })
+                            } else if (effectiveProvider === 'antigravity') {
+                              // No separate effort state: the slider swaps
+                              // which concrete variant id of the family is
+                              // selected, so dispatch/persistence/pricing keep
+                              // seeing real wire ids.
+                              const variantGroup = antigravityVariantGroupForModel(
+                                effectiveModelOptionsRaw,
+                                effectiveSelectedModel
+                              )
+                              const target = variantGroup?.variants.find(
+                                (variant) => variant.effort === value
+                              )
+                              if (target && target.id !== effectiveSelectedModel) {
+                                handleCombinedModelChange(target.id)
+                              }
                             }
                           }
 
