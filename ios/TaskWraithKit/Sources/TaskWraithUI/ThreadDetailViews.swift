@@ -59,6 +59,28 @@ enum TranscriptFollowPolicy {
         guard force || autoFollow else { return false }
         return now.timeIntervalSince(lastUserTouchAt) >= userTouchQuietPeriod
     }
+
+    /// Does the bottom sentinel going off-screen mean the USER left the bottom?
+    ///
+    /// Only when a finger was recently on the transcript. The sentinel also
+    /// disappears for reasons that are pure layout — a snapshot swap on send
+    /// replaces the row set, a long streamed message grows the content below the
+    /// viewport, a lazy stack drops the trailing row while re-materializing —
+    /// and treating those as intent LATCHED FOLLOWING OFF MID-RUN: both re-pin
+    /// triggers (`onChange(rows.count)`, `onChange(streamingTexts)`) are gated
+    /// behind `autoFollow`, so nothing could ever set it back. The transcript
+    /// then sat frozen while the reply streamed in below the fold, and only a
+    /// manual jump-to-latest tap recovered it — the 2026-07-28 "picker during
+    /// streaming" stall, which reproduced on a plain send with no picker at all.
+    ///
+    /// Same quiet period as `shouldScroll`, and the same principle: a real
+    /// gesture always wins, a layout event never speaks for the user.
+    static func sentinelDisappearanceEndsFollowing(
+        lastUserTouchAt: Date,
+        now: Date = Date()
+    ) -> Bool {
+        now.timeIntervalSince(lastUserTouchAt) < userTouchQuietPeriod
+    }
 }
 
 private extension View {
@@ -1671,8 +1693,23 @@ struct ThreadDetailView: View {
                     // both edges from the sentinel makes the flag self-correct —
                     // the old drag heuristic set `false` with no way back to
                     // `true` while already at the bottom, so the pill stuck on.
+                    //
+                    // The OFF edge is gated on a recent touch: the sentinel also
+                    // vanishes for pure-layout reasons mid-run, and taking those
+                    // as intent latched following off with no way back (see
+                    // TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing).
+                    // A layout-driven disappearance instead RE-PINS, which is
+                    // what puts the sentinel back on screen.
                     .onAppear { autoFollow = true }
-                    .onDisappear { autoFollow = false }
+                    .onDisappear {
+                        if TranscriptFollowPolicy.sentinelDisappearanceEndsFollowing(
+                            lastUserTouchAt: followPin.lastUserTouchAt)
+                        {
+                            autoFollow = false
+                        } else if autoFollow {
+                            requestFollowPin(proxy, force: true)
+                        }
+                    }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             }
