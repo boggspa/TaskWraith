@@ -635,7 +635,9 @@ export interface MainProcessActionExecutorDependencies {
   ) => Promise<boolean>
   respondQuestionFn?: (
     action: BridgeQuestionReplyAction | BridgeQuestionRejectAction,
-    response: { kind: 'answer'; answer: string } | { kind: 'reject'; reason?: string }
+    response:
+      | { kind: 'answer'; answer: string; isCustom?: boolean }
+      | { kind: 'reject'; reason?: string }
   ) => Promise<boolean>
   /** Callback the executor uses to dispatch an iOS-initiated agent run.
    * The caller in main/index.ts looks up the workspace path by id,
@@ -994,7 +996,11 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     )
     try {
       const resolved = this.deps.respondQuestionFn
-        ? await this.deps.respondQuestionFn(action, { kind: 'answer', answer: action.answer })
+        ? await this.deps.respondQuestionFn(action, {
+            kind: 'answer',
+            answer: action.answer,
+            isCustom: action.isCustom
+          })
         : await this.deps.respondApprovalFn!(action.promptId, 'accept', {
             userInput: action.answer
           })

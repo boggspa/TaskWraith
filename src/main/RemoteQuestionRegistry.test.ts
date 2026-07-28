@@ -213,4 +213,26 @@ describe('RemoteQuestionRegistry', () => {
     registry.answer('q1', 'x'.repeat(9000))
     expect(resolved).toEqual({ answer: 'x'.repeat(8000), is_custom: false })
   })
+
+  it('stamps the answer origin on the answered event, defaulting to desktop', () => {
+    const registry = new RemoteQuestionRegistry({
+      setTimer: () => 'timer',
+      clearTimer: vi.fn()
+    })
+    const events: Array<{ type: string; origin?: string; isCustom?: boolean }> = []
+    registry.subscribe((event) => {
+      events.push({
+        type: event.type,
+        ...(event.type === 'answered' ? { origin: event.origin, isCustom: event.isCustom } : {})
+      })
+    })
+    registry.register({ questionId: 'q-desktop', question: 'pick', resolve: () => {} })
+    registry.answer('q-desktop', 'a', true)
+    registry.register({ questionId: 'q-remote', question: 'pick', resolve: () => {} })
+    registry.answerScoped('q-remote', {}, 'chip answer', false, 'remote')
+    expect(events.filter((event) => event.type === 'answered')).toEqual([
+      { type: 'answered', origin: 'desktop', isCustom: true },
+      { type: 'answered', origin: 'remote', isCustom: false }
+    ])
+  })
 })

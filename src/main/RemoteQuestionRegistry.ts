@@ -43,9 +43,20 @@ export interface RegisterRemoteQuestionInput {
   resolve: (result: RemoteQuestionResolution) => void
 }
 
+/** Who resolved the question. The desktop modal writes its own transcript
+ * reply row in the renderer; every other origin relies on the registry's
+ * subscriber to persist one, so the event must say which side answered. */
+export type RemoteQuestionAnswerOrigin = 'desktop' | 'remote'
+
 export type RemoteQuestionRegistryEvent =
   | { type: 'registered'; record: RemoteQuestionRecord }
-  | { type: 'answered'; record: RemoteQuestionRecord; answer: string; isCustom: boolean }
+  | {
+      type: 'answered'
+      record: RemoteQuestionRecord
+      answer: string
+      isCustom: boolean
+      origin: RemoteQuestionAnswerOrigin
+    }
   | { type: 'rejected' | 'expired' | 'cancelled'; record: RemoteQuestionRecord; reason: string }
 
 export interface RemoteQuestionRegistryOptions {
@@ -143,7 +154,12 @@ export class RemoteQuestionRegistry {
     return { ...record }
   }
 
-  answer(questionId: string, answer: string, isCustom = false): RemoteQuestionResolveResult {
+  answer(
+    questionId: string,
+    answer: string,
+    isCustom = false,
+    origin: RemoteQuestionAnswerOrigin = 'desktop'
+  ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
     const record = this.resolvePending(questionId, 'answered')
@@ -157,7 +173,8 @@ export class RemoteQuestionRegistry {
       type: 'answered',
       record,
       answer: sanitizedAnswer,
-      isCustom: Boolean(isCustom)
+      isCustom: Boolean(isCustom),
+      origin
     })
     return { ok: true, record }
   }
@@ -166,14 +183,15 @@ export class RemoteQuestionRegistry {
     questionId: string,
     scope: RemoteQuestionResolutionScope,
     answer: string,
-    isCustom = false
+    isCustom = false,
+    origin: RemoteQuestionAnswerOrigin = 'desktop'
   ): RemoteQuestionResolveResult {
     const pending = this.pending.get(questionId)
     if (!pending) return { ok: false, reason: 'not-found' }
     if (!recordMatchesScope(pending.record, scope)) {
       return { ok: false, reason: 'scope-mismatch', record: { ...pending.record } }
     }
-    return this.answer(questionId, answer, isCustom)
+    return this.answer(questionId, answer, isCustom, origin)
   }
 
   reject(questionId: string, reason = 'user-dismissed'): RemoteQuestionResolveResult {

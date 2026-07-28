@@ -1905,10 +1905,14 @@ public enum BridgeAction {
         ])
     }
 
-    /// Answer an agent question.
+    /// Answer an agent question. `isCustom` is false for a tapped option
+    /// chip, true for typed free text — the Mac persists it so the settled
+    /// card can tick the chosen chip instead of labelling every remote
+    /// answer a custom one. Older hosts ignore the extra key.
     public static func questionReply(
         questionId: String, answer: String, workspaceId: String, threadId: String,
         runId: String? = nil,
+        isCustom: Bool = true,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1918,6 +1922,7 @@ public enum BridgeAction {
             "kind": "questionReply", "actionId": actionId, "promptId": questionId,
             "questionId": questionId,
             "answer": answer, "workspaceId": workspaceId, "threadId": threadId,
+            "isCustom": isCustom,
         ]
         if let runId, !runId.isEmpty {
             payload["runId"] = runId

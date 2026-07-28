@@ -6171,7 +6171,7 @@ public final class RemoteSessionModel: ObservableObject {
         }
     #endif
 
-    public func answer(_ card: MobileQuestionCard, _ text: String) {
+    public func answer(_ card: MobileQuestionCard, _ text: String, isCustom: Bool = true) {
         guard let promptId = card.resolvedId,
             let context = replyContext(
                 workspaceId: card.workspaceId, threadId: card.threadId, runId: card.runId)
@@ -6183,7 +6183,7 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.questionReply(
                 questionId: promptId, answer: text, workspaceId: ws, threadId: thread,
-                runId: context.runId),
+                runId: context.runId, isCustom: isCustom),
             successLabel: "Answer sent.",
             onAck: { [weak self] accepted in
                 guard let self, !accepted else { return }

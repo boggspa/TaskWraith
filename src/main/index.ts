@@ -2335,6 +2335,46 @@ remoteQuestionRegistry.subscribe((event) => {
             : record.cancellationReason
     })
   }
+  // A remote answer resolves the parked tool but, unlike the desktop modal,
+  // has no renderer to append the `agentQuestionReply` transcript row — and
+  // that row is the ONLY evidence both platforms' tombstone classifiers
+  // accept, so a phone-answered question settled as "Skipped — no answer
+  // sent" (F11). Persist the reply here, in the one place that fires for
+  // every answer origin, shaped exactly like the desktop writer's row and
+  // idempotent on its id in case a desktop-origin path ever double-fires.
+  if (event.type === 'answered' && event.origin === 'remote' && record.threadId) {
+    try {
+      const chat = AppStore.getChat(record.threadId)
+      const replyId = `agent-question-reply-${record.questionId}`
+      if (chat && !chat.messages?.some((message) => message.id === replyId)) {
+        const replyMessage: ChatMessage = {
+          id: replyId,
+          role: 'user',
+          content: event.answer,
+          timestamp: record.resolvedAt || new Date().toISOString(),
+          metadata: {
+            kind: 'agentQuestionReply',
+            questionId: record.questionId,
+            respondedToMessageId: `agent-question-${record.questionId}`,
+            isCustomAnswer: event.isCustom
+          }
+        }
+        const updated: ChatRecord = {
+          ...chat,
+          messages: [...(chat.messages || []), replyMessage],
+          updatedAt: Date.now()
+        }
+        AppStore.saveChat(updated)
+        broadcastChatUpdated(updated)
+        pushRemoteThreadSnapshotForChat?.(updated)
+      }
+    } catch (err) {
+      console.error(
+        `[remote-question] failed to persist remote answer reply for ${record.questionId}:`,
+        err
+      )
+    }
+  }
 })
 
 async function revealPathInFinder(pathRaw: unknown): Promise<{ ok: boolean; error?: string }> {
@@ -37953,7 +37993,10 @@ if (isGeminiMcpBridgeProcess) {
               action.promptId,
               scope,
               response.answer,
-              true
+              // Older phones omit the chip-vs-typed flag; treat absent as a
+              // typed answer (the pre-flag labelling) so nothing regresses.
+              response.isCustom ?? true,
+              'remote'
             ).ok
           }
           return remoteQuestionRegistry.rejectScoped(

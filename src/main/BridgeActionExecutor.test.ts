@@ -1597,6 +1597,16 @@ describe('MainProcessActionExecutor.executeQuestionReply', () => {
     expect(result.executed).toBe(true)
   })
 
+  it('forwards the chip-vs-typed flag to respondQuestionFn', async () => {
+    const respondQuestionFn = vi.fn().mockResolvedValue(true)
+    const executor = new MainProcessActionExecutor({ cancelRunFn, respondQuestionFn })
+    await executor.executeQuestionReply({ ...sample.questionReply, isCustom: false })
+    expect(respondQuestionFn).toHaveBeenCalledWith(
+      expect.objectContaining({ isCustom: false }),
+      expect.objectContaining({ kind: 'answer', answer: 'yes', isCustom: false })
+    )
+  })
+
   it('reports executed=false when respondApprovalFn returns false', async () => {
     const respondApprovalFn = vi.fn().mockResolvedValue(false)
     const executor = new MainProcessActionExecutor({ cancelRunFn, respondApprovalFn })
