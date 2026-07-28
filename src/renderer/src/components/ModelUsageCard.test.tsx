@@ -16,6 +16,40 @@ import {
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import type { UsageRecord } from '../../../main/store/types'
 import { parseGrokUsage } from '../../../main/grok/GrokUsage'
+import {
+  accumulate,
+  applyAnchor,
+  estimateQuota,
+  startCycle
+} from '../../../main/mistral/MistralQuotaEstimate'
+import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
+
+const MISTRAL_CYCLE_START = new Date('2026-07-01T00:00:00.000Z')
+
+function mistralSnapshot(
+  spentUsd: number,
+  source: 'estimated' | 'mistral' = 'estimated'
+): MistralQuotaSnapshot {
+  const cycle =
+    source === 'mistral'
+      ? applyAnchor(startCycle(MISTRAL_CYCLE_START), {
+          allowanceUsd: 10,
+          spentUsd,
+          observedAt: MISTRAL_CYCLE_START.toISOString(),
+          cycleResetsAt: '2026-08-01T00:00:00.000Z'
+        })
+      : accumulate(startCycle(MISTRAL_CYCLE_START), {
+          costUsd: spentUsd,
+          totalTokens: 200_000
+        })
+  const plan = source === 'mistral' ? 'pro' : 'unknown'
+  return {
+    estimate: estimateQuota(cycle, plan, MISTRAL_CYCLE_START),
+    plan,
+    turns: cycle.turns,
+    totalTokens: cycle.totalTokens
+  }
+}
 
 function quotaEntry(overrides: Partial<ModelUsageAggregate> = {}): ModelUsageAggregate {
   return {
@@ -397,6 +431,41 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('Cursor API: 100%')
     expect(html).toContain('provider-claude is-danger')
     expect(html).toContain('provider-grok')
+    expect(html).not.toContain('>Mistral</th>')
+    expect(html).not.toContain('>MO</th>')
+  })
+
+  it('adds a conditional Mistral monthly band without fabricating percentage precision', () => {
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[]}
+        mistralQuota={{ snapshot: mistralSnapshot(8), loading: false }}
+      />
+    )
+
+    expect(html).toContain('>Mistral</th>')
+    expect(html).toContain('>MO</th>')
+    expect(html).toContain('>~NEAR</td>')
+    expect(html).toContain('provider-mistral is-warning is-estimated')
+    expect(html).toContain('~$8.00 of ~$9.25')
+    expect(html).toContain('resets 1 Aug')
+    expect(html).toContain('estimated locally')
+    expect(html).not.toMatch(/>\d+%<\/td>/)
+  })
+
+  it('drops the compact Mistral estimate hedge for Mistral-sourced figures', () => {
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[]}
+        mistralQuota={{ snapshot: mistralSnapshot(8, 'mistral'), loading: false }}
+      />
+    )
+
+    expect(html).toContain('>NEAR</td>')
+    expect(html).not.toContain('>~NEAR</td>')
+    expect(html).toContain('$8.00 of $10.00')
+    expect(html).toContain('Mistral-sourced figures')
+    expect(html).not.toContain('provider-mistral is-warning is-estimated')
   })
 })
 

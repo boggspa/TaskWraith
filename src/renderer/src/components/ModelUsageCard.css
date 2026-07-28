@@ -583,6 +583,17 @@
   --compact-quota-color: var(--provider-grok-color);
 }
 
+.model-usage-compact-cell.provider-mistral {
+  --compact-quota-color: var(--provider-mistral-color);
+}
+
+.model-usage-compact-cell.provider-mistral.is-estimated {
+  opacity: 0.72;
+  font-style: italic;
+  text-decoration: underline dotted color-mix(in srgb, currentColor 48%, transparent);
+  text-underline-offset: 2px;
+}
+
 .model-usage-compact-cell.is-warning {
   --compact-quota-color: var(--quota-warning-color, #f59e0b);
 }

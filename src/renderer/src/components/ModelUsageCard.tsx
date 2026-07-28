@@ -60,7 +60,11 @@ import {
   useGrokCreditsMeterState,
   type GrokCreditsMeterViewProps
 } from './GrokCreditsMeter'
-import { MistralQuotaMeterView, useMistralQuotaMeterState } from './MistralQuotaMeter'
+import {
+  MistralQuotaMeterView,
+  useMistralQuotaMeterState,
+  type MistralQuotaMeterViewProps
+} from './MistralQuotaMeter'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { UsageHeatmap } from './UsageHeatmap'
@@ -149,19 +153,21 @@ const SIDEBAR_USAGE_MIN_HEIGHT = 220
 // overflow the viewport).
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
-const COMPACT_USAGE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
+const COMPACT_USAGE_BASE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
 const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
   codex: 'Codex',
   claude: 'Claude',
   kimi: 'Kimi',
   cursor: 'Cursor',
-  grok: 'Grok'
+  grok: 'Grok',
+  mistral: 'Mistral'
 }
 const COMPACT_USAGE_ROWS = [
   { key: 'fiveHour', label: '5H' },
   { key: 'weekly', label: 'WK' },
   { key: 'extraOne', label: 'X1' },
-  { key: 'extraTwo', label: 'X2' }
+  { key: 'extraTwo', label: 'X2' },
+  { key: 'monthly', label: 'MO' }
 ] as const
 
 type CompactUsageRowKey = (typeof COMPACT_USAGE_ROWS)[number]['key']
@@ -171,6 +177,8 @@ interface CompactQuotaCell {
   fraction: number | null
   title: string
   state?: 'loading'
+  estimated?: boolean
+  tone?: 'warning' | 'danger'
 }
 
 function clampSidebarUsageHeight(height: number, maxHeight = SIDEBAR_USAGE_MAX_HEIGHT): number {
@@ -235,10 +243,12 @@ function fillFractionForWindow(window: UsageWindowAggregate): number {
   return 0
 }
 
-function compactQuotaTone(fraction: number | null): string {
-  if (fraction === null) return ''
-  if (fraction >= 0.98) return ' is-danger'
-  if (fraction >= 0.9) return ' is-warning'
+function compactQuotaTone(cell: CompactQuotaCell | undefined): string {
+  if (cell?.tone === 'danger') return ' is-danger'
+  if (cell?.tone === 'warning') return ' is-warning'
+  if (cell?.fraction == null) return ''
+  if (cell.fraction >= 0.98) return ' is-danger'
+  if (cell.fraction >= 0.9) return ' is-warning'
   return ''
 }
 
@@ -383,16 +393,73 @@ function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): Comp
   }
 }
 
+const COMPACT_MISTRAL_BAND_LABELS = {
+  quiet: 'LOW',
+  moderate: 'MOD',
+  heavy: 'HIGH',
+  'near-limit': 'NEAR',
+  exceeded: 'OVER'
+} as const
+
+function compactMistralCell(
+  mistralQuota: MistralQuotaMeterViewProps | undefined
+): CompactQuotaCell | null {
+  const snapshot = mistralQuota?.snapshot
+  if (!snapshot) return null
+
+  const { estimate } = snapshot
+  const measured = estimate.vendorReported === true
+  const spendFromVendor = estimate.confidence === 'anchored' || estimate.confidence === 'reported'
+  const ceilingFromVendor =
+    estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
+  const resetText = formatResetShort({ resetAt: estimate.cycleResetsAt })
+  const spentText = `${spendFromVendor ? '' : '~'}$${estimate.spentUsd.toFixed(2)}`
+  const ceilingText = `${ceilingFromVendor ? '' : '~'}$${estimate.estimatedCeilingUsd.toFixed(2)}`
+  const sourceText = measured ? 'Mistral-sourced figures' : 'estimated locally'
+  const title = [
+    `Mistral monthly: ${estimate.label}`,
+    `${spentText} of ${ceilingText}`,
+    resetText ? `resets ${resetText}` : '',
+    sourceText,
+    mistralQuota.loading ? 'refreshing' : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const fraction = Math.max(0, Math.min(1, estimate.usedPercent / 100))
+
+  return {
+    value: `${measured ? '' : '~'}${COMPACT_MISTRAL_BAND_LABELS[estimate.band]}`,
+    fraction,
+    title,
+    estimated: !measured,
+    tone:
+      estimate.band === 'exceeded'
+        ? 'danger'
+        : estimate.band === 'near-limit'
+          ? 'warning'
+          : undefined
+  }
+}
+
 export function CompactModelUsageGrid({
   quotaEntries,
-  grokUsage
+  grokUsage,
+  mistralQuota
 }: {
   quotaEntries: ModelUsageAggregate[]
   grokUsage?: GrokCreditsMeterViewProps
+  mistralQuota?: MistralQuotaMeterViewProps
 }) {
+  const mistralCell = compactMistralCell(mistralQuota)
+  const providers = mistralCell
+    ? [...COMPACT_USAGE_BASE_PROVIDERS, 'mistral' as const]
+    : COMPACT_USAGE_BASE_PROVIDERS
+  const rows = mistralCell
+    ? COMPACT_USAGE_ROWS
+    : COMPACT_USAGE_ROWS.filter((row) => row.key !== 'monthly')
   const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
   const cellsByProvider = new Map(
-    COMPACT_USAGE_PROVIDERS.map((provider) => [
+    providers.map((provider) => [
       provider,
       compactCellsForEntry(provider, entriesByProvider.get(provider))
     ])
@@ -401,13 +468,19 @@ export function CompactModelUsageGrid({
   if (grokCell) {
     cellsByProvider.set('grok', { ...cellsByProvider.get('grok'), weekly: grokCell })
   }
+  if (mistralCell) {
+    cellsByProvider.set('mistral', {
+      ...cellsByProvider.get('mistral'),
+      monthly: mistralCell
+    })
+  }
 
   return (
     <table className="model-usage-compact-grid" aria-label="Compact model usage">
       <thead>
         <tr>
           <th scope="col" className="model-usage-compact-corner" aria-label="Window" />
-          {COMPACT_USAGE_PROVIDERS.map((provider) => (
+          {providers.map((provider) => (
             <th key={provider} scope="col" className={`provider-${provider}`}>
               {COMPACT_USAGE_PROVIDER_LABELS[provider]}
             </th>
@@ -415,17 +488,19 @@ export function CompactModelUsageGrid({
         </tr>
       </thead>
       <tbody>
-        {COMPACT_USAGE_ROWS.map((row) => (
+        {rows.map((row) => (
           <tr key={row.key}>
             <th scope="row">{row.label}</th>
-            {COMPACT_USAGE_PROVIDERS.map((provider) => {
+            {providers.map((provider) => {
               const cell = cellsByProvider.get(provider)?.[row.key]
               return (
                 <td
                   key={`${row.key}-${provider}`}
                   className={`model-usage-compact-cell provider-${provider}${
-                    cell ? compactQuotaTone(cell.fraction) : ' is-empty'
-                  }${cell?.state === 'loading' ? ' is-loading' : ''}`}
+                    cell ? compactQuotaTone(cell) : ' is-empty'
+                  }${cell?.state === 'loading' ? ' is-loading' : ''}${
+                    cell?.estimated ? ' is-estimated' : ''
+                  }`}
                   title={
                     cell?.title ||
                     `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`
@@ -1223,7 +1298,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
       </div>
       <div className="model-usage-liquid-card">
         {showCollapsedCompactUsage && (
-          <CompactModelUsageGrid quotaEntries={quotaEntries} grokUsage={grokUsage} />
+          <CompactModelUsageGrid
+            quotaEntries={quotaEntries}
+            grokUsage={grokUsage}
+            mistralQuota={mistralQuota}
+          />
         )}
         <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
           <div className="model-usage-collapsible-inner">
