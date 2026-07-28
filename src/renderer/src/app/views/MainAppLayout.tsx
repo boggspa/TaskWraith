@@ -10,6 +10,7 @@ import {
 import { buildSideChatComposerProps } from '../../lib/sideChatComposer'
 import { activeEnsembleRoundForComposer } from '../../lib/chatBusyState'
 import { resolveSlashParticipantForChat } from '../../lib/resolveSlashParticipant'
+import { buildEnsembleProviderBlendStyle } from '../../lib/multiviewEnsembleComposer'
 import { SIDE_CHAT_SELECTED_PARTICIPANT_ID_METADATA_KEY } from '../../lib/sideChatLifecycle'
 import {
   MAX_ROSTER_PRESET_PARTICIPANTS,
@@ -919,16 +920,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         selectedParticipant: sideSelectedParticipant,
         effectiveSelectedParticipantId: sideSelectedParticipant?.id || null,
         ensembleEnabledParticipantsForCurrent: sideEnabledParticipants,
-        ensembleBlendStyle: sideEnabledParticipants.reduce(
-          (style: Record<string, string>, participant: any, index: number) => {
-            if (index < 4) {
-              style[`--ensemble-provider-${index + 1}`] =
-                `var(--provider-${participant.provider}-color)`
-            }
-            return style
-          },
-          {}
-        ),
+        ensembleBlendStyle: buildEnsembleProviderBlendStyle(sideEnabledParticipants),
         currentEnsembleOrchestrationMode: sideCurrentOrchestrationMode,
         activeEnsembleOrchestrationMode: sideActiveOrchestrationMode,
         currentEnsembleFanoutPolicy: sideCurrentFanoutPolicy,

@@ -289,7 +289,6 @@ import {
 import { chatHasInFlightThinkingWork } from './lib/chatThinkingState'
 import { humaniseModelId } from './lib/modelDisplayName'
 import { mergeOllamaModelCatalog } from './lib/ollamaModelCatalog'
-import { resolveOllamaDisplayBrand } from './lib/ollamaDisplayBrand'
 import { normalizeGeminiResumeTarget, resolveGeminiResumeForRun } from './lib/geminiResume'
 import {
   buildChatTokenTally,
@@ -479,7 +478,10 @@ import {
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
 import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
-import { deriveActiveEnsembleWorkingPresentation } from './lib/workingIndicatorPresentation'
+import {
+  deriveActiveEnsembleWorkingPresentation,
+  resolveWorkingIndicatorProviderPresentation
+} from './lib/workingIndicatorPresentation'
 import {
   buildProviderChangeParticipantPatch,
   getDefaultEnsembleParticipantConfig,
@@ -810,6 +812,7 @@ import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParti
 import { resolveSoleEnsembleSoloCandidate } from './lib/ensembleRosterFloor'
 import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
 import {
+  buildEnsembleProviderBlendStyle,
   buildMultiviewEnsembleSelectionPruneSnapshot,
   buildMultiviewEnsembleComposerProjection,
   isMultiviewEnsembleParticipantSelectionValid,
@@ -11179,6 +11182,12 @@ function App(): React.JSX.Element {
                       (participant) => participant.provider === provider
                     ))
               : undefined
+          const failureModel =
+            targetRun?.actualModel ||
+            targetRun?.requestedModel ||
+            roundParticipant?.model ||
+            ensembleParticipant?.model ||
+            ''
           const failureSnippet = buildProviderRunFailureSnippet({
             provider,
             exitCode,
@@ -11203,12 +11212,14 @@ function App(): React.JSX.Element {
                 failureAt: completedAt,
                 headline: failureSnippet.headline,
                 lines: failureSnippet.lines,
+                ...(failureModel ? { model: failureModel } : {}),
                 ...(failureSnippet.hint ? { hint: failureSnippet.hint } : {}),
                 ...(ensembleParticipant
                   ? {
                       ensembleProvider: ensembleParticipant.provider,
                       ensembleRole: ensembleParticipant.role,
-                      ensembleParticipantId: ensembleParticipant.id
+                      ensembleParticipantId: ensembleParticipant.id,
+                      ...(failureModel ? { ensembleModel: failureModel } : {})
                     }
                   : {})
               }
@@ -19790,12 +19801,9 @@ function App(): React.JSX.Element {
     if (!isCurrentEnsembleChat || ensembleEnabledParticipantsForCurrent.length === 0) {
       return undefined
     }
-    const style: CSSProperties = {}
-    ensembleEnabledParticipantsForCurrent.slice(0, 4).forEach((participant, idx) => {
-      ;(style as Record<string, string>)[`--ensemble-provider-${idx + 1}`] =
-        `var(--provider-${participant.provider}-color)`
-    })
-    return style
+    return buildEnsembleProviderBlendStyle(
+      ensembleEnabledParticipantsForCurrent
+    ) as CSSProperties
   }, [isCurrentEnsembleChat, ensembleEnabledParticipantsForCurrent])
   const chatOwnedSelectedParticipantId = currentChat
     ? resolveSlashParticipantForChat(currentChat)?.id || null
@@ -20572,29 +20580,24 @@ function App(): React.JSX.Element {
                 participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
             })
           : ''
-        const ollamaBrand =
-          participant.provider === 'ollama' && participant.model
-            ? resolveOllamaDisplayBrand(
-                participant.model,
-                humaniseModelId('ollama', participant.model)
-              )
-            : null
+        const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+          participant.provider,
+          participant.model
+        )
+        const workingModelBadge = providerPresentation.modelBadge || baseModelName
         return {
-          thinkingProviderLabel:
-            ollamaBrand?.providerLabel || getProviderLabel(participant.provider),
+          thinkingProviderLabel: providerPresentation.providerLabel,
           thinkingProvider: participant.provider as ProviderId | null,
-          thinkingProviderClass: ollamaBrand?.providerClass || (participant.provider as string),
+          thinkingProviderClass: providerPresentation.providerClass,
           // Show the short model name alongside the "Codex Thinking…"
           // chip so the user can see at a glance which configured
           // model is actually producing the in-flight output. Empty
           // for participants without a custom model (legacy chats).
-          thinkingModelBadge: ollamaBrand?.modelLabel
-            ? ollamaBrand.modelLabel
-            : baseModelName
-              ? thinkingReasoningSuffix
-                ? `${baseModelName} ${thinkingReasoningSuffix}`
-                : baseModelName
-              : null
+          thinkingModelBadge: workingModelBadge
+            ? thinkingReasoningSuffix
+              ? `${workingModelBadge} ${thinkingReasoningSuffix}`
+              : workingModelBadge
+            : null
         }
       }
     }
@@ -20614,20 +20617,22 @@ function App(): React.JSX.Element {
         thinkingModelBadge: null as string | null
       }
     }
-    if (currentProvider === 'ollama') {
+    if (currentProvider === 'ollama' || currentProvider === 'pi') {
       const latestRun = currentChat?.runs?.[currentChat.runs.length - 1]
       const model =
         latestRun?.actualModel ||
         latestRun?.requestedModel ||
         (selectedModelType === 'custom' ? customModel : selectedModelType) ||
-        ollamaDefaultModel
-      const modelLabel = humaniseModelId('ollama', model)
-      const brand = resolveOllamaDisplayBrand(model, modelLabel)
+        (currentProvider === 'pi' ? PI_DEFAULT_MODEL_WIRE_ID : ollamaDefaultModel)
+      const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+        currentProvider,
+        model
+      )
       return {
-        thinkingProviderLabel: brand?.providerLabel || modelLabel || currentProviderLabel,
+        thinkingProviderLabel: providerPresentation.providerLabel,
         thinkingProvider: currentProvider as ProviderId | null,
-        thinkingProviderClass: brand?.providerClass || currentProvider,
-        thinkingModelBadge: brand?.modelLabel || null
+        thinkingProviderClass: providerPresentation.providerClass,
+        thinkingModelBadge: providerPresentation.modelBadge
       }
     }
     return {
@@ -20670,32 +20675,29 @@ function App(): React.JSX.Element {
   const sideRunCompleteNotice = sideChat
     ? deriveChatRunCompleteNotice(sideChat, isSideChatRunning)
     : null
-  const sideThinkingOllamaModel =
-    sideProvider === 'ollama'
+  const sideThinkingModel =
+    sideProvider === 'ollama' || sideProvider === 'pi'
       ? sideRun?.actualModel ||
         sideRun?.requestedModel ||
         sideChat?.runs?.[sideChat.runs.length - 1]?.actualModel ||
         sideChat?.runs?.[sideChat.runs.length - 1]?.requestedModel ||
         ''
       : ''
-  const sideThinkingOllamaModelLabel =
-    sideProvider === 'ollama' ? humaniseModelId('ollama', sideThinkingOllamaModel) : ''
-  const sideThinkingOllamaBrand =
-    sideProvider === 'ollama'
-      ? resolveOllamaDisplayBrand(sideThinkingOllamaModel, sideThinkingOllamaModelLabel)
-      : null
+  const sideThinkingPresentation = resolveWorkingIndicatorProviderPresentation(
+    sideProvider,
+    sideThinkingModel
+  )
   const sideThinkingProviderLabel =
     sideChat?.chatKind === 'ensemble'
       ? 'Ensemble'
-      : sideThinkingOllamaBrand?.providerLabel ||
-        sideThinkingOllamaModelLabel ||
-        getProviderLabel(sideProvider)
+      : sideThinkingPresentation.providerLabel
   const sideThinkingProvider = sideChat?.chatKind === 'ensemble' ? null : sideProvider
   const sideThinkingProviderClass =
     sideChat?.chatKind === 'ensemble'
       ? null
-      : sideThinkingOllamaBrand?.providerClass || sideProvider
-  const sideThinkingModelBadge = sideThinkingOllamaBrand?.modelLabel || null
+      : sideThinkingPresentation.providerClass
+  const sideThinkingModelBadge =
+    sideChat?.chatKind === 'ensemble' ? null : sideThinkingPresentation.modelBadge
   const sidePendingProviderChange =
     sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
   const sideComposerSourceChat =
