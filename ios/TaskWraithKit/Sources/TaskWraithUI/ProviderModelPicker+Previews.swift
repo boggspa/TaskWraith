@@ -220,6 +220,111 @@ private struct ProviderModelPickerPreviewHost: View {
     }
 }
 
+// MARK: - Participant editor in a keyboard-raised gap
+
+/// The ensemble participant editor as a phone with the keyboard up actually
+/// presents it.
+///
+/// On a compact width that popover is pinned ABOVE its anchor (`arrowEdge:
+/// .bottom`), and the anchor is a roster chip riding the top of a composer that
+/// the keyboard has already pushed up the screen — so the panel's entire world
+/// is the gap between that chip and the safe-area top. A popover neither
+/// scrolls nor shrinks to fit: hand it something taller and the system centres
+/// it in the bounds it can give and CLIPS both ends, which the fixed-height
+/// `.clipped()` window below reproduces exactly.
+///
+/// Numbers are a 402x874 phone (59pt top inset, 336pt keyboard) with a focused
+/// composer roughly 250pt tall, fed through the same `twPopoverAnchoredHeight`
+/// the app uses. Toggle `usesMeasuredBudget` to see the failure and the fix:
+/// unmeasured, the panel sizes against the whole safe area and loses its
+/// Enabled/authority rows off the top and its sidecar controls off the bottom.
+private struct RosterEditorGapPreviewHost: View {
+    /// false = the pre-fix behaviour (no host measurement, safe-area estimate).
+    let usesMeasuredBudget: Bool
+
+    private static let windowHeight: CGFloat = 874
+    private static let safeTopY: CGFloat = 59
+    private static let keyboardHeight: CGFloat = 336
+    private static let composerHeight: CGFloat = 250
+    private static let anchorHeight: CGFloat = 34
+    private static var anchorMinY: CGFloat { windowHeight - keyboardHeight - composerHeight }
+    /// What the balloon can occupy on screen, before its own chrome allowance.
+    private static var gapHeight: CGFloat { anchorMinY - safeTopY }
+
+    private static var budget: CGFloat {
+        twPopoverAnchoredHeight(
+            anchorMinY: anchorMinY,
+            anchorMaxY: anchorMinY + anchorHeight,
+            arrowEdge: .bottom,
+            safeTopY: safeTopY,
+            safeBottomY: windowHeight - keyboardHeight,
+            sideAnchoredHeight: 389,
+            chromeAllowance: 56)
+    }
+
+    @State private var entry = RemoteSessionModel.RosterDraftEntry(
+        id: "preview-seat",
+        provider: "claude",
+        model: "claude-opus-5",
+        role: "Reviewer",
+        brief: "",
+        enabled: true,
+        reasoningEffort: "high",
+        stageRole: "reviewer")
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: Self.safeTopY)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(TWTheme.statusFailed.opacity(0.5), style: .init(dash: [4, 3]))
+                RosterParticipantEditorPopover(
+                    entry: entry,
+                    catalogs: ProviderModelPickerPreviewData.catalogs,
+                    canRemove: true,
+                    onApply: { entry = $0 },
+                    onRemove: {},
+                    spaceBudget: usesMeasuredBudget ? Self.budget : nil
+                )
+            }
+            // The balloon's world: everything drawn outside is what the system
+            // silently cuts off, with no scroll affordance to say so.
+            .frame(height: Self.gapHeight)
+            .clipped()
+            Text(
+                usesMeasuredBudget
+                    ? "measured budget \(Int(Self.budget))pt in a \(Int(Self.gapHeight))pt gap"
+                    : "no budget — panel sizes against the safe area"
+            )
+            .font(.caption2)
+            .foregroundStyle(TWTheme.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            // Fake composer + keyboard so the gap reads at true scale.
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.06))
+                .frame(height: Self.composerHeight)
+                .overlay(alignment: .top) {
+                    Text("composer (roster chip anchors here)")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .padding(.top, 8)
+                }
+                .padding(.horizontal, 10)
+            Rectangle()
+                .fill(Color.white.opacity(0.10))
+                .frame(height: Self.keyboardHeight)
+                .overlay(
+                    Text("keyboard")
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted))
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .background(Color(red: 0.05, green: 0.05, blue: 0.06).ignoresSafeArea())
+        .preferredColorScheme(.dark)
+    }
+}
+
 // MARK: - Previews
 // Use the Canvas device menu (iPhone SE / 16 / iPad) to compare squish vs roomy.
 // "Open panel · narrow 360" forces a phone-ish content width without changing the
@@ -235,6 +340,14 @@ private struct ProviderModelPickerPreviewHost: View {
 
 #Preview("Open panel · roomy 520 (pad-ish)") {
     ProviderModelPickerPreviewHost(mode: .openPanel, maxContentWidth: 520)
+}
+
+#Preview("Participant editor · keyboard up (clipped)") {
+    RosterEditorGapPreviewHost(usesMeasuredBudget: false)
+}
+
+#Preview("Participant editor · keyboard up (budgeted)") {
+    RosterEditorGapPreviewHost(usesMeasuredBudget: true)
 }
 
 #Preview("Chip · full label") {

@@ -1431,7 +1431,79 @@ private func twNormalizeFastModeSelection(
 /// Grabber block of the picker panel: 4pt capsule + 6pt above + 1pt below.
 /// File scope because `ProviderModelPickerPanel` is generic over its
 /// `topContent`, and generic types cannot hold static stored properties.
-private let twPickerGrabberHeight: CGFloat = 11
+/// Module-scope rather than file-private so the height clamp below — and its
+/// tests — can charge for it without re-typing the number.
+let twPickerGrabberHeight: CGFloat = 11
+
+/// Vertical room for a popover balloon PINNED to one side of its anchor.
+///
+/// Pure geometry (window numbers in, points out) so the rule is unit-testable
+/// without a live `UIWindow`; `TWPopoverSpace` supplies the real numbers.
+///
+/// `arrowEdge` names the edge of the POPOVER that carries the arrow, so
+/// `.bottom` means the panel sits ABOVE its anchor and `.top` means below it.
+/// A pinned balloon cannot use the whole safe height — only the gap on the side
+/// it opens toward — and that difference is what broke the composer's roster
+/// chip with the keyboard up: "safe height minus keyboard" reads ~390pt on a
+/// 6.3" phone, while a chip pinned to the top of a keyboard-raised composer has
+/// barely 200pt above it. The panel took its full ~300pt, the system clipped
+/// the overflow at BOTH ends (a fixed-size popover child is centred in whatever
+/// bounds it is actually given), and the rows inside the clipped band could not
+/// be scrolled back into view: the list scrolls inside a viewport whose top is
+/// off the balloon entirely.
+///
+/// The upward case carries no keyboard term BY DESIGN. The keyboard raises the
+/// composer and therefore the anchor, and this measures the anchor — charging
+/// for the keyboard again would bill it twice and starve the panel. Downward is
+/// the opposite: there the keyboard is exactly the floor the balloon grows into.
+///
+/// `sideAnchoredHeight` answers `.leading`/`.trailing`: a side-anchored balloon
+/// is centred vertically on its anchor and grows both ways, so the whole safe
+/// height genuinely is available (the iPad roster-editor fix).
+func twPopoverAnchoredHeight(
+    anchorMinY: CGFloat,
+    anchorMaxY: CGFloat,
+    arrowEdge: Edge,
+    safeTopY: CGFloat,
+    safeBottomY: CGFloat,
+    sideAnchoredHeight: CGFloat,
+    chromeAllowance: CGFloat
+) -> CGFloat {
+    switch arrowEdge {
+    case .bottom:
+        // Balloon above the anchor: ceiling is the top of the safe area.
+        return max(0, anchorMinY - safeTopY - chromeAllowance)
+    case .top:
+        // Balloon below the anchor: floor is the keyboard, or the bottom safe
+        // inset when it is down (both folded into `safeBottomY`).
+        return max(0, safeBottomY - anchorMaxY - chromeAllowance)
+    case .leading, .trailing:
+        return sideAnchoredHeight
+    }
+}
+
+/// `ProviderModelPickerPanel`'s body height, clamped to the room its balloon
+/// actually has. Split out of the view so the arithmetic is greppable and
+/// testable rather than re-derived at each seam.
+func twPickerClampedBodyHeight(
+    requested: CGFloat,
+    available: CGFloat,
+    contentScale: CGFloat,
+    grabberHeight: CGFloat = twPickerGrabberHeight
+) -> CGFloat {
+    // Undo the scale first: the budget is in SCREEN points but this height is
+    // pre-scale, so a 0.70 panel may legitimately be ~43% taller here than the
+    // space it will ultimately occupy. The grabber rides above the body inside
+    // the same balloon, so it is charged to the same budget. The 44 keeps a
+    // degenerate anchor (a budget at or below the grabber's own height) from
+    // handing SwiftUI a negative frame.
+    let cap = max(44, (available / max(contentScale, 0.01)) - grabberHeight)
+    // The 200 floor keeps a merely-cramped panel usable — the list scrolls, so
+    // height given up costs scrolling, never access. It must never win against
+    // the cap itself, though: a floor that overshoots the room the balloon has
+    // re-creates the clip it exists to prevent.
+    return max(min(200, cap), min(requested, cap))
+}
 
 #if canImport(UIKit)
     /// App-lifetime keyboard height.
@@ -1496,17 +1568,44 @@ private let twPickerGrabberHeight: CGFloat = 11
         /// panel stops short of the safe-area edge rather than butting it.
         private static let chromeAllowance: CGFloat = 56
 
-        static func availableHeight(keyboardHeight: CGFloat) -> CGFloat {
-            let window = UIApplication.shared.connectedScenes
+        private static var keyWindow: UIWindow? {
+            UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .flatMap(\.windows)
                 .first { $0.isKeyWindow }
-            guard let window else { return 420 }
+        }
+
+        /// The safe-area budget: right for a balloon that can grow BOTH ways
+        /// from its anchor (side-anchored), and a generous over-estimate for one
+        /// pinned above or below it — use `availableHeight(anchor:…)` there.
+        static func availableHeight(keyboardHeight: CGFloat) -> CGFloat {
+            guard let window = keyWindow else { return 420 }
             let safe =
                 window.bounds.height - window.safeAreaInsets.top - window.safeAreaInsets.bottom
             // Never return something so small the panel becomes unusable; below
             // this the list scrolls and that is the correct trade.
             return max(240, safe - keyboardHeight - chromeAllowance)
+        }
+
+        /// Room for a balloon opening from `anchor` (GLOBAL/window coordinates)
+        /// toward `arrowEdge`. See `twPopoverAnchoredHeight` for the rule, and
+        /// for why the anchor rather than the safe area is the quantity that
+        /// matters once a popover is pinned to one side.
+        static func availableHeight(
+            anchor: CGRect, arrowEdge: Edge, keyboardHeight: CGFloat
+        ) -> CGFloat {
+            guard let window = keyWindow else {
+                return availableHeight(keyboardHeight: keyboardHeight)
+            }
+            return twPopoverAnchoredHeight(
+                anchorMinY: anchor.minY,
+                anchorMaxY: anchor.maxY,
+                arrowEdge: arrowEdge,
+                safeTopY: window.safeAreaInsets.top,
+                safeBottomY: window.bounds.height
+                    - max(keyboardHeight, window.safeAreaInsets.bottom),
+                sideAnchoredHeight: availableHeight(keyboardHeight: keyboardHeight),
+                chromeAllowance: chromeAllowance)
         }
     }
 #endif
@@ -1543,6 +1642,12 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     /// sizes together. 1 leaves the panel untouched; the roster popovers pass
     /// 0.85 so the participant editor fits alongside its sidecar.
     var contentScale: CGFloat = 1
+    /// Vertical room (in SCREEN points) the host measured for this panel's
+    /// balloon. Only the host knows where its anchor sits and which way the
+    /// popover opens, and for a balloon pinned to one side that gap — not the
+    /// safe area — is the real budget. nil = unmeasured; fall back to the
+    /// safe-area estimate, which is honest only for side-anchored balloons.
+    var spaceBudget: CGFloat? = nil
     /// Keep the reasoning/Fast sidecar mounted even when the current model has
     /// neither (a dimmed, disabled rail) — the participant popovers use this so
     /// the effort ladder is a constant fixture of the surface, not a column
@@ -1574,6 +1679,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         bodyHeight: CGFloat = 276,
         bodyMaxHeight: CGFloat = 308,
         contentScale: CGFloat = 1,
+        spaceBudget: CGFloat? = nil,
         alwaysShowsSidecar: Bool = false,
         showsDisabledFastPill: Bool = false,
         sidecarAccessory: AnyView? = nil,
@@ -1593,6 +1699,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         self.bodyHeight = bodyHeight
         self.bodyMaxHeight = bodyMaxHeight
         self.contentScale = contentScale
+        self.spaceBudget = spaceBudget
         self.alwaysShowsSidecar = alwaysShowsSidecar
         self.showsDisabledFastPill = showsDisabledFastPill
         self.sidecarAccessory = sidecarAccessory
@@ -1648,22 +1755,29 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     /// the `arrowEdge: .leading` on the roster chip): a side-anchored balloon is
     /// centred vertically on its anchor and can grow both ways, so the whole
     /// safe height is genuinely available and halving would only ration space
-    /// that exists. This stays as the backstop for genuinely short screens.
-    /// The inner list already scrolls, so height given up costs scrolling,
-    /// never access.
+    /// that exists. The inner list already scrolls, so height given up costs
+    /// scrolling, never access.
+    ///
+    /// Side-anchoring, though, is a REGULAR-WIDTH answer. On a phone the same
+    /// popover falls back to `.bottom` (upward from a chip pinned above the
+    /// composer), and there the safe-area estimate is not a backstop at all: it
+    /// over-states the gap by roughly 2x with the keyboard up, so the clamp
+    /// never engaged and the panel was clipped top and bottom exactly as before.
+    /// A host that knows its anchor therefore MEASURES the gap and passes
+    /// `spaceBudget`; the safe-area estimate remains only for hosts that do not.
     private var resolvedBodyHeight: CGFloat {
         let requested = min(bodyHeight, bodyMaxHeight)
         #if canImport(UIKit)
             let available =
-                TWPopoverSpace.availableHeight(
+                spaceBudget
+                ?? TWPopoverSpace.availableHeight(
                     keyboardHeight: TWKeyboardTracker.shared.height)
-            // Undo the scale first: the cap is in SCREEN points but this height
-            // is pre-scale, so a 0.85 panel may legitimately be ~18% taller
-            // here than the space it will ultimately occupy.
-            let capInContentSpace = (available / max(contentScale, 0.01)) - twPickerGrabberHeight
-            return max(200, min(requested, capInContentSpace))
+            return twPickerClampedBodyHeight(
+                requested: requested, available: available, contentScale: contentScale)
         #else
-            return requested
+            guard let spaceBudget else { return requested }
+            return twPickerClampedBodyHeight(
+                requested: requested, available: spaceBudget, contentScale: contentScale)
         #endif
     }
 
@@ -6301,6 +6415,18 @@ public struct EditableRosterStrip: View {
     /// top and bottom (verified). `.bottom` opens it upward into the transcript.
     private var editorArrowEdge: Edge { editorSizeClass == .regular ? .leading : .bottom }
 
+    /// This row's frame in WINDOW coordinates — the anchor every popover here
+    /// opens from (chips and the `+` all sit in it). A panel pinned above or
+    /// below its anchor is bounded by the gap on that side, and only this view
+    /// knows where the gap is: `TWPopoverSpace`'s safe-area estimate reads ~390pt
+    /// with the keyboard up while this row, riding the top of a keyboard-raised
+    /// composer, has barely 200pt above it.
+    ///
+    /// Measuring the ROW also makes the budget keyboard-live for free: the
+    /// keyboard raises the composer, the row moves, this updates, and the open
+    /// popover re-renders with a fresh budget — no second keyboard observer.
+    @State private var anchorFrame: CGRect = .zero
+
     @State private var editingChipId: String? = nil
     @State private var addPopoverPresented = false
     /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
@@ -6448,6 +6574,14 @@ public struct EditableRosterStrip: View {
             )
         )
         .padding(.horizontal, attached ? 0 : 12)
+        .background(
+            GeometryReader { proxy in
+                let frame = proxy.frame(in: .global)
+                Color.clear
+                    .onAppear { recordAnchorFrame(frame) }
+                    .onChange(of: frame) { _, fresh in recordAnchorFrame(fresh) }
+            }
+        )
         .onAppear { if draft.isEmpty { draft = remoteRoster } }
         .onChange(of: remoteRoster) { _, fresh in
             // Reconcile from the Mac unless mid-drag. (The chip editor popover
@@ -6471,6 +6605,32 @@ public struct EditableRosterStrip: View {
                 autoApprovalsDraft = nil
             }
         }
+    }
+
+    /// Store the measured row frame, QUANTIZED to whole points and only when it
+    /// actually moved. A raw `GeometryReader` value written straight back into
+    /// `@State` is the classic SwiftUI livelock: a sub-point difference on each
+    /// pass re-triggers layout forever and can wedge the first frame.
+    private func recordAnchorFrame(_ frame: CGRect) {
+        let quantized = CGRect(
+            x: frame.origin.x.rounded(), y: frame.origin.y.rounded(),
+            width: frame.size.width.rounded(), height: frame.size.height.rounded())
+        guard quantized != anchorFrame else { return }
+        anchorFrame = quantized
+    }
+
+    /// Vertical room the participant / add popovers have on the side they open
+    /// toward. nil before the first layout pass measures the row (the panel then
+    /// falls back to its own safe-area estimate).
+    private var editorSpaceBudget: CGFloat? {
+        #if canImport(UIKit)
+            guard anchorFrame.height > 0 else { return nil }
+            return TWPopoverSpace.availableHeight(
+                anchor: anchorFrame, arrowEdge: editorArrowEdge,
+                keyboardHeight: TWKeyboardTracker.shared.height)
+        #else
+            return nil
+        #endif
     }
 
     private func chip(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
@@ -6556,6 +6716,10 @@ public struct EditableRosterStrip: View {
                 onApply: { applyLiveEdit($0) },
                 onRemove: { removeChip(id: entry.id) },
                 autoApprovals: autoApprovalsConfig,
+                // The gap this balloon opens into, measured on the row itself —
+                // without it the panel sizes against the whole safe area and is
+                // clipped top and bottom whenever the keyboard is up.
+                spaceBudget: editorSpaceBudget,
                 onDismissRequest: { editingChipId = nil }
             )
             .presentationCompactAdaptation(.popover)
@@ -6677,6 +6841,8 @@ public struct EditableRosterStrip: View {
                         toggleAutoApprovals(stagedAutoApprovals)
                     }
                 },
+                // Same row, same gap (see the chip editor above).
+                spaceBudget: editorSpaceBudget,
                 onDismissRequest: { addPopoverPresented = false }
             )
             .presentationCompactAdaptation(.popover)

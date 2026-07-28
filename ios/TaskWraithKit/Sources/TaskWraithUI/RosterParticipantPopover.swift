@@ -660,6 +660,12 @@ struct RosterParticipantEditorPopover: View {
     let onRemove: () -> Void
     /// Thread-wide Auto Approvals pill state + toggle (nil hides the pill).
     var autoApprovals: RosterAutoApprovalsConfig? = nil
+    /// Vertical room the HOST measured for this balloon on the side it opens
+    /// toward (see `TWPopoverSpace.availableHeight(anchor:arrowEdge:…)`). A
+    /// popover neither scrolls nor shrinks to fit, so an unbounded panel is
+    /// silently clipped — and the clipped band cannot be scrolled back, because
+    /// the list scrolls inside a viewport whose own top is off the balloon.
+    var spaceBudget: CGFloat? = nil
     var onDismissRequest: () -> Void = {}
 
     @State private var entry: RemoteSessionModel.RosterDraftEntry
@@ -679,6 +685,7 @@ struct RosterParticipantEditorPopover: View {
         onApply: @escaping (RemoteSessionModel.RosterDraftEntry) -> Void,
         onRemove: @escaping () -> Void,
         autoApprovals: RosterAutoApprovalsConfig? = nil,
+        spaceBudget: CGFloat? = nil,
         onDismissRequest: @escaping () -> Void = {}
     ) {
         self.catalogs = catalogs
@@ -686,6 +693,7 @@ struct RosterParticipantEditorPopover: View {
         self.onApply = onApply
         self.onRemove = onRemove
         self.autoApprovals = autoApprovals
+        self.spaceBudget = spaceBudget
         self.onDismissRequest = onDismissRequest
         self._entry = State(initialValue: entry)
         self._lastApplied = State(initialValue: entry)
@@ -715,7 +723,14 @@ struct RosterParticipantEditorPopover: View {
             // the panel is ~366pt against roughly 357pt of room below the row on
             // a 6.3" phone, so the sidecar's Fast/Ask controls fell off the
             // bottom edge. 0.70 brings it to ~300pt with margin to spare.
+            //
+            // The scale is a DENSITY choice, not the fit guarantee: even 0.70
+            // overflows the ~200pt a keyboard-raised composer leaves above this
+            // row. `spaceBudget` is what actually bounds the panel; the topContent
+            // cluster shares the list's ScrollView, so a tight budget costs
+            // scrolling rather than access.
             contentScale: compactWidth ? 0.70 : 0.85,
+            spaceBudget: spaceBudget,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(
@@ -779,6 +794,8 @@ struct RosterAddParticipantPopover: View {
     /// Current thread Auto Approvals state + leadership (for the pill).
     var threadAutoApprovalsEnabled: Bool = false
     var threadHasLeadership: Bool = false
+    /// Room the host measured for this balloon — see the editor popover above.
+    var spaceBudget: CGFloat? = nil
     var onDismissRequest: () -> Void = {}
 
     @State private var entry: RemoteSessionModel.RosterDraftEntry
@@ -797,12 +814,14 @@ struct RosterAddParticipantPopover: View {
         threadAutoApprovalsEnabled: Bool = false,
         threadHasLeadership: Bool = false,
         onAdd: @escaping (RemoteSessionModel.RosterDraftEntry, Bool?) -> Void,
+        spaceBudget: CGFloat? = nil,
         onDismissRequest: @escaping () -> Void = {}
     ) {
         self.catalogs = catalogs
         self.threadAutoApprovalsEnabled = threadAutoApprovalsEnabled
         self.threadHasLeadership = threadHasLeadership
         self.onAdd = onAdd
+        self.spaceBudget = spaceBudget
         self.onDismissRequest = onDismissRequest
         let provider = seedProvider ?? catalogs.first?.provider ?? "claude"
         self._entry = State(
@@ -842,7 +861,14 @@ struct RosterAddParticipantPopover: View {
             // the panel is ~366pt against roughly 357pt of room below the row on
             // a 6.3" phone, so the sidecar's Fast/Ask controls fell off the
             // bottom edge. 0.70 brings it to ~300pt with margin to spare.
+            //
+            // The scale is a DENSITY choice, not the fit guarantee: even 0.70
+            // overflows the ~200pt a keyboard-raised composer leaves above this
+            // row. `spaceBudget` is what actually bounds the panel; the topContent
+            // cluster shares the list's ScrollView, so a tight budget costs
+            // scrolling rather than access.
             contentScale: compactWidth ? 0.70 : 0.85,
+            spaceBudget: spaceBudget,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(
