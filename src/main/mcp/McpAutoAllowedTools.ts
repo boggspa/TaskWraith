@@ -219,8 +219,9 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
  * hand-listed), so a mutating workspace/shell/destructive app tool can never
  * appear here unless it is also wrongly added to MCP_AUTO_ALLOWED_TOOLS — which
  * the SAFETY INVARIANT test forbids. The Gemini read-only --allowed-tools
- * allowlist and the Grok read-only mcpServers safe-subset are both built from
- * this set, so all three providers advertise an identical surface in read-only.
+ * allowlist, the Grok and Cursor read-only safe-subset bridges, the Mistral
+ * safe-tool gate, and the Ollama read_only tool tier are all built from this
+ * set, so every read-only seat advertises an identical surface.
  */
 export const READ_ONLY_MCP_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter((tool) => MCP_AUTO_ALLOWED_TOOLS.has(tool))
