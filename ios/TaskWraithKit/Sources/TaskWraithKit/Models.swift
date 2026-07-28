@@ -1612,12 +1612,18 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         }
         public let agentQuestion: AgentQuestion?
         /// Ensemble fan-out lane identity — the desktop EnsembleFanoutResult
-        /// Card's header data, so a lane result reads as its own card rather
-        /// than an ordinary assistant bubble. HEADER ONLY by design: the
-        /// desktop card renders content and tool blocks INTERLEAVED, which the
-        /// wire flattens (prose → `preview`, tools → `toolSummary`).
-        /// `partCount` is the real interleave depth, present only when the
-        /// lane actually interleaved, so the card can say it flattened.
+        /// Card's header data plus the lane's interleaved output, so a lane
+        /// result reads as its own card with the lane's prose and tool blocks
+        /// NESTED inside it in production order (desktop parity), rather than
+        /// an ordinary assistant bubble.
+        ///
+        /// `parts` is the bounded wire form of the desktop card's interleave.
+        /// The flat fallback still rides beside it (prose → `preview`, tools
+        /// → `toolSummary`) for older Macs and byte-pressure degraded
+        /// snapshots, which strip `parts` first. `partCount` is the full
+        /// interleave depth: its excess over `parts.count` is how many earlier
+        /// blocks were elided in transport, and with `parts` absent it lets
+        /// the card say it flattened.
         /// No hue field: the accent resolves LIVE from (provider, model) here
         /// exactly as it does on the desktop.
         public struct FanoutResult: Codable, Sendable, Equatable {
@@ -1636,6 +1642,32 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let model: String?
             public let order: Int?
             public let partCount: Int?
+            /// The lane's output blocks in production order, tail-biased and
+            /// bounded Mac-side. Absent on older Macs, for prose-only lanes
+            /// (flattening those is lossless), and after byte-pressure
+            /// degradation — all of which keep the flat presentation.
+            public let parts: [Part]?
+
+            /// One block of the lane's output — prose ("content") or a tool
+            /// burst ("tools"), the same `ToolEntry` shape the flat
+            /// `toolSummary` uses so both render through one idiom.
+            public struct Part: Codable, Sendable, Equatable, Identifiable {
+                public let id: String
+                /// "content" | "tools" — a String, never an enum, so an
+                /// unknown kind from a newer Mac drops that block instead of
+                /// failing the whole snapshot decode.
+                public let kind: String?
+                /// kind "content": bounded prose block.
+                public let preview: String?
+                public let truncated: Bool?
+                /// kind "tools": the block's TRUE call count — kept even when
+                /// `tools` is capped, so the card can say "+N more".
+                public let activityCount: Int?
+                public let status: String?
+                public let tools: [ToolEntry]?
+
+                public var isToolsBlock: Bool { kind == "tools" }
+            }
 
             /// Provider key for `TWTheme.providerAccent` / `providerLabel` —
             /// mirrors the desktop's `resolveProviderHueClass(provider, model)`

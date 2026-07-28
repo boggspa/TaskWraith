@@ -999,12 +999,139 @@ describe('RemoteThreadProjection', () => {
         lane({
           ensembleFanoutTranscriptParts: [
             { kind: 'content', id: 'p1', messageIds: ['m1'], content: 'x' },
-            { kind: 'tools', id: 'p2', messageIds: ['m2'], toolActivities: [] },
+            { kind: 'tools', id: 'p2', messageIds: ['m2'], toolActivities: [activity({ id: 'a1' })] },
             { kind: 'content', id: 'p3', messageIds: ['m3'], content: 'y' }
           ]
         })
       ])
       expect(many.rows[0].fanoutResult?.partCount).toBe(3)
+      // An EMPTY tools part renders nothing on either platform (the desktop
+      // card skips it), which leaves this lane prose-only — and a prose-only
+      // lane flattens losslessly, so it carries neither parts nor the note.
+      const empty = project({ kind: 'latestN', n: 10 }, [
+        lane({
+          ensembleFanoutTranscriptParts: [
+            { kind: 'content', id: 'p1', messageIds: ['m1'], content: 'x' },
+            { kind: 'tools', id: 'p2', messageIds: ['m2'], toolActivities: [] },
+            { kind: 'content', id: 'p3', messageIds: ['m3'], content: 'y' }
+          ]
+        })
+      ])
+      expect(empty.rows[0].fanoutResult?.partCount).toBeUndefined()
+      expect(empty.rows[0].fanoutResult?.parts).toBeUndefined()
+    })
+
+    it('ships the interleaved parts in production order (desktop card parity)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        lane({
+          ensembleFanoutTranscriptParts: [
+            { kind: 'content', id: 'p1', messageIds: ['m1'], content: 'Scanning first.' },
+            {
+              kind: 'tools',
+              id: 'p2',
+              messageIds: ['m2'],
+              toolActivities: [
+                activity({ id: 'a1', toolName: 'read', displayName: 'Read', category: 'read' })
+              ]
+            },
+            { kind: 'content', id: 'p3', messageIds: ['m3'], content: 'Found the bug.' }
+          ]
+        })
+      ])
+      expect(snap.rows[0].fanoutResult?.parts).toEqual([
+        { id: 'p1', kind: 'content', preview: 'Scanning first.' },
+        {
+          id: 'p2',
+          kind: 'tools',
+          activityCount: 1,
+          status: 'success',
+          tools: [{ toolName: 'read', name: 'Read', category: 'read', status: 'success' }]
+        },
+        { id: 'p3', kind: 'content', preview: 'Found the bug.' }
+      ])
+    })
+
+    it('omits parts for a single prose block but ships them for a lone tool block', () => {
+      const prose = project({ kind: 'latestN', n: 10 }, [
+        lane({ ensembleFanoutTranscriptParts: [{ kind: 'content', id: 'p1', messageIds: ['m1'], content: 'x' }] })
+      ])
+      // Flattening a single prose block is lossless — the row preview IS the lane.
+      expect(prose.rows[0].fanoutResult?.parts).toBeUndefined()
+      const tools = project({ kind: 'latestN', n: 10 }, [
+        lane({
+          ensembleFanoutTranscriptParts: [
+            { kind: 'tools', id: 'p1', messageIds: ['m1'], toolActivities: [activity({ id: 'a1' })] }
+          ]
+        })
+      ])
+      expect(tools.rows[0].fanoutResult?.parts).toHaveLength(1)
+      expect(tools.rows[0].fanoutResult?.parts?.[0].kind).toBe('tools')
+    })
+
+    it('spends the parts budget from the newest block backwards and drops the elided head', () => {
+      const long = 'A'.repeat(3000)
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          lane({
+            ensembleFanoutTranscriptParts: [
+              { kind: 'content', id: 'p1', messageIds: ['m1'], content: long },
+              { kind: 'tools', id: 'p2', messageIds: ['m2'], toolActivities: [activity({ id: 'a1' })] },
+              { kind: 'content', id: 'p3', messageIds: ['m3'], content: long },
+              { kind: 'content', id: 'p4', messageIds: ['m4'], content: 'The verdict.' }
+            ]
+          }),
+          // A later plain reply keeps the lane row off the latest-assistant
+          // full-length bump, so the routine 2400 budget is what's under test.
+          msg(7, { id: 'after', role: 'assistant', content: 'done' })
+        ],
+        [],
+        { previewMaxChars: 2400 }
+      )
+      const fanout = snap.rows[0].fanoutResult
+      // Newest prose intact, the block before it clipped into the remaining
+      // budget, the tools block untouched (its budget is separate), and the
+      // oldest prose block gone entirely.
+      expect(fanout?.parts?.map((p) => p.id)).toEqual(['p2', 'p3', 'p4'])
+      expect(fanout?.parts?.[2].preview).toBe('The verdict.')
+      expect(fanout?.parts?.[1].truncated).toBe(true)
+      expect(fanout?.parts?.[0].kind).toBe('tools')
+      expect(fanout?.partCount).toBe(4)
+    })
+
+    it('caps tool entries per part and across the lane, keeping counts honest', () => {
+      const bigPart = (id: string, prefix: string, n: number) => ({
+        kind: 'tools',
+        id,
+        messageIds: [id],
+        toolActivities: Array.from({ length: n }, (_, i) =>
+          activity({ id: `${prefix}${i}`, displayName: `${prefix}${i}` })
+        )
+      })
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        lane({
+          ensembleFanoutTranscriptParts: [
+            bigPart('p1', 'early', 16),
+            { kind: 'content', id: 'p2', messageIds: ['m2'], content: 'between' },
+            bigPart('p3', 'mid', 16),
+            { kind: 'content', id: 'p4', messageIds: ['m4'], content: 'after' },
+            bigPart('p5', 'late', 16)
+          ]
+        }),
+        // Keeps the lane off the latest-assistant full-length bump, whose
+        // expand-tier budgets would make the routine caps unobservable.
+        msg(7, { id: 'after-caps', role: 'assistant', content: 'done' })
+      ])
+      const parts = snap.rows[0].fanoutResult?.parts ?? []
+      const byId = new Map(parts.map((p) => [p.id, p]))
+      // Newest tool part gets the per-part cap, the next one the remainder of
+      // the lane budget, the oldest ships count-only — the interleave shape
+      // survives even where detail cannot.
+      expect(byId.get('p5')?.tools).toHaveLength(12)
+      expect(byId.get('p3')?.tools).toHaveLength(12)
+      expect(byId.get('p1')?.tools).toBeUndefined()
+      expect(byId.get('p1')?.activityCount).toBe(16)
+      expect(parts.map((p) => p.id)).toEqual(['p1', 'p2', 'p3', 'p4', 'p5'])
     })
 
     it('ignores a blank lane id and a non-assistant role', () => {
@@ -1013,6 +1140,127 @@ describe('RemoteThreadProjection', () => {
       const tool = project({ kind: 'latestN', n: 10 }, [lane({}, { role: 'tool' })])
       expect(tool.rows[0].fanoutResult).toBeUndefined()
     })
+  })
+
+  describe('fan-out lane grouping', () => {
+    const laneMeta = (laneId: string, extra: Record<string, unknown> = {}) => ({
+      kind: 'ensembleParticipant',
+      ensembleRoundId: 'round-1',
+      ensembleParticipantId: `seat-${laneId}`,
+      ensembleLaneId: laneId,
+      ensembleLaneIntent: 'read' as const,
+      ensembleProvider: 'claude',
+      ensembleRole: 'Scout',
+      ...extra
+    })
+    const contentFragment = (i: number, laneId: string, content: string) =>
+      msg(i, {
+        id: `frag-${laneId}-c${i}`,
+        role: 'assistant',
+        content,
+        runId: `run-${laneId}`,
+        metadata: laneMeta(laneId)
+      })
+    const toolFragment = (i: number, laneId: string, ids: string[]) =>
+      msg(i, {
+        id: `frag-${laneId}-t${i}`,
+        role: 'tool',
+        content: '',
+        runId: `run-${laneId}`,
+        metadata: laneMeta(laneId, { kind: 'ensembleParticipantTools' }),
+        toolActivities: ids.map((id) => activity({ id, displayName: id }))
+      })
+
+    it('folds one lane\'s fragments into a single card row, the desktop fold', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        contentFragment(1, 'lane-a', 'Looking at the tests.'),
+        toolFragment(3, 'lane-a', ['read-1']),
+        contentFragment(5, 'lane-a', 'They pass.')
+      ])
+      expect(snap.rows).toHaveLength(1)
+      const row = snap.rows[0]
+      // Anchored at the first fragment: same id the desktop synthetic card uses.
+      expect(row.id).toBe('frag-lane-a-c1')
+      expect(row.kind).toBe('assistant')
+      expect(row.preview).toBe('Looking at the tests.\n\nThey pass.')
+      expect(row.toolSummary?.activityCount).toBe(1)
+      expect(row.fanoutResult?.parts?.map((p) => p.kind)).toEqual(['content', 'tools', 'content'])
+      expect(row.fanoutResult?.partCount).toBe(3)
+    })
+
+    it('coalesces consecutive tool fragments into one block, as the desktop tool-grouping does', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        contentFragment(1, 'lane-a', 'Starting.'),
+        toolFragment(3, 'lane-a', ['read-1']),
+        toolFragment(5, 'lane-a', ['read-2', 'read-3'])
+      ])
+      const parts = snap.rows[0].fanoutResult?.parts ?? []
+      expect(parts.map((p) => p.kind)).toEqual(['content', 'tools'])
+      expect(parts[1].activityCount).toBe(3)
+      expect(snap.rows[0].fanoutResult?.partCount).toBe(2)
+    })
+
+    it('keeps concurrent lanes separate and leaves unrelated rows in place', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        contentFragment(1, 'lane-a', 'A starts.'),
+        contentFragment(2, 'lane-b', 'B starts.'),
+        msg(4, { id: 'sys-1', role: 'system', content: 'Round status.' }),
+        toolFragment(5, 'lane-a', ['a-tool']),
+        contentFragment(7, 'lane-b', 'B finishes.')
+      ])
+      expect(snap.rows.map((r) => r.id)).toEqual(['frag-lane-a-c1', 'frag-lane-b-c2', 'sys-1'])
+      const laneA = snap.rows[0]
+      const laneB = snap.rows[1]
+      expect(laneA.fanoutResult?.parts?.map((p) => p.kind)).toEqual(['content', 'tools'])
+      expect(laneB.preview).toBe('B starts.\n\nB finishes.')
+      // Lane B never interleaved with tools — prose-only lanes flatten
+      // losslessly, so they ship neither parts nor the flatten note.
+      expect(laneB.fanoutResult?.parts).toBeUndefined()
+      expect(laneB.fanoutResult?.partCount).toBeUndefined()
+    })
+
+    it('lets the loose ensembleParticipantTools row vanish from the wire (no orphan tool rows)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        contentFragment(1, 'lane-a', 'Prose.'),
+        toolFragment(3, 'lane-a', ['t1'])
+      ])
+      expect(snap.rows).toHaveLength(1)
+      expect(snap.rows.some((r) => r.kind === 'tool')).toBe(false)
+    })
+
+    it('aroundRow resolves the merged lane row id', () => {
+      const snap = project({ kind: 'aroundRow', rowId: 'frag-lane-a-c1', radius: 0 }, [
+        contentFragment(1, 'lane-a', 'Prose.'),
+        toolFragment(3, 'lane-a', ['t1']),
+        msg(6, { id: 'after', role: 'user', content: 'next' })
+      ])
+      expect(snap.rows).toHaveLength(1)
+      expect(snap.rows[0].id).toBe('frag-lane-a-c1')
+      expect(snap.rows[0].fanoutResult?.parts).toHaveLength(2)
+    })
+
+    it('byte-pressure lean pass strips lane parts but keeps the card header honest', () => {
+      const long = 'B'.repeat(2000)
+      const snap = project(
+        { kind: 'latestN', n: 10 },
+        [
+          contentFragment(1, 'lane-a', long),
+          toolFragment(3, 'lane-a', ['t1']),
+          contentFragment(5, 'lane-a', long)
+        ],
+        [],
+        { previewMaxChars: REMOTE_IOS_PREVIEW_MAX }
+      )
+      expect(snap.rows[0].fanoutResult?.parts?.length).toBeGreaterThan(0)
+      // Small enough to force the lean pass, big enough that the row survives
+      // it without degrading all the way to the skeleton.
+      const squeezed = fitRemoteThreadSnapshotToByteBudget(snap, 2600)
+      const degraded = squeezed.rows[squeezed.rows.length - 1]
+      expect(degraded.fanoutResult?.parts).toBeUndefined()
+      expect(degraded.fanoutResult?.laneId).toBe('lane-a')
+      expect(degraded.fanoutResult?.partCount).toBe(3)
+    })
+
   })
 
   describe('runFailure', () => {

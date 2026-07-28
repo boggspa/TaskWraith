@@ -3559,11 +3559,13 @@ struct EnsembleFanoutResultHeader: View {
                 }
                 Spacer(minLength: 0)
             }
-            // Honesty note, not decoration: the desktop card interleaves the
-            // lane's content and tool blocks in production order, which the
-            // wire flattens to prose + a tool group. Say so rather than let a
-            // reordered lane read as the order it actually ran in.
-            if let partCount = fanout.partCount, partCount > 1 {
+            // Honesty note, not decoration — and only when honesty demands it:
+            // with `parts` shipped the row body renders the lane's content and
+            // tool blocks nested in production order, so nothing is flattened.
+            // Only an older Mac or a byte-pressure degraded snapshot (which
+            // strips `parts` first) still flattens, and then the card says so
+            // rather than let a reordered lane read as the order it ran in.
+            if fanout.parts?.isEmpty ?? true, let partCount = fanout.partCount, partCount > 1 {
                 Text("\(partCount) parts, shown flattened")
                     .font(.caption2)
                     .foregroundStyle(TWTheme.textMuted)
@@ -3922,11 +3924,15 @@ struct ThreadRowView: View, Equatable {
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
     private var showExpand: Bool {
-        // Fan-out is deliberately absent: its lane prose IS the row preview, so
-        // a clipped lane must stay expandable. The failure card is self-
-        // contained (the row body is just the copy text it already renders).
-        row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
-            && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
+        // Fan-out is deliberately absent from the suppression list: its lane
+        // prose IS the row preview, so a clipped lane must stay expandable —
+        // and a lane whose earlier blocks were elided in transport expands the
+        // same way (the expand fetch lifts the part caps with the budget).
+        // The failure card is self-contained (the row body is just the copy
+        // text it already renders).
+        (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
+            && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
+            && !hasRunFailureCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -3941,6 +3947,24 @@ struct ThreadRowView: View, Equatable {
     /// Fan-out is a FRAME, not a replacement: the header renders above the
     /// ordinary body (tools + prose + media), all of it inside the lane card.
     private var hasFanoutResultCard: Bool { row.fanoutResult != nil }
+    /// Interleaved lane blocks shipped by the Mac. When present they replace
+    /// the flat toolSummary + prose body inside the lane card, restoring the
+    /// desktop card's production-order nesting; when absent (older Mac,
+    /// prose-only lane, degraded snapshot) the flat body renders as before.
+    private var fanoutTranscriptParts: [RemoteThreadSnapshot.Row.FanoutResult.Part] {
+        row.fanoutResult?.parts ?? []
+    }
+    private var hasFanoutTranscriptParts: Bool { !fanoutTranscriptParts.isEmpty }
+    /// Blocks the wire elided from the head of the lane (`partCount` carries
+    /// the full interleave depth). Drives the elision note and keeps the
+    /// Show-more chip offered even when the joined preview itself fit.
+    private var elidedFanoutPartCount: Int {
+        guard hasFanoutTranscriptParts, let partCount = row.fanoutResult?.partCount else {
+            return 0
+        }
+        return max(0, partCount - fanoutTranscriptParts.count)
+    }
+    private var hasElidedFanoutParts: Bool { elidedFanoutPartCount > 0 }
     /// The failure card OWNS its row — headline, stderr lines, hint and its own
     /// action bar — so every ordinary body branch stands down beneath it.
     private var hasRunFailureCard: Bool { row.runFailure != nil }
@@ -3984,10 +4008,15 @@ struct ThreadRowView: View, Equatable {
                     }
                 }
                 // The lane header REPLACES the plain label line and frames the
-                // ordinary body below it — prose and tool calls still render
-                // through their own branches, now inside the lane card.
+                // body below it. With interleaved parts on the wire, the lane's
+                // prose and tool blocks render nested here in production order
+                // (desktop card parity); without them, the ordinary flat
+                // branches below keep rendering inside the lane card.
                 if let fanout = row.fanoutResult {
                     EnsembleFanoutResultHeader(fanout: fanout, modelChip: settledRowModelChip)
+                }
+                if hasFanoutTranscriptParts {
+                    fanoutTranscriptPartsBody
                 }
                 if let failure = row.runFailure {
                     ProviderRunFailureCard(
@@ -4023,7 +4052,11 @@ struct ThreadRowView: View, Equatable {
                             showSideChat: true
                         )
                     }
-                } else if let tools = row.toolSummary, let count = tools.activityCount, count > 0 {
+                } else if !hasFanoutTranscriptParts, let tools = row.toolSummary,
+                    let count = tools.activityCount, count > 0
+                {
+                    // Suppressed in parts mode: the same activities already
+                    // render inside the interleave, in their real positions.
                     if let entries = tools.tools, !entries.isEmpty {
                         ToolActivityCards(
                             entries: entries, totalCount: count, status: tools.status)
@@ -4089,12 +4122,18 @@ struct ThreadRowView: View, Equatable {
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
-                        MarkdownLite(
-                            preview,
-                            participants: participants,
-                            baseColor: bodyColor
-                        )
-                        .textSelection(.enabled)
+                        // In parts mode the prose already rendered inside the
+                        // interleave; this block keeps only the footer clock and
+                        // the action bar (whose copy target stays the joined
+                        // preview — the full lane prose in one string).
+                        if !hasFanoutTranscriptParts {
+                            MarkdownLite(
+                                preview,
+                                participants: participants,
+                                baseColor: bodyColor
+                            )
+                            .textSelection(.enabled)
+                        }
                         if let footerTime = transcriptFooterTime {
                             Text(footerTime)
                                 .font(.caption2)
@@ -4153,6 +4192,60 @@ struct ThreadRowView: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
+    }
+
+    /// The lane's interleaved output, nested inside the card chrome — the
+    /// desktop EnsembleFanoutResultCard body rendered with this transcript's
+    /// own idioms: MarkdownLite for prose blocks, ToolActivityCards for tool
+    /// bursts, in production order. A tools block whose entry detail was
+    /// capped away Mac-side ships count-only, so the interleave SHAPE always
+    /// survives; the elision note mirrors the desktop's "earlier parts hidden"
+    /// line for blocks the wire dropped from the head of the lane.
+    @ViewBuilder
+    private var fanoutTranscriptPartsBody: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if elidedFanoutPartCount > 0 {
+                Text(
+                    "\(elidedFanoutPartCount) earlier part\(elidedFanoutPartCount == 1 ? "" : "s") not shown"
+                )
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textMuted)
+            }
+            ForEach(fanoutTranscriptParts) { part in
+                if part.isToolsBlock {
+                    if let entries = part.tools, !entries.isEmpty {
+                        ToolActivityCards(
+                            entries: entries,
+                            totalCount: part.activityCount ?? entries.count,
+                            status: part.status)
+                    } else if let count = part.activityCount, count > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "wrench.and.screwdriver")
+                            Text(toolLine(count: count, status: part.status))
+                            if let status = part.status {
+                                Circle().fill(TWTheme.statusColor(status))
+                                    .frame(width: 5, height: 5)
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textTertiary)
+                    }
+                } else if let text = part.preview, !text.isEmpty {
+                    MarkdownLite(text, participants: participants, baseColor: bodyColor)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .contextMenu {
+            messageActionMenu(
+                content: row.preview ?? "",
+                copyLabel: "Copy message",
+                pinLabelPinned: "Unpin message",
+                pinLabelUnpinned: "Pin message",
+                showAddToPrompt: true,
+                showSideChat: true
+            )
+        }
     }
 
     private func toolLine(count: Int, status: String?) -> String {

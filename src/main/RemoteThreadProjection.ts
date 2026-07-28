@@ -53,6 +53,12 @@ import {
 } from './services/TranscriptMediaService'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
+  groupFanoutLaneMessages,
+  isEnsembleFanoutResultMessage,
+  readEnsembleFanoutTranscriptParts,
+  type EnsembleFanoutTranscriptPart
+} from '../shared/fanoutLaneGrouping'
+import {
   matchOllamaBrand,
   resolveHealthEntryPresentation
 } from '../shared/ollamaBrandTable'
@@ -610,18 +616,40 @@ export function indexRemoteAgentQuestionAnswers(
   return byMarker
 }
 
+/** One block of a fan-out lane's output, in production order — the wire form
+ * of a desktop `ensembleFanoutTranscriptPart`, bounded for transport. A
+ * 'content' part carries a sanitized prose block; a 'tools' part carries the
+ * block's activity count/status plus capped per-tool entries (same
+ * `RemoteToolEntry` shape the flat row `toolSummary` uses, so clients render
+ * both through one tool idiom). A tools part whose entry budget ran out ships
+ * count-only — the interleave SHAPE always survives even when detail cannot. */
+export interface RemoteFanoutTranscriptPart {
+  id: string
+  kind: 'content' | 'tools'
+  /** kind 'content': bounded prose block. */
+  preview?: string
+  truncated?: boolean
+  /** kind 'tools': block's true activity count (kept even when `tools` is capped). */
+  activityCount?: number
+  status?: 'running' | 'success' | 'error' | 'mixed'
+  tools?: RemoteToolEntry[]
+}
+
 /** Structured identity for an ensemble FAN-OUT lane result — the desktop
- * EnsembleFanoutResultCard's header data, projected so the phone renders the
- * same distinct lane card (glyph, lane label, provider badge, role, model,
- * order) instead of folding the lane into an ordinary assistant bubble.
+ * EnsembleFanoutResultCard's header data plus the lane's interleaved output,
+ * projected so the phone renders the same distinct lane card (glyph, lane
+ * label, provider badge, role, model, order) with the lane's prose and tool
+ * blocks NESTED inside it in production order, instead of folding the lane
+ * into an ordinary assistant bubble.
  *
- * DELIBERATELY header-only. The desktop card renders `ensembleFanoutTranscript
- * Parts` — content and tool blocks INTERLEAVED in the order the lane produced
- * them. That structure does not survive the wire cheaply, so the phone flattens
- * it: prose rides the row `preview`, tool calls ride `toolSummary`, and the card
- * renders activity above prose (the same chronology iOS already uses for
- * thinking traces). `partCount` carries the real interleave depth so the card
- * can SAY it flattened rather than silently reorder the lane.
+ * `parts` is the bounded wire form of the desktop card's interleave. The flat
+ * fallback still ships beside it (prose on the row `preview`, tools on
+ * `toolSummary`) so older clients — and byte-pressure degraded snapshots,
+ * which strip `parts` first — keep today's flattened-but-complete rendering.
+ * `partCount` carries the full interleave depth; when it exceeds
+ * `parts.length` the client should say earlier parts were elided (desktop
+ * collapsed cards do the same), and when `parts` is absent entirely it lets
+ * the card say the lane was flattened rather than silently reorder it.
  *
  * No `displayHueClass`: unlike the participant-health card (whose hue is frozen
  * at stamp time), the desktop card resolves its accent LIVE from (provider,
@@ -644,10 +672,18 @@ export interface RemoteEnsembleFanoutResult {
   role?: string
   model?: string
   order?: number
-  /** Interleaved content/tool parts the desktop card renders in order. Present
-   * only when the lane actually interleaved (> 1), so the phone can note the
-   * flattening; absent for single-part lanes where flattening is lossless. */
+  /** Full interleave depth of the lane (content + tool blocks). Present only
+   * when the lane interleaved (> 1) AND contains tool blocks — prose-only
+   * lanes flatten losslessly, so they carry no depth note. With `parts`
+   * shipped, the excess over `parts.length` is how many earlier blocks were
+   * elided; without `parts` (older builder, or byte-pressure degradation), it
+   * lets the card note the flattening. */
   partCount?: number
+  /** The lane's output blocks in production order, tail-biased and bounded.
+   * Present exactly when the interleave contains tool blocks — the structure
+   * the flat preview/toolSummary form destroys. Absent for prose-only lanes
+   * (flattening is lossless) and after byte-pressure degradation. */
+  parts?: RemoteFanoutTranscriptPart[]
 }
 
 /** Structured provider run failure — the desktop ProviderRunFailureCard's
@@ -1020,6 +1056,14 @@ function rowWithTransportLeanFields(row: RemoteThreadRow, previewMax: number): R
     const { tools: _tools, ...summary } = toolSummary
     lean.toolSummary = summary
   }
+  // Lane parts duplicate the prose already in `preview` plus tool entries —
+  // the heaviest optional on a fan-out row. Under byte pressure the card
+  // degrades to the flat header-only presentation (partCount keeps the
+  // honesty note working), mirroring the toolSummary entry strip above.
+  if (row.fanoutResult?.parts) {
+    const { parts: _parts, ...fanout } = row.fanoutResult
+    lean.fanoutResult = fanout
+  }
   return lean
 }
 
@@ -1238,50 +1282,69 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
   else if (error > 0 && success > 0) status = 'mixed'
   else if (error > 0) status = 'error'
   else status = 'success'
-  const tools: RemoteToolEntry[] = activities.slice(0, 12).map((activity) => {
-    const singleDiffFile =
-      Array.isArray(activity.diffSummary?.files) && activity.diffSummary.files.length === 1
-        ? activity.diffSummary.files[0]
-        : null
-    const entry: RemoteToolEntry = {
-      toolName: activity.toolName,
-      name: activity.displayName || activity.toolName,
-      category: activity.category ?? 'unknown',
-      status:
-        activity.status === 'running' || activity.status === 'pending'
-          ? 'running'
-          : activity.status === 'error'
-            ? 'error'
-            : 'success'
-    }
-    if (typeof activity.filePath === 'string' && activity.filePath) {
-      entry.file = activity.filePath
-    } else if (typeof singleDiffFile?.path === 'string' && singleDiffFile.path) {
-      entry.file = singleDiffFile.path
-    }
-    if (typeof activity.diffSummary?.additions === 'number') {
-      entry.additions = activity.diffSummary.additions
-    } else if (typeof singleDiffFile?.additions === 'number') {
-      entry.additions = singleDiffFile.additions
-    }
-    if (typeof activity.diffSummary?.deletions === 'number') {
-      entry.deletions = activity.diffSummary.deletions
-    } else if (typeof singleDiffFile?.deletions === 'number') {
-      entry.deletions = singleDiffFile.deletions
-    }
-    // Desktop parity: an edit card is one line — "Edited <file> +N −M" —
-    // with no result text underneath. Write entries that carry ± chips
-    // drop their detail (often a raw MCP result envelope); everything
-    // else keeps the one-line summary.
-    const hasDiffChips =
-      entry.category === 'write' && ((entry.additions ?? 0) > 0 || (entry.deletions ?? 0) > 0)
-    const detail = activity.resultSummary?.trim()
-    if (detail && !hasDiffChips) {
-      entry.detail = detail.length > 90 ? `${detail.slice(0, 87).trimEnd()}...` : detail
-    }
-    return entry
-  })
+  const tools: RemoteToolEntry[] = activities.slice(0, 12).map(toolEntryFromActivity)
   return { activityCount: activities.length, status, tools }
+}
+
+function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
+  const singleDiffFile =
+    Array.isArray(activity.diffSummary?.files) && activity.diffSummary.files.length === 1
+      ? activity.diffSummary.files[0]
+      : null
+  const entry: RemoteToolEntry = {
+    toolName: activity.toolName,
+    name: activity.displayName || activity.toolName,
+    category: activity.category ?? 'unknown',
+    status:
+      activity.status === 'running' || activity.status === 'pending'
+        ? 'running'
+        : activity.status === 'error'
+          ? 'error'
+          : 'success'
+  }
+  if (typeof activity.filePath === 'string' && activity.filePath) {
+    entry.file = activity.filePath
+  } else if (typeof singleDiffFile?.path === 'string' && singleDiffFile.path) {
+    entry.file = singleDiffFile.path
+  }
+  if (typeof activity.diffSummary?.additions === 'number') {
+    entry.additions = activity.diffSummary.additions
+  } else if (typeof singleDiffFile?.additions === 'number') {
+    entry.additions = singleDiffFile.additions
+  }
+  if (typeof activity.diffSummary?.deletions === 'number') {
+    entry.deletions = activity.diffSummary.deletions
+  } else if (typeof singleDiffFile?.deletions === 'number') {
+    entry.deletions = singleDiffFile.deletions
+  }
+  // Desktop parity: an edit card is one line — "Edited <file> +N −M" —
+  // with no result text underneath. Write entries that carry ± chips
+  // drop their detail (often a raw MCP result envelope); everything
+  // else keeps the one-line summary.
+  const hasDiffChips =
+    entry.category === 'write' && ((entry.additions ?? 0) > 0 || (entry.deletions ?? 0) > 0)
+  const detail = activity.resultSummary?.trim()
+  if (detail && !hasDiffChips) {
+    entry.detail = detail.length > 90 ? `${detail.slice(0, 87).trimEnd()}...` : detail
+  }
+  return entry
+}
+
+function fanoutToolPartStatus(
+  activities: readonly ToolActivity[]
+): 'running' | 'success' | 'error' | 'mixed' {
+  let running = 0
+  let success = 0
+  let error = 0
+  for (const a of activities) {
+    if (a.status === 'running' || a.status === 'pending') running++
+    else if (a.status === 'error') error++
+    else success++
+  }
+  if (running > 0) return 'running'
+  if (error > 0 && success > 0) return 'mixed'
+  if (error > 0) return 'error'
+  return 'success'
 }
 
 function normalizedToolName(toolName: string | undefined): string {
@@ -1500,19 +1563,111 @@ function buildGuestReply(
   return { summary, speaker }
 }
 
-/** Mirrors the renderer's `isEnsembleFanoutResultMessage` predicate exactly: an
- * assistant participant message stamped with a non-empty lane id. Shared by the
- * card builder and the tool-summary widening so a row can never get fan-out
- * tool activities without the fan-out card that frames them (or vice versa). */
-function isFanoutResultMessage(message: ChatMessage): boolean {
-  if (message.role !== 'assistant') return false
-  const metadata = message.metadata as Record<string, unknown> | undefined
-  if (metadata?.kind !== 'ensembleParticipant') return false
-  const laneId = metadata.ensembleLaneId
-  return typeof laneId === 'string' && laneId.trim().length > 0
+/** The renderer's own `isEnsembleFanoutResultMessage` predicate (imported from
+ * shared/, not mirrored): an assistant participant message stamped with a
+ * non-empty lane id. Shared by the card builder and the tool-summary widening
+ * so a row can never get fan-out tool activities without the fan-out card that
+ * frames them (or vice versa). */
+const isFanoutResultMessage = isEnsembleFanoutResultMessage
+
+/** Ship at most this many lane blocks per card — the desktop's own collapsed
+ * part limit (`COLLAPSED_FANOUT_PART_LIMIT`), tail-biased the same way. */
+const REMOTE_FANOUT_PART_MAX = 24
+/** Per-part tool-entry cap, matching the flat row `toolSummary` cap. */
+const REMOTE_FANOUT_PART_TOOL_ENTRY_MAX = 12
+/** Whole-lane tool-entry budget across every part — twice the flat cap, spent
+ * newest-first. Parts past the budget ship count-only. */
+const REMOTE_FANOUT_TOOL_ENTRY_TOTAL_MAX = 24
+/** Expand-row fetches (the phone's "Show more", previewMax ≥ the expand
+ * ceiling) are single-row snapshots, so the caps lift with the prose budget —
+ * otherwise Show more could never restore the elided head of a long lane. */
+const REMOTE_FANOUT_PART_EXPANDED_MAX = 96
+const REMOTE_FANOUT_TOOL_ENTRY_TOTAL_EXPANDED_MAX = 96
+
+/** Bounded wire form of a lane's interleaved output.
+ *
+ * The desktop pipeline groups adjacent tool messages BEFORE folding lanes, so
+ * a burst of consecutive tool calls reaches its card as one block; the
+ * projection folds raw fragments, so the same coalescing happens here.
+ * Budgets are spent from the newest part backwards — on a phone the tail of a
+ * lane is what the user is watching — and once the prose budget is exhausted
+ * the remaining OLDER parts drop entirely (partCount still carries the truth)
+ * rather than shipping an interleave with silent holes in the middle. */
+function buildFanoutParts(
+  message: ChatMessage,
+  previewMax: number
+): { parts: RemoteFanoutTranscriptPart[]; totalParts: number; hasToolsBlock: boolean } | undefined {
+  const raw = readEnsembleFanoutTranscriptParts(message)
+  if (raw.length === 0) return undefined
+  const coalesced: EnsembleFanoutTranscriptPart[] = []
+  for (const part of raw) {
+    if (part.kind === 'content') {
+      if (!part.content.trim()) continue
+      coalesced.push(part)
+      continue
+    }
+    if (part.toolActivities.length === 0) continue
+    const previous = coalesced[coalesced.length - 1]
+    if (previous?.kind === 'tools') {
+      coalesced[coalesced.length - 1] = {
+        ...previous,
+        toolActivities: [...previous.toolActivities, ...part.toolActivities]
+      }
+      continue
+    }
+    coalesced.push(part)
+  }
+  const totalParts = coalesced.length
+  if (totalParts === 0) return undefined
+
+  const expanded = previewMax >= REMOTE_IOS_ROW_EXPAND_MAX
+  const tail = coalesced.slice(-(expanded ? REMOTE_FANOUT_PART_EXPANDED_MAX : REMOTE_FANOUT_PART_MAX))
+  let contentBudget = Number.isFinite(previewMax) && previewMax > 0 ? previewMax : 0
+  let toolEntryBudget = expanded
+    ? REMOTE_FANOUT_TOOL_ENTRY_TOTAL_EXPANDED_MAX
+    : REMOTE_FANOUT_TOOL_ENTRY_TOTAL_MAX
+  const reversed: RemoteFanoutTranscriptPart[] = []
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    const part = tail[i]
+    if (part.kind === 'tools') {
+      const wirePart: RemoteFanoutTranscriptPart = {
+        id: part.id,
+        kind: 'tools',
+        activityCount: part.toolActivities.length,
+        status: fanoutToolPartStatus(part.toolActivities)
+      }
+      const entryCount = Math.min(
+        part.toolActivities.length,
+        REMOTE_FANOUT_PART_TOOL_ENTRY_MAX,
+        toolEntryBudget
+      )
+      if (entryCount > 0) {
+        wirePart.tools = part.toolActivities.slice(0, entryCount).map(toolEntryFromActivity)
+        toolEntryBudget -= entryCount
+      }
+      reversed.push(wirePart)
+      continue
+    }
+    if (contentBudget <= 0) break
+    const { preview, truncated } = sanitizePreview(part.content, contentBudget)
+    if (!preview) break
+    contentBudget -= preview.length
+    reversed.push({ id: part.id, kind: 'content', preview, ...(truncated ? { truncated } : {}) })
+  }
+  reversed.reverse()
+  return {
+    parts: reversed,
+    totalParts,
+    // From the COALESCED truth, not the shipped tail: a tools block elided by
+    // the budget still means the flat form would misorder this lane.
+    hasToolsBlock: coalesced.some((part) => part.kind === 'tools')
+  }
 }
 
-function buildFanoutResult(message: ChatMessage): RemoteEnsembleFanoutResult | undefined {
+function buildFanoutResult(
+  message: ChatMessage,
+  previewMax: number
+): RemoteEnsembleFanoutResult | undefined {
   if (!isFanoutResultMessage(message)) return undefined
   const metadata = message.metadata as Record<string, unknown>
   const laneId = stringField(metadata.ensembleLaneId, 120)
@@ -1532,8 +1687,23 @@ function buildFanoutResult(message: ChatMessage): RemoteEnsembleFanoutResult | u
   if (typeof order === 'number' && Number.isFinite(order)) {
     result.order = Math.trunc(order)
   }
-  const parts = metadata.ensembleFanoutTranscriptParts
-  if (Array.isArray(parts) && parts.length > 1) result.partCount = parts.length
+  const built = buildFanoutParts(message, previewMax)
+  if (built) {
+    // Parts carry their weight exactly when the interleave contains tool
+    // blocks — the structure the flat form (prose→preview, tools→toolSummary)
+    // actually destroys. A prose-only lane flattens LOSSLESSLY (the joined
+    // preview keeps block order as paragraphs), so it ships neither parts nor
+    // the flatten note.
+    if (built.hasToolsBlock) {
+      result.parts = built.parts
+      if (built.totalParts > 1) result.partCount = built.totalParts
+    }
+  } else {
+    // Metadata parts the reader rejected wholesale (foreign/malformed shape):
+    // keep the honesty count so the card can still say it flattened.
+    const parts = metadata.ensembleFanoutTranscriptParts
+    if (Array.isArray(parts) && parts.length > 1) result.partCount = parts.length
+  }
   return result
 }
 
@@ -1982,7 +2152,7 @@ function buildRow(
   if (proposedPlan) row.proposedPlan = proposedPlan
   const agentQuestion = buildAgentQuestion(message, questionAnswers)
   if (agentQuestion) row.agentQuestion = agentQuestion
-  const fanoutResult = buildFanoutResult(message)
+  const fanoutResult = buildFanoutResult(message, previewMax)
   if (fanoutResult) row.fanoutResult = fanoutResult
   const runFailure = buildRunFailure(message)
   if (runFailure) row.runFailure = runFailure
@@ -2783,14 +2953,23 @@ export function projectRemoteThread(
     return null
   }
 
-  // Fold consecutive identical assistant restatements (an ensemble continuation
-  // loop persists the same reply once per round) before any windowing — so
-  // totalRows and the window indices below all describe the collapsed view the
-  // client actually sees. Pinned rows + run summaries above intentionally stay
-  // on the raw `all` (the user may have pinned a specific occurrence, and run
-  // summaries resolve their own run→message associations).
+  // Fold each fan-out lane's persisted fragments (assistant content flushes +
+  // ensembleParticipantTools rows, interleaved in production order) into ONE
+  // synthetic lane message — the SAME fold the desktop renderer applies before
+  // it draws EnsembleFanoutResultCard, imported from shared/. Without it the
+  // phone received the raw fragments: one lane card per content flush with
+  // loose unbranded tool rows between them. The merged message carries
+  // `ensembleFanoutTranscriptParts`, which buildFanoutResult projects as the
+  // card's nested `parts`. Row id = the lane's first fragment id (what the
+  // desktop uses), so deep links and expand fetches resolve on both platforms.
+  // Then fold consecutive identical assistant restatements (an ensemble
+  // continuation loop persists the same reply once per round) before any
+  // windowing — so totalRows and the window indices below all describe the
+  // collapsed view the client actually sees. Pinned rows + run summaries above
+  // intentionally stay on the raw `all` (the user may have pinned a specific
+  // occurrence, and run summaries resolve their own run→message associations).
   const visible = collapseConsecutiveAssistantRestatements(
-    all,
+    groupFanoutLaneMessages(all),
     (m) => opts.speakerForMessage?.(m),
     attentionFor
   )

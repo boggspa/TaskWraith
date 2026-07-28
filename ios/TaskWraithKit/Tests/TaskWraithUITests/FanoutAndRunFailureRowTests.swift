@@ -59,6 +59,56 @@ struct FanoutAndRunFailureRowTests {
         #expect(lane.fanoutResult?.intent == "sideways")
     }
 
+    /// The nested interleave: parts decode in production order, a tools block
+    /// carries the same ToolEntry shape the flat toolSummary uses, and the
+    /// true activityCount survives even when entries were capped Mac-side.
+    @Test func decodesTheInterleavedLaneParts() throws {
+        let lane = try row(
+            """
+            {"id":"lane-a","role":"assistant","kind":"assistant","preview":"Scanning.\\n\\nFound it.",
+             "fanoutResult":{"laneId":"lane-a","provider":"claude","partCount":4,
+               "parts":[
+                 {"id":"p2","kind":"content","preview":"Scanning."},
+                 {"id":"p3","kind":"tools","activityCount":16,"status":"success",
+                  "tools":[{"name":"Read","toolName":"read","category":"read","status":"success"}]},
+                 {"id":"p4","kind":"content","preview":"Found it.","truncated":true}]}}
+            """)
+        let parts = try #require(lane.fanoutResult?.parts)
+        #expect(parts.map(\.id) == ["p2", "p3", "p4"])
+        #expect(parts.map(\.isToolsBlock) == [false, true, false])
+        #expect(parts[1].activityCount == 16)
+        #expect(parts[1].tools?.first?.name == "Read")
+        #expect(parts[2].truncated == true)
+        // partCount(4) − parts(3) = one block elided from the head in transport.
+        #expect((lane.fanoutResult?.partCount ?? 0) - parts.count == 1)
+    }
+
+    /// A count-only tools block (entry budget spent Mac-side) still decodes —
+    /// the interleave SHAPE survives even where detail could not.
+    @Test func toleratesACountOnlyToolsBlockAndAnUnknownPartKind() throws {
+        let lane = try row(
+            """
+            {"id":"l","role":"assistant",
+             "fanoutResult":{"laneId":"l","parts":[
+               {"id":"p1","kind":"tools","activityCount":9,"status":"mixed"},
+               {"id":"p2","kind":"holograph","preview":"future block"}]}}
+            """)
+        let parts = try #require(lane.fanoutResult?.parts)
+        #expect(parts[0].tools == nil)
+        #expect(parts[0].activityCount == 9)
+        // Unknown kind from a newer Mac: decodes (String, not enum), renders
+        // as neither tools nor content rather than failing the snapshot.
+        #expect(parts[1].isToolsBlock == false)
+    }
+
+    /// Older Macs ship no parts — the flat presentation (preview + toolSummary
+    /// + flatten note) must keep working from the same decode.
+    @Test func toleratesAnOlderMacWithoutParts() throws {
+        let lane = try row(laneJSON)
+        #expect(lane.fanoutResult?.parts == nil)
+        #expect(lane.fanoutResult?.partCount == 3)
+    }
+
     /// Ollama-backed lanes wear their upstream brand, matching the desktop's
     /// live `resolveProviderHueClass(provider, model)`.
     @Test func resolvesTheParticipantBrandHueNotTheGenericProvider() throws {
