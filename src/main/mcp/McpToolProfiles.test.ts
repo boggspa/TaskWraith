@@ -327,13 +327,15 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // The v8-mesh specialist profile compacts long-form Mesh/Sketch wire prose
     // while preserving every direct tool, typed schema, enum, required field,
     // and annotation. Both fresh variants stay below the transport ceiling.
-    expect(fullChars).toBe(137_005)
-    expect(gatewayChars).toBe(39_869)
+    // Re-measured after rebasing over the Captain fan-out guidance: each
+    // catalogue grows by the same 66 characters; membership is unchanged.
+    expect(fullChars).toBe(137_071)
+    expect(gatewayChars).toBe(39_935)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
-    expect(freshGatewayChars).toBe(36_985)
+    expect(freshGatewayChars).toBe(37_051)
     expect(freshGatewayChars).toBeLessThan(40_000)
-    expect(freshMeshGatewayChars).toBe(39_780)
+    expect(freshMeshGatewayChars).toBe(39_846)
     expect(freshMeshGatewayChars).toBeLessThan(40_000)
   })
 
