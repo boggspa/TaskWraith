@@ -274,6 +274,7 @@ export function isSafeMeshAssetRelativePath(value: unknown): value is string {
       segment !== '.' &&
       segment !== '..' &&
       !segment.includes(':') &&
+      // eslint-disable-next-line no-control-regex -- rejecting control bytes is exactly the check.
       !/[\x00-\x1f]/.test(segment)
   )
 }
