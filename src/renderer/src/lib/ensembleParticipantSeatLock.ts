@@ -39,7 +39,8 @@ export function isEnsembleParticipantSeatRuntimeLocked(
 
 export interface EnsembleParticipantSeatMutationState {
   locked: boolean
-  queueAtTurnEnd: boolean
+  deferUntilExecutionBoundary: boolean
+  requiresRuntimeSync: boolean
   message: string | null
 }
 
@@ -47,12 +48,14 @@ export function resolveEnsembleParticipantSeatMutationState(
   round: EnsembleRoundState | null | undefined,
   participantId: string | null | undefined
 ): EnsembleParticipantSeatMutationState {
+  const requiresRuntimeSync = isEnsembleActiveRoundDispatchLive(round)
   const locked = isEnsembleParticipantSeatRuntimeLocked(round, participantId)
   return {
     locked,
-    queueAtTurnEnd: locked,
+    deferUntilExecutionBoundary: locked,
+    requiresRuntimeSync,
     message: locked
-      ? 'This seat is executing. Provider/model changes apply next round; other seat edits queue until turn end.'
+      ? 'This seat is executing. Changes apply when its current execution finishes.'
       : null
   }
 }

@@ -113,6 +113,7 @@ import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
 import { formatScheduledTaskCountdown } from '../lib/scheduledCountdown'
 import { buildParticipantToolGrantPatch, getParticipantToolGrantIds } from '../lib/ensembleParticipantToolGrants'
+import { isEnsembleParticipantSeatRuntimeLocked } from '../lib/ensembleParticipantSeatLock'
 import {
   buildCodexModelChangeParticipantPatch,
   buildProviderModelChangeParticipantPatch,
@@ -539,13 +540,6 @@ export function shouldRenderWelcomeNotifications(
   return isWelcomeChat && showWelcomeNotifications
 }
 
-function patchTouchesProviderOrModel(patch: Partial<EnsembleParticipant>): boolean {
-  return (
-    Object.prototype.hasOwnProperty.call(patch, 'provider') ||
-    Object.prototype.hasOwnProperty.call(patch, 'model')
-  )
-}
-
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
@@ -889,31 +883,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   })
   const composerGhostText = composerSuggestion.ghostText
 
-  const [seatChangeNoticeRoundKey, setSeatChangeNoticeRoundKey] = useState<string | null>(null)
-  const [dismissedSeatChangeNoticeRoundKey, setDismissedSeatChangeNoticeRoundKey] = useState<
-    string | null
-  >(null)
-  const activeSeatChangeNoticeRoundKey =
-    isCurrentEnsembleChat &&
-    isCurrentEnsembleRoundRunning &&
-    currentChat?.appChatId &&
-    currentChat.ensemble?.activeRound?.roundId
-      ? `${currentChat.appChatId}:${currentChat.ensemble.activeRound.roundId}`
-      : null
-  const showSeatChangeNextRoundNotice =
-    Boolean(activeSeatChangeNoticeRoundKey) &&
-    seatChangeNoticeRoundKey === activeSeatChangeNoticeRoundKey &&
-    dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey
-  const updateSelectedParticipantWithNotice = (patch: Partial<EnsembleParticipant>): void => {
-    if (
-      activeSeatChangeNoticeRoundKey &&
-      dismissedSeatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey &&
-      patchTouchesProviderOrModel(patch)
-    ) {
-      setSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
-    }
-    updateSelectedParticipant(patch)
-  }
   const buildPickerModelOptions = (
     targetProvider: ProviderId,
     models: CodexModelOption[],
@@ -1048,12 +1017,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return getEnsembleReasoningOptions(targetProvider, modelId)
   }
 
-  useEffect(() => {
-    if (seatChangeNoticeRoundKey && seatChangeNoticeRoundKey !== activeSeatChangeNoticeRoundKey) {
-      setSeatChangeNoticeRoundKey(null)
-    }
-  }, [activeSeatChangeNoticeRoundKey, seatChangeNoticeRoundKey])
-
   const hasVisibleScheduledCountdown =
     Array.isArray(visibleScheduledTasks) &&
     visibleScheduledTasks.some((task: any) => task?.status === 'pending' || task?.status === 'due')
@@ -1167,7 +1130,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     if (approvalParticipantId && currentChat?.ensemble) {
       patchEnsembleParticipantById(approvalParticipantId, { permissionPresetId: 'full_access' })
     } else if (isCurrentEnsembleChat && selectedParticipant) {
-      updateSelectedParticipantWithNotice({ permissionPresetId: 'full_access' })
+      updateSelectedParticipant({ permissionPresetId: 'full_access' })
     } else {
       setApprovalMode('auto_edit')
       rememberCurrentChatComposerSelection({
@@ -3161,27 +3124,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </div>
                       </div>
                     )}
-                    {showSeatChangeNextRoundNotice && (
-                      <div className="composer-permission-card composer-seat-change-notice" role="status">
-                        <span className="composer-seat-change-notice-copy">
-                          Provider/model changes during this round will apply to the next round.
-                        </span>
-                        <button
-                          type="button"
-                          className="composer-seat-change-notice-dismiss"
-                          aria-label="Dismiss provider/model next-round notice"
-                          title="Dismiss"
-                          onClick={() => {
-                            if (activeSeatChangeNoticeRoundKey) {
-                              setDismissedSeatChangeNoticeRoundKey(activeSeatChangeNoticeRoundKey)
-                            }
-                            setSeatChangeNoticeRoundKey(null)
-                          }}
-                        >
-                          <XSymbolIcon />
-                        </button>
-                      </div>
-                    )}
                     {pendingPlanImport && (
                       <ComposerPlanImportCard
                         pendingPlanImport={pendingPlanImport}
@@ -3650,7 +3592,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   patch.fastModeEnabled = false
                                 }
                               }
-                              updateSelectedParticipantWithNotice(patch)
+                              updateSelectedParticipant(patch)
                               return
                             }
                             if (shouldUpdateLiveComposerState && nextModel !== 'custom') {
@@ -3771,7 +3713,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               const nextModelMetadata = getProviderModelOptions(nextProvider).find(
                                 (model: CodexModelOption) => model.id === nextModel
                               )
-                              updateSelectedParticipantWithNotice(
+                              updateSelectedParticipant(
                                 buildProviderModelChangeParticipantPatch(
                                   nextProvider,
                                   nextModel,
@@ -3814,7 +3756,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   const nextTier =
                                     effectiveCodexServiceTier === 'fast' ? '' : 'fast'
                                   if (ensembleBinding) {
-                                    updateSelectedParticipantWithNotice({
+                                    updateSelectedParticipant({
                                       serviceTier: nextTier,
                                       fastModeEnabled: nextTier === 'fast'
                                     })
@@ -3831,7 +3773,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 ? () => {
                                     const nextFast = !effectiveClaudeFastMode
                                     if (ensembleBinding) {
-                                      updateSelectedParticipantWithNotice({ fastModeEnabled: nextFast })
+                                      updateSelectedParticipant({ fastModeEnabled: nextFast })
                                       return
                                     }
                                     if (shouldUpdateLiveComposerState) {
@@ -3845,7 +3787,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   ? () => {
                                       const nextFast = !effectiveKimiFastMode
                                       if (ensembleBinding) {
-                                        updateSelectedParticipantWithNotice({
+                                        updateSelectedParticipant({
                                           fastModeEnabled: nextFast,
                                           serviceTier: nextFast ? 'fast' : 'standard'
                                         })
@@ -3863,7 +3805,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                         if (isCursorGrok45ModelId(effectiveSelectedModel)) {
                                           const nextFast = !effectiveCursorFastMode
                                           if (ensembleBinding) {
-                                            updateSelectedParticipantWithNotice({
+                                            updateSelectedParticipant({
                                               fastModeEnabled: nextFast
                                             })
                                             return
@@ -3887,12 +3829,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
                               if (ensembleBinding.provider === 'kimi') {
-                                updateSelectedParticipantWithNotice({
+                                updateSelectedParticipant({
                                   reasoningEffort: value,
                                   thinkingEnabled: true
                                 })
                               } else {
-                                updateSelectedParticipantWithNotice({ reasoningEffort: value })
+                                updateSelectedParticipant({ reasoningEffort: value })
                               }
                               return
                             }
@@ -4217,9 +4159,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               : []
                           const grantTimingNote =
                             ensembleBinding &&
-                            currentChat?.ensemble?.activeRound?.activeParticipantId ===
+                            isEnsembleParticipantSeatRuntimeLocked(
+                              currentChat?.ensemble?.activeRound,
                               ensembleBinding.id
-                              ? 'This participant is running. Changes apply on its next turn.'
+                            )
+                              ? 'This participant is running. Changes apply when its current execution finishes.'
                               : undefined
                           const handlePermissionSelection = (nextPermissionMode: string): void => {
                             const nextPermissionPreset = selectionToPreset(nextPermissionMode)
@@ -4237,7 +4181,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               // reaches here — it's intercepted above into the
                               // TrustedSessionConfirmSheet.
                               const applyParticipantSelection = (): void => {
-                                updateSelectedParticipantWithNotice({
+                                updateSelectedParticipant({
                                   permissionPresetId: nextPermissionPreset
                                 })
                               }
@@ -4312,7 +4256,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             enabled: boolean
                           ): boolean | Promise<boolean> => {
                             if (ensembleBinding) {
-                              updateSelectedParticipantWithNotice(
+                              updateSelectedParticipant(
                                 buildParticipantToolGrantPatch(ensembleBinding, service, enabled)
                               )
                               return true
@@ -4343,7 +4287,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               )
                             }
                             if (ensembleBinding) {
-                              updateSelectedParticipantWithNotice({ permissionPresetId: 'workspace_write' })
+                              updateSelectedParticipant({ permissionPresetId: 'workspace_write' })
                               return
                             }
                             setApprovalMode('auto_edit')

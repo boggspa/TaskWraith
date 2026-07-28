@@ -227,6 +227,16 @@ describe('Multiview pane Composer context parity', () => {
     expect(source).toContain('summaryChatUpdateQueueRef.current.hasPending(chatId)')
     expect(source).toContain('resolveAvailableBase: (key) =>')
     expect(source).toContain('return updateChatById(key, queuedUpdater, queuedOptions)')
+    const seatGate = source.slice(
+      source.indexOf('const requestAuthoritativeParticipantSeatChange ='),
+      source.indexOf('const patchEnsembleParticipantForChat =')
+    )
+    expect(seatGate).toContain('mutationState.requiresRuntimeSync')
+    expect(seatGate).toContain('requestAuthoritativeParticipantSeatChange(')
+    expect(seatGate).toContain('authoritativeParticipantSeatChangeQueueRef')
+    expect(seatGate).toContain('(previous || Promise.resolve())')
+    expect(seatGate).not.toContain('queueForNextRound')
+    expect(seatGate).not.toContain('hasProviderOrModelSeatPatch')
     const participantPatch = source.slice(
       source.indexOf('const patchEnsembleParticipantForChat ='),
       source.indexOf('const applyEnsembleRosterPresetToChat =')
