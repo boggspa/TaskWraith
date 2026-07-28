@@ -152,6 +152,14 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('canvas_eval')).toBe('canvas')
   })
 
+  it('maps mesh scene tools to the mesh family', () => {
+    expect(toolNameToFamily('mesh_scene_create')).toBe('mesh')
+    expect(toolNameToFamily('mesh_scene_apply')).toBe('mesh')
+    expect(toolNameToFamily('mesh_scene_set_material')).toBe('mesh')
+    expect(toolNameToFamily('mesh_scene_present')).toBe('mesh')
+    expect(toolNameToFamily('mcp__TaskWraith__mesh_scene_import')).toBe('mesh')
+  })
+
   it('maps media tools to image/audio/video families', () => {
     expect(toolNameToFamily('image_generate')).toBe('image')
     expect(toolNameToFamily('svg_rasterize')).toBe('image')
@@ -325,7 +333,9 @@ describe('toolNameToFamily', () => {
       'status',
       'reasoning',
       'plan',
-      'handoff'
+      'handoff',
+      'mail',
+      'mesh'
     ]
 
     for (const family of families) {

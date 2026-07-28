@@ -55,6 +55,7 @@ export type ToolFamily =
   | 'plan'
   | 'handoff'
   | 'mail'
+  | 'mesh'
 
 interface ToolFamilyIconProps {
   family: ToolFamily | null | undefined
@@ -307,6 +308,18 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_eval':
     case 'canvas_close':
       return 'canvas'
+    // Mesh Canvas is its own surface (3D scene service + dock viewer), not the
+    // 2D canvas — the scene tools get a wireframe-cube glyph of their own.
+    case 'mesh_scene_create':
+    case 'mesh_scene_list':
+    case 'mesh_scene_inspect':
+    case 'mesh_scene_import':
+    case 'mesh_scene_apply':
+    case 'mesh_scene_set_material':
+    case 'mesh_scene_present':
+    case 'mesh_scene_close':
+    case 'mesh_scene_delete':
+      return 'mesh'
     // Appearance, not a canvas surface — these change the user's own theme
     // tokens. 'window-context' is the closest existing family (it is about the
     // app's own chrome rather than a workspace artifact); no new glyph needed.
@@ -653,6 +666,17 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M7.6 11.5C9.1 8.9 11 8.1 12.8 9.1 14.6 10.1 15.9 9.3 16.8 7.4" />
           <circle cx="7.8" cy="7.5" r="1" />
           <circle cx="16.1" cy="12.5" r="1" />
+        </g>
+      )
+    case 'mesh':
+      return (
+        <g>
+          <path d="M9.6 4.9 18.2 4.7 18.4 13 9.9 13.2Z" />
+          <path d="M5.8 9.2 14.1 8.9 14.3 17.2 6.1 17.4Z" />
+          <path d="M9.6 4.9 5.8 9.2" />
+          <path d="M18.2 4.7 14.1 8.9" />
+          <path d="M18.4 13 14.3 17.2" />
+          <path d="M9.9 13.2 6.1 17.4" />
         </g>
       )
     case 'image':

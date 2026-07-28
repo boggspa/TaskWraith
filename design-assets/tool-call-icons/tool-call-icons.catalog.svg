@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1220" viewBox="0 0 360 488" role="img" aria-labelledby="tool-call-icons-title tool-call-icons-desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1400" viewBox="0 0 360 560" role="img" aria-labelledby="tool-call-icons-title tool-call-icons-desc">
   <title id="tool-call-icons-title">Tool-call icon catalog</title>
-  <desc id="tool-call-icons-desc">Thirty-four sketchy monoline SVG icons for TaskWraith tool-call families.</desc>
+  <desc id="tool-call-icons-desc">Thirty-six sketchy monoline SVG icons for TaskWraith tool-call families.</desc>
 
   <g fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
     <g id="tool-icon-file" transform="translate(24 11)">
@@ -410,6 +410,26 @@
         <circle cx="12.1" cy="15.2" r="0.9" />
       </svg>
     </g>
+
+    <g id="tool-icon-mail" transform="translate(312 443)">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M3.6 6.4 20.4 6.4 20.4 17.6 3.6 17.6Z" />
+        <path d="M3.6 6.4 12 13.1 20.4 6.4" />
+        <path d="M3.6 17.6 9.7 11.9" />
+        <path d="M20.4 17.6 14.3 11.9" />
+      </svg>
+    </g>
+
+    <g id="tool-icon-mesh" transform="translate(24 515)">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path d="M9.6 4.9 18.2 4.7 18.4 13 9.9 13.2Z" />
+        <path d="M5.8 9.2 14.1 8.9 14.3 17.2 6.1 17.4Z" />
+        <path d="M9.6 4.9 5.8 9.2" />
+        <path d="M18.2 4.7 14.1 8.9" />
+        <path d="M18.4 13 14.3 17.2" />
+        <path d="M9.9 13.2 6.1 17.4" />
+      </svg>
+    </g>
   </g>
 
   <g fill="currentColor" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="4.8" text-anchor="middle">
@@ -447,5 +467,7 @@
     <text x="108" y="479">audit</text>
     <text x="180" y="479">approval</text>
     <text x="252" y="479">status</text>
+    <text x="324" y="479">mail</text>
+    <text x="36" y="551">mesh</text>
   </g>
 </svg>
