@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { UsageRecord } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 
 import {
   HEATMAP_DAY_COUNT,
@@ -683,6 +684,24 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     expect(byModel.get('qwen3.5:9b')).toBe('provider-alibaba')
     expect(byModel.get('gemma4:12b')).toBe('provider-google')
     expect(byModel.get('gpt-oss:20b')).toBe('provider-openai')
+  })
+
+  it('maps every Pi upstream model to its spoofed brand hue class', () => {
+    const records = Object.keys(PI_MODEL_LABELS).map((model, index) =>
+      baseRecord({
+        id: `pi-brand-${index}`,
+        provider: 'pi',
+        timestamp: NOW - (index + 1) * 1_000,
+        model
+      })
+    )
+
+    const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
+    const byModel = new Map(data.modelBreakdown.map((entry) => [entry.model, entry.colorClass]))
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(byModel.get(modelId!)).toBe(`provider-${brand.hueClass}`)
+    }
   })
 
   it('falls back to the runtime provider hue class for non-brand models', () => {

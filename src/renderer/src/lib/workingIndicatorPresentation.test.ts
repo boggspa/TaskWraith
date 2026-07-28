@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, EnsembleParticipant, ProviderId } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   deriveActiveEnsembleWorkingPresentation,
-  deriveActiveEnsembleWorkingPresentations
+  deriveActiveEnsembleWorkingPresentations,
+  resolveWorkingIndicatorProviderPresentation
 } from './workingIndicatorPresentation'
 
 function participant(patch: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
@@ -122,6 +124,17 @@ describe('deriveActiveEnsembleWorkingPresentation', () => {
       modelBadge: 'deepseek/deepseek-v4-flash',
       activity: 'working'
     })
+  })
+
+  it('uses every Pi upstream hue in the shared working-indicator presentation', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      expect(resolveWorkingIndicatorProviderPresentation('pi', model)).toMatchObject({
+        providerLabel: 'Pi',
+        providerClass: brand.hueClass
+      })
+    }
   })
 
   it('prefers the frozen round participant display over a next-round roster edit', () => {

@@ -7,7 +7,9 @@ import type {
   EnsembleRoundState,
   ProviderId
 } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
+  buildEnsembleProviderBlendStyle,
   buildMultiviewEnsembleComposerProjection,
   buildMultiviewEnsembleSelectionPruneSnapshot,
   isMultiviewEnsembleParticipantSelectionValid,
@@ -547,6 +549,30 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
         divergentLatest
       )
     ).toBe(divergentLatest)
+  })
+})
+
+describe('buildEnsembleProviderBlendStyle', () => {
+  it('uses every Pi upstream hue and preserves Ollama spoofing', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      expect(
+        buildEnsembleProviderBlendStyle([{ provider: 'pi', model }])
+      ).toEqual({
+        '--ensemble-provider-1': `var(--provider-${brand.hueClass}-color)`
+      })
+    }
+
+    expect(
+      buildEnsembleProviderBlendStyle([
+        { provider: 'ollama', model: 'qwen3.5:9b' },
+        { provider: 'codex', model: 'gpt-5.5' }
+      ])
+    ).toEqual({
+      '--ensemble-provider-1': 'var(--provider-alibaba-color)',
+      '--ensemble-provider-2': 'var(--provider-codex-color)'
+    })
   })
 })
 

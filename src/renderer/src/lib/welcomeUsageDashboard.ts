@@ -6,7 +6,10 @@ import type {
   WorkspaceRecord
 } from '../../../main/store/types'
 import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
-import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
+import {
+  resolveOllamaDisplayBrand,
+  resolveProviderHueClass
+} from './ollamaDisplayBrand'
 import { usageRecordInputTokens, usageRecordTotalTokens } from './providerRateEstimate'
 
 export type WelcomeUsageTab = 'overview' | 'models' | 'workspaces' | 'providers' | 'agents'
@@ -478,10 +481,11 @@ const labelForBreakdownModel = (provider: ProviderId, model: string): string =>
 
 /**
  * Resolve the display label + CSS hue class for a breakdown row. For most
- * providers this is just the humanised model name + `provider-<id>`. For
- * Ollama-backed display brands the row adopts the spoofed upstream brand
- * label + class (e.g. Qwen → `provider-alibaba`) so the Model Comparisons
- * tab matches the transcript / run-card / picker hue treatment.
+ * providers this is just the humanised model name + `provider-<id>`. For the
+ * two model-backed runtime seats, the row adopts the spoofed upstream hue
+ * class (e.g. Ollama Qwen → `provider-alibaba`, Pi DeepSeek →
+ * `provider-deepseek`) so Model Comparisons matches transcript/run/picker
+ * presentation.
  */
 const presentationForBreakdownModel = (
   provider: ProviderId,
@@ -497,7 +501,10 @@ const presentationForBreakdownModel = (
       }
     }
   }
-  return { label: baseLabel, colorClass: `provider-${provider}` }
+  return {
+    label: baseLabel,
+    colorClass: `provider-${resolveProviderHueClass(provider, model, baseLabel)}`
+  }
 }
 
 const inferProviderFromModelName = (model: string): ProviderId => {

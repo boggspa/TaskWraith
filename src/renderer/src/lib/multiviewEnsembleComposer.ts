@@ -17,6 +17,7 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from './ensembleFanoutPolicy'
+import { resolveProviderHueClass } from './ollamaDisplayBrand'
 import { resolveSlashParticipantForChat } from './resolveSlashParticipant'
 
 export interface MultiviewEnsembleComposerProjection {
@@ -52,6 +53,23 @@ export interface MultiviewEnsembleSelectionOwnership {
 export interface MultiviewEnsembleSelectionPruneSnapshot {
   chats: ChatRecord[]
   ownershipKey: string
+}
+
+export function buildEnsembleProviderBlendStyle(
+  participants: readonly Pick<EnsembleParticipant, 'provider' | 'model'>[]
+): Record<string, string> {
+  return participants.slice(0, 4).reduce<Record<string, string>>(
+    (style, participant, index) => {
+      const providerClass = resolveProviderHueClass(
+        participant.provider,
+        participant.model
+      )
+      style[`--ensemble-provider-${index + 1}`] =
+        `var(--provider-${providerClass}-color)`
+      return style
+    },
+    {}
+  )
 }
 
 export function isMultiviewEnsembleParticipantSelectionValid(
@@ -276,14 +294,7 @@ export function buildMultiviewEnsembleComposerProjection(
     isRoundRunning: Boolean(liveRound),
     roundStatus: liveRound?.status,
     activeGoalStatus: chat.activeGoal?.status ?? null,
-    providerBlendStyle: enabledParticipants.slice(0, 4).reduce<Record<string, string>>(
-      (style, participant, index) => {
-        style[`--ensemble-provider-${index + 1}`] =
-          `var(--provider-${participant.provider}-color)`
-        return style
-      },
-      {}
-    ),
+    providerBlendStyle: buildEnsembleProviderBlendStyle(enabledParticipants),
     ollamaContextWarning: ollamaPressure
       ? {
           severity: ollamaPressure.severity,

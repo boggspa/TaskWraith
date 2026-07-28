@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { formatAssistantMessageLabel } from './assistantMessageLabel'
 
 const assistant = (metadata?: ChatMessage['metadata']): ChatMessage => ({
@@ -135,6 +136,37 @@ describe('formatAssistantMessageLabel', () => {
       provider: 'codex',
       providerClass: 'codex',
       modelBadge: '5.5'
+    })
+  })
+
+  it('uses every Pi upstream hue for solo transcript attribution', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      expect(
+        formatAssistantMessageLabel(assistant({ providerModel: modelId }), 'Pi', 'pi')
+      ).toMatchObject({
+        provider: 'pi',
+        providerClass: brand.hueClass
+      })
+    }
+  })
+
+  it('uses the Pi upstream hue for guest transcript attribution', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          kind: 'guestParticipantReply',
+          guestProvider: 'pi',
+          guestRole: 'Scout',
+          guestModel: 'qwen-token-plan/qwen3.7-max'
+        }),
+        'Codex',
+        'codex'
+      )
+    ).toMatchObject({
+      provider: 'pi',
+      providerClass: 'qwen'
     })
   })
 

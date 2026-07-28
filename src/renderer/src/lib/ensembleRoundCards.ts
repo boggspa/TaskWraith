@@ -139,12 +139,22 @@ export interface EnsembleRoundHeaderData {
   providers: string[]
   /** Distinct participant roles that spoke in the round, in order. */
   roles: string[]
+  /** Model-aware participant attribution for brand-spoof accents. Optional so
+   * synthetic headers restored from older renderer sessions still render. */
+  attributions?: EnsembleRoundHeaderAttribution[]
   /** Count of body messages in the round (excludes the round prompt). */
   bodyMessageCount: number
   /** Synthesizer summary for the round, when available. */
   summary: string | null
   /** First line of the round's user prompt, for the collapsed preview. */
   promptPreview: string | null
+}
+
+export interface EnsembleRoundHeaderAttribution {
+  participantId: string | null
+  provider: string
+  role: string | null
+  model: string | null
 }
 
 export function ensembleRoundHeaderId(roundId: string): string {
@@ -174,16 +184,32 @@ function isRoundPrompt(message: ChatMessage): boolean {
   return message.metadata?.kind === 'ensembleRoundPrompt' || message.role === 'user'
 }
 
-function collectAttribution(messages: ChatMessage[]): { providers: string[]; roles: string[] } {
+function collectAttribution(messages: ChatMessage[]): {
+  providers: string[]
+  roles: string[]
+  attributions: EnsembleRoundHeaderAttribution[]
+} {
   const providers: string[] = []
   const roles: string[] = []
+  const attributions: EnsembleRoundHeaderAttribution[] = []
+  const attributionKeys = new Set<string>()
   for (const message of messages) {
     const provider = metaString(message, 'ensembleProvider')
     if (provider && !providers.includes(provider)) providers.push(provider)
     const role = metaString(message, 'ensembleRole')
     if (role && !roles.includes(role)) roles.push(role)
+    if (provider) {
+      const participantId = metaString(message, 'ensembleParticipantId')
+      const model = metaString(message, 'ensembleModel')
+      const attributionKey =
+        participantId || `${provider}\u0000${role || ''}\u0000${model || ''}`
+      if (!attributionKeys.has(attributionKey)) {
+        attributionKeys.add(attributionKey)
+        attributions.push({ participantId, provider, role, model })
+      }
+    }
   }
-  return { providers, roles }
+  return { providers, roles, attributions }
 }
 
 function firstPromptPreview(messages: ChatMessage[]): string | null {
@@ -207,7 +233,7 @@ function buildRoundHeaderMessage(args: {
   summary: string | null
 }): ChatMessage {
   const { roundId, roundIndex, roundCount, expanded, messages, summary } = args
-  const { providers, roles } = collectAttribution(messages)
+  const { providers, roles, attributions } = collectAttribution(messages)
   const bodyMessageCount = messages.filter((message) => !isRoundPrompt(message)).length
   const data: EnsembleRoundHeaderData = {
     roundId,
@@ -216,6 +242,7 @@ function buildRoundHeaderMessage(args: {
     expanded,
     providers,
     roles,
+    attributions,
     bodyMessageCount,
     summary: summary && summary.trim() ? summary.trim() : null,
     promptPreview: firstPromptPreview(messages)

@@ -20,15 +20,26 @@ function message(
   id: string,
   overrides: Partial<ChatMessage> & {
     roundId?: string
+    ensembleParticipantId?: string
     ensembleProvider?: string
     ensembleRole?: string
+    ensembleModel?: string
   } = {}
 ): ChatMessage {
-  const { roundId, ensembleProvider, ensembleRole, ...rest } = overrides
+  const {
+    roundId,
+    ensembleParticipantId,
+    ensembleProvider,
+    ensembleRole,
+    ensembleModel,
+    ...rest
+  } = overrides
   const metadata: Record<string, unknown> = { ...(rest.metadata as object) }
   if (roundId) metadata.ensembleRoundId = roundId
+  if (ensembleParticipantId) metadata.ensembleParticipantId = ensembleParticipantId
   if (ensembleProvider) metadata.ensembleProvider = ensembleProvider
   if (ensembleRole) metadata.ensembleRole = ensembleRole
+  if (ensembleModel) metadata.ensembleModel = ensembleModel
   return {
     id,
     role: 'assistant',
@@ -147,8 +158,59 @@ describe('buildEnsembleRoundCardRows', () => {
     expect(data?.roundCount).toBe(2)
     expect(data?.providers).toEqual(['codex'])
     expect(data?.roles).toEqual(['Planner'])
+    expect(data?.attributions).toEqual([
+      {
+        participantId: null,
+        provider: 'codex',
+        role: 'Planner',
+        model: null
+      }
+    ])
     expect(data?.bodyMessageCount).toBe(1)
     expect(data?.promptPreview).toBe('prompt-u1')
+  })
+
+  it('keeps same-seat Pi speakers distinct by participant and model', () => {
+    const display = [
+      userPrompt('u1', 'r1'),
+      message('pi-deepseek', {
+        roundId: 'r1',
+        ensembleParticipantId: 'pi-deepseek',
+        ensembleProvider: 'pi',
+        ensembleRole: 'Scout',
+        ensembleModel: 'deepseek/deepseek-v4-pro'
+      }),
+      message('pi-mistral', {
+        roundId: 'r1',
+        ensembleParticipantId: 'pi-mistral',
+        ensembleProvider: 'pi',
+        ensembleRole: 'Reviewer',
+        ensembleModel: 'mistral/devstral-2512'
+      })
+    ]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: new Map([['r1', false]])
+    })
+
+    expect(readEnsembleRoundHeader(result[0])?.attributions).toEqual([
+      {
+        participantId: 'pi-deepseek',
+        provider: 'pi',
+        role: 'Scout',
+        model: 'deepseek/deepseek-v4-pro'
+      },
+      {
+        participantId: 'pi-mistral',
+        provider: 'pi',
+        role: 'Reviewer',
+        model: 'mistral/devstral-2512'
+      }
+    ])
   })
 
   it('expands the most-recent round by default when idle (no active round)', () => {

@@ -32,6 +32,33 @@ export type WorkingIndicatorPresentation = {
   activity: WorkingIndicatorActivity
 }
 
+export type WorkingIndicatorProviderPresentation = {
+  providerLabel: string
+  providerClass: string
+  modelBadge: string | null
+}
+
+export function resolveWorkingIndicatorProviderPresentation(
+  provider: ProviderId,
+  model = ''
+): WorkingIndicatorProviderPresentation {
+  const ollamaBrand =
+    provider === 'ollama' && model
+      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
+      : null
+  return {
+    providerLabel:
+      ollamaBrand?.providerLabel ||
+      (provider === 'ollama' && model
+        ? humaniseModelId('ollama', model)
+        : getProviderLabel(provider)),
+    providerClass: resolveProviderHueClass(provider, model) || provider,
+    modelBadge:
+      ollamaBrand?.modelLabel ||
+      (provider === 'pi' && model ? shortModelName(provider, '', model) : null)
+  }
+}
+
 const LIVE_ROUND_PARTICIPANT_STATUSES = new Set(['idle', 'running', 'sleeping'])
 const LIVE_LANE_STATUSES = new Set(['pending', 'running', 'blocked', 'awaiting-approval'])
 
@@ -226,10 +253,7 @@ function workingPresentationForParticipant(
   const roleLabel = (roundParticipant?.role || participant?.role || '').trim() || null
   const modelDisplay = modelDisplayForParticipant(provider, roundParticipant, participant)
   const model = modelDisplay?.model || ''
-  const brand =
-    provider === 'ollama' && model
-      ? resolveOllamaDisplayBrand(model, humaniseModelId('ollama', model))
-      : null
+  const providerPresentation = resolveWorkingIndicatorProviderPresentation(provider, model)
 
   return {
     participantId,
@@ -241,12 +265,12 @@ function workingPresentationForParticipant(
       chat.ensemble?.activeRound?.startedAt ||
       null,
     tokenAccumulatorBase: participantTokenAccumulatorBase(participant),
-    providerLabel: brand?.providerLabel || getProviderLabel(provider),
+    providerLabel: providerPresentation.providerLabel,
     provider,
     // Pi wire ids include the actual upstream, just as Ollama model ids can.
     // Keep the working animation on that display-brand hue rather than the
     // neutral Pi seat colour (e.g. DeepSeek blue for a DeepSeek Pi run).
-    providerClass: resolveProviderHueClass(provider, model) || provider,
+    providerClass: providerPresentation.providerClass,
     roleLabel,
     modelBadge: modelDisplay ? modelBadgeForParticipant(modelDisplay) : null,
     activity: activityForParticipant(chat, participantId, contextCompactionProgress)

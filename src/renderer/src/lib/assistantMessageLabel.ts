@@ -141,7 +141,9 @@ const formatAssistantMessageLabel = (
         ? `${getProviderLabel(guestProvider)} / ${guestRole}`
         : `Guest / ${guestRole}`,
       provider: guestProvider,
-      providerClass: guestProvider,
+      providerClass: guestProvider
+        ? resolveProviderHueClass(guestProvider, guestModel)
+        : null,
       modelBadge: guestProvider && guestModel ? shortModelName(guestProvider, '', guestModel) : null
     })
   }
@@ -179,7 +181,9 @@ const formatAssistantMessageLabel = (
     return withPooledIdentity({
       label: fallbackLabel,
       provider: fallbackProvider,
-      providerClass: fallbackProvider,
+      providerClass: fallbackProvider
+        ? resolveProviderHueClass(fallbackProvider, soloModel, soloModelLabel)
+        : null,
       modelBadge: soloModelBadge
     })
   }
