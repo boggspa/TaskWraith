@@ -129,7 +129,7 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('200 / 200 remaining')
   })
 
-  it('renders the existing four providers and does NOT add a Grok meter when Grok is unavailable', () => {
+  it('renders the four fixture providers and does NOT add a Grok meter when Grok is unavailable', () => {
     // Regression for 1.0.6-GU: the gated Grok subscription-credit meter
     // must not leak into the card. Under SSR the availability effect never
     // runs, so `grokAvailable` stays false and the meter is absent — exactly
@@ -435,7 +435,7 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('>MO</th>')
   })
 
-  it('adds a conditional Mistral monthly band without fabricating percentage precision', () => {
+  it('shows the Mistral monthly estimate as a spend figure in the X1 slot, not a band or MO row', () => {
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
         quotaEntries={[]}
@@ -444,8 +444,12 @@ describe('ModelUsageCard', () => {
     )
 
     expect(html).toContain('>Mistral</th>')
-    expect(html).toContain('>MO</th>')
-    expect(html).toContain('>~NEAR</td>')
+    // No dedicated MO row: monthly rides the Extra X1 slot like Cursor.
+    expect(html).not.toContain('>MO</th>')
+    expect(html).toContain('>X1</th>')
+    // A rough € figure (hedged with ~), never the old qualitative "~NEAR" band.
+    expect(html).toContain('>~$8.00</td>')
+    expect(html).not.toContain('NEAR</td>')
     expect(html).toContain('provider-mistral is-warning is-estimated')
     expect(html).toContain('~$8.00 of ~$9.25')
     expect(html).toContain('resets 1 Aug')
@@ -461,12 +465,20 @@ describe('ModelUsageCard', () => {
             provider: 'antigravity',
             windows: [
               {
-                id: 'gemini-models',
-                label: 'Gemini models',
+                id: 'agy-gemini-weekly',
+                label: 'Gemini Weekly',
                 runs: 0,
                 totalTokens: 0,
-                limitLabel: '85% left · refresh: 2026-07-24T12:00:00.000Z',
-                usedPercent: 15
+                limitLabel: '42% remaining · refresh: in 91h 44m',
+                usedPercent: 58
+              },
+              {
+                id: 'agy-gemini-5h',
+                label: 'Gemini 5H',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '100% remaining',
+                usedPercent: 0
               }
             ]
           })
@@ -474,10 +486,11 @@ describe('ModelUsageCard', () => {
       />
     )
     // Manual-only doctrine: the column exists because a manual /usage probe
-    // produced a snapshot; the single Gemini family quota rides the 5H row
-    // (Google's five-hour refresh cycle) with the panel truth in the title.
+    // produced a snapshot. The Gemini pool's two sub-limits land on 5H and WK
+    // by label predicate, with the panel truth carried in each cell's title.
     expect(withAgy).toContain('>AGY</th>')
-    expect(withAgy).toContain('Gemini models')
+    expect(withAgy).toContain('Gemini Weekly')
+    expect(withAgy).toContain('Gemini 5H')
 
     const withoutAgy = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[]} />)
     expect(withoutAgy).not.toContain('>AGY</th>')
@@ -491,8 +504,9 @@ describe('ModelUsageCard', () => {
       />
     )
 
-    expect(html).toContain('>NEAR</td>')
-    expect(html).not.toContain('>~NEAR</td>')
+    // Mistral-sourced (anchored/reported): the spend figure drops its ~ hedge.
+    expect(html).toContain('>$8.00</td>')
+    expect(html).not.toContain('>~$8.00</td>')
     expect(html).toContain('$8.00 of $10.00')
     expect(html).toContain('Mistral-sourced figures')
     expect(html).not.toContain('provider-mistral is-warning is-estimated')
@@ -596,5 +610,14 @@ describe('API spend roster lockstep', () => {
     const aggregated = new Set(API_SPEND_PROVIDER_ORDER)
     const rendered = API_SPEND_RENDER_ORDER.filter((provider) => !aggregated.has(provider))
     expect(rendered).toEqual([])
+  })
+
+  // The reverse direction: a provider aggregated but absent from the render
+  // order never shows its spend section at all — Mistral shipped in exactly
+  // that state, the mirror image of the Pi bug above.
+  it('drops no aggregated provider from the render order', () => {
+    const rendered = new Set(API_SPEND_RENDER_ORDER)
+    const aggregated = API_SPEND_PROVIDER_ORDER.filter((provider) => !rendered.has(provider))
+    expect(aggregated).toEqual([])
   })
 })
