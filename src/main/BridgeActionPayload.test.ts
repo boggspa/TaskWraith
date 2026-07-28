@@ -1630,6 +1630,43 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload.kind).toBe('registerApnsToken')
     })
 
+    it('accepts an 80-byte simulator (BAA) device token', () => {
+      // Apple-silicon simulators register REAL sandbox tokens of 80 bytes, not
+      // the 32 a physical device mints. The old exact-64-hex gate denied every
+      // one as "unknown kind" and the phone retried forever.
+      const wire = encode({
+        kind: 'registerApnsToken',
+        pairID: 'pair-1',
+        deviceToken: 'ab'.repeat(80),
+        env: 'sandbox'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('registerApnsToken')
+      if (payload.kind === 'registerApnsToken') {
+        expect(payload.deviceToken).toBe('ab'.repeat(80))
+      }
+    })
+
+    it('still rejects non-hex, odd-length, short and oversized device tokens', () => {
+      const rejects = [
+        'zz'.repeat(32), // not hex
+        'a'.repeat(65), // odd length — not whole bytes
+        'ab'.repeat(31), // under 32 bytes
+        'ab'.repeat(101), // over 100 bytes
+        ''
+      ]
+      for (const deviceToken of rejects) {
+        const wire = encode({
+          kind: 'registerApnsToken',
+          pairID: 'pair-1',
+          deviceToken,
+          env: 'sandbox'
+        })
+        const { payload } = decodeBridgeActionPayload(wire)
+        expect(payload.kind).toBe('unknown')
+      }
+    })
+
     it('decodes setWatchedThread as a read-only pair-scoped action', () => {
       const wire = encode({ kind: 'setWatchedThread', appChatId: 'chat-1' })
       const { payload } = decodeBridgeActionPayload(wire)

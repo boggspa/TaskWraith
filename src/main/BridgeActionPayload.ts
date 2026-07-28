@@ -2557,9 +2557,14 @@ function isRegisterApnsToken(v: Record<string, unknown>): boolean {
     typeof v.pairID === 'string' &&
     v.pairID.length > 0 &&
     typeof v.deviceToken === 'string' &&
-    // APNs device tokens are 32 bytes = 64 hex chars. Reject anything else so a
-    // malformed/foreign token can't be stored verbatim and routed to Apple.
-    /^[0-9a-fA-F]{64}$/.test(v.deviceToken) &&
+    // APNs device tokens are opaque, and Apple documents their length as NOT a
+    // contract. Real devices mint 32 bytes today, but Apple-silicon SIMULATORS
+    // mint 80-byte BAA tokens — an exact 64-hex check silently denied every
+    // simulator registration as "unknown kind" and the phone re-armed forever
+    // (closed-app push dead, 5s retries for the pairing's lifetime). Keep the
+    // shape gate — pure hex, whole bytes, bounded — so a malformed/foreign
+    // blob still can't be stored verbatim and routed to Apple.
+    /^(?:[0-9a-fA-F]{2}){32,100}$/.test(v.deviceToken) &&
     (v.env === 'production' || v.env === 'sandbox') &&
     (v.agreePub === undefined || typeof v.agreePub === 'string')
   )
