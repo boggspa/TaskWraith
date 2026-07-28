@@ -1786,11 +1786,7 @@ describe('collapsed one-liner super-groups', () => {
   })
 
   it('leaves a lone settled stack as an ordinary one-liner', () => {
-    const loneStack = [
-      superGroupMessages[0],
-      superGroupMessages[1],
-      superGroupMessages[4]
-    ]
+    const loneStack = [superGroupMessages[0], superGroupMessages[1], superGroupMessages[4]]
     const html = renderToStaticMarkup(
       <TranscriptPanel {...makeProps({ messages: loneStack, virtualize: false })} />
     )
@@ -1863,9 +1859,7 @@ describe('working-indicator context-pressure hint', () => {
       createdAt: 0,
       updatedAt: 0,
       archived: false,
-      messages: [
-        { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' }
-      ],
+      messages: [{ id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' }],
       runs: [
         {
           runId: 'run-1',

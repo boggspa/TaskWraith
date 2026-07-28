@@ -19,7 +19,7 @@
 }
 
 /* ============== CODEX STYLE ============== */
-[data-composer-style="codex"] .composer-surface {
+[data-composer-style='codex'] .composer-surface {
   border-radius: 22px;
   padding: 0;
   gap: 0;
@@ -27,7 +27,7 @@
   border: 1px solid transparent;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
 }
-[data-composer-style="codex"] .composer-inner-module {
+[data-composer-style='codex'] .composer-inner-module {
   position: relative;
   z-index: 2;
   display: flex;
@@ -43,7 +43,7 @@
     0 8px 16px rgba(0, 0, 0, 0.12),
     inset 0 -1px 0 color-mix(in srgb, #ffffff 7%, transparent);
 }
-[data-composer-style="codex"] .composer-telemetry-row {
+[data-composer-style='codex'] .composer-telemetry-row {
   min-height: 40px;
   margin: 0;
   padding: 7px 16px 10px;
@@ -51,37 +51,34 @@
   background: transparent;
   color: color-mix(in srgb, #ffffff 58%, transparent);
 }
-[data-composer-style="codex"] .composer-telemetry-row .composer-workspace-button {
+[data-composer-style='codex'] .composer-telemetry-row .composer-workspace-button {
   margin-left: 0;
 }
-[data-composer-style="codex"] .composer-telemetry-row .composer-thread-token-tally {
+[data-composer-style='codex'] .composer-telemetry-row .composer-thread-token-tally {
   margin-left: auto;
 }
-[data-composer-style="codex"] .composer-surface:focus-within {
+[data-composer-style='codex'] .composer-surface:focus-within {
   border-color: transparent;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.46);
 }
 /* Codex shell/interface: remove only the outer composer-surface rim.
  * The detached above rows keep their own rim/tab treatment. */
-:not(:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]))
-  :is([data-composer-style="codex"])
-  :is(
-    .composer-surface,
-    .composer-surface:focus-within
-  ) {
+:not(:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']))
+  :is([data-composer-style='codex'])
+  :is(.composer-surface, .composer-surface:focus-within) {
   border-color: transparent !important;
 }
-[data-composer-style="codex"] .composer-textarea {
+[data-composer-style='codex'] .composer-textarea {
   padding: 6px 6px 12px;
   min-height: 58px;
   font-size: calc(var(--font-size-md) - 1px);
 }
-[data-composer-style="codex"] .composer-textarea::placeholder {
+[data-composer-style='codex'] .composer-textarea::placeholder {
   color: color-mix(in srgb, #ffffff 38%, transparent);
 }
 
 /* Codex bottom row: [+] [Permission ▾]   ...   [⚡ Model ▾] [Send] */
-[data-composer-style="codex"] .composer-inline-pickers {
+[data-composer-style='codex'] .composer-inline-pickers {
   margin-top: 0;
 }
 /* TaskWraith native (default) shell — adopt the standard control order the
@@ -91,50 +88,82 @@
  * order (permission last). Mirrors the codex order below; the base
  * .composer-inline-pickers-left (shard 03) is already flex, so only
  * `order` is needed. Model right-aligns so it sits beside the send cluster. */
-[data-composer-style="default"] [data-composer-control="attach"] { order: 0; }
-[data-composer-style="default"] [data-composer-control="schedule"] { order: 1; }
-[data-composer-style="default"] [data-composer-control="permission"] { order: 2; }
-[data-composer-style="default"] [data-composer-control="ensemble-mode"] { order: 3; }
-[data-composer-style="default"] [data-composer-control="provider"] { order: 4; }
-[data-composer-style="default"] [data-composer-control="workspace"] { order: 5; }
-[data-composer-style="default"] [data-composer-control="model"] { order: 6; margin-left: auto; }
+[data-composer-style='default'] [data-composer-control='attach'] {
+  order: 0;
+}
+[data-composer-style='default'] [data-composer-control='schedule'] {
+  order: 1;
+}
+[data-composer-style='default'] [data-composer-control='permission'] {
+  order: 2;
+}
+[data-composer-style='default'] [data-composer-control='ensemble-mode'] {
+  order: 3;
+}
+[data-composer-style='default'] [data-composer-control='provider'] {
+  order: 4;
+}
+[data-composer-style='default'] [data-composer-control='workspace'] {
+  order: 5;
+}
+[data-composer-style='default'] [data-composer-control='model'] {
+  order: 6;
+  margin-left: auto;
+}
 
-[data-composer-style="codex"] .composer-inline-pickers-left {
+[data-composer-style='codex'] .composer-inline-pickers-left {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 1;
 }
-[data-composer-style="codex"] [data-composer-control="attach"] { order: 0; }
-[data-composer-style="codex"] [data-composer-control="schedule"] { order: 1; }
-[data-composer-style="codex"] [data-composer-control="permission"] { order: 2; }
-[data-composer-style="codex"] [data-composer-control="ensemble-mode"] { order: 3; }
+[data-composer-style='codex'] [data-composer-control='attach'] {
+  order: 0;
+}
+[data-composer-style='codex'] [data-composer-control='schedule'] {
+  order: 1;
+}
+[data-composer-style='codex'] [data-composer-control='permission'] {
+  order: 2;
+}
+[data-composer-style='codex'] [data-composer-control='ensemble-mode'] {
+  order: 3;
+}
 /* Provider sits between permission and the right-aligned model picker,
  * styled as a low-key outlined chip matching the codex purple palette. */
-[data-composer-style="codex"] [data-composer-control="provider"] { order: 4; }
+[data-composer-style='codex'] [data-composer-control='provider'] {
+  order: 4;
+}
 /* 1.0.5-AR12 — Workspace sits between provider and the right-anchored
  * model picker. Same satellite-text token treatment as the codex
  * provider chip so it reads as a peer-control rather than a fresh
  * chrome surface. */
-[data-composer-style="codex"] [data-composer-control="workspace"] { order: 5; }
-[data-composer-style="codex"] [data-composer-control="model"] { order: 6; margin-left: auto; }
-[data-composer-style="codex"] .composer-inline-pickers-left > [data-composer-control="context"] {
+[data-composer-style='codex'] [data-composer-control='workspace'] {
+  order: 5;
+}
+[data-composer-style='codex'] [data-composer-control='model'] {
+  order: 6;
+  margin-left: auto;
+}
+[data-composer-style='codex'] .composer-inline-pickers-left > [data-composer-control='context'] {
   order: 6;
   margin-left: auto;
   flex: 0 0 auto;
 }
-[data-composer-style="codex"]
-  .composer-inline-pickers-left:has(> [data-composer-control="context"])
-  > [data-composer-control="model"] {
+[data-composer-style='codex']
+  .composer-inline-pickers-left:has(> [data-composer-control='context'])
+  > [data-composer-control='model'] {
   order: 7;
   margin-left: 0;
 }
 /* Ollama tier picker sits beside the permission picker (it IS the Ollama
  * permission control). order:1 ties permission; DOM source-order (rendered
  * right after the permission picker) resolves the tie deterministically. */
-[data-composer-style="codex"] [data-composer-control="ollama-tier"] { order: 1; }
+[data-composer-style='codex'] [data-composer-control='ollama-tier'] {
+  order: 1;
+}
 
-[data-composer-style="codex"] [data-composer-control="workspace"] {
+[data-composer-style='codex'] [data-composer-control='workspace'] {
   min-height: 24px;
   padding: 2px 6px;
   border-radius: 6px;
@@ -144,25 +173,25 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="codex"] [data-composer-control="workspace"]:hover:not(:disabled) {
+[data-composer-style='codex'] [data-composer-control='workspace']:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
   border-color: transparent;
 }
-[data-composer-style="codex"] [data-composer-control="workspace"] .composer-control-icon {
+[data-composer-style='codex'] [data-composer-control='workspace'] .composer-control-icon {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
   opacity: 0.78;
 }
-[data-composer-style="codex"] [data-composer-control="workspace"]::after {
+[data-composer-style='codex'] [data-composer-control='workspace']::after {
   content: '▾';
   font-size: 9px;
   margin-left: 4px;
   opacity: 0.7;
 }
 
-[data-composer-style="codex"] [data-composer-control="provider"] {
+[data-composer-style='codex'] [data-composer-control='provider'] {
   /* 1.0.3 polish (Codex parity) — drop the indigo pill outline so
    * the provider reads as a satellite text-token like the real
    * Codex composer's "Full access ▾" / "5.5 Extra High ▾" pickers.
@@ -177,17 +206,17 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="codex"] [data-composer-control="provider"]:hover {
+[data-composer-style='codex'] [data-composer-control='provider']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
 }
-[data-composer-style="codex"] [data-composer-control="provider"] .composer-control-icon {
+[data-composer-style='codex'] [data-composer-control='provider'] .composer-control-icon {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
   opacity: 0.78;
 }
-[data-composer-style="codex"] [data-composer-control="provider"] select {
+[data-composer-style='codex'] [data-composer-control='provider'] select {
   font: inherit;
   color: inherit;
 }
@@ -206,7 +235,7 @@
  *
  * Specificity: 0,2,0 (data-composer-style + data-composer-control)
  * beats the base `.composer-ensemble-mode` (0,1,0) cleanly. */
-[data-composer-style="codex"] [data-composer-control="ensemble-mode"] {
+[data-composer-style='codex'] [data-composer-control='ensemble-mode'] {
   min-height: 24px;
   padding: 0;
   border-radius: 0;
@@ -217,24 +246,30 @@
   font-weight: 500;
   gap: 0;
 }
-[data-composer-style="codex"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
+[data-composer-style='codex']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button {
   color: color-mix(in srgb, #ffffff 60%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
   padding: 2px 8px;
   border-radius: 6px;
 }
-[data-composer-style="codex"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
+[data-composer-style='codex']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button:hover {
   color: color-mix(in srgb, #ffffff 92%, transparent);
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="codex"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
+[data-composer-style='codex']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button.is-active {
   color: color-mix(in srgb, #ffffff 96%, transparent);
   background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent);
   font-weight: 600;
 }
 
-[data-composer-style="codex"] .composer-image-picker-btn {
+[data-composer-style='codex'] .composer-image-picker-btn {
   /* 1.0.3 polish (Codex parity) — drop the rounded-circle container.
    * The real Codex composer's `+` is a satellite glyph with a faint
    * square hover surface, not a pill. Override the base
@@ -247,13 +282,13 @@
   border-radius: 6px;
   color: color-mix(in srgb, #ffffff 60%, transparent);
 }
-[data-composer-style="codex"] .composer-image-picker-btn:hover:not(:disabled) {
+[data-composer-style='codex'] .composer-image-picker-btn:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: #ffffff;
 }
 
 /* Permission picker styled like Codex's mode-tinted chip + model-style chevron */
-[data-composer-style="codex"] [data-composer-control="permission"] {
+[data-composer-style='codex'] [data-composer-control='permission'] {
   min-height: 28px;
   padding: 0 10px 0 8px;
   border-radius: 999px;
@@ -266,13 +301,13 @@
   display: inline-flex;
   align-items: center;
 }
-[data-composer-style="codex"] [data-composer-control="permission"]:hover {
+[data-composer-style='codex'] [data-composer-control='permission']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="codex"] [data-composer-control="permission"] svg {
+[data-composer-style='codex'] [data-composer-control='permission'] svg {
   color: inherit;
 }
-[data-composer-style="codex"] [data-composer-control="permission"]::after {
+[data-composer-style='codex'] [data-composer-control='permission']::after {
   content: '';
   display: inline-block;
   width: 5px;
@@ -285,23 +320,23 @@
   flex: 0 0 auto;
   color: color-mix(in srgb, #ffffff 56%, transparent);
 }
-[data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="plan"]::after {
+[data-composer-style='codex']
+  [data-composer-control='permission'][data-permission-value='plan']::after {
   color: color-mix(in srgb, #6fb6ff 72%, transparent);
 }
-[data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="read_only"]::after {
+[data-composer-style='codex']
+  [data-composer-control='permission'][data-permission-value='read_only']::after {
   color: color-mix(in srgb, #6fb6ff 72%, transparent);
 }
-[data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="workspace_write"]::after,
-[data-composer-style="codex"]
-  [data-composer-control="permission"][data-permission-value="full_access"]::after {
+[data-composer-style='codex']
+  [data-composer-control='permission'][data-permission-value='workspace_write']::after,
+[data-composer-style='codex']
+  [data-composer-control='permission'][data-permission-value='full_access']::after {
   color: color-mix(in srgb, #ef4444 72%, transparent);
 }
 
 /* Model picker styled like "5.5 Extra High" with lightning glyph */
-[data-composer-style="codex"] [data-composer-control="model"] {
+[data-composer-style='codex'] [data-composer-control='model'] {
   min-height: 28px;
   padding: 0 9px 0 10px;
   border-radius: 999px;
@@ -314,17 +349,19 @@
   display: inline-flex;
   align-items: center;
 }
-[data-composer-style="codex"] [data-composer-control="model"]:hover {
+[data-composer-style='codex'] [data-composer-control='model']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="codex"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
+[data-composer-style='codex']
+  [data-composer-control='model']
+  svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 /* Codex Fast-tier monoline bolt on the model chip trigger only (not the
  * popover picker — that uses fixed 11×13 via `.codex-fast-bolt-icon`).
  * ~2× the base 0.62×0.78em silhouette so it reads beside the label
  * without `width:100%` layout blow-up. */
-[data-composer-style="codex"] .composer-combined-picker-trigger-fast-bolt {
+[data-composer-style='codex'] .composer-combined-picker-trigger-fast-bolt {
   flex-shrink: 0;
   display: block;
   width: 1.24em;
@@ -334,11 +371,11 @@
   color: color-mix(in srgb, #ffffff 58%, transparent);
   transform: translateY(0.5px);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='codex']
   .composer-combined-picker-trigger-fast-bolt {
   color: rgba(29, 29, 31, 0.58);
 }
-[data-composer-style="codex"] [data-composer-control="model"]::after {
+[data-composer-style='codex'] [data-composer-control='model']::after {
   content: '';
   display: inline-block;
   width: 5px;
@@ -352,7 +389,7 @@
 }
 
 /* Send button: solid filled light circle with dark arrow up — Codex hallmark */
-[data-composer-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='codex'] .composer-action-btn.run-btn:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -361,10 +398,10 @@
   border: 0;
   box-shadow: none;
 }
-[data-composer-style="codex"] .composer-action-btn.run-btn:hover:not(:disabled) {
+[data-composer-style='codex'] .composer-action-btn.run-btn:hover:not(:disabled) {
   background: #ffffff;
 }
-[data-composer-style="codex"] .composer-action-btn:disabled:not(.run-btn) {
+[data-composer-style='codex'] .composer-action-btn:disabled:not(.run-btn) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -374,7 +411,7 @@
   box-shadow: none;
 }
 /* Empty composer: dimmed light-gray bubble + darker gray arrow (real Codex idle). */
-[data-composer-style="codex"] .composer-action-btn.run-btn:disabled {
+[data-composer-style='codex'] .composer-action-btn.run-btn:disabled {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -384,13 +421,13 @@
   box-shadow: none;
   opacity: 1;
 }
-[data-composer-style="codex"] .composer-action-btn.run-btn:disabled .sf-symbol-icon,
-[data-composer-style="codex"] .composer-action-btn.run-btn:disabled .sf-symbol-icon svg {
+[data-composer-style='codex'] .composer-action-btn.run-btn:disabled .sf-symbol-icon,
+[data-composer-style='codex'] .composer-action-btn.run-btn:disabled .sf-symbol-icon svg {
   color: inherit;
 }
-[data-composer-style="codex"] .composer-action-btn.stop-btn,
-[data-composer-style="codex"] .composer-action-btn.run-btn.queue,
-[data-composer-style="codex"] .composer-action-btn.voice-btn {
+[data-composer-style='codex'] .composer-action-btn.stop-btn,
+[data-composer-style='codex'] .composer-action-btn.run-btn.queue,
+[data-composer-style='codex'] .composer-action-btn.voice-btn {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -400,53 +437,53 @@
  * bubble, dark square glyph) matching the send button, instead of the
  * shared red danger pill. Light-family themes flip it in the theme
  * overrides (dark bubble, white glyph), mirroring the send button. */
-[data-composer-style="codex"] .composer-action-btn.stop-btn:not(:disabled) {
+[data-composer-style='codex'] .composer-action-btn.stop-btn:not(:disabled) {
   background: color-mix(in srgb, #ffffff 92%, transparent);
   color: #0d0d0d;
   border: 0;
   box-shadow: none;
 }
-[data-composer-style="codex"] .composer-action-btn.stop-btn:hover:not(:disabled) {
+[data-composer-style='codex'] .composer-action-btn.stop-btn:hover:not(:disabled) {
   background: #ffffff;
 }
-[data-composer-style="codex"]
+[data-composer-style='codex']
   .composer-action-btn.stop-btn
   :is(.sf-symbol-icon, .sf-symbol-icon svg) {
   color: inherit;
 }
 
-[data-composer-style="codex"] .composer-action-btn.voice-btn {
+[data-composer-style='codex'] .composer-action-btn.voice-btn {
   background: transparent;
   color: color-mix(in srgb, #ffffff 48%, transparent);
   border: 0;
   box-shadow: none;
 }
 
-[data-composer-style="codex"] .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="codex"] .composer-action-btn.voice-btn.is-recording {
+[data-composer-style='codex'] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style='codex'] .composer-action-btn.voice-btn.is-recording {
   background: color-mix(in srgb, #ffffff 10%, transparent);
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
 
-[data-composer-style="codex"] .composer-voice-chevron {
+[data-composer-style='codex'] .composer-voice-chevron {
   color: color-mix(in srgb, #ffffff 42%, transparent);
 }
 
-[data-composer-style="codex"] .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="codex"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+[data-composer-style='codex'] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style='codex'] .composer-voice-control.is-menu-open .composer-voice-chevron {
   background: color-mix(in srgb, #ffffff 10%, transparent);
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
 
 /* Codex footer chip row sitting below the composer surface */
-[data-composer-style="codex"] .composer-codex-footer {
+[data-composer-style='codex'] .composer-codex-footer {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-top: 8px;
   padding: 0 6px;
 }
-[data-composer-style="codex"] .composer-codex-chip {
+[data-composer-style='codex'] .composer-codex-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -456,18 +493,18 @@
   color: color-mix(in srgb, #ffffff 60%, transparent);
   background: transparent;
 }
-[data-composer-style="codex"] .composer-codex-chip:hover {
+[data-composer-style='codex'] .composer-codex-chip:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
-[data-composer-style="codex"] .composer-codex-chip svg:first-child {
+[data-composer-style='codex'] .composer-codex-chip svg:first-child {
   opacity: 0.85;
 }
-[data-composer-style="codex"] .composer-codex-chip svg:last-child {
+[data-composer-style='codex'] .composer-codex-chip svg:last-child {
   opacity: 0.55;
 }
-[data-composer-style="default"] .composer-codex-footer,
-[data-composer-style="claude"] .composer-codex-footer {
+[data-composer-style='default'] .composer-codex-footer,
+[data-composer-style='claude'] .composer-codex-footer {
   display: none;
 }
 
@@ -476,30 +513,30 @@
  * instead of a single dark rounded rect linking them. The composer
  * surface itself keeps its Codex-purple aura — only the inner footer
  * strip needs to disappear. Mirrors the Claude-shell treatment above. */
-[data-composer-style="codex"] .composer-control-footer,
-[data-composer-style="codex"] .composer-inline-pickers,
-[data-composer-style="codex"] .composer-inline-pickers-left,
-[data-composer-style="codex"] .composer-inline-actions {
+[data-composer-style='codex'] .composer-control-footer,
+[data-composer-style='codex'] .composer-inline-pickers,
+[data-composer-style='codex'] .composer-inline-pickers-left,
+[data-composer-style='codex'] .composer-inline-actions {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
 }
 
 /* ============== CLAUDE STYLE ============== */
-[data-composer-style="claude"] .composer-surface {
+[data-composer-style='claude'] .composer-surface {
   border-radius: 14px;
   padding: 4px 12px 8px;
   background: color-mix(in srgb, #161616 94%, transparent);
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
 }
-[data-composer-style="claude"] .composer-surface:focus-within {
+[data-composer-style='claude'] .composer-surface:focus-within {
   border-color: color-mix(in srgb, #ffffff 20%, transparent);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.36);
 }
 
 /* Top status row: branch/worktree chips look like Claude Code's top bar */
-[data-composer-style="claude"] .composer-chips {
+[data-composer-style='claude'] .composer-chips {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -507,7 +544,7 @@
   border-bottom: 1px solid color-mix(in srgb, #ffffff 6%, transparent);
   margin-bottom: 6px;
 }
-[data-composer-style="claude"] .composer-chip {
+[data-composer-style='claude'] .composer-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -518,46 +555,65 @@
   color: color-mix(in srgb, #ffffff 58%, transparent);
   font-size: calc(var(--font-size-xs) - 1px);
 }
-[data-composer-style="claude"] .composer-chip:hover {
+[data-composer-style='claude'] .composer-chip:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
 
-[data-composer-style="claude"] .composer-textarea {
+[data-composer-style='claude'] .composer-textarea {
   padding: 6px 6px 10px;
   min-height: 48px;
   font-size: calc(var(--font-size-sm) + 1px);
 }
-[data-composer-style="claude"] .composer-textarea::placeholder {
+[data-composer-style='claude'] .composer-textarea::placeholder {
   color: color-mix(in srgb, #ffffff 30%, transparent);
 }
 
 /* Claude bottom row: [Permission text]  [+] [...]   ...   [Model · Effort]  [Send/Spinner] */
-[data-composer-style="claude"] .composer-inline-pickers {
+[data-composer-style='claude'] .composer-inline-pickers {
   margin-top: 0;
 }
-[data-composer-style="claude"] .composer-inline-pickers-left {
+[data-composer-style='claude'] .composer-inline-pickers-left {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: 1;
 }
-[data-composer-style="claude"] [data-composer-control="permission"] { order: -1; }
-[data-composer-style="claude"] [data-composer-control="voice"] { order: 0; }
-[data-composer-style="claude"] [data-composer-control="attach"]    { order: 0; }
-[data-composer-style="claude"] [data-composer-control="schedule"] { order: 1; }
+[data-composer-style='claude'] [data-composer-control='permission'] {
+  order: -1;
+}
+[data-composer-style='claude'] [data-composer-control='voice'] {
+  order: 0;
+}
+[data-composer-style='claude'] [data-composer-control='attach'] {
+  order: 0;
+}
+[data-composer-style='claude'] [data-composer-control='schedule'] {
+  order: 1;
+}
 /* Provider sits in the gap between `+` (attach) and the right-aligned model
  * picker — replaces the previous satellite footer chip. */
-[data-composer-style="claude"] [data-composer-control="ensemble-mode"] { order: 2; }
-[data-composer-style="claude"] [data-composer-control="provider"] { order: 3; }
+[data-composer-style='claude'] [data-composer-control='ensemble-mode'] {
+  order: 2;
+}
+[data-composer-style='claude'] [data-composer-control='provider'] {
+  order: 3;
+}
 /* 1.0.5-AR12 — Workspace sits just before the right-anchored model
  * picker. Same outlined-pill aesthetic as the claude provider chip
  * so the controls cluster reads as a coherent peer-group. */
-[data-composer-style="claude"] [data-composer-control="workspace"] { order: 4; }
-[data-composer-style="claude"] [data-composer-control="model"]    { order: 5; margin-left: auto; }
-[data-composer-style="claude"] [data-composer-control="ollama-tier"] { order: 0; }
+[data-composer-style='claude'] [data-composer-control='workspace'] {
+  order: 4;
+}
+[data-composer-style='claude'] [data-composer-control='model'] {
+  order: 5;
+  margin-left: auto;
+}
+[data-composer-style='claude'] [data-composer-control='ollama-tier'] {
+  order: 0;
+}
 
-[data-composer-style="claude"] [data-composer-control="workspace"] {
+[data-composer-style='claude'] [data-composer-control='workspace'] {
   min-height: 24px;
   padding: 2px 10px;
   border-radius: 999px;
@@ -567,12 +623,12 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="claude"] [data-composer-control="workspace"]:hover:not(:disabled) {
+[data-composer-style='claude'] [data-composer-control='workspace']:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
   border-color: color-mix(in srgb, #ffffff 24%, transparent);
 }
-[data-composer-style="claude"] [data-composer-control="workspace"] .composer-control-icon {
+[data-composer-style='claude'] [data-composer-control='workspace'] .composer-control-icon {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
@@ -580,7 +636,7 @@
 }
 
 /* Inline provider chip in claude mode — outlined pill, low-key, native-ish */
-[data-composer-style="claude"] [data-composer-control="provider"] {
+[data-composer-style='claude'] [data-composer-control='provider'] {
   min-height: 24px;
   padding: 2px 10px;
   border-radius: 999px;
@@ -590,17 +646,17 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="claude"] [data-composer-control="provider"]:hover {
+[data-composer-style='claude'] [data-composer-control='provider']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
 }
-[data-composer-style="claude"] [data-composer-control="provider"] .composer-control-icon {
+[data-composer-style='claude'] [data-composer-control='provider'] .composer-control-icon {
   width: 11px;
   height: 11px;
   flex: 0 0 11px;
   opacity: 0.78;
 }
-[data-composer-style="claude"] [data-composer-control="provider"] select {
+[data-composer-style='claude'] [data-composer-control='provider'] select {
   font: inherit;
   color: inherit;
 }
@@ -610,7 +666,7 @@
  * overall palette is whisper-quiet so the toggle stays neutral on
  * active state — just a slight white tint, no provider-orange
  * accent (orange is reserved for the permission label here). */
-[data-composer-style="claude"] [data-composer-control="ensemble-mode"] {
+[data-composer-style='claude'] [data-composer-control='ensemble-mode'] {
   min-height: 24px;
   padding: 1px;
   border-radius: 999px;
@@ -620,24 +676,30 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="claude"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
+[data-composer-style='claude']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button {
   color: color-mix(in srgb, #ffffff 70%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
   padding: 2px 9px;
 }
-[data-composer-style="claude"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
+[data-composer-style='claude']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button:hover {
   color: color-mix(in srgb, #ffffff 92%, transparent);
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="claude"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
+[data-composer-style='claude']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button.is-active {
   color: color-mix(in srgb, #ffffff 96%, transparent);
   background: color-mix(in srgb, #ffffff 12%, transparent);
   font-weight: 600;
 }
 
 /* Permission as plain text label ("Plan mode" style) */
-[data-composer-style="claude"] [data-composer-control="permission"] {
+[data-composer-style='claude'] [data-composer-control='permission'] {
   background: transparent;
   border: 0;
   padding: 0 4px;
@@ -645,7 +707,7 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="claude"] [data-composer-control="permission"] svg {
+[data-composer-style='claude'] [data-composer-control='permission'] svg {
   display: none;
 }
 
@@ -669,7 +731,7 @@
  * at 26x26 via the explicit dimensions so the touch area is
  * unchanged. `transform: none` defeats the base rule's hover
  * `translateY(-1px)` so the glyph doesn't bounce. */
-[data-composer-style="claude"] .composer-image-picker-btn {
+[data-composer-style='claude'] .composer-image-picker-btn {
   width: 26px;
   height: 26px;
   background: transparent;
@@ -678,8 +740,8 @@
   color: color-mix(in srgb, currentColor 60%, transparent);
   transform: none;
 }
-[data-composer-style="claude"] .composer-image-picker-btn:hover:not(:disabled),
-[data-composer-style="claude"] .composer-image-picker-btn:focus-visible {
+[data-composer-style='claude'] .composer-image-picker-btn:hover:not(:disabled),
+[data-composer-style='claude'] .composer-image-picker-btn:focus-visible {
   background: transparent;
   border: 0;
   color: currentColor;
@@ -697,15 +759,15 @@
  * `[data-theme=...][data-composer-style=...]` is (0,3,0) which
  * beats the generic light rule's (0,2,0) regardless of source
  * order. Hover follows the same pattern. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
   .composer-image-picker-btn {
   background: transparent;
   border: 0;
   color: color-mix(in srgb, var(--text-primary) 60%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
   .composer-image-picker-btn:hover:not(:disabled),
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
   .composer-image-picker-btn:focus-visible {
   background: transparent;
   border: 0;
@@ -713,19 +775,21 @@
 }
 
 /* Model picker styled like "Sonnet 4.6 · High" minimal */
-[data-composer-style="claude"] [data-composer-control="model"] {
+[data-composer-style='claude'] [data-composer-control='model'] {
   background: transparent;
   border: 0;
   padding: 0 4px;
   color: color-mix(in srgb, #ffffff 70%, transparent);
   font-size: calc(var(--font-size-xs) + 1px);
 }
-[data-composer-style="claude"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
+[data-composer-style='claude']
+  [data-composer-control='model']
+  svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 
 /* Send button: small squared enter-symbol — sits at right of the textarea row */
-[data-composer-style="claude"] .composer-action-btn {
+[data-composer-style='claude'] .composer-action-btn {
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -739,49 +803,49 @@
  * child icon upward by 26px, leaving the hover/focus rectangle behind at the
  * pre-offset location. Keep the icon centered inside the real hit target so
  * glyph, hover fill, focus ring, and pointer box stay in sync. */
-[data-composer-style="claude"] .composer-action-btn .sf-symbol-icon {
+[data-composer-style='claude'] .composer-action-btn .sf-symbol-icon {
   transform: scale(var(--claude-send-glyph-scale)) !important;
 }
-[data-composer-style="claude"] .composer-action-btn:hover:not(:disabled) .sf-symbol-icon {
+[data-composer-style='claude'] .composer-action-btn:hover:not(:disabled) .sf-symbol-icon {
   transform: scale(var(--claude-send-glyph-hover-scale)) !important;
 }
-[data-composer-style="claude"] .composer-action-btn.stop-btn .sf-symbol-icon {
+[data-composer-style='claude'] .composer-action-btn.stop-btn .sf-symbol-icon {
   transform: scale(var(--claude-stop-glyph-scale)) !important;
 }
-[data-composer-style="claude"] .composer-action-btn.stop-btn:hover:not(:disabled) .sf-symbol-icon {
+[data-composer-style='claude'] .composer-action-btn.stop-btn:hover:not(:disabled) .sf-symbol-icon {
   transform: scale(var(--claude-stop-glyph-hover-scale)) !important;
 }
 
-[data-composer-style="claude"] .composer-action-btn {
+[data-composer-style='claude'] .composer-action-btn {
   --claude-send-button-lift: 26px;
   --claude-send-glyph-scale: 1.25;
   --claude-send-glyph-hover-scale: 1.325;
   --claude-stop-glyph-scale: 2;
   --claude-stop-glyph-hover-scale: 2.12;
 }
-[data-composer-style="claude"] .composer-action-btn:focus-visible {
+[data-composer-style='claude'] .composer-action-btn:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
   border-radius: 8px;
   box-shadow: none;
 }
 
-[data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='claude'] .composer-action-btn.run-btn:not(:disabled) {
   background: transparent;
   border: 0;
   color: color-mix(in srgb, #ffffff 70%, transparent);
 }
-[data-composer-style="claude"] .composer-action-btn.run-btn:hover:not(:disabled) {
+[data-composer-style='claude'] .composer-action-btn.run-btn:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: #ffffff;
 }
-[data-composer-style="claude"] .composer-action-btn:disabled {
+[data-composer-style='claude'] .composer-action-btn:disabled {
   background: transparent;
   border: 0;
   color: color-mix(in srgb, #ffffff 22%, transparent);
 }
 
-[data-composer-style="claude"] .composer-action-btn.voice-btn {
+[data-composer-style='claude'] .composer-action-btn.voice-btn {
   width: 26px;
   height: 26px;
   min-width: 26px;
@@ -793,33 +857,33 @@
   transform: none;
 }
 
-[data-composer-style="claude"] .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="claude"] .composer-action-btn.voice-btn.is-recording {
+[data-composer-style='claude'] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style='claude'] .composer-action-btn.voice-btn.is-recording {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
   transform: none;
 }
 
-[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon,
-[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+[data-composer-style='claude'] .composer-action-btn.voice-btn .sf-symbol-icon,
+[data-composer-style='claude'] .composer-action-btn.voice-btn .sf-symbol-icon svg {
   width: 16px;
   height: 16px;
   transform: none !important;
 }
 
-[data-composer-style="claude"] .composer-action-btn.voice-btn:disabled,
-[data-composer-style="claude"] .composer-voice-chevron:disabled {
+[data-composer-style='claude'] .composer-action-btn.voice-btn:disabled,
+[data-composer-style='claude'] .composer-voice-chevron:disabled {
   color: color-mix(in srgb, #ffffff 22%, transparent);
 }
 
-[data-composer-style="claude"] .composer-voice-chevron {
+[data-composer-style='claude'] .composer-voice-chevron {
   width: 13px;
   height: 26px;
   color: color-mix(in srgb, #ffffff 48%, transparent);
 }
 
-[data-composer-style="claude"] .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="claude"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+[data-composer-style='claude'] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style='claude'] .composer-voice-control.is-menu-open .composer-voice-chevron {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: color-mix(in srgb, #ffffff 92%, transparent);
 }
@@ -834,8 +898,8 @@
  * So we strip the container, push chip backgrounds toward transparent
  * with just a hairline outline, widen the gap, and zero out any shadow
  * the chips inherit from their default styling. */
-[data-composer-style="claude"] .composer-above-bar.style-unified,
-[data-composer-style="claude"] .composer-above-bar {
+[data-composer-style='claude'] .composer-above-bar.style-unified,
+[data-composer-style='claude'] .composer-above-bar {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -843,13 +907,13 @@
   margin: 0 0 4px;
   gap: 10px;
 }
-[data-composer-style="claude"] .composer-above-bar::before {
+[data-composer-style='claude'] .composer-above-bar::before {
   display: none;
 }
-[data-composer-style="claude"] .composer-above-bar-branch,
-[data-composer-style="claude"] .composer-above-bar-files,
-[data-composer-style="claude"] .composer-above-bar-stats,
-[data-composer-style="claude"] .composer-above-bar-summary {
+[data-composer-style='claude'] .composer-above-bar-branch,
+[data-composer-style='claude'] .composer-above-bar-files,
+[data-composer-style='claude'] .composer-above-bar-stats,
+[data-composer-style='claude'] .composer-above-bar-summary {
   padding: 3px 10px;
   border-radius: 999px;
   background: transparent;
@@ -858,7 +922,7 @@
   font-size: calc(var(--font-size-xs) + 1px);
   box-shadow: none;
 }
-[data-composer-style="claude"] .composer-above-bar-action {
+[data-composer-style='claude'] .composer-above-bar-action {
   /* Create-PR / Commit-changes pill: same hairline outline as the chips
    * so it reads as part of the same satellite row rather than a button
    * pinned to a tray. */
@@ -880,23 +944,25 @@
  * The branch + files + stats pills + Create PR all pick up the same
  * radius so the whole above-bar row reads as ONE cohesive band
  * matching the textarea below. Only applies to the Claude shell. */
-[data-composer-style="claude"] .composer-above-bar .composer-workspace-access-pill {
+[data-composer-style='claude'] .composer-above-bar .composer-workspace-access-pill {
   background: transparent;
   border-color: color-mix(in srgb, #ffffff 9%, transparent);
   box-shadow: none;
   color: color-mix(in srgb, #ffffff 64%, transparent);
   border-radius: var(--radius-md, 10px);
 }
-[data-composer-style="claude"] .composer-above-bar .composer-workspace-access-pill:hover:not(:disabled) {
+[data-composer-style='claude']
+  .composer-above-bar
+  .composer-workspace-access-pill:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 5%, transparent);
   border-color: color-mix(in srgb, #ffffff 20%, transparent);
   color: #ffffff;
 }
 /* Other pills in the same row inherit the same shape so the band reads cohesively. */
-[data-composer-style="claude"] .composer-above-bar .composer-above-bar-branch,
-[data-composer-style="claude"] .composer-above-bar .composer-above-bar-files,
-[data-composer-style="claude"] .composer-above-bar .composer-above-bar-stats,
-[data-composer-style="claude"] .composer-above-bar .composer-above-bar-action {
+[data-composer-style='claude'] .composer-above-bar .composer-above-bar-branch,
+[data-composer-style='claude'] .composer-above-bar .composer-above-bar-files,
+[data-composer-style='claude'] .composer-above-bar .composer-above-bar-stats,
+[data-composer-style='claude'] .composer-above-bar .composer-above-bar-action {
   border-radius: 8px;
 }
 
@@ -905,15 +971,15 @@
  * Codex / Claude styles drop provider-tinted radial gradients
  * and use neutral gray. Outer focus glow is preserved.
  * ============================================================ */
-[data-composer-style="codex"] .app-transcript .composer-surface::before,
-[data-composer-style="claude"] .app-transcript .composer-surface::before {
+[data-composer-style='codex'] .app-transcript .composer-surface::before,
+[data-composer-style='claude'] .app-transcript .composer-surface::before {
   background: none !important;
   display: none !important;
 }
-[data-composer-style="codex"] .app-transcript.provider-gemini .composer-surface,
-[data-composer-style="codex"] .app-transcript.provider-codex .composer-surface,
-[data-composer-style="codex"] .app-transcript.provider-claude .composer-surface,
-[data-composer-style="codex"] .app-transcript.provider-kimi .composer-surface {
+[data-composer-style='codex'] .app-transcript.provider-gemini .composer-surface,
+[data-composer-style='codex'] .app-transcript.provider-codex .composer-surface,
+[data-composer-style='codex'] .app-transcript.provider-claude .composer-surface,
+[data-composer-style='codex'] .app-transcript.provider-kimi .composer-surface {
   --composer-bg: color-mix(in srgb, #1a1a1a 92%, transparent);
   --composer-border: color-mix(in srgb, #ffffff 10%, transparent);
 }
@@ -922,21 +988,21 @@
  * the page rather than melting into the surrounding dark band. The
  * Claude-shell-specific value applies regardless of which provider
  * is active; codex shell keeps its slightly darker palette above. */
-[data-composer-style="claude"] .app-transcript.provider-gemini .composer-surface,
-[data-composer-style="claude"] .app-transcript.provider-codex .composer-surface,
-[data-composer-style="claude"] .app-transcript.provider-claude .composer-surface,
-[data-composer-style="claude"] .app-transcript.provider-kimi .composer-surface {
+[data-composer-style='claude'] .app-transcript.provider-gemini .composer-surface,
+[data-composer-style='claude'] .app-transcript.provider-codex .composer-surface,
+[data-composer-style='claude'] .app-transcript.provider-claude .composer-surface,
+[data-composer-style='claude'] .app-transcript.provider-kimi .composer-surface {
   --composer-bg: color-mix(in srgb, #262626 92%, transparent);
   --composer-border: color-mix(in srgb, #ffffff 12%, transparent);
 }
-[data-composer-style="codex"] .app-transcript.provider-gemini .composer-surface:focus-within,
-[data-composer-style="codex"] .app-transcript.provider-codex .composer-surface:focus-within,
-[data-composer-style="codex"] .app-transcript.provider-claude .composer-surface:focus-within,
-[data-composer-style="codex"] .app-transcript.provider-kimi .composer-surface:focus-within,
-[data-composer-style="claude"] .app-transcript.provider-gemini .composer-surface:focus-within,
-[data-composer-style="claude"] .app-transcript.provider-codex .composer-surface:focus-within,
-[data-composer-style="claude"] .app-transcript.provider-claude .composer-surface:focus-within,
-[data-composer-style="claude"] .app-transcript.provider-kimi .composer-surface:focus-within {
+[data-composer-style='codex'] .app-transcript.provider-gemini .composer-surface:focus-within,
+[data-composer-style='codex'] .app-transcript.provider-codex .composer-surface:focus-within,
+[data-composer-style='codex'] .app-transcript.provider-claude .composer-surface:focus-within,
+[data-composer-style='codex'] .app-transcript.provider-kimi .composer-surface:focus-within,
+[data-composer-style='claude'] .app-transcript.provider-gemini .composer-surface:focus-within,
+[data-composer-style='claude'] .app-transcript.provider-codex .composer-surface:focus-within,
+[data-composer-style='claude'] .app-transcript.provider-claude .composer-surface:focus-within,
+[data-composer-style='claude'] .app-transcript.provider-kimi .composer-surface:focus-within {
   border-color: color-mix(in srgb, #ffffff 26%, transparent);
   box-shadow:
     0 6px 24px rgba(0, 0, 0, 0.4),
@@ -972,14 +1038,24 @@
   isolation: isolate;
 }
 .composer-above-bar::before {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(90deg, rgba(17, 41, 89, 0.204), rgba(17, 41, 89, 0.108) 16%, transparent 33%, transparent 67%, rgba(17, 41, 89, 0.108) 84%, rgba(17, 41, 89, 0.204));
+  background: linear-gradient(
+    90deg,
+    rgba(17, 41, 89, 0.204),
+    rgba(17, 41, 89, 0.108) 16%,
+    transparent 33%,
+    transparent 67%,
+    rgba(17, 41, 89, 0.108) 84%,
+    rgba(17, 41, 89, 0.204)
+  );
   opacity: 0.92;
-  box-shadow: inset 36px 0 44px -28px rgba(17, 41, 89, 0.168), inset -36px 0 44px -28px rgba(17, 41, 89, 0.168);
+  box-shadow:
+    inset 36px 0 44px -28px rgba(17, 41, 89, 0.168),
+    inset -36px 0 44px -28px rgba(17, 41, 89, 0.168);
   z-index: 0;
 }
 .composer-above-bar > * {
@@ -987,15 +1063,16 @@
   z-index: 1;
 }
 :is(
-  .app-transcript.provider-gemini,
-  .app-transcript.provider-codex,
-  .app-transcript.provider-claude,
-  .app-transcript.provider-kimi,
-  .app-transcript.provider-grok,
-  .app-transcript.provider-cursor,
-  .app-transcript.provider-ollama,
-  .app-transcript.provider-ensemble
-) .composer-above-bar::before {
+    .app-transcript.provider-gemini,
+    .app-transcript.provider-codex,
+    .app-transcript.provider-claude,
+    .app-transcript.provider-kimi,
+    .app-transcript.provider-grok,
+    .app-transcript.provider-cursor,
+    .app-transcript.provider-ollama,
+    .app-transcript.provider-ensemble
+  )
+  .composer-above-bar::before {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 32%)),
@@ -1061,35 +1138,35 @@
 .composer-above-bar-pill {
   display: contents;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .composer-above-bar-branch {
+:not([data-composer-style='cursor']) .composer-above-bar .composer-above-bar-branch {
   order: 10;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .git-status-merge {
+:not([data-composer-style='cursor']) .composer-above-bar .git-status-merge {
   order: 15;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .git-status-push {
+:not([data-composer-style='cursor']) .composer-above-bar .git-status-push {
   order: 20;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .git-status-ci {
+:not([data-composer-style='cursor']) .composer-above-bar .git-status-ci {
   order: 25;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .composer-above-bar-files-cluster {
+:not([data-composer-style='cursor']) .composer-above-bar .composer-above-bar-files-cluster {
   order: 30;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .composer-above-bar-files {
+:not([data-composer-style='cursor']) .composer-above-bar .composer-above-bar-files {
   order: 30;
   margin-left: 6px;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar .composer-above-bar-stats {
+:not([data-composer-style='cursor']) .composer-above-bar .composer-above-bar-stats {
   order: 40;
   margin-left: 4px;
 }
-:not([data-composer-style="cursor"])
+:not([data-composer-style='cursor'])
   .composer-above-bar
   :is(.composer-workspace-access-inline, .composer-workspace-access) {
   order: 65;
 }
-:not([data-composer-style="cursor"]) .composer-above-bar > .composer-diff-action-menu-wrap {
+:not([data-composer-style='cursor']) .composer-above-bar > .composer-diff-action-menu-wrap {
   order: 80;
 }
 .composer-above-bar-files {
@@ -1107,21 +1184,21 @@
  * legible (some non-Codex shells used to bleed `<strong>` as
  * white even when the surrounding text recoloured correctly). */
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .composer-above-bar-files {
   color: rgba(29, 29, 31, 0.78);
 }
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .composer-above-bar-files
   strong {
@@ -1133,30 +1210,30 @@
  * default `color: #ffffff 80%` on `.composer-above-bar` wins in
  * the merged-stack layout, so pin dark text on the branch cluster. */
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .composer-above-bar-branch,
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .composer-above-bar-branch
   svg {
   color: rgba(29, 29, 31, 0.84);
 }
 :is(
-    [data-theme="light"],
-    [data-theme="citrus"],
-    [data-theme="mist"],
-    [data-theme="sage"],
-    [data-theme="alabaster"]
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
   )
   .composer-above-bar-branch
   .composer-above-bar-secondary-branch:not(
@@ -1219,7 +1296,10 @@
   appearance: none;
   -webkit-appearance: none;
   font-family: inherit;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
+  transition:
+    background 0.16s,
+    color 0.16s,
+    border-color 0.16s;
 }
 .composer-workspace-access-pill:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
@@ -1260,7 +1340,11 @@
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--composer-border) 90%, var(--text-primary) 10%);
   background:
-    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 42%),
+    radial-gradient(
+      circle at 18% 0%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 42%
+    ),
     color-mix(in srgb, var(--composer-bg-solid) 92%, #000000 8%);
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 12%, transparent),
@@ -1396,7 +1480,10 @@
   padding: 4px 10px;
   border-radius: 999px;
   cursor: pointer;
-  transition: background 0.16s, color 0.16s, border-color 0.16s;
+  transition:
+    background 0.16s,
+    color 0.16s,
+    border-color 0.16s;
 }
 .composer-above-bar-action:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
@@ -1404,13 +1491,14 @@
   border-color: color-mix(in srgb, #ffffff 22%, transparent);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-above-bar-action {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-above-bar-action {
   color: rgba(29, 29, 31, 0.86);
   border-color: var(--surface-border);
   background: color-mix(in srgb, var(--surface-1) 72%, transparent);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-above-bar-action:hover:not(:disabled) {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-above-bar-action:hover:not(:disabled) {
   color: rgba(29, 29, 31, 0.96);
   border-color: color-mix(in srgb, var(--accent) 42%, var(--surface-border));
   background: color-mix(in srgb, var(--surface-2) 84%, transparent);
@@ -1546,7 +1634,7 @@
   cursor: not-allowed;
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-diff-action-menu {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   color: rgba(29, 29, 31, 0.88);
@@ -1555,12 +1643,18 @@
     0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu button:hover:not(:disabled),
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu button:focus-visible:not(:disabled) {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-diff-action-menu
+  button:hover:not(:disabled),
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-diff-action-menu
+  button:focus-visible:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-diff-action-menu button:disabled {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-diff-action-menu
+  button:disabled {
   color: rgba(29, 29, 31, 0.38);
 }
 
@@ -1638,7 +1732,9 @@
   font-size: var(--font-size-xs);
   text-align: left;
   padding: 7px 9px;
-  transition: background 0.16s, color 0.16s;
+  transition:
+    background 0.16s,
+    color 0.16s;
 }
 .composer-git-menu-item + .composer-git-menu-item {
   margin-top: -2px;
@@ -1688,7 +1784,9 @@
   font-size: var(--font-size-xs);
   padding: 5px 9px;
   border-radius: 8px;
-  transition: border-color 0.16s, background 0.16s;
+  transition:
+    border-color 0.16s,
+    background 0.16s;
 }
 .composer-git-commit-input::placeholder {
   color: color-mix(in srgb, var(--text-secondary) 56%, transparent);
@@ -1739,25 +1837,29 @@
 }
 
 /* Light themes — mirror the diff-action-menu / above-bar light overrides. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-branch {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-git-branch {
   color: rgba(29, 29, 31, 0.92);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-status {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-git-status {
   border-bottom-color: var(--surface-border);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-menu-item:hover:not(:disabled),
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-menu-item:focus-visible:not(:disabled) {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-git-menu-item:hover:not(:disabled),
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-git-menu-item:focus-visible:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-menu-item:disabled {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-git-menu-item:disabled {
   color: rgba(29, 29, 31, 0.38);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-commit-input {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-git-commit-input {
   color: rgba(29, 29, 31, 0.88);
   border-color: var(--surface-border);
   background: color-mix(in srgb, var(--surface-1) 72%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-commit-input::placeholder {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .composer-git-commit-input::placeholder {
   color: rgba(29, 29, 31, 0.45);
 }
 
@@ -1796,7 +1898,7 @@
   color: #6ddfa8;
   border-color: color-mix(in srgb, #6ddfa8 36%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-git-state-staged {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-git-state-staged {
   color: rgba(29, 29, 31, 0.82);
 }
 
@@ -1832,27 +1934,63 @@
   font-size: 0.95em;
   line-height: 1;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .composer-above-bar-secondary-branch.git-tone-main {
   color: #1a5ceb;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .composer-above-bar-secondary-branch.git-tone-feature {
   color: #6d4fe0;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .composer-above-bar-secondary-branch.git-tone-fix {
   color: #c0660f;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .composer-above-bar-secondary-branch.git-tone-release {
   color: #138a59;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .git-status-push.git-status-unpublished {
   color: #c38b00;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
   .git-status-push.git-status-synced {
   color: var(--diff-stat-add-color, #2db777);
 }
@@ -1996,12 +2134,26 @@
   border-color: color-mix(in srgb, #ff6b7a 48%, transparent);
   background: color-mix(in srgb, #ff6b7a 15%, transparent);
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-merge.git-merge-progress {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-merge.git-merge-progress {
   color: #b8860b;
   border-color: color-mix(in srgb, #b8860b 45%, transparent);
   background: color-mix(in srgb, #b8860b 12%, transparent);
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-merge.git-merge-conflict {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-merge.git-merge-conflict {
   color: #d23b4e;
   border-color: color-mix(in srgb, #d23b4e 48%, transparent);
   background: color-mix(in srgb, #d23b4e 12%, transparent);
@@ -2010,43 +2162,127 @@
 /* Light-theme git-status colours — the tones above are dark-optimised;
  * deepen them for contrast on light backgrounds. (The pill bg/border are
  * already theme-aware via --composer-bg / --composer-border.) */
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ahead {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-ahead {
   color: #c38b00;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-behind {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-behind {
   color: #c38b00;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-behind.git-status-diverged {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-behind.git-status-diverged {
   color: #d23b4e;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-pass {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-ci.git-ci-pass {
   color: #138a59;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-fail {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-ci.git-ci-fail {
   color: #d23b4e;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-ci.git-ci-pending {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-ci.git-ci-pending {
   color: #b8860b;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-open {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-open {
   color: #6d4fe0;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-ready,
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-merged {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-ready,
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-merged {
   color: #138a59;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-stale {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-stale {
   color: #b8860b;
 }
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-blocked,
-:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]) .git-status-pr.git-pr-closed {
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-blocked,
+:is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .git-status-pr.git-pr-closed {
   color: #d23b4e;
 }
 
 /* Respect reduce-motion — drop the control transitions entirely. */
-[data-reduce-motion="true"] .composer-git-menu-item,
-[data-reduce-motion="true"] .composer-git-commit-input,
-[data-reduce-motion="true"] .composer-git-commit-button {
+[data-reduce-motion='true'] .composer-git-menu-item,
+[data-reduce-motion='true'] .composer-git-commit-input,
+[data-reduce-motion='true'] .composer-git-commit-button {
   transition: none;
 }
 
@@ -2072,37 +2308,37 @@
   width: 19px;
   height: 19px;
 }
-[data-composer-style="codex"] .context-wheel {
+[data-composer-style='codex'] .context-wheel {
   order: -1;
   margin-right: 4px;
   color: color-mix(in srgb, #ffffff 70%, transparent);
   width: 21.6px;
   height: 21.6px;
 }
-[data-composer-style="codex"] .context-wheel svg {
+[data-composer-style='codex'] .context-wheel svg {
   width: 17.1px;
   height: 17.1px;
 }
-[data-composer-style="claude"] .context-wheel {
+[data-composer-style='claude'] .context-wheel {
   order: -1;
   margin-right: 6px;
   color: var(--provider-claude-color);
   width: 20px;
   height: 20px;
 }
-[data-composer-style="claude"] .context-wheel svg {
+[data-composer-style='claude'] .context-wheel svg {
   width: 15px;
   height: 15px;
 }
-[data-composer-style="claude"] .composer-context-trigger {
+[data-composer-style='claude'] .composer-context-trigger {
   transform: translateY(-4px);
 }
-:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .context-wheel {
+:is([data-composer-style='cursor'], [data-composer-style='chatgpt']) .context-wheel {
   width: 21.6px;
   height: 21.6px;
   color: var(--cursor-shell-muted, color-mix(in srgb, #ffffff 65%, transparent));
 }
-:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .context-wheel svg {
+:is([data-composer-style='cursor'], [data-composer-style='chatgpt']) .context-wheel svg {
   width: 17.1px;
   height: 17.1px;
 }
@@ -2113,10 +2349,11 @@
  * to dark tone so the donut + its dashed remainder ring read
  * legibly. Claude's balanced provider hue already works in both modes
  * — no override needed there. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .context-wheel {
   color: rgba(29, 29, 31, 0.62);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .context-wheel {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='codex']
+  .context-wheel {
   color: rgba(29, 29, 31, 0.66);
 }
 
@@ -2129,13 +2366,15 @@
  * codex shell in light/mist/sage themes.
  * Thresholds: src/shared/contextCompaction.ts (warn ≥80%, critical ≥95%). */
 .context-wheel.context-wheel--warn.context-wheel--warn,
-[data-composer-style="claude"] .context-wheel.context-wheel--warn,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--warn {
+[data-composer-style='claude'] .context-wheel.context-wheel--warn,
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .context-wheel.context-wheel--warn {
   color: #f0a93f;
 }
 .context-wheel.context-wheel--critical.context-wheel--critical,
-[data-composer-style="claude"] .context-wheel.context-wheel--critical,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .context-wheel.context-wheel--critical {
+[data-composer-style='claude'] .context-wheel.context-wheel--critical,
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+  .context-wheel.context-wheel--critical {
   color: var(--danger, #e54d4d);
 }
 
@@ -2143,19 +2382,19 @@
  * Claude inside/outside aesthetic
  * Textarea sits in its own bubble; control row visually floats below.
  * ============================================================ */
-[data-composer-style="claude"] .composer-surface {
+[data-composer-style='claude'] .composer-surface {
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
   padding: 0 !important;
 }
-[data-composer-style="claude"] .composer-surface:focus-within {
+[data-composer-style='claude'] .composer-surface:focus-within {
   box-shadow: none !important;
 }
-[data-composer-style="claude"] .composer-chips {
+[data-composer-style='claude'] .composer-chips {
   display: none; /* Top status now lives in .composer-above-bar */
 }
-[data-composer-style="claude"] .composer-textarea {
+[data-composer-style='claude'] .composer-textarea {
   background: color-mix(in srgb, #161616 94%, transparent);
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
   border-radius: 10px;
@@ -2163,18 +2402,18 @@
   min-height: 56px;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
 }
-[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
+[data-composer-style='claude'] .composer-surface:focus-within .composer-textarea {
   border-color: color-mix(in srgb, #ffffff 22%, transparent);
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.36),
     0 0 0 1px color-mix(in srgb, #ffffff 14%, transparent);
 }
-[data-composer-style="claude"] .composer-control-footer {
+[data-composer-style='claude'] .composer-control-footer {
   background: transparent;
   padding: 4px 4px 0;
   margin-top: 0;
 }
-[data-composer-style="claude"] .composer-inline-pickers {
+[data-composer-style='claude'] .composer-inline-pickers {
   background: transparent;
   border: 0;
   padding: 6px 2px 2px;
@@ -2187,8 +2426,8 @@
  * bubble's top-right; .composer-surface is the positioning context. The
  * surrounding footer pickers stay where they are but no longer have to
  * carry the send button alongside them. */
-[data-composer-style="claude"] .composer-action-btn.run-btn,
-[data-composer-style="claude"] .composer-action-btn.stop-btn {
+[data-composer-style='claude'] .composer-action-btn.run-btn,
+[data-composer-style='claude'] .composer-action-btn.stop-btn {
   position: absolute;
   top: 12px;
   right: 14px;
@@ -2198,10 +2437,10 @@
 /* Belt-and-braces: ensure nothing in the footer chrome carries a
  * leftover background so the surrounding controls read as floating
  * satellites instead of a contained rect. */
-[data-composer-style="claude"] .composer-control-footer,
-[data-composer-style="claude"] .composer-inline-pickers,
-[data-composer-style="claude"] .composer-inline-pickers-left,
-[data-composer-style="claude"] .composer-inline-actions {
+[data-composer-style='claude'] .composer-control-footer,
+[data-composer-style='claude'] .composer-inline-pickers,
+[data-composer-style='claude'] .composer-inline-pickers-left,
+[data-composer-style='claude'] .composer-inline-actions {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -2211,7 +2450,7 @@
  * Claude-mode satellite footer (mirrors codex footer)
  * Provider + workspace chips sit below the bubble + action row.
  * ============================================================ */
-[data-composer-style="claude"] .composer-claude-footer {
+[data-composer-style='claude'] .composer-claude-footer {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2220,8 +2459,10 @@
   pointer-events: auto;
   flex-wrap: wrap;
 }
-[data-composer-style="default"] .composer-claude-footer,
-[data-composer-style="codex"]   .composer-claude-footer { display: none; }
+[data-composer-style='default'] .composer-claude-footer,
+[data-composer-style='codex'] .composer-claude-footer {
+  display: none;
+}
 
 .composer-claude-chip {
   display: inline-flex;
@@ -2234,14 +2475,20 @@
   background: transparent;
   cursor: pointer;
   border: 0;
-  transition: background 120ms ease, color 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 .composer-claude-chip:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
-.composer-claude-chip svg:first-child { opacity: 0.85; }
-.composer-claude-chip > svg:last-child  { opacity: 0.55; }
+.composer-claude-chip svg:first-child {
+  opacity: 0.85;
+}
+.composer-claude-chip > svg:last-child {
+  opacity: 0.55;
+}
 
 /* YOLO/Trust-mode chip — compact session trust indicator. Sits inline
  * in the composer's action row so auto-approve is visible without a
@@ -2260,7 +2507,9 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: background 100ms ease, border-color 100ms ease;
+  transition:
+    background 100ms ease,
+    border-color 100ms ease;
 }
 
 .composer-yolo-chip:hover,
@@ -2327,12 +2576,12 @@
 }
 
 /* Light-theme override: invert chip text/hover for legibility */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-claude-chip,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-codex-chip {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-claude-chip,
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-codex-chip {
   color: color-mix(in srgb, #000000 60%, transparent);
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-claude-chip:hover,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-codex-chip:hover {
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-claude-chip:hover,
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-codex-chip:hover {
   background: color-mix(in srgb, #000000 6%, transparent);
   color: color-mix(in srgb, #000000 88%, transparent);
 }
@@ -2341,7 +2590,7 @@
  * Codex shape refinement — keep textarea + controls inside a single bubble.
  * Footer chips already sit below from earlier work.
  * ============================================================ */
-[data-composer-style="codex"] .composer-textarea {
+[data-composer-style='codex'] .composer-textarea {
   background: transparent;
   border: 0;
   padding: 6px 6px 10px;
@@ -2353,9 +2602,17 @@
  * Model picker is a blue rounded pill on the right. Send button is a
  * light circular arrow. No above-bar; no satellite footer chips.
  * ============================================================ */
-[data-composer-style="gemini"] .composer-top-toggles,
-[data-composer-style="gemini"] .composer-chips,
-[data-composer-style="gemini"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style='gemini'] .composer-top-toggles,
+[data-composer-style='gemini'] .composer-chips,
+[data-composer-style='gemini']
+  .composer-inline-pickers-left
+  > *:not([data-composer-control='attach']):not([data-composer-control='schedule']):not(
+    [data-composer-control='ensemble-mode']
+  ):not([data-composer-control='permission']):not([data-composer-control='voice']):not(
+    [data-composer-control='model']
+  ):not([data-composer-control='provider']):not([data-composer-control='workspace']):not(
+    [data-composer-control='guest']
+  ):not([data-composer-control='ollama-tier']) {
   display: none !important;
 }
 /* Gemini shell — historically hid `.composer-above-bar` entirely
@@ -2367,7 +2624,7 @@
  * uses (28px radius / `#0e1218 94%` / provider-blue 18% border /
  * `0 4px 28px` shadow) so both rows in the stack read as siblings
  * of the Gemini composer below. */
-[data-composer-style="gemini"] .composer-above-bar {
+[data-composer-style='gemini'] .composer-above-bar {
   border-radius: 28px;
   background: color-mix(in srgb, #0e1218 94%, transparent);
   border: 1px solid color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
@@ -2376,7 +2633,7 @@
 /* Per-provider ::before gradient is too busy on the cleaner Gemini
  * surface treatment — keep it suppressed (the base rule paints a
  * navy gradient that fights the #0e1218 base + blue accent). */
-[data-composer-style="gemini"] .composer-above-bar::before {
+[data-composer-style='gemini'] .composer-above-bar::before {
   display: none;
 }
 
@@ -2407,7 +2664,7 @@
 
 /* ---- Capsule palette tokens (dark default; also covers obsidian +
  * alabaster, whose Gemini chrome is intentionally dark navy). ---- */
-[data-composer-style="gemini"] {
+[data-composer-style='gemini'] {
   --gemini-capsule-fill: linear-gradient(180deg, #141d30 0%, #0d1320 100%);
   --gemini-capsule-border: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
   --gemini-capsule-border-focus: color-mix(in srgb, var(--provider-gemini-color) 58%, transparent);
@@ -2428,8 +2685,8 @@
  * shell rule's (0,2,0) — without `!important` the surface re-appears
  * as a sharp-cornered rectangle behind the capsule. Same approach the
  * Modular/Satellite shells use to stay invisible under native glass. */
-[data-composer-style="gemini"] .composer-surface,
-[data-composer-style="gemini"] .composer-surface:focus-within {
+[data-composer-style='gemini'] .composer-surface,
+[data-composer-style='gemini'] .composer-surface:focus-within {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -2458,13 +2715,13 @@
    * the composer font scale changes. Cursor shares identical geometry. */
   --composer-capsule-single-h: calc(1.55 * var(--font-size-md) + 30px);
 }
-[data-composer-style="gemini"] .composer-surface::before {
+[data-composer-style='gemini'] .composer-surface::before {
   content: none;
 }
 
 /* THE CAPSULE — the single rounded pill. Holds only the textarea;
  * +/model/send are lifted into it (lift block below). */
-[data-composer-style="gemini"] .composer-textarea-wrap {
+[data-composer-style='gemini'] .composer-textarea-wrap {
   position: relative;
   z-index: 1;
   display: flex;
@@ -2475,7 +2732,9 @@
   border: 1px solid var(--gemini-capsule-border);
   border-radius: 26px;
   box-shadow: var(--gemini-capsule-shadow);
-  transition: border-color 200ms ease, box-shadow 200ms ease;
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease;
   /* 1.0.6-CRUX22 — name the capsule so the lifted +/model/send can
    * anchor to ITS bottom edge (not the surface's). The capsule grows
    * downward with multi-line text, so anchoring here makes the three
@@ -2483,11 +2742,11 @@
    * references this anchor name). */
   anchor-name: --composer-capsule;
 }
-[data-composer-style="gemini"] .composer-textarea-wrap:focus-within {
+[data-composer-style='gemini'] .composer-textarea-wrap:focus-within {
   border-color: var(--gemini-capsule-border-focus);
   box-shadow: var(--gemini-capsule-shadow-focus);
 }
-[data-composer-style="gemini"] .composer-textarea {
+[data-composer-style='gemini'] .composer-textarea {
   flex: 1;
   background: transparent;
   border: 0;
@@ -2498,7 +2757,7 @@
   min-height: 32px;
   font-size: var(--font-size-md);
 }
-[data-composer-style="gemini"] .composer-textarea::placeholder {
+[data-composer-style='gemini'] .composer-textarea::placeholder {
   color: color-mix(in srgb, #ffffff 38%, transparent);
 }
 
@@ -2506,15 +2765,15 @@
  * provider / workspace) flow here, transparent, below the capsule.
  * `.composer-control-footer` dissolves so `.composer-inline-pickers`
  * becomes a direct column item of the surface (stable lift anchor). */
-[data-composer-style="gemini"] .composer-control-footer {
+[data-composer-style='gemini'] .composer-control-footer {
   display: contents;
 }
-[data-composer-style="gemini"] .composer-inline-pickers {
+[data-composer-style='gemini'] .composer-inline-pickers {
   margin-top: 0;
   padding: 0 6px;
   overflow: visible;
 }
-[data-composer-style="gemini"] .composer-inline-pickers-left {
+[data-composer-style='gemini'] .composer-inline-pickers-left {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2526,15 +2785,29 @@
 }
 /* Satellite ordering — the lifted +/model/send are removed from this
  * flow, so the remaining modifiers run: schedule · permission · turn · provider · ws. */
-[data-composer-style="gemini"] [data-composer-control="schedule"] { order: 1; }
-[data-composer-style="gemini"] [data-composer-control="permission"] { order: 2; }
-[data-composer-style="gemini"] [data-composer-control="voice"] { order: 2; }
-[data-composer-style="gemini"] [data-composer-control="ensemble-mode"] { order: 3; }
-[data-composer-style="gemini"] [data-composer-control="provider"] { order: 4; }
+[data-composer-style='gemini'] [data-composer-control='schedule'] {
+  order: 1;
+}
+[data-composer-style='gemini'] [data-composer-control='permission'] {
+  order: 2;
+}
+[data-composer-style='gemini'] [data-composer-control='voice'] {
+  order: 2;
+}
+[data-composer-style='gemini'] [data-composer-control='ensemble-mode'] {
+  order: 3;
+}
+[data-composer-style='gemini'] [data-composer-control='provider'] {
+  order: 4;
+}
 /* 1.0.5-AR12 — Workspace pill matches Gemini's softened outline-chip
  * family (provider chip pattern at line 19060). */
-[data-composer-style="gemini"] [data-composer-control="workspace"] { order: 5; }
-[data-composer-style="gemini"] [data-composer-control="ollama-tier"] { order: 1; }
+[data-composer-style='gemini'] [data-composer-control='workspace'] {
+  order: 5;
+}
+[data-composer-style='gemini'] [data-composer-control='ollama-tier'] {
+  order: 1;
+}
 
 /* ---- LIFT: +/model/send onto the capsule's row ----
  * Anchored to `.composer-surface` (position:relative) as the containing
@@ -2555,7 +2828,7 @@
  * capsule grows by Δ, anchor(bottom) grows by Δ and each control drops
  * by Δ, holding a constant gap above the (new) capsule bottom. The
  * textarea's 46px / 224px gutters still reserve the horizontal space. */
-[data-composer-style="gemini"] [data-composer-control="attach"] {
+[data-composer-style='gemini'] [data-composer-control='attach'] {
   position: absolute;
   position-anchor: --composer-capsule;
   top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 12px);
@@ -2563,7 +2836,7 @@
   margin: 0;
   z-index: 3;
 }
-[data-composer-style="gemini"] [data-composer-control="model"] {
+[data-composer-style='gemini'] [data-composer-control='model'] {
   position: absolute;
   position-anchor: --composer-capsule;
   top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 13px);
@@ -2572,7 +2845,7 @@
   margin: 0;
   z-index: 3;
 }
-[data-composer-style="gemini"] .composer-send-cluster {
+[data-composer-style='gemini'] .composer-send-cluster {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2583,7 +2856,7 @@
   z-index: 3;
 }
 
-[data-composer-style="gemini"] [data-composer-control="workspace"] {
+[data-composer-style='gemini'] [data-composer-control='workspace'] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2592,11 +2865,11 @@
   border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="gemini"] [data-composer-control="workspace"]:hover:not(:disabled) {
+[data-composer-style='gemini'] [data-composer-control='workspace']:hover:not(:disabled) {
   background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
   border-color: color-mix(in srgb, var(--provider-gemini-color) 30%, transparent);
 }
-[data-composer-style="gemini"] [data-composer-control="workspace"] .composer-control-icon {
+[data-composer-style='gemini'] [data-composer-control='workspace'] .composer-control-icon {
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
@@ -2610,7 +2883,7 @@
  * `.composer-image-picker-btn` rule. The button is lifted/absolute (not inside
  * the capsule), so the larger glyph isn't clipped, and the 46px textarea left
  * gutter still clears it. */
-[data-composer-style="gemini"] .composer-image-picker-btn {
+[data-composer-style='gemini'] .composer-image-picker-btn {
   width: 32px;
   height: 32px;
   background: transparent;
@@ -2618,7 +2891,7 @@
   color: color-mix(in srgb, #ffffff 76%, transparent);
   border-radius: 999px;
 }
-[data-composer-style="gemini"] .composer-image-picker-btn:hover:not(:disabled) {
+[data-composer-style='gemini'] .composer-image-picker-btn:hover:not(:disabled) {
   background: transparent;
   border: 0;
   color: #ffffff;
@@ -2626,7 +2899,7 @@
 }
 
 /* Permission picker (Plan / Default approval) — plain text */
-[data-composer-style="gemini"] [data-composer-control="permission"] {
+[data-composer-style='gemini'] [data-composer-control='permission'] {
   background: transparent;
   border: 0;
   padding: 0 6px;
@@ -2634,11 +2907,11 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="gemini"] [data-composer-control="permission"] svg {
+[data-composer-style='gemini'] [data-composer-control='permission'] svg {
   display: none;
 }
 
-[data-composer-style="gemini"] .composer-action-btn.voice-btn {
+[data-composer-style='gemini'] .composer-action-btn.voice-btn {
   width: 28px;
   height: 28px;
   min-width: 28px;
@@ -2650,31 +2923,31 @@
   transform: none;
 }
 
-[data-composer-style="gemini"] .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="gemini"] .composer-action-btn.voice-btn.is-recording {
+[data-composer-style='gemini'] .composer-action-btn.voice-btn:hover:not(:disabled),
+[data-composer-style='gemini'] .composer-action-btn.voice-btn.is-recording {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: #ffffff;
   transform: none;
 }
 
-[data-composer-style="gemini"] .composer-action-btn.voice-btn .sf-symbol-icon,
-[data-composer-style="gemini"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+[data-composer-style='gemini'] .composer-action-btn.voice-btn .sf-symbol-icon,
+[data-composer-style='gemini'] .composer-action-btn.voice-btn .sf-symbol-icon svg {
   width: 16px;
   height: 16px;
 }
 
-[data-composer-style="gemini"] .composer-action-btn.voice-btn:disabled,
-[data-composer-style="gemini"] .composer-voice-chevron:disabled {
+[data-composer-style='gemini'] .composer-action-btn.voice-btn:disabled,
+[data-composer-style='gemini'] .composer-voice-chevron:disabled {
   color: color-mix(in srgb, #ffffff 24%, transparent);
 }
 
-[data-composer-style="gemini"] .composer-voice-chevron {
+[data-composer-style='gemini'] .composer-voice-chevron {
   width: 14px;
   color: color-mix(in srgb, #ffffff 58%, transparent);
 }
 
-[data-composer-style="gemini"] .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="gemini"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+[data-composer-style='gemini'] .composer-voice-chevron:hover:not(:disabled),
+[data-composer-style='gemini'] .composer-voice-control.is-menu-open .composer-voice-chevron {
   background: color-mix(in srgb, #ffffff 8%, transparent);
   color: #ffffff;
 }
@@ -2682,7 +2955,7 @@
 /* Model picker — Gemini's signature blue tier pill. (Lifted into the
  * capsule's right edge by the CS3 lift block above; clamp + ellipsis
  * so a long model label can never spill into the textarea gutter.) */
-[data-composer-style="gemini"] [data-composer-control="model"] {
+[data-composer-style='gemini'] [data-composer-control='model'] {
   display: inline-flex;
   align-items: center;
   min-height: 28px;
@@ -2699,19 +2972,25 @@
  * `text-overflow` on the button itself can't reach them — ellipsize
  * the primary span directly (safety net for very long model names;
  * the 172px clamp + 224px textarea gutter already fit known ones). */
-[data-composer-style="gemini"] [data-composer-control="model"] .composer-combined-picker-trigger-primary {
+[data-composer-style='gemini']
+  [data-composer-control='model']
+  .composer-combined-picker-trigger-primary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-[data-composer-style="gemini"] [data-composer-control="model"] .composer-combined-picker-trigger-suffix {
+[data-composer-style='gemini']
+  [data-composer-control='model']
+  .composer-combined-picker-trigger-suffix {
   flex: 0 0 auto;
 }
-[data-composer-style="gemini"] [data-composer-control="model"]:hover {
+[data-composer-style='gemini'] [data-composer-control='model']:hover {
   background: color-mix(in srgb, var(--provider-gemini-color) 28%, transparent);
 }
-[data-composer-style="gemini"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
+[data-composer-style='gemini']
+  [data-composer-control='model']
+  svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 
@@ -2720,38 +2999,36 @@
  * provider Gemini/Kimi hues instead of the neutral base pill. The
  * :is() arg includes a 2-class selector so the rule outranks the per-control
  * neutral styling (your "overridden in the cascade" worry). */
-[data-composer-style="gemini"]
+[data-composer-style='gemini']
   :is(
-    [data-composer-control="provider"],
-    [data-composer-control="workspace"],
-    [data-composer-control="ensemble-mode"] .composer-picker-label
+    [data-composer-control='provider'],
+    [data-composer-control='workspace'],
+    [data-composer-control='ensemble-mode'] .composer-picker-label
   ) {
   background: color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
   border-color: transparent;
   color: color-mix(in srgb, #b8ccff 95%, transparent);
 }
-[data-composer-style="gemini"]
-  :is([data-composer-control="provider"], [data-composer-control="workspace"]):hover,
-[data-composer-style="gemini"]
-  [data-composer-control="ensemble-mode"]
+[data-composer-style='gemini']
+  :is([data-composer-control='provider'], [data-composer-control='workspace']):hover,
+[data-composer-style='gemini']
+  [data-composer-control='ensemble-mode']
   .composer-picker-label:hover {
   background: color-mix(in srgb, var(--provider-gemini-color) 28%, transparent);
 }
-[data-composer-style="kimi"]
+[data-composer-style='kimi']
   :is(
-    [data-composer-control="provider"],
-    [data-composer-control="workspace"],
-    [data-composer-control="ensemble-mode"] .composer-picker-label
+    [data-composer-control='provider'],
+    [data-composer-control='workspace'],
+    [data-composer-control='ensemble-mode'] .composer-picker-label
   ) {
   background: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
   border-color: color-mix(in srgb, var(--provider-kimi-color) 34%, transparent);
   color: color-mix(in srgb, #cfe4ff 96%, transparent);
 }
-[data-composer-style="kimi"]
-  :is([data-composer-control="provider"], [data-composer-control="workspace"]):hover,
-[data-composer-style="kimi"]
-  [data-composer-control="ensemble-mode"]
-  .composer-picker-label:hover {
+[data-composer-style='kimi']
+  :is([data-composer-control='provider'], [data-composer-control='workspace']):hover,
+[data-composer-style='kimi'] [data-composer-control='ensemble-mode'] .composer-picker-label:hover {
   background: color-mix(in srgb, var(--provider-kimi-color) 32%, transparent);
   border-color: color-mix(in srgb, var(--provider-kimi-color) 46%, transparent);
 }
@@ -2774,7 +3051,7 @@
 }
 
 /* Provider picker — softened outline pill */
-[data-composer-style="gemini"] [data-composer-control="provider"] {
+[data-composer-style='gemini'] [data-composer-control='provider'] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2783,7 +3060,7 @@
   border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="gemini"] [data-composer-control="provider"]:hover {
+[data-composer-style='gemini'] [data-composer-control='provider']:hover {
   background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
 }
 
@@ -2794,7 +3071,7 @@
  *
  * Heights aligned with the provider chip (28px min) for visual
  * rhythm across the footer row. */
-[data-composer-style="gemini"] [data-composer-control="ensemble-mode"] {
+[data-composer-style='gemini'] [data-composer-control='ensemble-mode'] {
   min-height: 28px;
   padding: 1px;
   border-radius: 999px;
@@ -2804,24 +3081,30 @@
   font-size: var(--font-size-xs);
   font-weight: 500;
 }
-[data-composer-style="gemini"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
+[data-composer-style='gemini']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button {
   color: color-mix(in srgb, #ffffff 70%, transparent);
   font-size: var(--font-size-xs);
   font-weight: 500;
   padding: 3px 10px;
 }
-[data-composer-style="gemini"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
+[data-composer-style='gemini']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button:hover {
   color: color-mix(in srgb, #ffffff 92%, transparent);
   background: color-mix(in srgb, var(--provider-gemini-color) 10%, transparent);
 }
-[data-composer-style="gemini"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
+[data-composer-style='gemini']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button.is-active {
   color: color-mix(in srgb, #ffffff 96%, transparent);
   background: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
   font-weight: 600;
 }
 
 /* Send button — light filled circle with dark arrow */
-[data-composer-style="gemini"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='gemini'] .composer-action-btn.run-btn:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -2830,10 +3113,10 @@
   border: 0;
   box-shadow: none;
 }
-[data-composer-style="gemini"] .composer-action-btn.run-btn:hover:not(:disabled) {
+[data-composer-style='gemini'] .composer-action-btn.run-btn:hover:not(:disabled) {
   background: #ffffff;
 }
-[data-composer-style="gemini"] .composer-action-btn:disabled {
+[data-composer-style='gemini'] .composer-action-btn:disabled {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -2847,9 +3130,17 @@
  * Dark rounded rectangle, blue focus accent.
  * Outlined model pill on the right. Filled circular send button.
  * ============================================================ */
-[data-composer-style="kimi"] .composer-top-toggles,
-[data-composer-style="kimi"] .composer-chips,
-[data-composer-style="kimi"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+[data-composer-style='kimi'] .composer-top-toggles,
+[data-composer-style='kimi'] .composer-chips,
+[data-composer-style='kimi']
+  .composer-inline-pickers-left
+  > *:not([data-composer-control='attach']):not([data-composer-control='schedule']):not(
+    [data-composer-control='ensemble-mode']
+  ):not([data-composer-control='permission']):not([data-composer-control='model']):not(
+    [data-composer-control='provider']
+  ):not([data-composer-control='workspace']):not([data-composer-control='guest']):not(
+    [data-composer-control='ollama-tier']
+  ) {
   display: none !important;
 }
 /* Kimi shell — same parity move as Gemini above. Was hidden
@@ -2858,69 +3149,86 @@
  * `0 4px 16px` shadow) so the Create-PR row matches the chip
  * strip below it and both look like siblings of the Kimi
  * composer textarea. */
-[data-composer-style="kimi"] .composer-above-bar {
+[data-composer-style='kimi'] .composer-above-bar {
   border-radius: 18px;
   background: color-mix(in srgb, #0a0a0c 96%, transparent);
   border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
-[data-composer-style="kimi"] .composer-above-bar::before {
+[data-composer-style='kimi'] .composer-above-bar::before {
   display: none;
 }
 
-[data-composer-style="kimi"] .composer-surface {
+[data-composer-style='kimi'] .composer-surface {
   border-radius: 18px;
   padding: 14px 16px 8px;
   background: color-mix(in srgb, #0a0a0c 96%, transparent);
   border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
 }
-[data-composer-style="kimi"] .composer-surface::before {
+[data-composer-style='kimi'] .composer-surface::before {
   /* The base composer edge gradient (~main.css 6566) is blue and the
    * provider-tinted variants only override it on a matching transcript. The
    * Kimi shell wants a solid dark/gray surface, so suppress the leaked edge
    * entirely (its above-bar::before is already hidden above). */
   display: none;
 }
-[data-composer-style="kimi"] .composer-surface:focus-within {
+[data-composer-style='kimi'] .composer-surface:focus-within {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 50%, transparent);
   box-shadow:
     0 4px 16px rgba(0, 0, 0, 0.55),
     0 0 0 3px color-mix(in srgb, var(--provider-kimi-color) 10%, transparent);
 }
-[data-composer-style="kimi"] .composer-textarea {
+[data-composer-style='kimi'] .composer-textarea {
   background: transparent;
   border: 0;
   padding: 6px 4px 12px;
   min-height: 58px;
   font-size: var(--font-size-md);
 }
-[data-composer-style="kimi"] .composer-textarea::placeholder {
+[data-composer-style='kimi'] .composer-textarea::placeholder {
   color: color-mix(in srgb, #ffffff 36%, transparent);
 }
 
-[data-composer-style="kimi"] .composer-inline-pickers {
+[data-composer-style='kimi'] .composer-inline-pickers {
   margin-top: 0;
 }
-[data-composer-style="kimi"] .composer-inline-pickers-left {
+[data-composer-style='kimi'] .composer-inline-pickers-left {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: 1;
 }
-[data-composer-style="kimi"] [data-composer-control="attach"] { order: 0; }
-[data-composer-style="kimi"] [data-composer-control="schedule"] { order: 1; }
-[data-composer-style="kimi"] [data-composer-control="permission"] { order: 2; }
-[data-composer-style="kimi"] [data-composer-control="ensemble-mode"] { order: 3; }
-[data-composer-style="kimi"] [data-composer-control="provider"] { order: 4; }
+[data-composer-style='kimi'] [data-composer-control='attach'] {
+  order: 0;
+}
+[data-composer-style='kimi'] [data-composer-control='schedule'] {
+  order: 1;
+}
+[data-composer-style='kimi'] [data-composer-control='permission'] {
+  order: 2;
+}
+[data-composer-style='kimi'] [data-composer-control='ensemble-mode'] {
+  order: 3;
+}
+[data-composer-style='kimi'] [data-composer-control='provider'] {
+  order: 4;
+}
 /* 1.0.5-AR12 — Workspace pill mirrors Kimi's outlined provider chip
  * (line 19245) — slightly brighter than codex/gemini per Kimi's
  * terminal aesthetic. */
-[data-composer-style="kimi"] [data-composer-control="workspace"] { order: 5; }
-[data-composer-style="kimi"] [data-composer-control="model"] { order: 6; margin-left: auto; }
-[data-composer-style="kimi"] [data-composer-control="ollama-tier"] { order: 1; }
+[data-composer-style='kimi'] [data-composer-control='workspace'] {
+  order: 5;
+}
+[data-composer-style='kimi'] [data-composer-control='model'] {
+  order: 6;
+  margin-left: auto;
+}
+[data-composer-style='kimi'] [data-composer-control='ollama-tier'] {
+  order: 1;
+}
 
-[data-composer-style="kimi"] [data-composer-control="workspace"] {
+[data-composer-style='kimi'] [data-composer-control='workspace'] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2929,18 +3237,18 @@
   border: 1px solid color-mix(in srgb, #ffffff 14%, transparent);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="kimi"] [data-composer-control="workspace"]:hover:not(:disabled) {
+[data-composer-style='kimi'] [data-composer-control='workspace']:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   border-color: color-mix(in srgb, var(--provider-kimi-color) 40%, transparent);
 }
-[data-composer-style="kimi"] [data-composer-control="workspace"] .composer-control-icon {
+[data-composer-style='kimi'] [data-composer-control='workspace'] .composer-control-icon {
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
   opacity: 0.78;
 }
 
-[data-composer-style="kimi"] .composer-image-picker-btn {
+[data-composer-style='kimi'] .composer-image-picker-btn {
   width: 30px;
   height: 30px;
   background: transparent;
@@ -2948,13 +3256,13 @@
   color: color-mix(in srgb, #ffffff 56%, transparent);
   border-radius: 999px;
 }
-[data-composer-style="kimi"] .composer-image-picker-btn:hover:not(:disabled) {
+[data-composer-style='kimi'] .composer-image-picker-btn:hover:not(:disabled) {
   background: color-mix(in srgb, #ffffff 10%, transparent);
   color: #ffffff;
 }
 
 /* Permission picker — plain text, neutral */
-[data-composer-style="kimi"] [data-composer-control="permission"] {
+[data-composer-style='kimi'] [data-composer-control='permission'] {
   background: transparent;
   border: 0;
   padding: 0 6px;
@@ -2962,12 +3270,12 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="kimi"] [data-composer-control="permission"] svg {
+[data-composer-style='kimi'] [data-composer-control='permission'] svg {
   display: none;
 }
 
 /* Model picker — outlined pill with chevron */
-[data-composer-style="kimi"] [data-composer-control="model"] {
+[data-composer-style='kimi'] [data-composer-control='model'] {
   min-height: 28px;
   padding: 4px 12px;
   border-radius: 999px;
@@ -2977,14 +3285,16 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="kimi"] [data-composer-control="model"]:hover {
+[data-composer-style='kimi'] [data-composer-control='model']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
   border-color: color-mix(in srgb, #ffffff 28%, transparent);
 }
-[data-composer-style="kimi"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
+[data-composer-style='kimi']
+  [data-composer-control='model']
+  svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
-[data-composer-style="kimi"] [data-composer-control="model"]::after {
+[data-composer-style='kimi'] [data-composer-control='model']::after {
   content: '▾';
   font-size: 9px;
   margin-left: 4px;
@@ -2992,7 +3302,7 @@
 }
 
 /* Provider picker — matching outlined pill */
-[data-composer-style="kimi"] [data-composer-control="provider"] {
+[data-composer-style='kimi'] [data-composer-control='provider'] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -3001,7 +3311,7 @@
   border: 1px solid color-mix(in srgb, #ffffff 14%, transparent);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="kimi"] [data-composer-control="provider"]:hover {
+[data-composer-style='kimi'] [data-composer-control='provider']:hover {
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
 
@@ -3010,7 +3320,7 @@
  * brighter than Codex/Gemini per Kimi's terminal aesthetic). Active
  * state uses the balanced Kimi accent so the choice reads in
  * Kimi's signature colour rather than a neutral white. */
-[data-composer-style="kimi"] [data-composer-control="ensemble-mode"] {
+[data-composer-style='kimi'] [data-composer-control='ensemble-mode'] {
   min-height: 28px;
   padding: 1px;
   border-radius: 999px;
@@ -3020,24 +3330,30 @@
   font-size: var(--font-size-xs);
   font-weight: 500;
 }
-[data-composer-style="kimi"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
+[data-composer-style='kimi']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button {
   color: color-mix(in srgb, #ffffff 78%, transparent);
   font-size: var(--font-size-xs);
   font-weight: 500;
   padding: 3px 10px;
 }
-[data-composer-style="kimi"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
+[data-composer-style='kimi']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button:hover {
   color: color-mix(in srgb, #ffffff 95%, transparent);
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
-[data-composer-style="kimi"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
+[data-composer-style='kimi']
+  [data-composer-control='ensemble-mode']
+  .composer-ensemble-mode-button.is-active {
   color: #0a0a0c;
   background: color-mix(in srgb, var(--provider-kimi-color) 70%, transparent);
   font-weight: 600;
 }
 
 /* Send button — filled circle, hover takes the Kimi accent */
-[data-composer-style="kimi"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='kimi'] .composer-action-btn.run-btn:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -3045,11 +3361,11 @@
   color: #ffffff;
   border: 0;
 }
-[data-composer-style="kimi"] .composer-action-btn.run-btn:hover:not(:disabled) {
+[data-composer-style='kimi'] .composer-action-btn.run-btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--provider-kimi-color) 65%, transparent);
   color: #0a0a0c;
 }
-[data-composer-style="kimi"] .composer-action-btn:disabled {
+[data-composer-style='kimi'] .composer-action-btn:disabled {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -3219,12 +3535,7 @@
 }
 .claude-workflow-card-progress span.indeterminate {
   width: 40%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    var(--tool-running),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, var(--tool-running), transparent);
   animation: claude-workflow-progress 1.6s ease-in-out infinite;
 }
 @keyframes claude-workflow-progress {
@@ -3405,9 +3716,18 @@
   color: color-mix(in srgb, var(--accent) 80%, var(--text-primary) 20%);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.child-agent-thread-avatar.status-running { color: var(--tool-running); background: color-mix(in srgb, var(--tool-running) 14%, transparent); }
-.child-agent-thread-avatar.status-completed { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
-.child-agent-thread-avatar.status-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.child-agent-thread-avatar.status-running {
+  color: var(--tool-running);
+  background: color-mix(in srgb, var(--tool-running) 14%, transparent);
+}
+.child-agent-thread-avatar.status-completed {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+.child-agent-thread-avatar.status-failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
 .child-agent-thread-avatar :is(.agent-identicon, .agent-identity-icon) {
   display: block;
 }
@@ -3440,9 +3760,18 @@
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
   color: var(--text-secondary);
 }
-.child-agent-thread-state.state-running { color: var(--tool-running); background: color-mix(in srgb, var(--tool-running) 14%, transparent); }
-.child-agent-thread-state.state-completed { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
-.child-agent-thread-state.state-failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.child-agent-thread-state.state-running {
+  color: var(--tool-running);
+  background: color-mix(in srgb, var(--tool-running) 14%, transparent);
+}
+.child-agent-thread-state.state-completed {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+}
+.child-agent-thread-state.state-failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
 
 .child-agent-thread-interactivity {
   color: var(--text-tertiary);
@@ -3573,8 +3902,8 @@
   color: color-mix(in srgb, #ffb36c 86%, #ffffff 14%);
 }
 
-[data-composer-style="codex"] .composer-area,
-[data-composer-style="claude"] .composer-area {
+[data-composer-style='codex'] .composer-area,
+[data-composer-style='claude'] .composer-area {
   /* Parity: themed shells inherit TaskWraith native width — color/border/typography
    * differences still convey the codex / claude feel, but the composer footprint
    * matches the rest of the app so users don't see the bar reflow when they
@@ -3582,14 +3911,14 @@
   padding-bottom: 18px;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar,
-[data-composer-style="claude"] .composer-above-bar {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .composer-above-bar,
+[data-composer-style='claude'] .composer-above-bar {
   background: var(--composer-bg);
   border-color: var(--composer-border);
   box-shadow: var(--composer-shadow);
 }
 
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .composer-above-bar {
   min-height: 34px;
   padding: 6px 12px;
   border-radius: 20px;
@@ -3605,8 +3934,12 @@
    highlight; the roster-preset / ensemble / queued rows keep the framed stack.
    Tweak knobs: border-radius (bubble roundness), the codex tint % in background,
    the top-rim alpha + glow in box-shadow, and margin-block (detach gap). */
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-area > .composer-above-bar--cursor-lead,
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-primary-stack > .composer-above-bar--cursor-lead {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
+  .composer-area
+  > .composer-above-bar--cursor-lead,
+:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
+  .composer-primary-stack
+  > .composer-above-bar--cursor-lead {
   align-self: center;
   width: -moz-fit-content;
   width: fit-content;
@@ -3634,10 +3967,10 @@
    flush row inside the merged tray), so re-assert the identical pill here at
    higher specificity + !important to win — otherwise it renders square (clipped)
    with no rim and tucks under the primary pill's shadow. */
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
   .composer-area
   > .composer-above-bar--cursor-lead.composer-above-bar-secondary,
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
   .composer-primary-stack
   > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
   padding: 6px 14px !important;
@@ -3653,11 +3986,13 @@
 
 /* Solo Codex chat: the git rows floated out, leaving the merged stack with no
    rows — hide the empty frame so only the floating pills show (mirrors cursor). */
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-area .composer-above-bar-stack:empty {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
+  .composer-area
+  .composer-above-bar-stack:empty {
   display: none;
 }
 
-[data-composer-style="claude"] .composer-above-bar {
+[data-composer-style='claude'] .composer-above-bar {
   min-height: 30px;
   padding: 6px 12px;
   border-radius: 12px;
@@ -3677,7 +4012,7 @@
  * border + 14px radius + 0 4px 20px drop shadow that
  * .composer-textarea now carries (see line ~14346), placed after the
  * interface-style rule so the !importants win on source order. */
-[data-composer-style="claude"] .composer-above-bar {
+[data-composer-style='claude'] .composer-above-bar {
   background: #151515 !important;
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent) !important;
   border-radius: 14px !important;
@@ -3685,7 +4020,7 @@
   padding: 12px 14px !important;
 }
 
-[data-composer-style="codex"] .composer-surface {
+[data-composer-style='codex'] .composer-surface {
   background: #212121 !important;
   border-color: transparent !important;
   border-radius: 22px !important;
@@ -3693,7 +4028,7 @@
   box-shadow: 0 18px 56px rgba(0, 0, 0, 0.36) !important;
 }
 
-[data-composer-style="codex"] .composer-inner-module {
+[data-composer-style='codex'] .composer-inner-module {
   position: relative;
   z-index: 2;
   display: flex;
@@ -3710,18 +4045,18 @@
     inset 0 -1px 0 color-mix(in srgb, #ffffff 7%, transparent);
 }
 
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-control-footer {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .composer-control-footer {
   padding-top: 0;
 }
 
-[data-composer-style="codex"] .composer-inline-pickers {
+[data-composer-style='codex'] .composer-inline-pickers {
   min-height: 34px;
   align-items: center;
   border-top: 0;
   padding-top: 0;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-codex-footer {
+:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .composer-codex-footer {
   min-height: 24px;
   margin-top: 7px;
 }
@@ -3732,7 +4067,7 @@
  * rectangles). Shape now matches every other theme; the claude feel reads
  * via colors, fonts, and the accent run-button tint defined below. */
 
-[data-composer-style="claude"] .composer-textarea {
+[data-composer-style='claude'] .composer-textarea {
   background: #151515 !important;
   border-color: color-mix(in srgb, #ffffff 10%, transparent) !important;
 }
@@ -3754,18 +4089,18 @@
  * line 13471 (which lights up the textarea border/box-shadow on focus
  * via higher specificity) still wins during focus and the bubble glows
  * when the user clicks in. */
-[data-composer-style="claude"] .composer-surface,
-[data-composer-style="claude"] .composer-surface:focus-within {
+[data-composer-style='claude'] .composer-surface,
+[data-composer-style='claude'] .composer-surface:focus-within {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-[data-composer-style="claude"] .composer-surface::before {
+[data-composer-style='claude'] .composer-surface::before {
   display: none !important;
 }
-[data-composer-style="claude"] .composer-textarea {
+[data-composer-style='claude'] .composer-textarea {
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
@@ -3780,18 +4115,18 @@
  * value (see useAppearance.ts), any background declared here would win
  * by source order and undo that intent. Leave the footer alone. */
 
-[data-composer-style="claude"] .composer-claude-footer {
+[data-composer-style='claude'] .composer-claude-footer {
   min-height: 24px;
   margin-top: 6px;
 }
 
-[data-composer-style="codex"] .composer-picker-label select,
-[data-composer-style="claude"] .composer-picker-label select {
+[data-composer-style='codex'] .composer-picker-label select,
+[data-composer-style='claude'] .composer-picker-label select {
   max-width: 180px;
 }
 
-[data-composer-style="codex"] .composer-picker-label[data-composer-control="permission"] select,
-[data-composer-style="claude"] .composer-picker-label[data-composer-control="permission"] select {
+[data-composer-style='codex'] .composer-picker-label[data-composer-control='permission'] select,
+[data-composer-style='claude'] .composer-picker-label[data-composer-control='permission'] select {
   max-width: 170px;
 }
 
@@ -3800,8 +4135,8 @@
  * codex/claude rules hid it for "feels native" reasons, but theme is now
  * pure cosmetics — the control set is invariant. */
 
-[data-composer-style="codex"] .composer-picker-command,
-[data-composer-style="claude"] .composer-picker-command {
+[data-composer-style='codex'] .composer-picker-command,
+[data-composer-style='claude'] .composer-picker-command {
   border-color: transparent;
   background: transparent;
 }
@@ -3818,20 +4153,32 @@
  * but scoped here with :not() instead of a stacked light override, because
  * a (0,3,0) light override on the bare card class would out-rank the
  * per-provider light tints in 03 by source order and flatten them. */
-[data-composer-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
-[data-composer-style="codex"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card,
-[data-composer-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-discovery-card,
-[data-composer-style="claude"]:not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"]) .composer-permission-card {
+[data-composer-style='codex']:not([data-theme='light']):not([data-theme='mist']):not(
+    [data-theme='sage']
+  )
+  .composer-discovery-card,
+[data-composer-style='codex']:not([data-theme='light']):not([data-theme='mist']):not(
+    [data-theme='sage']
+  )
+  .composer-permission-card,
+[data-composer-style='claude']:not([data-theme='light']):not([data-theme='mist']):not(
+    [data-theme='sage']
+  )
+  .composer-discovery-card,
+[data-composer-style='claude']:not([data-theme='light']):not([data-theme='mist']):not(
+    [data-theme='sage']
+  )
+  .composer-permission-card {
   background: color-mix(in srgb, #151515 96%, transparent);
   border-color: color-mix(in srgb, #ffffff 12%, transparent);
   box-shadow: 0 18px 46px rgba(0, 0, 0, 0.28);
 }
 
-[data-composer-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='codex'] .composer-action-btn.run-btn:not(:disabled) {
   background: color-mix(in srgb, #ffffff 90%, transparent) !important;
 }
 
-[data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
+[data-composer-style='claude'] .composer-action-btn.run-btn:not(:disabled) {
   color: color-mix(in srgb, #ffb36c 82%, #ffffff 18%) !important;
 }
 
@@ -3839,15 +4186,15 @@
   /* Composer-area width is now inherited from the default .composer-area
    * rule; we keep the narrow-viewport status-row tweaks because those are
    * about chip overflow, not bubble width. */
-  [data-composer-style="codex"] .provider-shell-status-row,
-  [data-composer-style="claude"] .provider-shell-status-row {
+  [data-composer-style='codex'] .provider-shell-status-row,
+  [data-composer-style='claude'] .provider-shell-status-row {
     gap: 4px;
     overflow-x: auto;
     scrollbar-width: none;
   }
 
-  [data-composer-style="codex"] .provider-shell-status-row::-webkit-scrollbar,
-  [data-composer-style="claude"] .provider-shell-status-row::-webkit-scrollbar {
+  [data-composer-style='codex'] .provider-shell-status-row::-webkit-scrollbar,
+  [data-composer-style='claude'] .provider-shell-status-row::-webkit-scrollbar {
     display: none;
   }
 }
@@ -3895,8 +4242,8 @@
  * ============================================================ */
 
 /* Closed-state chip — rim + faint amber tint + amber border. */
-[data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="workspace_write"] {
+[data-composer-style='default'][data-composer-style='default'][data-composer-style='default']
+  .composer-combined-picker-trigger[data-permission-value='workspace_write'] {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary)) !important;
   border-color: color-mix(in srgb, #f0a93f 50%, var(--composer-border)) !important;
   background: color-mix(in srgb, #f0a93f 8%, transparent);
@@ -3906,15 +4253,15 @@
 /* The label span carries its own `color` (+ `!important` in shard
  * 08), so tint it directly — one class deeper than the trigger
  * selector above to clear shard 08's `-primary !important` rule. */
-[data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="workspace_write"]
+[data-composer-style='default'][data-composer-style='default'][data-composer-style='default']
+  .composer-combined-picker-trigger[data-permission-value='workspace_write']
   .composer-combined-picker-trigger-primary {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary)) !important;
 }
 
 /* Hover — slightly firmer amber rim, still calm. */
-[data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-trigger[data-permission-value="workspace_write"]:hover:not(:disabled) {
+[data-composer-style='default'][data-composer-style='default'][data-composer-style='default']
+  .composer-combined-picker-trigger[data-permission-value='workspace_write']:hover:not(:disabled) {
   border-color: color-mix(in srgb, #f0a93f 62%, var(--composer-border)) !important;
   background: color-mix(in srgb, #f0a93f 12%, transparent);
 }
@@ -3924,13 +4271,13 @@
  * The popover is portaled to <body> but `[data-composer-style]`
  * lives on <html>, so the descendant selector still scopes it to
  * the native shell. */
-[data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-row[data-permission-value="workspace_write"]
+[data-composer-style='default'][data-composer-style='default'][data-composer-style='default']
+  .composer-combined-picker-row[data-permission-value='workspace_write']
   .composer-combined-picker-row-label {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary));
 }
-[data-composer-style="default"][data-composer-style="default"][data-composer-style="default"]
-  .composer-combined-picker-row[data-permission-value="workspace_write"].is-selected
+[data-composer-style='default'][data-composer-style='default'][data-composer-style='default']
+  .composer-combined-picker-row[data-permission-value='workspace_write'].is-selected
   .composer-combined-picker-check {
   color: color-mix(in srgb, #f0a93f 72%, var(--text-primary));
 }
@@ -3955,10 +4302,10 @@
  * the two rims read as one continuous highlight rather than two
  * competing lines.
  * ============================================================ */
-[data-composer-style="default"]
+[data-composer-style='default']
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
-  content: "";
+  content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
@@ -3967,44 +4314,44 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 4%, transparent);
   transition: box-shadow 160ms ease;
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-gemini
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-gemini-color) 13%, transparent);
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-codex
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-codex-color) 13%, transparent);
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-claude
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-claude-color) 13%, transparent);
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-kimi
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-kimi-color) 13%, transparent);
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-grok
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-grok-color) 13%, transparent);
 }
-[data-composer-style="default"]
+[data-composer-style='default']
   .app-transcript.provider-cursor
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--provider-cursor-color) 13%, transparent);
 }
-[data-reduce-motion="true"]
-  [data-composer-style="default"]
+[data-reduce-motion='true']
+  [data-composer-style='default']
   .composer-surface:not(.fx-agent-aura)
   .composer-inner-module::after {
   transition: none;
@@ -4349,39 +4696,51 @@
 
 /* Light-family themes — mirror the .git-status-* light overrides exactly. */
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) .github-satellite-icon.tone-open {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .github-satellite-icon.tone-open {
   color: #6d4fe0;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(.github-satellite-icon.tone-ready, .github-satellite-icon.tone-merged, .github-satellite-icon.tone-success) {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(
+    .github-satellite-icon.tone-ready,
+    .github-satellite-icon.tone-merged,
+    .github-satellite-icon.tone-success
+  ) {
   color: #138a59;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(.github-satellite-icon.tone-stale, .github-satellite-icon.tone-warning) {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(.github-satellite-icon.tone-stale, .github-satellite-icon.tone-warning) {
   color: #b8860b;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(.github-satellite-icon.tone-blocked, .github-satellite-icon.tone-closed, .github-satellite-icon.tone-danger) {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(
+    .github-satellite-icon.tone-blocked,
+    .github-satellite-icon.tone-closed,
+    .github-satellite-icon.tone-danger
+  ) {
   color: #d23b4e;
 }
 
@@ -4604,22 +4963,26 @@
 }
 /* Light-family: the on-state green mirrors the tone-success light value. */
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) .github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-track {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .github-satellite-watch-toggle[data-on='true']
+  .github-satellite-watch-track {
   background: color-mix(in srgb, #138a59 26%, transparent);
   border-color: color-mix(in srgb, #138a59 60%, transparent);
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) .github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-thumb {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  .github-satellite-watch-toggle[data-on='true']
+  .github-satellite-watch-thumb {
   background: #138a59;
 }
 
@@ -4645,45 +5008,49 @@
 
 /* Light-family theme overrides for the popover + standalone dots. */
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(.github-satellite-popover .tone-open) {
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(.github-satellite-popover .tone-open) {
   color: #6d4fe0;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(
     .github-satellite-popover :is(.tone-ready, .tone-merged, .tone-success),
     .github-satellite-dot.tone-success
   ) {
   color: #138a59;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(
     .github-satellite-popover :is(.tone-stale, .tone-warning),
     .github-satellite-dot.tone-warning
   ) {
   color: #b8860b;
 }
 :is(
-  [data-theme='light'],
-  [data-theme='citrus'],
-  [data-theme='mist'],
-  [data-theme='sage'],
-  [data-theme='alabaster']
-) :is(
+    [data-theme='light'],
+    [data-theme='citrus'],
+    [data-theme='mist'],
+    [data-theme='sage'],
+    [data-theme='alabaster']
+  )
+  :is(
     .github-satellite-popover :is(.tone-blocked, .tone-closed, .tone-danger),
     .github-satellite-dot.tone-danger
   ) {

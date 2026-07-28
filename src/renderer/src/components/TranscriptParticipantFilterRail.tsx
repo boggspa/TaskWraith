@@ -218,7 +218,10 @@ export function TranscriptParticipantFilterRail({
     () => providedItems || buildTranscriptParticipantFilterItems(currentChat),
     [currentChat, providedItems]
   )
-  const participantItems = useMemo(() => items.filter((item) => item.kind === 'participant'), [items])
+  const participantItems = useMemo(
+    () => items.filter((item) => item.kind === 'participant'),
+    [items]
+  )
   const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
   const columnCount = Math.max(1, Math.ceil(participantItems.length / FILTER_MAX_ROWS))
   const [frame, setFrame] = useState<RailFrame | null>(null)
@@ -284,7 +287,8 @@ export function TranscriptParticipantFilterRail({
   // shared hook keeps it in lockstep with the sibling gutter rail.
   useRailFrameRemeasure(updateFrame, { scrollRef, contentRef, railRef })
 
-  if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
+  if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0)
+    return null
 
   const participantGridRowOffset =
     participantItems.length < FILTER_MAX_ROWS ? FILTER_MAX_ROWS - participantItems.length : 0

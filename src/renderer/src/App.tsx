@@ -1,4 +1,13 @@
-import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore } from 'react'
+import {
+  startTransition,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useCallback,
+  useSyncExternalStore
+} from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
@@ -215,10 +224,7 @@ import {
   clampWorkspaceSidebarWidth,
   getStoredWorkspaceSidebarWidth
 } from './lib/panelWidths'
-import {
-  getProviderLabel,
-  getProviderOfferUnavailableReason
-} from './lib/providerLabels'
+import { getProviderLabel, getProviderOfferUnavailableReason } from './lib/providerLabels'
 import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
@@ -290,10 +296,7 @@ import { chatHasInFlightThinkingWork } from './lib/chatThinkingState'
 import { humaniseModelId } from './lib/modelDisplayName'
 import { mergeOllamaModelCatalog } from './lib/ollamaModelCatalog'
 import { normalizeGeminiResumeTarget, resolveGeminiResumeForRun } from './lib/geminiResume'
-import {
-  buildChatTokenTally,
-  formatEnsembleTokenBreakdown
-} from './lib/threadTokenTally'
+import { buildChatTokenTally, formatEnsembleTokenBreakdown } from './lib/threadTokenTally'
 import { buildCodexUsageWindows } from './lib/codexUsageWindows'
 import {
   restoreQueuedRunWorktreeTarget,
@@ -317,7 +320,10 @@ import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
 import { resolveChatApprovalMode } from './lib/chatComposerSelection'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
-import { attachmentPathsOutsideWorkspace, parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
+import {
+  attachmentPathsOutsideWorkspace,
+  parseGeminiPermissionRequest
+} from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
   CommandPaletteItem,
@@ -334,10 +340,7 @@ import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModa
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { JoinSharedChatModal } from './components/JoinSharedChatModal'
 import { HostAdmissionBanner } from './components/HostAdmissionBanner'
-import {
-  NeedsInputBanner,
-  useNeedsInputBannerController
-} from './components/NeedsInputBanner'
+import { NeedsInputBanner, useNeedsInputBannerController } from './components/NeedsInputBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
@@ -396,19 +399,9 @@ import {
 } from './lib/chatGitWorkflowObserver'
 import { summarizeChecks } from './components/GitStatusChips'
 import { repoNameFromRemote } from './components/GitHubSatellitePopover'
-import {
-  buildSidebarGitIndicators,
-  encodeSidebarGitIndicators
-} from './lib/sidebarGitIndicators'
-import {
-  type SharedChatCreateVariant,
-  type WorkspaceBoardCreateInput
-} from './components/Sidebar'
-import {
-  SETTINGS_TABS,
-  isSettingsTabVisible,
-  type SettingsTab
-} from './components/SettingsPanel'
+import { buildSidebarGitIndicators, encodeSidebarGitIndicators } from './lib/sidebarGitIndicators'
+import { type SharedChatCreateVariant, type WorkspaceBoardCreateInput } from './components/Sidebar'
+import { SETTINGS_TABS, isSettingsTabVisible, type SettingsTab } from './components/SettingsPanel'
 import { resolveSettingsTabFromSlashArg } from './lib/resolveSettingsSlashTab'
 import { SubThreadCreator } from './components/SubThreadCreator'
 import { FirstLaunchSheet } from './components/FirstLaunchSheet'
@@ -439,11 +432,9 @@ import {
   ScreenWatchSymbolIcon,
   SidebarCornerIcon,
   SkyWeatherIcon,
-  SplitChatIcon } from './components/AppChromeSymbols'
-import {
-  collectChatMediaRefs,
-  type ChatMediaRef
-} from './components/ChatMediaPanel'
+  SplitChatIcon
+} from './components/AppChromeSymbols'
+import { collectChatMediaRefs, type ChatMediaRef } from './components/ChatMediaPanel'
 // PairingSheet retired in the post-1.0.2 Settings full-app takeover.
 // The pairing flow now lives as a Settings tab (`PairingPage` mounted
 // inside SettingsPanel). Triggers route through `setShowSettings(true)
@@ -503,11 +494,7 @@ import {
 import { type PermissionOption } from './components/CombinedPermissionsPicker'
 import { useComposerTextareaContextMenu } from './components/ComposerTextareaContextMenu'
 import { WORKSPACE_POLICY_SERVICES } from './lib/workspacePolicyServices'
-import {
-  applyStateAction,
-  type PerChatStateAction,
-  usePerChatState
-} from './hooks/usePerChatState'
+import { applyStateAction, type PerChatStateAction, usePerChatState } from './hooks/usePerChatState'
 import {
   DEFAULT_CONTEXT_TURNS,
   buildConversationCompactionProjection,
@@ -655,10 +642,7 @@ import {
   APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE,
   applyParticipantPermissionsToEnsemble
 } from './lib/ensembleParticipantPermissions'
-import {
-  buildPinnedMessageSummaries,
-  toggleChatMessagePin
-} from './lib/pinnedMessages'
+import { buildPinnedMessageSummaries, toggleChatMessagePin } from './lib/pinnedMessages'
 import { applyChatMessageFeedback, type MessageFeedbackDetails } from './lib/messageFeedback'
 import {
   buildRightDockTabs,
@@ -742,7 +726,11 @@ import {
 } from './lib/imageAttachments'
 import { shouldSurfaceProposedPlanCard } from './lib/ensemblePlanPolicy'
 import { parsePlanModeChoice, type PlanChoiceState } from './lib/planModeChoice'
-import { parseProposedPlan, stripProposedPlanBlock, type ProposedPlanState } from './lib/proposedPlan'
+import {
+  parseProposedPlan,
+  stripProposedPlanBlock,
+  type ProposedPlanState
+} from './lib/proposedPlan'
 import { messageAnchorsActivePrompt } from './lib/transcriptDeleteGuard'
 import { type AgentQuestionState } from './components/AgentQuestionCard'
 import {
@@ -780,10 +768,7 @@ import {
   type RendererProviderRates
 } from './lib/providerRateEstimate'
 import { buildWelcomeUsageDashboardData } from './lib/welcomeUsageDashboard'
-import {
-  type AgentAuraProviderKey,
-  type AgentAuraStatus
-} from './components/FxLayers'
+import { type AgentAuraProviderKey, type AgentAuraStatus } from './components/FxLayers'
 import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenTally'
 import {
   cachedPaneContextTelemetry,
@@ -825,10 +810,7 @@ import {
 export { TranscriptPanel } from './components/TranscriptPanel'
 import { FILE_DIFF_STATUSES } from './lib/fileDiffStatuses'
 import { RUN_WRITE_TOOLS } from './lib/runWriteTools'
-import {
-  deriveVisibleRunCompleteNotice,
-  type RunCompleteNotice
-} from './lib/runCompleteNotice'
+import { deriveVisibleRunCompleteNotice, type RunCompleteNotice } from './lib/runCompleteNotice'
 import type { PersistentSessionStatus } from './lib/persistentSessionStatus'
 import { DEFAULT_AGENTIC_SERVICES } from './lib/agenticServicesDefaults'
 import { EMPTY_CHAT_MESSAGES, EMPTY_IMAGE_ATTACHMENTS } from './lib/stableEmpties'
@@ -845,10 +827,7 @@ import {
   applyPendingEnsembleRosterPresetOnRunTerminal,
   hasPendingEnsembleRosterPresetApply
 } from '../../main/EnsembleRosterPresetApply'
-import {
-  EMPTY_PERMISSION_STATE,
-  type ComposerPermissionState
-} from './lib/composerPermissionState'
+import { EMPTY_PERMISSION_STATE, type ComposerPermissionState } from './lib/composerPermissionState'
 import { createAppRunId, createMessageId } from './lib/idGenerators'
 import { drainStreamRenderMetrics } from './lib/streamRenderMetrics'
 import {
@@ -947,7 +926,9 @@ type ContextCompactionProgressState = ContextCompactionProgressEvent & {
 
 const EMPTY_CONTEXT_COMPACTION_PROGRESS: readonly ContextCompactionProgressEvent[] = []
 
-function contextCompactionProgressKey(event: Pick<ContextCompactionProgressEvent, 'chatId' | 'participantId' | 'provider'>): string {
+function contextCompactionProgressKey(
+  event: Pick<ContextCompactionProgressEvent, 'chatId' | 'participantId' | 'provider'>
+): string {
   return `${event.chatId}:${event.participantId || event.provider || 'chat'}`
 }
 
@@ -1075,7 +1056,6 @@ function buildWelcomeHeatmapSlots({
 // Prompt-composition helpers moved to `src/main/PromptComposition.ts` (Phase B3 step 1).
 // Re-exported below from the canonical module so existing call sites keep working
 // without an import-statement migration; future call sites should import directly.
-
 
 /**
  * QMOD (1.0.3) — modal card rendered next to a synthetic system
@@ -1274,7 +1254,9 @@ function gitPrStatusRefreshKey(snapshot: GitRepositorySnapshot | null | undefine
 }
 
 function hasGitSnapshotSubscriptionApi(): boolean {
-  return typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
+  return (
+    typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
+  )
 }
 
 function App(): React.JSX.Element {
@@ -1649,8 +1631,11 @@ function App(): React.JSX.Element {
           mode: options.mode || 'comments'
         })
         refreshHumanCollaborationShares()
-        const { payload: invitePayload, relayUrls, relayWarning } =
-          buildHumanCollaborationInvitePayload(result)
+        const {
+          payload: invitePayload,
+          relayUrls,
+          relayWarning
+        } = buildHumanCollaborationInvitePayload(result)
         const availability = classifyHumanCollaborationRelayUrls(relayUrls)
         const postHealth: HumanCollaborationInviteHealth = {
           ...preflight,
@@ -1709,7 +1694,8 @@ function App(): React.JSX.Element {
           return {
             ok: false,
             code: 'clipboard-failed',
-            message: 'Clipboard copy failed. The invite is shown below so you can copy it manually.',
+            message:
+              'Clipboard copy failed. The invite is shown below so you can copy it manually.',
             invitePayload,
             relayUrls,
             relayWarning,
@@ -1820,11 +1806,7 @@ function App(): React.JSX.Element {
         typeof window.api.humanCollaborationRevokeShare !== 'function'
       )
         return
-      if (
-        !window.confirm(
-          'Stop sharing this chat? Collaborators will lose access immediately.'
-        )
-      )
+      if (!window.confirm('Stop sharing this chat? Collaborators will lose access immediately.'))
         return
       void window.api
         .humanCollaborationListShares(chatId)
@@ -1901,9 +1883,8 @@ function App(): React.JSX.Element {
   const [runQueueJobs, setRunQueueJobs] = useState<RunQueueJob[]>([])
   const [scheduledQueueWakeTick, setScheduledQueueWakeTick] = useState(0)
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
-  const [pluginActivation, setPluginActivation] = useState<TaskWraithPluginActivationSnapshot | null>(
-    null
-  )
+  const [pluginActivation, setPluginActivation] =
+    useState<TaskWraithPluginActivationSnapshot | null>(null)
   const [selectedRuntimeProfileByChatId, setSelectedRuntimeProfileByChatId] = useState<
     Record<string, string>
   >({})
@@ -1980,8 +1961,7 @@ function App(): React.JSX.Element {
           },
     [antigravityAdmissible, rawConfiguredProviderSnapshot]
   )
-  const configuredAntigravityModels =
-    configuredProviderSnapshot.modelsByProvider?.antigravity || []
+  const configuredAntigravityModels = configuredProviderSnapshot.modelsByProvider?.antigravity || []
   const [selectedModelType, setSelectedModelType] = useState<string>('flash-lite')
   const [lastNonCustomModelType, setLastNonCustomModelType] = useState<string>('flash-lite')
   const [customModel, setCustomModel] = useState('')
@@ -2127,9 +2107,8 @@ function App(): React.JSX.Element {
   const [isPreparingDiffReview, setIsPreparingDiffReview] = useState(false)
   const [auditRuns, setAuditRuns] = useState<AuditRunRecord[]>([])
   const [auditRunNotice, setAuditRunNotice] = useState<AuditRunNoticeState | null>(null)
-  const [dismissedAuditRunIds, setDismissedAuditRunIds] = useState<Set<string>>(
-    readDismissedAuditRunIds
-  )
+  const [dismissedAuditRunIds, setDismissedAuditRunIds] =
+    useState<Set<string>>(readDismissedAuditRunIds)
 
   const currentRunWarningsRef = useRef<RunWarning[]>([])
   const preSnapshotRef = useRef<any>(null)
@@ -2407,8 +2386,9 @@ function App(): React.JSX.Element {
   >({})
   const discordContextSelectionByChatIdRef = useRef(discordContextSelectionByChatId)
   discordContextSelectionByChatIdRef.current = discordContextSelectionByChatId
-  const [discordContextTargets, setDiscordContextTargets] =
-    useState<DiscordContextTargets | null>(null)
+  const [discordContextTargets, setDiscordContextTargets] = useState<DiscordContextTargets | null>(
+    null
+  )
   const [discordContextPickerOpen, setDiscordContextPickerOpen] = useState(false)
   const [discordContextLoading, setDiscordContextLoading] = useState(false)
   const [discordContextError, setDiscordContextError] = useState('')
@@ -2820,18 +2800,19 @@ function App(): React.JSX.Element {
     if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi()) return undefined
     const requestedWorkspacePath = currentGitPresentationPath
     const workspaceGeneration = primaryWorkspacePresentationGenerationRef.current
-    return window.api.gitSubscribeSnapshot(
-      { workspacePath: requestedWorkspacePath },
-      (payload) => {
-        if (!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)) return
-        setPrimaryGitSnapshot(payload.snapshot)
-        refreshPrimaryPrStatus(payload.snapshot)
-      }
-    )
+    return window.api.gitSubscribeSnapshot({ workspacePath: requestedWorkspacePath }, (payload) => {
+      if (!isCurrentPrimaryWorkspaceRequest(requestedWorkspacePath, workspaceGeneration)) return
+      setPrimaryGitSnapshot(payload.snapshot)
+      refreshPrimaryPrStatus(payload.snapshot)
+    })
   }, [currentGitPresentationPath, isCurrentPrimaryWorkspaceRequest, refreshPrimaryPrStatus])
 
   useEffect(() => {
-    if (!currentGitPresentationPath || !runCompleteNotice?.timestamp || !window.api.gitInvalidateSnapshot) {
+    if (
+      !currentGitPresentationPath ||
+      !runCompleteNotice?.timestamp ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return
     }
     void window.api.gitInvalidateSnapshot({
@@ -3003,7 +2984,11 @@ function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    if (!currentGitPresentationPath || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (
+      !currentGitPresentationPath ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return undefined
     }
     const onFocus = (): void => {
@@ -3135,8 +3120,7 @@ function App(): React.JSX.Element {
   const needsInputBanner = useNeedsInputBannerController()
   const needsInputBannerRef = useRef(needsInputBanner)
   needsInputBannerRef.current = needsInputBanner
-  const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] =
-    usePerChatState(0)
+  const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] = usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([])
   const [executionRunsById, setExecutionRunsById] = useState<
@@ -3152,8 +3136,7 @@ function App(): React.JSX.Element {
         (diagnostic) => `Stack service: ${boundedReason(diagnostic.message)}`
       ),
       ...executionGraphDiagnostics.repositoryDiagnostics.map(
-        (diagnostic) =>
-          `Stack ${diagnostic.executionId}: ${boundedReason(diagnostic.message)}`
+        (diagnostic) => `Stack ${diagnostic.executionId}: ${boundedReason(diagnostic.message)}`
       ),
       ...executionGraphDiagnostics.recoveryDiagnostics.map(
         (diagnostic) =>
@@ -3163,9 +3146,9 @@ function App(): React.JSX.Element {
       )
     ]
   }, [executionGraphDiagnostics])
-  const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<
-    Record<string, string[]>
-  >({})
+  const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<Record<string, string[]>>(
+    {}
+  )
   const [openExecutionMap, setOpenExecutionMap] = useState<{
     executionId: string
     selectedStepId?: string
@@ -3276,8 +3259,7 @@ function App(): React.JSX.Element {
   // from sideChatId — the session can stay alive while another dock tab
   // is selected).
   const [isSideChatDockPanelOpen, setIsSideChatDockPanelOpen] = useState(false)
-  const [sidePanelPresentation, setSidePanelPresentation] =
-    useState<SidePanelPresentation>('split')
+  const [sidePanelPresentation, setSidePanelPresentation] = useState<SidePanelPresentation>('split')
   const [sideChatMenuOpen, setSideChatMenuOpen] = useState(false)
   const [popoutMenuOpen, setPopoutMenuOpen] = useState(false)
   // Which pane's preview-target dropdown is open. Keyed by the pane's STABLE id
@@ -3365,16 +3347,13 @@ function App(): React.JSX.Element {
     // badge uses so an orphaned entry can't pin a phantom streaming pill.
     streamingActive: Boolean(
       currentChat &&
-        runningChatIds.has(currentChat.appChatId) &&
-        !hasTerminalLastRun(currentChat) &&
-        !hasKnownInactiveEnsembleRound(currentChat)
+      runningChatIds.has(currentChat.appChatId) &&
+      !hasTerminalLastRun(currentChat) &&
+      !hasKnownInactiveEnsembleRound(currentChat)
     )
   })
   const setCurrentChatIdForNavigation = useCallback(
-    (
-      nextChatId: string | null,
-      options: { assignMultiviewPane?: boolean } = {}
-    ) => {
+    (nextChatId: string | null, options: { assignMultiviewPane?: boolean } = {}) => {
       if (nextChatId && multiview.isMultiview && options.assignMultiviewPane !== false) {
         multiview.assignToNextPane(nextChatId)
       }
@@ -3397,10 +3376,7 @@ function App(): React.JSX.Element {
   } | null>(null)
   useLayoutEffect(() => {
     committedSideChatIdRef.current = sideChatId
-    if (
-      sideRestoreTargetChatIdRef.current &&
-      sideRestoreTargetChatIdRef.current !== sideChatId
-    ) {
+    if (sideRestoreTargetChatIdRef.current && sideRestoreTargetChatIdRef.current !== sideChatId) {
       sideRestoreTargetChatIdRef.current = null
       sideRestoreGenerationRef.current += 1
       setSideExternalRestoreAnchorTarget(null)
@@ -3418,9 +3394,7 @@ function App(): React.JSX.Element {
       )
       const cancel = restoreChatScrollStateWhenReady(
         () =>
-          committedSideChatIdRef.current === targetChatId
-            ? sideTranscriptScrollRef.current
-            : null,
+          committedSideChatIdRef.current === targetChatId ? sideTranscriptScrollRef.current : null,
         scrollState,
         8,
         () =>
@@ -3746,20 +3720,21 @@ function App(): React.JSX.Element {
   const visibleAuditRunNotice =
     auditRunNotice && auditRunNotice.chatId === currentChat?.appChatId ? auditRunNotice : null
   const canOpenWorkspacePopout = Boolean(currentWorkspacePopoutPath)
-  const shouldTreatRunQueueJobAsActive = useCallback((
-    job: Pick<RunQueueJob, 'chatId' | 'status'>
-  ): boolean => {
-    if (!job.chatId || !ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return false
-    const chat =
-      chatByIdRef.current.get(job.chatId) ||
-      chats.find((candidate) => candidate.appChatId === job.chatId)
-    return isRunQueueJobVisibleForChat(job, chat)
-  }, [chats])
+  const shouldTreatRunQueueJobAsActive = useCallback(
+    (job: Pick<RunQueueJob, 'chatId' | 'status'>): boolean => {
+      if (!job.chatId || !ACTIVE_RUN_QUEUE_STATUSES.has(job.status)) return false
+      const chat =
+        chatByIdRef.current.get(job.chatId) ||
+        chats.find((candidate) => candidate.appChatId === job.chatId)
+      return isRunQueueJobVisibleForChat(job, chat)
+    },
+    [chats]
+  )
   const chatHasActiveRunQueueJob = useCallback(
     (chatId?: string | null): boolean =>
       Boolean(
         chatId &&
-          runQueueJobs.some((job) => job.chatId === chatId && shouldTreatRunQueueJobAsActive(job))
+        runQueueJobs.some((job) => job.chatId === chatId && shouldTreatRunQueueJobAsActive(job))
       ),
     [runQueueJobs, shouldTreatRunQueueJobAsActive]
   )
@@ -3767,13 +3742,15 @@ function App(): React.JSX.Element {
     currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
   const currentPendingProviderChange =
-    currentChat && currentChat.chatKind !== 'ensemble' ? readPendingProviderChange(currentChat) : null
+    currentChat && currentChat.chatKind !== 'ensemble'
+      ? readPendingProviderChange(currentChat)
+      : null
   const isCurrentChatProviderLocked = Boolean(
     currentChat?.appChatId &&
-      (runningChatIds.has(currentChat.appChatId) ||
-        hasCurrentChatQueuedRunForProviderLock ||
-        isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound) ||
-        Boolean(currentPendingProviderChange))
+    (runningChatIds.has(currentChat.appChatId) ||
+      hasCurrentChatQueuedRunForProviderLock ||
+      isEnsembleActiveRoundDispatchLive(currentChat?.ensemble?.activeRound) ||
+      Boolean(currentPendingProviderChange))
   )
   const isFxEnabled = appearance.funFxEnabled && appearance.funFxMode !== 'off'
   // Refraction is an independent MATERIAL toggle (not part of the fun-FX system),
@@ -3824,14 +3801,12 @@ function App(): React.JSX.Element {
   // rendered alongside the primary above-bar. Probe results are
   // cached in the hook so re-renders are free; only changes to the
   // grant set trigger new probes.
-  const externalPathRepoMetadataByPath = useExternalPathRepoMetadataByPath(
-    visibleExternalPathGrants
-  )
+  const externalPathRepoMetadataByPath =
+    useExternalPathRepoMetadataByPath(visibleExternalPathGrants)
   const currentComposerChatId = currentChat?.appChatId || null
   const currentProjectReferenceContextSelection = useSyncExternalStore(
     useCallback(
-      (listener) =>
-        subscribeProjectReferenceContextSelection(currentComposerChatId, listener),
+      (listener) => subscribeProjectReferenceContextSelection(currentComposerChatId, listener),
       [currentComposerChatId]
     ),
     () => getProjectReferenceContextSelection(currentComposerChatId),
@@ -3856,10 +3831,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const refreshExecutionGraphDiagnostics = useCallback((): void => {
-    if (
-      isChatPopoutWindow ||
-      typeof window.api.getExecutionGraphDiagnostics !== 'function'
-    ) {
+    if (isChatPopoutWindow || typeof window.api.getExecutionGraphDiagnostics !== 'function') {
       return
     }
     void window.api
@@ -3876,10 +3848,7 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const generation = ++executionRunQueryGenerationRef.current
-    if (
-      isChatPopoutWindow ||
-      typeof window.api.listExecutionRuns !== 'function'
-    ) {
+    if (isChatPopoutWindow || typeof window.api.listExecutionRuns !== 'function') {
       return
     }
 
@@ -3911,10 +3880,7 @@ function App(): React.JSX.Element {
           setExecutionRunIdsByChatId((current) => ({
             ...current,
             [chatId]: Array.from(
-              new Set([
-                ...ordered.map((run) => run.executionId),
-                ...(current[chatId] || [])
-              ])
+              new Set([...ordered.map((run) => run.executionId), ...(current[chatId] || [])])
             )
           }))
           refreshExecutionGraphDiagnostics()
@@ -4024,9 +3990,7 @@ function App(): React.JSX.Element {
   )
   const currentDiscordContextSelection = useMemo(
     () =>
-      currentComposerChatId
-        ? discordContextSelectionByChatId[currentComposerChatId] || null
-        : null,
+      currentComposerChatId ? discordContextSelectionByChatId[currentComposerChatId] || null : null,
     [currentComposerChatId, discordContextSelectionByChatId]
   )
   const composerImageAttachments = useMemo(
@@ -4181,8 +4145,7 @@ function App(): React.JSX.Element {
     for (const pane of multiview.panes) {
       if (!pane.chatId) continue
       addChatWorkspace(
-        chatByIdRef.current.get(pane.chatId) ||
-          chats.find((chat) => chat.appChatId === pane.chatId)
+        chatByIdRef.current.get(pane.chatId) || chats.find((chat) => chat.appChatId === pane.chatId)
       )
     }
     return paths
@@ -4194,7 +4157,7 @@ function App(): React.JSX.Element {
       : 'split'
   const currentChatIsLinkedChild = Boolean(
     currentChat?.parentChatId &&
-      (currentChat.parentChatRelation === 'sideChat' || isSubThreadChat(currentChat))
+    (currentChat.parentChatRelation === 'sideChat' || isSubThreadChat(currentChat))
   )
   const currentLinkedParentChat =
     currentChatIsLinkedChild && currentChat?.parentChatId
@@ -4256,9 +4219,7 @@ function App(): React.JSX.Element {
     if (provider === 'pi') {
       const piModels = agentModelsByProvider.pi || []
       return (
-        piModels.find((model) => model.isDefault)?.id ||
-        piModels[0]?.id ||
-        PI_DEFAULT_MODEL_WIRE_ID
+        piModels.find((model) => model.isDefault)?.id || piModels[0]?.id || PI_DEFAULT_MODEL_WIRE_ID
       )
     }
     return getStaticProviderDefaultModel(provider)
@@ -4299,8 +4260,7 @@ function App(): React.JSX.Element {
       ...(provider === 'codex'
         ? {
             codexReasoningEffort: participant.reasoningEffort || 'medium',
-            codexServiceTier:
-              participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
+            codexServiceTier: participant.serviceTier || (participant.fastModeEnabled ? 'fast' : '')
           }
         : {}),
       ...(provider === 'claude'
@@ -4321,8 +4281,7 @@ function App(): React.JSX.Element {
       ...(provider === 'grok'
         ? isGrok45ReasoningModelId(providerModel)
           ? {
-              grokReasoningEffort:
-                participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
+              grokReasoningEffort: participant.reasoningEffort || GROK_45_DEFAULT_REASONING_EFFORT
             }
           : { grokReasoningEffort: '' }
         : {}),
@@ -4504,9 +4463,7 @@ function App(): React.JSX.Element {
         const closedSideChat = applySideChatLifecycle(liveSideChat, 'closed')
         chatByIdRef.current.set(closedSideChat.appChatId, closedSideChat)
         setChats((prev) =>
-          prev.map((chat) =>
-            chat.appChatId === closedSideChat.appChatId ? closedSideChat : chat
-          )
+          prev.map((chat) => (chat.appChatId === closedSideChat.appChatId ? closedSideChat : chat))
         )
         void window.api.saveChat(closedSideChat).catch(() => {})
       }
@@ -4587,8 +4544,7 @@ function App(): React.JSX.Element {
         shouldTreatScrollAsUserScrollAway({
           previousScrollTop: lastSideTranscriptScrollTopRef.current,
           nextScrollTop: scroller.scrollTop,
-          distanceFromBottom:
-            scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+          distanceFromBottom: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
           isProgrammatic: sideProgrammaticScrollRef.current
         })
       ) {
@@ -5433,10 +5389,7 @@ function App(): React.JSX.Element {
           ? activeRunChatSnapshotRef.current
           : null)
       if (!base) return null
-      if (
-        isChatSummaryRecord(base) ||
-        summaryChatUpdateQueueRef.current.hasPending(chatId)
-      ) {
+      if (isChatSummaryRecord(base) || summaryChatUpdateQueueRef.current.hasPending(chatId)) {
         return summaryChatUpdateQueueRef.current.enqueue({
           key: chatId,
           updater,
@@ -5672,17 +5625,17 @@ function App(): React.JSX.Element {
     return window.api.getChats(workspaceId)
   }, [])
 
-  const refreshChatList = useCallback(async (workspaceId?: string): Promise<ChatRecord[]> => {
-    const list = await loadChatList(workspaceId)
-    chatMutations.reconcileAll(list)
-    return list
-  }, [chatMutations, loadChatList])
+  const refreshChatList = useCallback(
+    async (workspaceId?: string): Promise<ChatRecord[]> => {
+      const list = await loadChatList(workspaceId)
+      chatMutations.reconcileAll(list)
+      return list
+    },
+    [chatMutations, loadChatList]
+  )
 
   const resolveHydratedChat = useCallback(
-    (
-      chat: ChatRecord,
-      request?: { localAtRequestStart: ChatRecord | null }
-    ): ChatRecord => {
+    (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
       const current =
         chatByIdRef.current.get(chat.appChatId) ||
         (activeRunChatSnapshotRef.current?.appChatId === chat.appChatId
@@ -5700,10 +5653,7 @@ function App(): React.JSX.Element {
   )
 
   const applyHydratedChat = useCallback(
-    (
-      chat: ChatRecord,
-      request?: { localAtRequestStart: ChatRecord | null }
-    ): ChatRecord => {
+    (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
       const merged = resolveHydratedChat(chat, request)
       chatByIdRef.current.set(merged.appChatId, merged)
       setChats((prev) => mergeChatRecord(prev, merged))
@@ -5741,7 +5691,8 @@ function App(): React.JSX.Element {
     // carried over from another provider. A legacy 'cli-default' coerces to the
     // provider default so the picker shows Grok 4.5, not blank.
     if (provider === 'grok') return modelId.startsWith('grok')
-    if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
+    if (provider === 'cursor')
+      return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
     if (provider === 'pi') {
       return getProviderModelOptions('pi').some((model) => model.id === modelId)
@@ -5765,21 +5716,24 @@ function App(): React.JSX.Element {
     return ids
   }, [])
 
-  const refreshOllamaModelsFromStatus = useCallback((status: any): string[] => {
-    const installedIds = rememberOllamaInstalledModels(status?.models)
-    if (Array.isArray(status?.models)) {
-      setAgentModelsByProvider((prev) => ({
-        ...prev,
-        ollama: mergeOllamaModelCatalog(
-          status.models.map((model: CodexModelOption) => ({
-            ...model,
-            label: model.label || model.id
-          }))
-        )
-      }))
-    }
-    return installedIds
-  }, [rememberOllamaInstalledModels])
+  const refreshOllamaModelsFromStatus = useCallback(
+    (status: any): string[] => {
+      const installedIds = rememberOllamaInstalledModels(status?.models)
+      if (Array.isArray(status?.models)) {
+        setAgentModelsByProvider((prev) => ({
+          ...prev,
+          ollama: mergeOllamaModelCatalog(
+            status.models.map((model: CodexModelOption) => ({
+              ...model,
+              label: model.label || model.id
+            }))
+          )
+        }))
+      }
+      return installedIds
+    },
+    [rememberOllamaInstalledModels]
+  )
 
   const getOllamaModelLabel = useCallback(
     (modelId: string, label?: string): string => {
@@ -6138,9 +6092,7 @@ function App(): React.JSX.Element {
     if (!chatId) return
     const maybeWorkflowMode = patch.workflowMode
     const nextWorkflowMode =
-      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal'
-        ? maybeWorkflowMode
-        : undefined
+      maybeWorkflowMode === 'plan' || maybeWorkflowMode === 'normal' ? maybeWorkflowMode : undefined
     const touchesProviderScopedMetadata = Object.keys(patch).some((key) =>
       PROVIDER_SCOPED_COMPOSER_METADATA_KEYS.has(key)
     )
@@ -6261,11 +6213,7 @@ function App(): React.JSX.Element {
         reportPreviewLaunchError(target, chat, target.reason || 'Launch target is unavailable.')
       }
     } catch (error) {
-      reportPreviewLaunchError(
-        target,
-        chat,
-        error instanceof Error ? error.message : String(error)
-      )
+      reportPreviewLaunchError(target, chat, error instanceof Error ? error.message : String(error))
     }
   }
   const renderPreviewTargetMenu = (
@@ -6326,7 +6274,8 @@ function App(): React.JSX.Element {
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
   const refreshProviderModelCatalog = async (provider: ProviderId): Promise<void> => {
-    if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function') return
+    if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function')
+      return
     try {
       const models = await window.api.getAgentModels(provider)
       const normalized =
@@ -6730,25 +6679,20 @@ function App(): React.JSX.Element {
     // `handleSelectWorkspace` re-fetched and all "previously loaded"
     // workspaces suddenly appeared. Use `Promise.allSettled` so each
     // load is independent, then apply whatever resolved.
-    const [
-      wsResult,
-      chatsResult,
-      profilesResult,
-      handoffsResult,
-      pluginActivationResult
-    ] = await Promise.allSettled([
-      window.api.getWorkspaces(),
-      loadChatList(),
-      typeof window.api.getRuntimeProfiles === 'function'
-        ? window.api.getRuntimeProfiles()
-        : Promise.resolve([]),
-      typeof window.api.getHandoffCards === 'function'
-        ? window.api.getHandoffCards()
-        : Promise.resolve([]),
-      typeof window.api.getPluginActivation === 'function'
-        ? window.api.getPluginActivation()
-        : Promise.resolve(null)
-    ])
+    const [wsResult, chatsResult, profilesResult, handoffsResult, pluginActivationResult] =
+      await Promise.allSettled([
+        window.api.getWorkspaces(),
+        loadChatList(),
+        typeof window.api.getRuntimeProfiles === 'function'
+          ? window.api.getRuntimeProfiles()
+          : Promise.resolve([]),
+        typeof window.api.getHandoffCards === 'function'
+          ? window.api.getHandoffCards()
+          : Promise.resolve([]),
+        typeof window.api.getPluginActivation === 'function'
+          ? window.api.getPluginActivation()
+          : Promise.resolve(null)
+      ])
     const wsList = wsResult.status === 'fulfilled' ? wsResult.value : []
     const allChats = chatsResult.status === 'fulfilled' ? chatsResult.value : []
     const profiles = profilesResult.status === 'fulfilled' ? profilesResult.value : []
@@ -6768,10 +6712,7 @@ function App(): React.JSX.Element {
       console.error('[loadInitialData] getHandoffCards failed:', handoffsResult.reason)
     }
     if (pluginActivationResult.status === 'rejected') {
-      console.error(
-        '[loadInitialData] getPluginActivation failed:',
-        pluginActivationResult.reason
-      )
+      console.error('[loadInitialData] getPluginActivation failed:', pluginActivationResult.reason)
     }
     setRuntimeProfiles(profiles)
     setPluginActivation(activation)
@@ -6780,9 +6721,7 @@ function App(): React.JSX.Element {
     setWorkspaces(wsList)
     await rehydrateQueuedRuns(wsList).catch(() => {})
     if (isChatPopoutWindow) {
-      const popoutSummary = allChats.find(
-        (chat) => chat.appChatId === chatPopoutChatIdRef.current
-      )
+      const popoutSummary = allChats.find((chat) => chat.appChatId === chatPopoutChatIdRef.current)
       const popoutChat =
         popoutSummary && isChatSummaryRecord(popoutSummary)
           ? (await window.api.getChat(popoutSummary.appChatId)) || popoutSummary
@@ -6823,10 +6762,7 @@ function App(): React.JSX.Element {
         }
         const popoutHandoff = readChatPopoutHandoff(popoutChat.appChatId)
         if (popoutHandoff?.roundExpansion !== undefined) {
-          hydrateSessionRoundExpansionForChat(
-            popoutChat.appChatId,
-            popoutHandoff.roundExpansion
-          )
+          hydrateSessionRoundExpansionForChat(popoutChat.appChatId, popoutHandoff.roundExpansion)
         }
         setCurrentChat(popoutChat)
         applyChatComposerSelection(popoutChat, provider)
@@ -7510,8 +7446,7 @@ function App(): React.JSX.Element {
           provider === 'kimi' ? Boolean(normalizedSelection.fastModeEnabled) : undefined,
         kimiReasoningEffort:
           provider === 'kimi' ? normalizedSelection.reasoningEffort || 'on' : undefined,
-        kimiThinkingEnabled:
-          provider === 'kimi' ? true : undefined,
+        kimiThinkingEnabled: provider === 'kimi' ? true : undefined,
         grokReasoningEffort:
           provider === 'grok' ? normalizedSelection.reasoningEffort || '' : undefined,
         cursorReasoningEffort:
@@ -7754,7 +7689,10 @@ function App(): React.JSX.Element {
     if (capability.kind === 'unsupported') {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `Fork unavailable for ${getProviderLabel(provider)}: ${capability.detail}` }
+        {
+          type: 'stderr',
+          content: `Fork unavailable for ${getProviderLabel(provider)}: ${capability.detail}`
+        }
       ])
       return
     }
@@ -8136,8 +8074,7 @@ function App(): React.JSX.Element {
     if (sidebarSurfaceConvertInFlightRef.current) return
     const chatId = currentChatIdRef.current
     const initiatingChat = chatId
-      ? chatByIdRef.current.get(chatId) ||
-        (currentChat?.appChatId === chatId ? currentChat : null)
+      ? chatByIdRef.current.get(chatId) || (currentChat?.appChatId === chatId ? currentChat : null)
       : null
     const plan = planPrimarySurfaceConversion({
       surface,
@@ -8146,8 +8083,8 @@ function App(): React.JSX.Element {
       isMultiview: multiview.isMultiview,
       isWorkflowChat: Boolean(
         chatId &&
-          (workflowDraft?.chatId === chatId ||
-            workflowDefinitions.some((workflow) => workflow.template.chatId === chatId))
+        (workflowDraft?.chatId === chatId ||
+          workflowDefinitions.some((workflow) => workflow.template.chatId === chatId))
       ),
       hasActiveWorkspaceBoard: Boolean(activeWorkspaceBoardId),
       currentWorkspace,
@@ -8522,9 +8459,8 @@ function App(): React.JSX.Element {
     // reach this transport. Do not reuse an old quota window after a failed
     // official `/usage` probe: every timeout, unsupported panel, or error is
     // shown as quota unavailable rather than stale or inferred usage.
-    const antigravityFresh = (Array.isArray(antigravitySnap?.windows)
-      ? antigravitySnap.windows
-      : []
+    const antigravityFresh = (
+      Array.isArray(antigravitySnap?.windows) ? antigravitySnap.windows : []
     )
       .map((windowEntry: any, index: number) =>
         normalizeQuotaWindow('antigravity', windowEntry, `antigravity-quota-${index}`)
@@ -8676,8 +8612,7 @@ function App(): React.JSX.Element {
     providerHint?: ProviderId,
     options: { force?: boolean; codexStatusHint?: any } = {}
   ): Promise<boolean> => {
-    const canRefresh =
-      typeof navigator === 'undefined' || navigator.onLine !== false
+    const canRefresh = typeof navigator === 'undefined' || navigator.onLine !== false
     const decision = options.force
       ? !usageRefreshInFlightRef.current && canRefresh
       : shouldRunUsageRefresh({
@@ -8764,25 +8699,19 @@ function App(): React.JSX.Element {
    * permission preset and tool policies still govern what it may do
    * inside the additional workspace.
    */
-  const clearExternalPathGrantPrompt = useCallback(
-    (chatId?: string | null) => {
-      const targetChatId = chatId || currentChatIdRef.current
-      if (!targetChatId) return
-      const pendingRun = externalPathGrantPromptByChatIdRef.current[targetChatId]?.pendingRun
-      if (pendingRun) {
-        settleProjectReferenceContextClaim(
-          pendingRun.projectReferenceContextClaim,
-          'rejected'
-        )
-      }
-      externalPathGrantPromptByChatIdRef.current = {
-        ...externalPathGrantPromptByChatIdRef.current,
-        [targetChatId]: null
-      }
-      setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
-    },
-    []
-  )
+  const clearExternalPathGrantPrompt = useCallback((chatId?: string | null) => {
+    const targetChatId = chatId || currentChatIdRef.current
+    if (!targetChatId) return
+    const pendingRun = externalPathGrantPromptByChatIdRef.current[targetChatId]?.pendingRun
+    if (pendingRun) {
+      settleProjectReferenceContextClaim(pendingRun.projectReferenceContextClaim, 'rejected')
+    }
+    externalPathGrantPromptByChatIdRef.current = {
+      ...externalPathGrantPromptByChatIdRef.current,
+      [targetChatId]: null
+    }
+    setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
+  }, [])
 
   const openExternalPathGrantPrompt = useCallback(
     (input: {
@@ -8797,10 +8726,7 @@ function App(): React.JSX.Element {
         previousRun?.projectReferenceContextClaim?.claimId !==
         input.pendingRun?.projectReferenceContextClaim?.claimId
       ) {
-        settleProjectReferenceContextClaim(
-          previousRun?.projectReferenceContextClaim,
-          'rejected'
-        )
+        settleProjectReferenceContextClaim(previousRun?.projectReferenceContextClaim, 'rejected')
       }
       const nextPrompt = {
         gaps: input.gaps,
@@ -9016,11 +8942,7 @@ function App(): React.JSX.Element {
   const handleToggleArchiveChat = (chatId: string, nextArchived: boolean) => {
     updateChatById(chatId, (source) => ({
       ...(source.parentChatRelation === 'sideChat'
-        ? applySideChatLifecycle(
-            source,
-            nextArchived ? 'terminated' : 'closed',
-            'archived_by_user'
-          )
+        ? applySideChatLifecycle(source, nextArchived ? 'terminated' : 'closed', 'archived_by_user')
         : source),
       archived: nextArchived
     }))
@@ -9527,8 +9449,7 @@ function App(): React.JSX.Element {
       ? workspaces.find((workspace) => workspace.id === workspaceOverride.id) || {
           id: workspaceOverride.id,
           path: workspaceOverride.path,
-          displayName:
-            workspaceOverride.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace',
+          displayName: workspaceOverride.path.split(/[\\/]/).filter(Boolean).pop() || 'Workspace',
           lastOpenedAt: Date.now(),
           createdAt: Date.now(),
           pinned: false
@@ -9958,16 +9879,13 @@ function App(): React.JSX.Element {
     updateExternalPathGrantsForChat(chatId, nextGrants)
   }
 
-  const revokeExternalPathGrantsForChat = useCallback(
-    (chatId: string, grantIds: string[]) => {
-      const canonicalIds = [...new Set(grantIds.filter(Boolean))]
-      if (canonicalIds.length === 0) return
-      void window.api
-        .revokeExternalPathGrants({ chatId, grantIds: canonicalIds })
-        .catch(() => undefined)
-    },
-    []
-  )
+  const revokeExternalPathGrantsForChat = useCallback((chatId: string, grantIds: string[]) => {
+    const canonicalIds = [...new Set(grantIds.filter(Boolean))]
+    if (canonicalIds.length === 0) return
+    void window.api
+      .revokeExternalPathGrants({ chatId, grantIds: canonicalIds })
+      .catch(() => undefined)
+  }, [])
 
   // `handlePickExternalPathGrant` was the entry point for the
   // pre-emptive picker pill that lived in the composer's above-bar.
@@ -10502,7 +10420,9 @@ function App(): React.JSX.Element {
       setActiveWorkspaceBoardId(null)
     }
     if (evidencePackApiReady) {
-      void window.api.getCapabilityLedgerSnapshot(currentWorkspace?.id).then(setCapabilityLedgerSnapshot)
+      void window.api
+        .getCapabilityLedgerSnapshot(currentWorkspace?.id)
+        .then(setCapabilityLedgerSnapshot)
     } else {
       setCapabilityLedgerSnapshot(null)
     }
@@ -10863,8 +10783,7 @@ function App(): React.JSX.Element {
     // session) — the agy CLI sub-lane owns its own context and must not be
     // host-summarized.
     const antigravityApiLane =
-      provider === 'antigravity' &&
-      Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
+      provider === 'antigravity' && Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
     if (provider !== 'kimi' && !antigravityApiLane) return
     // Never chain off an in-flight compaction, and respect the cooldown.
     if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chatId)) return
@@ -11174,13 +11093,13 @@ function App(): React.JSX.Element {
           )
           const ensembleParticipant =
             updated.chatKind === 'ensemble' && updated.ensemble
-              ? (roundParticipant
-                  ? updated.ensemble.participants.find(
-                      (participant) => participant.id === roundParticipant.participantId
-                    )
-                  : updated.ensemble.participants.find(
-                      (participant) => participant.provider === provider
-                    ))
+              ? roundParticipant
+                ? updated.ensemble.participants.find(
+                    (participant) => participant.id === roundParticipant.participantId
+                  )
+                : updated.ensemble.participants.find(
+                    (participant) => participant.provider === provider
+                  )
               : undefined
           const failureModel =
             targetRun?.actualModel ||
@@ -11244,10 +11163,7 @@ function App(): React.JSX.Element {
         return terminalFinalized
       })
       if (finalizedTerminalChat && currentChatIdRef.current === completedRunChatId) {
-        applyChatComposerSelection(
-          finalizedTerminalChat,
-          getChatProvider(finalizedTerminalChat)
-        )
+        applyChatComposerSelection(finalizedTerminalChat, getChatProvider(finalizedTerminalChat))
       }
 
       // Host-side compaction: consume a finished summarize run (store summary,
@@ -11436,8 +11352,12 @@ function App(): React.JSX.Element {
       if (typeof unsubscribe === 'function') ipcUnsubscriptions.push(unsubscribe)
     }
 
-    addIpcSubscription(window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload)))
-    addIpcSubscription(window.api.onGeminiError((payload) => handleProviderError('gemini', payload)))
+    addIpcSubscription(
+      window.api.onGeminiOutput((payload) => handleProviderOutput('gemini', payload))
+    )
+    addIpcSubscription(
+      window.api.onGeminiError((payload) => handleProviderError('gemini', payload))
+    )
     addIpcSubscription(window.api.onGeminiExit((payload) => handleProviderExit('gemini', payload)))
 
     if (typeof window.api.onAgentOutput === 'function') {
@@ -11613,7 +11533,9 @@ function App(): React.JSX.Element {
         window.api.onWorkflowDefinitionsChanged((workflows) => {
           const workspaceId = currentWorkspaceIdRef.current || currentWorkspace?.id
           setWorkflowDefinitions(
-            workspaceId ? workflows.filter((workflow) => workflow.workspaceId === workspaceId) : workflows
+            workspaceId
+              ? workflows.filter((workflow) => workflow.workspaceId === workspaceId)
+              : workflows
           )
         })
       )
@@ -11648,7 +11570,9 @@ function App(): React.JSX.Element {
           if (!workspaceId || payload.ledger.workspaceId === workspaceId) {
             setCapabilityLedgerSnapshot(payload.ledger)
           } else {
-            void window.api.getCapabilityLedgerSnapshot(workspaceId).then(setCapabilityLedgerSnapshot)
+            void window.api
+              .getCapabilityLedgerSnapshot(workspaceId)
+              .then(setCapabilityLedgerSnapshot)
           }
         })
       )
@@ -11667,12 +11591,10 @@ function App(): React.JSX.Element {
             // the other consumers reacting to this same broadcast — but do
             // not force the provider quota meters (their TTLs guard against
             // per-run endpoint hammering).
-            void refreshUsageSummaryRef.current?.(
-              currentWorkspaceIdRef.current || undefined,
-              undefined,
-              undefined,
-              { forceUsageRecords: true }
-            )
+            void refreshUsageSummaryRef
+              .current?.(currentWorkspaceIdRef.current || undefined, undefined, undefined, {
+                forceUsageRecords: true
+              })
               .catch(() => {})
               .finally(completeUsageRefresh)
           } else {
@@ -11753,194 +11675,202 @@ function App(): React.JSX.Element {
             acknowledge(true)
             return
           }
-        // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
-        // mid-stream (saveChat debounces by 200ms; sub-thread delegation
-        // card injection, F2 back-prop, surfaceSubThreadDispatchFailure
-        // etc. all read-from-disk → splice → broadcast). Unconditionally
-        // replacing `chatByIdRef.current` with that snapshot wipes out
-        // every token streamed since the last persisted write. Net
-        // effect: the rendered assistant transcript shows keep/drop/
-        // drop/keep — the source of the "Codex transcript is garbled"
-        // reports (raw event stream contains all tokens; we were
-        // dropping them at the merge layer).
-        //
-        // Heuristic when a run is active for this chat: prefer the
-        // live ref's content for any assistant message whose live copy
-        // is longer than the incoming copy (streaming-only path —
-        // disk can never be ahead of memory mid-run), and append any
-        // assistant messages the live ref has that the broadcast
-        // doesn't (newly-spawned assistant message, snapshot pre-
-        // dating the first delta). System cards added by main
-        // (delegation cards, sub-thread return cards) flow through
-        // unchanged because they only exist in the broadcast.
-        let merged = chat
-        const liveChat = chatByIdRef.current.get(chat.appChatId)
-        const hasActiveRun = (() => {
-          for (const ctx of activeRunsRef.current.values()) {
-            if (ctx.chatId === chat.appChatId) return true
-          }
-          return false
-        })()
-        // Phase K1 — extend the merge guard for ~2s past run completion
-        // to catch the post-exit-race straggler broadcasts (delegation
-        // card writes, debounced save-chat round-trips). After the
-        // window expires we let the regular replace branch resume; if
-        // there's no active run AND no recent completion, the broadcast
-        // really IS authoritative.
-        let hadRecentRun = false
-        const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)
-        if (completedAt !== undefined) {
-          if (Date.now() - completedAt < RECENTLY_COMPLETED_WINDOW_MS) {
-            hadRecentRun = true
-          } else {
-            recentlyCompletedChatIdsRef.current.delete(chat.appChatId)
-          }
-        }
-        if ((hasActiveRun || hadRecentRun) && liveChat && liveChat.messages.length > 0) {
-          const liveById = new Map(liveChat.messages.map((m) => [m.id, m]))
-          const mergedMessages = chat.messages.map((m) => {
-            const live = liveById.get(m.id)
-            if (live && shouldPreferLiveAssistantContent(m, live)) {
-              return { ...m, content: live.content }
+          // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
+          // mid-stream (saveChat debounces by 200ms; sub-thread delegation
+          // card injection, F2 back-prop, surfaceSubThreadDispatchFailure
+          // etc. all read-from-disk → splice → broadcast). Unconditionally
+          // replacing `chatByIdRef.current` with that snapshot wipes out
+          // every token streamed since the last persisted write. Net
+          // effect: the rendered assistant transcript shows keep/drop/
+          // drop/keep — the source of the "Codex transcript is garbled"
+          // reports (raw event stream contains all tokens; we were
+          // dropping them at the merge layer).
+          //
+          // Heuristic when a run is active for this chat: prefer the
+          // live ref's content for any assistant message whose live copy
+          // is longer than the incoming copy (streaming-only path —
+          // disk can never be ahead of memory mid-run), and append any
+          // assistant messages the live ref has that the broadcast
+          // doesn't (newly-spawned assistant message, snapshot pre-
+          // dating the first delta). System cards added by main
+          // (delegation cards, sub-thread return cards) flow through
+          // unchanged because they only exist in the broadcast.
+          let merged = chat
+          const liveChat = chatByIdRef.current.get(chat.appChatId)
+          const hasActiveRun = (() => {
+            for (const ctx of activeRunsRef.current.values()) {
+              if (ctx.chatId === chat.appChatId) return true
             }
-            return m
-          })
-          const incomingIds = new Set(chat.messages.map((m) => m.id))
-          const orphanedLiveAssistants = liveChat.messages.filter(
-            (m) => m.role === 'assistant' && !incomingIds.has(m.id)
-          )
-          /*
-           * 1.0.5-EW36 — Also preserve orphaned synthetic `agentQuestion`
-           * system markers added by the `onAgentQuestionRequested` IPC
-           * listener (around line 10929). Without this, when an agent
-           * calls `ask_user_question`:
-           *
-           *  1. Renderer creates a synthetic `role: 'system'` marker
-           *     in `chat.messages` with `metadata.kind: 'agentQuestion'`
-           *     and enqueues it in `pendingAgentQuestionsByChatId[chatId]`.
-           *  2. Main broadcasts `chat-updated` (e.g. because the tool-
-           *     call event from the participant was just flushed, or
-           *     because another participant in the same ensemble round
-           *     emitted output). That broadcast doesn't include the
-           *     synthetic marker — main doesn't know about it.
-           *  3. The merge above ONLY preserved orphaned `assistant`
-           *     messages, so the synthetic system marker silently
-           *     vanished from `chat.messages`.
-           *  4. The transcript-side `AgentQuestionCard` renders inline
-           *     next to the marker via
-           *     `pendingAgentQuestions[].messageId === msg.id`. With the
-           *     marker gone, the card never appears — the modal never
-           *     pops, the user has no way to answer, the question
-           *     times out after 10 minutes, and the agent reports
-           *     "interactive question card timed out" in chat.
-           *
-           * Fix: filter the same orphaned-from-incoming list but also
-           * include synthetic `agentQuestion` system markers.
-           * Conservative — only matches the specific metadata kind so
-           * other system messages (delegation cards, status notes,
-           * etc.) keep flowing through unchanged.
-           */
-          const orphanedAgentQuestionMarkers = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' && m.metadata?.kind === 'agentQuestion' && !incomingIds.has(m.id)
-          )
-          /*
-           * Context-compaction cards share the agentQuestion hazard exactly:
-           * the renderer appends them to the LIVE record when a solo run's
-           * compact_boundary streams in, but the 200ms debounced saveChat may
-           * not have flushed them when a main-side `chat-updated` broadcast
-           * (built from the pre-card disk snapshot) arrives — the merge would
-           * silently drop the card. Same conservative kind-scoped preserve.
-           */
-          const orphanedContextCompactionCards = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' &&
-              m.metadata?.kind === 'contextCompaction' &&
-              !incomingIds.has(m.id)
-          )
-          const orphanedTaskWraithCloseouts = liveChat.messages.filter(
-            (m) =>
-              m.role === 'system' &&
-              m.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
-              !incomingIds.has(m.id)
-          )
-          // Preserve orphans in their ORIGINAL relative order (a single
-          // ordered pass over liveChat.messages, not category concatenation).
-          // Grouping by category re-sorted the tail — an orphaned system card
-          // (compaction/closeout) landed BELOW assistant text that actually
-          // streamed after it, and the inversion persisted via chatByIdRef +
-          // the next saveChat.
-          const orphanIds = new Set(
-            [
-              ...orphanedLiveAssistants,
-              ...orphanedAgentQuestionMarkers,
-              ...orphanedContextCompactionCards,
-              ...orphanedTaskWraithCloseouts
-            ].map((m) => m.id)
-          )
-          const orphans = liveChat.messages.filter((m) => orphanIds.has(m.id))
-          if (
-            mergedMessages.length !== chat.messages.length ||
-            orphans.length > 0 ||
-            mergedMessages.some((m, i) => m !== chat.messages[i])
-          ) {
-            merged = {
-              ...chat,
-              messages: orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
+            return false
+          })()
+          // Phase K1 — extend the merge guard for ~2s past run completion
+          // to catch the post-exit-race straggler broadcasts (delegation
+          // card writes, debounced save-chat round-trips). After the
+          // window expires we let the regular replace branch resume; if
+          // there's no active run AND no recent completion, the broadcast
+          // really IS authoritative.
+          let hadRecentRun = false
+          const completedAt = recentlyCompletedChatIdsRef.current.get(chat.appChatId)
+          if (completedAt !== undefined) {
+            if (Date.now() - completedAt < RECENTLY_COMPLETED_WINDOW_MS) {
+              hadRecentRun = true
+            } else {
+              recentlyCompletedChatIdsRef.current.delete(chat.appChatId)
             }
           }
-        }
-        merged = preserveOptimisticEnsembleQueue(merged, liveChat)
-        // Pin every PENDING ask_user_question marker to the live tail. Its
-        // renderer-only synthetic marker is otherwise frozen at a stale array
-        // index while main's flushRun keeps re-tailing the live participant's own
-        // content past it — stranding the question card above the current speaker.
-        // Runs on EVERY broadcast (both merge branches) so the pending card can't
-        // lag or be dropped; answered/historical markers stay put.
-        const pendingQuestionsForChat = pendingAgentQuestionsByChatIdRef.current[merged.appChatId]
-        if (pendingQuestionsForChat && pendingQuestionsForChat.length > 0) {
-          const pendingMarkerIds = new Set(pendingQuestionsForChat.map((q) => q.messageId))
-          const anchoredMessages = anchorPendingAgentQuestionMarkers(
-            merged.messages,
-            liveChat?.messages || [],
-            pendingMarkerIds
-          )
-          if (anchoredMessages !== merged.messages) {
-            merged = { ...merged, messages: anchoredMessages }
-          }
-        }
-        setChats((prev) => mergeChatRecord(prev, merged))
-        chatByIdRef.current.set(merged.appChatId, merged)
-        if (currentChatIdRef.current === merged.appChatId) {
-          // Ensemble runs broadcast a fresh whole-chat snapshot 10–100×/sec;
-          // most change only chat-level metadata (round flips, per-participant
-          // tallies), not the rendered message list — yet each arrives as a new
-          // `messages` array that would re-fire the messages-update snap effect
-          // (keyed on `currentChat?.messages` identity) and re-render the
-          // transcript. When the rendered list is unchanged, preserve the
-          // PREVIOUS `messages` reference so the snap/re-render is skipped while
-          // the chat-level metadata still updates. STRICT by construction
-          // (messagesRenderEqual): a false negative only costs a redundant
-          // render, never a frozen transcript. Routed through the functional
-          // setter so it compares against the actual committed state.
-          setCurrentChat((prev) => {
-            if (!prev || prev.appChatId !== merged.appChatId || prev.messages === merged.messages) {
-              return merged
+          if ((hasActiveRun || hadRecentRun) && liveChat && liveChat.messages.length > 0) {
+            const liveById = new Map(liveChat.messages.map((m) => [m.id, m]))
+            const mergedMessages = chat.messages.map((m) => {
+              const live = liveById.get(m.id)
+              if (live && shouldPreferLiveAssistantContent(m, live)) {
+                return { ...m, content: live.content }
+              }
+              return m
+            })
+            const incomingIds = new Set(chat.messages.map((m) => m.id))
+            const orphanedLiveAssistants = liveChat.messages.filter(
+              (m) => m.role === 'assistant' && !incomingIds.has(m.id)
+            )
+            /*
+             * 1.0.5-EW36 — Also preserve orphaned synthetic `agentQuestion`
+             * system markers added by the `onAgentQuestionRequested` IPC
+             * listener (around line 10929). Without this, when an agent
+             * calls `ask_user_question`:
+             *
+             *  1. Renderer creates a synthetic `role: 'system'` marker
+             *     in `chat.messages` with `metadata.kind: 'agentQuestion'`
+             *     and enqueues it in `pendingAgentQuestionsByChatId[chatId]`.
+             *  2. Main broadcasts `chat-updated` (e.g. because the tool-
+             *     call event from the participant was just flushed, or
+             *     because another participant in the same ensemble round
+             *     emitted output). That broadcast doesn't include the
+             *     synthetic marker — main doesn't know about it.
+             *  3. The merge above ONLY preserved orphaned `assistant`
+             *     messages, so the synthetic system marker silently
+             *     vanished from `chat.messages`.
+             *  4. The transcript-side `AgentQuestionCard` renders inline
+             *     next to the marker via
+             *     `pendingAgentQuestions[].messageId === msg.id`. With the
+             *     marker gone, the card never appears — the modal never
+             *     pops, the user has no way to answer, the question
+             *     times out after 10 minutes, and the agent reports
+             *     "interactive question card timed out" in chat.
+             *
+             * Fix: filter the same orphaned-from-incoming list but also
+             * include synthetic `agentQuestion` system markers.
+             * Conservative — only matches the specific metadata kind so
+             * other system messages (delegation cards, status notes,
+             * etc.) keep flowing through unchanged.
+             */
+            const orphanedAgentQuestionMarkers = liveChat.messages.filter(
+              (m) =>
+                m.role === 'system' &&
+                m.metadata?.kind === 'agentQuestion' &&
+                !incomingIds.has(m.id)
+            )
+            /*
+             * Context-compaction cards share the agentQuestion hazard exactly:
+             * the renderer appends them to the LIVE record when a solo run's
+             * compact_boundary streams in, but the 200ms debounced saveChat may
+             * not have flushed them when a main-side `chat-updated` broadcast
+             * (built from the pre-card disk snapshot) arrives — the merge would
+             * silently drop the card. Same conservative kind-scoped preserve.
+             */
+            const orphanedContextCompactionCards = liveChat.messages.filter(
+              (m) =>
+                m.role === 'system' &&
+                m.metadata?.kind === 'contextCompaction' &&
+                !incomingIds.has(m.id)
+            )
+            const orphanedTaskWraithCloseouts = liveChat.messages.filter(
+              (m) =>
+                m.role === 'system' &&
+                m.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND &&
+                !incomingIds.has(m.id)
+            )
+            // Preserve orphans in their ORIGINAL relative order (a single
+            // ordered pass over liveChat.messages, not category concatenation).
+            // Grouping by category re-sorted the tail — an orphaned system card
+            // (compaction/closeout) landed BELOW assistant text that actually
+            // streamed after it, and the inversion persisted via chatByIdRef +
+            // the next saveChat.
+            const orphanIds = new Set(
+              [
+                ...orphanedLiveAssistants,
+                ...orphanedAgentQuestionMarkers,
+                ...orphanedContextCompactionCards,
+                ...orphanedTaskWraithCloseouts
+              ].map((m) => m.id)
+            )
+            const orphans = liveChat.messages.filter((m) => orphanIds.has(m.id))
+            if (
+              mergedMessages.length !== chat.messages.length ||
+              orphans.length > 0 ||
+              mergedMessages.some((m, i) => m !== chat.messages[i])
+            ) {
+              merged = {
+                ...chat,
+                messages: orphans.length > 0 ? [...mergedMessages, ...orphans] : mergedMessages
+              }
             }
-            if (messagesRenderEqual(prev.messages, merged.messages)) {
-              return { ...merged, messages: prev.messages }
-            }
-            const sharedMessages = shareUnchangedMessageObjects(prev.messages, merged.messages)
-            return sharedMessages === merged.messages ? merged : { ...merged, messages: sharedMessages }
-          })
-          if (
-            merged.chatKind === 'ensemble' &&
-            isEnsembleActiveRoundDispatchLive(merged.ensemble?.activeRound)
-          ) {
-            setIsThinking(true)
           }
-        }
-        acknowledge(true)
+          merged = preserveOptimisticEnsembleQueue(merged, liveChat)
+          // Pin every PENDING ask_user_question marker to the live tail. Its
+          // renderer-only synthetic marker is otherwise frozen at a stale array
+          // index while main's flushRun keeps re-tailing the live participant's own
+          // content past it — stranding the question card above the current speaker.
+          // Runs on EVERY broadcast (both merge branches) so the pending card can't
+          // lag or be dropped; answered/historical markers stay put.
+          const pendingQuestionsForChat = pendingAgentQuestionsByChatIdRef.current[merged.appChatId]
+          if (pendingQuestionsForChat && pendingQuestionsForChat.length > 0) {
+            const pendingMarkerIds = new Set(pendingQuestionsForChat.map((q) => q.messageId))
+            const anchoredMessages = anchorPendingAgentQuestionMarkers(
+              merged.messages,
+              liveChat?.messages || [],
+              pendingMarkerIds
+            )
+            if (anchoredMessages !== merged.messages) {
+              merged = { ...merged, messages: anchoredMessages }
+            }
+          }
+          setChats((prev) => mergeChatRecord(prev, merged))
+          chatByIdRef.current.set(merged.appChatId, merged)
+          if (currentChatIdRef.current === merged.appChatId) {
+            // Ensemble runs broadcast a fresh whole-chat snapshot 10–100×/sec;
+            // most change only chat-level metadata (round flips, per-participant
+            // tallies), not the rendered message list — yet each arrives as a new
+            // `messages` array that would re-fire the messages-update snap effect
+            // (keyed on `currentChat?.messages` identity) and re-render the
+            // transcript. When the rendered list is unchanged, preserve the
+            // PREVIOUS `messages` reference so the snap/re-render is skipped while
+            // the chat-level metadata still updates. STRICT by construction
+            // (messagesRenderEqual): a false negative only costs a redundant
+            // render, never a frozen transcript. Routed through the functional
+            // setter so it compares against the actual committed state.
+            setCurrentChat((prev) => {
+              if (
+                !prev ||
+                prev.appChatId !== merged.appChatId ||
+                prev.messages === merged.messages
+              ) {
+                return merged
+              }
+              if (messagesRenderEqual(prev.messages, merged.messages)) {
+                return { ...merged, messages: prev.messages }
+              }
+              const sharedMessages = shareUnchangedMessageObjects(prev.messages, merged.messages)
+              return sharedMessages === merged.messages
+                ? merged
+                : { ...merged, messages: sharedMessages }
+            })
+            if (
+              merged.chatKind === 'ensemble' &&
+              isEnsembleActiveRoundDispatchLive(merged.ensemble?.activeRound)
+            ) {
+              setIsThinking(true)
+            }
+          }
+          acknowledge(true)
         })
       )
     }
@@ -11987,7 +11917,10 @@ function App(): React.JSX.Element {
             payload.mediaRefs.length === 0
           )
             return
-          applyAssistantMediaRefsToChat(payload.appChatId, payload.mediaRefs as TranscriptMediaRef[])
+          applyAssistantMediaRefsToChat(
+            payload.appChatId,
+            payload.mediaRefs as TranscriptMediaRef[]
+          )
         })
       )
     }
@@ -12045,9 +11978,7 @@ function App(): React.JSX.Element {
         .catch(() => {})
     }
     if (!isChatPopoutWindow && typeof window.api.onAgenticYoloState === 'function') {
-      addIpcSubscription(
-        window.api.onAgenticYoloState((state) => setSessionYoloModeState(state))
-      )
+      addIpcSubscription(window.api.onAgenticYoloState((state) => setSessionYoloModeState(state)))
     }
 
     // QMOD (1.0.3) — listen for `ask_user_question` MCP-driven question
@@ -12178,7 +12109,9 @@ function App(): React.JSX.Element {
     return new Date(runAtMs).toISOString()
   }
 
-  const getScheduledQueueRunAtMs = (request: Pick<QueuedRunRequest, 'scheduledRunAt'>): number | null => {
+  const getScheduledQueueRunAtMs = (
+    request: Pick<QueuedRunRequest, 'scheduledRunAt'>
+  ): number | null => {
     if (!request.scheduledRunAt) return null
     const runAtMs = new Date(request.scheduledRunAt).getTime()
     return Number.isFinite(runAtMs) ? runAtMs : null
@@ -12241,16 +12174,20 @@ function App(): React.JSX.Element {
   const invokePromoteQueuedRunForSteer = async (
     input: PromoteQueuedRunForSteerInput
   ): Promise<PromoteQueuedRunForSteerResponse | null> => {
-    const modernApi = (window.api as {
-      promoteQueuedRunForSteer?: (
-        request: PromoteQueuedRunForSteerInput
-      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
-    }).promoteQueuedRunForSteer
-    const legacyApi = (window.api as {
-      promoteQueuedJobForSteer?: (
-        request: PromoteQueuedRunForSteerInput
-      ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
-    }).promoteQueuedJobForSteer
+    const modernApi = (
+      window.api as {
+        promoteQueuedRunForSteer?: (
+          request: PromoteQueuedRunForSteerInput
+        ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+      }
+    ).promoteQueuedRunForSteer
+    const legacyApi = (
+      window.api as {
+        promoteQueuedJobForSteer?: (
+          request: PromoteQueuedRunForSteerInput
+        ) => Promise<PromoteQueuedRunForSteerResponse> | PromoteQueuedRunForSteerResponse
+      }
+    ).promoteQueuedJobForSteer
     const promotionApi = typeof modernApi === 'function' ? modernApi : legacyApi
     if (typeof promotionApi !== 'function') return null
 
@@ -12279,7 +12216,8 @@ function App(): React.JSX.Element {
         cancelRequested:
           typeof response.cancelRequested === 'boolean' ? response.cancelRequested : undefined,
         requeuedTo: response.requeuedTo === 'queued' ? 'queued' : undefined,
-        status: typeof response.status === 'string' ? (response.status as RunQueueJobStatus) : undefined
+        status:
+          typeof response.status === 'string' ? (response.status as RunQueueJobStatus) : undefined
       }
     } catch (error) {
       console.warn('[queued-steer] promoteQueuedRunForSteer failed', error)
@@ -12299,13 +12237,17 @@ function App(): React.JSX.Element {
     status?: RunQueueJobStatus
   } | null> => {
     const maybeApi = window.api as {
-      leasePromotedSteerJob?: (
-        input: {
-          runId: string
-          ownerToken: string
-          statusReason?: string
-        }
-      ) => Promise<{ ok?: boolean; kind?: string; request?: RunQueueRequestSnapshot; ownerToken?: string; status?: RunQueueJobStatus }>
+      leasePromotedSteerJob?: (input: {
+        runId: string
+        ownerToken: string
+        statusReason?: string
+      }) => Promise<{
+        ok?: boolean
+        kind?: string
+        request?: RunQueueRequestSnapshot
+        ownerToken?: string
+        status?: RunQueueJobStatus
+      }>
     }
     if (typeof maybeApi.leasePromotedSteerJob !== 'function') return null
     try {
@@ -12355,14 +12297,17 @@ function App(): React.JSX.Element {
       approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
       workflowMode: snapshot.workflowMode || fallbackRequest.workflowMode,
       sessionTrust:
-        typeof snapshot.sessionTrust === 'boolean' ? snapshot.sessionTrust : fallbackRequest.sessionTrust,
+        typeof snapshot.sessionTrust === 'boolean'
+          ? snapshot.sessionTrust
+          : fallbackRequest.sessionTrust,
       effectiveWorkspacePath: restoreQueuedRunWorktreeTarget(snapshot),
       imageAttachments: snapshot.imageAttachments.length
         ? snapshot.imageAttachments.map((attachment, index) => ({
-          id: attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
-          path: attachment.path,
-          name: attachment.name || getImageName(attachment.path),
-          ...persistedAttachmentMetadata(attachment)
+            id:
+              attachment.id || `${fallbackRequest.appRunId || 'queued-steer'}-attachment-${index}`,
+            path: attachment.path,
+            name: attachment.name || getImageName(attachment.path),
+            ...persistedAttachmentMetadata(attachment)
           }))
         : fallbackRequest.imageAttachments,
       ...(snapshot.discordContextSelection
@@ -12371,9 +12316,7 @@ function App(): React.JSX.Element {
       ...(snapshot.projectReferenceContextSelection
         ? { projectReferenceContextSelection: snapshot.projectReferenceContextSelection }
         : {}),
-      ...(snapshot.externalPathGrants
-        ? { externalPathGrants: snapshot.externalPathGrants }
-        : {}),
+      ...(snapshot.externalPathGrants ? { externalPathGrants: snapshot.externalPathGrants } : {}),
       ...(snapshot.geminiWorktree ? { geminiWorktree: snapshot.geminiWorktree } : {}),
       ...(snapshot.codexNativeReview ? { codexNativeReview: true } : {}),
       ...(snapshot.codexReasoningEffort !== undefined
@@ -12399,9 +12342,7 @@ function App(): React.JSX.Element {
       ...(snapshot.cursorReasoningEffort !== undefined
         ? { cursorReasoningEffort: snapshot.cursorReasoningEffort }
         : {}),
-      ...(snapshot.cursorFastMode !== undefined
-        ? { cursorFastMode: snapshot.cursorFastMode }
-        : {}),
+      ...(snapshot.cursorFastMode !== undefined ? { cursorFastMode: snapshot.cursorFastMode } : {}),
       ...(snapshot.scheduledTaskId ? { scheduledTaskId: snapshot.scheduledTaskId } : {}),
       ...(snapshot.scheduledRunAt ? { scheduledRunAt: snapshot.scheduledRunAt } : {}),
       ...(snapshot.runtimeProfileId ? { runtimeProfileId: snapshot.runtimeProfileId } : {}),
@@ -12434,7 +12375,10 @@ function App(): React.JSX.Element {
         if (requestKey) {
           return existing.appRunId === requestKey
         }
-        return existing.prompt === request.prompt && queuedRunFallbackId(existing) === queuedRunFallbackId(request)
+        return (
+          existing.prompt === request.prompt &&
+          queuedRunFallbackId(existing) === queuedRunFallbackId(request)
+        )
       })
       if (exists) return prev
       return [...prev, request]
@@ -12524,9 +12468,7 @@ function App(): React.JSX.Element {
       runId,
       provider: request.provider,
       scope,
-      ...(scope === 'global'
-        ? {}
-        : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
+      ...(scope === 'global' ? {} : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
       chatId: chat.appChatId,
       source: getRunQueueSource(request),
       status,
@@ -12572,14 +12514,12 @@ function App(): React.JSX.Element {
     const hasQueuedProviderChange = Boolean(
       !isExecutionGraphJob && chatRecord && hasPendingProviderChange(chatRecord)
     )
-    const queuedProviderBaseChat =
-      hasQueuedProviderChange
-        ? applyPendingProviderChangeOnFinalize(chatRecord)
-        : chatRecord
-    const queuedProviderSelection =
-      hasQueuedProviderChange
-        ? getChatComposerSelection(queuedProviderBaseChat)
-        : null
+    const queuedProviderBaseChat = hasQueuedProviderChange
+      ? applyPendingProviderChangeOnFinalize(chatRecord)
+      : chatRecord
+    const queuedProviderSelection = hasQueuedProviderChange
+      ? getChatComposerSelection(queuedProviderBaseChat)
+      : null
     const effectiveProvider = queuedProviderSelection?.provider || job.provider
     const scope =
       job.scope === 'global' || job.request.scope === 'global' || isGlobalChat(chatRecord)
@@ -12670,28 +12610,29 @@ function App(): React.JSX.Element {
 
   const projectReferenceContextSelectionQueueKey = (
     selection: ProjectReferenceContextSelection | null | undefined
-  ): string =>
-    selection ? `${selection.projectId}:${selection.referenceIds.join(',')}` : ''
+  ): string => (selection ? `${selection.projectId}:${selection.referenceIds.join(',')}` : '')
 
   const getQueuedDesktopRunJobs = (sourceJobs: RunQueueJob[] = runQueueJobsRef.current) => {
     const cachedOrder = new Map<string, number>()
     queuedRunsRef.current.forEach((request, index) => {
       if (request.appRunId) cachedOrder.set(request.appRunId, index)
     })
-    return sourceJobs
-      .filter(isQueuedDesktopRunQueueJob)
-      // Execution-graph rows are observed here for Stack/Map projection only.
-      // Their lease, composition, and provider launch are owned by main.
-      .filter((job) => !job.executionGraph)
-      .slice()
-      .sort((a, b) => {
-        const aOrder = cachedOrder.get(a.runId)
-        const bOrder = cachedOrder.get(b.runId)
-        if (aOrder !== undefined || bOrder !== undefined) {
-          return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
-        }
-        return queuedRunJobSortTime(a) - queuedRunJobSortTime(b)
-      })
+    return (
+      sourceJobs
+        .filter(isQueuedDesktopRunQueueJob)
+        // Execution-graph rows are observed here for Stack/Map projection only.
+        // Their lease, composition, and provider launch are owned by main.
+        .filter((job) => !job.executionGraph)
+        .slice()
+        .sort((a, b) => {
+          const aOrder = cachedOrder.get(a.runId)
+          const bOrder = cachedOrder.get(b.runId)
+          if (aOrder !== undefined || bOrder !== undefined) {
+            return (aOrder ?? Number.MAX_SAFE_INTEGER) - (bOrder ?? Number.MAX_SAFE_INTEGER)
+          }
+          return queuedRunJobSortTime(a) - queuedRunJobSortTime(b)
+        })
+    )
   }
 
   const resolveQueuedDesktopRunRequest = (job: RunQueueJob): QueuedRunRequest | null => {
@@ -12707,7 +12648,8 @@ function App(): React.JSX.Element {
         job.scope === 'global'
           ? undefined
           : workspaces.find(
-              (workspace) => workspace.id === job.workspaceId || workspace.path === job.workspacePath
+              (workspace) =>
+                workspace.id === job.workspaceId || workspace.path === job.workspacePath
             ) || cached.workspaceRecord
       return {
         ...cached,
@@ -12847,7 +12789,8 @@ function App(): React.JSX.Element {
       ? rawRequestModel
       : getDefaultModelForProvider(provider)
     const requestCustomModel = composerSelection?.customModel ?? customModel
-    const requestApprovalMode = target?.approvalMode || composerSelection?.approvalMode || approvalMode
+    const requestApprovalMode =
+      target?.approvalMode || composerSelection?.approvalMode || approvalMode
     const requestWorkflowMode =
       target?.workflowMode ??
       composerSelection?.workflowMode ??
@@ -12865,8 +12808,7 @@ function App(): React.JSX.Element {
       provider === 'codex'
         ? composerSelection?.codexServiceTier || codexServiceTier
         : codexServiceTier
-    const requestKimiThinkingEnabled =
-      provider === 'kimi' ? true : kimiThinkingEnabled
+    const requestKimiThinkingEnabled = provider === 'kimi' ? true : kimiThinkingEnabled
     const requestKimiReasoningEffort =
       provider === 'kimi'
         ? composerSelection?.kimiReasoningEffort || kimiReasoningEffort
@@ -12875,9 +12817,9 @@ function App(): React.JSX.Element {
       provider === 'kimi'
         ? Boolean(
             (composerSelection?.kimiFastMode ?? kimiFastMode) &&
-              getProviderModelOptions('kimi')
-                .find((model) => model.id === requestModel)
-                ?.additionalSpeedTiers?.includes('fast')
+            getProviderModelOptions('kimi')
+              .find((model) => model.id === requestModel)
+              ?.additionalSpeedTiers?.includes('fast')
           )
         : kimiFastMode
     const requestClaudeReasoningEffort =
@@ -12895,9 +12837,7 @@ function App(): React.JSX.Element {
         ? composerSelection?.cursorReasoningEffort || cursorReasoningEffort
         : cursorReasoningEffort
     const requestCursorFastMode =
-      provider === 'cursor'
-        ? (composerSelection?.cursorFastMode ?? cursorFastMode)
-        : cursorFastMode
+      provider === 'cursor' ? (composerSelection?.cursorFastMode ?? cursorFastMode) : cursorFastMode
     const normalizedExternalPathGrants =
       scope !== 'global'
         ? normalizeExternalPathGrants(
@@ -12936,7 +12876,7 @@ function App(): React.JSX.Element {
       !existingPrompt && selectedChat?.chatKind !== 'ensemble'
         ? targetProjectReferenceContextSelection !== undefined
           ? targetProjectReferenceContextSelection
-          : projectReferenceContextClaim?.selection ?? null
+          : (projectReferenceContextClaim?.selection ?? null)
         : null
 
     return {
@@ -12963,9 +12903,7 @@ function App(): React.JSX.Element {
       ...(requestProjectReferenceContextSelection
         ? { projectReferenceContextSelection: requestProjectReferenceContextSelection }
         : {}),
-      ...(projectReferenceContextClaim
-        ? { projectReferenceContextClaim }
-        : {}),
+      ...(projectReferenceContextClaim ? { projectReferenceContextClaim } : {}),
       externalPathGrants,
       geminiWorktree:
         scope === 'global' ? undefined : resolveGeminiWorktreeConfig(selectedWorkspace),
@@ -13014,12 +12952,8 @@ function App(): React.JSX.Element {
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
-        projectReferenceContextSelectionQueueKey(
-          job.request?.projectReferenceContextSelection
-        ) ===
-          projectReferenceContextSelectionQueueKey(
-            queuedRequest.projectReferenceContextSelection
-          )
+        projectReferenceContextSelectionQueueKey(job.request?.projectReferenceContextSelection) ===
+          projectReferenceContextSelectionQueueKey(queuedRequest.projectReferenceContextSelection)
     )
     const duplicateLocalQueuedRun = queuedRunsRef.current.some(
       (request) =>
@@ -13037,9 +12971,7 @@ function App(): React.JSX.Element {
         discordContextSelectionQueueKey(request.discordContextSelection) ===
           discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
         projectReferenceContextSelectionQueueKey(request.projectReferenceContextSelection) ===
-          projectReferenceContextSelectionQueueKey(
-            queuedRequest.projectReferenceContextSelection
-          )
+          projectReferenceContextSelectionQueueKey(queuedRequest.projectReferenceContextSelection)
     )
     if (duplicateQueuedRun || duplicateLocalQueuedRun) {
       settleProjectReferenceContextForRequest(queuedRequest, 'rejected')
@@ -13538,14 +13470,13 @@ function App(): React.JSX.Element {
         runDiffWorkspacePath = composerEffectiveWorkspacePath
       }
       const finalPrompt = composerMetadata.finalPrompt
-      const discordContextReads =
-        composerMetadata.discordContextReads?.length
-          ? redactDiscordContextReadsForHistory(composerMetadata.discordContextReads)
-          : request.discordContextSnapshots?.length
-            ? redactDiscordContextReadsForHistory(
-                request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
-              )
-            : []
+      const discordContextReads = composerMetadata.discordContextReads?.length
+        ? redactDiscordContextReadsForHistory(composerMetadata.discordContextReads)
+        : request.discordContextSnapshots?.length
+          ? redactDiscordContextReadsForHistory(
+              request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
+            )
+          : []
       const projectReferenceContextMetadata = composerMetadata.projectReferenceContext
         ? projectReferenceContextDisclosure(composerMetadata.projectReferenceContext)
         : null
@@ -13563,8 +13494,7 @@ function App(): React.JSX.Element {
       const geminiResumeSkippedReason = composerMetadata.geminiResumeSkippedReason
       const contextTurnsForRun = composerMetadata.contextTurnsApplied
       const contextualPrompt = composedPayload.prompt
-      const usagePromptText =
-        discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
+      const usagePromptText = discordContextReads.length > 0 ? displayFinalPrompt : contextualPrompt
       const contextApplicationLog = composerMetadata.applicationLog
 
       activeScheduledTaskIdRef.current = request.scheduledTaskId || null
@@ -13602,8 +13532,9 @@ function App(): React.JSX.Element {
         if (imageAttachmentMetadata.length > 0) {
           messageMetadata.imageAttachments = imageAttachmentMetadata
         }
-        const imageThumbnailMetadata =
-          await buildSubmittedImageThumbnailMetadata(request.imageAttachments)
+        const imageThumbnailMetadata = await buildSubmittedImageThumbnailMetadata(
+          request.imageAttachments
+        )
         if (imageThumbnailMetadata.imagePaths.length > 0) {
           messageMetadata.imagePaths = imageThumbnailMetadata.imagePaths
           messageMetadata.imageThumbnails = imageThumbnailMetadata.imageThumbnails
@@ -13658,7 +13589,9 @@ function App(): React.JSX.Element {
         ...(effectiveRunProvider !== 'gemini' && resumeSessionId
           ? { providerThreadId: resumeSessionId }
           : {}),
-        ...(composedPayload.providerReroute ? { providerReroute: composedPayload.providerReroute } : {}),
+        ...(composedPayload.providerReroute
+          ? { providerReroute: composedPayload.providerReroute }
+          : {}),
         ...(runWorktree ? { geminiWorktree: runWorktree } : {}),
         ...(runDiffWorkspacePath ? { effectiveWorkspacePath: runDiffWorkspacePath } : {}),
         ...(runDiffUnavailable ? { diffUnavailableReason: WORKTREE_DIFF_UNAVAILABLE_TEXT } : {}),
@@ -13873,29 +13806,33 @@ function App(): React.JSX.Element {
           )
           const sidecarProjection = projectRunItemAssistantDelta(itemEvent)
           if (sidecarProjection && sidecarProjection.chatId === runChatId) {
-            updateChatById(runChatId, (source) => {
-              const updated = { ...source }
-              if (updated.chatKind === 'ensemble') return updated
-              if (steerSuppressionChatIdsRef.current.has(runChatId)) return updated
-              if (isVisibleRunChat()) setIsThinking(false)
-              const providerModelMetadata = providerModelMetadataForAssistantDelta(
-                updated,
-                itemEvent.kind === 'item/delta' ? itemEvent.model : undefined,
-                itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
-              )
-              const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
-              if (!projection) return updated
-              updated.messages = applyAssistantDelta(updated.messages, projection.input, {
-                createMessageId,
-                now: () => new Date().toISOString()
-              })
-              recordPendingStreamFlush(
-                projection.runId,
-                projection.itemId,
-                projection.input.incoming.length
-              )
-              return updated
-            }, { coalesce: true })
+            updateChatById(
+              runChatId,
+              (source) => {
+                const updated = { ...source }
+                if (updated.chatKind === 'ensemble') return updated
+                if (steerSuppressionChatIdsRef.current.has(runChatId)) return updated
+                if (isVisibleRunChat()) setIsThinking(false)
+                const providerModelMetadata = providerModelMetadataForAssistantDelta(
+                  updated,
+                  itemEvent.kind === 'item/delta' ? itemEvent.model : undefined,
+                  itemEvent.kind === 'item/delta' ? itemEvent.modelLabel : undefined
+                )
+                const projection = projectRunItemAssistantDelta(itemEvent, providerModelMetadata)
+                if (!projection) return updated
+                updated.messages = applyAssistantDelta(updated.messages, projection.input, {
+                  createMessageId,
+                  now: () => new Date().toISOString()
+                })
+                recordPendingStreamFlush(
+                  projection.runId,
+                  projection.itemId,
+                  projection.input.incoming.length
+                )
+                return updated
+              },
+              { coalesce: true }
+            )
           }
           const toolProjections = projectRunItemToolEvents(itemEvent, effectiveRunProvider).filter(
             (projection) => projection.chatId === runChatId
@@ -13906,39 +13843,43 @@ function App(): React.JSX.Element {
                 runContext.toolCallsCount += 1
               }
             })
-            updateChatById(runChatId, (source) => {
-              const updated = { ...source }
-              if (updated.chatKind === 'ensemble') return updated
-              // The assistant-delta handler hides the Working indicator while
-              // the bubble streams; tool traffic after the bubble seals means
-              // the run is still live, so re-arm it or the transcript shows
-              // no indicator at all for the rest of the tool phase.
-              if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
-                setIsThinking(true)
-              }
-              let nextMessages = updated.messages
-              for (const projection of toolProjections) {
-                const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
-                  createMessageId,
-                  provider: effectiveRunProvider,
-                  runId: currentRunId
-                })
-                nextMessages = reduction.messages
-                if (
-                  isVisibleRunChat() &&
-                  !runContext.diffUnavailable &&
-                  reduction.latestToolActivity &&
-                  reduction.isResult
-                ) {
-                  upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+            updateChatById(
+              runChatId,
+              (source) => {
+                const updated = { ...source }
+                if (updated.chatKind === 'ensemble') return updated
+                // The assistant-delta handler hides the Working indicator while
+                // the bubble streams; tool traffic after the bubble seals means
+                // the run is still live, so re-arm it or the transcript shows
+                // no indicator at all for the rest of the tool phase.
+                if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+                  setIsThinking(true)
                 }
-                projection.legacySkipKeys.forEach((key) => {
-                  projectedLegacyToolEventKeysRef.current.add(key)
-                })
-              }
-              updated.messages = nextMessages
-              return updated
-            }, { coalesce: true })
+                let nextMessages = updated.messages
+                for (const projection of toolProjections) {
+                  const reduction = reduceSoloToolEventMessages(nextMessages, projection.event, {
+                    createMessageId,
+                    provider: effectiveRunProvider,
+                    runId: currentRunId
+                  })
+                  nextMessages = reduction.messages
+                  if (
+                    isVisibleRunChat() &&
+                    !runContext.diffUnavailable &&
+                    reduction.latestToolActivity &&
+                    reduction.isResult
+                  ) {
+                    upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
+                  }
+                  projection.legacySkipKeys.forEach((key) => {
+                    projectedLegacyToolEventKeysRef.current.add(key)
+                  })
+                }
+                updated.messages = nextMessages
+                return updated
+              },
+              { coalesce: true }
+            )
           }
           return
         }
@@ -13987,9 +13928,10 @@ function App(): React.JSX.Element {
               : typeof rawEventRecord?.code === 'number'
                 ? rawEventRecord.code
                 : undefined
-          const exitMatch = isExitRawEvent ? redacted.match(/Process exited with code\s+(\d+)/i) : null
-          const exitCode =
-            rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
+          const exitMatch = isExitRawEvent
+            ? redacted.match(/Process exited with code\s+(\d+)/i)
+            : null
+          const exitCode = rawExitCode ?? (exitMatch ? Number(exitMatch[1]) : undefined)
           if (isExitRawEvent && Number.isFinite(exitCode)) {
             const suppressRawCompletionNotice =
               steerSuppressedSummaryRunIdsRef.current.has(currentRunId) ||
@@ -14070,9 +14012,9 @@ function App(): React.JSX.Element {
                 ? event.data.toolId
                 : typeof event.data?.id === 'string'
                   ? event.data.id
-                : typeof event.data?.call_id === 'string'
-                  ? event.data.call_id
-                  : undefined
+                  : typeof event.data?.call_id === 'string'
+                    ? event.data.call_id
+                    : undefined
           const toolName =
             typeof event.name === 'string' && event.name
               ? event.name
@@ -14094,172 +14036,416 @@ function App(): React.JSX.Element {
 
         let finalizedProviderChangeChat: ChatRecord | null = null
         let finalizedProviderChangeChatId: string | null = null
-        updateChatById(runChatId, (source) => {
-          let updated = { ...source }
+        updateChatById(
+          runChatId,
+          (source) => {
+            let updated = { ...source }
 
-          // Steer suppression: while the user has clicked Steer and the
-          // cancel is in flight, drop in-flight assistant content so the
-          // provider's farewell wrap-up doesn't pollute the transcript
-          // with a mid-flow "final summary." See `handleSteer`.
-          const isSteerSuppressed =
-            (event.type === 'assistant_message_delta' ||
-              event.type === 'assistant_message_complete') &&
-            steerSuppressionChatIdsRef.current.has(runChatId)
-          if (isSteerSuppressed) {
-            return updated
-          }
-
-          if (event.type === 'user_message') {
-            // Handled manually before run
-          } else if (event.type === 'assistant_message_delta') {
-            // Ensemble transcripts are materialised by EnsembleOrchestrator
-            // (`flushRun` → chat-updated). Provider compat lines still reach
-            // the renderer, but merging them here races the orchestrator and
-            // can stamp Ollama `providerModel` metadata onto the wrong
-            // assistant bubble (backward-scan finds another participant's
-            // message). Skip transcript mutation; orchestrator is canonical.
-            // Also leave `isThinking` alone — compat deltas are noise for
-            // ensemble rounds and were clearing the indicator until the next
-            // user turn.
-            if (updated.chatKind === 'ensemble') {
+            // Steer suppression: while the user has clicked Steer and the
+            // cancel is in flight, drop in-flight assistant content so the
+            // provider's farewell wrap-up doesn't pollute the transcript
+            // with a mid-flow "final summary." See `handleSteer`.
+            const isSteerSuppressed =
+              (event.type === 'assistant_message_delta' ||
+                event.type === 'assistant_message_complete') &&
+              steerSuppressionChatIdsRef.current.has(runChatId)
+            if (isSteerSuppressed) {
               return updated
             }
-            if (isVisibleRunChat()) setIsThinking(false)
-            // Interleaving-preserving routing. A content delta continues
-            // the live bubble ONLY while the trailing message is still an
-            // assistant; once a tool burst is the trailing message the text
-            // segment is sealed and the next delta opens a NEW bubble AFTER
-            // the burst. This mirrors the iOS stream (af91f0be — "seal a
-            // text segment at every tool boundary") and the main bridge
-            // transcript (`appendBridgeRunText`). The previous code scanned
-            // backward PAST tool messages and merged every later delta into
-            // the first bubble of the turn, which pulled prose up out of its
-            // position and left the tail a tool message — so every tool
-            // burst coalesced into one ActivityStack rendered above the text.
-            const incomingItemId = (event as { itemId?: unknown }).itemId
-            const incomingItemIdStr =
-              typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
-            // Ollama stamps the streaming bubble with its provider model so the
-            // transcript can show which local model produced the text.
-            const providerModelMetadata = providerModelMetadataForAssistantDelta(
-              updated,
-              typeof event.model === 'string' && event.model ? event.model : undefined,
-              typeof event.modelLabel === 'string' && event.modelLabel ? event.modelLabel : undefined
-            )
-            // Interleaving-preserving routing, idempotent increment-vs-
-            // restatement merge, and Codex item separators all live in
-            // lib/applyAssistantDelta (pure + unit-tested). It returns a new
-            // messages array; the ref write-back happens in updateChatById.
-            updated.messages = applyAssistantDelta(
-              updated.messages,
-              {
-                incoming: event.content,
-                runId: currentRunId,
-                cumulative: event.cumulative === true,
-                itemId: incomingItemIdStr,
-                providerModelMetadata
-              },
-              { createMessageId, now: () => new Date().toISOString() }
-            )
-            if (currentRunId && event.content) {
-              recordPendingStreamFlush(currentRunId, incomingItemIdStr, event.content.length)
-            }
-          } else if (event.type === 'assistant_message_complete') {
-            if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
-            const lastRun = updated.runs?.[updated.runs.length - 1]
-            const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
-            const isPlanMode =
-              lastRun?.approvalMode === 'plan' && lastWorkflowMode === 'plan'
-            const parsedChoice = parsePlanModeChoice(event.content)
-            // The complete event carries the FULL turn, so treat it as a
-            // cumulative restatement: it may reach back across a trailing
-            // tool burst to replace its own bubble in place. Without this an
-            // interleaved turn (text → tool burst → complete) would append a
-            // duplicate full-turn bubble below the tools.
-            const completeTarget = resolveAssistantDeltaTarget(updated.messages, {
-              incoming: event.content,
-              cumulative: true,
-              // A system card (queued-run record, question marker, terminal
-              // compaction card) landing after the last delta must not hide
-              // the streamed bubbles from the dedupe — without this the full
-              // turn re-appends below the card.
-              spanTrailingSystemCards: true
-            })
-            // The complete event restates the FULL turn. A `merge`/`replaceText`
-            // targets an existing bubble; `skip` means the streamed deltas
-            // already rendered it (don't duplicate); `appendText`/`append` open
-            // a fresh post-tool bubble with only the tail / the content.
-            const completeTargetIdx =
-              completeTarget.action === 'merge' || completeTarget.action === 'replaceText'
-                ? completeTarget.index
-                : -1
-            const completeTargetMsg =
-              completeTargetIdx >= 0 ? updated.messages[completeTargetIdx] : null
-            // assistantMessageId anchors the plan-mode choice below — reuse the
-            // targeted bubble's id, else the trailing assistant's, else a new id.
-            const trailingAssistantForId =
-              updated.messages.length > 0 &&
-              updated.messages[updated.messages.length - 1].role === 'assistant'
-                ? updated.messages[updated.messages.length - 1]
-                : null
-            const newCompleteMessageId = createMessageId()
-            const assistantMessageId =
-              completeTargetMsg?.id ?? trailingAssistantForId?.id ?? newCompleteMessageId
 
-            if (updated.chatKind !== 'ensemble') {
-              if (completeTarget.action === 'skip') {
-                // Already rendered by the streamed deltas — no-op.
-              } else if (
-                (completeTarget.action === 'merge' || completeTarget.action === 'replaceText') &&
-                completeTargetMsg
-              ) {
-                const nextContent =
-                  completeTarget.action === 'replaceText' ? completeTarget.text : event.content
-                updated.messages = [
-                  ...updated.messages.slice(0, completeTargetIdx),
-                  { ...completeTargetMsg, content: nextContent, runId: completeTargetMsg.runId ?? currentRunId },
-                  ...updated.messages.slice(completeTargetIdx + 1)
-                ]
-              } else {
-                const content =
-                  completeTarget.action === 'appendText' ? completeTarget.text : event.content
-                updated.messages = [
-                  ...updated.messages,
-                  {
-                    id: newCompleteMessageId,
-                    role: 'assistant',
-                    content,
-                    runId: currentRunId,
-                    timestamp: new Date().toISOString()
-                  }
-                ]
+            if (event.type === 'user_message') {
+              // Handled manually before run
+            } else if (event.type === 'assistant_message_delta') {
+              // Ensemble transcripts are materialised by EnsembleOrchestrator
+              // (`flushRun` → chat-updated). Provider compat lines still reach
+              // the renderer, but merging them here races the orchestrator and
+              // can stamp Ollama `providerModel` metadata onto the wrong
+              // assistant bubble (backward-scan finds another participant's
+              // message). Skip transcript mutation; orchestrator is canonical.
+              // Also leave `isThinking` alone — compat deltas are noise for
+              // ensemble rounds and were clearing the indicator until the next
+              // user turn.
+              if (updated.chatKind === 'ensemble') {
+                return updated
               }
-            }
-            const resetHints = extractResetHintsFromText(event.content)
-            for (const hint of resetHints) {
-              const key = normalizeModelName(hint.model)
-              const existing = runContext.usageResetHints.get(key) || {}
-              runContext.usageResetHints.set(key, mergeUsageReset(existing, hint))
-            }
-            if (resetHints.length > 0) {
-              Promise.all(
-                resetHints.map((hint) =>
-                  window.api.recordUsage({
-                    provider: effectiveRunProvider,
-                    workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
-                    chatId: updated.appChatId,
-                    runId: currentRunId,
-                    usageKind: 'reset_hint',
-                    model: hint.model,
-                    inputTokens: 0,
-                    outputTokens: 0,
-                    totalTokens: 0,
-                    resetAt: hint.resetAt,
-                    resetText: hint.resetText,
-                    durationMs: 0
-                  })
+              if (isVisibleRunChat()) setIsThinking(false)
+              // Interleaving-preserving routing. A content delta continues
+              // the live bubble ONLY while the trailing message is still an
+              // assistant; once a tool burst is the trailing message the text
+              // segment is sealed and the next delta opens a NEW bubble AFTER
+              // the burst. This mirrors the iOS stream (af91f0be — "seal a
+              // text segment at every tool boundary") and the main bridge
+              // transcript (`appendBridgeRunText`). The previous code scanned
+              // backward PAST tool messages and merged every later delta into
+              // the first bubble of the turn, which pulled prose up out of its
+              // position and left the tail a tool message — so every tool
+              // burst coalesced into one ActivityStack rendered above the text.
+              const incomingItemId = (event as { itemId?: unknown }).itemId
+              const incomingItemIdStr =
+                typeof incomingItemId === 'string' && incomingItemId ? incomingItemId : undefined
+              // Ollama stamps the streaming bubble with its provider model so the
+              // transcript can show which local model produced the text.
+              const providerModelMetadata = providerModelMetadataForAssistantDelta(
+                updated,
+                typeof event.model === 'string' && event.model ? event.model : undefined,
+                typeof event.modelLabel === 'string' && event.modelLabel
+                  ? event.modelLabel
+                  : undefined
+              )
+              // Interleaving-preserving routing, idempotent increment-vs-
+              // restatement merge, and Codex item separators all live in
+              // lib/applyAssistantDelta (pure + unit-tested). It returns a new
+              // messages array; the ref write-back happens in updateChatById.
+              updated.messages = applyAssistantDelta(
+                updated.messages,
+                {
+                  incoming: event.content,
+                  runId: currentRunId,
+                  cumulative: event.cumulative === true,
+                  itemId: incomingItemIdStr,
+                  providerModelMetadata
+                },
+                { createMessageId, now: () => new Date().toISOString() }
+              )
+              if (currentRunId && event.content) {
+                recordPendingStreamFlush(currentRunId, incomingItemIdStr, event.content.length)
+              }
+            } else if (event.type === 'assistant_message_complete') {
+              if (isVisibleRunChat() && updated.chatKind !== 'ensemble') setIsThinking(false)
+              const lastRun = updated.runs?.[updated.runs.length - 1]
+              const lastWorkflowMode = lastRun?.workflowMode || updated.workflowMode
+              const isPlanMode = lastRun?.approvalMode === 'plan' && lastWorkflowMode === 'plan'
+              const parsedChoice = parsePlanModeChoice(event.content)
+              // The complete event carries the FULL turn, so treat it as a
+              // cumulative restatement: it may reach back across a trailing
+              // tool burst to replace its own bubble in place. Without this an
+              // interleaved turn (text → tool burst → complete) would append a
+              // duplicate full-turn bubble below the tools.
+              const completeTarget = resolveAssistantDeltaTarget(updated.messages, {
+                incoming: event.content,
+                cumulative: true,
+                // A system card (queued-run record, question marker, terminal
+                // compaction card) landing after the last delta must not hide
+                // the streamed bubbles from the dedupe — without this the full
+                // turn re-appends below the card.
+                spanTrailingSystemCards: true
+              })
+              // The complete event restates the FULL turn. A `merge`/`replaceText`
+              // targets an existing bubble; `skip` means the streamed deltas
+              // already rendered it (don't duplicate); `appendText`/`append` open
+              // a fresh post-tool bubble with only the tail / the content.
+              const completeTargetIdx =
+                completeTarget.action === 'merge' || completeTarget.action === 'replaceText'
+                  ? completeTarget.index
+                  : -1
+              const completeTargetMsg =
+                completeTargetIdx >= 0 ? updated.messages[completeTargetIdx] : null
+              // assistantMessageId anchors the plan-mode choice below — reuse the
+              // targeted bubble's id, else the trailing assistant's, else a new id.
+              const trailingAssistantForId =
+                updated.messages.length > 0 &&
+                updated.messages[updated.messages.length - 1].role === 'assistant'
+                  ? updated.messages[updated.messages.length - 1]
+                  : null
+              const newCompleteMessageId = createMessageId()
+              const assistantMessageId =
+                completeTargetMsg?.id ?? trailingAssistantForId?.id ?? newCompleteMessageId
+
+              if (updated.chatKind !== 'ensemble') {
+                if (completeTarget.action === 'skip') {
+                  // Already rendered by the streamed deltas — no-op.
+                } else if (
+                  (completeTarget.action === 'merge' || completeTarget.action === 'replaceText') &&
+                  completeTargetMsg
+                ) {
+                  const nextContent =
+                    completeTarget.action === 'replaceText' ? completeTarget.text : event.content
+                  updated.messages = [
+                    ...updated.messages.slice(0, completeTargetIdx),
+                    {
+                      ...completeTargetMsg,
+                      content: nextContent,
+                      runId: completeTargetMsg.runId ?? currentRunId
+                    },
+                    ...updated.messages.slice(completeTargetIdx + 1)
+                  ]
+                } else {
+                  const content =
+                    completeTarget.action === 'appendText' ? completeTarget.text : event.content
+                  updated.messages = [
+                    ...updated.messages,
+                    {
+                      id: newCompleteMessageId,
+                      role: 'assistant',
+                      content,
+                      runId: currentRunId,
+                      timestamp: new Date().toISOString()
+                    }
+                  ]
+                }
+              }
+              const resetHints = extractResetHintsFromText(event.content)
+              for (const hint of resetHints) {
+                const key = normalizeModelName(hint.model)
+                const existing = runContext.usageResetHints.get(key) || {}
+                runContext.usageResetHints.set(key, mergeUsageReset(existing, hint))
+              }
+              if (resetHints.length > 0) {
+                Promise.all(
+                  resetHints.map((hint) =>
+                    window.api.recordUsage({
+                      provider: effectiveRunProvider,
+                      workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
+                      chatId: updated.appChatId,
+                      runId: currentRunId,
+                      usageKind: 'reset_hint',
+                      model: hint.model,
+                      inputTokens: 0,
+                      outputTokens: 0,
+                      totalTokens: 0,
+                      resetAt: hint.resetAt,
+                      resetText: hint.resetText,
+                      durationMs: 0
+                    })
+                  )
+                ).then(() => {
+                  const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
+                  if (
+                    usageWorkspaceId &&
+                    (currentWorkspaceIdRef.current === usageWorkspaceId || isGlobalChat(updated))
+                  ) {
+                    void refreshUsageSummary(usageWorkspaceId)
+                  }
+                })
+              }
+              if (isVisibleRunChat()) {
+                // Plan mode surfaces ONE card per turn: a choice (question +
+                // options) takes precedence; otherwise a proposed plan (an
+                // explicit <proposed_plan> block in any mode, or a substantive
+                // plan-mode turn) gets the approve/implement card.
+                // Solo plan-mode runs still parse <proposed_plan> inline to derive
+                // title/body. Ensemble transcripts are authored by the
+                // orchestrator, so they hydrate pending modal state from existing
+                // metadata instead.
+                const parsedPlan =
+                  parsedChoice || updated.chatKind === 'ensemble'
+                    ? null
+                    : parseProposedPlan(event.content, isPlanMode)
+                setPendingPlanChoice(
+                  isPlanMode && parsedChoice
+                    ? {
+                        messageId: assistantMessageId,
+                        question: parsedChoice.question,
+                        options: parsedChoice.options
+                      }
+                    : null
                 )
-              ).then(() => {
+                if (parsedPlan) {
+                  // Persist the plan on its message so the card survives reload +
+                  // the decision, and strip the raw <proposed_plan> block so it
+                  // doesn't double-render as prose beside the card. Anchor to the
+                  // message that actually holds the plan: the resolved id when it
+                  // exists, else the last assistant bubble — `assistantMessageId`
+                  // can be a phantom id on the skip branch when the turn ends on a
+                  // tool burst (the plan streamed into the pre-burst bubble).
+                  const planTargetId = updated.messages.some((m) => m.id === assistantMessageId)
+                    ? assistantMessageId
+                    : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
+                  updated.messages = updated.messages.map((m) =>
+                    m.id === planTargetId
+                      ? {
+                          ...m,
+                          content: stripProposedPlanBlock(m.content),
+                          metadata: {
+                            ...(m.metadata || {}),
+                            proposedPlan: {
+                              ...(m.metadata?.proposedPlan || {}),
+                              title: parsedPlan.title,
+                              body: parsedPlan.body,
+                              status: 'pending' as const
+                            }
+                          }
+                        }
+                      : m
+                  )
+                  if (planTargetId) {
+                    setPendingProposedPlan({
+                      messageId: planTargetId,
+                      title: parsedPlan.title,
+                      body: parsedPlan.body,
+                      artifactPath: updated.messages.find((message) => message.id === planTargetId)
+                        ?.metadata?.proposedPlan?.artifactPath
+                    })
+                  }
+                } else if (updated.chatKind === 'ensemble') {
+                  const pendingEnsembleProposedPlan = [...updated.messages]
+                    .reverse()
+                    .find((message) => {
+                      const proposedPlan = message.metadata?.proposedPlan
+                      if (!proposedPlan || proposedPlan.status !== 'pending') return false
+
+                      const messageParticipantId =
+                        typeof message.metadata?.ensembleParticipantId === 'string'
+                          ? message.metadata?.ensembleParticipantId
+                          : undefined
+
+                      return shouldSurfaceProposedPlanCard({
+                        chatKind: 'ensemble',
+                        bossmanParticipantId: updated.ensemble?.bossmanParticipantId,
+                        fallbackOwnerParticipantId: undefined,
+                        messageParticipantId,
+                        isPlanMode,
+                        hasExplicitProposedPlanBlock: true
+                      })
+                    })
+
+                  if (pendingEnsembleProposedPlan?.metadata?.proposedPlan) {
+                    setPendingProposedPlan({
+                      messageId: pendingEnsembleProposedPlan.id,
+                      title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
+                      body: pendingEnsembleProposedPlan.metadata.proposedPlan.body,
+                      artifactPath: pendingEnsembleProposedPlan.metadata.proposedPlan.artifactPath
+                    })
+                  }
+                }
+              }
+            } else if (event.type === 'run_started') {
+              const sessionId = normalizeGeminiResumeTarget(event.session_id)
+              if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
+                if (effectiveRunProvider !== 'gemini') {
+                  updated.linkedProviderSessionId = sessionId
+                  if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
+                    updated.providerMetadata = {
+                      ...(updated.providerMetadata || {}),
+                      kimiAcpNativeSession: true,
+                      ...(event.kimiAcpPostureVersion
+                        ? { kimiAcpPostureVersion: event.kimiAcpPostureVersion }
+                        : {})
+                    }
+                  }
+                } else {
+                  updated.linkedGeminiSessionId = sessionId
+                }
+              }
+              const runs = [...(updated.runs || [])]
+              if (runs.length > 0) {
+                runs[runs.length - 1].actualModel = event.model
+                if (effectiveRunProvider !== 'gemini') {
+                  runs[runs.length - 1].providerThreadId =
+                    sessionId || runs[runs.length - 1].providerThreadId
+                }
+              }
+              updated.runs = runs
+            } else if (event.type === 'run_finished') {
+              if (isVisibleRunChat()) setIsThinking(false)
+              const runs = [...(updated.runs || [])]
+              const renderMetrics = drainStreamRenderMetrics(currentRunId)
+              const streamMetrics = renderMetrics
+                ? mergeRunStreamRenderMetrics(
+                    runStreamMetricsByRunIdRef.current.get(currentRunId),
+                    currentRunId,
+                    renderMetrics,
+                    Date.now()
+                  )
+                : runStreamMetricsByRunIdRef.current.get(currentRunId)
+              if (streamMetrics) {
+                runStreamMetricsByRunIdRef.current.set(currentRunId, streamMetrics)
+              }
+              const finishedStats = streamMetrics
+                ? { ...(event.stats || {}), streamMetrics }
+                : event.stats
+              const finishedSessionId = normalizeGeminiResumeTarget(event.providerThreadId)
+              if (finishedSessionId && effectiveRunProvider !== 'gemini') {
+                updated.linkedProviderSessionId = finishedSessionId
+              }
+              const resolvedRunModel =
+                runs.length > 0
+                  ? runs[runs.length - 1].actualModel ||
+                    runs[runs.length - 1].requestedModel ||
+                    'unknown'
+                  : 'unknown'
+              const runUsageEntries = extractModelUsageEntriesFromStats(
+                finishedStats || {},
+                resolvedRunModel
+              )
+
+              if (runs.length > 0) {
+                runs[runs.length - 1].status = event.status
+                runs[runs.length - 1].stats = finishedStats
+                runs[runs.length - 1].endedAt = new Date().toISOString()
+                if (finishedSessionId && effectiveRunProvider !== 'gemini') {
+                  runs[runs.length - 1].providerThreadId = finishedSessionId
+                }
+              }
+              updated.runs = runs
+              if (updated.chatKind !== 'ensemble') {
+                const nextChat = applyPendingProviderChangeOnFinalize(
+                  applyPendingEnsembleRosterPresetOnRunTerminal(updated, currentRunId)
+                )
+                if (nextChat !== updated) {
+                  updated = nextChat
+                  finalizedProviderChangeChat = nextChat
+                  finalizedProviderChangeChatId = nextChat.appChatId
+                }
+              }
+
+              const runDurationMs = Math.max(
+                0,
+                extractUsageCount(finishedStats, [['duration_ms'], ['durationMs']])
+              )
+
+              const usageAlreadyRecorded = Boolean(finishedStats?._taskwraith_usage_recorded)
+              const usageRecordPromises = usageAlreadyRecorded
+                ? []
+                : runUsageEntries.map((usageEntry) => {
+                    const {
+                      model,
+                      inputTokens,
+                      outputTokens,
+                      totalTokens,
+                      cacheReadInputTokens,
+                      cacheCreationInputTokens,
+                      inputTokenLimit,
+                      outputTokenLimit,
+                      totalTokenLimit,
+                      resetAt,
+                      resetText,
+                      durationMs: entryDurationMs
+                    } = usageEntry
+                    const resetHint =
+                      runContext.usageResetHints.get(normalizeModelName(model)) || {}
+                    const mergedReset = mergeUsageReset({ resetAt, resetText }, resetHint)
+
+                    return window.api.recordUsage({
+                      provider: effectiveRunProvider,
+                      workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
+                      chatId: updated.appChatId,
+                      runId: currentRunId,
+                      usageKind: 'run',
+                      model,
+                      inputTokens,
+                      outputTokens,
+                      totalTokens,
+                      cacheReadInputTokens,
+                      cacheCreationInputTokens,
+                      inputTokenLimit,
+                      outputTokenLimit,
+                      totalTokenLimit,
+                      resetAt: mergedReset.resetAt,
+                      resetText: mergedReset.resetText,
+                      durationMs: entryDurationMs ?? runDurationMs,
+                      ...(effectiveRunProvider === 'ollama'
+                        ? ollamaMemoryUsageFields(event.stats)
+                        : {}),
+                      promptText: usagePromptText,
+                      responseText:
+                        updated.messages[updated.messages.length - 1]?.role === 'assistant'
+                          ? updated.messages[updated.messages.length - 1].content
+                          : undefined
+                    })
+                  })
+
+              Promise.all(usageRecordPromises).then(() => {
                 const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
                 if (
                   usageWorkspaceId &&
@@ -14268,349 +14454,119 @@ function App(): React.JSX.Element {
                   void refreshUsageSummary(usageWorkspaceId)
                 }
               })
-            }
-            if (isVisibleRunChat()) {
-              // Plan mode surfaces ONE card per turn: a choice (question +
-              // options) takes precedence; otherwise a proposed plan (an
-              // explicit <proposed_plan> block in any mode, or a substantive
-              // plan-mode turn) gets the approve/implement card.
-              // Solo plan-mode runs still parse <proposed_plan> inline to derive
-              // title/body. Ensemble transcripts are authored by the
-              // orchestrator, so they hydrate pending modal state from existing
-              // metadata instead.
-              const parsedPlan =
-                parsedChoice || updated.chatKind === 'ensemble'
-                  ? null
-                  : parseProposedPlan(event.content, isPlanMode)
-              setPendingPlanChoice(
-                isPlanMode && parsedChoice
-                  ? {
-                      messageId: assistantMessageId,
-                      question: parsedChoice.question,
-                      options: parsedChoice.options
-                    }
-                  : null
-              )
-              if (parsedPlan) {
-                // Persist the plan on its message so the card survives reload +
-                // the decision, and strip the raw <proposed_plan> block so it
-                // doesn't double-render as prose beside the card. Anchor to the
-                // message that actually holds the plan: the resolved id when it
-                // exists, else the last assistant bubble — `assistantMessageId`
-                // can be a phantom id on the skip branch when the turn ends on a
-                // tool burst (the plan streamed into the pre-burst bubble).
-                const planTargetId = updated.messages.some((m) => m.id === assistantMessageId)
-                  ? assistantMessageId
-                  : [...updated.messages].reverse().find((m) => m.role === 'assistant')?.id
-                updated.messages = updated.messages.map((m) =>
-                  m.id === planTargetId
-                  ? {
-                        ...m,
-                        content: stripProposedPlanBlock(m.content),
-                        metadata: {
-                          ...(m.metadata || {}),
-                          proposedPlan: {
-                            ...(m.metadata?.proposedPlan || {}),
-                            title: parsedPlan.title,
-                            body: parsedPlan.body,
-                            status: 'pending' as const
-                          }
-                        }
-                      }
-                    : m
-                )
-                if (planTargetId) {
-                  setPendingProposedPlan({
-                    messageId: planTargetId,
-                    title: parsedPlan.title,
-                    body: parsedPlan.body,
-                    artifactPath: updated.messages.find((message) => message.id === planTargetId)
-                      ?.metadata?.proposedPlan?.artifactPath
-                  })
-                }
-              } else if (updated.chatKind === 'ensemble') {
-                const pendingEnsembleProposedPlan = [...updated.messages].reverse().find((message) => {
-                  const proposedPlan = message.metadata?.proposedPlan
-                  if (!proposedPlan || proposedPlan.status !== 'pending') return false
-
-                  const messageParticipantId =
-                    typeof message.metadata?.ensembleParticipantId === 'string'
-                      ? message.metadata?.ensembleParticipantId
-                      : undefined
-
-                  return shouldSurfaceProposedPlanCard({
-                    chatKind: 'ensemble',
-                    bossmanParticipantId: updated.ensemble?.bossmanParticipantId,
-                    fallbackOwnerParticipantId: undefined,
-                    messageParticipantId,
-                    isPlanMode,
-                    hasExplicitProposedPlanBlock: true
-                  })
-                })
-
-                if (pendingEnsembleProposedPlan?.metadata?.proposedPlan) {
-                  setPendingProposedPlan({
-                    messageId: pendingEnsembleProposedPlan.id,
-                    title: pendingEnsembleProposedPlan.metadata.proposedPlan.title,
-                    body: pendingEnsembleProposedPlan.metadata.proposedPlan.body,
-                    artifactPath: pendingEnsembleProposedPlan.metadata.proposedPlan.artifactPath
-                  })
-                }
+            } else if (event.type === 'tool_event') {
+              // Ensemble tool rows are materialised by EnsembleOrchestrator
+              // (`flushRun` -> chat-updated). The renderer's solo reducer
+              // would append a second local tool message for the same provider
+              // compat event, which is especially visible for ensemble_yield
+              // because yield activities intentionally stay inline.
+              if (updated.chatKind === 'ensemble') {
+                return updated
               }
-            }
-          } else if (event.type === 'run_started') {
-            const sessionId = normalizeGeminiResumeTarget(event.session_id)
-            if (sessionId && (effectiveRunProvider !== 'gemini' || !event.fallback)) {
-              if (effectiveRunProvider !== 'gemini') {
-                updated.linkedProviderSessionId = sessionId
-                if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
-                  updated.providerMetadata = {
-                    ...(updated.providerMetadata || {}),
-                    kimiAcpNativeSession: true,
-                    ...(event.kimiAcpPostureVersion
-                      ? { kimiAcpPostureVersion: event.kimiAcpPostureVersion }
-                      : {})
-                  }
-                }
-              } else {
-                updated.linkedGeminiSessionId = sessionId
+              // Mirrors the run-item lane above: text deltas hide the Working
+              // indicator, so trailing tool activity must re-arm it.
+              if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
+                setIsThinking(true)
               }
-            }
-            const runs = [...(updated.runs || [])]
-            if (runs.length > 0) {
-              runs[runs.length - 1].actualModel = event.model
-              if (effectiveRunProvider !== 'gemini') {
-                runs[runs.length - 1].providerThreadId =
-                  sessionId || runs[runs.length - 1].providerThreadId
+              if (isProviderExecutionToolEvent(event)) {
+                runContext.toolCallsCount += 1
               }
-            }
-            updated.runs = runs
-          } else if (event.type === 'run_finished') {
-            if (isVisibleRunChat()) setIsThinking(false)
-            const runs = [...(updated.runs || [])]
-            const renderMetrics = drainStreamRenderMetrics(currentRunId)
-            const streamMetrics = renderMetrics
-              ? mergeRunStreamRenderMetrics(
-                  runStreamMetricsByRunIdRef.current.get(currentRunId),
-                  currentRunId,
-                  renderMetrics,
-                  Date.now()
-                )
-              : runStreamMetricsByRunIdRef.current.get(currentRunId)
-            if (streamMetrics) {
-              runStreamMetricsByRunIdRef.current.set(currentRunId, streamMetrics)
-            }
-            const finishedStats = streamMetrics
-              ? { ...(event.stats || {}), streamMetrics }
-              : event.stats
-            const finishedSessionId = normalizeGeminiResumeTarget(event.providerThreadId)
-            if (finishedSessionId && effectiveRunProvider !== 'gemini') {
-              updated.linkedProviderSessionId = finishedSessionId
-            }
-            const resolvedRunModel =
-              runs.length > 0
-                ? runs[runs.length - 1].actualModel ||
-                  runs[runs.length - 1].requestedModel ||
-                  'unknown'
-                : 'unknown'
-            const runUsageEntries = extractModelUsageEntriesFromStats(
-              finishedStats || {},
-              resolvedRunModel
-            )
+              const reduction = reduceSoloToolEventMessages(updated.messages, event, {
+                createMessageId,
+                provider: effectiveRunProvider,
+                runId: currentRunId
+              })
+              updated.messages = reduction.messages
 
-            if (runs.length > 0) {
-              runs[runs.length - 1].status = event.status
-              runs[runs.length - 1].stats = finishedStats
-              runs[runs.length - 1].endedAt = new Date().toISOString()
-              if (finishedSessionId && effectiveRunProvider !== 'gemini') {
-                runs[runs.length - 1].providerThreadId = finishedSessionId
-              }
-            }
-            updated.runs = runs
-            if (updated.chatKind !== 'ensemble') {
-              const nextChat = applyPendingProviderChangeOnFinalize(
-                applyPendingEnsembleRosterPresetOnRunTerminal(updated, currentRunId)
-              )
-              if (nextChat !== updated) {
-                updated = nextChat
-                finalizedProviderChangeChat = nextChat
-                finalizedProviderChangeChatId = nextChat.appChatId
-              }
-            }
-
-            const runDurationMs = Math.max(
-              0,
-              extractUsageCount(finishedStats, [['duration_ms'], ['durationMs']])
-            )
-
-            const usageAlreadyRecorded = Boolean(finishedStats?._taskwraith_usage_recorded)
-            const usageRecordPromises = usageAlreadyRecorded
-              ? []
-              : runUsageEntries.map((usageEntry) => {
-                  const {
-                    model,
-                    inputTokens,
-                    outputTokens,
-                    totalTokens,
-                    cacheReadInputTokens,
-                    cacheCreationInputTokens,
-                    inputTokenLimit,
-                    outputTokenLimit,
-                    totalTokenLimit,
-                    resetAt,
-                    resetText,
-                    durationMs: entryDurationMs
-                  } = usageEntry
-                  const resetHint = runContext.usageResetHints.get(normalizeModelName(model)) || {}
-                  const mergedReset = mergeUsageReset({ resetAt, resetText }, resetHint)
-
-                  return window.api.recordUsage({
-                    provider: effectiveRunProvider,
-                    workspaceId: getUsageWorkspaceIdForChat(updated) || GLOBAL_USAGE_WORKSPACE_ID,
-                    chatId: updated.appChatId,
-                    runId: currentRunId,
-                    usageKind: 'run',
-                    model,
-                    inputTokens,
-                    outputTokens,
-                    totalTokens,
-                    cacheReadInputTokens,
-                    cacheCreationInputTokens,
-                    inputTokenLimit,
-                    outputTokenLimit,
-                    totalTokenLimit,
-                    resetAt: mergedReset.resetAt,
-                    resetText: mergedReset.resetText,
-                    durationMs: entryDurationMs ?? runDurationMs,
-                    ...(effectiveRunProvider === 'ollama' ? ollamaMemoryUsageFields(event.stats) : {}),
-                    promptText: usagePromptText,
-                    responseText:
-                      updated.messages[updated.messages.length - 1]?.role === 'assistant'
-                        ? updated.messages[updated.messages.length - 1].content
-                        : undefined
-                  })
-                })
-
-            Promise.all(usageRecordPromises).then(() => {
-              const usageWorkspaceId = getUsageWorkspaceIdForChat(updated)
               if (
-                usageWorkspaceId &&
-                (currentWorkspaceIdRef.current === usageWorkspaceId || isGlobalChat(updated))
+                isVisibleRunChat() &&
+                !runContext.diffUnavailable &&
+                reduction.latestToolActivity &&
+                reduction.isResult
               ) {
-                void refreshUsageSummary(usageWorkspaceId)
+                upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
               }
-            })
-          } else if (event.type === 'tool_event') {
-            // Ensemble tool rows are materialised by EnsembleOrchestrator
-            // (`flushRun` -> chat-updated). The renderer's solo reducer
-            // would append a second local tool message for the same provider
-            // compat event, which is especially visible for ensemble_yield
-            // because yield activities intentionally stay inline.
-            if (updated.chatKind === 'ensemble') {
-              return updated
-            }
-            // Mirrors the run-item lane above: text deltas hide the Working
-            // indicator, so trailing tool activity must re-arm it.
-            if (isVisibleRunChat() && !steerSuppressionChatIdsRef.current.has(runChatId)) {
-              setIsThinking(true)
-            }
-            if (isProviderExecutionToolEvent(event)) {
-              runContext.toolCallsCount += 1
-            }
-            const reduction = reduceSoloToolEventMessages(updated.messages, event, {
-              createMessageId,
-              provider: effectiveRunProvider,
-              runId: currentRunId
-            })
-            updated.messages = reduction.messages
-
-            if (
-              isVisibleRunChat() &&
-              !runContext.diffUnavailable &&
-              reduction.latestToolActivity &&
-              reduction.isResult
-            ) {
-              upsertRunDiffFromTool(reduction.latestToolActivity, runContext.workspacePath)
-            }
-          } else if (event.type === 'workflow_telemetry') {
-            // Claude-native Workflow live status. Merge onto the originating
-            // `Workflow` tool activity (found by tool_use id anywhere in the
-            // transcript) so the workflow card updates in place; no new tool row.
-            if (event.toolUseId) {
-              updated.messages = mergeWorkflowTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'review_telemetry') {
-            // Codex native-review live status. Merge onto the synthesized
-            // `codex_review` anchor activity so the review card updates in place.
-            if (event.toolUseId) {
-              updated.messages = mergeReviewTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'multi_agent_telemetry') {
-            // Codex native Multi-agent live status. Merge onto the synthesized
-            // `codex_multi_agent` anchor so the orchestration card updates in
-            // place; coordination never becomes a generic tool row.
-            if (event.toolUseId) {
-              updated.messages = mergeMultiAgentTelemetryIntoMessages(
-                updated.messages,
-                event.toolUseId,
-                event.telemetry
-              )
-            }
-          } else if (event.type === 'compaction_notice') {
-            // Provider context compaction. Persist a system card for terminal
-            // signals; 'started' stays transient (no row). Ensemble transcripts
-            // are orchestrator-canonical — the same compat line reaches the
-            // orchestrator, which appends the card main-side, so appending here
-            // too would double-card (and be clobbered by its saveChat anyway).
-            if (event.kind !== 'started' && updated.chatKind !== 'ensemble') {
-              const cardId = contextCompactionMessageId(
-                event.telemetry,
-                `${currentRunId}-${event.kind}`
-              )
-              if (!updated.messages.some((message) => message.id === cardId)) {
-                updated.messages = [
-                  ...updated.messages,
-                  {
-                    id: cardId,
-                    role: 'system',
-                    content: formatContextCompactionSummary(
-                      { kind: event.kind, telemetry: event.telemetry },
-                      getProviderLabel(
-                        (event.telemetry.provider as ProviderId) || effectiveRunProvider
-                      )
-                    ),
-                    timestamp: new Date().toISOString(),
-                    metadata: {
-                      kind: CONTEXT_COMPACTION_MESSAGE_KIND,
-                      contextCompaction: { kind: event.kind, telemetry: event.telemetry },
-                      provider: event.telemetry.provider || effectiveRunProvider
+            } else if (event.type === 'workflow_telemetry') {
+              // Claude-native Workflow live status. Merge onto the originating
+              // `Workflow` tool activity (found by tool_use id anywhere in the
+              // transcript) so the workflow card updates in place; no new tool row.
+              if (event.toolUseId) {
+                updated.messages = mergeWorkflowTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'review_telemetry') {
+              // Codex native-review live status. Merge onto the synthesized
+              // `codex_review` anchor activity so the review card updates in place.
+              if (event.toolUseId) {
+                updated.messages = mergeReviewTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'multi_agent_telemetry') {
+              // Codex native Multi-agent live status. Merge onto the synthesized
+              // `codex_multi_agent` anchor so the orchestration card updates in
+              // place; coordination never becomes a generic tool row.
+              if (event.toolUseId) {
+                updated.messages = mergeMultiAgentTelemetryIntoMessages(
+                  updated.messages,
+                  event.toolUseId,
+                  event.telemetry
+                )
+              }
+            } else if (event.type === 'compaction_notice') {
+              // Provider context compaction. Persist a system card for terminal
+              // signals; 'started' stays transient (no row). Ensemble transcripts
+              // are orchestrator-canonical — the same compat line reaches the
+              // orchestrator, which appends the card main-side, so appending here
+              // too would double-card (and be clobbered by its saveChat anyway).
+              if (event.kind !== 'started' && updated.chatKind !== 'ensemble') {
+                const cardId = contextCompactionMessageId(
+                  event.telemetry,
+                  `${currentRunId}-${event.kind}`
+                )
+                if (!updated.messages.some((message) => message.id === cardId)) {
+                  updated.messages = [
+                    ...updated.messages,
+                    {
+                      id: cardId,
+                      role: 'system',
+                      content: formatContextCompactionSummary(
+                        { kind: event.kind, telemetry: event.telemetry },
+                        getProviderLabel(
+                          (event.telemetry.provider as ProviderId) || effectiveRunProvider
+                        )
+                      ),
+                      timestamp: new Date().toISOString(),
+                      metadata: {
+                        kind: CONTEXT_COMPACTION_MESSAGE_KIND,
+                        contextCompaction: { kind: event.kind, telemetry: event.telemetry },
+                        provider: event.telemetry.provider || effectiveRunProvider
+                      }
                     }
-                  }
-                ]
+                  ]
+                }
               }
+            } else if (event.type === 'error') {
+              updated.messages = [
+                ...updated.messages,
+                {
+                  id: createMessageId(),
+                  role: 'error',
+                  content: event.message,
+                  timestamp: new Date().toISOString()
+                }
+              ]
             }
-          } else if (event.type === 'error') {
-            updated.messages = [
-              ...updated.messages,
-              {
-                id: createMessageId(),
-                role: 'error',
-                content: event.message,
-                timestamp: new Date().toISOString()
-              }
-            ]
-          }
 
-          return updated
-        }, { coalesce: event.type === 'assistant_message_delta' })
+            return updated
+          },
+          { coalesce: event.type === 'assistant_message_delta' }
+        )
         if (
           finalizedProviderChangeChat &&
           currentChatIdRef.current === finalizedProviderChangeChatId
@@ -14635,7 +14591,8 @@ function App(): React.JSX.Element {
         workspacePath: runDiffWorkspacePath || null,
         workspaceId: isGlobalRun ? undefined : runWorkspace!.id,
         worktree: runWorktree,
-        checkpointingEnabled: effectiveRunProvider === 'gemini' ? geminiCheckpointingEnabled : false,
+        checkpointingEnabled:
+          effectiveRunProvider === 'gemini' ? geminiCheckpointingEnabled : false,
         startedAt: runStartedAt,
         diffUnavailable: runDiffUnavailable,
         scheduledTaskId: request.scheduledTaskId || null
@@ -14919,13 +14876,13 @@ function App(): React.JSX.Element {
           specialOverride ||
           Boolean(
             request.verbatimPrompt ||
-              request.codexNativeReview ||
-              request.handoffSourceRunId ||
-              request.preserveComposer ||
-              request.discordContextSelection ||
-              request.geminiWorktree?.enabled ||
-              request.effectiveWorkspacePath ||
-              request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')
+            request.codexNativeReview ||
+            request.handoffSourceRunId ||
+            request.preserveComposer ||
+            request.discordContextSelection ||
+            request.geminiWorktree?.enabled ||
+            request.effectiveWorkspacePath ||
+            request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')
           )
       }) ||
       !targetChatId ||
@@ -15029,7 +14986,9 @@ function App(): React.JSX.Element {
       })
       .then((run) => {
         try {
-          const persisted = JSON.parse(window.localStorage.getItem(pendingStorageKey) || 'null') as {
+          const persisted = JSON.parse(
+            window.localStorage.getItem(pendingStorageKey) || 'null'
+          ) as {
             key?: unknown
             clientRequestId?: unknown
           } | null
@@ -15192,10 +15151,7 @@ function App(): React.JSX.Element {
         ...request,
         scheduledRunAt
       }
-      queueRunRequest(
-        scheduledRequest,
-        `Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`
-      )
+      queueRunRequest(scheduledRequest, `Scheduled for ${formatScheduledRunTime(scheduledRunAt)}.`)
       setScheduleRunAt('')
       clearComposerAttachmentsForSubmittedRequest(request)
       setChatPromptDraft(
@@ -15236,10 +15192,7 @@ function App(): React.JSX.Element {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
-        setChatPromptDraft(
-          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
-          ''
-        )
+        setChatPromptDraft(targetChatId || currentChatIdRef.current || currentChat?.appChatId, '')
       }
       return
     }
@@ -15357,9 +15310,7 @@ function App(): React.JSX.Element {
             (selectedSideParticipant.fastModeEnabled ? 'fast' : '')
         }
         if (selectedSideParticipant.provider === 'claude') {
-          const selectedClaudeSettings = resolveEnsembleParticipantSettings(
-            selectedSideParticipant
-          )
+          const selectedClaudeSettings = resolveEnsembleParticipantSettings(selectedSideParticipant)
           const selectedClaudeModel =
             selectedSideParticipant.model ||
             getDefaultModelForProvider(selectedSideParticipant.provider)
@@ -15372,9 +15323,7 @@ function App(): React.JSX.Element {
           participantMetadata.claudeFastMode = Boolean(selectedSideParticipant.fastModeEnabled)
         }
         if (selectedSideParticipant.provider === 'kimi') {
-          const selectedKimiSettings = resolveEnsembleParticipantSettings(
-            selectedSideParticipant
-          )
+          const selectedKimiSettings = resolveEnsembleParticipantSettings(selectedSideParticipant)
           participantMetadata.kimiFastMode = selectedKimiSettings.fastModeEnabled
           participantMetadata.kimiReasoningEffort = selectedKimiSettings.reasoningEffort || 'on'
           participantMetadata.kimiThinkingEnabled = true
@@ -15425,7 +15374,10 @@ function App(): React.JSX.Element {
         setIsSideChatDockPanelOpen(true)
         setRightDockTab('chat')
       }
-      setChatPromptDraft(nextSideChat.appChatId, hiddenInitialContextPrompt ? '' : effectiveSeedPrompt)
+      setChatPromptDraft(
+        nextSideChat.appChatId,
+        hiddenInitialContextPrompt ? '' : effectiveSeedPrompt
+      )
       if (clearParentDraft) {
         setChatPromptDraft(parentChat.appChatId, '')
       }
@@ -15490,9 +15442,9 @@ function App(): React.JSX.Element {
     }
     const cancelInlineRestore = inlineScrollState
       ? restoreMainTranscriptScrollStateWhenReady(inlineScrollState, {
-        syncAutoFollow: true,
-        targetChatId: chat.appChatId
-      })
+          syncAutoFollow: true,
+          targetChatId: chat.appChatId
+        })
       : null
     try {
       await handleSelectChat(chat)
@@ -15729,9 +15681,7 @@ function App(): React.JSX.Element {
     presentation: SidePanelPresentation = 'split'
   ) => {
     const linkedMainScrollState =
-      currentChat?.appChatId === chat.appChatId
-        ? captureMainTranscriptScrollState()
-        : undefined
+      currentChat?.appChatId === chat.appChatId ? captureMainTranscriptScrollState() : undefined
     const parentChat = chat.parentChatId
       ? chatByIdRef.current.get(chat.parentChatId) ||
         chats.find((item) => item.appChatId === chat.parentChatId) ||
@@ -15891,10 +15841,7 @@ function App(): React.JSX.Element {
 
   const cancelLinkedChatRun = async (targetChat: ChatRecord) => {
     if (
-      await cancelRunningScheduledTaskForChat(
-        targetChat.appChatId,
-        'Cancelled from linked chat.'
-      )
+      await cancelRunningScheduledTaskForChat(targetChat.appChatId, 'Cancelled from linked chat.')
     ) {
       syncRunningState()
       void refreshSingleChat(targetChat.appChatId)
@@ -16546,10 +16493,9 @@ function App(): React.JSX.Element {
       return
     }
     if (!enabled) {
-      const modalChat =
-        isChatSummaryRecord(targetChat)
-          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
-          : targetChat
+      const modalChat = isChatSummaryRecord(targetChat)
+        ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+        : targetChat
       // The modal exists to ask WHICH agent keeps the thread. A roster the
       // floor exempts (Agent-MCP / imported one-seat panels, and legacy chats
       // that predate the floor) offers exactly one answer, so asking is pure
@@ -16565,10 +16511,9 @@ function App(): React.JSX.Element {
     chatKindTogglingRef.current = true
     setChatKindMutationBusy(true)
     try {
-      const baseChat =
-        isChatSummaryRecord(targetChat)
-          ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
-          : targetChat
+      const baseChat = isChatSummaryRecord(targetChat)
+        ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
+        : targetChat
       const updatedChat = applyHydratedChat(
         await window.api.setChatKind({
           chatId: baseChat.appChatId,
@@ -16584,9 +16529,7 @@ function App(): React.JSX.Element {
         updatedChat.ensemble?.participants[0]?.id || null
       )
       setWorkflowDraft((draft) =>
-        draft?.chatId === updatedChat.appChatId
-          ? { ...draft, ensembleEnabled: true }
-          : draft
+        draft?.chatId === updatedChat.appChatId ? { ...draft, ensembleEnabled: true } : draft
       )
       void refreshChatList()
     } catch (error) {
@@ -16625,9 +16568,7 @@ function App(): React.JSX.Element {
       }
       setSelectedParticipantForChat(updatedChat.appChatId, null)
       setWorkflowDraft((draft) =>
-        draft?.chatId === updatedChat.appChatId
-          ? { ...draft, ensembleEnabled: false }
-          : draft
+        draft?.chatId === updatedChat.appChatId ? { ...draft, ensembleEnabled: false } : draft
       )
       void refreshChatList()
       setPendingEnsembleToSoloChatId(null)
@@ -16733,7 +16674,8 @@ function App(): React.JSX.Element {
         kind: 'interval',
         intervalMs,
         startAt: new Date(Date.now() + intervalMs).toISOString(),
-        timezone: workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
+        timezone:
+          workflow.trigger.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
       }
     })
     await refreshWorkflowState(currentWorkspace?.id)
@@ -16754,8 +16696,7 @@ function App(): React.JSX.Element {
   // confirmation for elevation; revocation remains immediate and fail-safe.
   const handleSetWorkflowUnattended = async (workflow: WorkflowDefinition): Promise<void> => {
     const current = workflow.unattendedElevation
-    const level: UnattendedElevationLevel =
-      current && current.level !== 'safe' ? 'safe' : 'default'
+    const level: UnattendedElevationLevel = current && current.level !== 'safe' ? 'safe' : 'default'
     try {
       await window.api.setWorkflowUnattendedElevation(workflow.id, level)
     } catch (error) {
@@ -16921,7 +16862,9 @@ function App(): React.JSX.Element {
         note: 'Duplicated from an existing workspace board.'
       })
     })
-    const sourceCards = workspaceBoardCards.filter((card) => card.boardId === board.id && !card.archived)
+    const sourceCards = workspaceBoardCards.filter(
+      (card) => card.boardId === board.id && !card.archived
+    )
     const savedCards: WorkspaceBoardCard[] = []
     for (const card of sourceCards) {
       const savedCard = await window.api.saveWorkspaceBoardCard({
@@ -17111,22 +17054,38 @@ function App(): React.JSX.Element {
 
   const chatBoardColumn = (chat: ChatRecord): WorkspaceBoardCard['columnId'] => {
     const run = chat.runs?.[chat.runs.length - 1]
-    if (runningChatIds.has(chat.appChatId) || run?.status === 'running' || run?.status === 'sleeping') {
+    if (
+      runningChatIds.has(chat.appChatId) ||
+      run?.status === 'running' ||
+      run?.status === 'sleeping'
+    ) {
       return 'running'
     }
     if (chat.activeGoal?.status === 'blocked') return 'blocked'
     if (run?.status === 'failed' || run?.status === 'cancelled') return 'needs-input'
-    if (run?.status === 'success' || run?.status === 'success_with_warnings' || run?.status === 'completed') {
+    if (
+      run?.status === 'success' ||
+      run?.status === 'success_with_warnings' ||
+      run?.status === 'completed'
+    ) {
       return 'review-ready'
     }
     return 'inbox'
   }
 
   const workflowBoardColumn = (workflow: WorkflowDefinition): WorkspaceBoardCard['columnId'] => {
-    if (workflow.activeExecutionId || workflow.lastStatus === 'running' || workflow.lastStatus === 'queued') {
+    if (
+      workflow.activeExecutionId ||
+      workflow.lastStatus === 'running' ||
+      workflow.lastStatus === 'queued'
+    ) {
       return 'running'
     }
-    if (workflow.lastStatus === 'failed' || workflow.lastStatus === 'cancelled' || workflow.failureStreak > 0) {
+    if (
+      workflow.lastStatus === 'failed' ||
+      workflow.lastStatus === 'cancelled' ||
+      workflow.failureStreak > 0
+    ) {
       return 'needs-input'
     }
     if (workflow.lastStatus === 'completed') return 'review-ready'
@@ -17134,7 +17093,12 @@ function App(): React.JSX.Element {
   }
 
   const runQueueJobBoardColumn = (job: RunQueueJob): WorkspaceBoardCard['columnId'] => {
-    if (job.status === 'queued' || job.status === 'starting' || job.status === 'active' || job.status === 'steer_promoting') {
+    if (
+      job.status === 'queued' ||
+      job.status === 'starting' ||
+      job.status === 'active' ||
+      job.status === 'steer_promoting'
+    ) {
       return 'running'
     }
     if (job.status === 'failed' || job.status === 'cancelled') return 'needs-input'
@@ -17152,7 +17116,8 @@ function App(): React.JSX.Element {
       labels: compactBoardLabels('thread', chat.provider),
       link: { kind: 'chat', id: chat.appChatId },
       columnId: chatBoardColumn(chat),
-      blockedReason: chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
+      blockedReason:
+        chat.activeGoal?.status === 'blocked' ? chat.activeGoal.blockedReason : undefined,
       provenance: createWorkspaceBoardProvenance('thread', {
         sourceId: chat.appChatId,
         sourceTitle: chat.title,
@@ -17255,10 +17220,7 @@ function App(): React.JSX.Element {
     if (!chatId) return
     const chat = chatByIdRef.current.get(chatId) || chats.find((item) => item.appChatId === chatId)
     if (chat) {
-      if (
-        chat.parentChatRelation === 'sideChat' ||
-        chat.parentChatRelation === 'subThread'
-      ) {
+      if (chat.parentChatRelation === 'sideChat' || chat.parentChatRelation === 'subThread') {
         void openLinkedChatAsMain(chat)
       } else {
         void handleSelectChat(chat)
@@ -17509,9 +17471,7 @@ function App(): React.JSX.Element {
     setChats((prev) =>
       prev.map((item) => (item.appChatId === updatedChat.appChatId ? updatedChat : item))
     )
-    setCurrentChat((prev) =>
-      prev?.appChatId === updatedChat.appChatId ? updatedChat : prev
-    )
+    setCurrentChat((prev) => (prev?.appChatId === updatedChat.appChatId ? updatedChat : prev))
     void window.api.saveChat(updatedChat).catch(() => {})
   }
 
@@ -17971,10 +17931,7 @@ function App(): React.JSX.Element {
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
-        setChatPromptDraft(
-          targetChatId || currentChatIdRef.current || currentChat?.appChatId,
-          ''
-        )
+        setChatPromptDraft(targetChatId || currentChatIdRef.current || currentChat?.appChatId, '')
       }
       return
     }
@@ -18003,10 +17960,7 @@ function App(): React.JSX.Element {
       window.alert('No active goal is set for this chat.')
       return false
     }
-    const reason = window.prompt(
-      'Why is this goal blocked?',
-      currentActiveGoal.blockedReason || ''
-    )
+    const reason = window.prompt('Why is this goal blocked?', currentActiveGoal.blockedReason || '')
     if (reason === null) return false
     return updateCurrentGoalStatus('blocked', reason.trim() || 'Blocked by user.')
   }
@@ -18707,11 +18661,7 @@ function App(): React.JSX.Element {
     const pendingRoute = findPendingApprovalRoute(requestId)
     let responseAccepted = false
     try {
-      responseAccepted = await window.api.respondAgentApproval(
-        requestId,
-        action,
-        noteForDecision
-      )
+      responseAccepted = await window.api.respondAgentApproval(requestId, action, noteForDecision)
       if (!shouldDismissAgentApproval(responseAccepted)) {
         setRawLogs((prev) => [
           ...prev,
@@ -18786,7 +18736,10 @@ function App(): React.JSX.Element {
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `TaskWraith MCP bridge status failed: ${redactLog(String(error))}` }
+        {
+          type: 'stderr',
+          content: `TaskWraith MCP bridge status failed: ${redactLog(String(error))}`
+        }
       ])
     }
   }
@@ -19012,7 +18965,10 @@ function App(): React.JSX.Element {
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
-        { type: 'stderr', content: `TaskWraith MCP bridge install failed: ${redactLog(String(error))}` }
+        {
+          type: 'stderr',
+          content: `TaskWraith MCP bridge install failed: ${redactLog(String(error))}`
+        }
       ])
     }
   }
@@ -19020,10 +18976,7 @@ function App(): React.JSX.Element {
   const handleCancel = async () => {
     if (
       currentChat &&
-      (await cancelRunningScheduledTaskForChat(
-        currentChat.appChatId,
-        'Cancelled from composer.'
-      ))
+      (await cancelRunningScheduledTaskForChat(currentChat.appChatId, 'Cancelled from composer.'))
     ) {
       setIsThinking(false)
       syncRunningState()
@@ -19172,7 +19125,15 @@ function App(): React.JSX.Element {
           chatRecord: dispatchChat || nextRun.chatRecord
         })
       })
-  }, [queuedRuns, runningChatIds, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
+  }, [
+    queuedRuns,
+    runningChatIds,
+    runQueueJobs,
+    workspaces,
+    currentWorkspace,
+    currentChat,
+    scheduledQueueWakeTick
+  ])
 
   useEffect(() => {
     try {
@@ -19344,26 +19305,23 @@ function App(): React.JSX.Element {
       chatId: currentChat.appChatId,
       workspacePath: currentChat.workspacePath
     })
-  }, [
-    captureMainTranscriptScrollState,
-    currentChat?.appChatId,
-    currentChat?.workspacePath,
-    prompt
-  ])
+  }, [captureMainTranscriptScrollState, currentChat?.appChatId, currentChat?.workspacePath, prompt])
 
   const dockChatPopoutWindow = useCallback(
     (presentation: SidePanelPresentation) => {
       if (!isChatPopoutWindow || !currentChat?.appChatId) return
       isDockingChatPopoutRef.current = true
-      void window.api.dockSideChatPopout({
-        chatId: currentChat.appChatId,
-        presentation,
-        draft: prompt,
-        scrollState: captureMainTranscriptScrollState(),
-        roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
-      }).catch(() => {
-        isDockingChatPopoutRef.current = false
-      })
+      void window.api
+        .dockSideChatPopout({
+          chatId: currentChat.appChatId,
+          presentation,
+          draft: prompt,
+          scrollState: captureMainTranscriptScrollState(),
+          roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+        })
+        .catch(() => {
+          isDockingChatPopoutRef.current = false
+        })
     },
     [captureMainTranscriptScrollState, currentChat?.appChatId, isChatPopoutWindow, prompt]
   )
@@ -19676,14 +19634,17 @@ function App(): React.JSX.Element {
           ...activeRunQueueChatIds
         ])
       ),
-    [runningChatIds, pendingAgentApprovalByChatId, chatsByAppChatIdForRunning, activeRunQueueChatIds]
+    [
+      runningChatIds,
+      pendingAgentApprovalByChatId,
+      chatsByAppChatIdForRunning,
+      activeRunQueueChatIds
+    ]
   )
   const hasCurrentChatActiveRunQueueJob = Boolean(
     currentChat?.appChatId && chatHasActiveRunQueueJob(currentChat.appChatId)
   )
-  const currentEnsembleRound = activeEnsembleRoundForComposer(
-    currentChat?.ensemble?.activeRound
-  )
+  const currentEnsembleRound = activeEnsembleRoundForComposer(currentChat?.ensemble?.activeRound)
   const isCurrentEnsembleRoundDispatchLive = Boolean(currentEnsembleRound)
   const isCurrentChatRunning = Boolean(
     currentChat?.appChatId &&
@@ -19695,9 +19656,7 @@ function App(): React.JSX.Element {
   // True while the open chat is a workflow being composed (welcome screen shows
   // the workflow controls; first send saves the WorkflowDefinition).
   const isWorkflowComposeChat =
-    workflowDraft != null &&
-    currentChat != null &&
-    workflowDraft.chatId === currentChat.appChatId
+    workflowDraft != null && currentChat != null && workflowDraft.chatId === currentChat.appChatId
   // A saved workflow whose thread is the open chat (post-create / re-opened).
   const workflowForCurrentChat = currentChat
     ? (workflowDefinitions.find((wf) => wf.template.chatId === currentChat.appChatId) ?? null)
@@ -19712,7 +19671,9 @@ function App(): React.JSX.Element {
       : null
   const isEnsembleModeEnabled = settings?.ensembleModeEnabled !== false
   const isCurrentComposerLocked = isCurrentChatRunning && !isCurrentEnsembleChat
-  const planImportGroundingWorkspace = currentChat ? getWorkspaceForChat(currentChat) : currentWorkspace
+  const planImportGroundingWorkspace = currentChat
+    ? getWorkspaceForChat(currentChat)
+    : currentWorkspace
   const planImportGroundingDisabledReason = !pendingPlanImport
     ? null
     : pendingPlanImport.contract.fileGroundings.length === 0
@@ -19747,18 +19708,18 @@ function App(): React.JSX.Element {
     // authority for hydrated/current panes and removed genuinely deleted chats.
     // Whole-chat broadcasts replace `chats` repeatedly during streaming, so
     // skip both scheduling boundaries unless roster/live-round ownership changed.
-    const snapshot = buildMultiviewEnsembleSelectionPruneSnapshot(
-      chatByIdRef.current.values()
-    )
+    const snapshot = buildMultiviewEnsembleSelectionPruneSnapshot(chatByIdRef.current.values())
     if (ensembleSelectionPruneKeyRef.current === snapshot.ownershipKey) return
     ensembleSelectionPruneKeyRef.current = snapshot.ownershipKey
-    setSelectedParticipantIdByChatId((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, previous, new Set())
-        .selectedParticipantIdByChatId
+    setSelectedParticipantIdByChatId(
+      (previous) =>
+        pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, previous, new Set())
+          .selectedParticipantIdByChatId
     )
-    setUserOverrodeSelectionRoundKeys((previous) =>
-      pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, {}, previous)
-        .userOverrodeSelectionRoundKeys
+    setUserOverrodeSelectionRoundKeys(
+      (previous) =>
+        pruneMultiviewEnsembleSelectionOwnership(snapshot.chats, {}, previous)
+          .userOverrodeSelectionRoundKeys
     )
   }, [chats, currentChat])
   const setSelectedParticipantForChat = useCallback(
@@ -19801,9 +19762,7 @@ function App(): React.JSX.Element {
     if (!isCurrentEnsembleChat || ensembleEnabledParticipantsForCurrent.length === 0) {
       return undefined
     }
-    return buildEnsembleProviderBlendStyle(
-      ensembleEnabledParticipantsForCurrent
-    ) as CSSProperties
+    return buildEnsembleProviderBlendStyle(ensembleEnabledParticipantsForCurrent) as CSSProperties
   }, [isCurrentEnsembleChat, ensembleEnabledParticipantsForCurrent])
   const chatOwnedSelectedParticipantId = currentChat
     ? resolveSlashParticipantForChat(currentChat)?.id || null
@@ -19847,7 +19806,9 @@ function App(): React.JSX.Element {
     runtimePickerScope.provider,
     runtimePickerScope.selectedRuntimeProfileId
   )
-  currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(runtimePickerScope.provider)
+  currentProviderRuntimeProfiles = runtimeProfilesForProviderAndCurrentScope(
+    runtimePickerScope.provider
+  )
   const currentEnsembleOrchestrationMode: EnsembleOrchestrationMode =
     currentChat?.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeEnsembleOrchestrationMode: EnsembleOrchestrationMode =
@@ -19893,8 +19854,9 @@ function App(): React.JSX.Element {
       )
     const pressure = estimateWorstOllamaEnsembleUiPressure({
       configuredContextChars: currentChat.ensemble.ensembleContextChars,
-      participantCount: currentChat.ensemble.participants.filter((participant) => participant.enabled)
-        .length,
+      participantCount: currentChat.ensemble.participants.filter(
+        (participant) => participant.enabled
+      ).length,
       ollamaParticipants: ollamaParticipants.map((participant) => ({
         modelId: participant.model,
         ollamaContextLength: installedOllamaModels.find(
@@ -19913,15 +19875,18 @@ function App(): React.JSX.Element {
         (contextLength) => contextLength < 128 * 1024
       )
     }
-  }, [isCurrentEnsembleChat, currentChat?.ensemble, currentChat?.scope, agentStatusByProvider.ollama?.models])
+  }, [
+    isCurrentEnsembleChat,
+    currentChat?.ensemble,
+    currentChat?.scope,
+    agentStatusByProvider.ollama?.models
+  ])
   const currentEnsembleContinuationHops = currentEnsembleRound?.continuationHops || 0
   // Prefer chat-level cap so the hops meter updates as soon as the user
   // saves — an in-flight round still carries its own snapshot, but the
   // composer chip should reflect the user's latest setting immediately.
   const currentEnsembleMaxContinuationHops =
-    currentChat?.ensemble?.maxContinuationHops ??
-    currentEnsembleRound?.maxContinuationHops ??
-    6
+    currentChat?.ensemble?.maxContinuationHops ?? currentEnsembleRound?.maxContinuationHops ?? 6
   const isCurrentEnsembleRoundRunning = Boolean(currentEnsembleRound)
   const queuedSeatPatchKeys = useMemo(
     () =>
@@ -19956,12 +19921,15 @@ function App(): React.JSX.Element {
     },
     [queuedSeatPatchKeys]
   )
-  const hasProviderOrModelSeatPatch = useCallback((patch: Partial<EnsembleParticipant>): boolean => {
-    return (
-      Object.prototype.hasOwnProperty.call(patch, 'provider') ||
-      Object.prototype.hasOwnProperty.call(patch, 'model')
-    )
-  }, [])
+  const hasProviderOrModelSeatPatch = useCallback(
+    (patch: Partial<EnsembleParticipant>): boolean => {
+      return (
+        Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+        Object.prototype.hasOwnProperty.call(patch, 'model')
+      )
+    },
+    []
+  )
   const applyChatSnapshot = useCallback((nextChat: ChatRecord): void => {
     chatByIdRef.current.set(nextChat.appChatId, nextChat)
     setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
@@ -20059,13 +20027,12 @@ function App(): React.JSX.Element {
       ) {
         return
       }
-      const materializedPreset = materializeParticipantsFromPresetWithBossman(
-        preset.participants
-      )
+      const materializedPreset = materializeParticipantsFromPresetWithBossman(preset.participants)
       const participants = hydrateParticipantsWithPooledAgentIdentity(
         materializedPreset.participants
       )
-      const firstEnabled = participants.find((participant) => participant.enabled) || participants[0]
+      const firstEnabled =
+        participants.find((participant) => participant.enabled) || participants[0]
       const nextMaxParticipants = Math.min(
         MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
@@ -20095,9 +20062,7 @@ function App(): React.JSX.Element {
             concurrentModeEnabled:
               typeof preset.concurrentModeEnabled === 'boolean'
                 ? preset.concurrentModeEnabled
-                : ensembleFanoutPolicyEnabled(
-                    normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)
-                  ),
+                : ensembleFanoutPolicyEnabled(normalizeEnsembleFanoutPolicy(preset.fanoutPolicy)),
             ...(typeof preset.ensembleContextChars === 'number'
               ? { ensembleContextChars: preset.ensembleContextChars }
               : {}),
@@ -20287,12 +20252,7 @@ function App(): React.JSX.Element {
       if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
       patchEnsembleParticipantForChat(currentChat.appChatId, selectedParticipant.id, patch)
     },
-    [
-      isCurrentEnsembleChat,
-      patchEnsembleParticipantForChat,
-      selectedParticipant,
-      currentChat
-    ]
+    [isCurrentEnsembleChat, patchEnsembleParticipantForChat, selectedParticipant, currentChat]
   )
   const patchEnsembleParticipantById = useCallback(
     (participantId: string, patch: Partial<EnsembleParticipant>) => {
@@ -20327,10 +20287,7 @@ function App(): React.JSX.Element {
   )
   const applyEnsemblePermissionsToAllParticipants = useCallback(() => {
     if (!isCurrentEnsembleChat || !selectedParticipant || !currentChat?.ensemble) return
-    applyEnsemblePermissionsToAllParticipantsForChat(
-      currentChat.appChatId,
-      selectedParticipant.id
-    )
+    applyEnsemblePermissionsToAllParticipantsForChat(currentChat.appChatId, selectedParticipant.id)
   }, [
     applyEnsemblePermissionsToAllParticipantsForChat,
     isCurrentEnsembleChat,
@@ -20548,100 +20505,101 @@ function App(): React.JSX.Element {
   // apply the matching `.provider-{name}` class to the thinking-indicator's
   // message-meta — same provider-tint treatment as the assistant labels
   // in the rest of the transcript.
-  const { thinkingProviderLabel, thinkingProvider, thinkingProviderClass, thinkingModelBadge } = (() => {
-    const activeRound = currentChat?.ensemble?.activeRound
-    if (activeRound?.activeParticipantId) {
-      const participant = currentChat?.ensemble?.participants.find(
-        (p) => p.id === activeRound.activeParticipantId
-      )
-      if (participant) {
-        const baseModelName = participant.model
-          ? shortModelName(participant.provider, '', participant.model)
-          : null
-        // Mirror the assistant-header treatment in `formatAssistantMessageLabel`:
-        // append the participant's reasoning effort / thinking flag so
-        // the in-flight indicator reads "5.5 Extra High" / "K2.7 Coding
-        // Thinking" — matching the composer chip the user picked.
-        // `reasoningDisplayLabel` short-circuits to '' for providers
-        // without a reasoning axis or when effort is 'off'.
-        const thinkingReasoningSuffix = baseModelName
-          ? reasoningDisplayLabel({
-              provider: participant.provider,
-              composerStyle: 'default',
-              modelId: participant.model || '',
-              modelLabel: '',
-              codexReasoningEffort:
-                participant.provider === 'codex' ? participant.reasoningEffort : undefined,
-              claudeReasoningEffort:
-                participant.provider === 'claude' ? participant.reasoningEffort : undefined,
-              kimiReasoningEffort:
-                participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
-              kimiThinkingEnabled:
-                participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
-            })
-          : ''
-        const providerPresentation = resolveWorkingIndicatorProviderPresentation(
-          participant.provider,
-          participant.model
+  const { thinkingProviderLabel, thinkingProvider, thinkingProviderClass, thinkingModelBadge } =
+    (() => {
+      const activeRound = currentChat?.ensemble?.activeRound
+      if (activeRound?.activeParticipantId) {
+        const participant = currentChat?.ensemble?.participants.find(
+          (p) => p.id === activeRound.activeParticipantId
         )
-        const workingModelBadge = providerPresentation.modelBadge || baseModelName
-        return {
-          thinkingProviderLabel: providerPresentation.providerLabel,
-          thinkingProvider: participant.provider as ProviderId | null,
-          thinkingProviderClass: providerPresentation.providerClass,
-          // Show the short model name alongside the "Codex Thinking…"
-          // chip so the user can see at a glance which configured
-          // model is actually producing the in-flight output. Empty
-          // for participants without a custom model (legacy chats).
-          thinkingModelBadge: workingModelBadge
-            ? thinkingReasoningSuffix
-              ? `${workingModelBadge} ${thinkingReasoningSuffix}`
-              : workingModelBadge
+        if (participant) {
+          const baseModelName = participant.model
+            ? shortModelName(participant.provider, '', participant.model)
             : null
+          // Mirror the assistant-header treatment in `formatAssistantMessageLabel`:
+          // append the participant's reasoning effort / thinking flag so
+          // the in-flight indicator reads "5.5 Extra High" / "K2.7 Coding
+          // Thinking" — matching the composer chip the user picked.
+          // `reasoningDisplayLabel` short-circuits to '' for providers
+          // without a reasoning axis or when effort is 'off'.
+          const thinkingReasoningSuffix = baseModelName
+            ? reasoningDisplayLabel({
+                provider: participant.provider,
+                composerStyle: 'default',
+                modelId: participant.model || '',
+                modelLabel: '',
+                codexReasoningEffort:
+                  participant.provider === 'codex' ? participant.reasoningEffort : undefined,
+                claudeReasoningEffort:
+                  participant.provider === 'claude' ? participant.reasoningEffort : undefined,
+                kimiReasoningEffort:
+                  participant.provider === 'kimi' ? participant.reasoningEffort : undefined,
+                kimiThinkingEnabled:
+                  participant.provider === 'kimi' ? participant.thinkingEnabled : undefined
+              })
+            : ''
+          const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+            participant.provider,
+            participant.model
+          )
+          const workingModelBadge = providerPresentation.modelBadge || baseModelName
+          return {
+            thinkingProviderLabel: providerPresentation.providerLabel,
+            thinkingProvider: participant.provider as ProviderId | null,
+            thinkingProviderClass: providerPresentation.providerClass,
+            // Show the short model name alongside the "Codex Thinking…"
+            // chip so the user can see at a glance which configured
+            // model is actually producing the in-flight output. Empty
+            // for participants without a custom model (legacy chats).
+            thinkingModelBadge: workingModelBadge
+              ? thinkingReasoningSuffix
+                ? `${workingModelBadge} ${thinkingReasoningSuffix}`
+                : workingModelBadge
+              : null
+          }
         }
       }
-    }
-    // Ensemble fallback: when `activeParticipantId` is briefly cleared
-    // (between one participant finalising and the next being seeded),
-    // do NOT fall back to the chat's base provider. That field is the
-    // user's last-active provider when the ensemble chat was created
-    // (commonly 'codex'), so the indicator would show "Codex
-    // Thinking…" for ~50-200ms even when Kimi or Gemini is about to
-    // speak — confusing and wrong. Show a neutral "Ensemble" label
-    // with no provider tint instead.
-    if (currentChat?.chatKind === 'ensemble') {
+      // Ensemble fallback: when `activeParticipantId` is briefly cleared
+      // (between one participant finalising and the next being seeded),
+      // do NOT fall back to the chat's base provider. That field is the
+      // user's last-active provider when the ensemble chat was created
+      // (commonly 'codex'), so the indicator would show "Codex
+      // Thinking…" for ~50-200ms even when Kimi or Gemini is about to
+      // speak — confusing and wrong. Show a neutral "Ensemble" label
+      // with no provider tint instead.
+      if (currentChat?.chatKind === 'ensemble') {
+        return {
+          thinkingProviderLabel: 'Ensemble',
+          thinkingProvider: null as ProviderId | null,
+          thinkingProviderClass: null as string | null,
+          thinkingModelBadge: null as string | null
+        }
+      }
+      if (currentProvider === 'ollama' || currentProvider === 'pi') {
+        const latestRun = currentChat?.runs?.[currentChat.runs.length - 1]
+        const model =
+          latestRun?.actualModel ||
+          latestRun?.requestedModel ||
+          (selectedModelType === 'custom' ? customModel : selectedModelType) ||
+          (currentProvider === 'pi' ? PI_DEFAULT_MODEL_WIRE_ID : ollamaDefaultModel)
+        const providerPresentation = resolveWorkingIndicatorProviderPresentation(
+          currentProvider,
+          model
+        )
+        return {
+          thinkingProviderLabel: providerPresentation.providerLabel,
+          thinkingProvider: currentProvider as ProviderId | null,
+          thinkingProviderClass: providerPresentation.providerClass,
+          thinkingModelBadge: providerPresentation.modelBadge
+        }
+      }
       return {
-        thinkingProviderLabel: 'Ensemble',
-        thinkingProvider: null as ProviderId | null,
-        thinkingProviderClass: null as string | null,
+        thinkingProviderLabel: currentProviderLabel,
+        thinkingProvider: currentProvider as ProviderId | null,
+        thinkingProviderClass: currentProvider as string | null,
         thinkingModelBadge: null as string | null
       }
-    }
-    if (currentProvider === 'ollama' || currentProvider === 'pi') {
-      const latestRun = currentChat?.runs?.[currentChat.runs.length - 1]
-      const model =
-        latestRun?.actualModel ||
-        latestRun?.requestedModel ||
-        (selectedModelType === 'custom' ? customModel : selectedModelType) ||
-        (currentProvider === 'pi' ? PI_DEFAULT_MODEL_WIRE_ID : ollamaDefaultModel)
-      const providerPresentation = resolveWorkingIndicatorProviderPresentation(
-        currentProvider,
-        model
-      )
-      return {
-        thinkingProviderLabel: providerPresentation.providerLabel,
-        thinkingProvider: currentProvider as ProviderId | null,
-        thinkingProviderClass: providerPresentation.providerClass,
-        thinkingModelBadge: providerPresentation.modelBadge
-      }
-    }
-    return {
-      thinkingProviderLabel: currentProviderLabel,
-      thinkingProvider: currentProvider as ProviderId | null,
-      thinkingProviderClass: currentProvider as string | null,
-      thinkingModelBadge: null as string | null
-    }
-  })()
+    })()
   // Slice C (revised): clear the "Thinking…" indicator when the ensemble
   // round has already finished. Otherwise the indicator persists after the
   // last participant yields and the user sees stale "Codex Thinking…" even
@@ -20660,9 +20618,9 @@ function App(): React.JSX.Element {
   )
   const isSideChatRunning = Boolean(
     sideChat?.appChatId &&
-      (runningChatIds.has(sideChat.appChatId) ||
-        hasSideChatActiveRunQueueJob ||
-        isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound))
+    (runningChatIds.has(sideChat.appChatId) ||
+      hasSideChatActiveRunQueueJob ||
+      isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound))
   )
   const sideChatStatusLabel =
     sideChat && getSideChatMode(sideChat) === 'fanOut'
@@ -20688,20 +20646,18 @@ function App(): React.JSX.Element {
     sideThinkingModel
   )
   const sideThinkingProviderLabel =
-    sideChat?.chatKind === 'ensemble'
-      ? 'Ensemble'
-      : sideThinkingPresentation.providerLabel
+    sideChat?.chatKind === 'ensemble' ? 'Ensemble' : sideThinkingPresentation.providerLabel
   const sideThinkingProvider = sideChat?.chatKind === 'ensemble' ? null : sideProvider
   const sideThinkingProviderClass =
-    sideChat?.chatKind === 'ensemble'
-      ? null
-      : sideThinkingPresentation.providerClass
+    sideChat?.chatKind === 'ensemble' ? null : sideThinkingPresentation.providerClass
   const sideThinkingModelBadge =
     sideChat?.chatKind === 'ensemble' ? null : sideThinkingPresentation.modelBadge
   const sidePendingProviderChange =
     sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
   const sideComposerSourceChat =
-    sideChat && sidePendingProviderChange ? applyProviderChange(sideChat, sidePendingProviderChange) : sideChat
+    sideChat && sidePendingProviderChange
+      ? applyProviderChange(sideChat, sidePendingProviderChange)
+      : sideChat
   const sideComposerSelection = sideComposerSourceChat
     ? getChatComposerSelection(
         sideComposerSourceChat,
@@ -20714,8 +20670,8 @@ function App(): React.JSX.Element {
     (sideComposerSourceChat ? getChatProvider(sideComposerSourceChat) : sideProvider)
   const sideCanRun = Boolean(
     sideChat &&
-      isRunnableProvider(sideComposerProvider) &&
-      (getChatScope(sideChat) === 'global' || sideWorkspace)
+    isRunnableProvider(sideComposerProvider) &&
+    (getChatScope(sideChat) === 'global' || sideWorkspace)
   )
   const sideComposerModelOptionsRaw = getProviderModelOptions(sideComposerProvider)
   const sideComposerSelectedModel = sideComposerSelection?.selectedModelType
@@ -20796,9 +20752,9 @@ function App(): React.JSX.Element {
     const modelOption = sideComposerModelOptionsRaw.find(
       (model) => model.id === sideComposerSelectedModel
     )
-    sideComposerReasoningOptions = (modelOption?.supportedReasoningEfforts || [
-      { reasoningEffort: 'on' }
-    ]).map((option) => ({
+    sideComposerReasoningOptions = (
+      modelOption?.supportedReasoningEfforts || [{ reasoningEffort: 'on' }]
+    ).map((option) => ({
       value: option.reasoningEffort,
       label:
         option.reasoningEffort === 'on'
@@ -20906,14 +20862,15 @@ function App(): React.JSX.Element {
             if (!grant || grant.provider !== sideComposerProvider || !grant.workspacePath) {
               return false
             }
-            return grant.workspacePath.replace(/\/+$/, '') === sideGrantWorkspacePath.replace(/\/+$/, '')
+            return (
+              grant.workspacePath.replace(/\/+$/, '') === sideGrantWorkspacePath.replace(/\/+$/, '')
+            )
           })
           .map((grant) => grant.service)
       : []
   )
-  const sideGrantServices = sideChat && !sideIsGlobalChat && sideWorkspace
-    ? WORKSPACE_POLICY_SERVICES
-    : []
+  const sideGrantServices =
+    sideChat && !sideIsGlobalChat && sideWorkspace ? WORKSPACE_POLICY_SERVICES : []
   const isSideChatProviderLocked = Boolean(
     sideChat && (isSideChatRunning || Boolean(sidePendingProviderChange))
   )
@@ -20933,11 +20890,7 @@ function App(): React.JSX.Element {
   }
   const handleSideProviderChange = (provider: ProviderId, model?: string): void => {
     const pendingProvider = sidePendingProviderChange?.provider || sideComposerProvider
-    if (
-      !sideChat ||
-      isSideEnsembleComposerLocked ||
-      provider === pendingProvider
-    ) {
+    if (!sideChat || isSideEnsembleComposerLocked || provider === pendingProvider) {
       return
     }
     const { change, nextModel, nextRuntimeProfileId } = buildQueuedProviderChange(provider, {
@@ -21130,9 +21083,7 @@ function App(): React.JSX.Element {
     if (activeRunIds.size === 0 && sideRun?.runId) {
       activeRunIds.add(sideRun.runId)
     }
-    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(
-      sideChat.ensemble?.activeRound
-    )
+    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(sideChat.ensemble?.activeRound)
       ? Date.parse(sideChat.ensemble!.activeRound!.startedAt || '')
       : Number.NaN
     let liveChars = 0
@@ -21153,7 +21104,8 @@ function App(): React.JSX.Element {
   }, [isSideChatRunning, sideChat, sideRun?.runId])
   const sideThreadTokenTallyHasValue =
     sideChatTokenTally.totalTokens > 0 || sideLiveRunOutputTokens > 0
-  const sideContextModelId = sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
+  const sideContextModelId =
+    sideRun?.actualModel || sideRun?.requestedModel || sideComposerSelectedModel
   const sideDualComposerTelemetry = Boolean(sideChat && sideChat.chatKind === 'ensemble')
   const composerRunTimecodeStartedAt = isCurrentChatRunning
     ? currentEnsembleRound?.startedAt || currentRun?.startedAt || null
@@ -21237,9 +21189,7 @@ function App(): React.JSX.Element {
     [installedOllamaModelsForContext]
   )
   const ollamaLiveContextLength =
-    currentProvider === 'ollama'
-      ? resolveLiveOllamaContextLength(contextModelId)
-      : undefined
+    currentProvider === 'ollama' ? resolveLiveOllamaContextLength(contextModelId) : undefined
   const contextWindowSize = resolveContextWindow(
     isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
     contextModelId,
@@ -21335,9 +21285,9 @@ function App(): React.JSX.Element {
       const sessionId = chat.linkedProviderSessionId
       const kimiNativeSession = Boolean(
         provider === 'kimi' &&
-          sessionId?.startsWith('session_') &&
-          chat.providerMetadata?.kimiAcpNativeSession === true &&
-          isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
+        sessionId?.startsWith('session_') &&
+        chat.providerMetadata?.kimiAcpNativeSession === true &&
+        isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
       )
       if (provider === 'codex') {
         if (!sessionId) return
@@ -21382,7 +21332,9 @@ function App(): React.JSX.Element {
         if (!chat.linkedProviderSessionId?.startsWith('api://')) return
         const transcript = chat.messages || []
         if (!transcript.some((m) => m.role === 'assistant')) return
-        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+        if (
+          [...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId)
+        )
           return
         const preTokens = currentContextTokens(chat.runs || [], {
           liveOutputTokens: 0,
@@ -21442,16 +21394,16 @@ function App(): React.JSX.Element {
         // summarize turn, captured on exit by finalizeHostCompactionRun. Legacy
         // Kimi summarizes the bounded transcript projection carried here.
         if (!(chat.messages || []).some((m) => m.role === 'assistant')) return
-        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+        if (
+          [...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId)
+        )
           return
         const preTokens = currentContextTokens(chat.runs || [], {
           liveOutputTokens: 0,
           isRunning: false
         })
         const previousSummary = chat.contextCompactionSummary
-        const previousSummaryText = previousSummary?.text?.trim()
-          ? previousSummary.text
-          : undefined
+        const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
         const contextBudget = resolveContextBudget(provider)
         const projection = buildConversationCompactionProjection(
           chat.messages || [],
@@ -21684,9 +21636,7 @@ function App(): React.JSX.Element {
         setExternalGitSnapshotsByOwner(
           Object.fromEntries(entries.map(([ownerKey, snapshot]) => [ownerKey, snapshot]))
         )
-        setExternalPrByOwner(
-          Object.fromEntries(entries.map(([ownerKey, , pr]) => [ownerKey, pr]))
-        )
+        setExternalPrByOwner(Object.fromEntries(entries.map(([ownerKey, , pr]) => [ownerKey, pr])))
       }
     }
     void fetchAll()
@@ -21822,7 +21772,11 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     const paths = multiviewPaneWorkspacePathsKey ? multiviewPaneWorkspacePathsKey.split('\n') : []
-    if (paths.length === 0 || !hasGitSnapshotSubscriptionApi() || !window.api.gitInvalidateSnapshot) {
+    if (
+      paths.length === 0 ||
+      !hasGitSnapshotSubscriptionApi() ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return undefined
     }
     const invalidateAll = (): void => {
@@ -21860,7 +21814,7 @@ function App(): React.JSX.Element {
       : null
   const focusedPrimaryGitSnapshot =
     isMultiviewSplit && currentGitPresentationPath
-      ? gitSnapshotByWorkspace[currentGitPresentationPath] ?? null
+      ? (gitSnapshotByWorkspace[currentGitPresentationPath] ?? null)
       : singlePanePrimaryGitSnapshot
   const focusedCurrentWorkspace = isMultiviewSplit ? currentChatWorkspace : currentWorkspace
   const setFocusedPrimaryGitSnapshot = useCallback(
@@ -21918,29 +21872,23 @@ function App(): React.JSX.Element {
     setChatPromptDraft
   })
 
-  const currentExternalWorkspaceState = useMemo(
-    () => {
-      const gitSnapshotsByPath = projectExternalWorkspaceOwnerCache(
-        externalPathGrants,
-        externalGitSnapshotsByOwner
-      )
-      const prByPath = projectExternalWorkspaceOwnerCache(
-        externalPathGrants,
-        externalPrByOwner
-      )
-      return deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
-        repoMetadataByPath: externalPathRepoMetadataByPath,
-        gitSnapshotsByPath,
-        prByPath
-      })
-    },
-    [
-      externalGitSnapshotsByOwner,
+  const currentExternalWorkspaceState = useMemo(() => {
+    const gitSnapshotsByPath = projectExternalWorkspaceOwnerCache(
       externalPathGrants,
-      externalPathRepoMetadataByPath,
-      externalPrByOwner
-    ]
-  )
+      externalGitSnapshotsByOwner
+    )
+    const prByPath = projectExternalWorkspaceOwnerCache(externalPathGrants, externalPrByOwner)
+    return deriveExternalWorkspaceStateFromGrants(externalPathGrants, {
+      repoMetadataByPath: externalPathRepoMetadataByPath,
+      gitSnapshotsByPath,
+      prByPath
+    })
+  }, [
+    externalGitSnapshotsByOwner,
+    externalPathGrants,
+    externalPathRepoMetadataByPath,
+    externalPrByOwner
+  ])
 
   const currentProviderModelOptions = getProviderModelOptions(currentProvider)
   const composerTokenTally = chatTokenTally
@@ -21957,10 +21905,7 @@ function App(): React.JSX.Element {
     const options: SideChatTypePickerOption[] = [
       {
         id: 'isolated-side-chat',
-        label:
-          defaultSideChatMode === 'ensembleClone'
-            ? 'Side Ensemble'
-            : 'Side Chat',
+        label: defaultSideChatMode === 'ensembleClone' ? 'Side Ensemble' : 'Side Chat',
         description:
           defaultSideChatMode === 'ensembleClone'
             ? "Clone this ensemble's participants into an isolated side chat"
@@ -22023,8 +21968,7 @@ function App(): React.JSX.Element {
     (job) => job.status === 'queued' && !job.executionGraph
   ).length
   const currentChatQueuedRunCount = runQueueJobs.filter(
-    (job) =>
-      job.chatId === currentChat?.appChatId && job.status === 'queued' && !job.executionGraph
+    (job) => job.chatId === currentChat?.appChatId && job.status === 'queued' && !job.executionGraph
   ).length
   const currentExecutionRuns = useMemo(
     () =>
@@ -22032,7 +21976,7 @@ function App(): React.JSX.Element {
         (currentComposerChatId ? executionRunIdsByChatId[currentComposerChatId] || [] : [])
           .map((executionId) => executionRunsById[executionId])
           .filter((run): run is ExecutionRunProjection => Boolean(run))
-    ),
+      ),
     [currentComposerChatId, executionRunIdsByChatId, executionRunsById]
   )
   const currentPreferredExecutionId = currentComposerChatId
@@ -22041,8 +21985,7 @@ function App(): React.JSX.Element {
   const activeExecutionRun = useMemo(() => {
     return (
       currentExecutionRuns.find(
-        (run) =>
-          run.executionId === currentPreferredExecutionId && !isTerminalExecutionRun(run)
+        (run) => run.executionId === currentPreferredExecutionId && !isTerminalExecutionRun(run)
       ) ||
       currentExecutionRuns.find((run) => !isTerminalExecutionRun(run)) ||
       null
@@ -22068,7 +22011,9 @@ function App(): React.JSX.Element {
     [activeExecutionRun?.executionId, currentExecutionRuns]
   )
   const executionStackViewForChat = useCallback(
-    (chatId: string): {
+    (
+      chatId: string
+    ): {
       projection: ExecutionGraphProjection | null
       history: { runId: string; title: string; statusLabel: string; updatedAt?: string }[]
     } => {
@@ -22079,9 +22024,7 @@ function App(): React.JSX.Element {
       )
       const preferredId = preferredExecutionByChatIdRef.current[chatId]
       const activeRun =
-        runs.find(
-          (run) => run.executionId === preferredId && !isTerminalExecutionRun(run)
-        ) ||
+        runs.find((run) => run.executionId === preferredId && !isTerminalExecutionRun(run)) ||
         runs.find((run) => !isTerminalExecutionRun(run)) ||
         null
       return {
@@ -22169,9 +22112,7 @@ function App(): React.JSX.Element {
         .catch((error) => {
           appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
             type: 'stderr',
-            content: `Could not save graph: ${redactLog(
-              stripElectronInvokeErrorFraming(error)
-            )}`
+            content: `Could not save graph: ${redactLog(stripElectronInvokeErrorFraming(error))}`
           })
         })
         .finally(() => {
@@ -22418,9 +22359,7 @@ function App(): React.JSX.Element {
             }
             setChatPromptDraft(chat.appChatId, result.prompt || target)
             const restoredAttachments = mapQueuedAttachmentsForComposer(
-              result.imageAttachments?.length
-                ? result.imageAttachments
-                : localEntryAttachments,
+              result.imageAttachments?.length ? result.imageAttachments : localEntryAttachments,
               `ensemble-edit-${chat.appChatId}`
             )
             if (restoredAttachments.length > 0) {
@@ -22448,8 +22387,7 @@ function App(): React.JSX.Element {
               type: 'stderr',
               content: `Queued Ensemble prompt could not be edited: ${redactLog(String(error))}`
             })
-          }
-        )
+          })
         return
       }
       const job = runQueueJobsRef.current.find(
@@ -22461,8 +22399,7 @@ function App(): React.JSX.Element {
       if (!match && !job) return
       const recordedOwnerChatId = match?.chatRecord?.appChatId || job?.chatId || null
       if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
-      const targetChatId =
-        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
+      const targetChatId = targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       if (targetChatId) {
         setChatPromptDraft(
           targetChatId,
@@ -22474,18 +22411,13 @@ function App(): React.JSX.Element {
             ''
         )
         const restoredAttachments = mapQueuedAttachmentsForComposer(
-          match?.imageAttachments?.length
-            ? match.imageAttachments
-            : job?.request?.imageAttachments,
+          match?.imageAttachments?.length ? match.imageAttachments : job?.request?.imageAttachments,
           `queue-edit-${entryId}`
         )
         if (restoredAttachments.length > 0) {
           setImageAttachmentsByChatId((prev) => ({
             ...prev,
-            [targetChatId]: mergeImageAttachments(
-              prev[targetChatId] || [],
-              restoredAttachments
-            )
+            [targetChatId]: mergeImageAttachments(prev[targetChatId] || [], restoredAttachments)
           }))
         }
         const discordSelection =
@@ -22499,15 +22431,11 @@ function App(): React.JSX.Element {
       }
       const scheduledRunAt = match?.scheduledRunAt || job?.request?.scheduledRunAt
       if (scheduledRunAt && targetChatId) {
-        setScheduleRunAtForChat(
-          targetChatId,
-          toDateTimeLocalValue(new Date(scheduledRunAt))
-        )
+        setScheduleRunAtForChat(targetChatId, toDateTimeLocalValue(new Date(scheduledRunAt)))
       }
       setQueuedRuns((prev) =>
         prev.filter(
-          (request) =>
-            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
+          (request) => queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
       const runId = job?.runId || match?.appRunId
@@ -22580,8 +22508,7 @@ function App(): React.JSX.Element {
               type: 'stderr',
               content: `Queued Ensemble prompt could not be removed: ${redactLog(String(error))}`
             })
-          }
-        )
+          })
         return
       }
       const job = runQueueJobsRef.current.find(
@@ -22595,8 +22522,7 @@ function App(): React.JSX.Element {
       if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
       setQueuedRuns((prev) =>
         prev.filter(
-          (request) =>
-            queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
+          (request) => queuedRunFallbackId(request) !== entryId && request.appRunId !== job?.runId
         )
       )
       const runId = job?.runId || match?.appRunId
@@ -22608,11 +22534,7 @@ function App(): React.JSX.Element {
           .catch(() => {})
       }
     },
-    [
-      currentChat,
-      updateEnsembleQueuedPromptsForRound,
-      workspaces
-    ]
+    [currentChat, updateEnsembleQueuedPromptsForRound, workspaces]
   )
   // Blackboard: consume the queued ensemble prompt into a user-authored
   // blackboard note (session scope) WITHOUT interrupting the live round —
@@ -22654,19 +22576,11 @@ function App(): React.JSX.Element {
           // Optimistic queue splice mirrors handleDeleteQueuedMessage; the
           // new blackboard entry itself arrives via the chat-updated
           // broadcast from the main-side save.
-          updateEnsembleQueuedPromptsForRound(
-            chat.appChatId,
-            queuedRoundId,
-            (latestQueue) => {
-              const latestIndex =
-                latestQueue[idx] === target ? idx : latestQueue.indexOf(target)
-              if (latestIndex < 0) return latestQueue
-              return [
-                ...latestQueue.slice(0, latestIndex),
-                ...latestQueue.slice(latestIndex + 1)
-              ]
-            }
-          )
+          updateEnsembleQueuedPromptsForRound(chat.appChatId, queuedRoundId, (latestQueue) => {
+            const latestIndex = latestQueue[idx] === target ? idx : latestQueue.indexOf(target)
+            if (latestIndex < 0) return latestQueue
+            return [...latestQueue.slice(0, latestIndex), ...latestQueue.slice(latestIndex + 1)]
+          })
         })
         .catch((error) => {
           appendThreadRawLog(chat.appChatId, {
@@ -22681,7 +22595,7 @@ function App(): React.JSX.Element {
   // dispatch this queued request immediately. Same gentle handoff
   // as the composer's Steer button — no restart of unrelated state.
   const handleSteerToQueuedMessage = useCallback(
-      async (entryId: string, targetChat?: ChatRecord | null) => {
+    async (entryId: string, targetChat?: ChatRecord | null) => {
       const appendFailure = (message: string, context?: string): void => {
         const targetChatId = targetChat?.appChatId || currentChat?.appChatId
         const content = context ? `${message}: ${context}` : message
@@ -22690,7 +22604,10 @@ function App(): React.JSX.Element {
           appendThreadRawLog(targetChatId, { type: 'stderr', content })
           return
         }
-        setRawLogs((previous) => [...previous, { type: 'stderr', content, timestamp: new Date().toISOString() }])
+        setRawLogs((previous) => [
+          ...previous,
+          { type: 'stderr', content, timestamp: new Date().toISOString() }
+        ])
       }
 
       // Ensemble-queued: cancel the current round and dispatch the
@@ -22715,10 +22632,10 @@ function App(): React.JSX.Element {
         if (ensembleSteerInFlightChatIdsRef.current.has(ensembleChatId)) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
-          ? round.queuedPrompts
-          : round.queuedPrompt
-            ? [round.queuedPrompt]
-            : []
+            ? round.queuedPrompts
+            : round.queuedPrompt
+              ? [round.queuedPrompt]
+              : []
         const prompt = currentQueue[idx]
         if (!prompt) return
         const fanoutPolicy = normalizeEnsembleFanoutPolicy(
@@ -22770,8 +22687,7 @@ function App(): React.JSX.Element {
       if (!match) return
       const recordedOwnerChatId = match.chatRecord?.appChatId || job?.chatId || null
       if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
-      const targetChatId =
-        targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
+      const targetChatId = targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       const targetRecord =
         (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
         targetChat ||
@@ -22828,8 +22744,7 @@ function App(): React.JSX.Element {
         )
         return
       }
-      const promotionPermitted =
-        promotion.ok === true || promotion.kind === 'dispatch-permission'
+      const promotionPermitted = promotion.ok === true || promotion.kind === 'dispatch-permission'
 
       if (!promotionPermitted) {
         clearQueuedSteerSuppression()
@@ -22883,7 +22798,9 @@ function App(): React.JSX.Element {
       // Remove from queue once steering is authorized, so we don't
       // double-dispatch this row while cancellation is in flight.
       setQueuedRuns((prev) =>
-        prev.filter((request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId)
+        prev.filter(
+          (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
+        )
       )
 
       if (!targetChatId || !cancelTargetRunId) {
@@ -22910,7 +22827,8 @@ function App(): React.JSX.Element {
 
       appendThreadRawLog(targetChatId, {
         type: 'info',
-        content: 'Steer requested from queued message; waiting for active run to terminate before dispatch.'
+        content:
+          'Steer requested from queued message; waiting for active run to terminate before dispatch.'
       })
 
       if (promotion.cancelRequested !== true) {
@@ -22977,7 +22895,9 @@ function App(): React.JSX.Element {
         // so resolve from refs before the run dispatch.
         const currentTarget =
           (targetChatId && chatByIdRef.current.get(targetChatId)) || targetRecord || null
-        const liveRequest = currentTarget ? { ...dispatchRequest, chatRecord: currentTarget } : dispatchRequest
+        const liveRequest = currentTarget
+          ? { ...dispatchRequest, chatRecord: currentTarget }
+          : dispatchRequest
         void executeRunRef.current(liveRequest)
         clearQueuedSteerInFlight()
         window.setTimeout(() => {
@@ -23027,7 +22947,11 @@ function App(): React.JSX.Element {
       })
       window.setTimeout(() => {
         const latest = steerStateRef.current
-        if (latest.phase === 'failed' && latest.chatId === targetChatId && latest.reason === 'timeout') {
+        if (
+          latest.phase === 'failed' &&
+          latest.chatId === targetChatId &&
+          latest.reason === 'timeout'
+        ) {
           setSteerState(resetSteer())
           steerStateRef.current = resetSteer()
         }
@@ -23132,9 +23056,7 @@ function App(): React.JSX.Element {
    * negative seam margin). Keep aura on the input surface only; the
    * glass cap stays neutral (shard 09/10). */
   const composerAboveBarStackAuraClass =
-    composerAgentAuraClass && appearance.composerStyle !== 'default'
-      ? composerAgentAuraClass
-      : ''
+    composerAgentAuraClass && appearance.composerStyle !== 'default' ? composerAgentAuraClass : ''
   // Phase K-followup — `providerSessionLabel` ("New Codex thread" /
   // "{Provider} session linked") removed alongside its only consumer
   // (the non-interactive pill in the composer top-toggles row). The
@@ -23237,7 +23159,8 @@ function App(): React.JSX.Element {
     () => buildLiveToolFileSummarySignature(liveToolFileSummaryMessages),
     [liveToolFileSummaryMessages]
   )
-  const liveToolFileSummaryWorkspacePath = currentWorkspace?.path || currentChat?.workspacePath || null
+  const liveToolFileSummaryWorkspacePath =
+    currentWorkspace?.path || currentChat?.workspacePath || null
   useEffect(() => {
     if (!liveToolFileSummaryChatId || liveToolFileSummaryMessages.length === 0) {
       setLiveToolFileSummaryState(null)
@@ -23360,8 +23283,8 @@ function App(): React.JSX.Element {
     () =>
       Boolean(
         runCompleteNotice &&
-          currentChat?.chatKind === 'ensemble' &&
-          selectCompletionRunIds(currentChat, currentRun).size > 1
+        currentChat?.chatKind === 'ensemble' &&
+        selectCompletionRunIds(currentChat, currentRun).size > 1
       ),
     [currentChat, currentRun, runCompleteNotice]
   )
@@ -23381,9 +23304,7 @@ function App(): React.JSX.Element {
     ]
   )
   const completionRoundFileChangeSummaries =
-    roundFileChangeSummaries.length > 0
-      ? displayFileChangeSummaries
-      : EMPTY_DIFF_FILE_SUMMARIES
+    roundFileChangeSummaries.length > 0 ? displayFileChangeSummaries : EMPTY_DIFF_FILE_SUMMARIES
   const completionFileChangeSummaryEstimated =
     fileChangeSummaryEstimated ||
     (roundFileChangeSummaries.length > 0 && completionRoundHasMultipleRuns)
@@ -23452,15 +23373,18 @@ function App(): React.JSX.Element {
     () =>
       displayFileChangeSummaries
         .map(
-          (item) =>
-            `${item.path}:${item.status}:${item.additions ?? ''}:${item.deletions ?? ''}`
+          (item) => `${item.path}:${item.status}:${item.additions ?? ''}:${item.deletions ?? ''}`
         )
         .join('\n'),
     [displayFileChangeSummaries]
   )
 
   useEffect(() => {
-    if (!currentGitPresentationPath || !liveGitInvalidationKey || !window.api.gitInvalidateSnapshot) {
+    if (
+      !currentGitPresentationPath ||
+      !liveGitInvalidationKey ||
+      !window.api.gitInvalidateSnapshot
+    ) {
       return
     }
     void window.api.gitInvalidateSnapshot({
@@ -23490,64 +23414,61 @@ function App(): React.JSX.Element {
     Boolean(currentChat?.appChatId) &&
     threadSearchChatId === currentChat?.appChatId &&
     threadSearchQuery.trim().length > 0
-  const threadSearchTargets = useMemo(
-    () => {
-      if (!threadSearchCanBuildTargets) return []
-      const chatPooledIdentity =
-        currentChat?.providerMetadata?.pooledAgentIdentity &&
-        typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
-          ? (currentChat.providerMetadata.pooledAgentIdentity as NonNullable<
-              ChatMessage['metadata']
-            >['pooledAgentIdentity'])
-          : undefined
-      const chatPooledAgentId =
-        typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
-          ? currentChat.providerMetadata.pooledAgentId
-          : undefined
-      return buildCurrentChatSearchTargets(
-        isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages),
-        {
-          assistantLabel: (message) => {
-            const assistantMessage =
-              chatPooledIdentity && !message.metadata?.pooledAgentIdentity
-                ? {
-                    ...message,
-                    metadata: {
-                      ...(message.metadata || {}),
-                      ...(chatPooledAgentId ? { pooledAgentId: chatPooledAgentId } : {}),
-                      pooledAgentIdentity: chatPooledIdentity
-                    }
+  const threadSearchTargets = useMemo(() => {
+    if (!threadSearchCanBuildTargets) return []
+    const chatPooledIdentity =
+      currentChat?.providerMetadata?.pooledAgentIdentity &&
+      typeof currentChat.providerMetadata.pooledAgentIdentity === 'object'
+        ? (currentChat.providerMetadata.pooledAgentIdentity as NonNullable<
+            ChatMessage['metadata']
+          >['pooledAgentIdentity'])
+        : undefined
+    const chatPooledAgentId =
+      typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
+        ? currentChat.providerMetadata.pooledAgentId
+        : undefined
+    return buildCurrentChatSearchTargets(
+      isWelcomeChat ? EMPTY_CHAT_MESSAGES : groupAdjacentToolMessages(transcriptMessages),
+      {
+        assistantLabel: (message) => {
+          const assistantMessage =
+            chatPooledIdentity && !message.metadata?.pooledAgentIdentity
+              ? {
+                  ...message,
+                  metadata: {
+                    ...(message.metadata || {}),
+                    ...(chatPooledAgentId ? { pooledAgentId: chatPooledAgentId } : {}),
+                    pooledAgentIdentity: chatPooledIdentity
                   }
-                : message
-            const run =
-              message.runId && currentChat?.runs
-                ? currentChat.runs.find((item) => item.runId === message.runId) || null
-                : null
-            const presentation = formatAssistantMessageLabel(
-              assistantMessage,
-              currentProviderLabel,
-              currentProvider,
-              {
-                isEnsembleChat: currentChat?.chatKind === 'ensemble',
-                soloModelId: run?.actualModel || run?.requestedModel || null
-              }
-            )
-            return [presentation.label, presentation.modelBadge].filter(Boolean).join(' ')
-          }
+                }
+              : message
+          const run =
+            message.runId && currentChat?.runs
+              ? currentChat.runs.find((item) => item.runId === message.runId) || null
+              : null
+          const presentation = formatAssistantMessageLabel(
+            assistantMessage,
+            currentProviderLabel,
+            currentProvider,
+            {
+              isEnsembleChat: currentChat?.chatKind === 'ensemble',
+              soloModelId: run?.actualModel || run?.requestedModel || null
+            }
+          )
+          return [presentation.label, presentation.modelBadge].filter(Boolean).join(' ')
         }
-      )
-    },
-    [
-      currentChat?.chatKind,
-      currentChat?.providerMetadata,
-      currentChat?.runs,
-      currentProvider,
-      currentProviderLabel,
-      isWelcomeChat,
-      threadSearchCanBuildTargets,
-      transcriptMessages
-    ]
-  )
+      }
+    )
+  }, [
+    currentChat?.chatKind,
+    currentChat?.providerMetadata,
+    currentChat?.runs,
+    currentProvider,
+    currentProviderLabel,
+    isWelcomeChat,
+    threadSearchCanBuildTargets,
+    transcriptMessages
+  ])
   const threadSearchMatches = useMemo(
     () => findCurrentChatSearchMatches(threadSearchTargets, threadSearchQuery),
     [threadSearchQuery, threadSearchTargets]
@@ -23688,8 +23609,7 @@ function App(): React.JSX.Element {
   // Until then we show the reserved placeholder instead of mounting
   // the real dashboard (prevents appear → hide → reappear flicker).
   const shouldShowWelcomeUsageDashboard =
-    shouldBuildWelcomeUsageDashboardDataNow &&
-    welcomeUsageDashboardData.lifetimeHasActivity
+    shouldBuildWelcomeUsageDashboardDataNow && welcomeUsageDashboardData.lifetimeHasActivity
   const welcomeWorkspaceHeatmapEnabled =
     settings?.welcomeHeatmapPrefs?.workspaceActivityEnabled !== false
   const welcomeTaskWraithHeatmapEnabled =
@@ -23701,8 +23621,7 @@ function App(): React.JSX.Element {
       ? currentWorkspace?.path || currentChat?.workspacePath
       : ''
   const shouldShowWelcomeStandaloneHeatmaps =
-    !isMultiviewSplit &&
-    (Boolean(welcomeWorkspaceActivityPath) || shouldShowWelcomeUsageDashboard)
+    !isMultiviewSplit && (Boolean(welcomeWorkspaceActivityPath) || shouldShowWelcomeUsageDashboard)
   // Welcome standalone activity panels now always use the uncluttered cycle
   // presentation. Older stored `welcomeHeatmapPrefs.layout` values are ignored
   // so a legacy "stacked" setting cannot crowd the new-chat screen.
@@ -23788,8 +23707,7 @@ function App(): React.JSX.Element {
       const heatmapHeight = heatmapRect?.height || 0
 
       const composerStyle = window.getComputedStyle(composer)
-      const composerPadding =
-        readPx(composerStyle.paddingTop) + readPx(composerStyle.paddingBottom)
+      const composerPadding = readPx(composerStyle.paddingTop) + readPx(composerStyle.paddingBottom)
       const composerGap = readPx(composerStyle.rowGap === 'normal' ? '0' : composerStyle.rowGap)
       const fullTranscriptPadding = clampPx(72, 0.095, 120)
       const compactTranscriptPadding = clampPx(48, 0.07, 72)
@@ -23809,14 +23727,9 @@ function App(): React.JSX.Element {
       const fullFlowHeight = fullTranscriptPadding + dashboardHeight + flexComposerHeight
       const notificationCollisionHeight = notificationRect
         ? availableHeight +
-          ((heatmapRect || primaryBounds).bottom +
-            clampPx(12, 0.018, 24) -
-            notificationRect.top)
+          ((heatmapRect || primaryBounds).bottom + clampPx(12, 0.018, 24) - notificationRect.top)
         : null
-      const fullHeight = resolveWelcomeFullFitHeight(
-        fullFlowHeight,
-        notificationCollisionHeight
-      )
+      const fullHeight = resolveWelcomeFullFitHeight(fullFlowHeight, notificationCollisionHeight)
       const gridComposerMinHeight =
         composerPadding +
         clampPx(18, 0.03, 48) +
@@ -23832,8 +23745,7 @@ function App(): React.JSX.Element {
       const dashboardHiddenHeight =
         compactTranscriptPadding + flexComposerHeight + clampPx(16, 0.03, 32)
       setWelcomeFitState((current) => {
-        const currentLevel =
-          current.chatId === welcomeFitChatId ? current.level : WELCOME_FIT_FULL
+        const currentLevel = current.chatId === welcomeFitChatId ? current.level : WELCOME_FIT_FULL
         const level = resolveWelcomeFitLevel({
           currentLevel,
           availableHeight,
@@ -23946,7 +23858,12 @@ function App(): React.JSX.Element {
     updateChatById(currentChat.appChatId, (source) => {
       if (source.chatKind === 'ensemble') {
         const round = source.ensemble?.activeRound
-        if (!round || (round.status !== 'completed' && round.status !== 'cancelled' && round.status !== 'failed')) {
+        if (
+          !round ||
+          (round.status !== 'completed' &&
+            round.status !== 'cancelled' &&
+            round.status !== 'failed')
+        ) {
           return source
         }
         const closeoutId = taskWraithRoundCloseoutId(round.roundId)
@@ -24224,12 +24141,13 @@ function App(): React.JSX.Element {
   )
   const activeWorkProject =
     sidebarActiveTab === 'projects' && activeWorkProjectId
-      ? listProjects().find((project) => project.id === activeWorkProjectId) ?? null
+      ? (listProjects().find((project) => project.id === activeWorkProjectId) ?? null)
       : null
   const isWorkRouteReferencesPinned = shouldPinProjectReferencesOnWorkRoute({
     activeSidebarTab: sidebarActiveTab
   })
-  const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
+  const isTerminalDockAvailable =
+    showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = buildRightDockTabs({
     showHome: showRightDockHome,
     showCockpit,
@@ -24782,9 +24700,7 @@ function App(): React.JSX.Element {
       onSchedule={handleScheduleRun}
       hasPrompt={
         hasAttachmentPromptContent(prompt, imageAttachments) ||
-        Boolean(
-          currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
-        )
+        Boolean(currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble')
       }
       disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
       disabledReason={scheduleDisabledReason}
@@ -24973,10 +24889,14 @@ function App(): React.JSX.Element {
         openInBrowser: true
       })
       if (result?.ok) {
-        setCreatePrStateFor(workspacePath, {
-          status: 'success',
-          message: result.url ? `Opened ${result.url}` : 'Pull request created.'
-        }, externalChatId)
+        setCreatePrStateFor(
+          workspacePath,
+          {
+            status: 'success',
+            message: result.url ? `Opened ${result.url}` : 'Pull request created.'
+          },
+          externalChatId
+        )
         const refreshPr = async (): Promise<GitPrSummary | null> => {
           if (typeof window.api.githubPrStatus !== 'function') return result as GitPrSummary
           try {
@@ -24998,16 +24918,24 @@ function App(): React.JSX.Element {
           setPrimaryPr(pr)
         }
       } else {
-        setCreatePrStateFor(workspacePath, {
-          status: 'error',
-          message: result?.error || 'Failed to create pull request.'
-        }, externalChatId)
+        setCreatePrStateFor(
+          workspacePath,
+          {
+            status: 'error',
+            message: result?.error || 'Failed to create pull request.'
+          },
+          externalChatId
+        )
       }
     } catch (error) {
-      setCreatePrStateFor(workspacePath, {
-        status: 'error',
-        message: error instanceof Error ? error.message : 'Failed to create pull request.'
-      }, externalChatId)
+      setCreatePrStateFor(
+        workspacePath,
+        {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Failed to create pull request.'
+        },
+        externalChatId
+      )
     }
     window.setTimeout(
       () => setCreatePrStateFor(workspacePath, { status: 'idle' }, externalChatId),
@@ -25030,10 +24958,7 @@ function App(): React.JSX.Element {
   const slashCommandProviderCapabilities =
     providerCapabilitiesByProvider[slashCommandProvider] ||
     (slashCommandProvider === currentProvider ? currentProviderCapabilities : undefined)
-  const slashActionRemainder = (
-    ctx: SlashCommandRunContext,
-    commandPattern: RegExp
-  ): string => {
+  const slashActionRemainder = (ctx: SlashCommandRunContext, commandPattern: RegExp): string => {
     const raw = ctx.rawPrompt.trim()
     return commandPattern.test(raw)
       ? raw.replace(commandPattern, '').trim()
@@ -25045,9 +24970,7 @@ function App(): React.JSX.Element {
     text: string
   ): void => {
     const remainder = slashActionRemainder(ctx, commandPattern)
-    const next = remainder
-      ? `${remainder}\n\n${text}`
-      : text
+    const next = remainder ? `${remainder}\n\n${text}` : text
     ctx.setDraft(next)
     ctx.focusComposer(next.length)
   }
@@ -25077,7 +25000,8 @@ function App(): React.JSX.Element {
             : '/side'
     return sideCommand.seedPrompt ? `${command} ${sideCommand.seedPrompt}` : command
   }
-  const firstSlashArgToken = (arg: string): string => arg.trim().split(/\s+/)[0]?.toLowerCase() || ''
+  const firstSlashArgToken = (arg: string): string =>
+    arg.trim().split(/\s+/)[0]?.toLowerCase() || ''
   const parseScopedToggleSlashArg = (
     ctx: SlashCommandRunContext,
     arg: string,
@@ -25136,9 +25060,7 @@ function App(): React.JSX.Element {
   }
   const patchScopedEnsembleConfig = (
     chat: ChatRecord,
-    patcher: (
-      ensemble: NonNullable<ChatRecord['ensemble']>
-    ) => NonNullable<ChatRecord['ensemble']>
+    patcher: (ensemble: NonNullable<ChatRecord['ensemble']>) => NonNullable<ChatRecord['ensemble']>
   ): void => {
     updateChatById(chat.appChatId, (source) => {
       if (source.chatKind !== 'ensemble' || !source.ensemble) return source
@@ -25158,7 +25080,8 @@ function App(): React.JSX.Element {
     displayPrompt: string
   ): void => {
     if (chat.chatKind !== 'ensemble' || !chat.ensemble) return
-    const attachments = imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
+    const attachments =
+      imageAttachmentsByChatIdRef.current[chat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
     const fanoutPolicy = normalizeEnsembleFanoutPolicy(
       chat.ensemble.fanoutPolicy,
       chat.ensemble.concurrentModeEnabled
@@ -25258,13 +25181,13 @@ function App(): React.JSX.Element {
     handleGoalCommand: (ctx: SlashCommandRunContext) => void
     focusPaneForFocusedFlow?: () => void
   }): ComposerSlashCommand[] => [
-  /**
-   * Cross-provider TaskWraith actions promoted to first-class slash entries.
-   * These don't have a CommandPaletteItem analog because they fire
-   * renderer-side handlers directly — the slash picker is their only
-   * surface today. Listed in the Custom group below the per-provider
-   * palette-passthrough block.
-   */
+    /**
+     * Cross-provider TaskWraith actions promoted to first-class slash entries.
+     * These don't have a CommandPaletteItem analog because they fire
+     * renderer-side handlers directly — the slash picker is their only
+     * surface today. Listed in the Custom group below the per-provider
+     * palette-passthrough block.
+     */
     {
       kind: 'action',
       id: 'taskwraith-audit',
@@ -25349,9 +25272,7 @@ function App(): React.JSX.Element {
         // Was `handleImportPlanSlashCommand()` (App-level). The composer-side
         // token machinery moved into <Composer>; this closure now drives it
         // through `ctx` so it operates on the INVOKING composer's draft.
-        const candidate = ctx.promptWithoutSlashToken
-          .replace(/^\s*\/import-plan\b/i, '')
-          .trim()
+        const candidate = ctx.promptWithoutSlashToken.replace(/^\s*\/import-plan\b/i, '').trim()
         if (!candidate) {
           rejectSlashCommandWithDraft(
             ctx,
@@ -25512,7 +25433,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-context',
             command: '/ensemble-context',
             label: 'Set ensemble context budget',
-            description: 'Set shared transcript budget in characters. Usage: /ensemble-context 120000.',
+            description:
+              'Set shared transcript budget in characters. Usage: /ensemble-context 120000.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -25538,7 +25460,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-hops',
             command: '/ensemble-hops',
             label: 'Set continuous handoff limit',
-            description: 'Set maximum continuation hops for continuous rounds. Usage: /ensemble-hops 12.',
+            description:
+              'Set maximum continuation hops for continuous rounds. Usage: /ensemble-hops 12.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -25572,7 +25495,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-reflect',
             command: '/ensemble-reflect',
             label: 'Toggle self-reflective mode',
-            description: 'Toggle or set self-reflective ensemble context. Usage: /ensemble-reflect on|off|toggle.',
+            description:
+              'Toggle or set self-reflective ensemble context. Usage: /ensemble-reflect on|off|toggle.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -25622,7 +25546,10 @@ function App(): React.JSX.Element {
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(ctx, 'Open an ensemble chat to use /ensemble-skip-reads.')
+                rejectSlashCommandWithDraft(
+                  ctx,
+                  'Open an ensemble chat to use /ensemble-skip-reads.'
+                )
                 return
               }
               void window.api.skipEnsembleReadFanout(chat.appChatId).catch((error) => {
@@ -25638,7 +25565,8 @@ function App(): React.JSX.Element {
             id: 'taskwraith-ensemble-steer',
             command: '/ensemble-steer',
             label: 'Steer ensemble round',
-            description: 'Start or steer the ensemble with the provided prompt. Usage: /ensemble-steer <prompt>.',
+            description:
+              'Start or steer the ensemble with the provided prompt. Usage: /ensemble-steer <prompt>.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
@@ -25797,10 +25725,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'split',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'split',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -25823,10 +25752,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'drawer',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'drawer',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -25849,10 +25779,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'popout',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'popout',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -25875,10 +25806,11 @@ function App(): React.JSX.Element {
           )
           return
         }
-        const shouldKeepDraft = openSideChatCommand({
-          presentation: 'main',
-          seedPrompt: ctx.promptWithoutSlashToken.trim()
-        }) === false
+        const shouldKeepDraft =
+          openSideChatCommand({
+            presentation: 'main',
+            seedPrompt: ctx.promptWithoutSlashToken.trim()
+          }) === false
         if (shouldKeepDraft) {
           ctx.setDraft(ctx.rawPrompt)
           ctx.focusComposer(ctx.rawPrompt.length)
@@ -26138,9 +26070,9 @@ function App(): React.JSX.Element {
   // closures reference App handlers) and is passed to <Composer> as a prop.
   const isLinkedChatPopout = Boolean(
     isChatPopoutWindow &&
-      currentChat?.parentChatId &&
-      (currentChat.parentChatRelation === 'sideChat' ||
-        currentChat.parentChatRelation === 'subThread')
+    currentChat?.parentChatId &&
+    (currentChat.parentChatRelation === 'sideChat' ||
+      currentChat.parentChatRelation === 'subThread')
   )
   const chatPopoutParentChat =
     isLinkedChatPopout && currentChat?.parentChatId
@@ -26152,9 +26084,10 @@ function App(): React.JSX.Element {
   const sidePanelLayoutClass = isSideSplitOpen
     ? `side-chat-open side-chat-layout-${sidePanelPresentation} side-chat-docked`
     : ''
-  const appMainStyle = sidebarPresence.mounted && !isChatPopoutWindow
-    ? ({ '--sidebar-width': `${workspaceSidebarWidth}px` } as CSSProperties)
-    : undefined
+  const appMainStyle =
+    sidebarPresence.mounted && !isChatPopoutWindow
+      ? ({ '--sidebar-width': `${workspaceSidebarWidth}px` } as CSSProperties)
+      : undefined
   const chatSplitStyle = rightDockStyle
   const interfaceStyle = appearance.composerStyle
   const primaryModifierLabel = window.api?.hostPlatform === 'darwin' ? '⌘' : 'Ctrl'
@@ -26353,7 +26286,13 @@ function App(): React.JSX.Element {
         void refreshProviderMetadata(paneProvider, workspace.path)
       }
     },
-    [currentWorkspace, handleFocusMultiviewPane, multiview.panes, refreshWorkspaceTrust, updateChatById]
+    [
+      currentWorkspace,
+      handleFocusMultiviewPane,
+      multiview.panes,
+      refreshWorkspaceTrust,
+      updateChatById
+    ]
   )
   const handleMultiviewPaneAddWorkspace = useCallback(
     (paneIndex: number, chatId: string) => {
@@ -26528,7 +26467,9 @@ function App(): React.JSX.Element {
       const paneWorkspace = getWorkspaceForChat(paneChat)
       const paneBusy = isChatBusy(chatId)
       const updatedChat = updateChatById(chatId, (source) => {
-        const nextChat = paneBusy ? queueProviderChange(source, change) : applyProviderChange(source, change)
+        const nextChat = paneBusy
+          ? queueProviderChange(source, change)
+          : applyProviderChange(source, change)
         return {
           ...nextChat,
           updatedAt: Date.now()
@@ -26640,9 +26581,7 @@ function App(): React.JSX.Element {
       const paneChat = chatByIdRef.current.get(chatId)
       const path = paneChat?.workspacePath
       if (!path) return
-      setGitSnapshotByWorkspace((prev) =>
-        updatePathKeyedWorkspaceSnapshot(prev, path, snapshot)
-      )
+      setGitSnapshotByWorkspace((prev) => updatePathKeyedWorkspaceSnapshot(prev, path, snapshot))
     },
     []
   )
@@ -26696,11 +26635,7 @@ function App(): React.JSX.Element {
       if (!workspace?.path || isPreparingDiffReview) return
       const reviewPath = resolveComposerEffectiveWorkspacePath(
         workspace.path,
-        composerWorktreeSelectionForChat(
-          composerWorktreeByChatId,
-          chat.appChatId,
-          workspace.path
-        )
+        composerWorktreeSelectionForChat(composerWorktreeByChatId, chat.appChatId, workspace.path)
       )
       if (!reviewPath) return
       setIsPreparingDiffReview(true)
@@ -26768,11 +26703,7 @@ function App(): React.JSX.Element {
       const focusPane = (): void => handleFocusMultiviewPane(paneIndex, chat.appChatId)
       const paneGitActionPath = resolveComposerEffectiveWorkspacePath(
         workspace?.path,
-        composerWorktreeSelectionForChat(
-          composerWorktreeByChatId,
-          chat.appChatId,
-          workspace?.path
-        )
+        composerWorktreeSelectionForChat(composerWorktreeByChatId, chat.appChatId, workspace?.path)
       )
       if (provider === 'codex') {
         if (item.command === '/status' || item.command === '/permissions') {
@@ -26803,7 +26734,9 @@ function App(): React.JSX.Element {
           void handleReviewDiffForChat(chat, provider, workspace)
         } else if (item.command === '/fast') {
           const selection = getChatComposerSelection(chat, provider)
-          const modelOption = codexModels.find((option) => option.id === selection.selectedModelType)
+          const modelOption = codexModels.find(
+            (option) => option.id === selection.selectedModelType
+          )
           if (!modelOption?.additionalSpeedTiers?.includes('fast')) {
             openInspectorTab('capabilities')
             return
@@ -26964,7 +26897,7 @@ function App(): React.JSX.Element {
       handleMultiviewPaneCopyTranscript,
       handleMultiviewPanePickAttachments,
       paneSlashCommandHelpers,
-      providerCapabilitiesByProvider,
+      providerCapabilitiesByProvider
     ]
   )
   const handleSelectMultiviewLayout = useCallback(
@@ -26997,8 +26930,7 @@ function App(): React.JSX.Element {
       viewerSelectedParticipantId
     )
     const viewerOwnsFocusedTrust =
-      viewerPaneIndex === multiview.focusedPaneIndex &&
-      currentChatIdRef.current === viewerChatId
+      viewerPaneIndex === multiview.focusedPaneIndex && currentChatIdRef.current === viewerChatId
     const viewerWorkspace = getWorkspaceForChat(viewerChat)
     const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
     const viewerWorktreeSelection = composerWorktreeSelectionForChat(
@@ -27106,7 +27038,7 @@ function App(): React.JSX.Element {
     // the focused composer — so they no longer need pane-local copies here.
     const viewerProviderLocked = Boolean(
       viewerIsRunning ||
-        (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
+      (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
     )
     const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
     const viewerRunStartedAt = viewerIsRunning
@@ -27329,8 +27261,7 @@ function App(): React.JSX.Element {
         ariaLabel: 'Open workspace Workbench',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('workbench', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('workbench', paneIndex, chatId)
       },
       {
         id: 'popout-diff-studio',
@@ -27338,8 +27269,7 @@ function App(): React.JSX.Element {
         ariaLabel: 'Open workspace Diff Studio',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('diff-studio', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('diff-studio', paneIndex, chatId)
       },
       {
         id: 'popout-file-editor',
@@ -27347,8 +27277,7 @@ function App(): React.JSX.Element {
         ariaLabel: 'Open workspace File Editor',
         icon: <FileMenuSelectionIcon />,
         disabled: !viewerWorkspace,
-        onClick: (paneIndex, chatId) =>
-          openPaneWorkspacePopout('file-editor', paneIndex, chatId)
+        onClick: (paneIndex, chatId) => openPaneWorkspacePopout('file-editor', paneIndex, chatId)
       },
       {
         id: 'side-chat',
@@ -27388,9 +27317,7 @@ function App(): React.JSX.Element {
             const paneId = multiview.panes[paneIndex]?.id
             if (!paneId) return
             setPreviewMenuTarget((current) =>
-              current?.paneId === paneId && current.chatId === chatId
-                ? null
-                : { paneId, chatId }
+              current?.paneId === paneId && current.chatId === chatId ? null : { paneId, chatId }
             )
           }
         }
@@ -27526,8 +27453,7 @@ function App(): React.JSX.Element {
     })
     const paneThreadTokenTallyHasValue =
       viewerTokenTally.totalTokens > 0 || viewerLiveOutputTokens > 0
-    const paneIsWorkflowComposeChat =
-      workflowDraft != null && workflowDraft.chatId === viewerChatId
+    const paneIsWorkflowComposeChat = workflowDraft != null && workflowDraft.chatId === viewerChatId
     const paneWorkflowForChat =
       workflowDefinitions.find((wf) => wf.template.chatId === viewerChatId) ?? null
     const paneIsWorkflowChatWelcome = paneIsWorkflowComposeChat || paneWorkflowForChat != null
@@ -27540,14 +27466,10 @@ function App(): React.JSX.Element {
           paneExternalPathGrants,
           externalGitSnapshotsByOwner
         ),
-        prByPath: projectExternalWorkspaceOwnerCache(
-          paneExternalPathGrants,
-          externalPrByOwner
-        )
+        prByPath: projectExternalWorkspaceOwnerCache(paneExternalPathGrants, externalPrByOwner)
       }
     )
-    const paneExternalPathGrantPrompt =
-      externalPathGrantPromptByChatId[viewerChatId] || null
+    const paneExternalPathGrantPrompt = externalPathGrantPromptByChatId[viewerChatId] || null
     const paneExternalPathGrantPromptBusy =
       (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
     const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
@@ -27599,11 +27521,9 @@ function App(): React.JSX.Element {
     ): void => {
       patchEnsembleParticipantForChat(viewerChatId, participantId, patch)
     }
-    const paneQueuedMessagesAboveRowEntries =
-      buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
+    const paneQueuedMessagesAboveRowEntries = buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
     const paneExecutionStackView = executionStackViewForChat(viewerChatId)
-    const paneIsChatBusyForSteer =
-      viewerIsRunning || viewerEnsembleProjection.isRoundRunning
+    const paneIsChatBusyForSteer = viewerIsRunning || viewerEnsembleProjection.isRoundRunning
     const paneIsSteerBusyForCurrentChat = isSteerInFlight({
       state: steerState,
       chatId: viewerChatId
@@ -27649,14 +27569,13 @@ function App(): React.JSX.Element {
       currentComposerChatId: viewerChatId,
       hasProjectReferenceContext: Boolean(
         !paneIsEnsembleChat &&
-          getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+        getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
       ),
       currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
       resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
       humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
       humanCollaborationShare: paneHumanCollaborationShare,
-      humanCollaborationInviteHealth:
-        humanCollaborationInviteHealthByChatId[viewerChatId] || null,
+      humanCollaborationInviteHealth: humanCollaborationInviteHealthByChatId[viewerChatId] || null,
       humanCollaborationInviteBusy: pendingHumanCollaborationInviteChatIds.has(viewerChatId),
       humanCollaborationInviteLive: connectedCollaborationChatIds.has(viewerChatId),
       onCopyHumanCollaborationInvite: paneHumanCollaborationShare
@@ -27704,10 +27623,7 @@ function App(): React.JSX.Element {
         setActiveEnsembleRosterPresetIdForChat(viewerChatId, presetId),
       applyEnsemblePermissionsToAllParticipants: () => {
         if (!paneSlashParticipant) return
-        applyEnsemblePermissionsToAllParticipantsForChat(
-          viewerChatId,
-          paneSlashParticipant.id
-        )
+        applyEnsemblePermissionsToAllParticipantsForChat(viewerChatId, paneSlashParticipant.id)
       },
       updateCurrentEnsembleOrchestrationMode: (mode: EnsembleOrchestrationMode) =>
         updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
@@ -27737,8 +27653,7 @@ function App(): React.JSX.Element {
         : undefined,
       onSaveExecutionGraph: handleSaveExecutionGraph,
       onCancelExecutionStackStep: handleCancelExecutionStackStep,
-      handleEditQueuedMessage: (entryId: string) =>
-        handleEditQueuedMessage(entryId, viewerChat),
+      handleEditQueuedMessage: (entryId: string) => handleEditQueuedMessage(entryId, viewerChat),
       handleDeleteQueuedMessage: (entryId: string) =>
         handleDeleteQueuedMessage(entryId, viewerChat),
       handleBlackboardQueuedMessage: (entryId: string) =>
@@ -27756,11 +27671,19 @@ function App(): React.JSX.Element {
         paneSlashParticipant
       ),
       handlePaletteCommand: (item: CommandPaletteItem) =>
-        handlePanePaletteCommand(viewerPaneIndex, viewerChat, paneSlashProvider, viewerWorkspace, item),
+        handlePanePaletteCommand(
+          viewerPaneIndex,
+          viewerChat,
+          paneSlashProvider,
+          viewerWorkspace,
+          item
+        ),
       openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
         handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
         setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
-        window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
+        window.alert(
+          'Side-chat commands open from the focused pane. This pane is now focused; run the command again.'
+        )
         return false
       },
       currentWorkspace: viewerWorkspace,
@@ -27830,9 +27753,7 @@ function App(): React.JSX.Element {
       // mutate the focused chat's session/persistent trust. Its first trust
       // interaction focuses the pane; the now-focused composer owns any change.
       sessionTrust: viewerOwnsFocusedTrust ? sessionTrust : false,
-      setSessionTrust: viewerOwnsFocusedTrust
-        ? setSessionTrust
-        : () => focusPaneForGoalControl(),
+      setSessionTrust: viewerOwnsFocusedTrust ? setSessionTrust : () => focusPaneForGoalControl(),
       trustResult: viewerOwnsFocusedTrust ? trustResult : null,
       geminiWorkspaceTrustReady: viewerOwnsFocusedTrust
         ? geminiWorkspaceTrustReady
@@ -27918,14 +27839,14 @@ function App(): React.JSX.Element {
       handleSelectExistingWorkspace: (workspace: WorkspaceRecord) =>
         handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
       handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
-      handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+      handleNewGlobalChat: () =>
+        handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
       handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
         handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
       handleAddKnownWorkspaceAsSecondary: (
         workspacePath: string,
         access: ExternalPathGrant['access']
-      ) =>
-        handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
+      ) => handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
       handleRemoveExternalPathGrant: (grantId: string) =>
         handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
       handleRemoveExternalPathGrantsByPath: (path: string) =>
@@ -27939,8 +27860,7 @@ function App(): React.JSX.Element {
       // matching display field above keeps the picker's selection accurate.
       setSelectedModelType: paneNoopSetter,
       setLastNonCustomModelType: paneNoopSetter,
-      setCustomModel: (value: string) =>
-        paneRememberComposerSelection({ customModel: value }),
+      setCustomModel: (value: string) => paneRememberComposerSelection({ customModel: value }),
       setCodexReasoningEffort: paneNoopSetter,
       setClaudeReasoningEffort: paneNoopSetter,
       setKimiFastMode: paneNoopSetter,
@@ -27995,8 +27915,7 @@ function App(): React.JSX.Element {
       lastNonCustomModelType: viewerSelectedModel,
       // screen-watch: the composer-row button reflects THIS pane's ownership; the
       // pane chrome's corner-action remains the pane-scoped toggle.
-      attachedWindow:
-        attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
+      attachedWindow: attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
       isAttachingWindow:
         attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
       // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
@@ -28011,7 +27930,9 @@ function App(): React.JSX.Element {
     // memo was built, fall back to the freshly-built ctx so composer controls
     // like Plan/Goal see the same live chat as the transcript.
     const effectivePaneComposerCtx =
-      memoizedPaneComposerCtx?.currentChat === viewerChat ? memoizedPaneComposerCtx : paneComposerCtx
+      memoizedPaneComposerCtx?.currentChat === viewerChat
+        ? memoizedPaneComposerCtx
+        : paneComposerCtx
 
     return (
       <ChatViewPane
@@ -28392,7 +28313,7 @@ function App(): React.JSX.Element {
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,
-      workspaces,
+      workspaces
     }),
     [
       composerHandlers,
@@ -28515,7 +28436,7 @@ function App(): React.JSX.Element {
       workflowDraft,
       workflowIntervalMinutes,
       workspaceDiffStats,
-      workspaces,
+      workspaces
     ]
   )
 
@@ -28605,7 +28526,8 @@ function App(): React.JSX.Element {
       // picker-shaped { value, label } here crashed it (it read
       // option.reasoningEffort.charAt(0) on undefined). Kimi builds its own list
       // internally, so no raw list is needed for it.
-      const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts?.length
+      const viewerCodexReasoningOptionsRaw = viewerCodexModelOption?.supportedReasoningEfforts
+        ?.length
         ? viewerCodexModelOption.supportedReasoningEfforts
         : [
             { reasoningEffort: 'low' },
@@ -28613,16 +28535,14 @@ function App(): React.JSX.Element {
             { reasoningEffort: 'high' },
             { reasoningEffort: 'xhigh' }
           ]
-      const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(
-        viewerClaudeModelOption
-      )
+      const viewerClaudeReasoningOptionsRaw = resolveClaudeReasoningEfforts(viewerClaudeModelOption)
       // Fast-mode capability/state, the permission option list, and the
       // enabled-grant set are all derived inside the shared <Composer> (from the
       // per-pane provider/model/selection fields in paneComposerCtx), mirroring
       // the focused composer — so they no longer need pane-local copies here.
       const viewerProviderLocked = Boolean(
         viewerIsRunning ||
-          (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
+        (viewerChat.chatKind !== 'ensemble' && hasPendingProviderChange(viewerChat))
       )
       const viewerComposerLocked = Boolean(viewerIsRunning && viewerChat.chatKind !== 'ensemble')
       const viewerResumeAppWatchSnapshot =
@@ -28750,14 +28670,10 @@ function App(): React.JSX.Element {
             paneExternalPathGrants,
             externalGitSnapshotsByOwner
           ),
-          prByPath: projectExternalWorkspaceOwnerCache(
-            paneExternalPathGrants,
-            externalPrByOwner
-          )
+          prByPath: projectExternalWorkspaceOwnerCache(paneExternalPathGrants, externalPrByOwner)
         }
       )
-      const paneExternalPathGrantPrompt =
-        externalPathGrantPromptByChatId[viewerChatId] || null
+      const paneExternalPathGrantPrompt = externalPathGrantPromptByChatId[viewerChatId] || null
       const paneExternalPathGrantPromptBusy =
         (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
       const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
@@ -28801,11 +28717,7 @@ function App(): React.JSX.Element {
         paneCtxHelpers.selectEnsembleParticipantForChat(viewerChatId, participantId)
       const paneUpdateSelectedParticipant = (patch: Partial<EnsembleParticipant>): void => {
         if (!paneSlashParticipant) return
-        paneCtxHelpers.patchEnsembleParticipantForChat(
-          viewerChatId,
-          paneSlashParticipant.id,
-          patch
-        )
+        paneCtxHelpers.patchEnsembleParticipantForChat(viewerChatId, paneSlashParticipant.id, patch)
       }
       const panePatchParticipantById = (
         participantId: string,
@@ -28816,8 +28728,7 @@ function App(): React.JSX.Element {
       const paneQueuedMessagesAboveRowEntries =
         paneCtxHelpers.buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
       const paneExecutionStackView = executionStackViewForChat(viewerChatId)
-      const paneIsChatBusyForSteer =
-        viewerIsRunning || viewerEnsembleProjection.isRoundRunning
+      const paneIsChatBusyForSteer = viewerIsRunning || viewerEnsembleProjection.isRoundRunning
       const paneIsSteerBusyForCurrentChat = isSteerInFlight({
         state: steerState,
         chatId: viewerChatId
@@ -28863,7 +28774,7 @@ function App(): React.JSX.Element {
         currentComposerChatId: viewerChatId,
         hasProjectReferenceContext: Boolean(
           !paneIsEnsembleChat &&
-            getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+          getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
         ),
         currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
         resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
@@ -28983,7 +28894,9 @@ function App(): React.JSX.Element {
         openSideChatFromSlashCommand: (sideCommand: SideSlashCommand) => {
           handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
           setChatPromptDraft(viewerChatId, sideSlashCommandDraft(sideCommand))
-          window.alert('Side-chat commands open from the focused pane. This pane is now focused; run the command again.')
+          window.alert(
+            'Side-chat commands open from the focused pane. This pane is now focused; run the command again.'
+          )
           return false
         },
         currentWorkspace: viewerWorkspace,
@@ -29088,11 +29001,7 @@ function App(): React.JSX.Element {
         handleProviderChange: paneHandleProviderChange,
         handleReviewCurrentDiff: async () => {
           handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
-          await paneCtxHelpers.handleReviewDiffForChat(
-            viewerChat,
-            viewerProvider,
-            viewerWorkspace
-          )
+          await paneCtxHelpers.handleReviewDiffForChat(viewerChat, viewerProvider, viewerWorkspace)
         },
         handleToggleWelcomeEnsemble: (enabled: boolean) =>
           paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
@@ -29108,8 +29017,7 @@ function App(): React.JSX.Element {
           ),
         handleAttachWindow: () => paneCtxHelpers.handleAttachWindow(viewerChatId),
         handleDetachWindow: () => paneCtxHelpers.handleDetachWindow(viewerChatId),
-        handleClearDiscordContext: () =>
-          paneCtxHelpers.clearDiscordContextForChat(viewerChatId),
+        handleClearDiscordContext: () => paneCtxHelpers.clearDiscordContextForChat(viewerChatId),
         openDiscordContextPicker: () =>
           paneCtxHelpers.openDiscordContextPickerForPane(viewerPaneIndex, viewerChatId),
         rememberCurrentChatComposerSelection: paneRememberComposerSelection,
@@ -29132,14 +29040,14 @@ function App(): React.JSX.Element {
         handleSelectExistingWorkspace: (workspace: WorkspaceRecord) =>
           handleMultiviewPanePickWorkspace(viewerPaneIndex, viewerChatId, workspace),
         handleSelectWorkspace: () => handleMultiviewPaneAddWorkspace(viewerPaneIndex, viewerChatId),
-        handleNewGlobalChat: () => handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
+        handleNewGlobalChat: () =>
+          handleMultiviewPaneSelectNoWorkspace(viewerPaneIndex, viewerChatId),
         handleAddWorkspaceFolder: (access: ExternalPathGrant['access']) =>
           handleMultiviewPaneAddWorkspaceFolder(viewerChatId, access),
         handleAddKnownWorkspaceAsSecondary: (
           workspacePath: string,
           access: ExternalPathGrant['access']
-        ) =>
-          handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
+        ) => handleMultiviewPaneAddKnownWorkspaceAsSecondary(viewerChatId, workspacePath, access),
         handleRemoveExternalPathGrant: (grantId: string) =>
           handleMultiviewPaneRemoveExternalPathGrant(viewerChatId, grantId),
         handleRemoveExternalPathGrantsByPath: (path: string) =>
@@ -29153,8 +29061,7 @@ function App(): React.JSX.Element {
         // matching display field above keeps the picker's selection accurate.
         setSelectedModelType: paneNoopSetter,
         setLastNonCustomModelType: paneNoopSetter,
-        setCustomModel: (value: string) =>
-          paneRememberComposerSelection({ customModel: value }),
+        setCustomModel: (value: string) => paneRememberComposerSelection({ customModel: value }),
         setCodexReasoningEffort: paneNoopSetter,
         setClaudeReasoningEffort: paneNoopSetter,
         setKimiFastMode: paneNoopSetter,
@@ -29295,7 +29202,7 @@ function App(): React.JSX.Element {
       welcomeWorkspaceHeatmapEnabled,
       workflowDefinitions,
       workflowDraft,
-      gitSnapshotByWorkspace,
+      gitSnapshotByWorkspace
     ]
   )
   const paneComposerCtxByKey = useMemo(() => {
@@ -29456,12 +29363,13 @@ function App(): React.JSX.Element {
     workspaceTrustMutationDisabledReason,
     welcomeCopy,
     welcomeHeatmapSlots,
-    workflowForCurrentChat,
+    workflowForCurrentChat
   }
 
   const activeWorkspaceBoard =
     activeWorkspaceBoardId != null
-      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId && !board.archived) || null
+      ? workspaceBoards.find((board) => board.id === activeWorkspaceBoardId && !board.archived) ||
+        null
       : null
   const activeWorkspaceBoardWorkspace =
     activeWorkspaceBoard != null
@@ -30052,7 +29960,7 @@ function App(): React.JSX.Element {
     workspaceBoards,
     workspaceSearchShortcutHint,
     workspaceSidebarWidth,
-    workspaces,
+    workspaces
   }
 
   return (
@@ -30109,10 +30017,7 @@ function App(): React.JSX.Element {
         }}
         onDismiss={(questionId) => needsInputBanner.dismiss(questionId)}
       />
-      <JoinSharedChatModal
-        open={joinSharedChatOpen}
-        onClose={() => setJoinSharedChatOpen(false)}
-      />
+      <JoinSharedChatModal open={joinSharedChatOpen} onClose={() => setJoinSharedChatOpen(false)} />
       {/* PairingSheet modal mount retired — Pairing now renders as a
           Settings tab (`activeTab === 'pairing'`) when the iOS remote
           feature flag is enabled. */}
@@ -30148,9 +30053,7 @@ function App(): React.JSX.Element {
         cursorProviderAvailable={cursorProviderAvailable}
         grokProviderAvailable={grokProviderAvailable}
         mistralStatus={agentStatusByProvider.mistral}
-        antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes(
-          'antigravity'
-        )}
+        antigravityProviderOffered={configuredProviderSnapshot.providerIds.includes('antigravity')}
         ollamaProviderAvailable={
           agentStatusByProvider.ollama?.available === true &&
           (typeof agentStatusByProvider.ollama?.modelCount !== 'number' ||
@@ -30465,9 +30368,7 @@ function App(): React.JSX.Element {
                   .updateSettings({ approvalModeElevationAcknowledgements: nextAcks })
                   .catch(() => {})
                 setSettings((prev) =>
-                  prev
-                    ? { ...prev, approvalModeElevationAcknowledgements: nextAcks }
-                    : prev
+                  prev ? { ...prev, approvalModeElevationAcknowledgements: nextAcks } : prev
                 )
               }
             } catch (err) {

@@ -144,10 +144,7 @@ import {
   contextCompactionMessageFailed,
   contextCompactionMessageMetaLabel
 } from './ContextCompactionCard'
-import {
-  buildParticipantContextRows,
-  currentContextTokens
-} from '../lib/contextMeter'
+import { buildParticipantContextRows, currentContextTokens } from '../lib/contextMeter'
 import {
   contextPercent,
   isContextWindowProviderId,
@@ -347,21 +344,16 @@ function ActivityStackSpeakerHeader({
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityProvider = providerIdFromUnknown(firstActivityWithMetadata?.metadata?.provider)
   const labelProvider = providerIdFromUnknown(run?.provider) || activityProvider || fallbackProvider
-  const {
-    label,
-    provider,
-    providerClass,
-    modelBadge,
-    pooledAgentIdentity
-  } = formatAssistantMessageLabel(
-    activitySpeakerMessage(message, chat),
-    labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
-    labelProvider,
-    {
-      isEnsembleChat: chat?.chatKind === 'ensemble',
-      soloModelId: run?.actualModel || run?.requestedModel || null
-    }
-  )
+  const { label, provider, providerClass, modelBadge, pooledAgentIdentity } =
+    formatAssistantMessageLabel(
+      activitySpeakerMessage(message, chat),
+      labelProvider ? getProviderLabel(labelProvider) : fallbackProviderLabel,
+      labelProvider,
+      {
+        isEnsembleChat: chat?.chatKind === 'ensemble',
+        soloModelId: run?.actualModel || run?.requestedModel || null
+      }
+    )
   const providerHook = providerClass || provider
 
   return (
@@ -461,7 +453,11 @@ const COLLAPSED_STACK_FAMILY_ICON: Record<string, ToolFamily> = {
   task: 'task'
 }
 
-function CollapsedStackIconStrip({ families }: { families: readonly string[] }): ReactElement | null {
+function CollapsedStackIconStrip({
+  families
+}: {
+  families: readonly string[]
+}): ReactElement | null {
   if (families.length === 0) return null
   return (
     <span className="collapsed-activity-stack-icons" aria-hidden>
@@ -648,7 +644,11 @@ export type TranscriptPanelProps = {
   onDeleteMessage: (messageId: string) => void
   onTogglePinMessage?: (messageId: string) => void
   /** Thumbs feedback on an assistant message (up/down; host writes the receipt). */
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
+  onMessageFeedback?: (
+    messageId: string,
+    vote: 'up' | 'down',
+    details?: MessageFeedbackDetails
+  ) => void
   onPromoteCollaboratorComment?: (messageId: string) => void
   onMessageSelectionCandidate?: (message: ChatMessage) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
@@ -1107,10 +1107,7 @@ function useFanoutLaneMessageGrouping(messages: ChatMessage[]): ChatMessage[] {
   }, [messages])
 }
 
-const toolGroupingRegroupStart = (
-  messages: readonly ChatMessage[],
-  changedIndex: number
-): number =>
+const toolGroupingRegroupStart = (messages: readonly ChatMessage[], changedIndex: number): number =>
   regroupStartFromChangedIndex(messages, changedIndex, (previous, next) =>
     shouldGroupAdjacentToolMessages(previous, next)
   )
@@ -1172,7 +1169,9 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 
   return {
     dateTime: raw,
-    label: formatTranscriptClock(date) ?? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    label:
+      formatTranscriptClock(date) ??
+      date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     title: date.toLocaleString([], {
       dateStyle: 'medium',
       timeStyle: 'medium'
@@ -1181,8 +1180,7 @@ function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
 }
 
 function workingStatusLabel(presentation: WorkingIndicatorPresentation): string {
-  const activity =
-    presentation.activity === 'compacting' ? 'compacting context' : 'working'
+  const activity = presentation.activity === 'compacting' ? 'compacting context' : 'working'
   return presentation.roleLabel
     ? `${presentation.roleLabel} (${presentation.providerLabel || 'Agent'}) ${activity}`
     : `${presentation.providerLabel || 'Agent'} ${activity}`
@@ -1192,10 +1190,7 @@ function workingIndicatorLabel(presentation: WorkingIndicatorPresentation): stri
   return presentation.activity === 'compacting' ? 'Compacting' : 'Working'
 }
 
-function workingIndicatorKey(
-  presentation: WorkingIndicatorPresentation,
-  index: number
-): string {
+function workingIndicatorKey(presentation: WorkingIndicatorPresentation, index: number): string {
   return [
     presentation.participantId || '',
     presentation.runId || '',
@@ -1267,7 +1262,10 @@ function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] })
             title={fileChangeOwnerTitle(owner, order)}
           >
             {owner.provider && (
-              <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
+              <span
+                className={`file-change-summary-owner-icon provider-${owner.provider}`}
+                aria-hidden
+              >
                 <ProviderBrandLogo provider={owner.provider} />
               </span>
             )}
@@ -1327,7 +1325,11 @@ function TranscriptMessageFooter({
   onCopyMessage: (messageId: string, content: string) => void
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onTogglePinMessage?: (messageId: string) => void
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
+  onMessageFeedback?: (
+    messageId: string,
+    vote: 'up' | 'down',
+    details?: MessageFeedbackDetails
+  ) => void
   onDeleteMessage?: (messageId: string) => void
   onOpenSideChatFromMessage?: (message: ChatMessage) => void
   pinned: boolean
@@ -1379,11 +1381,7 @@ function TranscriptMessageFooter({
         />
       )}
       {timestamp && (
-        <time
-          className="message-footer-time"
-          dateTime={timestamp.dateTime}
-          title={timestamp.title}
-        >
+        <time className="message-footer-time" dateTime={timestamp.dateTime} title={timestamp.title}>
           {timestamp.label}
         </time>
       )}
@@ -1712,9 +1710,7 @@ function useTranscriptVirtualization(params: {
   // the whole transcript fits, so the lens layout can distinguish "everything
   // visible → hide lens" from "unmeasured → hide lens" with one code path.
   const spyViewportFraction =
-    enabled && totalHeight > 0
-      ? Math.max(0, Math.min(1, viewportRef.current / totalHeight))
-      : 0
+    enabled && totalHeight > 0 ? Math.max(0, Math.min(1, viewportRef.current / totalHeight)) : 0
 
   // Read-only passive scroll + resize listener: refresh metrics, capture
   // the anchor, and request a window recompute. Never writes scrollTop.
@@ -2135,11 +2131,9 @@ export const TranscriptPanel = memo(
     const workingProviderLabel =
       ensembleWorkingPresentation?.providerLabel || thinkingProviderLabel || currentProviderLabel
     const workingProvider = ensembleWorkingPresentation?.provider ?? thinkingProvider
-    const workingProviderClass =
-      ensembleWorkingPresentation?.providerClass ?? thinkingProviderClass
+    const workingProviderClass = ensembleWorkingPresentation?.providerClass ?? thinkingProviderClass
     const workingRoleLabel = ensembleWorkingPresentation?.roleLabel || null
-    const workingModelBadge =
-      ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
+    const workingModelBadge = ensembleWorkingPresentation?.modelBadge ?? thinkingModelBadge ?? null
     const workingPresentations = useMemo<WorkingIndicatorPresentation[]>(
       () =>
         ensembleWorkingPresentations.length > 0
@@ -2152,7 +2146,8 @@ export const TranscriptPanel = memo(
                 tokenAccumulatorBase: ensembleWorkingPresentation?.tokenAccumulatorBase ?? 0,
                 providerLabel: workingProviderLabel || currentProviderLabel || 'Agent',
                 provider: workingProvider ?? null,
-                providerClass: workingProviderClass || (workingProvider ? String(workingProvider) : null),
+                providerClass:
+                  workingProviderClass || (workingProvider ? String(workingProvider) : null),
                 roleLabel: workingRoleLabel,
                 modelBadge: workingModelBadge,
                 activity: contextCompactionProgress.some(
@@ -2372,8 +2367,8 @@ export const TranscriptPanel = memo(
       fileChangeDisplayList
     ])
     const showMoreFileChangeSummaries = useCallback(() => {
-      setFileChangeSummaryVisibleCount((current) =>
-        buildFileChangeSummaryWindow(fileChangeDisplayList, current).nextCount
+      setFileChangeSummaryVisibleCount(
+        (current) => buildFileChangeSummaryWindow(fileChangeDisplayList, current).nextCount
       )
     }, [fileChangeDisplayList])
     const showFewerFileChangeSummaries = useCallback(() => {
@@ -2442,8 +2437,9 @@ export const TranscriptPanel = memo(
       if (visibleMessages.some((message) => message.id === messageContextMenu.message.id)) return
       setMessageContextMenu(null)
     }, [messageContextMenu, visibleMessages])
-    const shouldShowRunCompleteNotice =
-      Boolean(runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice))
+    const shouldShowRunCompleteNotice = Boolean(
+      runCompleteNotice && !isWelcomeChat && !shouldSuppressRunCompleteSummary(runCompleteNotice)
+    )
     // The run-complete card's title is a dynamic status, not a fixed "Task
     // complete": blockers the orchestrator flagged for the round REPLACE the
     // title (and tint it) instead of contradicting it from an advisory banner
@@ -2573,9 +2569,7 @@ export const TranscriptPanel = memo(
         return map
       })
     }, [])
-    const [expandedSubThreadResults, setExpandedSubThreadResults] = useState<Set<string>>(
-      new Set()
-    )
+    const [expandedSubThreadResults, setExpandedSubThreadResults] = useState<Set<string>>(new Set())
     const setSubThreadResultExpanded = useCallback((rowId: string, expanded: boolean) => {
       setExpandedSubThreadResults((prev) => {
         const next = new Set(prev)
@@ -2723,8 +2717,7 @@ export const TranscriptPanel = memo(
       return map
     }, [visibleMessages])
     const participantFilteredMessages = useMemo(
-      () =>
-        filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
+      () => filterTranscriptMessagesByParticipantKeys(groupedMessages, activeParticipantFilterKeys),
       [activeParticipantFilterKeys, groupedMessages]
     )
     const participantFilterActive = activeParticipantFilterKeys.size > 0
@@ -2935,8 +2928,7 @@ export const TranscriptPanel = memo(
       if (!liveMeasurementMessageId) return null
       return (
         projectedRows.find(
-          (row) =>
-            row.id === liveMeasurementMessageId && row.index === displayMessages.length - 1
+          (row) => row.id === liveMeasurementMessageId && row.index === displayMessages.length - 1
         )?.rowKey ?? null
       )
     }, [displayMessages.length, liveMeasurementMessageId, projectedRows])
@@ -3064,12 +3056,7 @@ export const TranscriptPanel = memo(
       }
       flush()
       return map
-    }, [
-      displayMessages,
-      lastDisplayMessageId,
-      pendingAgentQuestions,
-      pendingPlanChoice
-    ])
+    }, [displayMessages, lastDisplayMessageId, pendingAgentQuestions, pendingPlanChoice])
 
     const expandedRowIdsWithLiveViewports = useMemo(() => {
       if (
@@ -3314,7 +3301,10 @@ export const TranscriptPanel = memo(
     )
     const pendingFocusRowIndex = useMemo(() => {
       if (!pendingFocusTarget) return null
-      const row = findProjectedRowForMessage(pendingFocusTarget.messageId, pendingFocusTarget.rowKey)
+      const row = findProjectedRowForMessage(
+        pendingFocusTarget.messageId,
+        pendingFocusTarget.rowKey
+      )
       if (!row) return null
       const rowPosition = projectedRowLookup.indexByRowKey.get(row.rowKey) ?? -1
       return rowPosition >= 0 ? rowPosition : null
@@ -3351,7 +3341,8 @@ export const TranscriptPanel = memo(
       hiddenRowKeys
     })
     const virtualHeightOffsets = useMemo(
-      () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
+      () =>
+        virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS,
       [virtualHeights, virtualizeEnabled]
     )
     const userGutterMarkers = useMemo(
@@ -3524,10 +3515,7 @@ export const TranscriptPanel = memo(
           virtualizeEnabled && virtualHeights.length === projectedRows.length
             ? sumHeightOffsets(virtualHeightOffsets, 0, rowPosition)
             : sumHeights(rowHeights, 0, rowPosition)
-        const nextScrollTop = Math.max(
-          0,
-          estimatedTop - Math.round(scroller.clientHeight * 0.35)
-        )
+        const nextScrollTop = Math.max(0, estimatedTop - Math.round(scroller.clientHeight * 0.35))
         if (options?.animate) {
           // First hop of a rail jump: glide toward the estimated position. If
           // the user grabs the scroll mid-glide, abandon the pending focus —
@@ -3636,7 +3624,6 @@ export const TranscriptPanel = memo(
           })
           .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
-
 
     useEffect(() => {
       const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
@@ -3751,7 +3738,8 @@ export const TranscriptPanel = memo(
             const toolActivityActionStateKey = hasToolActivitiesForActions
               ? `${toolActivityActionMessageIds
                   .map((messageId) => {
-                    const sourceMessage = messageById.get(messageId) || (messageId === msg.id ? msg : undefined)
+                    const sourceMessage =
+                      messageById.get(messageId) || (messageId === msg.id ? msg : undefined)
                     return [
                       messageId,
                       sourceMessage?.metadata?.pinnedAt || '',
@@ -3760,42 +3748,43 @@ export const TranscriptPanel = memo(
                   })
                   .join('\u0000')}|copy:${copiedId?.includes(':thinking') ? copiedId : ''}`
               : ''
-            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined = hasToolActivitiesForActions
-              ? {
-                  messageId: toolActivityActionMessageIds[0] || msg.id,
-                  label: 'thinking trace',
-                  copiedId,
-                  pinned: isPinned,
-                  thumbsVote: readMessageFeedbackVote(msg),
-                  messageIdForActivity: (activity) =>
-                    toolActivityMessageIdByActivityId.get(activity.id) ||
-                    toolActivityActionMessageIds[0] ||
-                    msg.id,
-                  stateForMessage: (messageId) => {
-                    const sourceMessage = messageById.get(messageId) || msg
-                    return {
-                      pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
-                      thumbsVote: readMessageFeedbackVote(sourceMessage)
-                    }
-                  },
-                  copy,
-                  onAddToPrompt: onAddMessageToPrompt,
-                  onTogglePin: onTogglePinMessage,
-                  onThumbsUp: onMessageFeedback
-                    ? (messageId) => onMessageFeedback(messageId, 'up')
-                    : undefined,
-                  onThumbsDown: onMessageFeedback
-                    ? (messageId) => onMessageFeedback(messageId, 'down')
-                    : undefined,
-                  onDelete: onDeleteMessage,
-                  onOpenSideChat: onOpenSideChatFromMessage
-                    ? (messageId, content) => {
-                        const sourceMessage = messageById.get(messageId) || msg
-                        onOpenSideChatFromMessage({ ...sourceMessage, content })
+            const thinkingTraceActions: ThinkingTraceActionsConfig | undefined =
+              hasToolActivitiesForActions
+                ? {
+                    messageId: toolActivityActionMessageIds[0] || msg.id,
+                    label: 'thinking trace',
+                    copiedId,
+                    pinned: isPinned,
+                    thumbsVote: readMessageFeedbackVote(msg),
+                    messageIdForActivity: (activity) =>
+                      toolActivityMessageIdByActivityId.get(activity.id) ||
+                      toolActivityActionMessageIds[0] ||
+                      msg.id,
+                    stateForMessage: (messageId) => {
+                      const sourceMessage = messageById.get(messageId) || msg
+                      return {
+                        pinned: typeof sourceMessage.metadata?.pinnedAt === 'number',
+                        thumbsVote: readMessageFeedbackVote(sourceMessage)
                       }
-                    : undefined
-                }
-              : undefined
+                    },
+                    copy,
+                    onAddToPrompt: onAddMessageToPrompt,
+                    onTogglePin: onTogglePinMessage,
+                    onThumbsUp: onMessageFeedback
+                      ? (messageId) => onMessageFeedback(messageId, 'up')
+                      : undefined,
+                    onThumbsDown: onMessageFeedback
+                      ? (messageId) => onMessageFeedback(messageId, 'down')
+                      : undefined,
+                    onDelete: onDeleteMessage,
+                    onOpenSideChat: onOpenSideChatFromMessage
+                      ? (messageId, content) => {
+                          const sourceMessage = messageById.get(messageId) || msg
+                          onOpenSideChatFromMessage({ ...sourceMessage, content })
+                        }
+                      : undefined
+                  }
+                : undefined
             const footerCopyContent =
               !isDelegationCard &&
               !isReturnCard &&
@@ -3811,13 +3800,13 @@ export const TranscriptPanel = memo(
                 ? 'user message'
                 : isFanoutResultCard
                   ? 'fan-out result'
-                : isGuestReply
-                  ? 'guest participant message'
-                  : isCollaboratorComment
-                    ? 'collaborator message'
-                    : msg.role === 'tool'
-                      ? 'tool message'
-                      : `${msg.role} message`
+                  : isGuestReply
+                    ? 'guest participant message'
+                    : isCollaboratorComment
+                      ? 'collaborator message'
+                      : msg.role === 'tool'
+                        ? 'tool message'
+                        : `${msg.role} message`
             const isPinnedMessageTarget = highlightedMessageTarget
               ? highlightedMessageTarget.rowKey
                 ? highlightedMessageTarget.rowKey === rowKey
@@ -3969,9 +3958,10 @@ export const TranscriptPanel = memo(
               isDelegationCard || isReturnCard
                 ? `${runningChatIdsSignature}|${auxiliaryChatsSignature}`
                 : ''
-            const pendingProposedPlanKey = pendingProposedPlan?.messageId === msg.id
-              ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
-              : ''
+            const pendingProposedPlanKey =
+              pendingProposedPlan?.messageId === msg.id
+                ? `${pendingProposedPlan?.messageId || ''}:plan-modal`
+                : ''
             const auxiliaryKeyWithPendingPlan = auxiliaryKey
               ? `${auxiliaryKey}|${pendingProposedPlanKey}`
               : pendingProposedPlanKey
@@ -3997,7 +3987,8 @@ export const TranscriptPanel = memo(
                 : currentRun?.runId === msg.runId
                   ? currentRun
                   : null
-            const assistantRunModel = assistantRun?.actualModel || assistantRun?.requestedModel || null
+            const assistantRunModel =
+              assistantRun?.actualModel || assistantRun?.requestedModel || null
             const assistantRevealProvider =
               providerIdFromUnknown(msg.metadata?.ensembleProvider) ||
               providerIdFromUnknown(msg.metadata?.guestProvider) ||
@@ -4165,167 +4156,171 @@ export const TranscriptPanel = memo(
                       />
                     ) : null}
                     {isSuperLead && !superGroupExpanded ? null : isRoundHeader ? (
-                  <EnsembleRoundCardHeader
-                    key={msg.id}
-                    message={msg}
-                    onSetExpanded={setRoundExpanded}
-                  />
-                ) : isDelegationCard || isReturnCard ? (
-                  <div
-                    key={msg.id}
-                    className={`message-group ${
-                      isReturnCard ? 'subthread-return-message' : ''
-                    } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
-                      isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''
-                    }`}
-                    onContextMenu={
-                      isReturnCard
-                        ? (event) =>
-                            openMessageContextMenu(
-                              event,
-                              msg,
-                              subThreadReturnBody(msg.content),
-                              'sub-thread result',
-                              { copySource: 'subthread-return-body' }
-                            )
-                        : undefined
-                    }
-                  >
-                    {isDelegationCard ? (
-                      <SubThreadDelegationCard
+                      <EnsembleRoundCardHeader
+                        key={msg.id}
                         message={msg}
-                        chats={chats}
-                        runningChatIds={runningChatIds}
-                        onOpenSubThread={onOpenSubThread}
-                        onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                        onSetExpanded={setRoundExpanded}
                       />
-                    ) : (
-                      <SubThreadReturnCard
-                        message={msg}
-                        chat={currentChat || undefined}
-                        onOpenSubThread={onOpenSubThread}
-                        onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
-                        onCopyMessage={onCopyMessage}
-                        onAddMessageToPrompt={onAddMessageToPrompt}
-                        onTogglePinMessage={onTogglePinMessage}
-                        onDeleteMessage={onDeleteMessage}
-                        onOpenSideChatFromMessage={onOpenSideChatFromMessage}
-                        pinned={isPinned}
-                        copied={copiedId === msg.id}
-                        resultExpanded={expandedSubThreadResults.has(rowKey)}
-                        onResultExpandedChange={(expanded) =>
-                          setSubThreadResultExpanded(rowKey, expanded)
+                    ) : isDelegationCard || isReturnCard ? (
+                      <div
+                        key={msg.id}
+                        className={`message-group ${
+                          isReturnCard ? 'subthread-return-message' : ''
+                        } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
+                          isGuestReply ? ' guest-participant-reply-message' : ''
+                        }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}`}
+                        onContextMenu={
+                          isReturnCard
+                            ? (event) =>
+                                openMessageContextMenu(
+                                  event,
+                                  msg,
+                                  subThreadReturnBody(msg.content),
+                                  'sub-thread result',
+                                  { copySource: 'subthread-return-body' }
+                                )
+                            : undefined
                         }
+                      >
+                        {isDelegationCard ? (
+                          <SubThreadDelegationCard
+                            message={msg}
+                            chats={chats}
+                            runningChatIds={runningChatIds}
+                            onOpenSubThread={onOpenSubThread}
+                            onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                          />
+                        ) : (
+                          <SubThreadReturnCard
+                            message={msg}
+                            chat={currentChat || undefined}
+                            onOpenSubThread={onOpenSubThread}
+                            onOpenSubThreadInSidePanel={onOpenSubThreadInSidePanel}
+                            onCopyMessage={onCopyMessage}
+                            onAddMessageToPrompt={onAddMessageToPrompt}
+                            onTogglePinMessage={onTogglePinMessage}
+                            onDeleteMessage={onDeleteMessage}
+                            onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                            pinned={isPinned}
+                            copied={copiedId === msg.id}
+                            resultExpanded={expandedSubThreadResults.has(rowKey)}
+                            onResultExpandedChange={(expanded) =>
+                              setSubThreadResultExpanded(rowKey, expanded)
+                            }
+                          />
+                        )}
+                      </div>
+                    ) : isFanoutResultCard ? (
+                      <div
+                        key={msg.id}
+                        className="message-group ensemble-fanout-result-message"
+                        onContextMenu={(event) =>
+                          openMessageContextMenu(event, msg, msg.content || '', 'fan-out result', {
+                            copySource: 'static'
+                          })
+                        }
+                      >
+                        <EnsembleFanoutResultCard
+                          message={msg}
+                          chat={currentChat || undefined}
+                          workspacePath={currentWorkspacePath}
+                          streamRunId={
+                            typeof msg.runId === 'string' && msg.runId
+                              ? msg.runId
+                              : boundaryRun?.runId
+                          }
+                          working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
+                          expanded={expandedFanoutResults.has(rowKey)}
+                          onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
+                          compactDensity={compactDensity}
+                          expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                          onExpandedActivityIdsChange={(next) =>
+                            setActivityExpansionForRow(rowKey, next)
+                          }
+                          onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                          onPreviewImage={onPreviewImage}
+                          onDetachToPane={onDetachToPane}
+                          thinkingTraceActions={thinkingTraceActions}
+                        />
+                      </div>
+                    ) : isToolActivityStack && stackAutoCollapsible ? (
+                      <CollapsedActivityStackRow
+                        key={msg.id}
+                        header={activityStackHeader}
+                        activities={msg.toolActivities || []}
+                        expanded={collapsedStackExpanded}
+                        onToggle={(expanded) =>
+                          setCollapsedStackExpanded(liveViewportStackKey, expanded)
+                        }
+                      >
+                        <ActivityStack
+                          activities={msg.toolActivities || []}
+                          header={null}
+                          workspacePath={currentWorkspacePath}
+                          provider={getChatProvider(currentChat)}
+                          chatId={currentChat?.appChatId}
+                          runId={msg.runId || boundaryRun?.runId}
+                          chat={currentChat || undefined}
+                          compactDensity={compactDensity}
+                          liveActivityViewport={liveActivityViewport}
+                          liveActivityViewportActive={false}
+                          liveActivityViewportExpanded={liveViewportExpanded}
+                          onLiveActivityViewportExpandedChange={(expanded) =>
+                            setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                          }
+                          expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                          onExpandedActivityIdsChange={(next) =>
+                            setActivityExpansionForRow(rowKey, next)
+                          }
+                          onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                          thinkingTraceActions={thinkingTraceActions}
+                        />
+                      </CollapsedActivityStackRow>
+                    ) : isToolActivityStack ? (
+                      <ActivityStack
+                        key={msg.id}
+                        activities={msg.toolActivities || []}
+                        header={activityStackHeader}
+                        workspacePath={currentWorkspacePath}
+                        provider={getChatProvider(currentChat)}
+                        chatId={currentChat?.appChatId}
+                        runId={msg.runId || boundaryRun?.runId}
+                        chat={currentChat || undefined}
+                        compactDensity={compactDensity}
+                        liveActivityViewport={liveActivityViewport}
+                        liveActivityViewportActive={liveViewportActive}
+                        liveActivityViewportExpanded={liveViewportExpanded}
+                        onLiveActivityViewportExpandedChange={(expanded) =>
+                          setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                        }
+                        expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                        onExpandedActivityIdsChange={(next) =>
+                          setActivityExpansionForRow(rowKey, next)
+                        }
+                        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                        thinkingTraceActions={thinkingTraceActions}
                       />
-                    )}
-                  </div>
-                ) : isFanoutResultCard ? (
-                  <div
-                    key={msg.id}
-                    className="message-group ensemble-fanout-result-message"
-                    onContextMenu={(event) =>
-                      openMessageContextMenu(event, msg, msg.content || '', 'fan-out result', {
-                        copySource: 'static'
-                      })
-                    }
-                  >
-                    <EnsembleFanoutResultCard
-                      message={msg}
-                      chat={currentChat || undefined}
-                      workspacePath={currentWorkspacePath}
-                      streamRunId={
-                        typeof msg.runId === 'string' && msg.runId
-                          ? msg.runId
-                          : boundaryRun?.runId
-                      }
-                      working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
-                      expanded={expandedFanoutResults.has(rowKey)}
-                      onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
-                      compactDensity={compactDensity}
-                      expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                      onExpandedActivityIdsChange={(next) =>
-                        setActivityExpansionForRow(rowKey, next)
-                      }
-                      onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                      onPreviewImage={onPreviewImage}
-                      onDetachToPane={onDetachToPane}
-                      thinkingTraceActions={thinkingTraceActions}
-                    />
-                  </div>
-                ) : isToolActivityStack && stackAutoCollapsible ? (
-                  <CollapsedActivityStackRow
-                    key={msg.id}
-                    header={activityStackHeader}
-                    activities={msg.toolActivities || []}
-                    expanded={collapsedStackExpanded}
-                    onToggle={(expanded) =>
-                      setCollapsedStackExpanded(liveViewportStackKey, expanded)
-                    }
-                  >
-                    <ActivityStack
-                      activities={msg.toolActivities || []}
-                      header={null}
-                      workspacePath={currentWorkspacePath}
-                      provider={getChatProvider(currentChat)}
-                      chatId={currentChat?.appChatId}
-                      runId={msg.runId || boundaryRun?.runId}
-                      chat={currentChat || undefined}
-                      compactDensity={compactDensity}
-                      liveActivityViewport={liveActivityViewport}
-                      liveActivityViewportActive={false}
-                      liveActivityViewportExpanded={liveViewportExpanded}
-                      onLiveActivityViewportExpandedChange={(expanded) =>
-                        setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
-                      }
-                      expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                      onExpandedActivityIdsChange={(next) =>
-                        setActivityExpansionForRow(rowKey, next)
-                      }
-                      onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                      thinkingTraceActions={thinkingTraceActions}
-                    />
-                  </CollapsedActivityStackRow>
-                ) : isToolActivityStack ? (
-                  <ActivityStack
-                    key={msg.id}
-                    activities={msg.toolActivities || []}
-                    header={activityStackHeader}
-                    workspacePath={currentWorkspacePath}
-                    provider={getChatProvider(currentChat)}
-                    chatId={currentChat?.appChatId}
-                    runId={msg.runId || boundaryRun?.runId}
-                    chat={currentChat || undefined}
-                    compactDensity={compactDensity}
-                    liveActivityViewport={liveActivityViewport}
-                    liveActivityViewportActive={liveViewportActive}
-                    liveActivityViewportExpanded={liveViewportExpanded}
-                    onLiveActivityViewportExpandedChange={(expanded) =>
-                      setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
-                    }
-                    expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
-                    onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
-                    onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                    thinkingTraceActions={thinkingTraceActions}
-                  />
-                ) : msg.role === 'tool' ? (
-                  <div key={msg.id} className="message-group tool-message-fallback">
-                    <div className="message-meta">Tool</div>
-                    <div
-                      className="message-bubble system tool-message-fallback-bubble"
-                      onContextMenu={(event) =>
-                        openMessageContextMenu(event, msg, msg.content || '', 'tool message')
-                      }
-                    >
-                      {msg.content ? (
-                        <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
-                      ) : (
-                        <span>Tool event recorded without displayable details.</span>
-                      )}
-                    </div>
-                  </div>
-                ) : isParticipantHealth ? (
-                  /*
+                    ) : msg.role === 'tool' ? (
+                      <div key={msg.id} className="message-group tool-message-fallback">
+                        <div className="message-meta">Tool</div>
+                        <div
+                          className="message-bubble system tool-message-fallback-bubble"
+                          onContextMenu={(event) =>
+                            openMessageContextMenu(event, msg, msg.content || '', 'tool message')
+                          }
+                        >
+                          {msg.content ? (
+                            <MarkdownMessage
+                              content={msg.content}
+                              chat={currentChat || undefined}
+                            />
+                          ) : (
+                            <span>Tool event recorded without displayable details.</span>
+                          )}
+                        </div>
+                      </div>
+                    ) : isParticipantHealth ? (
+                      /*
                     1.0.5-EW29 — Structured participant-health pre-flight
                     summary. Rendered as a chip-strip card instead of a
                     plain system-message bubble. The card component
@@ -4334,9 +4329,9 @@ export const TranscriptPanel = memo(
                     text variant on `msg.content` is the fallback for
                     older transcripts / exports.
                   */
-                  <ParticipantHealthCard key={msg.id} message={msg} />
-                ) : isContextCompaction && !systemAutoCollapsible ? (
-                  /*
+                      <ParticipantHealthCard key={msg.id} message={msg} />
+                    ) : isContextCompaction && !systemAutoCollapsible ? (
+                      /*
                     Provider context compaction (auto or manual), rendered in
                     the tool-call row idiom. Reached only while the record is
                     NOT fold-eligible (tail row, pinned, jump target) — once
@@ -4347,553 +4342,567 @@ export const TranscriptPanel = memo(
                     fallback for older transcripts, exports, and the iOS
                     system-row projection.
                   */
-                  <ContextCompactionCard key={msg.id} message={msg} />
-                ) : isProviderRunFailure ? (
-                  <ProviderRunFailureCard
-                    key={msg.id}
-                    message={msg}
-                    onCopy={onCopyMessage}
-                    onAddToPrompt={onAddMessageToPrompt}
-                    onContextMenu={(event, copyText) =>
-                      openMessageContextMenu(event, msg, copyText, 'provider failure', {
-                        copyOnly: true,
-                        copySource: 'static'
-                      })
-                    }
-                    copied={copiedId === msg.id}
-                  />
-                ) : systemAutoCollapsible ? (
-                  <CollapsedTranscriptRow
-                    key={msg.id}
-                    header={null}
-                    metaLabel={
-                      isContextCompaction ? contextCompactionMessageMetaLabel(msg) : 'System'
-                    }
-                    label={collapsedSystemNoticeLabel(msg.content)}
-                    icons={
-                      isContextCompaction ? (
-                        <span
-                          className={`collapsed-context-compaction-glyph ${
-                            contextCompactionMessageFailed(msg) ? 'is-failed' : 'is-completed'
-                          }`}
-                          aria-hidden
-                        >
-                          <ContextCompactionGlyph failed={contextCompactionMessageFailed(msg)} />
-                        </span>
-                      ) : undefined
-                    }
-                    errored={isContextCompaction && contextCompactionMessageFailed(msg)}
-                    compact
-                    expanded={collapsedSystemExpanded}
-                    onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
-                    ariaTargetLabel={
-                      isContextCompaction ? 'context compaction record' : 'system notice'
-                    }
-                  >
-                    {collapsedSystemExpanded ? (
-                      isContextCompaction ? (
-                        <ContextCompactionCard message={msg} />
-                      ) : (
-                        <div className="message-group">
-                          <div
-                            className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
-                            onContextMenu={(event) =>
-                              openMessageContextMenu(event, msg, msg.content || '', 'system message')
-                            }
-                          >
-                            <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
-                          </div>
-                        </div>
-                      )
-                    ) : null}
-                  </CollapsedTranscriptRow>
-                ) : (
-                  <div
-                    key={msg.id}
-                    className={`message-group ${
-                      isReturnCard ? 'subthread-return-message' : ''
-                    } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
-                      isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}${
-                      isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''
-                    }`}
-                  >
-                    {(() => {
-                      // Provider-aware label rendering. Solo chats: the
-                      // chat-level provider colours the whole label.
-                      // Ensemble chats: each message carries its own
-                      // `ensembleProvider` metadata so each assistant
-                      // message gets coloured by *who actually spoke*
-                      // even when the chat-level provider differs.
-                      // CSS in `main.css` keys off `.provider-{name}`
-                      // on `.message-meta` to tint with
-                      // `--provider-{name}-color`.
-                      if (msg.role === 'user') {
-                        // `user-meta` class is the seam the per-user
-                        // `userBubbleColor` appearance setting hooks
-                        // into to tint the "You" label with the same
-                        // hue as the bubble. See `[data-user-bubble-
-                        // color]` rules in `main.css`.
-                        return <div className="message-meta user-meta">You</div>
-                      }
-                      if (msg.role === 'error') {
-                        return <div className="message-meta">Error</div>
-                      }
-                      if (isCollaboratorComment) {
-                        return (
-                          <div className="message-meta human-collaborator-meta">
-                            <span className="message-meta-label">
-                              {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
-                            </span>
+                      <ContextCompactionCard key={msg.id} message={msg} />
+                    ) : isProviderRunFailure ? (
+                      <ProviderRunFailureCard
+                        key={msg.id}
+                        message={msg}
+                        onCopy={onCopyMessage}
+                        onAddToPrompt={onAddMessageToPrompt}
+                        onContextMenu={(event, copyText) =>
+                          openMessageContextMenu(event, msg, copyText, 'provider failure', {
+                            copyOnly: true,
+                            copySource: 'static'
+                          })
+                        }
+                        copied={copiedId === msg.id}
+                      />
+                    ) : systemAutoCollapsible ? (
+                      <CollapsedTranscriptRow
+                        key={msg.id}
+                        header={null}
+                        metaLabel={
+                          isContextCompaction ? contextCompactionMessageMetaLabel(msg) : 'System'
+                        }
+                        label={collapsedSystemNoticeLabel(msg.content)}
+                        icons={
+                          isContextCompaction ? (
                             <span
-                              className="message-meta-model-badge human-collaborator-badge"
-                              title="External, untrusted collaborator comment"
+                              className={`collapsed-context-compaction-glyph ${
+                                contextCompactionMessageFailed(msg) ? 'is-failed' : 'is-completed'
+                              }`}
+                              aria-hidden
                             >
-                              External
+                              <ContextCompactionGlyph
+                                failed={contextCompactionMessageFailed(msg)}
+                              />
                             </span>
-                            {collaboratorMeta?.contributionKind === 'requestHostAction' && (
-                              /* P2b: a structured request for the HOST to act —
-                               * it went to you for review, never to the AI. */
-                              <span
-                                className="message-meta-model-badge human-collaborator-badge human-collaborator-action-request"
-                                title="The collaborator asked you to take an action. Review it; nothing reaches the AI unless you insert and send it."
-                              >
-                                Action request
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (isTaskWraithCloseout) {
-                        const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
-                        const source = msg.metadata?.closeoutSource
-                        // Deterministic-fallback close-outs render "TaskWraith"
-                        // with no source badge — the "deterministic" chip read as
-                        // noise. Provider-generated close-outs still note their
-                        // source ("via Claude" / "via Foundation Models").
-                        const closeoutModel =
-                          typeof msg.metadata?.closeoutModel === 'string'
-                            ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
-                            : ''
-                        const closeoutProviderClass = closeoutProvider
-                          ? resolveProviderHueClass(closeoutProvider, closeoutModel)
-                          : null
-                        const badge =
-                          source === 'deterministicFallback'
-                            ? null
-                            : closeoutProvider
-                              ? `via ${getProviderLabel(closeoutProvider)}`
-                              : closeoutModel
-                                ? `via ${closeoutModel}`
-                                : 'generated'
-                        return (
-                          <div className="message-meta taskwraith-closeout-meta">
-                            <span className="message-meta-label">TaskWraith</span>
-                            {badge && (
-                              <span
-                                className={`message-meta-model-badge taskwraith-closeout-badge${
-                                  closeoutProviderClass
-                                    ? ` provider-${closeoutProviderClass}`
-                                    : ''
-                                }`}
-                                title={
-                                  closeoutProvider
-                                    ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
-                                    : closeoutModel
-                                      ? `Close-out summarized on-device by ${msg.metadata?.closeoutModel}`
-                                      : 'TaskWraith close-out'
+                          ) : undefined
+                        }
+                        errored={isContextCompaction && contextCompactionMessageFailed(msg)}
+                        compact
+                        expanded={collapsedSystemExpanded}
+                        onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
+                        ariaTargetLabel={
+                          isContextCompaction ? 'context compaction record' : 'system notice'
+                        }
+                      >
+                        {collapsedSystemExpanded ? (
+                          isContextCompaction ? (
+                            <ContextCompactionCard message={msg} />
+                          ) : (
+                            <div className="message-group">
+                              <div
+                                className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
+                                onContextMenu={(event) =>
+                                  openMessageContextMenu(
+                                    event,
+                                    msg,
+                                    msg.content || '',
+                                    'system message'
+                                  )
                                 }
                               >
-                                {badge}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      if (msg.role === 'assistant' || isGuestReply) {
-                        const rawChatPooledIdentity =
-                          currentChat?.providerMetadata?.pooledAgentIdentity
-                        const chatPooledIdentity =
-                          rawChatPooledIdentity && typeof rawChatPooledIdentity === 'object'
-                            ? (rawChatPooledIdentity as NonNullable<
-                                ChatMessage['metadata']
-                              >['pooledAgentIdentity'])
-                            : undefined
-                        const assistantLabelMessage =
-                          chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
-                            ? {
-                                ...msg,
-                                metadata: {
-                                  ...(msg.metadata || {}),
-                                  ...(typeof currentChat?.providerMetadata?.pooledAgentId === 'string'
-                                    ? {
-                                        pooledAgentId:
-                                          currentChat.providerMetadata.pooledAgentId
-                                      }
-                                    : {}),
-                                  pooledAgentIdentity: chatPooledIdentity
-                                }
-                              }
-                            : msg
-                        const {
-                          label,
-                          provider,
-                          providerClass,
-                          modelBadge,
-                          pooledAgentIdentity
-                        } =
-                          formatAssistantMessageLabel(
-                            assistantLabelMessage,
-                            currentProviderLabel,
-                            currentProvider,
-                            {
-                              isEnsembleChat: currentChat?.chatKind === 'ensemble',
-                              soloModelId: assistantRunModel
-                            }
-                          )
-                        // 1.0.7 — participant-rename continuity. The
-                        // header keeps the FROZEN role label; this quiet
-                        // badge tells the reader the seat has since been
-                        // renamed (e.g. "Planner" here is the seat now
-                        // called "Architect") so they can follow one
-                        // participant across a mid-session rename. Ledger-
-                        // preferred, with a frozen-vs-current fallback —
-                        // see deriveParticipantRenameContinuity.
-                        return (
-                          <div
-                            className={`message-meta${
-                              providerClass || provider
-                                ? ` provider-${providerClass || provider}`
-                                : ''
-                            }`}
-                          >
-                            <span className="message-meta-label">
-                              {pooledAgentIdentity && (
-                                <PooledAgentIcon
-                                  identity={pooledAgentIdentity}
-                                  size={14}
-                                  className="message-meta-agent-icon"
-                                />
-                              )}
-                              {label}
-                            </span>
-                            {modelBadge && (
-                              <span
-                                className="message-meta-model-badge"
-                                title={`Model: ${modelBadge}`}
-                                aria-label={`Model ${modelBadge}`}
-                              >
-                                {modelBadge}
-                              </span>
-                            )}
-                            {renameContinuity && (
-                              <span
-                                className="message-meta-renamed-from"
-                                title={`Now: ${renameContinuity.currentRole}`}
-                                aria-label={`Renamed from ${renameContinuity.fromRole}; now ${renameContinuity.currentRole}`}
-                              >
-                                renamed from {renameContinuity.fromRole}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      // Ensemble status messages (`yielded` / `failed` /
-                      // `skipped`) currently arrive with `role: 'system'`
-                      // because the orchestrator emits them as system-
-                      // origin chrome. They carry the participant's
-                      // identity in metadata though — so render them as
-                      // the participant (with provider tint) rather than
-                      // a generic "System" label. Reads more naturally
-                      // for users (e.g. the reason text on a yield is
-                      // really the participant's voice, not the app's).
-                      const statusMeta =
-                        msg.metadata?.kind === 'ensembleParticipantStatus'
-                          ? {
-                              provider: msg.metadata?.ensembleProvider as ProviderId | undefined,
-                              role:
-                                typeof msg.metadata?.ensembleRole === 'string'
-                                  ? msg.metadata.ensembleRole
-                                  : '',
-                              model:
-                                typeof msg.metadata?.ensembleModel === 'string'
-                                  ? msg.metadata.ensembleModel
-                                  : ''
-                            }
-                          : null
-                      if (statusMeta?.provider) {
-                        const statusProviderClass = resolveProviderHueClass(
-                          statusMeta.provider,
-                          statusMeta.model
-                        )
-                        const label = statusMeta.role
-                          ? `${getProviderLabel(statusMeta.provider)} / ${statusMeta.role}`
-                          : getProviderLabel(statusMeta.provider)
-                        const statusModelBadge = statusMeta.model
-                          ? shortModelName(statusMeta.provider, '', statusMeta.model)
-                          : ''
-                        return (
-                          <div className={`message-meta provider-${statusProviderClass}`}>
-                            <span className="message-meta-label">{label}</span>
-                            {statusModelBadge && (
-                              <span
-                                className="message-meta-model-badge"
-                                title={`Model: ${statusModelBadge}`}
-                                aria-label={`Model ${statusModelBadge}`}
-                              >
-                                {statusModelBadge}
-                              </span>
-                            )}
-                          </div>
-                        )
-                      }
-                      return <div className="message-meta">System</div>
-                    })()}
-                    {msg.role === 'user' ? (
-                      (() => {
-                        // Long pasted briefs would otherwise dominate the scroll
-                        // viewport. Collapse them by default and let the user
-                        // expand inline with "Show more". Toggle state lives in
-                        // `expandedUserMessages` so each bubble is independent.
-                        const collapsible = shouldCollapseUserMessage(msg.content)
-                        const isExpanded = expandedUserMessages.has(msg.id)
-                        const showCollapsed = collapsible && !isExpanded
-                        const preview = showCollapsed
-                          ? truncateUserMessagePreview(msg.content)
-                          : msg.content
-                        const mediaRefs = collectMessageMediaRefs(msg)
-                        // Drop from the attachment strip any image already shown
-                        // inline in the (possibly truncated) rendered body.
-                        const inlineImageIds = collectInlineImageRefIds(
-                          preview,
-                          mediaRefs,
-                          currentChat?.workspacePath
-                        )
-                        const stripRefs = inlineImageIds.size
-                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
-                          : mediaRefs
-                        return (
-                          <div
-                            className={`message-bubble user${
-                              collapsible ? ' is-collapsible' : ''
-                            }${showCollapsed ? ' is-collapsed' : ''}`}
-                            onContextMenu={(event) =>
-                              openMessageContextMenu(event, msg, msg.content, 'user message')
-                            }
-                          >
-                            <div className="user-message-content">
-                              <MarkdownMessage
-                                content={preview}
-                                chat={currentChat || undefined}
-                                mediaRefs={mediaRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                              />
-                            </div>
-                            {stripRefs.length > 0 && (
-                              <ChatMessageMediaStrip
-                                refs={stripRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                                onDetachToPane={onDetachToPane}
-                              />
-                            )}
-                            {collapsible && (
-                              <button
-                                type="button"
-                                className="user-message-toggle"
-                                onClick={() => toggleUserMessageExpanded(msg.id)}
-                                aria-expanded={isExpanded}
-                                title={isExpanded ? 'Collapse message' : 'Show full message'}
-                              >
-                                {isExpanded ? 'Show less' : 'Show more'}
-                              </button>
-                            )}
-                          </div>
-                        )
-                      })()
-                    ) : (
-                      (() => {
-                        const mediaRefs = collectMessageMediaRefs(msg)
-                        const messageStreamRunId =
-                          typeof msg.runId === 'string' && msg.runId
-                            ? msg.runId
-                            : boundaryRun?.runId
-                        // Drop from the attachment strip any image already shown
-                        // inline in the rendered body (deduped by resolved ref id).
-                        const inlineImageIds = collectInlineImageRefIds(
-                          msg.content,
-                          mediaRefs,
-                          currentChat?.workspacePath
-                        )
-                        const stripRefs = inlineImageIds.size
-                          ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
-                          : mediaRefs
-                        return (
-                          <div
-                            className={`message-bubble ${
-                              isCollaboratorComment
-                                ? 'system human-collaborator-comment'
-                                : isGuestReply
-                                  ? 'assistant guest-participant-reply'
-                                  : msg.role
-                            }${ensembleRoundStatusClass(msg)}`}
-                            onContextMenu={
-                              (msg.role === 'assistant' || msg.role === 'system' || isGuestReply) &&
-                              msg.content
-                                ? (event) =>
-                                    openMessageContextMenu(
-                                      event,
-                                      msg,
-                                      msg.content || '',
-                                      `${isGuestReply ? 'guest participant' : msg.role} message`
-                                    )
-                                : undefined
-                            }
-                          >
-                            {msg.role === 'assistant' || msg.role === 'system' || isGuestReply ? (
-                              usesRevealLifecycle ? (
-                                <RevealingMarkdownMessage
-                                  content={msg.content}
-                                  chat={currentChat || undefined}
-                                  isLive={isLiveRevealRow}
-                                  messageId={rowKey}
-                                  messageTimestamp={msg.timestamp}
-                                  provider={assistantRevealProvider}
-                                  model={assistantRevealModel}
-                                  mediaRefs={mediaRefs}
-                                  workspacePath={currentChat?.workspacePath}
-                                  onPreviewImage={onPreviewImage}
-                                  streamRunId={messageStreamRunId}
-                                  onRevealUnmounted={() =>
-                                    finishRevealLifecycle(revealLifecycleKey)
-                                  }
-                                />
-                              ) : (
                                 <MarkdownMessage
                                   content={msg.content}
                                   chat={currentChat || undefined}
-                                  mediaRefs={mediaRefs}
-                                  workspacePath={currentChat?.workspacePath}
-                                  onPreviewImage={onPreviewImage}
-                                  streamRunId={messageStreamRunId}
                                 />
-                              )
-                            ) : (
-                              msg.content
-                            )}
-                            {stripRefs.length > 0 && (
-                              <ChatMessageMediaStrip
-                                refs={stripRefs}
-                                workspacePath={currentChat?.workspacePath}
-                                onPreviewImage={onPreviewImage}
-                                onDetachToPane={onDetachToPane}
-                              />
-                            )}
-                            {isCollaboratorComment && onPromoteCollaboratorComment && (
-                              <div className="human-collaborator-actions">
-                                {/* P2a copy: promotion only creates a host-owned
-                                  * DRAFT — the host still reviews and sends. Never
-                                  * label this "Run" or "Prompt" (spec §6). */}
-                                <button
-                                  type="button"
-                                  className="human-collaborator-promote-btn"
-                                  onClick={() => onPromoteCollaboratorComment(msg.id)}
-                                  title="Insert this collaborator request into the composer as a draft you review before sending"
+                              </div>
+                            </div>
+                          )
+                        ) : null}
+                      </CollapsedTranscriptRow>
+                    ) : (
+                      <div
+                        key={msg.id}
+                        className={`message-group ${
+                          isReturnCard ? 'subthread-return-message' : ''
+                        } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
+                          isGuestReply ? ' guest-participant-reply-message' : ''
+                        }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}${
+                          isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''
+                        }`}
+                      >
+                        {(() => {
+                          // Provider-aware label rendering. Solo chats: the
+                          // chat-level provider colours the whole label.
+                          // Ensemble chats: each message carries its own
+                          // `ensembleProvider` metadata so each assistant
+                          // message gets coloured by *who actually spoke*
+                          // even when the chat-level provider differs.
+                          // CSS in `main.css` keys off `.provider-{name}`
+                          // on `.message-meta` to tint with
+                          // `--provider-{name}-color`.
+                          if (msg.role === 'user') {
+                            // `user-meta` class is the seam the per-user
+                            // `userBubbleColor` appearance setting hooks
+                            // into to tint the "You" label with the same
+                            // hue as the bubble. See `[data-user-bubble-
+                            // color]` rules in `main.css`.
+                            return <div className="message-meta user-meta">You</div>
+                          }
+                          if (msg.role === 'error') {
+                            return <div className="message-meta">Error</div>
+                          }
+                          if (isCollaboratorComment) {
+                            return (
+                              <div className="message-meta human-collaborator-meta">
+                                <span className="message-meta-label">
+                                  {collaboratorMeta?.collaboratorDisplayName || 'Collaborator'}
+                                </span>
+                                <span
+                                  className="message-meta-model-badge human-collaborator-badge"
+                                  title="External, untrusted collaborator comment"
                                 >
-                                  Insert as draft
-                                </button>
-                                {collaboratorMeta?.promotedAt && (
-                                  <span className="human-collaborator-status">
-                                    Inserted as draft
+                                  External
+                                </span>
+                                {collaboratorMeta?.contributionKind === 'requestHostAction' && (
+                                  /* P2b: a structured request for the HOST to act —
+                                   * it went to you for review, never to the AI. */
+                                  <span
+                                    className="message-meta-model-badge human-collaborator-badge human-collaborator-action-request"
+                                    title="The collaborator asked you to take an action. Review it; nothing reaches the AI unless you insert and send it."
+                                  >
+                                    Action request
                                   </span>
                                 )}
                               </div>
-                            )}
+                            )
+                          }
+                          if (isTaskWraithCloseout) {
+                            const closeoutProvider = closeoutProviderFromMetadata(msg.metadata)
+                            const source = msg.metadata?.closeoutSource
+                            // Deterministic-fallback close-outs render "TaskWraith"
+                            // with no source badge — the "deterministic" chip read as
+                            // noise. Provider-generated close-outs still note their
+                            // source ("via Claude" / "via Foundation Models").
+                            const closeoutModel =
+                              typeof msg.metadata?.closeoutModel === 'string'
+                                ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
+                                : ''
+                            const closeoutProviderClass = closeoutProvider
+                              ? resolveProviderHueClass(closeoutProvider, closeoutModel)
+                              : null
+                            const badge =
+                              source === 'deterministicFallback'
+                                ? null
+                                : closeoutProvider
+                                  ? `via ${getProviderLabel(closeoutProvider)}`
+                                  : closeoutModel
+                                    ? `via ${closeoutModel}`
+                                    : 'generated'
+                            return (
+                              <div className="message-meta taskwraith-closeout-meta">
+                                <span className="message-meta-label">TaskWraith</span>
+                                {badge && (
+                                  <span
+                                    className={`message-meta-model-badge taskwraith-closeout-badge${
+                                      closeoutProviderClass
+                                        ? ` provider-${closeoutProviderClass}`
+                                        : ''
+                                    }`}
+                                    title={
+                                      closeoutProvider
+                                        ? `Close-out generated via ${getProviderLabel(closeoutProvider)}`
+                                        : closeoutModel
+                                          ? `Close-out summarized on-device by ${msg.metadata?.closeoutModel}`
+                                          : 'TaskWraith close-out'
+                                    }
+                                  >
+                                    {badge}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
+                          if (msg.role === 'assistant' || isGuestReply) {
+                            const rawChatPooledIdentity =
+                              currentChat?.providerMetadata?.pooledAgentIdentity
+                            const chatPooledIdentity =
+                              rawChatPooledIdentity && typeof rawChatPooledIdentity === 'object'
+                                ? (rawChatPooledIdentity as NonNullable<
+                                    ChatMessage['metadata']
+                                  >['pooledAgentIdentity'])
+                                : undefined
+                            const assistantLabelMessage =
+                              chatPooledIdentity && !msg.metadata?.pooledAgentIdentity
+                                ? {
+                                    ...msg,
+                                    metadata: {
+                                      ...(msg.metadata || {}),
+                                      ...(typeof currentChat?.providerMetadata?.pooledAgentId ===
+                                      'string'
+                                        ? {
+                                            pooledAgentId:
+                                              currentChat.providerMetadata.pooledAgentId
+                                          }
+                                        : {}),
+                                      pooledAgentIdentity: chatPooledIdentity
+                                    }
+                                  }
+                                : msg
+                            const {
+                              label,
+                              provider,
+                              providerClass,
+                              modelBadge,
+                              pooledAgentIdentity
+                            } = formatAssistantMessageLabel(
+                              assistantLabelMessage,
+                              currentProviderLabel,
+                              currentProvider,
+                              {
+                                isEnsembleChat: currentChat?.chatKind === 'ensemble',
+                                soloModelId: assistantRunModel
+                              }
+                            )
+                            // 1.0.7 — participant-rename continuity. The
+                            // header keeps the FROZEN role label; this quiet
+                            // badge tells the reader the seat has since been
+                            // renamed (e.g. "Planner" here is the seat now
+                            // called "Architect") so they can follow one
+                            // participant across a mid-session rename. Ledger-
+                            // preferred, with a frozen-vs-current fallback —
+                            // see deriveParticipantRenameContinuity.
+                            return (
+                              <div
+                                className={`message-meta${
+                                  providerClass || provider
+                                    ? ` provider-${providerClass || provider}`
+                                    : ''
+                                }`}
+                              >
+                                <span className="message-meta-label">
+                                  {pooledAgentIdentity && (
+                                    <PooledAgentIcon
+                                      identity={pooledAgentIdentity}
+                                      size={14}
+                                      className="message-meta-agent-icon"
+                                    />
+                                  )}
+                                  {label}
+                                </span>
+                                {modelBadge && (
+                                  <span
+                                    className="message-meta-model-badge"
+                                    title={`Model: ${modelBadge}`}
+                                    aria-label={`Model ${modelBadge}`}
+                                  >
+                                    {modelBadge}
+                                  </span>
+                                )}
+                                {renameContinuity && (
+                                  <span
+                                    className="message-meta-renamed-from"
+                                    title={`Now: ${renameContinuity.currentRole}`}
+                                    aria-label={`Renamed from ${renameContinuity.fromRole}; now ${renameContinuity.currentRole}`}
+                                  >
+                                    renamed from {renameContinuity.fromRole}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
+                          // Ensemble status messages (`yielded` / `failed` /
+                          // `skipped`) currently arrive with `role: 'system'`
+                          // because the orchestrator emits them as system-
+                          // origin chrome. They carry the participant's
+                          // identity in metadata though — so render them as
+                          // the participant (with provider tint) rather than
+                          // a generic "System" label. Reads more naturally
+                          // for users (e.g. the reason text on a yield is
+                          // really the participant's voice, not the app's).
+                          const statusMeta =
+                            msg.metadata?.kind === 'ensembleParticipantStatus'
+                              ? {
+                                  provider: msg.metadata?.ensembleProvider as
+                                    | ProviderId
+                                    | undefined,
+                                  role:
+                                    typeof msg.metadata?.ensembleRole === 'string'
+                                      ? msg.metadata.ensembleRole
+                                      : '',
+                                  model:
+                                    typeof msg.metadata?.ensembleModel === 'string'
+                                      ? msg.metadata.ensembleModel
+                                      : ''
+                                }
+                              : null
+                          if (statusMeta?.provider) {
+                            const statusProviderClass = resolveProviderHueClass(
+                              statusMeta.provider,
+                              statusMeta.model
+                            )
+                            const label = statusMeta.role
+                              ? `${getProviderLabel(statusMeta.provider)} / ${statusMeta.role}`
+                              : getProviderLabel(statusMeta.provider)
+                            const statusModelBadge = statusMeta.model
+                              ? shortModelName(statusMeta.provider, '', statusMeta.model)
+                              : ''
+                            return (
+                              <div className={`message-meta provider-${statusProviderClass}`}>
+                                <span className="message-meta-label">{label}</span>
+                                {statusModelBadge && (
+                                  <span
+                                    className="message-meta-model-badge"
+                                    title={`Model: ${statusModelBadge}`}
+                                    aria-label={`Model ${statusModelBadge}`}
+                                  >
+                                    {statusModelBadge}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
+                          return <div className="message-meta">System</div>
+                        })()}
+                        {msg.role === 'user'
+                          ? (() => {
+                              // Long pasted briefs would otherwise dominate the scroll
+                              // viewport. Collapse them by default and let the user
+                              // expand inline with "Show more". Toggle state lives in
+                              // `expandedUserMessages` so each bubble is independent.
+                              const collapsible = shouldCollapseUserMessage(msg.content)
+                              const isExpanded = expandedUserMessages.has(msg.id)
+                              const showCollapsed = collapsible && !isExpanded
+                              const preview = showCollapsed
+                                ? truncateUserMessagePreview(msg.content)
+                                : msg.content
+                              const mediaRefs = collectMessageMediaRefs(msg)
+                              // Drop from the attachment strip any image already shown
+                              // inline in the (possibly truncated) rendered body.
+                              const inlineImageIds = collectInlineImageRefIds(
+                                preview,
+                                mediaRefs,
+                                currentChat?.workspacePath
+                              )
+                              const stripRefs = inlineImageIds.size
+                                ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                                : mediaRefs
+                              return (
+                                <div
+                                  className={`message-bubble user${
+                                    collapsible ? ' is-collapsible' : ''
+                                  }${showCollapsed ? ' is-collapsed' : ''}`}
+                                  onContextMenu={(event) =>
+                                    openMessageContextMenu(event, msg, msg.content, 'user message')
+                                  }
+                                >
+                                  <div className="user-message-content">
+                                    <MarkdownMessage
+                                      content={preview}
+                                      chat={currentChat || undefined}
+                                      mediaRefs={mediaRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                    />
+                                  </div>
+                                  {stripRefs.length > 0 && (
+                                    <ChatMessageMediaStrip
+                                      refs={stripRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                      onDetachToPane={onDetachToPane}
+                                    />
+                                  )}
+                                  {collapsible && (
+                                    <button
+                                      type="button"
+                                      className="user-message-toggle"
+                                      onClick={() => toggleUserMessageExpanded(msg.id)}
+                                      aria-expanded={isExpanded}
+                                      title={isExpanded ? 'Collapse message' : 'Show full message'}
+                                    >
+                                      {isExpanded ? 'Show less' : 'Show more'}
+                                    </button>
+                                  )}
+                                </div>
+                              )
+                            })()
+                          : (() => {
+                              const mediaRefs = collectMessageMediaRefs(msg)
+                              const messageStreamRunId =
+                                typeof msg.runId === 'string' && msg.runId
+                                  ? msg.runId
+                                  : boundaryRun?.runId
+                              // Drop from the attachment strip any image already shown
+                              // inline in the rendered body (deduped by resolved ref id).
+                              const inlineImageIds = collectInlineImageRefIds(
+                                msg.content,
+                                mediaRefs,
+                                currentChat?.workspacePath
+                              )
+                              const stripRefs = inlineImageIds.size
+                                ? mediaRefs.filter((ref) => !inlineImageIds.has(ref.id))
+                                : mediaRefs
+                              return (
+                                <div
+                                  className={`message-bubble ${
+                                    isCollaboratorComment
+                                      ? 'system human-collaborator-comment'
+                                      : isGuestReply
+                                        ? 'assistant guest-participant-reply'
+                                        : msg.role
+                                  }${ensembleRoundStatusClass(msg)}`}
+                                  onContextMenu={
+                                    (msg.role === 'assistant' ||
+                                      msg.role === 'system' ||
+                                      isGuestReply) &&
+                                    msg.content
+                                      ? (event) =>
+                                          openMessageContextMenu(
+                                            event,
+                                            msg,
+                                            msg.content || '',
+                                            `${isGuestReply ? 'guest participant' : msg.role} message`
+                                          )
+                                      : undefined
+                                  }
+                                >
+                                  {msg.role === 'assistant' ||
+                                  msg.role === 'system' ||
+                                  isGuestReply ? (
+                                    usesRevealLifecycle ? (
+                                      <RevealingMarkdownMessage
+                                        content={msg.content}
+                                        chat={currentChat || undefined}
+                                        isLive={isLiveRevealRow}
+                                        messageId={rowKey}
+                                        messageTimestamp={msg.timestamp}
+                                        provider={assistantRevealProvider}
+                                        model={assistantRevealModel}
+                                        mediaRefs={mediaRefs}
+                                        workspacePath={currentChat?.workspacePath}
+                                        onPreviewImage={onPreviewImage}
+                                        streamRunId={messageStreamRunId}
+                                        onRevealUnmounted={() =>
+                                          finishRevealLifecycle(revealLifecycleKey)
+                                        }
+                                      />
+                                    ) : (
+                                      <MarkdownMessage
+                                        content={msg.content}
+                                        chat={currentChat || undefined}
+                                        mediaRefs={mediaRefs}
+                                        workspacePath={currentChat?.workspacePath}
+                                        onPreviewImage={onPreviewImage}
+                                        streamRunId={messageStreamRunId}
+                                      />
+                                    )
+                                  ) : (
+                                    msg.content
+                                  )}
+                                  {stripRefs.length > 0 && (
+                                    <ChatMessageMediaStrip
+                                      refs={stripRefs}
+                                      workspacePath={currentChat?.workspacePath}
+                                      onPreviewImage={onPreviewImage}
+                                      onDetachToPane={onDetachToPane}
+                                    />
+                                  )}
+                                  {isCollaboratorComment && onPromoteCollaboratorComment && (
+                                    <div className="human-collaborator-actions">
+                                      {/* P2a copy: promotion only creates a host-owned
+                                       * DRAFT — the host still reviews and sends. Never
+                                       * label this "Run" or "Prompt" (spec §6). */}
+                                      <button
+                                        type="button"
+                                        className="human-collaborator-promote-btn"
+                                        onClick={() => onPromoteCollaboratorComment(msg.id)}
+                                        title="Insert this collaborator request into the composer as a draft you review before sending"
+                                      >
+                                        Insert as draft
+                                      </button>
+                                      {collaboratorMeta?.promotedAt && (
+                                        <span className="human-collaborator-status">
+                                          Inserted as draft
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })()}
+                        {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
+                          <div className="plan-choice-card">
+                            <div className="plan-choice-question">{pendingPlanChoice.question}</div>
+                            <div className="plan-choice-actions">
+                              {pendingPlanChoice.options.map((option) => (
+                                <button
+                                  key={option}
+                                  type="button"
+                                  className="plan-choice-action-btn"
+                                  onClick={() => onPlanChoiceSubmit(msg.id, option)}
+                                  title={`Continue with "${option}"`}
+                                >
+                                  {option}
+                                </button>
+                              ))}
+                            </div>
                           </div>
-                        )
-                      })()
-                    )}
-                    {pendingPlanChoice && pendingPlanChoice.messageId === msg.id && (
-                      <div className="plan-choice-card">
-                        <div className="plan-choice-question">{pendingPlanChoice.question}</div>
-                        <div className="plan-choice-actions">
-                          {pendingPlanChoice.options.map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              className="plan-choice-action-btn"
-                              onClick={() => onPlanChoiceSubmit(msg.id, option)}
-                              title={`Continue with "${option}"`}
-                            >
-                              {option}
-                            </button>
-                          ))}
-                        </div>
+                        )}
+                        {shouldSurfacePlanCard &&
+                          msg.metadata?.proposedPlan &&
+                          !isModalOwnedPendingPlan && (
+                            <ProposedPlanCard
+                              title={msg.metadata.proposedPlan.title}
+                              body={msg.metadata.proposedPlan.body}
+                              status={msg.metadata.proposedPlan.status}
+                              artifactPath={msg.metadata.proposedPlan.artifactPath}
+                              chat={currentChat || undefined}
+                              onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
+                              onDismiss={() => onProposedPlanDismiss(msg.id)}
+                              onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
+                            />
+                          )}
+                        {questionTombstone && (
+                          <AgentQuestionTombstoneCard
+                            tombstone={questionTombstone}
+                            provider={
+                              (msg.metadata?.ensembleProvider as ProviderId | undefined) ??
+                              currentProvider ??
+                              null
+                            }
+                            providerLabel={currentProviderLabel}
+                          />
+                        )}
+                        {pendingQuestionsForRow.map((question) => (
+                          <AgentQuestionCard
+                            key={question.questionId}
+                            state={question}
+                            onAnswer={(answer, isCustom) =>
+                              onAgentQuestionSubmit(question.questionId, answer, isCustom)
+                            }
+                            onDismiss={() => onAgentQuestionDismiss(question.questionId)}
+                          />
+                        ))}
+                        {msg.metadata?.kind === 'ensembleBossmanPoll' &&
+                          typeof msg.metadata.pollId === 'string' && (
+                            <EnsemblePollCard
+                              chat={currentChat}
+                              pollId={msg.metadata.pollId}
+                              onVote={onEnsemblePollVote}
+                            />
+                          )}
                       </div>
                     )}
-                    {shouldSurfacePlanCard &&
-                      msg.metadata?.proposedPlan &&
-                      !isModalOwnedPendingPlan && (
-                      <ProposedPlanCard
-                        title={msg.metadata.proposedPlan.title}
-                        body={msg.metadata.proposedPlan.body}
-                        status={msg.metadata.proposedPlan.status}
-                        artifactPath={msg.metadata.proposedPlan.artifactPath}
-                        chat={currentChat || undefined}
-                        onApprove={(planBody) => onProposedPlanApprove(msg.id, planBody)}
-                        onDismiss={() => onProposedPlanDismiss(msg.id)}
-                        onCustom={(feedback) => onProposedPlanCustom(msg.id, feedback)}
-                      />
-                    )}
-                    {questionTombstone && (
-                      <AgentQuestionTombstoneCard
-                        tombstone={questionTombstone}
-                        provider={
-                          (msg.metadata?.ensembleProvider as ProviderId | undefined) ??
-                          currentProvider ??
-                          null
-                        }
-                        providerLabel={currentProviderLabel}
-                      />
-                    )}
-                    {pendingQuestionsForRow.map((question) => (
-                      <AgentQuestionCard
-                        key={question.questionId}
-                        state={question}
-                        onAnswer={(answer, isCustom) =>
-                          onAgentQuestionSubmit(question.questionId, answer, isCustom)
-                        }
-                        onDismiss={() => onAgentQuestionDismiss(question.questionId)}
-                      />
-                    ))}
-                    {msg.metadata?.kind === 'ensembleBossmanPoll' &&
-                      typeof msg.metadata.pollId === 'string' && (
-                        <EnsemblePollCard
-                          chat={currentChat}
-                          pollId={msg.metadata.pollId}
-                          onVote={onEnsemblePollVote}
-                        />
-                      )}
-                  </div>
-                )}
                   </>
                 )}
                 {superGroupHidden || questionReplyHidden ? null : (
-                <TranscriptMessageFooter
-                  message={msg}
-                  label={footerLabel}
-                  copyContent={footerCopyContent}
-                  align={msg.role === 'user' ? 'end' : 'start'}
-                  onCopyMessage={onCopyMessage}
-                  onAddMessageToPrompt={onAddMessageToPrompt}
-                  onTogglePinMessage={onTogglePinMessage}
-                  onMessageFeedback={onMessageFeedback}
-                  onDeleteMessage={onDeleteMessage}
-                  onOpenSideChatFromMessage={onOpenSideChatFromMessage}
-                  pinned={isPinned}
-                  copied={copiedId === msg.id}
-                />
+                  <TranscriptMessageFooter
+                    message={msg}
+                    label={footerLabel}
+                    copyContent={footerCopyContent}
+                    align={msg.role === 'user' ? 'end' : 'start'}
+                    onCopyMessage={onCopyMessage}
+                    onAddMessageToPrompt={onAddMessageToPrompt}
+                    onTogglePinMessage={onTogglePinMessage}
+                    onMessageFeedback={onMessageFeedback}
+                    onDeleteMessage={onDeleteMessage}
+                    onOpenSideChatFromMessage={onOpenSideChatFromMessage}
+                    pinned={isPinned}
+                    copied={copiedId === msg.id}
+                  />
                 )}
               </div>
             )
@@ -4967,9 +4976,7 @@ export const TranscriptPanel = memo(
                     style={workingAccentStyle(presentation)}
                   >
                     <div
-                      className={`message-meta${
-                        providerClass ? ` provider-${providerClass}` : ''
-                      }`}
+                      className={`message-meta${providerClass ? ` provider-${providerClass}` : ''}`}
                     >
                       <span className="message-meta-label">
                         {presentation.providerLabel || currentProviderLabel}
@@ -5010,9 +5017,7 @@ export const TranscriptPanel = memo(
                           fallbackTargetTokens={
                             tokenTarget?.targetTokens ?? presentation.tokenAccumulatorBase
                           }
-                          estimatedCurrentTurnTokens={
-                            tokenTarget?.estimatedCurrentTurnTokens ?? 0
-                          }
+                          estimatedCurrentTurnTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
                         />
                       }
                     />
@@ -5021,9 +5026,9 @@ export const TranscriptPanel = memo(
                         key={`pressure-${presentation.participantId || presentation.runId || index}`}
                         percent={
                           presentation.participantId
-                            ? workingContextPressure.byParticipant.get(
+                            ? (workingContextPressure.byParticipant.get(
                                 presentation.participantId
-                              ) ?? 0
+                              ) ?? 0)
                             : workingContextPressure.solo
                         }
                         estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
@@ -5123,228 +5128,232 @@ export const TranscriptPanel = memo(
                 </div>
               </div>
               {(!isGlobal || displayFileChangeSummaries.length > 0) && (
-              <div className="file-change-summary-card">
-                <div className="file-change-summary-header">
-                  <strong>File changes</strong>
-                  <div className="file-change-summary-meta">
-                    <span>{fileChangeSummaryText}</span>
-                    {fileChangeShouldShowStats && (
-                      <span className="file-change-summary-stats">
-                        <span className="file-change-stat file-change-stat-add composer-diff-add">
-                          +{fileChangeDisplayAdds}
+                <div className="file-change-summary-card">
+                  <div className="file-change-summary-header">
+                    <strong>File changes</strong>
+                    <div className="file-change-summary-meta">
+                      <span>{fileChangeSummaryText}</span>
+                      {fileChangeShouldShowStats && (
+                        <span className="file-change-summary-stats">
+                          <span className="file-change-stat file-change-stat-add composer-diff-add">
+                            +{fileChangeDisplayAdds}
+                          </span>
+                          <span className="file-change-stat file-change-stat-delete composer-diff-del">
+                            -{fileChangeDisplayDels}
+                          </span>
                         </span>
-                        <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                          -{fileChangeDisplayDels}
-                        </span>
-                      </span>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="file-change-summary-list">
-                  {displayFileChangeSummaries.length > 0 ? (
-                    <>
-                      {fileChangeSummaryWindow.items.map((item, index) => {
-                        const inRoundSection =
-                          fileChangeSections !== null && index < fileChangeSections.boundary
-                        // Round rows can repeat a session path (normalisation
-                        // drift between the live and exact lanes) — prefix
-                        // keeps keys unique either way.
-                        const rowKey = inRoundSection
-                          ? `round-${item.path}-${item.status}`
-                          : `${item.path}-${item.status}`
-                        const sectionLead =
-                          fileChangeSections === null ? null : index === 0 ? (
-                            <div className="file-change-summary-section-row is-round-section">
-                              <span className="file-change-summary-section-label">This round</span>
-                              <span className="file-change-summary-section-count">
-                                {fileChangeSections.roundCount}{' '}
-                                {fileChangeSections.roundCount === 1 ? 'file' : 'files'}
+                  <div className="file-change-summary-list">
+                    {displayFileChangeSummaries.length > 0 ? (
+                      <>
+                        {fileChangeSummaryWindow.items.map((item, index) => {
+                          const inRoundSection =
+                            fileChangeSections !== null && index < fileChangeSections.boundary
+                          // Round rows can repeat a session path (normalisation
+                          // drift between the live and exact lanes) — prefix
+                          // keeps keys unique either way.
+                          const rowKey = inRoundSection
+                            ? `round-${item.path}-${item.status}`
+                            : `${item.path}-${item.status}`
+                          const sectionLead =
+                            fileChangeSections === null ? null : index === 0 ? (
+                              <div className="file-change-summary-section-row is-round-section">
+                                <span className="file-change-summary-section-label">
+                                  This round
+                                </span>
+                                <span className="file-change-summary-section-count">
+                                  {fileChangeSections.roundCount}{' '}
+                                  {fileChangeSections.roundCount === 1 ? 'file' : 'files'}
+                                </span>
+                                {fileChangeSections.roundHasLineStats && (
+                                  <span className="file-change-summary-section-stats">
+                                    <span className="file-change-stat file-change-stat-add composer-diff-add">
+                                      +{fileChangeSections.roundAdds}
+                                    </span>
+                                    <span className="file-change-stat file-change-stat-delete composer-diff-del">
+                                      -{fileChangeSections.roundDels}
+                                    </span>
+                                  </span>
+                                )}
+                              </div>
+                            ) : index === fileChangeSections.boundary ? (
+                              <>
+                                <div
+                                  className="file-change-summary-section-divider"
+                                  aria-hidden="true"
+                                />
+                                <div className="file-change-summary-section-row is-session-section">
+                                  <span className="file-change-summary-section-label">
+                                    Earlier in session
+                                  </span>
+                                  <span className="file-change-summary-section-count">
+                                    {fileChangeSections.remainingCount}{' '}
+                                    {fileChangeSections.remainingCount === 1 ? 'file' : 'files'}
+                                  </span>
+                                </div>
+                              </>
+                            ) : null
+                          const rowContent = (
+                            <span className="file-change-summary-row-content">
+                              <span className={`file-change-summary-status status-${item.status}`}>
+                                {item.status === 'modified' ? 'edited' : item.status}
                               </span>
-                              {fileChangeSections.roundHasLineStats && (
-                                <span className="file-change-summary-section-stats">
+                              <FileTypeIcon
+                                path={item.path}
+                                size={14}
+                                className="file-change-summary-type-icon"
+                                workspacePath={currentWorkspacePath}
+                              />
+                              <FileChangePathCell path={item.path} />
+                              <FileChangeOwnerCell owners={item.owners} />
+                              {(item.additions !== undefined || item.deletions !== undefined) && (
+                                <span className="file-change-summary-item-stats">
                                   <span className="file-change-stat file-change-stat-add composer-diff-add">
-                                    +{fileChangeSections.roundAdds}
+                                    +{item.additions || 0}
                                   </span>
                                   <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                                    -{fileChangeSections.roundDels}
+                                    -{item.deletions || 0}
                                   </span>
                                 </span>
                               )}
-                            </div>
-                          ) : index === fileChangeSections.boundary ? (
-                            <>
-                              <div
-                                className="file-change-summary-section-divider"
-                                aria-hidden="true"
-                              />
-                              <div className="file-change-summary-section-row is-session-section">
-                                <span className="file-change-summary-section-label">
-                                  Earlier in session
-                                </span>
-                                <span className="file-change-summary-section-count">
-                                  {fileChangeSections.remainingCount}{' '}
-                                  {fileChangeSections.remainingCount === 1 ? 'file' : 'files'}
-                                </span>
-                              </div>
-                            </>
-                          ) : null
-                        const rowContent = (
-                          <span className="file-change-summary-row-content">
-                            <span className={`file-change-summary-status status-${item.status}`}>
-                              {item.status === 'modified' ? 'edited' : item.status}
                             </span>
-                            <FileTypeIcon
-                              path={item.path}
-                              size={14}
-                              className="file-change-summary-type-icon"
-                              workspacePath={currentWorkspacePath}
-                            />
-                            <FileChangePathCell path={item.path} />
-                            <FileChangeOwnerCell owners={item.owners} />
-                            {(item.additions !== undefined || item.deletions !== undefined) && (
-                              <span className="file-change-summary-item-stats">
-                                <span className="file-change-stat file-change-stat-add composer-diff-add">
-                                  +{item.additions || 0}
-                                </span>
-                                <span className="file-change-stat file-change-stat-delete composer-diff-del">
-                                  -{item.deletions || 0}
-                                </span>
-                              </span>
-                            )}
-                          </span>
-                        )
-                        if (!item.diffText && !onOpenFileChangeInWorkbench) {
+                          )
+                          if (!item.diffText && !onOpenFileChangeInWorkbench) {
+                            return (
+                              <Fragment key={rowKey}>
+                                {sectionLead}
+                                <div className="file-change-summary-item">{rowContent}</div>
+                              </Fragment>
+                            )
+                          }
+                          const hasDiffPreview = Boolean(item.diffText)
+                          const canShowHoverPreview = canShowDiffHoverPreview(
+                            item,
+                            Boolean(onOpenFileChangeInWorkbench)
+                          )
+                          const fileChangeActionLabel = onOpenFileChangeInWorkbench
+                            ? `Open Workbench diff for ${item.path}`
+                            : `Preview diff for ${item.path}`
                           return (
                             <Fragment key={rowKey}>
                               {sectionLead}
-                              <div className="file-change-summary-item">{rowContent}</div>
-                            </Fragment>
-                          )
-                        }
-                        const hasDiffPreview = Boolean(item.diffText)
-                        const canShowHoverPreview = canShowDiffHoverPreview(
-                          item,
-                          Boolean(onOpenFileChangeInWorkbench)
-                        )
-                        const fileChangeActionLabel = onOpenFileChangeInWorkbench
-                          ? `Open Workbench diff for ${item.path}`
-                          : `Preview diff for ${item.path}`
-                        return (
-                          <Fragment key={rowKey}>
-                            {sectionLead}
-                            <div
-                              className={`file-change-summary-item file-change-summary-item-interactive ${
-                                hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
-                              }`}
-                              onMouseEnter={
-                                canShowHoverPreview
-                                  ? (event) => openFileChangeDiffPreview(event, item)
-                                  : undefined
-                              }
-                              onMouseLeave={
-                                canShowHoverPreview
-                                  ? scheduleCloseFileChangeDiffPreview
-                                  : undefined
-                              }
-                            >
-                              <button
-                                className="file-change-summary-main-action"
-                                type="button"
-                                aria-describedby={
-                                  canShowHoverPreview &&
-                                  fileChangeDiffPreview?.summary.path === item.path
-                                    ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
-                                    : undefined
-                                }
-                                aria-label={fileChangeActionLabel}
-                                onFocus={
+                              <div
+                                className={`file-change-summary-item file-change-summary-item-interactive ${
+                                  hasDiffPreview ? 'has-diff-preview' : 'has-workbench-link'
+                                }`}
+                                onMouseEnter={
                                   canShowHoverPreview
-                                    ? (event) =>
-                                        openFileChangeDiffPreview(event, item, {
-                                          focusTarget: 'preview'
-                                        })
+                                    ? (event) => openFileChangeDiffPreview(event, item)
                                     : undefined
                                 }
-                                onBlur={
+                                onMouseLeave={
                                   canShowHoverPreview
                                     ? scheduleCloseFileChangeDiffPreview
                                     : undefined
                                 }
-                                onClick={(event) => activateFileChangeSummary(event, item)}
                               >
-                                {rowContent}
-                              </button>
-                              {hasDiffPreview && (
                                 <button
+                                  className="file-change-summary-main-action"
                                   type="button"
-                                  className="file-change-summary-diff-bubble"
                                   aria-describedby={
+                                    canShowHoverPreview &&
                                     fileChangeDiffPreview?.summary.path === item.path
                                       ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
                                       : undefined
                                   }
-                                  aria-label={`Preview diff for ${item.path}`}
-                                  onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
-                                  onMouseLeave={scheduleCloseFileChangeDiffPreview}
-                                  onFocus={(event) =>
-                                    openFileChangeDiffPreview(event, item, {
-                                      focusTarget: 'preview'
-                                    })
+                                  aria-label={fileChangeActionLabel}
+                                  onFocus={
+                                    canShowHoverPreview
+                                      ? (event) =>
+                                          openFileChangeDiffPreview(event, item, {
+                                            focusTarget: 'preview'
+                                          })
+                                      : undefined
                                   }
-                                  onBlur={scheduleCloseFileChangeDiffPreview}
-                                  onClick={(event) => {
-                                    event.preventDefault()
-                                    event.stopPropagation()
-                                    openFileChangeDiffPreview(event, item, { immediate: true })
-                                  }}
-                                  onKeyDown={(event) => {
-                                    if (event.key === 'Enter' || event.key === ' ') {
+                                  onBlur={
+                                    canShowHoverPreview
+                                      ? scheduleCloseFileChangeDiffPreview
+                                      : undefined
+                                  }
+                                  onClick={(event) => activateFileChangeSummary(event, item)}
+                                >
+                                  {rowContent}
+                                </button>
+                                {hasDiffPreview && (
+                                  <button
+                                    type="button"
+                                    className="file-change-summary-diff-bubble"
+                                    aria-describedby={
+                                      fileChangeDiffPreview?.summary.path === item.path
+                                        ? DIFF_HOVER_PREVIEW_TOOLTIP_ID
+                                        : undefined
+                                    }
+                                    aria-label={`Preview diff for ${item.path}`}
+                                    onMouseEnter={(event) => openFileChangeDiffPreview(event, item)}
+                                    onMouseLeave={scheduleCloseFileChangeDiffPreview}
+                                    onFocus={(event) =>
+                                      openFileChangeDiffPreview(event, item, {
+                                        focusTarget: 'preview'
+                                      })
+                                    }
+                                    onBlur={scheduleCloseFileChangeDiffPreview}
+                                    onClick={(event) => {
                                       event.preventDefault()
                                       event.stopPropagation()
-                                      openFileChangeDiffPreview(event, item, { focusTarget: 'action' })
-                                    }
-                                  }}
-                                >
-                                  Diff
-                                </button>
-                              )}
+                                      openFileChangeDiffPreview(event, item, { immediate: true })
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter' || event.key === ' ') {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        openFileChangeDiffPreview(event, item, {
+                                          focusTarget: 'action'
+                                        })
+                                      }
+                                    }}
+                                  >
+                                    Diff
+                                  </button>
+                                )}
+                              </div>
+                            </Fragment>
+                          )
+                        })}
+                        {fileChangeSummaryWindow.canShowMore ? (
+                          <button
+                            className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                            type="button"
+                            aria-label={`Show ${fileChangeSummaryWindow.nextShowCount} more changed files`}
+                            onClick={showMoreFileChangeSummaries}
+                          >
+                            Show {fileChangeSummaryWindow.nextShowCount} more files
+                          </button>
+                        ) : fileChangeSummaryWindow.canShowFewer ? (
+                          <button
+                            className="file-change-summary-item file-change-summary-overflow has-workbench-link"
+                            type="button"
+                            aria-label="Show fewer changed files"
+                            onClick={showFewerFileChangeSummaries}
+                          >
+                            Show fewer files
+                          </button>
+                        ) : null}
+                        {!fileChangeSummaryWindow.canShowMore &&
+                          fileChangeSummaryWindow.hiddenCount > 0 && (
+                            <div className="file-change-summary-item file-change-summary-overflow">
+                              +{fileChangeSummaryWindow.hiddenCount} more files omitted from summary
                             </div>
-                          </Fragment>
-                        )
-                      })}
-                      {fileChangeSummaryWindow.canShowMore ? (
-                        <button
-                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
-                          type="button"
-                          aria-label={`Show ${fileChangeSummaryWindow.nextShowCount} more changed files`}
-                          onClick={showMoreFileChangeSummaries}
-                        >
-                          Show {fileChangeSummaryWindow.nextShowCount} more files
-                        </button>
-                      ) : fileChangeSummaryWindow.canShowFewer ? (
-                        <button
-                          className="file-change-summary-item file-change-summary-overflow has-workbench-link"
-                          type="button"
-                          aria-label="Show fewer changed files"
-                          onClick={showFewerFileChangeSummaries}
-                        >
-                          Show fewer files
-                        </button>
-                      ) : null}
-                      {!fileChangeSummaryWindow.canShowMore &&
-                        fileChangeSummaryWindow.hiddenCount > 0 && (
-                          <div className="file-change-summary-item file-change-summary-overflow">
-                            +{fileChangeSummaryWindow.hiddenCount} more files omitted from summary
-                          </div>
-                      )}
-                    </>
-                  ) : (
-                    <div className="file-change-summary-item file-change-summary-empty">
-                      No file changes detected for this run.
-                    </div>
-                  )}
+                          )}
+                      </>
+                    ) : (
+                      <div className="file-change-summary-item file-change-summary-empty">
+                        No file changes detected for this run.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
               )}
             </div>
           )}

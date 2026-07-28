@@ -6,10 +6,7 @@ import type {
   RunQueueJob,
   RunQueueJobStatus
 } from '../../../main/store/types'
-import {
-  resolveOllamaDisplayBrand,
-  resolveProviderHueClass
-} from '../lib/ollamaDisplayBrand'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 
@@ -164,10 +161,7 @@ export function ActiveRunsSection({
             const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
             const providerDisplay = resolveActiveRunProviderDisplay(job, chat)
             return (
-              <div
-                key={job.id || job.runId}
-                className="sidebar-active-run-entry"
-              >
+              <div key={job.id || job.runId} className="sidebar-active-run-entry">
                 <button
                   type="button"
                   className={`sidebar-active-run-row provider-${providerDisplay.providerClass} ${isCurrent ? 'active' : ''}`}
@@ -283,9 +277,7 @@ export function resolveActiveRunProviderDisplay(
   const provider = resolveActiveRunProvider(job.provider, chat?.provider)
   const modelId = resolveActiveRunModelId(job, chat)
   const brand = provider === 'ollama' ? resolveOllamaDisplayBrand(modelId) : null
-  const providerClass = provider
-    ? resolveProviderHueClass(provider, modelId)
-    : 'unknown'
+  const providerClass = provider ? resolveProviderHueClass(provider, modelId) : 'unknown'
   const providerColor = provider
     ? `var(--provider-${providerClass}-color, var(--provider-${provider}-color, var(--accent)))`
     : 'var(--accent)'

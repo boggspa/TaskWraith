@@ -13,10 +13,7 @@ import {
   type OllamaContextPressureSeverity
 } from '../../../main/ollama/OllamaEnsembleContext'
 import { activeEnsembleRoundForComposer } from './chatBusyState'
-import {
-  ensembleFanoutPolicyEnabled,
-  normalizeEnsembleFanoutPolicy
-} from './ensembleFanoutPolicy'
+import { ensembleFanoutPolicyEnabled, normalizeEnsembleFanoutPolicy } from './ensembleFanoutPolicy'
 import { resolveProviderHueClass } from './ollamaDisplayBrand'
 import { resolveSlashParticipantForChat } from './resolveSlashParticipant'
 
@@ -58,18 +55,11 @@ export interface MultiviewEnsembleSelectionPruneSnapshot {
 export function buildEnsembleProviderBlendStyle(
   participants: readonly Pick<EnsembleParticipant, 'provider' | 'model'>[]
 ): Record<string, string> {
-  return participants.slice(0, 4).reduce<Record<string, string>>(
-    (style, participant, index) => {
-      const providerClass = resolveProviderHueClass(
-        participant.provider,
-        participant.model
-      )
-      style[`--ensemble-provider-${index + 1}`] =
-        `var(--provider-${providerClass}-color)`
-      return style
-    },
-    {}
-  )
+  return participants.slice(0, 4).reduce<Record<string, string>>((style, participant, index) => {
+    const providerClass = resolveProviderHueClass(participant.provider, participant.model)
+    style[`--ensemble-provider-${index + 1}`] = `var(--provider-${providerClass}-color)`
+    return style
+  }, {})
 }
 
 export function isMultiviewEnsembleParticipantSelectionValid(
@@ -78,7 +68,7 @@ export function isMultiviewEnsembleParticipantSelectionValid(
 ): boolean {
   return Boolean(
     chat?.chatKind === 'ensemble' &&
-      chat.ensemble?.participants.some((participant) => participant.id === participantId)
+    chat.ensemble?.participants.some((participant) => participant.id === participantId)
   )
 }
 
@@ -94,9 +84,7 @@ export function resolveMultiviewEnsembleParticipantSelection(
 ): string | null {
   const liveRound = activeEnsembleRoundForComposer(chat?.ensemble?.activeRound)
   const roundKey =
-    chat?.appChatId && liveRound?.roundId
-      ? `${chat.appChatId}:${liveRound.roundId}`
-      : null
+    chat?.appChatId && liveRound?.roundId ? `${chat.appChatId}:${liveRound.roundId}` : null
   const activeParticipantId = liveRound?.activeParticipantId
   const validUserSelection =
     userSelectedParticipantId &&
@@ -104,9 +92,7 @@ export function resolveMultiviewEnsembleParticipantSelection(
       ? userSelectedParticipantId
       : null
   const hasValidManualOverride = Boolean(
-    validUserSelection &&
-      roundKey &&
-      userOverrodeSelectionRoundKeys.has(roundKey)
+    validUserSelection && roundKey && userOverrodeSelectionRoundKeys.has(roundKey)
   )
   if (
     activeParticipantId &&
@@ -257,9 +243,7 @@ export function buildMultiviewEnsembleComposerProjection(
     )
     .filter(
       (contextLength): contextLength is number =>
-        typeof contextLength === 'number' &&
-        Number.isFinite(contextLength) &&
-        contextLength >= 2048
+        typeof contextLength === 'number' && Number.isFinite(contextLength) && contextLength >= 2048
     )
   const ollamaPressure =
     ollamaParticipants.length > 0
@@ -269,8 +253,7 @@ export function buildMultiviewEnsembleComposerProjection(
           ollamaParticipants: ollamaParticipants.map((participant) => ({
             modelId: participant.model,
             ollamaContextLength: installedOllamaModels.find(
-              (model) =>
-                model.id && isOllamaModelInstalled(participant.model || '', [model.id])
+              (model) => model.id && isOllamaModelInstalled(participant.model || '', [model.id])
             )?.contextLength
           })),
           toolsEnabled: chat.scope !== 'global'
@@ -289,8 +272,7 @@ export function buildMultiviewEnsembleComposerProjection(
     currentConcurrentMode: ensembleFanoutPolicyEnabled(currentFanoutPolicy),
     activeConcurrentMode: ensembleFanoutPolicyEnabled(activeFanoutPolicy),
     continuationHops: liveRound?.continuationHops ?? 0,
-    maxContinuationHops:
-      chat.ensemble?.maxContinuationHops ?? liveRound?.maxContinuationHops ?? 6,
+    maxContinuationHops: chat.ensemble?.maxContinuationHops ?? liveRound?.maxContinuationHops ?? 6,
     isRoundRunning: Boolean(liveRound),
     roundStatus: liveRound?.status,
     activeGoalStatus: chat.activeGoal?.status ?? null,
