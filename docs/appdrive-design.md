@@ -528,6 +528,46 @@ A retro-scrub was considered and rejected on grounds worth recording, because it
 
 So disclosure plus the existing history-clear is the correct remediation, not merely the cheap one.
 
+## 12b. The 1.9.1 self-launch incident, and what it revealed
+
+A seat with launch grants was asked to QA the app, spawned TaskWraith itself, and hit what looked like constant crashes. Diagnosed 2026-07-26; **the crash is fixed (`d79ab7f7c`), the two capabilities it implied are not, and are sized here.**
+
+### What actually happened — a bug, not an AppDrive gap
+
+[devAppName.ts:111](../src/main/devAppName.ts:111) gates the entire multi-instance lane behind `!app.isPackaged`. A **packaged** build therefore ignores `TASKWRAITH_INSTANCE_ID` completely — same app name, same userData, same lock — so a child copy hits `app.requestSingleInstanceLock()` ([index.ts:35028](../src/main/index.ts:35028)) and quits in milliseconds. Provider- and grant-agnostic; launching any *other* app would have worked.
+
+The cost was the **retry loop**, not the exit: an instant exit with no window and no useful stderr reads as transient. Fixed by refusing up front with a reason that says not to retry.
+
+**The process-parenting the incident seemed to call for already exists** — that is Run/`LaunchManager`: PID *and* process group tracked, killed via the negative pgid, start reservation held across approval, cwd jailed, `LD_PRELOAD`/`DYLD_*` stripped, surfaced in Active processes. What does not exist is any way to *drive* what it spawns.
+
+### B — supported self-instancing. Larger than it looks; do not rush it.
+
+Naively flipping the `!app.isPackaged` gate is unsafe. The broker socket is instance-scoped — `join(app.getPath('userData'), 'taskwraith-gemini-mcp.sock')` ([index.ts:30531](../src/main/index.ts:30531)) — but the provider-side registration that points at it is **not uniformly so**:
+
+- **Claude** gets a **per-run** MCP config written to the OS temp dir plus `--mcp-config <path>` on argv ([index.ts:18399](../src/main/index.ts:18399)) — already instance-safe.
+- **Gemini** resolves `~/.gemini/settings.json` ([index.ts:30534](../src/main/index.ts:30534)) — user-global, one file, last writer wins. There is already a `repairKnownStaleGeminiMcpBridgeConfigs` path ([McpBridgeRuntime.ts:2683](../src/main/mcp/McpBridgeRuntime.ts:2683)) that shells out to `gemini mcp list` to detect staleness, which is direct evidence this has bitten before.
+- **Cursor** uses `~/.cursor/mcp.json`, same shape.
+
+So B is not one gate flip — it is **auditing MCP-bridge registration across the provider roster** and making the non-per-run ones instance-aware. Two instances otherwise means a CLI child launched by instance A can dial instance B's socket: precisely the known cross-instance write leak, which this would *widen*. **A half-done B is worse than no B.**
+
+Also unresolved and worth deciding before building: should a *release* build ever run a second instance? An accidental `TASKWRAITH_INSTANCE_ID` gives a user an empty app with none of their chats. That argues for a distinct, explicit opt-in rather than reusing the dev variable.
+
+### C — the `window` driver. Gated on a consent flow, not on a driver class.
+
+The `window` kind is declared in `CanvasDriverKind` and absent from `SUPPORTED_DRIVERS`, which makes it look like a one-line enable. It is not.
+
+- **Capture exists**: `swift/TaskWraithBridge` owns SCStream/`SCContentFilter` window capture with OCR, exposed as `appwatch_start` / `_stop` / `_status` / `_frames` / `_latest_frame`.
+- **The implementation is in Swift, over JSON-RPC** — there is no TS Appwatch service class to hang a driver off, so a `CanvasWindowDriver` needs a bridge client.
+- **Attachment requires a user picker.** `AttachedWindow.swift` sources its metadata by correlating `SCShareableContent` *against the picker's filter*. An agent cannot attach a window by itself.
+
+That last point is the important one, and it is a **feature, not an obstacle**: consent by construction. But it means C is really *"the user attaches a window, and an agent may then observe it as a canvas"* — an attach/adopt flow with UI, not a driver registration. Screenshot-only, following `CanvasDeviceDriver`'s pattern where structured verbs explicitly throw.
+
+### Actuation over a native window is blocked on a macOS permission
+
+Worth stating plainly so nobody re-scopes it optimistically: there is **zero actuation primitive anywhere in the tree** — no `AXUIElement`, no `CGEvent`, in TS or Swift — and the app has never declared or requested the Accessibility TCC permission. Native actuation therefore needs a new Swift input surface *and* a permission the user must grant in System Settings, which cannot be done programmatically.
+
+That is Tier 4, and it should be planned as a permission-and-consent feature that happens to involve input synthesis, not as a driver that happens to need a permission.
+
 ## 13. Open questions for the next session
 
 1. Does `grokToolKindToService` sit on the live path for canvas tools, or do Grok canvas calls always route through the MCP-bridge preview? Needs runtime tracing.
