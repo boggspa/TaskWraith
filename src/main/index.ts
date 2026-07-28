@@ -305,6 +305,7 @@ import { resolveCodexMcpRouteHint, type CodexMcpRouteHint } from './codex/CodexM
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
+import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
 import {
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
@@ -23294,6 +23295,10 @@ function publishRunEvent(
   runEventBus.publish({ channel, provider, payload, sender, ...options })
 }
 
+/** Trailing lone high surrogates held back per run so no wire envelope ever
+ * ends mid-pair (F14) — see the holdback block in sendAgentCompatLine. */
+const pendingCompatLoneSurrogateByRun = new Map<string, string>()
+
 function sendAgentCompatLine(
   sender: Electron.WebContents,
   provider: ProviderId,
@@ -23311,6 +23316,28 @@ function sendAgentCompatLine(
   payload = canvasEvalCompatSanitizer.sanitize(payload, canvasEvalApproval, canvasEvalScope)
   const routed = enrichAgentPayload(provider, payload, initialRoute)
   if (!providerRunPersistenceAuthorized(provider, routed)) return
+  // UTF-16 integrity for the per-delta wire lane (F14): a delta ending in a
+  // lone high surrogate serializes as an unpaired \uD8xx escape, which
+  // Swift-side JSON decoding turns into U+FFFD — and the phone accumulates
+  // deltas, so the damage is permanent there while every JS accumulator
+  // heals on concat. Hold the half back and lead the next delta with it.
+  // Cumulative restatements re-carry the whole healed turn, so a pending
+  // half is dropped rather than prepended to them.
+  if (routed.appRunId && (payload?.type === 'content' || payload?.type === 'token')) {
+    const textKey =
+      typeof payload.text === 'string' ? 'text' : typeof payload.content === 'string' ? 'content' : null
+    if (textKey) {
+      if (payload.cumulative === true || isTaggedCumulativeRestatement(payload)) {
+        pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
+      } else {
+        const held = pendingCompatLoneSurrogateByRun.get(routed.appRunId) || ''
+        const split = rejoinHeldSurrogate(held, payload[textKey] as string)
+        if (split.held) pendingCompatLoneSurrogateByRun.set(routed.appRunId, split.held)
+        else pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
+        payload[textKey] = split.emit
+      }
+    }
+  }
   const runItemEvents = runItemEventsForCompatPayload(provider, routed, payload)
   if (runItemEvents.length > 0) {
     appendDurableRunItemEvents(runItemEvents)
@@ -23463,6 +23490,10 @@ function sendAgentCompatExit(
     exitStats ? { code, stats: exitStats } : { code },
     route
   )
+  // Retire any surrogate-holdback stash for this run (see sendAgentCompatLine)
+  // — a half still pending at the terminal boundary was genuine provider
+  // garbage, and the accumulated lanes already hold everything emitted.
+  if (routed.appRunId) pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
   const scheduledSoloOwner =
     routed.appRunId && routed.appChatId
       ? scheduledOccurrenceOwners.lookupSoloExit({
