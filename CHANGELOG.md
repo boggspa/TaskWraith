@@ -8,14 +8,16 @@ to answer.
 
 ## 1.9.1 - 2026-07-28
 
-1.9.0 connected the workshop's rooms; 1.9.1 cuts a service hatch into the wall.
-A terminal-native companion can now watch and steer the same threads the App
-owns, a modelling bench brings 3D scenes into the dock, and the Captain learns
-the fan-out move the Boss already knew. Around them, questions settle instead
-of vanishing, meters read the real dials, and the workshop refuses to trip
-over itself when something tries to start it twice.
+1.9.0 connected the workshop's rooms; 1.9.1 lets the workshop answer from the
+terminal. Its headline is `tw`: a terminal-native companion that watches and
+steers the same TaskWraith-owned thread, making one task feel native in two
+surfaces without splitting its authority. A modelling bench also brings 3D
+scenes into the dock, and the Captain learns the fan-out move the Boss already
+knew. Around them, questions settle instead of vanishing, meters read the real
+dials, and the workshop refuses to trip over itself when something tries to
+start it twice.
 
-### The workshop answers the terminal
+### Your TaskWraith thread, live in the terminal
 
 TaskWraith 1.9.1 ships `tw`, a **Developer Preview** terminal sidecar packaged
 with the desktop App. From a terminal it connects to the running App over a
@@ -26,13 +28,22 @@ Ensemble round. Provider hues carry into the terminal — including Ollama and
 Pi upstream brands — and the display degrades honestly through TrueColor,
 NO_COLOR, and ASCII.
 
-The preview is deliberately a companion, not a second TaskWraith: the App
-remains the required authority, thread and provider configuration stay in the
-App, and when a run needs an approval or an answer the terminal says
-**Open TaskWraith to answer** rather than imitating the approval card. If the
-App restarts, the sidecar reconnects and picks the thread back up. The
-packaged launcher runs on TaskWraith's own bundled runtime, so nothing has to
-be installed globally to try it.
+The testing story is deliberately concrete: keep TaskWraith running, launch
+`tw`, choose an existing thread, watch tool calls and thinking traces move
+through their compact viewports, send a prompt, and cancel a run when needed.
+Try an Ensemble to see the live baton and upstream provider colours; restart
+the App to watch the sidecar reconnect and pick the thread back up. Repository
+testers can run `npm run tui` against TaskWraith Dev, while the packaged
+launcher uses TaskWraith's bundled runtime, so trying the preview requires no
+global Node installation.
+
+This is **the same task in two native surfaces, with one authority** — not a
+second TaskWraith. The App remains the required host; thread, provider, model,
+permission, and roster configuration stay there. When a run needs an approval
+or an answer, the terminal makes that boundary explicit with **Open TaskWraith
+to answer** instead of imitating an authority surface. The preview concentrates
+on the daily terminal loop — observe, prompt, steer, cancel, and reconnect —
+while richer configuration and governed decisions remain in the App.
 
 ### A modelling bench joins the dock
 
