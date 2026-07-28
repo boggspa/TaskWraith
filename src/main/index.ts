@@ -42849,6 +42849,11 @@ if (isGeminiMcpBridgeProcess) {
       platform: process.platform,
       requestApproval: requestAgenticServiceApproval,
       createEnv: createCliEnv,
+      // Refuse a launch that would start a second copy of TaskWraith: a packaged
+      // build holds a single-instance lock, so the child quits in milliseconds
+      // and whatever started it reads that as a crash and retries forever.
+      appRootPath: () => app.getAppPath(),
+      appExecutablePath: () => process.execPath,
       trackSpawn: (spawn) => spawnRegistry.track(spawn),
       untrackSpawn: (pid) => spawnRegistry.untrack(pid),
       recordLifecycleEvent: appendLaunchLifecycleRunEvent,

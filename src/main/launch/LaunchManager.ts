@@ -64,6 +64,13 @@ export interface LaunchManagerDeps {
     }
   ) => Promise<boolean>
   createEnv: (extra: Record<string, string>, binaryPath?: string | null) => Record<string, string>
+  /**
+   * This app's own install root and executable, used to refuse a launch that
+   * would start a second copy of TaskWraith. Injected rather than read from
+   * `app` so the guard is testable without Electron; omit both to disable it.
+   */
+  appRootPath?: () => string | undefined
+  appExecutablePath?: () => string | undefined
   trackSpawn?: (spawn: TrackedSpawn) => void
   untrackSpawn?: (pid: number) => void
   createKillController?: (pid: number, pgid?: number) => KillController
@@ -92,6 +99,8 @@ export class LaunchManager {
   private readonly activeChildren = new Map<string, ChildProcess>()
   private readonly requestApproval: LaunchManagerDeps['requestApproval']
   private readonly createEnv: LaunchManagerDeps['createEnv']
+  private readonly appRootPath: LaunchManagerDeps['appRootPath']
+  private readonly appExecutablePath: LaunchManagerDeps['appExecutablePath']
   private readonly trackSpawn: (spawn: TrackedSpawn) => void
   private readonly untrackSpawn: (pid: number) => void
   private readonly createKillController: (pid: number, pgid?: number) => KillController
@@ -113,6 +122,8 @@ export class LaunchManager {
     this.spawnProcess = deps.spawnProcess || spawn
     this.requestApproval = deps.requestApproval
     this.createEnv = deps.createEnv
+    this.appRootPath = deps.appRootPath
+    this.appExecutablePath = deps.appExecutablePath
     this.trackSpawn = deps.trackSpawn || (() => {})
     this.untrackSpawn = deps.untrackSpawn || (() => {})
     this.createKillController =
@@ -149,6 +160,49 @@ export class LaunchManager {
     }
   }
 
+  /**
+   * Refuse a launch that would start a second copy of TaskWraith itself.
+   *
+   * TaskWraith is uniquely self-hostile as a launch target. `devAppName.ts` gates
+   * the whole multi-instance lane behind `!app.isPackaged`, so a PACKAGED build
+   * ignores `TASKWRAITH_INSTANCE_ID` entirely: same app name, same userData, same
+   * lock. The child therefore hits `app.requestSingleInstanceLock()`, logs one
+   * line and quits within milliseconds.
+   *
+   * That is indistinguishable from a crash to whatever started it. A QA agent
+   * sees a process exit instantly with no window and no useful stderr, concludes
+   * the launch failed transiently, and retries — forever. Refusing up front with
+   * a reason it can act on turns an unbounded retry loop into one clear failure.
+   *
+   * Matches on the SHAPE of the launch (an Electron entry point resolving to this
+   * app's own root, or a .app bundle whose executable is ours) rather than on the
+   * product name, so a rename does not silently disable it and an unrelated
+   * project that merely has "taskwraith" in its path is not blocked.
+   */
+  private describeSelfLaunch(command: {
+    raw: string
+    argv?: string[]
+    cwd: string
+  }): string | null {
+    const ownRoot = this.appRootPath?.()
+    const ownExecutable = this.appExecutablePath?.()
+    if (!ownRoot && !ownExecutable) return null
+    const parts = [command.raw, ...(command.argv ?? [])].join(' ')
+    const normalized = parts.replace(/\\/g, '/')
+    const hit = (needle: string | undefined): boolean => {
+      if (!needle) return false
+      return normalized.includes(needle.replace(/\\/g, '/'))
+    }
+    if (!hit(ownRoot) && !hit(ownExecutable)) return null
+    return (
+      'TaskWraith cannot launch a second copy of itself: a packaged build holds a ' +
+      'single-instance lock, so the child exits immediately rather than starting. ' +
+      'This is a hard refusal, not a transient failure — do not retry. To exercise ' +
+      'the app, use an already-running instance, or a separate dev instance started ' +
+      'outside TaskWraith with TASKWRAITH_INSTANCE_ID set.'
+    )
+  }
+
   async startTarget(input: StartLaunchTargetInput): Promise<LaunchStartResult> {
     const { target, provider, sender, chatId, runId } = input
     const existing = this.activeAttemptForTarget(target.id, target.workspacePath)
@@ -169,6 +223,8 @@ export class LaunchManager {
     if (!isPathInsideWorkspace(target.workspacePath, command.cwd)) {
       return { ok: false, error: 'Launch target cwd is outside the workspace.' }
     }
+    const selfLaunch = this.describeSelfLaunch(command)
+    if (selfLaunch) return { ok: false, error: selfLaunch }
 
     // Reserve the target before awaiting approval so a second start for the same
     // target can't slip through the activeAttemptForTarget guard (which only sees

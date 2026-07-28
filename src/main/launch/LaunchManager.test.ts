@@ -88,6 +88,134 @@ function managerFixture(storagePath: string, workspacePath: string) {
   }
 }
 
+describe('LaunchManager — self-launch refusal', () => {
+  /**
+   * TaskWraith is uniquely self-hostile as a launch target: a packaged build
+   * ignores the multi-instance lane (it is gated behind `!app.isPackaged`), so a
+   * child copy hits the single-instance lock and quits in milliseconds. That is
+   * indistinguishable from a crash to whatever started it, so a QA agent retries
+   * forever. These pin the refusal AND the false-positive boundary — a guard that
+   * blocks unrelated projects is worse than the loop it prevents.
+   */
+  const OWN_ROOT = '/Applications/TaskWraith.app/Contents/Resources/app.asar'
+  const OWN_EXE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
+
+  function selfAwareFixture(storagePath: string, workspacePath: string) {
+    const base = managerFixture(storagePath, workspacePath)
+    return {
+      ...base,
+      manager: new LaunchManager({
+        store: new LaunchAttemptStore(storagePath),
+        platform: 'darwin',
+        now: () => new Date('2026-06-21T12:00:00.000Z'),
+        spawnProcess: base.spawnProcess,
+        requestApproval: base.requestApproval,
+        createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
+        appRootPath: () => OWN_ROOT,
+        appExecutablePath: () => OWN_EXE,
+        killProcess: base.killProcess
+      })
+    }
+  }
+
+  it('refuses to spawn a second copy of itself, and never reaches spawn or approval', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-'))
+    const storagePath = await tempFile()
+    const fixture = selfAwareFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        label: 'TaskWraith',
+        command: {
+          raw: `${OWN_EXE} --qa`,
+          argv: [OWN_EXE, '--qa'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toMatch(/cannot launch a second copy of itself/)
+    // The message has to tell an agent to stop, not just that something failed —
+    // an unbounded retry loop is the actual symptom being fixed.
+    expect(result.ok === false && result.error).toMatch(/do not retry/i)
+    // Refused before the human is ever asked, and before anything is spawned.
+    expect(fixture.spawnProcess).not.toHaveBeenCalled()
+    expect(fixture.requestApproval).not.toHaveBeenCalled()
+  })
+
+  it('also catches an electron-style launch of our own app root', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self2-'))
+    const storagePath = await tempFile()
+    const fixture = selfAwareFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: `npx electron ${OWN_ROOT}`,
+          argv: ['npx', 'electron', OWN_ROOT],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(false)
+    expect(fixture.spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('does NOT block an unrelated project that merely mentions taskwraith', async () => {
+    // The guard matches this install's real paths, not the product name, so a
+    // rename cannot silently disable it and a lookalike path is not blocked.
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-other-'))
+    const storagePath = await tempFile()
+    const fixture = selfAwareFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: 'npm run dev --prefix ~/code/taskwraith-docs',
+          argv: ['npm', 'run', 'dev', '--prefix', '~/code/taskwraith-docs'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fixture.spawnProcess).toHaveBeenCalled()
+  })
+
+  it('is inert when the app paths are not injected', async () => {
+    // Keeps the guard out of the way in any embedding that does not supply them.
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-inert-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: `${OWN_EXE} --qa`,
+          argv: [OWN_EXE, '--qa'],
+          cwd: workspacePath,
+          longRunning: true
+        }
+      })
+    })
+
+    expect(result.ok).toBe(true)
+  })
+})
+
 describe('LaunchManager', () => {
   it('starts approved argv targets with one-shot approval and durable state', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-workspace-'))
