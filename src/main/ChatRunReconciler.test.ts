@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS,
+  bridgeTranscriptActivityIsLive,
   CHAT_RUN_STALE_EXIT_CODE,
   CHAT_RUN_STALE_SETTLEMENT_STATUS,
   isActiveChatRunStatus,
   reconcileStaleChatRuns,
+  sealChatRunTerminalFields,
   settleStaleChatRun
 } from './ChatRunReconciler'
 import type { ChatRecord, ChatRun } from './store/types'
@@ -184,5 +187,97 @@ describe('reconcileStaleChatRuns', () => {
       NOW
     )
     expect(result).toEqual({ chats: [], settlements: [] })
+  })
+})
+
+describe('bridgeTranscriptActivityIsLive', () => {
+  it('is live within the grace window and dead at its edge', () => {
+    expect(bridgeTranscriptActivityIsLive(NOW_MS - 1_000, NOW_MS)).toBe(true)
+    expect(
+      bridgeTranscriptActivityIsLive(NOW_MS - BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS + 1, NOW_MS)
+    ).toBe(true)
+    expect(
+      bridgeTranscriptActivityIsLive(NOW_MS - BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS, NOW_MS)
+    ).toBe(false)
+  })
+
+  it('treats unstamped or malformed activity as NOT live', () => {
+    expect(bridgeTranscriptActivityIsLive(undefined, NOW_MS)).toBe(false)
+    expect(bridgeTranscriptActivityIsLive(Number.NaN, NOW_MS)).toBe(false)
+    expect(bridgeTranscriptActivityIsLive(Number.POSITIVE_INFINITY, NOW_MS)).toBe(false)
+  })
+
+  it('honors a custom grace window', () => {
+    expect(bridgeTranscriptActivityIsLive(NOW_MS - 5_000, NOW_MS, 10_000)).toBe(true)
+    expect(bridgeTranscriptActivityIsLive(NOW_MS - 5_000, NOW_MS, 4_000)).toBe(false)
+  })
+})
+
+describe('sealChatRunTerminalFields', () => {
+  it('fills status, endedAt, stats and exitCode on an active run', () => {
+    const sealed = sealChatRunTerminalFields(run({ runId: 'r1', status: 'running' }), {
+      status: 'success',
+      endedAt: NOW,
+      stats: { tokens: 5 },
+      exitCode: 0
+    })
+    expect(sealed).toMatchObject({
+      status: 'success',
+      endedAt: NOW,
+      stats: { tokens: 5 },
+      exitCode: 0
+    })
+  })
+
+  it('fills a missing status even when other fields are absent from the seal', () => {
+    const sealed = sealChatRunTerminalFields(run({ runId: 'r1', status: undefined }), {
+      status: 'failed',
+      endedAt: NOW
+    })
+    expect(sealed?.status).toBe('failed')
+    expect(sealed?.endedAt).toBe(NOW)
+    expect(sealed && 'stats' in sealed && sealed.stats !== undefined).toBe(false)
+  })
+
+  it('never overwrites terminal fields the live seal already wrote', () => {
+    const sealed = sealChatRunTerminalFields(
+      run({
+        runId: 'r1',
+        status: 'success',
+        endedAt: RECENT,
+        stats: { tokens: 9 },
+        exitCode: 0
+      }),
+      { status: 'failed', endedAt: NOW, stats: { tokens: 1 }, exitCode: 1 }
+    )
+    expect(sealed).toBeNull()
+  })
+
+  it('repairs the endedAt-set-but-still-running ghost shape', () => {
+    const sealed = sealChatRunTerminalFields(
+      run({ runId: 'r1', status: 'running', endedAt: RECENT }),
+      { status: 'failed', endedAt: NOW }
+    )
+    expect(sealed?.status).toBe('failed')
+    expect(sealed?.endedAt).toBe(RECENT)
+  })
+
+  it('marks cancelled seals with the cancelled flag', () => {
+    const sealed = sealChatRunTerminalFields(run({ runId: 'r1', status: 'running' }), {
+      status: 'cancelled',
+      endedAt: NOW
+    })
+    expect(sealed?.status).toBe('cancelled')
+    expect(sealed?.cancelled).toBe(true)
+  })
+
+  it('does not stamp cancelled when only non-status fields fill', () => {
+    const sealed = sealChatRunTerminalFields(
+      run({ runId: 'r1', status: 'failed', endedAt: undefined }),
+      { status: 'cancelled', endedAt: NOW }
+    )
+    expect(sealed?.status).toBe('failed')
+    expect(sealed?.endedAt).toBe(NOW)
+    expect(sealed?.cancelled).toBeUndefined()
   })
 })

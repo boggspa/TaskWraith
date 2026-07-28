@@ -1743,10 +1743,13 @@ import {
   resolveSubThreadRecall
 } from './SubThreadRecall'
 import {
+  bridgeTranscriptActivityIsLive,
   CHAT_RUN_STALE_REASON,
   isActiveChatRunStatus,
   reconcileStaleChatRuns,
-  settleStaleChatRun
+  sealChatRunTerminalFields,
+  settleStaleChatRun,
+  type ChatRunTerminalSeal
 } from './ChatRunReconciler'
 import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
 import { newProjectReferenceId } from '../shared/projects'
@@ -4968,6 +4971,12 @@ type BridgeRunTranscriptState = {
   errorMessage?: string
   flushedOnce: boolean
   flushTimer?: NodeJS.Timeout
+  /** Wall-clock ms of the last ingested event / lifecycle transition. The
+   * `isChatRunLive` transcript probe only counts an entry as live while this
+   * is recent (BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS) — a leaked entry (terminal
+   * flush threw, lane never finalized) must decay instead of pinning the run
+   * live and blocking the stale-run reconciler for the whole process. */
+  lastActivityAt?: number
   /** Activities parsed from tool_use/tool_result compat events. */
   activities: ToolActivity[]
   /** Codex item id of the last appended content delta — a transition
@@ -4989,6 +4998,11 @@ type BridgeRunTranscriptState = {
 }
 
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
+
+/** Stamp a transcript entry as recently active (see `lastActivityAt`). */
+function touchBridgeRunTranscript(state: BridgeRunTranscriptState): void {
+  state.lastActivityAt = Date.now()
+}
 
 function bridgeRunRouteMatches(
   state: BridgeRunTranscriptState,
@@ -6638,6 +6652,42 @@ function sealSoloCodexRunOnCompletion(args: {
   const updated: ChatRecord = { ...chat, runs, updatedAt: Date.now() }
   AppStore.saveChat(updated)
   broadcastChatUpdated(updated)
+}
+
+/**
+ * Direct-seal fallback for a bridge-owned ChatRun whose terminal flush could
+ * not run (the flush threw — fence, decorator, store failure). Fill-only via
+ * `sealChatRunTerminalFields`, so racing a flush that did land is harmless,
+ * and guarded by the same persistence-authority + erasure fences as the flush
+ * so a rotated incarnation or in-flight history clear is never written into.
+ * Pushes the remote surfaces the flush would have pushed — the whole point is
+ * that the phone sees the running→terminal flip.
+ */
+function sealBridgeChatRunRecord(
+  state: BridgeRunTranscriptState,
+  seal: ChatRunTerminalSeal
+): void {
+  if (historyClearAdmissionBlocked(state.runId, undefined, state.chatId)) return
+  if (
+    !providerRunPersistenceAuthorized(state.provider, {
+      appRunId: state.runId,
+      appChatId: state.chatId
+    })
+  ) {
+    return
+  }
+  const chat = AppStore.getChat(state.chatId)
+  if (!chat?.runs?.length) return
+  const runIndex = chat.runs.findIndex((run) => run.runId === state.runId)
+  if (runIndex < 0) return
+  const sealed = sealChatRunTerminalFields(chat.runs[runIndex], seal)
+  if (!sealed) return
+  const runs = [...chat.runs]
+  runs[runIndex] = sealed
+  const saved = saveAndBroadcastChat({ ...chat, runs, updatedAt: Date.now() })
+  bridgeBroadcasterRef?.resetThrottle()
+  pushBridgeRunTaskCardDelta?.(saved.appChatId)
+  pushBridgeRunSnapshot?.(saved)
 }
 
 /**
@@ -8401,8 +8451,18 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
 function isChatRunLive(runId: string | undefined | null): boolean {
   if (!runId || typeof runId !== 'string' || !runId.trim()) return false
   const id = runId.trim()
-  if (runManager.get(id)) return true
-  if (bridgeRunTranscripts.has(id)) return true
+  // Finished sessions LINGER in the RunManager map for the process lifetime
+  // (nothing calls remove()), so bare existence pinned every session-backed
+  // run "live" forever and made the periodic reconciler vacuous in-session —
+  // ghosts only ever healed across an app restart. Only an ACTIVE session is
+  // liveness evidence; the finish→terminal-flush gap is covered by the
+  // transcript probe below (finalize stamps activity).
+  const session = runManager.get(id)
+  if (session && isActiveRunSessionStatus(session.status)) return true
+  const bridgeState = bridgeRunTranscripts.get(id)
+  if (bridgeState && bridgeTranscriptActivityIsLive(bridgeState.lastActivityAt, Date.now())) {
+    return true
+  }
   if (backgroundSubThreadTranscripts.has(id)) return true
   if (
     [...backgroundSubThreadTranscripts.values()].some(
@@ -8484,6 +8544,16 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
   }
 
   for (const settlement of settlements) {
+    // A leaked transcript entry for a settled run must not linger: a straggler
+    // event could schedule a non-final flush that resurrects status 'running'
+    // over the settlement, and the entry would re-arm the liveness probe once
+    // touched. Settlement means nothing live owns the run — drop the entry.
+    const leaked = bridgeRunTranscripts.get(settlement.runId)
+    if (leaked) {
+      if (leaked.flushTimer) clearTimeout(leaked.flushTimer)
+      bridgeRunTranscripts.delete(settlement.runId)
+      releaseProviderSessionPersistenceDecision(settlement.runId)
+    }
     console.warn(
       `[chat-run-reconciler] settled stale ChatRun chat=${settlement.chatId} run=${settlement.runId} was=${settlement.previousStatus}: ${CHAT_RUN_STALE_REASON}`
     )
@@ -10264,7 +10334,8 @@ function registerBridgeRunTranscript(args: {
     flushedOnce: false,
     activities: [],
     parts: [],
-    workspacePath: args.workspacePath
+    workspacePath: args.workspacePath,
+    lastActivityAt: Date.now()
   })
   // Chain link 1/3 — if a phone send produces no response, these three
   // [bridge-run] lines bisect it: registered-but-no-delta = the provider
@@ -10336,7 +10407,8 @@ function registerExecutionGraphRunTranscript(args: {
     activities: [],
     parts: [],
     workspacePath: args.job.workspacePath,
-    executionGraphBinding: resultBinding
+    executionGraphBinding: resultBinding,
+    lastActivityAt: Date.now()
   })
   saveAndBroadcastChat(seeded.chat)
   const persisted = AppStore.getChat(args.job.chatId)
@@ -10700,27 +10772,47 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   // just written above (the old provider's session must not carry over); a
   // same-provider model/reasoning tweak keeps the live session. Desktop-origin
   // runs finalize in the renderer, which applies the same helper there.
-  const finalizedChat = final
-    ? applyPendingProviderChangeOnFinalize(applyPendingEnsembleRosterPresetOnFinalize(updated))
-    : updated
-  const saved = saveAndBroadcastChat(finalizedChat)
+  let finalizedChat = updated
   if (final) {
-    // Terminal per-thread/task deltas should not wait behind a coalesced full
-    // snapshot: this is the running→terminal flip the phone must see promptly.
-    bridgeBroadcasterRef?.resetThrottle()
-    pushBridgeRunTaskCardDelta?.(saved.appChatId)
+    try {
+      finalizedChat = applyPendingProviderChangeOnFinalize(
+        applyPendingEnsembleRosterPresetOnFinalize(updated)
+      )
+    } catch (error) {
+      // The terminal seal must never be hostage to switch bookkeeping —
+      // persist it undecorated; the pending change stays queued for the next
+      // terminal boundary.
+      console.error(
+        `[bridge-run] finalize decorators failed for run=${runId}; sealing without them:`,
+        error
+      )
+    }
   }
-  pushBridgeRunSnapshot?.(saved)
+  const saved = saveAndBroadcastChat(finalizedChat)
   state.flushedOnce = true
   if (final) {
+    // Cleanup BEFORE the push tail: a broadcaster hiccup below must not leak
+    // the entry — a leaked terminal entry blocks the stale-run reconciler.
     bridgeRunTranscripts.delete(runId)
     releaseProviderSessionPersistenceDecision(runId)
+  }
+  try {
+    if (final) {
+      // Terminal per-thread/task deltas should not wait behind a coalesced full
+      // snapshot: this is the running→terminal flip the phone must see promptly.
+      bridgeBroadcasterRef?.resetThrottle()
+      pushBridgeRunTaskCardDelta?.(saved.appChatId)
+    }
+    pushBridgeRunSnapshot?.(saved)
+  } catch (error) {
+    console.warn(`[bridge-run] post-flush push failed for run=${runId}:`, error)
   }
 }
 
 function scheduleBridgeRunFlush(runId: string): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  touchBridgeRunTranscript(state)
   if (state.flushTimer) clearTimeout(state.flushTimer)
   state.flushTimer = setTimeout(() => {
     try {
@@ -10738,6 +10830,7 @@ function finalizeBridgeRunTranscript(
 ): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  touchBridgeRunTranscript(state)
   if (state.owner === 'execution_graph') {
     recordExecutionGraphProviderTerminalCandidate(
       state,
@@ -10800,13 +10893,45 @@ function finalizeBridgeRunTranscript(
     } catch (err) {
       console.warn(`[bridge-run] run diff failed for ${runId}:`, err)
     }
-    flushBridgeRunTranscript(runId, true)
+    try {
+      flushBridgeRunTranscript(runId, true)
+    } catch (error) {
+      // A swallowed terminal-flush failure used to be the whole ghost-run
+      // class: the ChatRun never sealed AND the leaked transcript entry kept
+      // isChatRunLive true, so the stale-run reconciler could never settle it
+      // — a permanent "Working" row with a dead Stop button on the phone.
+      // Cleanup is unconditional (unblocks the reconciler even if the seal
+      // below also fails); the direct seal is best-effort fill-only.
+      console.error(
+        `[bridge-run] terminal flush failed for run=${runId}; direct-sealing the ChatRun:`,
+        error
+      )
+      const leaked = bridgeRunTranscripts.get(runId)
+      if (leaked?.flushTimer) clearTimeout(leaked.flushTimer)
+      bridgeRunTranscripts.delete(runId)
+      releaseProviderSessionPersistenceDecision(runId)
+      try {
+        sealBridgeChatRunRecord(state, {
+          status: resolvedStatus,
+          endedAt: new Date().toISOString(),
+          ...(state.stats !== undefined ? { stats: state.stats } : {}),
+          ...(resolvedStatus === 'failed' ? { exitCode: 1 } : {}),
+          ...(resolvedStatus === 'cancelled' ? { exitCode: 130 } : {})
+        })
+      } catch (sealError) {
+        console.error(
+          `[bridge-run] direct seal also failed for run=${runId}; the stale-run reconciler will settle it:`,
+          sealError
+        )
+      }
+    }
   })()
 }
 
 function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string): void {
   const trimmed = line.trim()
   if (!trimmed) return
+  touchBridgeRunTranscript(state)
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>
     const providerSessionId = extractProviderSessionId(parsed)
@@ -11231,6 +11356,7 @@ function materializeBridgeRunProviderOutput(
   if (!runId) return
   const state = bridgeRunTranscripts.get(runId)
   if (!state || !bridgeRunRouteMatches(state, provider, routed.appChatId)) return
+  touchBridgeRunTranscript(state)
 
   const providerSessionId = extractProviderSessionId(payload)
   if (providerSessionId) state.providerSessionId = providerSessionId
@@ -11328,6 +11454,7 @@ function materializeBridgeRunFromPublish(
   if (!state) return
   const appChatId = typeof record.appChatId === 'string' ? record.appChatId : undefined
   if (!bridgeRunRouteMatches(state, provider, appChatId)) return
+  touchBridgeRunTranscript(state)
 
   if (channel === 'agent-exit' || channel === 'gemini-exit') {
     const code = typeof record.code === 'number' ? record.code : -1

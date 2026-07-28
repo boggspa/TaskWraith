@@ -86,6 +86,66 @@ export function settleStaleChatRun(run: ChatRun, nowIso: string): ChatRun {
 }
 
 /**
+ * Window in which a bridge run-transcript entry counts as live purely on its
+ * own recent activity. The entry is only load-bearing for liveness in the two
+ * short gaps where the run has no active RunManager session (register →
+ * session, finish → terminal flush); outside those, a genuinely live run is
+ * covered by the RunManager probe. A leaked entry — terminal flush threw, or
+ * a lane never finalized — otherwise pinned `isChatRunLive` true for the rest
+ * of the process, permanently defeating the periodic reconciler.
+ */
+export const BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS = 60_000
+
+/**
+ * Whether a bridge transcript entry's last recorded activity is recent enough
+ * to count the run as live. Entries with no recorded activity are NOT live —
+ * an unstamped entry is indistinguishable from a leak, and the reconciler's
+ * min-age grace already protects freshly seeded runs.
+ */
+export function bridgeTranscriptActivityIsLive(
+  lastActivityAtMs: number | undefined,
+  nowMs: number,
+  graceMs: number = BRIDGE_TRANSCRIPT_ACTIVITY_GRACE_MS
+): boolean {
+  return (
+    typeof lastActivityAtMs === 'number' &&
+    Number.isFinite(lastActivityAtMs) &&
+    nowMs - lastActivityAtMs < graceMs
+  )
+}
+
+export interface ChatRunTerminalSeal {
+  status: 'success' | 'failed' | 'cancelled'
+  endedAt: string
+  stats?: unknown
+  exitCode?: number
+}
+
+/**
+ * Idempotent fill of a ChatRun's terminal fields — the direct-seal fallback
+ * for when the bridge lane's terminal flush cannot run. Only fields the live
+ * seal never wrote are filled (an already-terminal status, an existing
+ * endedAt, and existing stats all win), so racing a completed flush is
+ * harmless. Returns null when nothing needs writing so callers can skip the
+ * persist entirely.
+ */
+export function sealChatRunTerminalFields(run: ChatRun, seal: ChatRunTerminalSeal): ChatRun | null {
+  const needsStatus = run.status === undefined || isActiveChatRunStatus(run.status)
+  const needsEndedAt = !run.endedAt
+  const needsStats = run.stats === undefined && seal.stats !== undefined
+  const needsExitCode = run.exitCode === undefined && seal.exitCode !== undefined
+  if (!needsStatus && !needsEndedAt && !needsStats && !needsExitCode) return null
+  return {
+    ...run,
+    status: needsStatus ? seal.status : run.status,
+    endedAt: run.endedAt ?? seal.endedAt,
+    ...(needsStats ? { stats: seal.stats } : {}),
+    ...(needsExitCode ? { exitCode: seal.exitCode } : {}),
+    ...(needsStatus && seal.status === 'cancelled' ? { cancelled: true } : {})
+  }
+}
+
+/**
  * PURE wedge detector + settler. Returns only chats that changed; does NOT write.
  * Idempotent: already-terminal runs are skipped, so a second pass is a no-op.
  */
