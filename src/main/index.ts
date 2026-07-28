@@ -10747,6 +10747,24 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     }
     return
   }
+  // A LIVE flush must never touch an entry a finalizer has claimed. Once
+  // finalize stamps a terminal status, the terminal flush owns every remaining
+  // write AND the cleanup; a stale 250ms timer from the last token burst (or
+  // one re-armed by a trailing agent-output line) otherwise fires inside the
+  // finalize→terminal-flush window — where runManager.finish has already made
+  // the session terminal — fails the NON-allowTerminal auth check below, and
+  // takes the unauthorized cleanup: silently DELETING the transcript out from
+  // under the pending terminal flush. The flush then found no state, nothing
+  // sealed, and the whole reply was lost (the third silent variant of this
+  // class caught live on 2026-07-28; the first two are documented below and at
+  // the exit handler).
+  if (!final && bridgeTranscriptIsOwnedByFinalizer(state.status)) {
+    if (state.flushTimer) {
+      clearTimeout(state.flushTimer)
+      state.flushTimer = undefined
+    }
+    return
+  }
   // The TERMINAL flush must accept a terminal session: in-process lanes
   // (ollama) finish synchronously — result line → finalize (whose async diff
   // capture defers this flush a tick) → exit → runManager.finish — so by the
@@ -10986,6 +11004,11 @@ function scheduleBridgeRunFlush(runId: string): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
   touchBridgeRunTranscript(state)
+  // A finalizer-owned entry takes no more live flushes — the terminal flush
+  // writes everything. Arming one here (a trailing agent-output line often
+  // lands after the result) re-created the timer the guard in
+  // flushBridgeRunTranscript exists to defuse.
+  if (bridgeTranscriptIsOwnedByFinalizer(state.status)) return
   if (state.flushTimer) clearTimeout(state.flushTimer)
   state.flushTimer = setTimeout(() => {
     try {
@@ -11024,6 +11047,13 @@ function finalizeBridgeRunTranscript(
       ? 'The provider ended this turn without producing an assistant response after a tool failed or was rejected.'
       : undefined)
   state.status = resolvedStatus
+  // Taking ownership retires any armed live flush — from here on the terminal
+  // flush below writes everything, and a stale timer firing mid-window was one
+  // of the silent seal-killers (see the guard in flushBridgeRunTranscript).
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer)
+    state.flushTimer = undefined
+  }
   if (resolvedStatus === 'success' || resolvedStatus === 'cancelled') {
     state.errorMessage = undefined
   } else {
