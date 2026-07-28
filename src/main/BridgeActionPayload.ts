@@ -247,7 +247,8 @@ export interface BridgeThreadSnapshotRequestAction extends BridgeActionMetadata 
   kind: 'threadSnapshotRequest'
   workspaceId: string
   threadId: string
-  /** Requested row-window size; the executor clamps to 1–100 (default 40). */
+  /** Requested window size; initial hydration counts display viewports while
+   * `beforeRowId` pagination counts raw rows. Clamped to 1–100 (default 40). */
   limit?: number
   /** Fetch rows immediately before this desktop message id. */
   beforeRowId?: string

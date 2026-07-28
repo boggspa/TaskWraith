@@ -2617,9 +2617,11 @@ public enum BridgeAction {
         return encode(payload)
     }
 
-    /// Request a bounded transcript window for one thread. Read-only
-    /// (capability `monitor`); the snapshot is returned in the ACK payload
-    /// and may also arrive as a broadcast projection.
+    /// Request a bounded transcript window for one thread. The initial/latest
+    /// `limit` counts rendered transcript viewports (a tool/thinking stack or
+    /// fan-out lane is one); `beforeRowId` pagination still counts raw rows.
+    /// Read-only (capability `monitor`); the snapshot is returned in the ACK
+    /// payload and may also arrive as a broadcast projection.
     public static func threadSnapshotRequest(
         workspaceId: String, threadId: String, limit: Int = 40, beforeRowId: String? = nil,
         actionId: String = UUID().uuidString

@@ -5707,6 +5707,8 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     /// Ask the Mac for a fresh bounded transcript window for one thread.
+    /// For initial hydration, `limit` counts rendered transcript viewports,
+    /// not every tool/thinking row inside one viewport.
     /// Fire-and-forget — the snapshot arrives on the broadcast channel.
     /// Workspace hints for threads we initiated before their taskCard
     /// arrives — without this, opening a just-created thread raced the

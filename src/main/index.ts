@@ -36819,7 +36819,7 @@ if (isGeminiMcpBridgeProcess) {
       const costDisplay = remoteCostDisplayOptions()
       const mode: RemoteProjectionMode = beforeRowId
         ? { kind: 'beforeRow', rowId: beforeRowId, n: clamped }
-        : { kind: 'latestN', n: clamped }
+        : { kind: 'latestViewportN', n: clamped }
       const threadSnapshot = projectRemoteThread(chat.messages ?? [], chat.runs ?? [], {
         notes: chat.pinnedNotes,
         blackboardEntries: chat.ensemble?.blackboard,
@@ -41057,7 +41057,7 @@ if (isGeminiMcpBridgeProcess) {
             threadMessageInbox: summarizeThreadMessageInbox(
               AppStore.getThreadMessageInbox(chat.appChatId)
             ),
-            mode: { kind: 'latestN', n: 24 },
+            mode: { kind: 'latestViewportN', n: 24 },
             previewMaxChars: REMOTE_IOS_PREVIEW_MAX,
             generatedAt,
             costDisplay,
