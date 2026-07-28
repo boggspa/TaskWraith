@@ -276,7 +276,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('folds instead of jumping')
   })
 
-  it('bundles the current 1.9.0 release notes (narrative format)', () => {
+  it('bundles the frozen 1.9.0 release notes (narrative format)', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.9.0' }, null)
     expect(entry).toMatchObject({
       version: '1.9.0',
@@ -319,6 +319,35 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('The workshop closes without loose ends')
     expect(entry.releaseNotes).toContain('refuses a surprise')
     expect(entry.releaseNotes).toContain('same allowlisted shell-opening')
+  })
+
+  it('bundles the current 1.9.1 release notes (narrative format)', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.9.1' }, null)
+    expect(entry).toMatchObject({
+      version: '1.9.1',
+      releaseDate: '2026-07-28'
+    })
+    // 1.9.1 continues the story: the workshop gains a terminal hatch and a
+    // modelling bench. Pin the user-facing beats, not taxonomy headers.
+    expect(entry.releaseNotes).toContain('cuts a service hatch')
+    expect(entry.releaseNotes).toContain('The workshop answers the terminal')
+    expect(entry.releaseNotes).toContain('Developer Preview')
+    expect(entry.releaseNotes).toContain('same-user local socket')
+    expect(entry.releaseNotes).toContain('remains the required authority')
+    expect(entry.releaseNotes).toContain('Open TaskWraith to answer')
+    expect(entry.releaseNotes).toContain('A modelling bench joins the dock')
+    expect(entry.releaseNotes).toContain('3D scene surface')
+    expect(entry.releaseNotes).toContain('wireframe-cube glyph')
+    expect(entry.releaseNotes).toContain('The Captain fans out too')
+    expect(entry.releaseNotes).toContain('rim shimmer')
+    expect(entry.releaseNotes).toContain('Questions settle instead of vanishing')
+    expect(entry.releaseNotes).toContain('settled card')
+    expect(entry.releaseNotes).toContain('Meters read the real dials')
+    expect(entry.releaseNotes).toContain('allowance')
+    expect(entry.releaseNotes).toContain('Small tells around the workshop')
+    expect(entry.releaseNotes).toContain('git status icons')
+    expect(entry.releaseNotes).toContain('refuses cleanly')
+    expect(entry.releaseNotes).toContain('crash-looping')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

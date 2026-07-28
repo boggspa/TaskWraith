@@ -6,6 +6,88 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.9.1 - 2026-07-28
+
+1.9.0 connected the workshop's rooms; 1.9.1 cuts a service hatch into the wall.
+A terminal-native companion can now watch and steer the same threads the App
+owns, a modelling bench brings 3D scenes into the dock, and the Captain learns
+the fan-out move the Boss already knew. Around them, questions settle instead
+of vanishing, meters read the real dials, and the workshop refuses to trip
+over itself when something tries to start it twice.
+
+### The workshop answers the terminal
+
+TaskWraith 1.9.1 ships `tw`, a **Developer Preview** terminal sidecar packaged
+with the desktop App. From a terminal it connects to the running App over a
+same-user local socket, browses existing solo and Ensemble threads, follows
+live transcripts with their tool and thinking rows, sends prompts down the
+same canonical action paths the App uses, and cancels a solo run or an
+Ensemble round. Provider hues carry into the terminal — including Ollama and
+Pi upstream brands — and the display degrades honestly through TrueColor,
+NO_COLOR, and ASCII.
+
+The preview is deliberately a companion, not a second TaskWraith: the App
+remains the required authority, thread and provider configuration stay in the
+App, and when a run needs an approval or an answer the terminal says
+**Open TaskWraith to answer** rather than imitating the approval card. If the
+App restarts, the sidecar reconnects and picks the thread back up. The
+packaged launcher runs on TaskWraith's own bundled runtime, so nothing has to
+be installed globally to try it.
+
+### A modelling bench joins the dock
+
+Mesh Canvas gives a chat its own **3D scene surface**. Scenes are declarative
+and chat-owned: an agent builds with primitives and transforms, imports
+GLB/glTF/OBJ assets from the workspace, applies materials, and presents the
+result in a dock viewer beside the thread — all through a governed MCP service
+with its own permission ladder rather than a raw graphics door. Declared scene
+packages let DCC exports travel as a manifest the importer can check, and the
+scene tools wear a wireframe-cube glyph in the transcript so a scene edit
+reads at a glance.
+
+### The Captain fans out too
+
+Fan-out is no longer the Boss's private move: a Captain seat can now dispatch
+parallel lanes from inside a round. While a lane's seat is working, its card
+shows a rim shimmer bound to the live working state — the same tell on desktop
+and on the phone — so a busy panel reads truthfully without opening every
+lane. Ensemble system status messages drop their box chrome and read as quiet
+narration, status routing follows the seat that actually holds authority, and
+the tool surface a seat advertises now matches what it can actually call.
+
+### Questions settle instead of vanishing
+
+An answered agent question used to disappear with its card. It now stays in
+the transcript as a **settled card** carrying the question and the chosen
+answer, on the Mac and on the phone, so a decision made mid-run stays legible
+after the run moves on.
+
+### Meters read the real dials
+
+The Mistral quota meter now grounds itself in the console's own allowance
+figures instead of inferring spend from prices, with an opt-in Admin API lane
+for Enterprise workspaces. Kimi seats coordinate OAuth refresh through one
+authority so parallel seats stop racing the token file. And MCP tool schemas
+that legitimately name a property `description` now survive schema compaction
+unchanged.
+
+### Small tells around the workshop
+
+The sidebar shows git status icons on the active row's branch identity, and
+the run-complete card retitles itself with the actual outcome instead of a
+generic label. The composer gains an above-row minimizer while keeping the
+primary workspace row visible. Upstream hue parity lands across the
+transcript, composer, Ensemble chrome, and context surfaces — and on iOS
+remote rows and pickers — so a Pi or Ollama seat wears its upstream's colour
+everywhere it appears.
+
+### The workshop refuses to trip over itself
+
+If something points TaskWraith at its own executable as a provider, the
+launch now refuses cleanly with a legible error instead of crash-looping. And
+a pre-commit backstop now enforces the concurrent-work claims that previously
+bound only the agents polite enough to read them.
+
 ## 1.9.0 - 2026-07-27
 
 If 1.8.9 gave every agent **room to work**, 1.9.0 connects those rooms into a
