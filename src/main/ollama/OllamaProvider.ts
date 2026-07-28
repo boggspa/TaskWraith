@@ -370,6 +370,13 @@ const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
 // Exported for the scheduled-occurrence seal evidence layer, which must bind
 // the exact runtime constants dispatch enforces rather than duplicating them.
 export const OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
+// Runaway breaker for error loops: a tool that EXECUTES but keeps failing the
+// SAME way stops counting as progress after this many identical consecutive
+// failures, so the retry ceiling above can finalize the run instead of the
+// loop grinding until the user cancels (2026-07-28 QA: an 82-minute
+// shell-error loop with no ceiling). Distinct failures — a model genuinely
+// iterating on an error — keep resetting the streak, and any success clears it.
+export const OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES = 3
 export const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
@@ -2690,6 +2697,12 @@ export async function runOllamaProvider(
     // with an unchanged result gets a redirect instead of the re-dumped
     // output, so it stops burning its tool-loop budget re-reading files.
     const toolCallSignatures = new Map<string, string>()
+    // Identical-failure streak for the runaway breaker (see
+    // OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES). Keyed on tool name +
+    // the failure output's head so the same tool failing with a NEW error —
+    // real iteration — restarts the streak. Spans turns; any success clears.
+    let lastToolFailureKey: string | null = null
+    let identicalToolFailureStreak = 0
     const emitOllamaContent = (text: string): void => {
       if (!text) return
       deps.sendAgentCompatLine(
@@ -3090,7 +3103,23 @@ export async function runOllamaProvider(
           // non-productive and feed the retry ceiling. Otherwise a model that
           // re-hits the harness gate every turn would reset the counter forever.
           if (!harnessGate.blocked && !toolResult.validationError) {
-            productiveToolRanThisTurn = true
+            if (toolResult.ok) {
+              lastToolFailureKey = null
+              identicalToolFailureStreak = 0
+              productiveToolRanThisTurn = true
+            } else {
+              // An executed-but-failed tool is progress the first couple of
+              // times (compile error → read → fix is a legitimate loop). The
+              // SAME failure over and over is not — stop crediting it so the
+              // retry ceiling can finalize instead of looping for hours.
+              const failureKey = `${toolRequest.toolName}\n${String(toolResult.output || '').slice(0, 160)}`
+              identicalToolFailureStreak =
+                failureKey === lastToolFailureKey ? identicalToolFailureStreak + 1 : 1
+              lastToolFailureKey = failureKey
+              if (identicalToolFailureStreak < OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES) {
+                productiveToolRanThisTurn = true
+              }
+            }
           }
           if (harnessEnabled) {
             harnessState = recordOllamaHarnessToolResult(

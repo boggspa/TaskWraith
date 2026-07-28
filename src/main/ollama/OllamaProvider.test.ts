@@ -2437,6 +2437,122 @@ describe('runOllamaProvider streaming', () => {
     expect(contentTexts[0]).toContain('stopping instead of looping')
   }, 10000)
 
+  it('stops a tool that keeps failing the SAME way instead of looping for hours', async () => {
+    let chatCalls = 0
+    // The model re-issues the same shell command and the tool fails identically
+    // every time (the 2026-07-28 QA 82-minute error loop). An executed failure
+    // is progress the first two times (real iteration loops look like that);
+    // an unchanged failure streak must stop crediting the turn so the retry
+    // ceiling finalizes. Streak math: failures 1-2 productive, 3-6 feed the
+    // 4-turn ceiling, turn 7 never dispatches → 6 chat turns, 6 executions.
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output: 'python3: command exited 1: ModuleNotFoundError: tidepool'
+    }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"python3 tidepool.py rain"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(6)
+    expect(chatCalls).toBe(6)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts).toHaveLength(1)
+    expect(contentTexts[0]).toContain('stopping instead of looping')
+  }, 10000)
+
+  it('keeps crediting a tool whose failures CHANGE (real debugging never trips the streak)', async () => {
+    let chatCalls = 0
+    // Same tool, but a different error each attempt, then success — the streak
+    // must reset on every distinct failure and clear on success, so the run
+    // finalizes normally via the model's closing answer, not the ceiling.
+    const executeTool = vi.fn(async () => ({
+      ok: chatCalls >= 4,
+      output: chatCalls >= 4 ? 'ok' : `attempt ${chatCalls} failed differently`
+    }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        if (chatCalls >= 5) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: { role: 'assistant', content: 'All fixed after iterating.' }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"run_shell_command","arguments":{"command":"python3 tidepool.py rain"}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 6 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(4)
+    const contentTexts = lines
+      .filter((line) => line.payload.type === 'content')
+      .map((line) => line.payload.text)
+    expect(contentTexts.join('\n')).toContain('All fixed after iterating.')
+    expect(contentTexts.join('\n')).not.toContain('stopping instead of looping')
+  }, 10000)
+
   it('constrains json-fallback decoding to the compact gateway surface', async () => {
     // Regression: the constrained-decoding grammar must allow every EXECUTABLE
     // tool (so a model can name a tail tool discovered via tool_help), even

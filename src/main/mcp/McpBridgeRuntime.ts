@@ -393,7 +393,14 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   // resolveBrokerParentProvider would coerce those calls back to 'gemini'
   // and the session-keyed context/authority lookups would miss.
   'antigravity',
-  'mistral'
+  'mistral',
+  // Ollama's in-main tool loop routes write/shell tools through the MCP
+  // dispatcher with parentProvider='ollama' (OllamaMainRuntime.executeLocalTool)
+  // while its read tools bind the run context directly. Without this entry the
+  // dispatcher coerced those calls to 'gemini', the context lookup missed, and
+  // every mutating/shell tool failed "no active Gemini workspace context"
+  // while reads kept working — the split-brain 2026-07-28 QA reproduced.
+  'ollama'
 ])
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
 const BRIDGE_LOG_MAX_LINE_CHARS = 32_768
