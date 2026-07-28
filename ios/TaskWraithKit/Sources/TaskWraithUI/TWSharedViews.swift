@@ -815,11 +815,19 @@ extension View {
         }
     }
 
-    private struct TWSheetGlassBackdrop: View {
+    /// Glass surface for sheet/full-screen-cover presentations.
+    ///
+    /// The refractive liquid-glass variant is applied directly to the presented
+    /// content over a clear `presentationBackground`. Putting the material fill
+    /// *under* the glass inside the presentation background made the material
+    /// itself the glassed subject, which paints the neutral gray plate by
+    /// construction. The legacy fallback branches keep older systems and Reduce
+    /// Transparency honest.
+    private struct TWSheetGlassSurfaceModifier: ViewModifier {
         var cornerRadius: CGFloat
         var rimmed: Bool
 
-        var body: some View {
+        func body(content: Content) -> some View {
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             let isLight = TWThemeStore.shared.systemTheme.isLight
             let rimTop: Color =
@@ -830,41 +838,38 @@ extension View {
             // gray over sheet presentation backgrounds.
             let scrim =
                 isLight ? Color.white.opacity(0.06) : Color.black.opacity(0.10)
-            // Do not wrap glass in compositingGroup — that flattens the effect into
-            // an opaque gray slab and smothers the live backdrop sample.
-            // Prefer clear liquid glass; always keep ultraThinMaterial under it so
-            // Diff Studio / Tools / schedule / settings sheets never fall back to
-            // an opaque system gray plate when glass sampling is empty.
-            Group {
-                if TWTheme.composerGlassEnabled {
-                    if #available(iOS 26.0, macOS 26.0, *) {
-                        shape
-                            .fill(.ultraThinMaterial)
-                            .glassEffect(.clear, in: shape)
-                            .overlay(shape.fill(scrim))
-                    } else {
+
+            if !TWTheme.composerGlassEnabled {
+                content
+                    .background { shape.fill(TWTheme.surface2) }
+                    .overlay(shape.strokeBorder(TWTheme.border, lineWidth: 1))
+            } else if #available(iOS 26.0, macOS 26.0, *) {
+                content
+                    .glassEffect(.clear, in: shape)
+                    .background(scrim, in: shape)
+                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
+            } else {
+                content
+                    .background {
                         shape
                             .fill(.ultraThinMaterial)
                             .overlay(shape.fill(scrim))
                     }
-                } else {
-                    shape.fill(TWTheme.surface2)
-                }
+                    .overlay { rimOverlay(shape: shape, rimTop: rimTop, rimBottom: rimBottom) }
             }
-            .ignoresSafeArea()
-            .overlay {
-                if TWTheme.composerGlassEnabled, rimmed {
-                    shape.strokeBorder(TWTheme.border, lineWidth: 1)
-                    shape.inset(by: 0.5)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [rimTop, rimBottom],
-                                startPoint: .top,
-                                endPoint: .bottom),
-                            lineWidth: 1)
-                } else if !TWTheme.composerGlassEnabled {
-                    shape.strokeBorder(TWTheme.border, lineWidth: 1)
-                }
+        }
+
+        @ViewBuilder
+        private func rimOverlay(shape: RoundedRectangle, rimTop: Color, rimBottom: Color) -> some View {
+            if rimmed {
+                shape.strokeBorder(TWTheme.border, lineWidth: 1)
+                shape.inset(by: 0.5)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [rimTop, rimBottom],
+                            startPoint: .top,
+                            endPoint: .bottom),
+                        lineWidth: 1)
             }
         }
     }
@@ -980,6 +985,9 @@ extension View {
 
     /// Liquid-glass sheet chrome. Apply to the root of sheet content (inside
     /// any NavigationStack). iOS-only; non-iOS is pass-through.
+    ///
+    /// Glass is applied directly to the presented content over a clear
+    /// presentation background so it can refract the view behind the sheet.
     @ViewBuilder
     func twSheetLiquidGlass(
         detents: Set<PresentationDetent> = [.medium, .large],
@@ -991,9 +999,8 @@ extension View {
                 .presentationDetents(detents)
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(cornerRadius)
-                .presentationBackground {
-                    TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
-                }
+                .presentationBackground(.clear)
+                .modifier(TWSheetGlassSurfaceModifier(cornerRadius: cornerRadius, rimmed: rimmed))
                 .twGlassPresentationHostChrome()
         #else
             self
@@ -1001,15 +1008,14 @@ extension View {
     }
 
     /// Liquid-glass chrome for fullScreenCover hosts (Diff Studio / Files).
-    /// Same transparent + glassEffect backdrop and `twGlassSheetHosted` flag as
+    /// Same transparent + glassEffect surface and `twGlassSheetHosted` flag as
     /// sheets, without presentation detents or sheet corner rims.
     @ViewBuilder
     func twFullScreenLiquidGlass() -> some View {
         #if os(iOS)
             self
-                .presentationBackground {
-                    TWSheetGlassBackdrop(cornerRadius: 0, rimmed: false)
-                }
+                .presentationBackground(.clear)
+                .modifier(TWSheetGlassSurfaceModifier(cornerRadius: 0, rimmed: false))
                 .twGlassPresentationHostChrome()
         #else
             self

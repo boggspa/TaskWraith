@@ -21,4 +21,15 @@ describe('Composer permission / tool-grant admission while running', () => {
     expect(region).toContain('effectiveProvider')
     expect(region).toContain('configuredProviderSnapshot.providerIds')
   })
+
+  it('does not insert the obsolete next-round seat-change notice', () => {
+    expect(composerSource).not.toContain(
+      'Provider/model changes during this round will apply to the next round.'
+    )
+    expect(composerSource).not.toContain('updateSelectedParticipantWithNotice')
+    expect(composerSource).toContain('isEnsembleParticipantSeatRuntimeLocked(')
+    expect(composerSource).toContain(
+      'Changes apply when its current execution finishes.'
+    )
+  })
 })

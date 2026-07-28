@@ -20001,7 +20001,7 @@ function App(): React.JSX.Element {
     currentEnsembleRound?.maxContinuationHops ??
     6
   const isCurrentEnsembleRoundRunning = Boolean(currentEnsembleRound)
-  const queuedSeatPatchKeys = useMemo(
+  const runtimeSeatPatchKeys = useMemo(
     () =>
       [
         'provider',
@@ -20021,46 +20021,46 @@ function App(): React.JSX.Element {
       ] as const,
     []
   )
-  const buildQueuedSeatPatch = useCallback(
+  const buildRuntimeSeatPatch = useCallback(
     (patch: Partial<EnsembleParticipant>): Record<string, unknown> | null => {
       const participant: Record<string, unknown> = {}
       const patchRecord = patch as Record<string, unknown>
-      for (const key of queuedSeatPatchKeys) {
+      for (const key of runtimeSeatPatchKeys) {
         if (Object.prototype.hasOwnProperty.call(patch, key)) {
           participant[key] = patchRecord[key]
         }
       }
       return Object.keys(participant).length > 0 ? participant : null
     },
-    [queuedSeatPatchKeys]
+    [runtimeSeatPatchKeys]
   )
-  const hasProviderOrModelSeatPatch = useCallback((patch: Partial<EnsembleParticipant>): boolean => {
-    return (
-      Object.prototype.hasOwnProperty.call(patch, 'provider') ||
-      Object.prototype.hasOwnProperty.call(patch, 'model')
-    )
-  }, [])
   const applyChatSnapshot = useCallback((nextChat: ChatRecord): void => {
     chatByIdRef.current.set(nextChat.appChatId, nextChat)
     setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
     setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
   }, [])
-  const requestQueuedParticipantSeatChange = useCallback(
+  // Model, reasoning, and permission clicks can be one rapid picker edit.
+  // Preserve their order so each authoritative response builds on the last.
+  const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
+  const requestAuthoritativeParticipantSeatChange = useCallback(
     (
       sourceChat: ChatRecord,
       participantId: string,
       patch: Partial<EnsembleParticipant>
     ): boolean => {
-      const participant = buildQueuedSeatPatch(patch)
+      const participant = buildRuntimeSeatPatch(patch)
       if (!participant) return false
-      void window.api
-        .requestEnsembleParticipantSeatChange({
-          chatId: sourceChat.appChatId,
-          participantId,
-          participant: participant as never,
-          reason: 'Renderer participant seat change'
-        })
-        .then((result) => {
+      const queueKey = `${sourceChat.appChatId}:${participantId}`
+      const previous = authoritativeParticipantSeatChangeQueueRef.current.get(queueKey)
+      const request = (previous || Promise.resolve())
+        .catch(() => undefined)
+        .then(async () => {
+          const result = await window.api.requestEnsembleParticipantSeatChange({
+            chatId: sourceChat.appChatId,
+            participantId,
+            participant: participant as never,
+            reason: 'Renderer participant seat change'
+          })
           if (result?.chat) applyChatSnapshot(result.chat)
           if (!result?.ok && result?.error) {
             window.alert(result.error)
@@ -20069,9 +20069,15 @@ function App(): React.JSX.Element {
         .catch((error) => {
           window.alert(error instanceof Error ? error.message : 'Seat change failed.')
         })
+      authoritativeParticipantSeatChangeQueueRef.current.set(queueKey, request)
+      void request.finally(() => {
+        if (authoritativeParticipantSeatChangeQueueRef.current.get(queueKey) === request) {
+          authoritativeParticipantSeatChangeQueueRef.current.delete(queueKey)
+        }
+      })
       return true
     },
-    [applyChatSnapshot, buildQueuedSeatPatch]
+    [applyChatSnapshot, buildRuntimeSeatPatch]
   )
   const patchParticipantImmediate = useCallback(
     (
@@ -20106,18 +20112,15 @@ function App(): React.JSX.Element {
         sourceChat.ensemble?.activeRound,
         participantId
       )
-      const queueForNextRound =
-        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble?.activeRound) &&
-        hasProviderOrModelSeatPatch(patch)
       if (
-        (mutationState.queueAtTurnEnd || queueForNextRound) &&
-        requestQueuedParticipantSeatChange(sourceChat, participantId, patch)
+        mutationState.requiresRuntimeSync &&
+        requestAuthoritativeParticipantSeatChange(sourceChat, participantId, patch)
       ) {
         return null
       }
       return patchParticipantImmediate(sourceChat, participantId, patch)
     },
-    [hasProviderOrModelSeatPatch, patchParticipantImmediate, requestQueuedParticipantSeatChange]
+    [patchParticipantImmediate, requestAuthoritativeParticipantSeatChange]
   )
   const patchEnsembleParticipantForChat = useCallback(
     (chatId: string, participantId: string, patch: Partial<EnsembleParticipant>): void => {

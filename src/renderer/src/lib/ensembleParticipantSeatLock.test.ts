@@ -114,19 +114,31 @@ describe('isEnsembleParticipantSeatRuntimeLocked', () => {
 })
 
 describe('resolveEnsembleParticipantSeatMutationState', () => {
-  it('marks active runtime seats as queued-at-turn-end mutations', () => {
+  it('marks active runtime seats as deferred-to-execution-boundary mutations', () => {
     expect(resolveEnsembleParticipantSeatMutationState(round(), 'p1')).toEqual({
       locked: true,
-      queueAtTurnEnd: true,
-      message:
-        'This seat is executing. Provider/model changes apply next round; other seat edits queue until turn end.'
+      deferUntilExecutionBoundary: true,
+      requiresRuntimeSync: true,
+      message: 'This seat is executing. Changes apply when its current execution finishes.'
     })
   })
 
-  it('keeps idle seats immediately mutable', () => {
+  it('routes idle-seat edits through the live runtime without deferring them', () => {
     expect(resolveEnsembleParticipantSeatMutationState(round(), 'p2')).toEqual({
       locked: false,
-      queueAtTurnEnd: false,
+      deferUntilExecutionBoundary: false,
+      requiresRuntimeSync: true,
+      message: null
+    })
+  })
+
+  it('does not require runtime synchronization after a round completes', () => {
+    expect(
+      resolveEnsembleParticipantSeatMutationState(round({ status: 'completed' }), 'p1')
+    ).toEqual({
+      locked: false,
+      deferUntilExecutionBoundary: false,
+      requiresRuntimeSync: false,
       message: null
     })
   })

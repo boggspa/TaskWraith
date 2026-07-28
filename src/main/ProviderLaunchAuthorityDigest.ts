@@ -19,11 +19,12 @@ const PROVIDER_LAUNCH_DOMAIN = 'taskwraith:provider-launch-authority:v1\0'
 const MAX_TEXT_LENGTH = 4_096
 
 /**
- * The original six-provider union consumed by SealEvidenceCommon and the
- * production-wired scheduling service. Keep it narrow: Pi and conditional
- * AntiGravity now have strict evidence schemas, but neither is allowed to
- * become production seal-wired merely because the central digest can validate
- * its provider-local authority.
+ * The production seal-wired union consumed by SealEvidenceCommon and the
+ * scheduling service — originally six providers, seven since the Mistral seat
+ * joined ProviderId (codex/claude/kimi/grok/cursor/ollama/mistral). Keep it
+ * narrow: Pi and conditional AntiGravity now have strict evidence schemas, but
+ * neither is allowed to become production seal-wired merely because the
+ * central digest can validate its provider-local authority.
  */
 export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi'>
 
