@@ -2074,6 +2074,40 @@ same-UID residual boundaries when reconciling the final clean tip.
   turn verifies both the receipt and broker routing. Do not replace the
   server-side allowlist with token-only trust.
 
+## TW-SEC-2026-022 — DYLD environment entitlement lacks a packaged-runtime justification
+
+- **Date:** 2026-07-28
+- **Severity/status:** Medium / `Open`
+- **Owner:** TaskWraith maintainers — macOS packaging and child-process
+  environment boundaries
+- **Evidence and impact:**
+  - [`build/entitlements.mac.plist`](build/entitlements.mac.plist) grants
+    `com.apple.security.cs.allow-dyld-environment-variables`, and the macOS
+    packaging configuration inherits that entitlement into child code.
+  - The AppDrive packaging acceptance review found no repository path that
+    deliberately relies on a `DYLD_*` variable at runtime. The relevant source
+    references instead strip loader-injection variables at selected launch
+    boundaries, while Electron and the Swift bridge use normal `@rpath` or
+    system-framework linkage.
+  - The entitlement makes the hardened runtime honor dynamic-loader environment
+    variables. If an untrusted value reaches an entitled process launch, that
+    widens the code-injection surface. This is a justification and containment
+    gap, not evidence that injection occurred.
+- **Required decision and evidence:**
+  1. Identify and test the exact packaged behavior that requires this
+     entitlement, or ask the user to approve removing it after demonstrating
+     that debug, release, helper, native-module, and bridge launches still work.
+  2. Independently inventory every entitled child spawn and prove that
+     `DYLD_*`/`LD_*` injection variables are removed before execution wherever
+     inherited environment is not a required feature.
+  3. Keep the generated-package entitlement scanner and signed-app smoke test
+     load-bearing so a later signing change cannot silently add private
+     entitlements or remove the Apple Events entitlement from the bridge.
+- **Release disposition:** This AppDrive slice does not change the existing
+  entitlement and therefore does not narrow a user-facing packaged capability.
+  Do not silently remove it as security cleanup; resolve the evidence gap with
+  an explicit user decision in a separate packaging change.
+
 ## Combined AntiGravity/Gemini API certification contract
 
 The source-ahead combined-mode implementation has a tracked threat model and

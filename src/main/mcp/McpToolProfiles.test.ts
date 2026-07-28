@@ -324,7 +324,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // and annotation. Both fresh variants stay below the transport ceiling.
     // Re-measured after rebasing over the Captain fan-out guidance: each
     // catalogue grows by the same 66 characters; membership is unchanged.
-    expect(fullChars).toBe(137_071)
+    // Re-measured after the native AppDrive contract expanded the full-only
+    // canvas_open_launch guidance. Direct gateway membership and bytes are
+    // unchanged, so all three transport catalogues retain their prior budgets.
+    expect(fullChars).toBe(138_100)
     expect(gatewayChars).toBe(39_935)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)

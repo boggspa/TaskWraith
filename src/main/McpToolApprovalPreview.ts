@@ -30,7 +30,9 @@ export interface McpToolApprovalPreviewDependencies {
   ) => string
   previewPath: (context: GeminiToolContext, filePath: string) => string
   readApprovalPreviewFileContent: (context: GeminiToolContext, filePath: string) => string | null
-  getAttachedWindowMeta: () => McpApprovalAttachedWindowMeta | null | undefined
+  getAttachedWindowMeta: (
+    appChatId: string | null | undefined
+  ) => McpApprovalAttachedWindowMeta | null | undefined
 }
 
 export type McpToolApprovalPreviewer = (
@@ -611,7 +613,7 @@ export function createMcpToolApprovalPreviewer(
     }
 
     if (toolName === 'attached_window_capture') {
-      const meta = deps.getAttachedWindowMeta()
+      const meta = deps.getAttachedWindowMeta(context.appChatId)
       const label = meta
         ? `${meta.applicationName || meta.bundleID || 'window'}: ${meta.title || '(untitled)'}`
         : 'no window attached'
@@ -633,7 +635,7 @@ export function createMcpToolApprovalPreviewer(
       toolName === 'appwatch_latest_frame' ||
       toolName === 'appwatch_frames'
     ) {
-      const meta = deps.getAttachedWindowMeta()
+      const meta = deps.getAttachedWindowMeta(context.appChatId)
       const label = meta
         ? `${meta.applicationName || meta.bundleID || 'window'}: ${meta.title || '(untitled)'}`
         : 'no window attached'

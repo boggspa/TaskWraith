@@ -2,13 +2,20 @@
 // doesn't collide with a release build on the same Mac (see devAppName.ts).
 
 import './devAppName'
-import { devInstanceRelayPortOffset } from './devAppName'
+import {
+  devInstanceRelayPortOffset,
+  instanceLaunchBootstrapArgs,
+  instanceLaunchPosture,
+  instanceResourceIdentity
+} from './devAppName'
+import { createInstanceResourceEpoch } from './InstanceResourceIdentity'
 import { watchedPrDescriptorFromGitHubUrl } from '../shared/watchedPrNotify'
 import {
   app,
   Menu,
   shell,
   BrowserWindow,
+  webContents as electronWebContents,
   ipcMain,
   dialog,
   safeStorage,
@@ -199,7 +206,6 @@ import { createRemoteBridgeRunEventInterestFilter } from './RemoteBridgeRunEvent
 import type {
   McpToolContentBlock,
   McpToolExecutionResult,
-  AttachedWindowSnapshot,
   BackgroundSubThreadTranscriptState,
   WorkspacePopoutKind
 } from './index.types'
@@ -495,6 +501,16 @@ import { LaunchAttemptStore } from './launch/LaunchAttemptStore'
 import { LaunchManager, type LaunchLifecycleRecord } from './launch/LaunchManager'
 import { SpawnRegistry } from './localServers/SpawnRegistry'
 import { getNativeCapabilitySnapshot } from './NativeCapabilities'
+import {
+  NativeWindowCoordinator,
+  type NativeWindowCoordinatorRendererEvent
+} from './nativeWindow/NativeWindowCoordinator'
+import {
+  requestNativeWindowClickAuthorization,
+  requestNativeWindowControlConsent
+} from './nativeWindow/NativeWindowConsentDialog'
+import { createNativeProcessStartedAtResolver } from './nativeWindow/NativeProcessIdentityResolver'
+import { createNativeWindowClickAuditClaim } from './nativeWindow/NativeWindowClickAudit'
 import { AuditService } from './services/AuditService'
 import {
   ApprovalService,
@@ -864,11 +880,8 @@ import {
 } from './services/PdfAttachmentRenderService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
 import {
-  clearStickyAppWatch,
-  getStickyAppWatch,
-  normalizeStickyAppWatchStore,
-  stashStickyAppWatch,
-  type StickyAppWatchStore
+  StickyAppWatchStoreController,
+  type StickyAppWatchSnapshot
 } from './stickyAppWatch'
 import {
   AppSettings,
@@ -1118,6 +1131,8 @@ import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
 import { CanvasRenderDriver } from './canvas/CanvasRenderDriver'
 import { CanvasImageDriver } from './canvas/CanvasImageDriver'
 import { CanvasSketchDriver } from './canvas/CanvasSketchDriver'
+import { CanvasWindowDriverFactory } from './canvas/CanvasWindowDriverFactory'
+import { resolveNativeWindowCanvasOpenTarget } from './canvas/NativeWindowCanvasOpenResolver'
 import { CanvasEmbedController } from './canvas/CanvasEmbedController'
 import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
@@ -1125,7 +1140,8 @@ import type {
   CanvasDriverKind,
   CanvasEvalApprovalReceipt,
   CanvasEventRecord,
-  CanvasSketchDocument
+  CanvasSketchDocument,
+  CanvasWindowOpenTarget
 } from './canvas/canvasTypes'
 import {
   canvasEvalApprovalPayloadForDurableStorage,
@@ -2554,6 +2570,7 @@ if (shouldSuppressMacAppPresentation(process.argv, process.env)) {
 const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
 const externalPathGrantExecutionRegistry = new ExternalPathGrantExecutionRegistry()
 const geminiMcpBrokerToken = randomBytes(32).toString('hex')
+const instanceEpoch = createInstanceResourceEpoch()
 
 function taskwraithMcpBridgeCommandStatus(): {
   command: string
@@ -2595,11 +2612,13 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   updateSettings: (patch) => AppStore.updateSettings(patch),
   getGeminiMcpSocketPath: () => geminiMcpSocketPath(),
   getGeminiMcpBrokerToken: () => geminiMcpBrokerToken,
+  getInstanceEpoch: () => instanceEpoch,
   getGeminiUserSettingsPath: () => geminiUserSettingsPath(),
   getAppPath: () => app.getAppPath(),
   getAppVersion: () => app.getVersion(),
   isDev: () => is.dev,
   isPackaged: () => app.isPackaged,
+  getProcessBootstrapArgs: () => instanceLaunchBootstrapArgs,
   getProcessExecPath: () => taskwraithMcpBridgeCommandStatus().command,
   resolveCliProviderBinary,
   captureProcessOutput,
@@ -2639,6 +2658,7 @@ interface TaskWraithMcpBridgeArgOptions {
   portableEnsembleControl?: boolean
   meshDirect?: boolean
   sketchDirect?: boolean
+  auditSubset?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -2653,8 +2673,13 @@ function taskwraithMcpBridgeArgs(
     options.gatewaySubset === true,
     options.portableEnsembleControl === true,
     options.meshDirect === true,
-    options.sketchDirect === true
+    options.sketchDirect === true,
+    options.auditSubset === true
   )
+}
+
+function taskwraithMcpBridgeStaticRegistrationArgs(): string[] {
+  return mcpBridgeRuntime.taskwraithMcpBridgeStaticRegistrationArgs()
 }
 
 // Late-bound APNs handles. Constructed inside `app.whenReady()` (because
@@ -3495,25 +3520,70 @@ let remoteGitSnapshotFeedRef: RemoteGitSnapshotFeed | null = null
  * MCP tool entries null-check and refuse cleanly.
  */
 let creativeApprovalGateRef: CreativeApprovalGate | null = null
-// Mirror of the most recent picker selection, kept on the main side so the
-// renderer can show a status pill and the AI can call `attached_window_status`
-// without re-hopping into the daemon. Cleared on detach / daemon exit.
-//
-// Phase M1 — `streaming` carries the live Appwatch stream config when
-// `appwatch.start` has been called against this handle. Set / cleared by the
-// `executeAppwatchStart` / `executeAppwatchStop` MCP tool wrappers so the
-// renderer pill can flip between "attached" and "streaming" without polling.
-let attachedWindowSnapshot: AttachedWindowSnapshot | null = null
+// The coordinator is created after LaunchManager inside app.whenReady. MCP
+// executors are module-scoped, so their adapter resolves the current
+// coordinator at call time and fails closed until construction completes.
+let nativeWindowCoordinatorRef: NativeWindowCoordinator | null = null
+let canvasWindowDriverFactoryRef: CanvasWindowDriverFactory | null = null
+let nativeWindowExpirySweepTimer: ReturnType<typeof setInterval> | null = null
+
+const nativeWindowDaemonProxy = {
+  status: () => ({ running: bridgeDaemonRef?.status().running === true }),
+  request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number }
+  ): Promise<T> {
+    const daemon = bridgeDaemonRef
+    if (!daemon?.status().running) {
+      return Promise.reject(new Error('The native bridge daemon is not running.'))
+    }
+    return daemon.request<T>(method, params, options)
+  }
+}
+const resolveNativeProcessStartedAt = createNativeProcessStartedAtResolver({
+  daemon: nativeWindowDaemonProxy,
+  platform: process.platform
+})
+
+function currentNativeWindowProtectedPids(): ReadonlySet<number> {
+  const protectedPids = new Set<number>([process.pid])
+  for (const contents of electronWebContents.getAllWebContents()) {
+    if (contents.isDestroyed()) continue
+    try {
+      const pid = contents.getOSProcessId()
+      if (Number.isSafeInteger(pid) && pid > 1) protectedPids.add(pid)
+    } catch {
+      // A renderer may disappear between enumeration and process lookup.
+    }
+  }
+  return protectedPids
+}
+
+function notifyNativeWindowDaemonGone(): void {
+  void nativeWindowCoordinatorRef?.onDaemonGone().catch((error) => {
+    console.warn(
+      '[NativeWindow] daemon-loss cleanup failed:',
+      error instanceof Error ? error.message : String(error)
+    )
+  })
+}
+
+function publishNativeWindowRendererEvent(event: NativeWindowCoordinatorRendererEvent): void {
+  safeSendToWebContents(mainWindow, 'attached-window-changed', event)
+}
 
 const desktopToolExecutors = createDesktopToolExecutors({
   getBridgeDaemon: () => bridgeDaemonRef,
   getNativeCapabilities: () => getNativeCapabilitySnapshot(),
   getCreativeApprovalGate: () => creativeApprovalGateRef,
   attachedWindow: {
-    get: () => attachedWindowSnapshot,
-    set: (snapshot) => {
-      attachedWindowSnapshot = snapshot
-    }
+    getForChat: (chatId) => nativeWindowCoordinatorRef?.getForChat(chatId) ?? null,
+    updateStreaming: (exact, streaming) =>
+      nativeWindowCoordinatorRef?.updateStreaming(exact, streaming) ?? null,
+    clearExact: (exact) => nativeWindowCoordinatorRef?.clearExact(exact) ?? null,
+    rendererProjectionForChat: (chatId) =>
+      nativeWindowCoordinatorRef?.rendererProjectionForChat(chatId) ?? null
   },
   store: {
     getSettings: () => AppStore.getSettings(),
@@ -3591,10 +3661,23 @@ const canvasService = new CanvasService({
     opts?: {
       embedded?: boolean
       appChatId?: string
+      appRunId?: string
+      windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
     }
   ) => {
+    if (kind === 'window') {
+      const factory = canvasWindowDriverFactoryRef
+      if (!factory) throw new Error('Native-window Canvas is not ready.')
+      if (!opts?.appChatId || !opts.appRunId || !opts.windowTarget) {
+        throw new Error('Native-window Canvas requires exact chat, run, and target authority.')
+      }
+      return factory.takeDriverForCanvasContext(
+        { chatId: opts.appChatId, runId: opts.appRunId },
+        opts.windowTarget
+      )
+    }
     if (kind === 'device') return new CanvasDeviceDriver(sessionId)
     if (kind === 'html') {
       return new CanvasRenderDriver(sessionId, {
@@ -3677,7 +3760,20 @@ function teardownCanvasSurfacesForWindowClose(): void {
 let canvasLaunchAttemptsSnapshot: (() => LaunchAttempt[]) | null = null
 const canvasToolExecutors = createCanvasToolExecutors({
   controller: canvasService,
-  launchAttempts: () => canvasLaunchAttemptsSnapshot?.() ?? []
+  launchAttempts: () => canvasLaunchAttemptsSnapshot?.() ?? [],
+  resolveWindowOpenTarget: (attempt, context) => {
+    const capabilities = getNativeCapabilitySnapshot()
+    return resolveNativeWindowCanvasOpenTarget({
+      attempt,
+      context,
+      platform: process.platform,
+      macosVersion: capabilities.macosVersion,
+      appDriveCapability: capabilities.appDrive,
+      isDaemonRunning: () => nativeWindowDaemonProxy.status().running,
+      coordinator: nativeWindowCoordinatorRef,
+      targetIssuer: canvasWindowDriverFactoryRef
+    })
+  }
 })
 // Assigned during app init once LaunchManager + workspace/local-server deps exist
 // (see the registerLaunchHandlers wiring). Held at module scope so the shared MCP
@@ -4929,27 +5025,17 @@ const introspectionToolExecutors = createIntrospectionToolExecutors({
 })
 
 // M11 (1.0.7) — sticky AppWatch: per-chat remembered attachment snapshots,
-// persisted so they survive an app restart. The pure store logic lives in
-// `stickyAppWatch.ts`; here we hold the in-memory copy + its json file. Loaded
-// lazily on first access; written best-effort on every change.
-let stickyAppWatchStore: StickyAppWatchStore | null = null
+// persisted so they survive an app restart. The controller serializes
+// cross-chat read-modify-write mutations while retaining best-effort disk
+// persistence.
 function stickyAppWatchPath(): string {
   return join(app.getPath('userData'), 'sticky-appwatch.json')
 }
-async function loadStickyAppWatchStore(): Promise<StickyAppWatchStore> {
-  if (stickyAppWatchStore) return stickyAppWatchStore
-  const raw = await readJsonFile(stickyAppWatchPath())
-  stickyAppWatchStore = normalizeStickyAppWatchStore(raw)
-  return stickyAppWatchStore
-}
-async function persistStickyAppWatchStore(next: StickyAppWatchStore): Promise<void> {
-  stickyAppWatchStore = next
-  try {
-    await writeJsonFile(stickyAppWatchPath(), next)
-  } catch (err) {
-    console.error('[sticky-appwatch] persist failed:', err)
-  }
-}
+const stickyAppWatchStoreController = new StickyAppWatchStoreController({
+  load: () => readJsonFile(stickyAppWatchPath()),
+  persist: (next) => writeJsonFile(stickyAppWatchPath(), next),
+  onPersistError: (error) => console.error('[sticky-appwatch] persist failed:', error)
+})
 
 async function readJsonFile(filePath: string): Promise<any | null> {
   try {
@@ -7498,6 +7584,19 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 }
 
 runManager.onChange((event) => {
+  if (
+    event.session.appChatId &&
+    (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status))
+  ) {
+    void nativeWindowCoordinatorRef
+      ?.onRunTerminal(event.session.appChatId, event.session.runId)
+      .catch((error) => {
+        console.warn(
+          '[NativeWindow] run-terminal lease revocation failed:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+  }
   if (event.type === 'removed') {
     approvalService?.cancelForRun(event.session.runId, 'run-removed')
     clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
@@ -13092,7 +13191,10 @@ const previewForGeminiMcpTool = createMcpToolApprovalPreviewer({
   ollamaTextDiffPreview,
   previewPath: previewGeminiMcpPath,
   readApprovalPreviewFileContent,
-  getAttachedWindowMeta: () => attachedWindowSnapshot?.windowMeta
+  getAttachedWindowMeta: (chatId) =>
+    chatId
+      ? nativeWindowCoordinatorRef?.statusForChat(chatId).observation?.window ?? null
+      : null
 })
 
 function runHostCommand(
@@ -15832,9 +15934,7 @@ async function ensureGeminiAuthProfileMaterialized(
           mcp: {
             serverName: GEMINI_MCP_SERVER_NAME,
             command: bridgeCommandStatus.command,
-            args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-              portableEnsembleControl: true
-            }),
+            args: taskwraithMcpBridgeStaticRegistrationArgs(),
             includeTools: [...TASKWRAITH_MCP_TOOLS]
           }
         }
@@ -19258,6 +19358,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
   }
   let cursorMcpBridgeActive = false
+  let cursorMcpBridgeEnv: Record<string, string> = {}
   let workspaceMcpAliasesGlobalRegistry = false
   if (cursorAdvertiseTaskWraithMcp) {
     try {
@@ -19278,31 +19379,17 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // the host-gated plan instruments. Write seat: the full broker.
       const brokerInvocation = {
         command: bridgeCommandStatus.command,
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-          safeSubset: cursorBrokerPolicy.safeSubset,
-          planSubset: cursorBrokerPolicy.planSubset,
-          coreSubset: cursorBrokerPolicy.coreSubset,
-          gatewaySubset: cursorBrokerPolicy.gatewaySubset,
-          portableEnsembleControl: isPortableEnsembleControlMcpProfile(
-            payload.taskWraithMcpProfileId
-          ),
-          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
-            payload.taskWraithMcpProfileId
-          )
-        }),
+        args: taskwraithMcpBridgeStaticRegistrationArgs(),
         env: {
-          [GEMINI_MCP_BRIDGE_ENV]: '1',
-          // The global server entry must never own a specific run's route.
-          // Cursor passes its per-run launch environment through to the stdio
-          // MCP child, so that child inherits the exact run/chat/workspace
-          // identity from runCliProviderProcess. Only static bridge activation
-          // belongs in the shared registry.
-          TASKWRAITH_PARENT_PROVIDER: 'cursor'
+          // Static activation is not routing authority. Cursor passes the
+          // exact live route environment from its provider process to this
+          // stdio child for each run.
+          [GEMINI_MCP_BRIDGE_ENV]: '1'
         }
       }
-      // Global registration is the only one cursor-agent durably approves;
-      // refreshed when the app's broker endpoint/token changes.
+      // Global registration is the only one cursor-agent durably approves.
+      // It is instance-neutral and remains stable while the live endpoint,
+      // token, epoch, route, and profile travel only in this run's environment.
       // The legacy scoped read-only name is removed so Cursor never aggregates
       // two TaskWraith tool catalogues.
       // Route identity is intentionally absent from this global entry. Each
@@ -19381,6 +19468,29 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         CURSOR_MCP_SERVER_NAME,
         payload.providerSetupAbortSignal
       )
+      cursorMcpBridgeEnv = mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
+        route,
+        parentProvider: 'cursor',
+        workspacePath: payload.workspace,
+        profile: {
+          safeSubset: cursorBrokerPolicy.safeSubset,
+          planSubset: cursorBrokerPolicy.planSubset,
+          coreSubset: cursorBrokerPolicy.coreSubset,
+          gatewaySubset: cursorBrokerPolicy.gatewaySubset,
+          portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
+          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
+          auditSubset: Boolean(payload.auditRun)
+        },
+        isolatedInstanceId:
+          instanceLaunchPosture.kind === 'packaged-isolated'
+            ? instanceLaunchPosture.instanceId
+            : undefined
+      })
       cursorMcpBridgeActive = true
     } catch (error) {
       // Degrade WITH A VISIBLE WARNING (Grok parity): the seat runs native-only
@@ -19474,7 +19584,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   try {
     await runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
       fallback: false,
-      extraEnv: {},
+      extraEnv: cursorMcpBridgeEnv,
       onComplete: releaseCursorConfigurationLeases
     })
   } finally {
@@ -22028,6 +22138,8 @@ async function runKimiAcpProvider(
             workspace: payload.scope === 'global' ? undefined : payload.workspace,
             appVersion: app.getVersion(),
             brokerToken: geminiMcpBrokerToken,
+            auditSubset: Boolean(payload.auditRun),
+            instanceEpoch,
             getMcpToolDefinitions: () => mcpToolDefinitions(),
             dispatchBrokerRequest: (request) =>
               mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
@@ -25210,6 +25322,7 @@ async function compactKimiProviderContext(payload: {
               workspace,
               appVersion: app.getVersion(),
               brokerToken: geminiMcpBrokerToken,
+              instanceEpoch,
               getMcpToolDefinitions: () => mcpToolDefinitions(),
               dispatchBrokerRequest: (request) =>
                 mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
@@ -29573,14 +29686,51 @@ async function runGeminiProvider(
     return
   }
 
+  let geminiMcpRunEnv: Record<string, string>
+  try {
+    geminiMcpRunEnv = mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
+      route,
+      parentProvider: 'gemini',
+      workspacePath: payload.scope === 'global' ? '' : payload.workspace,
+      profile: {
+        safeSubset: geminiReadOnlyAdvertise,
+        coreSubset: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        gatewaySubset: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
+        auditSubset: Boolean(payload.auditRun)
+      },
+      isolatedInstanceId:
+        instanceLaunchPosture.kind === 'packaged-isolated'
+          ? instanceLaunchPosture.instanceId
+          : undefined
+    })
+  } catch (error) {
+    settleVisibleProviderSetupFailure({
+      sender: event.sender,
+      provider: 'gemini',
+      route,
+      message: `Gemini MCP route setup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      setupRequired: true,
+      fallback: false,
+      exitCode: -1
+    })
+    return
+  }
+
   const env = createCliEnv(
     {
       FORCE_COLOR: '0',
       NO_COLOR: '1',
       ...resolveGeminiAuthProfileEnv(payload.geminiAuthProfileId),
-      TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
+      ...geminiMcpRunEnv,
       TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
       // Audit role-run: set the audit-tool advertisement flag for this run's
       // bridge child (inherited via the Gemini CLI env). NOTE (v1 gap): a
@@ -29591,13 +29741,6 @@ async function runGeminiProvider(
       // PROVIDERS (claude/kimi) in v1, so Gemini is never assigned a recording
       // role. This flag is set forward-looking for when the security-gated
       // seatbelt swap lands and Gemini can be widened back in.
-      ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-      // Phase I2: every CLI spawn now carries the parent provider so
-      // the TaskWraith MCP bridge subprocess (inherited via env) stamps
-      // broker requests with the right routing key. Codex's persistent
-      // app-server sets this via `-c mcp_servers.TaskWraith.env` in
-      // CodexAppServerClient.
-      TASKWRAITH_PARENT_PROVIDER: 'gemini',
       // Recent Gemini CLI versions tightened the headless trust check:
       // even when the user has trusted the directory interactively, a
       // headless spawn fails with "Gemini CLI is not running in a
@@ -31278,7 +31421,7 @@ async function readGeminiCapabilitySection(
 }
 
 function geminiMcpSocketPath(): string {
-  return join(app.getPath('userData'), 'taskwraith-gemini-mcp.sock')
+  return instanceResourceIdentity.geminiMcpSocketPath
 }
 
 function geminiUserSettingsPath(): string {
@@ -42175,11 +42318,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           if (bridgeDaemonRef === daemon) {
             bridgeDaemonRef = null
-            // Daemon owned the picker state; once it's gone the handle is
-            // worthless. Clear the snapshot so the renderer pill drops and
-            // the AI's next status call returns `{ attached: false }`.
-            attachedWindowSnapshot = null
-            mainWindow?.webContents.send('attached-window-changed', null)
+            notifyNativeWindowDaemonGone()
           }
           if (wasActiveDaemon && !bridgeDaemonStartPromise) {
             bridgeDaemonLastError = `Bridge daemon exited with code ${code ?? 'unknown'}`
@@ -42222,7 +42361,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           if (bridgeDaemonRef === daemon) {
             bridgeDaemonRef = null
-            attachedWindowSnapshot = null
+            notifyNativeWindowDaemonGone()
           }
         })
         .finally(() => {
@@ -42239,18 +42378,7 @@ if (isGeminiMcpBridgeProcess) {
       bridgeDaemonStartPromise = null
       if (bridgeDaemonRef === daemon) {
         bridgeDaemonRef = null
-        attachedWindowSnapshot = null
-        // Guard against the destroyed-during-quit case: when this runs
-        // from the `will-quit` handler below, Electron has already
-        // begun tearing down `mainWindow`'s webContents — the bare
-        // optional chain on `mainWindow` passes because the JS ref is
-        // still bound, but calling `.send()` on the destroyed contents
-        // throws "Object has been destroyed" and bubbles up as a
-        // uncaught-exception dialog on quit. `isDestroyed()` is the
-        // canonical Electron way to skip post-teardown IPC dispatch.
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('attached-window-changed', null)
-        }
+        notifyNativeWindowDaemonGone()
       }
       daemon?.dispose()
     }
@@ -42716,7 +42844,11 @@ if (isGeminiMcpBridgeProcess) {
             canvasHoldCount = 1
             const bridgePurge =
               preparation.kind === 'global'
-                ? trackBroadHistoryStrictAttempt(beginBridgeSubprocessLogHistoryClear())
+                ? trackBroadHistoryStrictAttempt(
+                    beginBridgeSubprocessLogHistoryClear(
+                      mcpBridgeRuntime.getBridgeSubprocessLogPath()
+                    )
+                  )
                 : null
             bridgeHoldCount = bridgePurge ? 1 : 0
 
@@ -42882,7 +43014,9 @@ if (isGeminiMcpBridgeProcess) {
           }
           if (holds.bridgePurge?.status === 'rejected') {
             holds.bridgePurge = trackBroadHistoryStrictAttempt(
-              beginBridgeSubprocessLogHistoryClear()
+              beginBridgeSubprocessLogHistoryClear(
+                mcpBridgeRuntime.getBridgeSubprocessLogPath()
+              )
             )
             holds.bridgeHoldCount += 1
           }
@@ -43217,6 +43351,10 @@ if (isGeminiMcpBridgeProcess) {
     reconcileBridgeDaemonFromSettings()
     app.on('will-quit', () => {
       teardownCanvasSurfacesForWindowClose()
+      if (nativeWindowExpirySweepTimer) {
+        clearInterval(nativeWindowExpirySweepTimer)
+        nativeWindowExpirySweepTimer = null
+      }
       // Up to one debounce window of the last turn's spend is otherwise lost.
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()
@@ -43774,20 +43912,78 @@ if (isGeminiMcpBridgeProcess) {
     const launchManager = new LaunchManager({
       store: new LaunchAttemptStore(join(app.getPath('userData'), 'launch-attempts.json')),
       platform: process.platform,
+      isPackagedApp: () => app.isPackaged,
       requestApproval: requestAgenticServiceApproval,
       createEnv: createCliEnv,
-      // Refuse a launch that would start a second copy of TaskWraith: a packaged
-      // build holds a single-instance lock, so the child quits in milliseconds
-      // and whatever started it reads that as a crash and retries forever.
+      // LaunchManager may mint an isolated profile only for an exact packaged
+      // TaskWraith executable after the ordinary forced human approval.
+      // Unpackaged self-launches remain refused because development startup does
+      // not consume the private isolated-profile posture.
       appRootPath: () => app.getAppPath(),
       appExecutablePath: () => process.execPath,
+      resolveProcessStartedAt: resolveNativeProcessStartedAt,
       trackSpawn: (spawn) => spawnRegistry.track(spawn),
       untrackSpawn: (pid) => spawnRegistry.untrack(pid),
       recordLifecycleEvent: appendLaunchLifecycleRunEvent,
       log: (line) => console.log(line)
     })
+    const nativeCapabilitiesForCoordinator = getNativeCapabilitySnapshot()
+    nativeWindowCoordinatorRef = new NativeWindowCoordinator({
+      instanceEpoch,
+      daemon: nativeWindowDaemonProxy,
+      canScreenWatch: () => getNativeCapabilitySnapshot().screenWatch,
+      canAppDrive: () => getNativeCapabilitySnapshot().appDrive,
+      macosVersion: nativeCapabilitiesForCoordinator.macosVersion || '0',
+      getLaunchAttempts: () => launchManager.snapshot().attempts,
+      isRunActive: (chatId, runId) => {
+        const session = runManager.get(runId)
+        return Boolean(
+          session?.appChatId === chatId &&
+            isActiveRunSessionStatus(session.status) &&
+            runManager.canAdmitTransport(runId, true)
+        )
+      },
+      getHostProtectedPids: currentNativeWindowProtectedPids,
+      requestSecondConsent: (request) =>
+        requestNativeWindowControlConsent(
+          mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+          request
+        ),
+      notifyRenderer: publishNativeWindowRendererEvent
+    })
+    canvasWindowDriverFactoryRef = new CanvasWindowDriverFactory({
+      coordinator: nativeWindowCoordinatorRef,
+      daemon: nativeWindowDaemonProxy,
+      clickConfirmation: {
+        confirm: (request) =>
+          requestNativeWindowClickAuthorization(
+            mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+            request
+          )
+      },
+      clickAuditClaim: createNativeWindowClickAuditClaim({
+        appendRunEvent: (input, options) =>
+          getRunRepository().appendRunEvent(input, options)
+      })
+    })
+    if (nativeWindowExpirySweepTimer) clearInterval(nativeWindowExpirySweepTimer)
+    nativeWindowExpirySweepTimer = setInterval(() => {
+      void nativeWindowCoordinatorRef?.sweepExpired().catch((error) => {
+        console.warn(
+          '[NativeWindow] lease expiry sweep failed:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    }, 30_000)
+    nativeWindowExpirySweepTimer.unref?.()
     canvasLaunchAttemptsSnapshot = () => launchManager.snapshot().attempts
     launchManager.subscribe((snapshot) => {
+      void nativeWindowCoordinatorRef?.onLaunchSnapshot(snapshot.attempts).catch((error) => {
+        console.warn(
+          '[NativeWindow] launch ownership revalidation failed:',
+          error instanceof Error ? error.message : String(error)
+        )
+      })
       try {
         mainWindow?.webContents.send('launch-attempts-changed', snapshot)
       } catch {
@@ -44543,77 +44739,47 @@ if (isGeminiMcpBridgeProcess) {
       return { ok: true }
     })
 
-    // Attached-window picker (Appshots-equivalent). The renderer invokes
-    // `attach-window:pick` when the user clicks the Attach button; main
-    // forwards to the bridge daemon's `attachedWindow.requestPick`, which
-    // presents `SCContentSharingPicker`. We use a generous timeout because
-    // the picker blocks on a user gesture — the default 10s would fire
-    // long before most users finish picking.
-    ipcMain.handle('attach-window:pick', async () => {
+    // Screen Watch is observation-first. The coordinator owns the private
+    // daemon scope and may offer a separate, exact-run View & Control decision
+    // only after the user picks one canonical window.
+    ipcMain.handle('attach-window:pick', async (event, chatId: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+      assertRendererChatScope(event, canonicalChatId)
       const nativeCapabilities = getNativeCapabilitySnapshot()
       if (!nativeCapabilities.screenWatch.available) {
-        return {
-          ok: false,
-          unsupported: true,
-          error:
-            nativeCapabilities.screenWatch.reason || 'Screen Watch is unavailable on this host.',
-          nativeCapabilities
-        }
+        throw new Error(
+          nativeCapabilities.screenWatch.reason || 'Screen Watch is unavailable on this host.'
+        )
       }
-      if (!bridgeDaemon?.status().running) {
-        return {
-          ok: false,
-          error: 'Bridge daemon is not running. Enable it in Settings → Bridge Networking.'
-        }
-      }
-      try {
-        const result = (await bridgeDaemon.request(
-          'attachedWindow.requestPick',
-          {},
-          { timeoutMs: 120_000 }
-        )) as {
-          ok?: boolean
-          cancelled?: boolean
-          handleID?: string
-          windowMeta?: AttachedWindowSnapshot['windowMeta']
-        }
-        if (result?.cancelled) {
-          return { ok: false, cancelled: true }
-        }
-        if (!result?.ok || !result.handleID || !result.windowMeta) {
-          return { ok: false, error: 'Picker returned an unexpected payload.' }
-        }
-        attachedWindowSnapshot = {
-          handleID: result.handleID,
-          windowMeta: result.windowMeta,
-          attachedAt: new Date().toISOString()
-        }
-        mainWindow?.webContents.send('attached-window-changed', attachedWindowSnapshot)
-        return { ok: true, snapshot: attachedWindowSnapshot }
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
+      const coordinator = nativeWindowCoordinatorRef
+      if (!coordinator) throw new Error('Native-window coordination is not ready.')
+      return coordinator.pick(canonicalChatId)
     })
 
-    ipcMain.handle('attach-window:detach', async () => {
-      const snapshot = attachedWindowSnapshot
-      attachedWindowSnapshot = null
-      mainWindow?.webContents.send('attached-window-changed', null)
-      if (snapshot && bridgeDaemon?.status().running) {
-        try {
-          await bridgeDaemon.request('attachedWindow.detach', { handleID: snapshot.handleID })
-        } catch (err) {
-          // Daemon-side failure is non-fatal — main has already cleared its
-          // snapshot, so subsequent capture calls fail fast on the renderer
-          // side. Log so we notice if the daemon's handle table is leaking.
-          console.error('[attach-window:detach] daemon detach failed:', err)
+    ipcMain.handle(
+      'attach-window:detach',
+      async (event, chatId: string, generation: number) => {
+        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+        assertRendererChatScope(event, canonicalChatId)
+        if (!Number.isSafeInteger(generation) || generation <= 0) {
+          throw new Error('Attachment generation must be a positive integer.')
+        }
+        const coordinator = nativeWindowCoordinatorRef
+        if (!coordinator) throw new Error('Native-window coordination is not ready.')
+        const detached = await coordinator.detach(canonicalChatId, generation)
+        return {
+          detached,
+          status: coordinator.statusForChat(canonicalChatId)
         }
       }
-      return { ok: true }
-    })
+    )
 
-    ipcMain.handle('attach-window:status', () => {
-      return { snapshot: attachedWindowSnapshot }
+    ipcMain.handle('attach-window:status', (event, chatId: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+      assertRendererChatScope(event, canonicalChatId)
+      const coordinator = nativeWindowCoordinatorRef
+      if (!coordinator) throw new Error('Native-window coordination is not ready.')
+      return coordinator.statusForChat(canonicalChatId)
     })
 
     // M11 (1.0.7) — sticky AppWatch. The renderer stashes a chat's attachment
@@ -44622,37 +44788,38 @@ if (isGeminiMcpBridgeProcess) {
     // restart. macOS can't silently re-grant a window (SCContentSharingPicker is
     // interactive), so this is metadata for the resume affordance, never a live
     // grant.
-    ipcMain.handle('sticky-appwatch:get', async (_event, chatId: string) => {
-      const store = await loadStickyAppWatchStore()
-      return { snapshot: getStickyAppWatch(store, String(chatId || '')) }
+    ipcMain.handle('sticky-appwatch:get', async (event, chatId: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+      assertRendererChatScope(event, canonicalChatId)
+      return { snapshot: await stickyAppWatchStoreController.get(canonicalChatId) }
     })
     ipcMain.handle(
       'sticky-appwatch:stash',
       async (
-        _event,
+        event,
         input: {
           chatId: string
-          windowMeta: StickyAppWatchStore[string]['windowMeta']
+          windowMeta: StickyAppWatchSnapshot['windowMeta']
           attachedAt: string
           wasStreaming: boolean
         }
       ) => {
-        const store = await loadStickyAppWatchStore()
-        const next = stashStickyAppWatch(store, {
-          chatId: String(input?.chatId || ''),
+        const canonicalChatId = requireNonEmptyString(input?.chatId, 'Chat')
+        assertRendererChatScope(event, canonicalChatId)
+        await stickyAppWatchStoreController.stash({
+          chatId: canonicalChatId,
           windowMeta: input?.windowMeta,
           attachedAt: String(input?.attachedAt || new Date().toISOString()),
           wasStreaming: Boolean(input?.wasStreaming),
           stashedAt: new Date().toISOString()
         })
-        await persistStickyAppWatchStore(next)
         return { ok: true }
       }
     )
-    ipcMain.handle('sticky-appwatch:clear', async (_event, chatId: string) => {
-      const store = await loadStickyAppWatchStore()
-      const next = clearStickyAppWatch(store, String(chatId || ''))
-      if (next !== store) await persistStickyAppWatchStore(next)
+    ipcMain.handle('sticky-appwatch:clear', async (event, chatId: string) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+      assertRendererChatScope(event, canonicalChatId)
+      await stickyAppWatchStoreController.clear(canonicalChatId)
       return { ok: true }
     })
 
@@ -49425,17 +49592,38 @@ if (isGeminiMcpBridgeProcess) {
           includeMcp: settings.geminiMcpBridgeEnabled || requiresGeminiWriteTools
         })
 
+        let interactiveGeminiMcpEnv: Record<string, string>
+        try {
+          interactiveGeminiMcpEnv = mcpBridgeRuntime.buildProviderRunMcpBridgeEnv({
+            route: routedSession,
+            parentProvider: 'gemini',
+            workspacePath: registeredWorkspace,
+            profile: {
+              safeSubset: geminiReadOnlyAdvertise,
+              portableEnsembleControl: true,
+              sketchDirect: true
+            },
+            isolatedInstanceId:
+              instanceLaunchPosture.kind === 'packaged-isolated'
+                ? instanceLaunchPosture.instanceId
+                : undefined
+          })
+        } catch (error) {
+          event.sender.send(
+            'gemini-session-data',
+            `Gemini MCP route setup failed: ${
+              error instanceof Error ? error.message : String(error)
+            }\r\n`
+          )
+          event.sender.send('gemini-session-exit', -1)
+          return
+        }
+
         const env: Record<string, string> = createCliEnv(
           {
             FORCE_COLOR: '1',
             ...resolveGeminiAuthProfileEnv(getDefaultGeminiAuthProfileId()),
-            TASKWRAITH_RUN_ID: routedSession.appRunId || '',
-            TASKWRAITH_CHAT_ID: routedSession.appChatId || '',
-            TASKWRAITH_WORKSPACE_PATH: registeredWorkspace || '',
-            // Phase I2: tag the Gemini interactive session so the bridge
-            // subprocess stamps broker requests as parent='gemini'. Without
-            // this the new I2 default could mis-route session tool calls.
-            TASKWRAITH_PARENT_PROVIDER: 'gemini'
+            ...interactiveGeminiMcpEnv
           },
           resolved.binaryPath
         )

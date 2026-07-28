@@ -10,6 +10,7 @@ type ArgSpec =
   | 'piApiKey'
   | 'optionalString'
   | 'number'
+  | 'positiveInteger'
   | 'optionalNumber'
   | 'boolean'
   | 'optionalBoolean'
@@ -35,6 +36,7 @@ type ArgSpec =
   | 'optionalCanvasOpenArgs'
   | 'optionalCanvasSketchArgs'
   | 'canvasBounds'
+  | 'stickyAppWatchStash'
 
 // Pi BYOK upstream ids accepted over IPC; must mirror PI_ALLOWED_UPSTREAMS in
 // src/main/pi/PiModelPolicy.ts (this module stays import-light by design).
@@ -590,16 +592,14 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'bridge-begin-pairing': ['optionalString'],
   'bridge-list-paired-devices': [],
   'bridge-unpair-device': ['nonEmptyString'],
-  // Attached-window picker — all three handlers are no-arg; pick reads
-  // the daemon's response, detach/status read main-side state. The
-  // daemon-side validation (handleID format etc.) lives in the Swift
-  // dispatcher's Decodable params.
-  'attach-window:pick': [],
-  'attach-window:detach': [],
-  'attach-window:status': [],
+  // Native-window attachments are chat-scoped. The renderer receives only a
+  // safe status projection; the opaque handle and scope remain main-owned.
+  'attach-window:pick': ['chatId'],
+  'attach-window:detach': ['chatId', 'positiveInteger'],
+  'attach-window:status': ['chatId'],
   // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots.
   'sticky-appwatch:get': ['chatId'],
-  'sticky-appwatch:stash': ['object'],
+  'sticky-appwatch:stash': ['stickyAppWatchStash'],
   'sticky-appwatch:clear': ['chatId'],
   /* Slash-picker `/clear` — non-destructive of the chat record, only of
    * its message + run history. Mirrors deleteChat's arg shape. */
@@ -683,6 +683,8 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
     (typeof value !== 'number' || !Number.isFinite(value))
   )
     throw new Error(`${label} must be a finite number.`)
+  if (spec === 'positiveInteger' && (!Number.isSafeInteger(value) || Number(value) <= 0))
+    throw new Error(`${label} must be a positive safe integer.`)
   if ((spec === 'boolean' || spec === 'optionalBoolean') && typeof value !== 'boolean')
     throw new Error(`${label} must be a boolean.`)
   if (
@@ -725,6 +727,7 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   if (spec === 'optionalCanvasOpenArgs') validateCanvasOpenArgs(channel, value)
   if (spec === 'optionalCanvasSketchArgs') validateCanvasSketchArgs(channel, value)
   if (spec === 'canvasBounds') validateCanvasBounds(channel, value)
+  if (spec === 'stickyAppWatchStash') validateStickyAppWatchStash(channel, value)
 }
 
 function validateKnownKeys(
@@ -790,6 +793,50 @@ function validateCanvasBounds(channel: string, value: unknown): void {
     (value.height as number) > coordinateLimit
   ) {
     throw new Error(`${channel} bounds exceed the supported range.`)
+  }
+}
+
+/**
+ * Resume hints are intentionally display-only. Keep identity, lease, and
+ * consent material out of this renderer-writable IPC boundary even if a
+ * caller bypasses preload.
+ */
+function validateStickyAppWatchStash(channel: string, value: unknown): void {
+  if (!isRecord(value)) throw new Error(`${channel} payload must be an object.`)
+  validateKnownKeys(channel, value, new Set(['chatId', 'windowMeta', 'attachedAt', 'wasStreaming']))
+  assertSafeChatId(value.chatId, `${channel} chat id`)
+  if (!isRecord(value.windowMeta)) {
+    throw new Error(`${channel} windowMeta must be an object.`)
+  }
+  validateKnownKeys(
+    `${channel} windowMeta`,
+    value.windowMeta,
+    new Set(['title', 'bundleID', 'applicationName'])
+  )
+  let hasDisplayIdentity = false
+  for (const [field, maximum] of [
+    ['title', 4_096],
+    ['bundleID', 512],
+    ['applicationName', 512]
+  ] as const) {
+    const text = value.windowMeta[field]
+    if (typeof text !== 'string' || text.length > maximum) {
+      throw new Error(`${channel} windowMeta.${field} must be a bounded string.`)
+    }
+    hasDisplayIdentity ||= Boolean(text.trim())
+  }
+  if (!hasDisplayIdentity) {
+    throw new Error(`${channel} windowMeta must include display identity.`)
+  }
+  if (
+    typeof value.attachedAt !== 'string' ||
+    !value.attachedAt.trim() ||
+    value.attachedAt.length > 128
+  ) {
+    throw new Error(`${channel} attachedAt must be a bounded non-empty string.`)
+  }
+  if (typeof value.wasStreaming !== 'boolean') {
+    throw new Error(`${channel} wasStreaming must be a boolean.`)
   }
 }
 
@@ -889,6 +936,12 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
   const schema = IPC_ARGUMENT_SCHEMAS[channel]
   if (!schema) {
     throw new Error(`No IPC schema registered for ${channel}.`)
+  }
+  // Detach is a generation-bound revoke operation, so trailing renderer data
+  // must not be silently ignored. Preserve legacy optional-tail behavior for
+  // unrelated IPC channels.
+  if (channel === 'attach-window:detach' && args.length > schema.length) {
+    throw new Error(`${channel} received too many arguments.`)
   }
   schema.forEach((spec, index) => validateArg(channel, spec, args[index], index))
   return args

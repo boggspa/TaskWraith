@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import { CanvasWebDriver } from './CanvasWebDriver'
+import {
+  CanvasWebDriver,
+  CLEAR_SECRET_REDACTION_SCRIPT,
+  REDACT_SECRETS_SCRIPT
+} from './CanvasWebDriver'
 import type { CanvasHostSurface } from './CanvasHostSurface'
 
 /**
@@ -21,15 +25,32 @@ import type { CanvasHostSurface } from './CanvasHostSurface'
 
 type InputListener = (event: unknown, input: { type: string }) => void
 
-function harness(): {
+interface HarnessOptions {
+  secretProbeResult?: unknown
+  secretProbeError?: Error
+}
+
+function harness(options: HarnessOptions = {}): {
   driver: CanvasWebDriver
   emitInput: (type: string) => void
-  executeJavaScript: ReturnType<typeof vi.fn>
+  executeCanvasScript: ReturnType<typeof vi.fn>
+  capturePage: ReturnType<typeof vi.fn>
 } {
   const inputListeners: InputListener[] = []
   const loadListeners = new Map<string, ((...args: unknown[]) => void)[]>()
-  const executeJavaScript = vi.fn(async (source: string) => {
-    if (source.includes('__twSecretRedaction')) return 0
+  let rendererTrustedInputEpoch = 0
+  const executeCanvasScript = vi.fn(async (_worldId: number, scripts: Array<{ code: string }>) => {
+    const source = scripts[0]?.code ?? ''
+    if (source === REDACT_SECRETS_SCRIPT) {
+      if (options.secretProbeError) throw options.secretProbeError
+      return (
+        options.secretProbeResult ?? {
+          status: 'ready',
+          secretsRedacted: 0
+        }
+      )
+    }
+    if (source === CLEAR_SECRET_REDACTION_SCRIPT) return true
     if (source.includes('nodeCount')) {
       return {
         url: 'http://localhost:3000/',
@@ -37,15 +58,23 @@ function harness(): {
         viewport: { width: 1280, height: 800 },
         root: { ref: 'e1', role: 'document', tag: 'body' },
         nodeCount: 1,
-        truncated: false
+        truncated: false,
+        trustedInputEpoch: rendererTrustedInputEpoch
       }
     }
     // actScript: pretend the click landed so a refusal can't be mistaken for one.
     return { ok: true, found: true, action: 'click', executed: true, verified: 'changed' }
   })
+  const png = Buffer.from('PNG')
+  const capturePage = vi.fn(async () => ({
+    toPNG: () => png,
+    getSize: () => ({ width: 1, height: 1 })
+  }))
 
   const webContents = {
-    executeJavaScript,
+    executeJavaScript: vi.fn(),
+    executeJavaScriptInIsolatedWorld: executeCanvasScript,
+    capturePage,
     setWindowOpenHandler: vi.fn(),
     setWebRTCIPHandlingPolicy: vi.fn(),
     getURL: () => 'http://localhost:3000/',
@@ -95,23 +124,31 @@ function harness(): {
   return {
     driver,
     emitInput: (type: string) => {
+      if (
+        ['keyDown', 'keyUp', 'char', 'mouseDown', 'mouseUp', 'mouseWheel', 'touchStart'].includes(
+          type
+        )
+      ) {
+        rendererTrustedInputEpoch += 1
+      }
       for (const listener of inputListeners) listener({}, { type })
     },
-    executeJavaScript
+    executeCanvasScript,
+    capturePage
   }
 }
 
-async function openedHarness(): Promise<ReturnType<typeof harness>> {
-  const h = harness()
+async function openedHarness(options: HarnessOptions = {}): Promise<ReturnType<typeof harness>> {
+  const h = harness(options)
   await h.driver.open({ url: 'http://localhost:3000/' })
   return h
 }
 
 describe('canvas user takeover', () => {
   it('refuses to act while the user is interacting, without touching the page', async () => {
-    const { driver, emitInput, executeJavaScript } = await openedHarness()
+    const { driver, emitInput, executeCanvasScript } = await openedHarness()
     emitInput('mouseDown')
-    executeJavaScript.mockClear()
+    executeCanvasScript.mockClear()
 
     const result = await driver.act({ kind: 'click', ref: 'e1' })
 
@@ -119,7 +156,7 @@ describe('canvas user takeover', () => {
     expect(result.executed).toBe(false)
     expect(result.refusalReason).toBe('user_active')
     // Nothing was injected at all — not even the act script.
-    expect(executeJavaScript).not.toHaveBeenCalled()
+    expect(executeCanvasScript).not.toHaveBeenCalled()
   })
 
   it('watches the mouse, not just the keyboard', async () => {
@@ -218,5 +255,53 @@ describe('canvas user takeover', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('canvas screenshot credential boundary', () => {
+  it('fails closed without capturing when the secret-field probe rejects', async () => {
+    const { driver, capturePage } = await openedHarness({
+      secretProbeError: new Error('probe rejected')
+    })
+
+    await expect(driver.screenshot()).rejects.toThrow(
+      /credential-field protection could not verify/
+    )
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
+  it('fails closed without capturing when the page reports a probe failure', async () => {
+    const { driver, capturePage } = await openedHarness({
+      secretProbeResult: {
+        status: 'probe_failed',
+        secretsRedacted: 0
+      }
+    })
+
+    await expect(driver.screenshot()).rejects.toThrow(
+      /credential-field protection could not verify/
+    )
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
+  it('refuses capture while a credential field is focused', async () => {
+    const { driver, capturePage } = await openedHarness({
+      secretProbeResult: {
+        status: 'focused_secret',
+        secretsRedacted: 0
+      }
+    })
+
+    await expect(driver.screenshot()).rejects.toThrow(/credential field is focused/)
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
+  it('captures only after the probe returns a valid safe state', async () => {
+    const { driver, capturePage } = await openedHarness()
+
+    const frame = await driver.screenshot()
+
+    expect(frame.byteLength).toBe(3)
+    expect(capturePage).toHaveBeenCalledOnce()
   })
 })

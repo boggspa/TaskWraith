@@ -6,8 +6,9 @@
  * renderer-pane surface is injected) and drives its `webContents` WITHOUT the CDP
  * `webContents.debugger` (mutually exclusive with an open DevTools window + adds
  * attach/version churn). Instead it uses proven Electron primitives:
- *   - snapshot / inspect → `webContents.executeJavaScript` (fixed inspection
- *     scripts; arbitrary eval is the separate, signed-elevated canvas_eval verb)
+ *   - snapshot / inspect / act → `webContents.executeJavaScriptInIsolatedWorld`
+ *     (fixed scripts in a page-inaccessible registry; arbitrary eval remains the
+ *     separate, signed-elevated canvas_eval verb)
  *   - screenshot         → `webContents.capturePage().toPNG()`
  *   - network            → per-partition `session.webRequest` ring buffer
  *   - console            → `webContents.on('console-message')` ring buffer
@@ -121,23 +122,79 @@ const USER_PRESENCE_INPUT_TYPES: ReadonlySet<string> = new Set([
  */
 const USER_ACTIVE_GRACE_MS = 1500
 
+// Keep fixed Canvas scripts out of the page's JavaScript world. The page shares
+// the DOM with this world, but cannot replace this world's global registry or
+// its trusted-input listener between a snapshot and a ref action.
+const CANVAS_ISOLATED_WORLD_ID = 999
+export const CANVAS_ISOLATED_STATE_KEY = '__twCanvasIsolatedStateV1'
+
+// Inserted into the snapshot script only. A real renderer event is observed in
+// the same world that later checks the epoch and dispatches the action. Synthetic
+// DOM events from the page or Canvas action script have `isTrusted === false` and
+// therefore cannot advance this epoch.
+const ISOLATED_CANVAS_STATE_SETUP = `
+  const __twCanvasStateKey = ${JSON.stringify(CANVAS_ISOLATED_STATE_KEY)};
+  let __twCanvasState = globalThis[__twCanvasStateKey];
+  if (!__twCanvasState || typeof __twCanvasState !== 'object') {
+    __twCanvasState = {
+      refs: Object.create(null), ids: Object.create(null), seq: 0,
+      trustedInputEpoch: 0, inputWatchInstalled: false
+    };
+    try {
+      Object.defineProperty(globalThis, __twCanvasStateKey, {
+        value: __twCanvasState, configurable: false, enumerable: false, writable: false
+      });
+    } catch (e) {
+      globalThis[__twCanvasStateKey] = __twCanvasState;
+    }
+  }
+  if (__twCanvasState.inputWatchInstalled !== true &&
+      typeof globalThis.addEventListener === 'function') {
+    const __twTrustedInputTypes = [
+      'keydown', 'keyup', 'beforeinput', 'input', 'pointerdown', 'mousedown',
+      'mouseup', 'wheel', 'touchstart', 'touchend'
+    ];
+    const __twRecordTrustedInput = (event) => {
+      if (event && event.isTrusted === true) {
+        const current = Number.isSafeInteger(__twCanvasState.trustedInputEpoch) &&
+          __twCanvasState.trustedInputEpoch >= 0 ? __twCanvasState.trustedInputEpoch : 0;
+        __twCanvasState.trustedInputEpoch = current + 1;
+      }
+    };
+    for (const type of __twTrustedInputTypes) {
+      globalThis.addEventListener(type, __twRecordTrustedInput, true);
+    }
+    __twCanvasState.inputWatchInstalled = true;
+  }
+`
+
 const SECRET_FIELD_SELECTOR =
   'input[type=password], input[autocomplete*="password"], input[autocomplete="one-time-code"], [data-tw-secret]'
 
-// Paints an opaque box over every secret field, returning how many it covered.
-// Returns 0 without touching the DOM when there is nothing to hide, so the
-// common screenshot path costs one probe and causes no visible flicker.
+// Refuses capture while a secret field owns focus; otherwise paints an opaque
+// box over every visible secret field and returns how many it covered. The
+// structured result is validated main-side before capture so a failed/malformed
+// page probe cannot silently degrade to an unredacted screenshot.
 // Exported for CanvasWebDriverActScript.test.ts — see actScript's note.
 export const REDACT_SECRETS_SCRIPT = `(() => {
   const sel = ${JSON.stringify(SECRET_FIELD_SELECTOR)};
   let nodes = [];
-  try { nodes = Array.prototype.slice.call(document.querySelectorAll(sel)); } catch (e) { return 0; }
+  try {
+    nodes = Array.prototype.slice.call(document.querySelectorAll(sel));
+  } catch (e) {
+    return { status: 'probe_failed', secretsRedacted: 0 };
+  }
+  const active = document.activeElement;
+  const focusedSecret = nodes.some((el) =>
+    el === active || (active && typeof el.contains === 'function' && el.contains(active))
+  );
+  if (focusedSecret) return { status: 'focused_secret', secretsRedacted: 0 };
   const boxes = [];
   for (const el of nodes) {
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) boxes.push(r);
   }
-  if (boxes.length === 0) return 0;
+  if (boxes.length === 0) return { status: 'ready', secretsRedacted: 0 };
   const old = document.getElementById('__twSecretRedaction');
   if (old) old.remove();
   const layer = document.createElement('div');
@@ -150,7 +207,7 @@ export const REDACT_SECRETS_SCRIPT = `(() => {
     layer.appendChild(box);
   }
   document.documentElement.appendChild(layer);
-  return boxes.length;
+  return { status: 'ready', secretsRedacted: boxes.length };
 })()`
 
 export const CLEAR_SECRET_REDACTION_SCRIPT = `(() => {
@@ -158,6 +215,30 @@ export const CLEAR_SECRET_REDACTION_SCRIPT = `(() => {
   if (layer) layer.remove();
   return true;
 })()`
+
+interface SecretRedactionPreparation {
+  focusedSecret: boolean
+  secretsRedacted: number
+}
+
+function requireSecretRedactionPreparation(value: unknown): SecretRedactionPreparation {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Secret-field probe returned no structured result.')
+  }
+  const record = value as Record<string, unknown>
+  if (record.status === 'focused_secret' && record.secretsRedacted === 0) {
+    return { focusedSecret: true, secretsRedacted: 0 }
+  }
+  if (
+    record.status !== 'ready' ||
+    typeof record.secretsRedacted !== 'number' ||
+    !Number.isSafeInteger(record.secretsRedacted) ||
+    record.secretsRedacted < 0
+  ) {
+    throw new Error('Secret-field probe did not verify a safe capture state.')
+  }
+  return { focusedSecret: false, secretsRedacted: record.secretsRedacted }
+}
 
 // Structural + explicit-label identity for one element. Recorded per ref at
 // snapshot time and RECOMPUTED before every actuation, so a ref that now points
@@ -189,13 +270,18 @@ const TARGET_IDENTITY_FN = `
       (el.getAttribute('type') || '') + '|' + label + '|' + path;
   };`
 
-// Injected DOM-walk that assigns stable refs (e1, e2, …), stashes the elements
-// on window.__twCanvas__.refs for canvas_inspect, and returns a compact tree.
+// Injected DOM-walk that assigns stable refs (e1, e2, …), stashes elements in an
+// isolated-world registry for inspect/act, and returns a compact tree. The page
+// cannot replace that registry or redirect a later ref action.
 // NOTE: this is a template literal — every regex backslash is DOUBLED so it
 // survives into the evaluated JS string (`\\s` here → `\s` in the page).
-const SNAPSHOT_SCRIPT = `(() => {
+export const SNAPSHOT_SCRIPT = `(() => {
   const MAX_NODES = 400, TEXT_TRUNCATE = 200;
-  const reg = (window.__twCanvas__ = { refs: {}, ids: {}, seq: 0 });
+  ${ISOLATED_CANVAS_STATE_SETUP}
+  const reg = { refs: Object.create(null), ids: Object.create(null), seq: 0 };
+  __twCanvasState.refs = reg.refs;
+  __twCanvasState.ids = reg.ids;
+  __twCanvasState.seq = reg.seq;
   ${TARGET_IDENTITY_FN}
   let count = 0;
   const truncate = (s) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > TEXT_TRUNCATE ? s.slice(0, TEXT_TRUNCATE) + '\\u2026' : s; };
@@ -231,6 +317,16 @@ const SNAPSHOT_SCRIPT = `(() => {
     for (const n of el.childNodes) if (n.nodeType === 3) t += n.textContent;
     return truncate(t);
   };
+  const isSecretField = (el) => {
+    try {
+      if (typeof el.matches === 'function' && el.matches(${JSON.stringify(SECRET_FIELD_SELECTOR)})) return true;
+    } catch (e) {}
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const autocomplete = (el.getAttribute('autocomplete') || '').toLowerCase();
+    return (el.tagName === 'INPUT' &&
+      (type === 'password' || autocomplete.indexOf('password') >= 0 || autocomplete === 'one-time-code')) ||
+      el.hasAttribute('data-tw-secret');
+  };
   const meaningful = (el) => INTERACTIVE.has(el.tagName) || el.hasAttribute('role') ||
     isHeading(el.tagName) || LANDMARK.has(el.tagName) || Boolean(directText(el));
   const build = (el) => {
@@ -253,7 +349,9 @@ const SNAPSHOT_SCRIPT = `(() => {
     const text = directText(el); if (text) node.text = text;
     if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
       const itype = (el.getAttribute('type') || '').toLowerCase();
-      if (el.tagName === 'INPUT' && (itype === 'password' || itype === 'hidden')) {
+      if (isSecretField(el)) {
+        node.value = '[redacted]';
+      } else if (el.tagName === 'INPUT' && (itype === 'password' || itype === 'hidden')) {
         node.value = itype === 'password' ? '[redacted]' : '[hidden]';
       } else if (itype === 'checkbox' || itype === 'radio') {
         node.value = el.checked ? 'checked' : 'unchecked';
@@ -265,13 +363,15 @@ const SNAPSHOT_SCRIPT = `(() => {
     return node;
   };
   const root = (document.body && build(document.body)) || { ref: 'e0', tag: 'body', role: 'document' };
-  // Freeze the ref map so a malicious page cannot reassign refs[eN] to point a
-  // later canvas_click/canvas_inspect at an attacker-chosen element. (The next
-  // snapshot replaces window.__twCanvas__ wholesale, so this is per-snapshot.)
+  // The next snapshot replaces this isolated registry wholesale. Freezing its
+  // maps catches accidental mutation by another fixed Canvas script; page code
+  // cannot access this JavaScript world at all.
+  __twCanvasState.seq = reg.seq;
   try { Object.freeze(reg.refs); Object.freeze(reg.ids); Object.freeze(reg); } catch (e) {}
   return { url: location.href, title: document.title,
     viewport: { width: window.innerWidth, height: window.innerHeight }, root,
-    nodeCount: reg.seq, truncated: count >= MAX_NODES };
+    nodeCount: reg.seq, truncated: count >= MAX_NODES,
+    trustedInputEpoch: __twCanvasState.trustedInputEpoch };
 })()`
 
 function inspectScript(args: { ref?: string; selector?: string; styles?: string[] }): string {
@@ -283,7 +383,8 @@ function inspectScript(args: { ref?: string; selector?: string; styles?: string[
   return `(() => {
     const ref = ${ref}, selector = ${selector}, props = ${props};
     let el = null;
-    if (ref && window.__twCanvas__ && window.__twCanvas__.refs) el = window.__twCanvas__.refs[ref] || null;
+    const reg = globalThis[${JSON.stringify(CANVAS_ISOLATED_STATE_KEY)}];
+    if (ref && reg && reg.refs) el = reg.refs[ref] || null;
     if (!el && selector) { try { el = document.querySelector(selector); } catch (e) { el = null; } }
     if (!el) return { found: false };
     const r = el.getBoundingClientRect();
@@ -326,7 +427,9 @@ export function actScript(action: CanvasActionInput): string {
     selector: action.selector ?? null,
     x: typeof action.x === 'number' ? action.x : null,
     y: typeof action.y === 'number' ? action.y : null,
-    value: typeof action.value === 'string' ? action.value : null
+    value: typeof action.value === 'string' ? action.value : null,
+    expectedInputEpoch:
+      typeof action.expectedInputEpoch === 'number' ? action.expectedInputEpoch : null
   })
   return `(() => {
     const a = ${a};
@@ -335,10 +438,22 @@ export function actScript(action: CanvasActionInput): string {
       ok: false, found: found === true, action: a.kind, executed: false,
       verified: 'unknown', refusalReason: reason, message: message
     });
+    const reg = globalThis[${JSON.stringify(CANVAS_ISOLATED_STATE_KEY)}];
+    // This check and the eventual dispatch execute in one renderer task. Unlike
+    // a page-owned DOM listener, only actual browser input can advance this
+    // isolated epoch; page-dispatched MouseEvent/Event objects are untrusted.
+    if (a.expectedInputEpoch != null) {
+      const actualEpoch = reg && Number.isSafeInteger(reg.trustedInputEpoch)
+        ? reg.trustedInputEpoch : null;
+      if (actualEpoch !== a.expectedInputEpoch) {
+        return refuse('stale_input_epoch',
+          'The user has interacted with this canvas since your snapshot; re-run canvas_snapshot.', false);
+      }
+    }
     let el = null;
     let byRef = false;
-    if (a.ref && window.__twCanvas__ && window.__twCanvas__.refs) {
-      el = window.__twCanvas__.refs[a.ref] || null;
+    if (a.ref && reg && reg.refs) {
+      el = reg.refs[a.ref] || null;
       byRef = Boolean(el);
     }
     if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
@@ -350,8 +465,8 @@ export function actScript(action: CanvasActionInput): string {
       return refuse('stale_target', 'Target is no longer attached to the document; re-run canvas_snapshot.', false);
     }
     // 2. Still the same element this ref described?
-    if (byRef && window.__twCanvas__.ids) {
-      const expected = window.__twCanvas__.ids[a.ref];
+    if (byRef && reg && reg.ids) {
+      const expected = reg.ids[a.ref];
       if (expected && __twIdentity(el) !== expected) {
         return refuse('stale_target', 'Target changed since the snapshot that produced this ref; re-run canvas_snapshot.', false);
       }
@@ -468,8 +583,9 @@ function annotateScript(marks: CanvasMark[]): string {
     let count = 0;
     marks.forEach((mk, i) => {
       let rect = Array.isArray(mk.bbox) ? { x: mk.bbox[0], y: mk.bbox[1], w: mk.bbox[2], h: mk.bbox[3] } : null;
-      if (!rect && mk.ref && window.__twCanvas__ && window.__twCanvas__.refs && window.__twCanvas__.refs[mk.ref]) {
-        const r = window.__twCanvas__.refs[mk.ref].getBoundingClientRect();
+      const reg = globalThis[${JSON.stringify(CANVAS_ISOLATED_STATE_KEY)}];
+      if (!rect && mk.ref && reg && reg.refs && reg.refs[mk.ref]) {
+        const r = reg.refs[mk.ref].getBoundingClientRect();
         rect = { x: r.x, y: r.y, w: r.width, h: r.height };
       }
       if (!rect) return;
@@ -508,6 +624,17 @@ export interface CanvasWebDriverDeps {
   resolveHost?: CanvasResolveHost
 }
 
+type SnapshotScriptResult = Omit<CanvasElementTree, 'capturedAt' | 'inputEpoch'> & {
+  trustedInputEpoch: unknown
+}
+
+function requireTrustedInputEpoch(value: unknown): number {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error('Canvas snapshot did not return a valid trusted input epoch.')
+  }
+  return Number(value)
+}
+
 export class CanvasWebDriver implements CanvasDriver {
   readonly kind = 'web' as const
 
@@ -532,6 +659,8 @@ export class CanvasWebDriver implements CanvasDriver {
   private closeRequested = false
   /** Bumped by every human interaction; see attachUserInputWatch. */
   private inputEpoch = 0
+  /** Main input epoch recorded for each isolated renderer snapshot epoch. */
+  private readonly mainInputEpochByTrustedEpoch = new Map<number, number>()
   /** Epoch-ms until which the human owns the surface. */
   private userActiveUntil = 0
 
@@ -547,6 +676,28 @@ export class CanvasWebDriver implements CanvasDriver {
       throw new Error('Canvas surface is not open (or was closed).')
     }
     return this.surface
+  }
+
+  private executeCanvasScript<T>(wc: WebContents, code: string): Promise<T> {
+    // Do not fall back to executeJavaScript: a page-world fallback would let
+    // page code replace the ref registry that authorizes later actions.
+    return wc.executeJavaScriptInIsolatedWorld(
+      CANVAS_ISOLATED_WORLD_ID,
+      [{ code }],
+      true
+    ) as Promise<T>
+  }
+
+  private rememberTrustedInputEpoch(trustedEpoch: number): void {
+    // A repeated epoch is normal between snapshots; retain the latest main-side
+    // guard value and bound memory for long-lived canvases.
+    this.mainInputEpochByTrustedEpoch.delete(trustedEpoch)
+    this.mainInputEpochByTrustedEpoch.set(trustedEpoch, this.inputEpoch)
+    while (this.mainInputEpochByTrustedEpoch.size > 128) {
+      const oldest = this.mainInputEpochByTrustedEpoch.keys().next().value
+      if (oldest === undefined) break
+      this.mainInputEpochByTrustedEpoch.delete(oldest)
+    }
   }
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
@@ -779,28 +930,48 @@ export class CanvasWebDriver implements CanvasDriver {
 
   async snapshot(): Promise<CanvasElementTree> {
     const wc = this.requireSurface().webContents
-    const result = (await wc.executeJavaScript(SNAPSHOT_SCRIPT, true)) as Omit<
-      CanvasElementTree,
-      'capturedAt'
-    >
-    // Stamp the human-interaction counter the tree was captured at, so the caller
-    // can pin its plan to this observation via expectedInputEpoch.
-    return { ...result, capturedAt: new Date().toISOString(), inputEpoch: this.inputEpoch }
+    const result = await this.executeCanvasScript<SnapshotScriptResult>(wc, SNAPSHOT_SCRIPT)
+    const trustedInputEpoch = requireTrustedInputEpoch(result?.trustedInputEpoch)
+    const { trustedInputEpoch: _ignoredTrustedEpoch, ...tree } = result
+    // `inputEpoch` is the isolated renderer's trusted-input epoch. Pair it with
+    // the independent main-process input-event epoch so both guards must still
+    // agree before a pinned action reaches the renderer.
+    this.rememberTrustedInputEpoch(trustedInputEpoch)
+    return { ...tree, capturedAt: new Date().toISOString(), inputEpoch: trustedInputEpoch }
   }
 
   async screenshot(): Promise<CanvasFrame> {
     const wc = this.requireSurface().webContents
     // Snapshots already redact secret input VALUES, but a screenshot captures the
-    // rendered field, so it needs its own guard. Paint over the secrets first,
-    // and always take the overlay back down — a frame that fails to capture must
-    // not leave the user's page defaced.
-    let secretsRedacted = 0
-    try {
-      secretsRedacted = Number(await wc.executeJavaScript(REDACT_SECRETS_SCRIPT, true)) || 0
-    } catch {
-      // A page that refuses the probe still gets captured; treat as none found.
-      secretsRedacted = 0
+    // rendered field, so it needs its own guard. Refuse while a secret owns
+    // focus, paint over other visible secrets, and fail closed if the probe
+    // cannot prove either state. A frame that fails to capture must not leave
+    // the user's page defaced.
+    const clearSecretRedaction = async (): Promise<void> => {
+      try {
+        await this.executeCanvasScript(wc, CLEAR_SECRET_REDACTION_SCRIPT)
+      } catch {
+        // Window may have gone away; any overlay dies with it.
+      }
     }
+    let preparation: SecretRedactionPreparation
+    try {
+      preparation = requireSecretRedactionPreparation(
+        await this.executeCanvasScript(wc, REDACT_SECRETS_SCRIPT)
+      )
+    } catch {
+      await clearSecretRedaction()
+      throw new Error(
+        'Canvas screenshot blocked because credential-field protection could not verify the page.'
+      )
+    }
+    if (preparation.focusedSecret) {
+      await clearSecretRedaction()
+      throw new Error(
+        'Canvas screenshot refused while a credential field is focused. Ask the user to finish entering the secret and move focus before capturing.'
+      )
+    }
+    const { secretsRedacted } = preparation
     try {
       const image = await wc.capturePage()
       const png = image.toPNG()
@@ -817,11 +988,7 @@ export class CanvasWebDriver implements CanvasDriver {
       }
     } finally {
       if (secretsRedacted > 0) {
-        try {
-          await wc.executeJavaScript(CLEAR_SECRET_REDACTION_SCRIPT, true)
-        } catch {
-          // Window may have gone away mid-capture; the overlay dies with it.
-        }
+        await clearSecretRedaction()
       }
     }
   }
@@ -832,10 +999,10 @@ export class CanvasWebDriver implements CanvasDriver {
     styles?: string[]
   }): Promise<CanvasElementDetail> {
     const wc = this.requireSurface().webContents
-    const detail = (await wc.executeJavaScript(
-      inspectScript(args),
-      true
-    )) as Omit<CanvasElementDetail, 'ref' | 'selector'>
+    const detail = await this.executeCanvasScript<Omit<CanvasElementDetail, 'ref' | 'selector'>>(
+      wc,
+      inspectScript(args)
+    )
     return { ...detail, ref: args.ref, selector: args.selector }
   }
 
@@ -878,11 +1045,10 @@ export class CanvasWebDriver implements CanvasDriver {
     // default action, so focus() is what makes focus-driven widgets work at all,
     // and removing it would break menus to solve a problem the guard covers).
     //
-    // `inputEpoch` is freshness — the caller can pin the observation its plan was
-    // built on and have the action refused if the page moved since. Note this is
-    // NOT a DOM revision: a counter driven by DOM mutation would never settle on
-    // a page with polling or animation, and the agent could never land anything.
-    // Element-level staleness is handled separately, in actScript.
+    // `inputEpoch` is freshness — the caller can pin the observation its plan to
+    // an isolated renderer-side trusted-input epoch. The renderer compares it in
+    // the same task as dispatch, while the main input-event epoch remains an
+    // independent defence against input the isolated listener could not observe.
     const refuse = (
       refusalReason: 'user_active' | 'stale_input_epoch',
       message: string
@@ -905,17 +1071,19 @@ export class CanvasWebDriver implements CanvasDriver {
         'The user is interacting with this canvas. Wait for them to finish, then re-snapshot.'
       )
     }
-    if (
-      typeof action.expectedInputEpoch === 'number' &&
-      action.expectedInputEpoch !== this.inputEpoch
-    ) {
-      return refuse(
-        'stale_input_epoch',
-        `The user has interacted with this canvas since your snapshot (expected epoch ${action.expectedInputEpoch}, now ${this.inputEpoch}). Re-snapshot before acting.`
-      )
+    if (typeof action.expectedInputEpoch === 'number') {
+      const snapshotMainEpoch = this.mainInputEpochByTrustedEpoch.get(action.expectedInputEpoch)
+      if (snapshotMainEpoch !== this.inputEpoch) {
+        return refuse(
+          'stale_input_epoch',
+          'The user has interacted with this canvas since your snapshot. Re-snapshot before acting.'
+        )
+      }
+      // The renderer-side atomic comparison below remains necessary: human
+      // input can arrive after this main-process check and before injection.
     }
 
-    const result = (await wc.executeJavaScript(actScript(action), true)) as {
+    const result = await this.executeCanvasScript<{
       ok: boolean
       found: boolean
       action: 'click' | 'fill'
@@ -923,7 +1091,7 @@ export class CanvasWebDriver implements CanvasDriver {
       verified?: CanvasActVerification
       refusalReason?: CanvasActRefusalReason
       message?: string
-    }
+    }>(wc, actScript(action))
     return {
       ...result,
       // Fail honest: an injected result missing these is treated as "we cannot
@@ -939,9 +1107,7 @@ export class CanvasWebDriver implements CanvasDriver {
 
   async annotate(marks: CanvasMark[]): Promise<{ count: number }> {
     const wc = this.requireSurface().webContents
-    return (await wc.executeJavaScript(annotateScript(marks), true)) as {
-      count: number
-    }
+    return this.executeCanvasScript<{ count: number }>(wc, annotateScript(marks))
   }
 
   async sketchDocument(): Promise<CanvasSketchDocument> {
@@ -1011,6 +1177,7 @@ export class CanvasWebDriver implements CanvasDriver {
     this.lifecycleGeneration += 1
     const surface = this.surface
     this.surface = null
+    this.mainInputEpochByTrustedEpoch.clear()
     if (!surface || surface.isDestroyed()) return
     try {
       const wr = surface.webContents.session.webRequest

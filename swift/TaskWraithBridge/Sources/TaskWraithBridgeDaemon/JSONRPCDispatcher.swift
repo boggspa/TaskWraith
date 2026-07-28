@@ -34,6 +34,13 @@ enum JSONRPCErrorCode {
     /// same handle." The error's `message` carries the estimated
     /// MB + cap MB numbers for the agent to plan its retry.
     static let appwatchBudgetExceeded = -32002
+    /// Caller supplied a different chat/scope or attempted to select a
+    /// protected host process. This is distinct from a once-valid lease that
+    /// has subsequently been replaced or detached.
+    static let attachmentDenied = -32003
+    /// A handle/consent generation was valid earlier but is no longer live.
+    /// Callers must obtain fresh user-mediated attachment consent.
+    static let attachmentRevoked = -32004
 }
 
 final class JSONRPCDispatcher: @unchecked Sendable {
@@ -83,7 +90,12 @@ final class JSONRPCDispatcher: @unchecked Sendable {
             if id == nil { return nil }
             return makeSuccessResponse(id: id ?? NSNull(), result: result)
         } catch let error as JSONRPCError {
-            return makeErrorResponse(id: id ?? NSNull(), code: error.code, message: error.message)
+            return makeErrorResponse(
+                id: id ?? NSNull(),
+                code: error.code,
+                message: error.message,
+                data: error.data
+            )
         } catch {
             return makeErrorResponse(id: id ?? NSNull(), code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
         }
@@ -100,14 +112,23 @@ final class JSONRPCDispatcher: @unchecked Sendable {
         return serialize(response)
     }
 
-    private func makeErrorResponse(id: Any, code: Int, message: String) -> String? {
+    private func makeErrorResponse(
+        id: Any,
+        code: Int,
+        message: String,
+        data: Any? = nil
+    ) -> String? {
+        var error: [String: Any] = [
+            "code": code,
+            "message": message
+        ]
+        if let data {
+            error["data"] = data
+        }
         let response: [String: Any] = [
             "jsonrpc": "2.0",
             "id": id,
-            "error": [
-                "code": code,
-                "message": message
-            ]
+            "error": error
         ]
         return serialize(response)
     }
@@ -126,4 +147,27 @@ final class JSONRPCDispatcher: @unchecked Sendable {
 struct JSONRPCError: Error {
     let code: Int
     let message: String
+    let data: [String: String]?
+
+    init(code: Int, message: String, data: [String: String]? = nil) {
+        self.code = code
+        self.message = message
+        self.data = data
+    }
+
+    static func attachmentDenied(_ message: String) -> JSONRPCError {
+        return JSONRPCError(
+            code: JSONRPCErrorCode.attachmentDenied,
+            message: message,
+            data: ["kind": "attachmentDenied"]
+        )
+    }
+
+    static func attachmentRevoked(_ message: String) -> JSONRPCError {
+        return JSONRPCError(
+            code: JSONRPCErrorCode.attachmentRevoked,
+            message: message,
+            data: ["kind": "attachmentRevoked"]
+        )
+    }
 }

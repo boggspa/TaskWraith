@@ -18,7 +18,8 @@ import type {
   CanvasEvalApprovalReceipt,
   CanvasMark,
   CanvasSketchElement,
-  CanvasSketchUpdateInput
+  CanvasSketchUpdateInput,
+  CanvasWindowOpenTarget
 } from '../canvas/canvasTypes'
 import { CANVAS_EVAL_SCRIPT_CAP, CANVAS_EVAL_VALUE_CAP } from '../canvas/canvasTypes'
 import {
@@ -56,6 +57,14 @@ export const CANVAS_MCP_TOOL_NAMES = [
 export type CanvasMcpToolName = (typeof CANVAS_MCP_TOOL_NAMES)[number]
 
 const CANVAS_TOOL_NAME_SET: ReadonlySet<string> = new Set(CANVAS_MCP_TOOL_NAMES)
+const NATIVE_WINDOW_UNAVAILABLE_REASONS: ReadonlySet<string> = new Set([
+  'not-native-macos-launch',
+  'attachment-required',
+  'view-control-not-approved',
+  'attachment-stale',
+  'native-bridge-unavailable',
+  'target-unavailable'
+])
 
 export function isCanvasMcpToolName(name: string): name is CanvasMcpToolName {
   return CANVAS_TOOL_NAME_SET.has(name)
@@ -69,6 +78,25 @@ export interface CanvasToolContext {
   canvasEvalApproval?: CanvasEvalApprovalReceipt
 }
 
+export type CanvasWindowOpenUnavailableReason =
+  | 'not-native-macos-launch'
+  | 'attachment-required'
+  | 'view-control-not-approved'
+  | 'attachment-stale'
+  | 'native-bridge-unavailable'
+  | 'target-unavailable'
+
+export type CanvasWindowOpenTargetResolution =
+  | { ok: true; target: CanvasWindowOpenTarget }
+  | { ok: false; reason: CanvasWindowOpenUnavailableReason }
+
+export interface CanvasWindowOpenResolveContext {
+  appChatId: string
+  appRunId: string
+  workspacePath?: string
+  parentProvider: string
+}
+
 export interface CanvasToolExecutorDeps {
   controller: CanvasController
   /**
@@ -77,6 +105,15 @@ export interface CanvasToolExecutorDeps {
    * is called before launch infrastructure is available.
    */
   launchAttempts?: () => LaunchAttempt[]
+  /**
+   * Main-owned native-window capability resolver. It receives only an exact
+   * chat+run-owned launch attempt and returns an opaque lease reference or a
+   * structured reason; raw attached-window handles never cross this boundary.
+   */
+  resolveWindowOpenTarget?: (
+    attempt: LaunchAttempt,
+    context: CanvasWindowOpenResolveContext
+  ) => CanvasWindowOpenTargetResolution | Promise<CanvasWindowOpenTargetResolution>
 }
 
 export interface CanvasToolExecutors {
@@ -99,6 +136,17 @@ function asString(value: unknown): string {
 function asOptString(value: unknown): string | undefined {
   const s = asString(value).trim()
   return s ? s : undefined
+}
+
+function asCanonicalContextString(value: unknown): string | undefined {
+  return typeof value === 'string' && Boolean(value) && value.trim() === value ? value : undefined
+}
+
+function canonicalWindowTarget(value: unknown): CanvasWindowOpenTarget | undefined {
+  const leaseId = asCanonicalContextString(
+    (value as Partial<CanvasWindowOpenTarget> | null)?.leaseId
+  )
+  return leaseId ? Object.freeze({ leaseId }) : undefined
 }
 
 function asOptNumber(value: unknown): number | undefined {
@@ -214,11 +262,14 @@ function escapeHtml(value: string): string {
 
 function ownLaunchAttempts(
   attempts: LaunchAttempt[],
-  context: CanvasToolContext
+  appChatId: string,
+  appRunId: string
 ): LaunchAttempt[] {
-  const chat = context.appChatId
-  if (!chat) return []
-  return attempts.filter((attempt) => attempt.chatId === chat)
+  return attempts.filter((attempt) => attempt.chatId === appChatId && attempt.runId === appRunId)
+}
+
+function liveLaunchAttempt(attempt: LaunchAttempt): boolean {
+  return attempt.status === 'starting' || attempt.status === 'running'
 }
 
 function firstPreviewableLaunchUrl(attempt: LaunchAttempt): string | undefined {
@@ -279,6 +330,28 @@ ${truncated}
 </html>`
 }
 
+function nativeWindowGuidance(
+  attemptId: string,
+  reason: CanvasWindowOpenUnavailableReason
+): McpToolExecutionResult {
+  const guidance =
+    'Open Screen Watch for this launch, attach the app window, and approve View & Control; then retry canvas_open_launch.'
+  const value = {
+    ok: false,
+    tool: 'canvas_open_launch',
+    attemptId,
+    reason,
+    guidance
+  }
+  const text = JSON.stringify(value)
+  return {
+    text,
+    isError: true,
+    structuredContent: value,
+    content: [{ type: 'text', text }]
+  }
+}
+
 export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasToolExecutors {
   const { controller } = deps
 
@@ -305,7 +378,17 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
     try {
       switch (toolName) {
         case 'canvas_open': {
-          const driver = asOptString(args.driver) === 'device' ? 'device' : 'web'
+          const requestedDriver = asOptString(args.driver)
+          if (requestedDriver === 'window') {
+            return fail(
+              toolName,
+              'The native window driver is available only through canvas_open_launch after Screen Watch consent.'
+            )
+          }
+          if (requestedDriver && requestedDriver !== 'web' && requestedDriver !== 'device') {
+            return fail(toolName, `Unsupported canvas driver: ${requestedDriver}.`)
+          }
+          const driver = requestedDriver === 'device' ? 'device' : 'web'
           const viewport = resolveViewport({ width: args.width, height: args.height })
           if (driver === 'device') {
             // iOS simulator: launch + screenshot an app by bundle id (no url).
@@ -409,10 +492,20 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         case 'canvas_open_launch': {
           const attemptId = asOptString(args.attemptId)
           if (!attemptId) return fail(toolName, '`attemptId` is required (from launch_start / launch_status).')
+          const appChatId = asCanonicalContextString(context.appChatId)
+          const appRunId = asCanonicalContextString(context.appRunId)
+          if (!appChatId || !appRunId) {
+            return fail(
+              toolName,
+              'canvas_open_launch requires canonical active chat and run authority.'
+            )
+          }
           if (!deps.launchAttempts) {
             return fail(toolName, 'Launch attempts are not available yet (app still initializing).')
           }
-          const attempt = ownLaunchAttempts(deps.launchAttempts(), context).find((a) => a.id === attemptId)
+          const attempt = ownLaunchAttempts(deps.launchAttempts(), appChatId, appRunId).find(
+            (candidate) => candidate.id === attemptId
+          )
           if (!attempt) return fail(toolName, `Launch attempt "${attemptId}" was not found.`)
 
           const viewport = resolveViewport({ width: args.width, height: args.height })
@@ -430,11 +523,59 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               viewport: opened.viewport
             })
           }
-          if (!attempt.runId) {
-            return fail(
-              toolName,
-              'Launch output is only available for agent-started attempts; no live loopback URL was detected.'
-            )
+
+          if (liveLaunchAttempt(attempt)) {
+            let resolution: CanvasWindowOpenTargetResolution | undefined
+            if (deps.resolveWindowOpenTarget) {
+              try {
+                resolution = await deps.resolveWindowOpenTarget(attempt, {
+                  appChatId,
+                  appRunId,
+                  workspacePath: context.workspacePath,
+                  parentProvider
+                })
+              } catch {
+                resolution = { ok: false, reason: 'native-bridge-unavailable' }
+              }
+            }
+
+            if (resolution?.ok === true) {
+              const windowTarget = canonicalWindowTarget(resolution.target)
+              if (!windowTarget) {
+                return nativeWindowGuidance(attemptId, 'target-unavailable')
+              }
+              const opened = await controller.open(
+                { driver: 'window', windowTarget, viewport },
+                ctx
+              )
+              return jsonResult({
+                ok: true,
+                tool: toolName,
+                attemptId,
+                source: 'attachedWindow',
+                canvasId: opened.canvasId,
+                url: redactUrlQuery(opened.url),
+                title: opened.title,
+                viewport: opened.viewport
+              })
+            }
+
+            if (resolution?.ok === false) {
+              const reason = NATIVE_WINDOW_UNAVAILABLE_REASONS.has(resolution.reason)
+                ? resolution.reason
+                : 'target-unavailable'
+              if (
+                reason !== 'not-native-macos-launch' ||
+                attempt.targetSnapshot.platform === 'macos'
+              ) {
+                return nativeWindowGuidance(
+                  attemptId,
+                  reason === 'not-native-macos-launch' ? 'target-unavailable' : reason
+                )
+              }
+            } else if (attempt.targetSnapshot.platform === 'macos') {
+              return nativeWindowGuidance(attemptId, 'attachment-required')
+            }
           }
 
           const opened = await controller.open(
@@ -539,7 +680,12 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           if (!ref && !selector) return fail(toolName, 'Provide a `ref` or a `selector`.')
           const detail = await controller.inspect(
             needsId(),
-            { ref, selector, styles: asStringArray(args.styles) },
+            {
+              ref,
+              selector,
+              styles: asStringArray(args.styles),
+              expectedObservationId: asOptString(args.expectedObservationId)
+            },
             ctx
           )
           return jsonResult({ ok: true, tool: toolName, ...detail })
@@ -587,9 +733,18 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             return fail(toolName, 'Provide a `ref`, a `selector`, or both `x` and `y`.')
           }
           const expectedInputEpoch = asOptNumber(args.expectedInputEpoch)
+          const expectedObservationId = asOptString(args.expectedObservationId)
           const result = await controller.click(
             needsId(),
-            { kind: 'click', ref, selector, x, y, expectedInputEpoch },
+            {
+              kind: 'click',
+              ref,
+              selector,
+              x,
+              y,
+              expectedInputEpoch,
+              expectedObservationId
+            },
             ctx
           )
           return jsonResult({
@@ -610,7 +765,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ref,
               selector,
               value: args.value,
-              expectedInputEpoch: asOptNumber(args.expectedInputEpoch)
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch),
+              expectedObservationId: asOptString(args.expectedObservationId)
             },
             ctx
           )

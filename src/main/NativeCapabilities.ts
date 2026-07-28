@@ -27,6 +27,11 @@ export interface NativeCapabilitySnapshot {
   ocr: NativeFeatureCapability
   appleEvents: NativeFeatureCapability
   /**
+   * Structural AppDrive availability only. Accessibility trust is mutable
+   * runtime state and must be checked immediately before native actuation.
+   */
+  appDrive: NativeFeatureCapability
+  /**
    * Presence of OPTIONAL, user-installed host binaries (ffmpeg, poppler, …).
    * Unlike the fields above — which describe the BUNDLED Swift daemon — these can
    * appear and disappear while the app is running, so treat them as a snapshot
@@ -54,6 +59,7 @@ export interface NativeCapabilityInput {
 }
 
 const MIN_BRIDGE_MACOS = '14.0'
+const MIN_APP_DRIVE_MACOS = '15.2'
 
 export function getNativeCapabilitySnapshot(
   input: NativeCapabilityInput = {}
@@ -115,6 +121,7 @@ export function getNativeCapabilitySnapshot(
     platform === 'win32'
       ? { available: false, reason: 'AppleEvents automation is available on macOS only.' }
       : nativeBridgeFeature
+  const appDriveFeature = appDriveFeatureForHost(platform, macosVersion, bridge)
   return {
     platform,
     arch,
@@ -127,6 +134,7 @@ export function getNativeCapabilitySnapshot(
       ? { available: true, reason: 'Vision OCR is optional and capture remains available if OCR fails.' }
       : nativeBridgeFeature,
     appleEvents: appleEventsFeature,
+    appDrive: appDriveFeature,
     hostTools: input.hostTools ?? getHostToolSnapshot(input.forceHostToolProbe),
     featureGates: buildRuntimeFeatureGateSnapshot(process.env)
   }
@@ -167,6 +175,45 @@ export function resolveBridgeDaemonBinaryPath(input: {
 
 function featureFromBridge(bridge: NativeBridgeCapability): NativeFeatureCapability {
   return bridge.available ? { available: true } : { available: false, reason: bridge.reason }
+}
+
+function appDriveFeatureForHost(
+  platform: string,
+  macosVersion: string | undefined,
+  bridge: NativeBridgeCapability
+): NativeFeatureCapability {
+  if (platform !== 'darwin') {
+    return {
+      available: false,
+      reason: `AppDrive requires macOS ${MIN_APP_DRIVE_MACOS} or newer for exact picker window identity.`
+    }
+  }
+  if (!isValidVersion(macosVersion)) {
+    return {
+      available: false,
+      reason: `AppDrive could not verify this Mac's OS version. Exact picker window identity requires macOS ${MIN_APP_DRIVE_MACOS} or newer.`
+    }
+  }
+  if (compareVersions(macosVersion, MIN_APP_DRIVE_MACOS) < 0) {
+    return {
+      available: false,
+      reason: `AppDrive requires macOS ${MIN_APP_DRIVE_MACOS} or newer for exact picker window identity; this Mac is running macOS ${macosVersion}.`
+    }
+  }
+  if (!bridge.available) {
+    return {
+      available: false,
+      reason: `AppDrive requires the TaskWraith native bridge. ${bridge.reason || 'The bridge is unavailable.'}`
+    }
+  }
+  // This is deliberately not an Accessibility trust assertion. Trust can be
+  // granted or revoked while TaskWraith is running and belongs at actuation time.
+  return { available: true }
+}
+
+function isValidVersion(version: string | undefined): version is string {
+  if (!version || !/^\d+(?:\.\d+)*$/.test(version)) return false
+  return version.split('.').every((part) => Number.isSafeInteger(Number(part)))
 }
 
 function requiredMachOArch(arch: string): string | undefined {

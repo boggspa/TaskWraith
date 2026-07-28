@@ -6,9 +6,9 @@
  * the "node builtins in a renderer-reachable main module blank the window"
  * hazard. Everything here is types + pure functions.
  *
- * Slice 1 (P0) implements the read-only `web` driver only. `window` (appwatch /
- * ScreenCaptureKit) and `device` (simulator) drivers, plus the `act`/`eval`/
- * `annotate` verbs, are deferred — the contracts below leave room for them.
+ * Driver support is capability-gated by CanvasService. In particular, `window`
+ * can open only through an internal, exact-run native lease target; declaring a
+ * driver kind here never makes it agent-requestable.
  */
 
 export type CanvasDriverKind = 'web' | 'html' | 'image' | 'sketch' | 'window' | 'device'
@@ -23,6 +23,17 @@ export interface CanvasViewport {
 export interface CanvasDeviceTarget {
   /** Simulator UDID (uppercase UUID) or 'booted'. Omit → the booted simulator. */
   udid?: string
+}
+
+/**
+ * Main-process-only capability reference for a user-consented native window.
+ *
+ * This is deliberately just an opaque lease id. The attached-window handle,
+ * process identity, consent epoch, and other authority remain in the main-owned
+ * registry and must never enter agent-facing MCP arguments or renderer state.
+ */
+export interface CanvasWindowOpenTarget {
+  readonly leaseId: string
 }
 
 export interface CanvasOpenInput {
@@ -74,6 +85,12 @@ export interface CanvasOpenInput {
    * persisted per-chat sketch document, never by agent-facing MCP schemas.
    */
   initialSketchDocument?: CanvasSketchDocument
+  /**
+   * INTERNAL ONLY. Set by the trusted canvas_open_launch executor after it has
+   * resolved an exact chat+run-owned native-window lease. Agent-facing
+   * canvas_open schemas and parsing must never accept or forward this field.
+   */
+  windowTarget?: CanvasWindowOpenTarget
 }
 
 export interface CanvasElementNode {
@@ -83,6 +100,11 @@ export interface CanvasElementNode {
   name?: string
   tag: string
   value?: string
+  /**
+   * Trusted native accessibility metadata when available. It is a boolean only;
+   * secure-field contents are never represented in a Canvas tree.
+   */
+  secure?: boolean
   /** [x, y, width, height] in CSS pixels relative to the viewport. */
   bbox?: [number, number, number, number]
   /** Short visible text, truncated. */
@@ -101,9 +123,10 @@ export interface CanvasElementTree {
   /** True when the walk hit the node cap — the tree is partial (document order). */
   truncated: boolean
   /**
-   * Human-interaction counter for this surface at capture time. Echo it back as
+   * Trusted human-input epoch for this surface at capture time. Echo it back as
    * `expectedInputEpoch` on a subsequent action to have that action refused if
-   * the user touched the page in between.
+   * the user touched the page in between. Web drivers compare it atomically in
+   * their isolated renderer world and retain an independent main-process guard.
    */
   inputEpoch?: number
 }
@@ -137,6 +160,14 @@ export interface CanvasElementDetail {
   styles?: Record<string, string>
 }
 
+export interface CanvasInspectInput {
+  ref?: string
+  selector?: string
+  styles?: string[]
+  /** Exact native observation being inspected; optional for non-window drivers. */
+  expectedObservationId?: string
+}
+
 /** P1 interaction. ref-first; selector/xy are explicit fallbacks. */
 export interface CanvasActionInput {
   kind: 'click' | 'fill'
@@ -152,6 +183,8 @@ export interface CanvasActionInput {
    * seen. Omit to act on the live page regardless.
    */
   expectedInputEpoch?: number
+  /** Exact native observation being acted upon; optional for non-window drivers. */
+  expectedObservationId?: string
 }
 
 /**
@@ -185,6 +218,11 @@ export type CanvasActRefusalReason =
    * The observation the plan was built on is stale; re-snapshot.
    */
   | 'stale_input_epoch'
+  /**
+   * Native target appears consequential and no content-bound confirmation
+   * receipt exists. Nothing was dispatched.
+   */
+  | 'consequential_confirmation_required'
 
 /** Did the page move around the dispatch? See `CanvasActResult.verified`. */
 export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
@@ -376,7 +414,7 @@ export interface CanvasDriver {
   open(input: CanvasOpenInput): Promise<CanvasSessionHandle>
   snapshot(): Promise<CanvasElementTree>
   screenshot(): Promise<CanvasFrame>
-  inspect(args: { ref?: string; selector?: string; styles?: string[] }): Promise<CanvasElementDetail>
+  inspect(args: CanvasInspectInput): Promise<CanvasElementDetail>
   network(args: { filter?: 'all' | 'failed'; requestId?: number }): Promise<CanvasNetworkEntry[]>
   console(args: { level?: 'all' | 'warn' | 'error'; lines?: number }): Promise<CanvasConsoleEntry[]>
   resize(viewport: CanvasViewport): Promise<CanvasViewport>
@@ -478,7 +516,7 @@ export interface CanvasController {
   screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame>
   inspect(
     canvasId: string,
-    args: { ref?: string; selector?: string; styles?: string[] },
+    args: CanvasInspectInput,
     ctx: CanvasCallContext
   ): Promise<CanvasElementDetail>
   network(

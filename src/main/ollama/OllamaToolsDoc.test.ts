@@ -16,6 +16,14 @@ import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
 const generated = buildOllamaToolsMarkdown()
 
+function onDiskToolSection(name: string): string {
+  const onDisk = readFileSync(TOOLS_MD, 'utf8')
+  const start = onDisk.indexOf(`## ${name}\n`)
+  if (start < 0) return ''
+  const next = onDisk.indexOf('\n## ', start + 1)
+  return onDisk.slice(start, next < 0 ? undefined : next).trimEnd()
+}
+
 // `npm run generate:ollama-tools-md` sets UPDATE_TOOLS_MD=1 to (re)write the
 // checked-in file from the catalog. In every other run (incl. CI) the drift
 // test below compares the committed file against a fresh generation.
@@ -59,10 +67,18 @@ describe('resources/Tools.md', () => {
   it('does not describe non-grantable canvas_eval as grantable', () => {
     const section = buildOllamaToolDocSection('canvas_eval')
     expect(section).toContain(
-      '- Access: signed-elevated — denied under Read-Only/Plan; prompts every call and requires exact desktop review'
+      '- Access: signed-elevated — denied under Read-Only; approval-gated under Plan and prompts every permitted call with exact desktop review'
     )
+    expect(section).toContain('under Plan and every other posture where it is permitted')
     expect(section).not.toContain('unless granted')
   })
+
+  it.each(['canvas_screenshot', 'canvas_eval'])(
+    'keeps the focused %s resource section in sync with the catalog',
+    (name) => {
+      expect(onDiskToolSection(name)).toBe(buildOllamaToolDocSection(name))
+    }
+  )
 })
 
 describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {

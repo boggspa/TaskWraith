@@ -514,6 +514,7 @@ async function runProductionTurn(
             workspace,
             appVersion: '1.8.4',
             brokerToken: 'canary-broker-token',
+            instanceEpoch: 'a'.repeat(48),
             getMcpToolDefinitions: () => [
               {
                 name: 'read_file',

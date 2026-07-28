@@ -50,6 +50,11 @@ import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUs
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../shared/retiredProviders'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
 import type {
+  ScopedAttachedWindowRendererProjection,
+  ScopedAttachedWindowSnapshot,
+  ScopedAttachedWindowStreaming
+} from '../nativeWindow/ScopedAttachedWindowState'
+import type {
   AppSettings,
   ApprovalLedgerFilter,
   ApprovalLedgerRecord,
@@ -106,25 +111,8 @@ export interface DesktopToolContext {
   runtimeProfileId?: string
 }
 
-export type AttachedWindowStreamingSnapshot = {
-  fps: number
-  bufferSeconds: number
-  frameCount: number
-  startedAt: string
-}
-
-export type AttachedWindowSnapshot = {
-  handleID: string
-  windowMeta: {
-    windowID: number
-    title: string
-    bundleID: string
-    applicationName: string
-    pid: number
-  }
-  attachedAt: string
-  streaming?: AttachedWindowStreamingSnapshot
-}
+export type AttachedWindowStreamingSnapshot = ScopedAttachedWindowStreaming
+export type AttachedWindowSnapshot = ScopedAttachedWindowSnapshot
 
 export interface DesktopBridgeDaemon {
   status(): { running: boolean; startedAt: string | null; pid: number | null }
@@ -143,8 +131,42 @@ export interface CreativeApprovalGateLike {
 }
 
 export interface DesktopAttachedWindowState {
-  get(): AttachedWindowSnapshot | null
-  set(snapshot: AttachedWindowSnapshot | null): void
+  /** Returns a main-only attachment only when it belongs to this canonical chat. */
+  getForChat(appChatId: string | null | undefined): ScopedAttachedWindowSnapshot | null
+  /** Updates streaming only when the supplied scope/generation is still live. */
+  updateStreaming(
+    exact: ScopedAttachedWindowSnapshot,
+    streaming: ScopedAttachedWindowStreaming | null
+  ): ScopedAttachedWindowSnapshot | null
+  /** Clears only the supplied live scope/generation; stale cleanup is a no-op. */
+  clearExact(exact: ScopedAttachedWindowSnapshot): ScopedAttachedWindowSnapshot | null
+  /** Safe status projection for one canonical chat; no capability fields. */
+  rendererProjectionForChat(
+    appChatId: string | null | undefined
+  ): ScopedAttachedWindowRendererProjection | null
+}
+
+type AttachedWindowRendererMeta = ScopedAttachedWindowRendererProjection['windowMeta']
+
+function scopedAttachedWindowAccess(snapshot: ScopedAttachedWindowSnapshot) {
+  return {
+    handleID: snapshot.handleID,
+    scopeID: snapshot.scopeID,
+    chatID: snapshot.chatID,
+    consentEpoch: snapshot.consentEpoch,
+    generation: snapshot.generation
+  }
+}
+
+function safeAttachedWindowMeta(
+  snapshot: ScopedAttachedWindowSnapshot
+): AttachedWindowRendererMeta {
+  return Object.freeze({
+    title: snapshot.windowMeta.title,
+    bundleID: snapshot.windowMeta.bundleID,
+    applicationName: snapshot.windowMeta.applicationName,
+    identityQuality: snapshot.windowMeta.identityQuality
+  })
 }
 
 export interface DesktopToolStore {
@@ -542,6 +564,11 @@ function bridgeDaemonErrorCode(error: unknown): number | null {
   return isRecord(error) && typeof error.code === 'number' ? error.code : null
 }
 
+function isAttachedWindowGoneOrRevoked(error: unknown): boolean {
+  const code = bridgeDaemonErrorCode(error)
+  return code === -32001 || code === -32004
+}
+
 function desktopToolJsonResult(value: unknown): McpToolExecutionResult {
   const structuredContent = isRecord(value) ? value : { value }
   return {
@@ -671,24 +698,58 @@ async function runFcpxmlDtdPreflight(input: {
 export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
   let creativeRunningProbeCache: { fetchedAt: number; running: Map<string, boolean> } | null = null
 
-  function notifyAttachedWindowChanged(snapshot: AttachedWindowSnapshot | null): void {
-    deps.notifyRenderer?.('attached-window-changed', snapshot)
+  function attachedWindowForContext(
+    context: DesktopToolContext
+  ): ScopedAttachedWindowSnapshot | null {
+    if (typeof context.appChatId !== 'string' || !context.appChatId.trim()) return null
+    const snapshot = deps.attachedWindow.getForChat(context.appChatId)
+    return snapshot?.chatID === context.appChatId ? snapshot : null
   }
 
-  function setAttachedWindowStreaming(streaming: AttachedWindowStreamingSnapshot | null): void {
-    const snapshot = deps.attachedWindow.get()
-    if (!snapshot) return
-    const next: AttachedWindowSnapshot = {
-      ...snapshot,
-      streaming: streaming ?? undefined
+  /**
+   * A daemon result is useful only while it still belongs to the same exact
+   * attachment. Calling getForChat here is intentional: the coordinator uses
+   * that boundary to re-check the selected PID against its live protected-host
+   * identity supplier and fail closed if the process has become protected.
+   */
+  function isCurrentAttachedWindowResult(
+    snapshot: ScopedAttachedWindowSnapshot,
+    daemon: DesktopBridgeDaemon
+  ): boolean {
+    try {
+      if (!daemon.status().running) return false
+      const current = deps.attachedWindow.getForChat(snapshot.chatID)
+      return Boolean(
+        current &&
+          current.handleID === snapshot.handleID &&
+          current.scopeID === snapshot.scopeID &&
+          current.chatID === snapshot.chatID &&
+          current.consentEpoch === snapshot.consentEpoch &&
+          current.generation === snapshot.generation
+      )
+    } catch {
+      return false
     }
-    deps.attachedWindow.set(next)
-    notifyAttachedWindowChanged(next)
   }
 
-  function handleAppwatchWindowGone(): void {
-    deps.attachedWindow.set(null)
-    notifyAttachedWindowChanged(null)
+  function staleAttachedWindowResult(tool: DesktopMcpToolName): McpToolExecutionResult {
+    return mcpStructuredJsonResult({
+      ok: false,
+      tool,
+      error:
+        'The attached window changed, was detached, or became protected before this result completed. Discarded the stale result.'
+    })
+  }
+
+  function setAttachedWindowStreaming(
+    snapshot: ScopedAttachedWindowSnapshot,
+    streaming: ScopedAttachedWindowStreaming | null
+  ): ScopedAttachedWindowSnapshot | null {
+    return deps.attachedWindow.updateStreaming(snapshot, streaming)
+  }
+
+  function handleAttachedWindowGone(snapshot: ScopedAttachedWindowSnapshot): void {
+    deps.attachedWindow.clearExact(snapshot)
   }
 
   function unsupportedNativeToolResult(tool: DesktopMcpToolName): McpToolExecutionResult | null {
@@ -713,15 +774,15 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     })
   }
 
-  function currentCreativeAttachedWindowMeta(): CreativeAttachedWindowMeta | null {
-    const snapshot = deps.attachedWindow.get()
+  function currentCreativeAttachedWindowMeta(
+    context: DesktopToolContext
+  ): CreativeAttachedWindowMeta | null {
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) return null
     return {
-      windowID: snapshot.windowMeta.windowID,
       title: snapshot.windowMeta.title,
       bundleID: snapshot.windowMeta.bundleID,
-      applicationName: snapshot.windowMeta.applicationName,
-      pid: snapshot.windowMeta.pid
+      applicationName: snapshot.windowMeta.applicationName
     }
   }
 
@@ -819,9 +880,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
   }
 
   async function executeAttachedWindowCapture(
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context: DesktopToolContext
   ): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: false,
@@ -848,7 +910,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       result = await daemon.request<AttachedWindowDaemonCaptureResult>(
         'attachedWindow.capture',
         {
-          handleID: snapshot.handleID,
+          ...scopedAttachedWindowAccess(snapshot),
           includeOCR: includeOcr,
           maxDimensionPx
         },
@@ -856,15 +918,17 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (bridgeDaemonErrorCode(err) === -32001) {
-        deps.attachedWindow.set(null)
-        notifyAttachedWindowChanged(null)
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
         tool: 'attached_window_capture',
         error: message
       })
+    }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('attached_window_capture')
     }
     const pngBase64 = typeof result.pngBase64 === 'string' ? result.pngBase64 : ''
     if (!pngBase64) {
@@ -882,7 +946,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         byteLength: result.byteLength ?? 0,
         width: result.width ?? 0,
         height: result.height ?? 0,
-        windowMeta: result.windowMeta ?? snapshot.windowMeta,
+        windowMeta: safeAttachedWindowMeta(snapshot),
         capturedAt: result.capturedAt ?? new Date().toISOString(),
         ocrText: result.ocr?.text ?? null,
         ocrBlocks: result.ocr?.blocks ?? null,
@@ -892,8 +956,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     )
   }
 
-  function executeAttachedWindowStatus(): McpToolExecutionResult {
-    const snapshot = deps.attachedWindow.get()
+  async function executeAttachedWindowStatus(
+    context: DesktopToolContext
+  ): Promise<McpToolExecutionResult> {
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: true,
@@ -901,20 +967,50 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         attached: false
       })
     }
+    const daemon = deps.getBridgeDaemon()
+    if (!daemon?.status().running) {
+      return mcpStructuredJsonResult({
+        ok: false,
+        tool: 'attached_window_status',
+        error:
+          'TaskWraith bridge daemon is not running. Enable it in Settings -> Bridge Networking.'
+      })
+    }
+    try {
+      await daemon.request<Record<string, unknown>>(
+        'attachedWindow.status',
+        scopedAttachedWindowAccess(snapshot),
+        { timeoutMs: 5_000 }
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
+      }
+      return mcpStructuredJsonResult({
+        ok: false,
+        tool: 'attached_window_status',
+        error: message
+      })
+    }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('attached_window_status')
+    }
     return mcpStructuredJsonResult({
       ok: true,
       tool: 'attached_window_status',
       attached: true,
-      windowMeta: snapshot.windowMeta,
+      windowMeta: safeAttachedWindowMeta(snapshot),
       attachedAt: snapshot.attachedAt,
       streaming: snapshot.streaming ?? null
     })
   }
 
   async function executeAppwatchStart(
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context: DesktopToolContext
   ): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: false,
@@ -946,7 +1042,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       result = await daemon.request<AppwatchStartDaemonResult>(
         'appwatch.start',
         {
-          handleID: snapshot.handleID,
+          ...scopedAttachedWindowAccess(snapshot),
           fps,
           bufferSeconds,
           maxDimensionPx
@@ -956,8 +1052,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const daemonCode = bridgeDaemonErrorCode(err)
-      if (daemonCode === -32001) {
-        handleAppwatchWindowGone()
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
@@ -965,6 +1061,9 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         error: message,
         ...(daemonCode !== null ? { errorCode: daemonCode } : {})
       })
+    }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('appwatch_start')
     }
     const streaming = result.streaming
     if (!streaming) {
@@ -974,7 +1073,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         error: 'Bridge daemon returned no streaming config.'
       })
     }
-    setAttachedWindowStreaming({
+    setAttachedWindowStreaming(snapshot, {
       fps: streaming.fps ?? fps,
       bufferSeconds: streaming.bufferSeconds ?? bufferSeconds,
       frameCount: streaming.frameCount ?? 0,
@@ -983,7 +1082,6 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     return mcpStructuredJsonResult({
       ok: true,
       tool: 'appwatch_start',
-      handleID: result.handleID ?? snapshot.handleID,
       fps: streaming.fps ?? fps,
       bufferSeconds: streaming.bufferSeconds ?? bufferSeconds,
       frameCapacity: streaming.frameCapacity ?? fps * bufferSeconds,
@@ -993,8 +1091,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     })
   }
 
-  async function executeAppwatchStop(): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+  async function executeAppwatchStop(context: DesktopToolContext): Promise<McpToolExecutionResult> {
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: false,
@@ -1013,13 +1111,13 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     try {
       await daemon.request<AppwatchStopDaemonResult>(
         'appwatch.stop',
-        { handleID: snapshot.handleID },
+        scopedAttachedWindowAccess(snapshot),
         { timeoutMs: 5_000 }
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (bridgeDaemonErrorCode(err) === -32001) {
-        handleAppwatchWindowGone()
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
@@ -1027,17 +1125,21 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         error: message
       })
     }
-    setAttachedWindowStreaming(null)
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('appwatch_stop')
+    }
+    setAttachedWindowStreaming(snapshot, null)
     return mcpStructuredJsonResult({
       ok: true,
       tool: 'appwatch_stop',
-      handleID: snapshot.handleID,
       streaming: false
     })
   }
 
-  async function executeAppwatchStatus(): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+  async function executeAppwatchStatus(
+    context: DesktopToolContext
+  ): Promise<McpToolExecutionResult> {
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: true,
@@ -1058,13 +1160,13 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     try {
       result = await daemon.request<AppwatchStatusDaemonResult>(
         'appwatch.status',
-        { handleID: snapshot.handleID },
+        scopedAttachedWindowAccess(snapshot),
         { timeoutMs: 5_000 }
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (bridgeDaemonErrorCode(err) === -32001) {
-        handleAppwatchWindowGone()
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
@@ -1072,19 +1174,21 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         error: message
       })
     }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('appwatch_status')
+    }
     if (result.streaming && snapshot.streaming) {
-      setAttachedWindowStreaming({
+      setAttachedWindowStreaming(snapshot, {
         ...snapshot.streaming,
         frameCount: result.frameCount ?? snapshot.streaming.frameCount
       })
     } else if (!result.streaming && snapshot.streaming) {
-      setAttachedWindowStreaming(null)
+      setAttachedWindowStreaming(snapshot, null)
     }
     return mcpStructuredJsonResult({
       ok: true,
       tool: 'appwatch_status',
       attached: true,
-      handleID: snapshot.handleID,
       streaming: Boolean(result.streaming),
       fps: result.fps ?? 0,
       bufferSeconds: result.bufferSeconds ?? 0,
@@ -1099,8 +1203,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     })
   }
 
-  async function executeAppwatchLatestFrame(): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+  async function executeAppwatchLatestFrame(
+    context: DesktopToolContext
+  ): Promise<McpToolExecutionResult> {
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: false,
@@ -1120,13 +1226,13 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     try {
       result = await daemon.request<AppwatchLatestFrameDaemonResult>(
         'appwatch.latestFrame',
-        { handleID: snapshot.handleID },
+        scopedAttachedWindowAccess(snapshot),
         { timeoutMs: 10_000 }
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (bridgeDaemonErrorCode(err) === -32001) {
-        handleAppwatchWindowGone()
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
@@ -1134,12 +1240,14 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         error: message
       })
     }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('appwatch_latest_frame')
+    }
     if (!result.hasFrame || !result.pngBase64) {
       return mcpStructuredJsonResult({
         ok: true,
         tool: 'appwatch_latest_frame',
-        hasFrame: false,
-        handleID: snapshot.handleID
+        hasFrame: false
       })
     }
     return mcpStructuredJsonResult(
@@ -1147,22 +1255,22 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         ok: true,
         tool: 'appwatch_latest_frame',
         hasFrame: true,
-        handleID: snapshot.handleID,
         mimeType: 'image/png',
         byteLength: result.byteLength ?? 0,
         width: result.width ?? 0,
         height: result.height ?? 0,
         capturedAt: result.capturedAt ?? new Date().toISOString(),
-        windowMeta: snapshot.windowMeta
+        windowMeta: safeAttachedWindowMeta(snapshot)
       },
       [{ type: 'image', mimeType: 'image/png', data: result.pngBase64 }]
     )
   }
 
   async function executeAppwatchFrames(
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context: DesktopToolContext
   ): Promise<McpToolExecutionResult> {
-    const snapshot = deps.attachedWindow.get()
+    const snapshot = attachedWindowForContext(context)
     if (!snapshot) {
       return mcpStructuredJsonResult({
         ok: false,
@@ -1187,7 +1295,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       result = await daemon.request<AppwatchFramesDaemonResult>(
         'appwatch.frames',
         {
-          handleID: snapshot.handleID,
+          ...scopedAttachedWindowAccess(snapshot),
           since: optionalString(args.since),
           count,
           format,
@@ -1197,14 +1305,17 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       )
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      if (bridgeDaemonErrorCode(err) === -32001) {
-        handleAppwatchWindowGone()
+      if (isAttachedWindowGoneOrRevoked(err)) {
+        handleAttachedWindowGone(snapshot)
       }
       return mcpStructuredJsonResult({
         ok: false,
         tool: 'appwatch_frames',
         error: message
       })
+    }
+    if (!isCurrentAttachedWindowResult(snapshot, daemon)) {
+      return staleAttachedWindowResult('appwatch_frames')
     }
 
     const frames = Array.isArray(result.frames) ? result.frames : []
@@ -1236,33 +1347,38 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         count: result.count ?? count,
         format: result.format ?? format,
         includeOCR,
-        handleID: snapshot.handleID,
         nextSince: result.nextSince ?? null,
         availableCapturedAt: Array.isArray(result.availableCapturedAt)
           ? result.availableCapturedAt
           : [],
         frames: frameMetadata,
-        windowMeta: snapshot.windowMeta
+        windowMeta: safeAttachedWindowMeta(snapshot)
       },
       contentBlocks
     )
   }
 
-  async function executeCreativeAppStatus(args: Record<string, unknown>): Promise<unknown> {
+  async function executeCreativeAppStatus(
+    args: Record<string, unknown>,
+    context: DesktopToolContext
+  ): Promise<unknown> {
     const runningHint = await creativeAppRunningHint()
     return buildCreativeAppStatusSnapshot({
       appId: creativeAppIdFromArgs(args),
-      attachedWindow: currentCreativeAttachedWindowMeta(),
+      attachedWindow: currentCreativeAttachedWindowMeta(context),
       fileExists: fsSync.existsSync,
       runningHint
     })
   }
 
-  async function executeCreativeAppCapabilities(args: Record<string, unknown>): Promise<unknown> {
+  async function executeCreativeAppCapabilities(
+    args: Record<string, unknown>,
+    context: DesktopToolContext
+  ): Promise<unknown> {
     const runningHint = await creativeAppRunningHint()
     return buildCreativeAppCapabilitySnapshot({
       appId: creativeAppIdFromArgs(args),
-      attachedWindow: currentCreativeAttachedWindowMeta(),
+      attachedWindow: currentCreativeAttachedWindowMeta(context),
       fileExists: fsSync.existsSync,
       runningHint
     })
@@ -2311,13 +2427,13 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
   ): Promise<McpToolExecutionResult> {
     const unsupportedNativeTool = unsupportedNativeToolResult(toolName)
     if (unsupportedNativeTool) return { ...unsupportedNativeTool, isError: true }
-    if (toolName === 'attached_window_capture') return executeAttachedWindowCapture(args)
-    if (toolName === 'attached_window_status') return executeAttachedWindowStatus()
-    if (toolName === 'appwatch_start') return executeAppwatchStart(args)
-    if (toolName === 'appwatch_stop') return executeAppwatchStop()
-    if (toolName === 'appwatch_status') return executeAppwatchStatus()
-    if (toolName === 'appwatch_latest_frame') return executeAppwatchLatestFrame()
-    if (toolName === 'appwatch_frames') return executeAppwatchFrames(args)
+    if (toolName === 'attached_window_capture') return executeAttachedWindowCapture(args, context)
+    if (toolName === 'attached_window_status') return executeAttachedWindowStatus(context)
+    if (toolName === 'appwatch_start') return executeAppwatchStart(args, context)
+    if (toolName === 'appwatch_stop') return executeAppwatchStop(context)
+    if (toolName === 'appwatch_status') return executeAppwatchStatus(context)
+    if (toolName === 'appwatch_latest_frame') return executeAppwatchLatestFrame(context)
+    if (toolName === 'appwatch_frames') return executeAppwatchFrames(args, context)
     if (toolName === 'approval_status') {
       return desktopToolJsonResult(executeApprovalStatus(context, args, parentProvider))
     }
@@ -2337,10 +2453,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       return desktopToolJsonResult(await executeOpenWorkspaceFile(args, context))
     }
     if (toolName === 'creative_app_status') {
-      return desktopToolJsonResult(await executeCreativeAppStatus(args))
+      return desktopToolJsonResult(await executeCreativeAppStatus(args, context))
     }
     if (toolName === 'creative_app_capabilities') {
-      return desktopToolJsonResult(await executeCreativeAppCapabilities(args))
+      return desktopToolJsonResult(await executeCreativeAppCapabilities(args, context))
     }
     if (toolName === 'creative_project_snapshot') {
       return desktopToolJsonResult(await executeCreativeProjectSnapshot(args, context))

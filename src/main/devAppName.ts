@@ -1,6 +1,22 @@
 import { app } from 'electron'
 import { tmpdir } from 'os'
-import { basename, isAbsolute, join, relative, resolve } from 'path'
+import {
+  buildInstanceLaunchBootstrapArgs,
+  PACKAGED_ISOLATED_INSTANCE_ARG,
+  resolveInstanceLaunchPosture,
+  type InstanceLaunchPosture
+} from './InstanceLaunchPosture'
+import { admitPackagedIsolatedProfileRootSync } from './InstanceProfileAdmission'
+import {
+  createInstanceResourceIdentity,
+  type InstanceResourceIdentity
+} from './InstanceResourceIdentity'
+import {
+  isDevStaticMcpBridgeProcessArgv,
+  MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
+  isStaticMcpBridgeRegistrationArgv,
+  parseMcpBridgeRouteFromEnv
+} from './mcp/McpBridgeRoute'
 
 // Dev (electron-vite, unpackaged) runs under the package.json name "taskwraith",
 // which on macOS's case-INSENSITIVE filesystem resolves to the SAME userData
@@ -10,108 +26,243 @@ import { basename, isAbsolute, join, relative, resolve } from 'path'
 // indistinguishable to a paired phone (and the second instance exits on the
 // shared `requestSingleInstanceLock`).
 //
-// Give the dev build its own name AND its own userData, so it:
-//   - pairs as a fully separate host ("TaskWraith Dev on <hostname>" — the
-//     pairing label is `${app.getName()} on …`), and
-//   - can run at the same time as the release build (separate single-instance
-//     lock, separate embedded relay state).
-//
-// This MUST be imported FIRST in the main entry (src/main/index.ts), before any
-// module resolves `app.getPath('userData')` — Electron caches that path on first
-// read, so a setName/setPath that runs after the import block (which transitively
-// touches userData) would land too late to move the lock or the identity file.
-// Mirrors the packaged debug build (electron-builder.debug.yml → productName
-// "TaskWraith Debug", which already gets its own userData).
-/**
- * `TASKWRAITH_INSTANCE_ID` — run SEVERAL dev instances side by side.
- *
- * One "TaskWraith Dev" identity is not enough for two jobs we actually do:
- *   - human-collaboration testing needs a host AND a collaborator on one Mac,
- *   - CDP-driven QA needs a disposable instance that can't disturb the dev
- *     instance a concurrent session may be mid-run in.
- *
- * Each id gets its own app name, its own userData (⇒ its own single-instance
- * lock and its own remote identity), and its own embedded relay port, so
- * instances neither evict nor race each other. Unpackaged builds ONLY — a
- * shipped release must never relocate its userData on an env var.
- *
- *   TASKWRAITH_INSTANCE_ID=1 npx electron .       → "TaskWraith Dev 1", relay 8789
- *   TASKWRAITH_INSTANCE_ID=2 npx electron .       → "TaskWraith Dev 2", relay 8790
- *   TASKWRAITH_INSTANCE_ID=verify npx electron .  → "TaskWraith Dev verify"
- */
-function readDevInstanceId(): string {
-  if (app.isPackaged) return ''
-  // Filesystem- and display-safe: a userData directory name is built from this.
-  return (process.env.TASKWRAITH_INSTANCE_ID || '')
-    .trim()
-    .replace(/[^A-Za-z0-9_-]/g, '')
-    .slice(0, 16)
+// This module MUST be imported FIRST in src/main/index.ts. Electron caches the
+// userData path after its first read, so all packaged-private posture parsing,
+// profile admission, app naming, and userData selection occur here before any
+// transitive main import can resolve it.
+
+interface EarlyAppConfigurationTarget {
+  readonly isPackaged: boolean
+  getPath(name: 'appData' | 'userData'): string
+  setName(name: string): void
+  setPath(name: 'userData', path: string): void
+  exit(code?: number): void
 }
 
-export const devInstanceId = readDevInstanceId()
+export interface ResolveDevAppNamePostureInput {
+  isPackaged: boolean
+  argv: readonly string[]
+  appDataPath: string
+  temporaryDirectory: string
+  env?: Readonly<Record<string, string | undefined>>
+}
+
+export interface ConfiguredEarlyInstancePosture {
+  posture: Exclude<InstanceLaunchPosture, { kind: 'invalid' }>
+  resourceIdentity: InstanceResourceIdentity
+  bootstrapArgs: string[]
+}
 
 /**
- * Packaged smoke tests need an isolated profile so they cannot collide with,
- * read, or stop a human's real TaskWraith instance. Keep this deliberately
- * narrow: both the explicit smoke posture and a private temp-directory flag
- * are required. Ordinary packaged launches still never relocate userData from
- * an environment variable.
+ * A globally persisted MCP registration has exactly these two bridge switches.
+ * It cannot carry a profile argument; only this narrow helper shape is allowed
+ * to obtain its profile identity from the dedicated route endpoint environment.
  */
-function readPackagedSmokeUserDataPath(): string {
-  if (!app.isPackaged || !process.argv.includes('--taskwraith-package-smoke')) return ''
-  const prefix = '--taskwraith-package-smoke-user-data='
-  const raw = process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length)
-  if (!raw || !isAbsolute(raw)) return ''
+export function isStaticMcpBridgeRouteLaunch(argv: readonly string[]): boolean {
+  return isStaticMcpBridgeRegistrationArgv(argv.slice(1))
+}
 
-  const candidate = resolve(raw)
-  const tempRoot = resolve(tmpdir())
-  const withinTemp = relative(tempRoot, candidate)
-  if (!withinTemp || withinTemp === '..' || isAbsolute(withinTemp) || withinTemp.startsWith('..')) {
-    return ''
+function invalidStaticMcpBridgeRoutePosture(isPackaged: boolean): InstanceLaunchPosture {
+  // Reuse the existing generic invalid-posture result rather than placing a
+  // route-derived value in startup diagnostics. This is evaluated before any
+  // userData profile or resource can be selected.
+  return {
+    kind: 'invalid',
+    isPackaged,
+    isPrivateProfile: false,
+    reason: 'invalid-packaged-isolated-instance'
   }
-  if (!basename(candidate).startsWith('taskwraith-tui-package-smoke-')) return ''
-  return candidate
 }
 
-const packagedSmokeUserDataPath = readPackagedSmokeUserDataPath()
+function staticRouteMatchesPrivateProfile(
+  posture: InstanceLaunchPosture,
+  endpoint: { socketPath: string; isolatedInstanceId?: string }
+): boolean {
+  if (posture.kind !== 'development' && posture.kind !== 'packaged-isolated') return true
+  const expectedSocketPath = createInstanceResourceIdentity({
+    posture,
+    userDataPath: posture.userDataPath
+  }).geminiMcpSocketPath
+  return endpoint.socketPath === expectedSocketPath
+}
 
 /**
- * Port shift for this instance's embedded relay, so two dev instances don't
- * fight over one port (the loser silently ends up with no relay and cannot be
- * dialled — which reads as "collaboration is broken", not "port collision").
- *
- * A numeric id maps to itself — `=1` → +1 — because a predictable port is what
- * makes a QA script writable. Non-numeric ids fall back to a deterministic hash
- * so `=verify` still lands on the same port every launch.
- * `TASKWRAITH_RELAY_PORT` overrides this entirely.
+ * Pure posture seam used before Electron userData access and by focused tests.
+ * Ordinary launches never inspect the endpoint environment. An exact static
+ * route bridge helper gets exactly one synthetic argv selector when its route
+ * explicitly names an isolated packaged profile. An explicit empty selector
+ * retains the ordinary profile; missing or malformed route authority resolves
+ * as invalid before profile selection.
  */
-export function devInstanceRelayPortOffset(): number {
-  if (!devInstanceId) return 0
-  const numeric = Number(devInstanceId)
-  if (Number.isInteger(numeric) && numeric > 0 && numeric <= 99) return numeric
-  let hash = 0
-  for (let index = 0; index < devInstanceId.length; index += 1) {
-    hash = (hash * 31 + devInstanceId.charCodeAt(index)) % 99
+export function resolveDevAppNamePosture(
+  input: ResolveDevAppNamePostureInput
+): InstanceLaunchPosture {
+  const env = input.env || {}
+  const launchArgs = input.argv.slice(1)
+  const hasRouteSelector = launchArgs.includes(MCP_BRIDGE_ROUTE_FROM_ENV_ARG)
+  const isPackagedStaticRoute = isStaticMcpBridgeRegistrationArgv(launchArgs)
+  const isDevStaticRoute = isDevStaticMcpBridgeProcessArgv(input.argv)
+  if (hasRouteSelector) {
+    const exactRouteGrammar = input.isPackaged ? isPackagedStaticRoute : isDevStaticRoute
+    if (!exactRouteGrammar) return invalidStaticMcpBridgeRoutePosture(input.isPackaged)
+    // Validate the complete endpoint, full profile receipt, and isolated socket
+    // identity before an empty selector could fall back to the primary profile.
+    const parsedRoute = parseMcpBridgeRouteFromEnv(env)
+    if (!parsedRoute.ok) return invalidStaticMcpBridgeRoutePosture(input.isPackaged)
+    const routeInstanceId = input.isPackaged
+      ? parsedRoute.value.endpoint.isolatedInstanceId
+      : undefined
+    const argv = routeInstanceId
+      ? [...input.argv, `${PACKAGED_ISOLATED_INSTANCE_ARG}${routeInstanceId}`]
+      : input.argv
+    const posture = resolveInstanceLaunchPosture({
+      isPackaged: input.isPackaged,
+      argv,
+      appDataPath: input.appDataPath,
+      temporaryDirectory: input.temporaryDirectory,
+      // This value is intentionally ignored by resolveInstanceLaunchPosture for
+      // every packaged posture, including the narrow helper posture above.
+      ambientDevInstanceId: env.TASKWRAITH_INSTANCE_ID
+    })
+    if (
+      posture.kind === 'invalid' ||
+      !staticRouteMatchesPrivateProfile(posture, parsedRoute.value.endpoint)
+    ) {
+      return invalidStaticMcpBridgeRoutePosture(input.isPackaged)
+    }
+    return posture
   }
-  return hash + 1
+  return resolveInstanceLaunchPosture({
+    isPackaged: input.isPackaged,
+    argv: input.argv,
+    appDataPath: input.appDataPath,
+    temporaryDirectory: input.temporaryDirectory,
+    // This value is intentionally ignored by resolveInstanceLaunchPosture for
+    // every packaged posture, including the narrow helper posture above.
+    ambientDevInstanceId: env.TASKWRAITH_INSTANCE_ID
+  })
 }
 
-if (packagedSmokeUserDataPath) {
-  app.setName('TaskWraith Package Smoke')
-  app.setPath('userData', packagedSmokeUserDataPath)
+function configureEarlyInstancePosture(
+  target: EarlyAppConfigurationTarget,
+  argv: readonly string[],
+  env: Readonly<Record<string, string | undefined>>
+): ConfiguredEarlyInstancePosture {
+  const appDataPath = target.getPath('appData')
+  const posture = resolveDevAppNamePosture({
+    isPackaged: target.isPackaged,
+    argv,
+    appDataPath,
+    temporaryDirectory: tmpdir(),
+    env
+  })
+  if (posture.kind === 'invalid') {
+    throw new Error('TaskWraith refused an invalid private launch posture.')
+  }
+
+  if (posture.kind === 'packaged-isolated') {
+    const admission = admitPackagedIsolatedProfileRootSync({
+      appDataPath,
+      instanceId: posture.instanceId
+    })
+    if (admission.profileRootPath !== posture.userDataPath) {
+      throw new Error('TaskWraith refused an inconsistent isolated profile admission.')
+    }
+  }
+
+  if (posture.kind !== 'production') {
+    target.setName(posture.appName)
+    target.setPath('userData', posture.userDataPath)
+  }
+
+  if (posture.kind === 'package-smoke') {
+    installPackageSmokeFailureHandlers(target)
+  }
+
+  return {
+    posture,
+    resourceIdentity: createInstanceResourceIdentity({
+      posture,
+      // Private postures carry their selected path explicitly. Reading the
+      // normal production path here is safe because no relocation occurs.
+      userDataPath:
+        posture.kind === 'production' ? target.getPath('userData') : posture.userDataPath
+    }),
+    bootstrapArgs: buildInstanceLaunchBootstrapArgs(posture)
+  }
+}
+
+function installPackageSmokeFailureHandlers(
+  target: Pick<EarlyAppConfigurationTarget, 'exit'>
+): void {
   const failPackageSmoke = (kind: string, error: unknown) => {
     console.error(
       `[package-smoke] ${kind}:`,
       error instanceof Error ? error.stack || error.message : String(error)
     )
-    app.exit(1)
+    target.exit(1)
   }
   process.once('uncaughtException', (error) => failPackageSmoke('uncaught exception', error))
   process.once('unhandledRejection', (error) => failPackageSmoke('unhandled rejection', error))
-} else if (!app.isPackaged) {
-  const instanceName = devInstanceId ? `TaskWraith Dev ${devInstanceId}` : 'TaskWraith Dev'
-  app.setName(instanceName)
-  // Pin userData explicitly too: setName drives the default path, but this is
-  // the lock/identity-bearing key, so set it outright to be order-independent.
-  app.setPath('userData', join(app.getPath('appData'), instanceName))
+}
+
+function failClosedStartup(error: unknown): never {
+  // Do not include argv or endpoint environment values: a static route helper
+  // carries endpoint credentials there. The posture/admission helpers already
+  // return generic errors, but startup logs stay generic as a second boundary.
+  console.error('[instance-posture] startup refused.')
+  app.exit(1)
+  throw error instanceof Error ? error : new Error('TaskWraith startup was refused.')
+}
+
+const configuredEarlyInstancePosture = (() => {
+  try {
+    return configureEarlyInstancePosture(app, process.argv, process.env)
+  } catch (error) {
+    return failClosedStartup(error)
+  }
+})()
+
+/** Resolved once, before any other main import can read Electron userData. */
+export const instanceLaunchPosture = configuredEarlyInstancePosture.posture
+/** Alias kept explicit for call sites that need to emphasize startup ordering. */
+export const resolvedInstanceLaunchPosture = instanceLaunchPosture
+export const instanceResourceIdentity = configuredEarlyInstancePosture.resourceIdentity
+export const instanceLaunchBootstrapArgs = configuredEarlyInstancePosture.bootstrapArgs
+
+/** Existing dev-only public surface; packaged launches always expose an empty id. */
+export const devInstanceId =
+  instanceLaunchPosture.kind === 'development' ? instanceLaunchPosture.devInstanceId : ''
+
+function stableOffset(value: string, modulo: number): number {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) % modulo
+  }
+  return hash
+}
+
+/**
+ * Port shift for this instance's embedded relay. Development retains its old
+ * predictable 1..99 mapping. Packaged isolated profiles occupy a separate,
+ * deterministic range so they cannot reuse ordinary/dev relay ports.
+ */
+export function instanceRelayPortOffset(posture: InstanceLaunchPosture): number {
+  if (posture.kind === 'development') {
+    if (!posture.devInstanceId) return 0
+    const numeric = Number(posture.devInstanceId)
+    if (Number.isInteger(numeric) && numeric > 0 && numeric <= 99) return numeric
+    return stableOffset(posture.devInstanceId, 99) + 1
+  }
+  if (posture.kind === 'packaged-isolated') {
+    // Avoid production (0) and dev's 1..99 range. This remains below both
+    // default relay and HTTPS-port ceilings while making the identity stable.
+    return stableOffset(posture.instanceId, 10_000) + 1_000
+  }
+  return 0
+}
+
+/** Compatibility export consumed by index.ts's existing relay-port setup. */
+export function devInstanceRelayPortOffset(): number {
+  return instanceRelayPortOffset(instanceLaunchPosture)
 }

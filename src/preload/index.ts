@@ -77,6 +77,11 @@ import type { ContextCompactionProgressEvent } from '../shared/contextCompaction
 import type { WatchPollProgress } from '../shared/watchPrPollCycle'
 import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import type {
+  NativeWindowCoordinatorPickResult,
+  NativeWindowCoordinatorRendererEvent,
+  NativeWindowCoordinatorRendererStatus
+} from '../main/nativeWindow/NativeWindowCoordinator'
 import {
   CHAT_UPDATE_ACK_CHANNEL,
   type ChatUpdateAck,
@@ -136,6 +141,263 @@ async function saveClipboardImageAttachmentFromTrustedPaste(appChatId: string): 
 const serializedChatPersistence = new SerializedChatPersistence(
   (chat) => ipcRenderer.invoke('save-chat', chat) as Promise<CanonicalChatSaveResult>
 )
+
+type NativeWindowRendererVerb = 'observe' | 'inspect' | 'click' | 'fill'
+type NativeWindowRendererStreaming = NonNullable<
+  NonNullable<NativeWindowCoordinatorRendererStatus['observation']>['streaming']
+>
+type StickyAppWatchWindowMeta = Readonly<{
+  title: string
+  bundleID: string
+  applicationName: string
+}>
+type StickyAppWatchSnapshot = Readonly<{
+  chatId: string
+  windowMeta: StickyAppWatchWindowMeta
+  attachedAt: string
+  stashedAt: string
+  wasStreaming: boolean
+}>
+type StickyAppWatchStashInput = Readonly<{
+  chatId: string
+  windowMeta: StickyAppWatchWindowMeta
+  attachedAt: string
+  wasStreaming: boolean
+}>
+
+function nativeWindowRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function nativeWindowString(value: unknown, maximum: number, required = false): string | null {
+  if (typeof value !== 'string' || value.length > maximum) return null
+  if (required && !value.trim()) return null
+  return value
+}
+
+function nativeWindowPositiveInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null
+}
+
+function nativeWindowNonNegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 0 ? Number(value) : null
+}
+
+function nativeWindowFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function nativeWindowStreaming(value: unknown): NativeWindowRendererStreaming | null {
+  const input = nativeWindowRecord(value)
+  if (!input) return null
+  const fps = nativeWindowFiniteNumber(input.fps)
+  const bufferSeconds = nativeWindowFiniteNumber(input.bufferSeconds)
+  const frameCount = nativeWindowNonNegativeInteger(input.frameCount)
+  const startedAt = nativeWindowString(input.startedAt, 128, true)
+  if (
+    fps === null ||
+    fps <= 0 ||
+    bufferSeconds === null ||
+    bufferSeconds <= 0 ||
+    frameCount === null ||
+    startedAt === null
+  ) {
+    return null
+  }
+  return Object.freeze({ fps, bufferSeconds, frameCount, startedAt })
+}
+
+function nativeWindowObservation(
+  value: unknown
+): NativeWindowCoordinatorRendererStatus['observation'] | null | undefined {
+  if (value === null) return null
+  const input = nativeWindowRecord(value)
+  if (!input) return undefined
+  const chatId = nativeWindowString(input.chatId, 512, true)
+  const generation = nativeWindowPositiveInteger(input.generation)
+  const attachedAt = nativeWindowString(input.attachedAt, 128, true)
+  const window = nativeWindowRecord(input.window)
+  if (!chatId || generation === null || !attachedAt || !window) return undefined
+  const title = nativeWindowString(window.title, 4_096)
+  const bundleID = nativeWindowString(window.bundleID, 512)
+  const applicationName = nativeWindowString(window.applicationName, 512)
+  const identityQuality = window.identityQuality
+  if (
+    title === null ||
+    bundleID === null ||
+    applicationName === null ||
+    (identityQuality !== 'exact' && identityQuality !== 'bestEffort')
+  ) {
+    return undefined
+  }
+  let streaming: NativeWindowRendererStreaming | undefined
+  if (input.streaming !== undefined) {
+    const decodedStreaming = nativeWindowStreaming(input.streaming)
+    if (!decodedStreaming) return undefined
+    streaming = decodedStreaming
+  }
+  return Object.freeze({
+    chatId,
+    generation,
+    attachedAt,
+    window: Object.freeze({ title, bundleID, applicationName, identityQuality }),
+    ...(streaming ? { streaming } : {})
+  })
+}
+
+function nativeWindowControl(
+  value: unknown
+): NativeWindowCoordinatorRendererStatus['control'] | null | undefined {
+  if (value === null) return null
+  const input = nativeWindowRecord(value)
+  if (!input) return undefined
+  const chatId = nativeWindowString(input.chatId, 512, true)
+  const runId = nativeWindowString(input.runId, 512, true)
+  const provider = nativeWindowString(input.provider, 128, true)
+  const launchAttemptId = nativeWindowString(input.launchAttemptId, 512, true)
+  const participantId = input.participantId
+  const approvedAt = nativeWindowFiniteNumber(input.approvedAt)
+  const expiresAt = nativeWindowFiniteNumber(input.expiresAt)
+  const stepBudget = nativeWindowPositiveInteger(input.stepBudget)
+  const stepsUsed =
+    Number.isSafeInteger(input.stepsUsed) && Number(input.stepsUsed) >= 0
+      ? Number(input.stepsUsed)
+      : null
+  const stepsRemaining =
+    Number.isSafeInteger(input.stepsRemaining) && Number(input.stepsRemaining) >= 0
+      ? Number(input.stepsRemaining)
+      : null
+  const allowedVerbsInput = input.allowedVerbs
+  if (
+    !chatId ||
+    !runId ||
+    !provider ||
+    !launchAttemptId ||
+    (participantId !== null && typeof participantId !== 'string') ||
+    approvedAt === null ||
+    expiresAt === null ||
+    stepBudget === null ||
+    stepsUsed === null ||
+    stepsRemaining === null ||
+    input.approvedBy !== 'user' ||
+    input.trustState !== 'user-approved' ||
+    !Array.isArray(allowedVerbsInput) ||
+    allowedVerbsInput.some(
+      (verb) => verb !== 'observe' && verb !== 'inspect' && verb !== 'click' && verb !== 'fill'
+    )
+  ) {
+    return undefined
+  }
+  const allowedVerbs = allowedVerbsInput as NativeWindowRendererVerb[]
+  return Object.freeze({
+    chatId,
+    runId,
+    provider,
+    participantId,
+    launchAttemptId,
+    approvedAt,
+    approvedBy: 'user' as const,
+    trustState: 'user-approved' as const,
+    allowedVerbs: Object.freeze([...allowedVerbs]),
+    expiresAt,
+    stepBudget,
+    stepsUsed,
+    stepsRemaining
+  })
+}
+
+function decodeNativeWindowRendererEvent(
+  value: unknown
+): NativeWindowCoordinatorRendererEvent | null {
+  const input = nativeWindowRecord(value)
+  if (!input) return null
+  const chatId = nativeWindowString(input.chatId, 512, true)
+  const statusInput = nativeWindowRecord(input.status)
+  if (!chatId || !statusInput || typeof statusInput.pickerPending !== 'boolean') return null
+  const observation = nativeWindowObservation(statusInput.observation)
+  const control = nativeWindowControl(statusInput.control)
+  const statusWarning =
+    statusInput.warning === undefined ? undefined : nativeWindowString(statusInput.warning, 4_096)
+  const eventWarning =
+    input.warning === undefined ? undefined : nativeWindowString(input.warning, 4_096)
+  if (
+    observation === undefined ||
+    control === undefined ||
+    (observation && observation.chatId !== chatId) ||
+    (control && control.chatId !== chatId) ||
+    (statusInput.warning !== undefined && statusWarning === null) ||
+    (input.warning !== undefined && eventWarning === null)
+  ) {
+    return null
+  }
+  return Object.freeze({
+    chatId,
+    status: Object.freeze({
+      pickerPending: statusInput.pickerPending,
+      observation,
+      control,
+      ...(statusWarning ? { warning: statusWarning } : {})
+    }),
+    ...(eventWarning ? { warning: eventWarning } : {})
+  })
+}
+
+function stickyAppWatchWindowMeta(value: unknown): StickyAppWatchWindowMeta | null {
+  const input = nativeWindowRecord(value)
+  if (!input) return null
+  const title = nativeWindowString(input.title, 4_096)
+  const bundleID = nativeWindowString(input.bundleID, 512)
+  const applicationName = nativeWindowString(input.applicationName, 512)
+  if (title === null || bundleID === null || applicationName === null) return null
+  return Object.freeze({ title, bundleID, applicationName })
+}
+
+function stickyAppWatchSnapshot(value: unknown): StickyAppWatchSnapshot | null {
+  const input = nativeWindowRecord(value)
+  if (!input) return null
+  const chatId = nativeWindowString(input.chatId, 512, true)
+  const windowMeta = stickyAppWatchWindowMeta(input.windowMeta)
+  const attachedAt = nativeWindowString(input.attachedAt, 128, true)
+  const stashedAt = nativeWindowString(input.stashedAt, 128, true)
+  if (
+    !chatId ||
+    !windowMeta ||
+    !attachedAt ||
+    !stashedAt ||
+    typeof input.wasStreaming !== 'boolean'
+  ) {
+    return null
+  }
+  return Object.freeze({
+    chatId,
+    windowMeta,
+    attachedAt,
+    stashedAt,
+    wasStreaming: input.wasStreaming
+  })
+}
+
+function stickyAppWatchStashInput(value: unknown): StickyAppWatchStashInput | null {
+  const input = nativeWindowRecord(value)
+  if (!input) return null
+  const chatId = nativeWindowString(input.chatId, 512, true)
+  const windowMeta = stickyAppWatchWindowMeta(input.windowMeta)
+  const attachedAt = nativeWindowString(input.attachedAt, 128, true)
+  if (!chatId || !windowMeta || !attachedAt || typeof input.wasStreaming !== 'boolean') return null
+  return Object.freeze({ chatId, windowMeta, attachedAt, wasStreaming: input.wasStreaming })
+}
+
+function stickyAppWatchChatId(value: unknown): string {
+  const chatId = nativeWindowString(value, 512, true)
+  if (!chatId) throw new Error('A canonical chat id is required for Sticky AppWatch.')
+  return chatId
+}
+
+function stickyAppWatchOk(value: unknown): { ok: boolean } {
+  return Object.freeze({ ok: nativeWindowRecord(value)?.ok === true })
+}
 
 // Custom APIs for renderer
 const api = {
@@ -693,6 +955,7 @@ const api = {
       appwatch: { available: boolean; reason?: string }
       ocr: { available: boolean; reason?: string }
       appleEvents: { available: boolean; reason?: string }
+      appDrive: { available: boolean; reason?: string }
     }>,
 
   // Trust and PTY
@@ -1149,108 +1412,49 @@ const api = {
   bridgeUnpairDevice: (iphoneIdentityPubKey: string) =>
     ipcRenderer.invoke('bridge-unpair-device', iphoneIdentityPubKey),
 
-  // Attached-window picker. `pick` opens the macOS system picker via the
-  // Swift bridge daemon and stores the resulting handle on the main side.
-  // The AI never sees window enumeration — it can only act on a window
-  // the user has explicitly picked.
-  attachWindowPick: () =>
-    ipcRenderer.invoke('attach-window:pick') as Promise<{
-      ok: boolean
-      cancelled?: boolean
-      error?: string
-      snapshot?: {
-        handleID: string
-        windowMeta: {
-          windowID: number
-          title: string
-          bundleID: string
-          applicationName: string
-          pid: number
-        }
-        attachedAt: string
-        streaming?: {
-          fps: number
-          bufferSeconds: number
-          frameCount: number
-          startedAt: string
-        }
-      }
+  // Native-window attachment is chat-scoped. The preload exposes only the
+  // coordinator's renderer-safe status: no handle, scope, consent, process,
+  // bounds, or lease material crosses this boundary.
+  attachWindowPick: (chatId: string) =>
+    ipcRenderer.invoke('attach-window:pick', chatId) as Promise<NativeWindowCoordinatorPickResult>,
+  attachWindowDetach: (chatId: string, generation: number) =>
+    ipcRenderer.invoke('attach-window:detach', chatId, generation) as Promise<{
+      detached: boolean
+      status: NativeWindowCoordinatorRendererStatus
     }>,
-  attachWindowDetach: () => ipcRenderer.invoke('attach-window:detach') as Promise<{ ok: boolean }>,
-  attachWindowStatus: () =>
-    ipcRenderer.invoke('attach-window:status') as Promise<{
-      snapshot: {
-        handleID: string
-        windowMeta: {
-          windowID: number
-          title: string
-          bundleID: string
-          applicationName: string
-          pid: number
-        }
-        attachedAt: string
-        streaming?: {
-          fps: number
-          bufferSeconds: number
-          frameCount: number
-          startedAt: string
-        }
-      } | null
-    }>,
-  // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots.
-  stickyAppWatchGet: (chatId: string) =>
-    ipcRenderer.invoke('sticky-appwatch:get', chatId) as Promise<{
-      snapshot: {
-        chatId: string
-        windowMeta: {
-          windowID: number
-          title: string
-          bundleID: string
-          applicationName: string
-          pid: number
-        }
-        attachedAt: string
-        stashedAt: string
-        wasStreaming: boolean
-      } | null
-    }>,
-  stickyAppWatchStash: (input: {
+  attachWindowStatus: (chatId: string) =>
+    ipcRenderer.invoke(
+      'attach-window:status',
+      chatId
+    ) as Promise<NativeWindowCoordinatorRendererStatus>,
+  // Sticky AppWatch is a resume hint only. This preload reconstructs an
+  // allowlisted display projection and never forwards window IDs, process data,
+  // handles, scopes, consent epochs, or lease material.
+  stickyAppWatchGet: async (
     chatId: string
-    windowMeta: {
-      windowID: number
-      title: string
-      bundleID: string
-      applicationName: string
-      pid: number
+  ): Promise<{ snapshot: StickyAppWatchSnapshot | null }> => {
+    const canonicalChatId = stickyAppWatchChatId(chatId)
+    const response = await ipcRenderer.invoke('sticky-appwatch:get', canonicalChatId)
+    const snapshot = stickyAppWatchSnapshot(nativeWindowRecord(response)?.snapshot)
+    return Object.freeze({
+      snapshot: snapshot?.chatId === canonicalChatId ? snapshot : null
+    })
+  },
+  stickyAppWatchStash: async (input: StickyAppWatchStashInput): Promise<{ ok: boolean }> => {
+    const safeInput = stickyAppWatchStashInput(input)
+    if (!safeInput)
+      throw new Error('Sticky AppWatch data must be a safe chat-scoped display snapshot.')
+    return stickyAppWatchOk(await ipcRenderer.invoke('sticky-appwatch:stash', safeInput))
+  },
+  stickyAppWatchClear: async (chatId: string): Promise<{ ok: boolean }> => {
+    const canonicalChatId = stickyAppWatchChatId(chatId)
+    return stickyAppWatchOk(await ipcRenderer.invoke('sticky-appwatch:clear', canonicalChatId))
+  },
+  onAttachedWindowChanged: (callback: (event: NativeWindowCoordinatorRendererEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, event: unknown) => {
+      const safeEvent = decodeNativeWindowRendererEvent(event)
+      if (safeEvent) callback(safeEvent)
     }
-    attachedAt: string
-    wasStreaming: boolean
-  }) => ipcRenderer.invoke('sticky-appwatch:stash', input) as Promise<{ ok: boolean }>,
-  stickyAppWatchClear: (chatId: string) =>
-    ipcRenderer.invoke('sticky-appwatch:clear', chatId) as Promise<{ ok: boolean }>,
-  onAttachedWindowChanged: (
-    callback: (
-      snapshot: {
-        handleID: string
-        windowMeta: {
-          windowID: number
-          title: string
-          bundleID: string
-          applicationName: string
-          pid: number
-        }
-        attachedAt: string
-        streaming?: {
-          fps: number
-          bufferSeconds: number
-          frameCount: number
-          startedAt: string
-        }
-      } | null
-    ) => void
-  ) => {
-    const listener = (_event: Electron.IpcRendererEvent, snapshot: unknown) =>
-      callback(snapshot as never)
     ipcRenderer.on('attached-window-changed', listener)
     return () => ipcRenderer.removeListener('attached-window-changed', listener)
   },

@@ -162,6 +162,10 @@ import type { HumanCollaborationShare } from '../../main/collaboration/HumanColl
 import type { ExecutionRunProjection } from '../../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphDiagnosticsSnapshot } from '../../main/ipc/executionGraphHandlers'
 import type { LocalServerEntry } from '../../main/localServers/types'
+import type {
+  NativeWindowCoordinatorRendererObservation,
+  NativeWindowCoordinatorRendererStatus
+} from '../../main/nativeWindow/NativeWindowCoordinator'
 import {
   collectExternalPathGrantsFromMetadata,
   reorderExternalPathGrantsByPath
@@ -1276,6 +1280,58 @@ function gitPrStatusRefreshKey(snapshot: GitRepositorySnapshot | null | undefine
 
 function hasGitSnapshotSubscriptionApi(): boolean {
   return typeof (window.api as { gitSubscribeSnapshot?: unknown }).gitSubscribeSnapshot === 'function'
+}
+
+// Composer still names this field `windowMeta`; it is intentionally derived
+// from the coordinator's public renderer observation only.
+type AttachedWindowSnapshot = {
+  readonly chatId: string
+  readonly generation: number
+  readonly windowMeta: NativeWindowCoordinatorRendererObservation['window']
+  readonly attachedAt: string
+  readonly streaming?: NativeWindowCoordinatorRendererObservation['streaming']
+}
+
+function attachedWindowFromStatus(
+  status: NativeWindowCoordinatorRendererStatus
+): AttachedWindowSnapshot | null {
+  const observation = status.observation
+  if (!observation) return null
+  return {
+    chatId: observation.chatId,
+    generation: observation.generation,
+    windowMeta: observation.window,
+    attachedAt: observation.attachedAt,
+    ...(observation.streaming ? { streaming: observation.streaming } : {})
+  }
+}
+
+type StickyAppWatchWindowMeta = Pick<
+  NativeWindowCoordinatorRendererObservation['window'],
+  'title' | 'bundleID' | 'applicationName'
+>
+
+type ResumeAppWatchSnapshot = {
+  readonly chatId: string
+  readonly windowMeta: StickyAppWatchWindowMeta
+  readonly attachedAt: string
+  readonly stashedAt: string
+  readonly wasStreaming: boolean
+}
+
+function stickyAppWatchStashInput(
+  attachment: AttachedWindowSnapshot
+): Omit<ResumeAppWatchSnapshot, 'stashedAt'> {
+  return {
+    chatId: attachment.chatId,
+    windowMeta: {
+      title: attachment.windowMeta.title,
+      bundleID: attachment.windowMeta.bundleID,
+      applicationName: attachment.windowMeta.applicationName
+    },
+    attachedAt: attachment.attachedAt,
+    wasStreaming: Boolean(attachment.streaming)
+  }
 }
 
 function App(): React.JSX.Element {
@@ -3018,68 +3074,116 @@ function App(): React.JSX.Element {
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
   }, [currentGitPresentationPath])
-  type AttachedWindowSnapshot = {
-    handleID: string
-    windowMeta: {
-      windowID: number
-      title: string
-      bundleID: string
-      applicationName: string
-      pid: number
-    }
-    attachedAt: string
-    // Phase M1 — set by main when Appwatch is running for this handle. The
-    // pill flips to its `is-streaming` variant whenever this field is set;
-    // bare `attached` (no streaming) still uses the original visual.
-    streaming?: {
-      fps: number
-      bufferSeconds: number
-      frameCount: number
-      startedAt: string
-    }
-  }
   const [attachedWindow, setAttachedWindow] = useState<AttachedWindowSnapshot | null>(null)
+  // Main owns one live native attachment. Keep its safe renderer projection in
+  // a ref even while focus changes so a real replacement/loss (not a chat
+  // switch) can be remembered for the owning chat's resume affordance.
+  const liveAttachedWindowRef = useRef<AttachedWindowSnapshot | null>(null)
+  const stickyAppWatchQueueRef = useRef(new Map<string, Promise<void>>())
+  const stickyAppWatchRevisionRef = useRef(new Map<string, number>())
+  // Keep the primary composer synchronously scoped while the authoritative
+  // status request for a newly selected chat is still in flight.
+  const currentChatAttachedWindow =
+    attachedWindow?.chatId === currentChat?.appChatId ? attachedWindow : null
   const {
     ensembleConcurrentLanesAvailable,
     ensembleConcurrentWriteLanesAvailable,
     screenWatchUnavailableReason: nativeScreenWatchUnavailableReason
   } = useNativeCapabilities()
   const screenWatchUnavailableReason = isChatPopoutWindow
-    ? 'Open this chat in the main window to attach or resume Screen Watch.'
+    ? 'Open this chat in the main window to attach Screen Watch.'
     : nativeScreenWatchUnavailableReason
-  // 1.0.5-AU — Track which chat owns the current attachment so we
-  // can auto-detach when the user switches away. Pre-AU the
-  // `attachedWindow` state was app-global: attach in Chat A, switch
-  // to Chat B, and the Screen Watch button in B still showed
-  // "Watching <app>" because the renderer state hadn't reset. Worse,
-  // tools called from Chat B would observe Chat A's stream — a real
-  // cross-chat leak.
-  //
-  // Conservative scoping: the attachment belongs to the chat it was
-  // created in. Switching to ANY other chat triggers a detach so each
-  // chat starts with a clean slate. Per-chat sticky attachments
-  // (switch back to Chat A and the attachment reactivates) are
-  // deferred to 1.0.6 — they need main-side state restructuring +
-  // Swift daemon re-attach plumbing that's more than this slice can
-  // safely land.
-  const attachedWindowOwnerChatIdRef = useRef<string | null>(null)
-  // M11 (1.0.7) — sticky AppWatch. When the current chat has a remembered
-  // attachment (stashed on a prior auto-detach, persisted across restart), this
-  // holds its metadata so the composer can offer a one-tap "Resume watching
-  // <app>". Null when the current chat has no stash. macOS can't silently
-  // re-grant the window, so resume re-opens the picker — this is the affordance,
-  // not a live attachment.
-  const [resumeAppWatchSnapshot, setResumeAppWatchSnapshot] = useState<{
-    chatId: string
-    windowMeta: {
-      windowID: number
-      title: string
-      bundleID: string
-      applicationName: string
-      pid: number
-    }
-    wasStreaming: boolean
-  } | null>(null)
+  const [resumeAppWatchSnapshot, setResumeAppWatchSnapshot] =
+    useState<ResumeAppWatchSnapshot | null>(null)
+  const nextStickyAppWatchRevision = useCallback((chatId: string): number => {
+    const revision = (stickyAppWatchRevisionRef.current.get(chatId) ?? 0) + 1
+    stickyAppWatchRevisionRef.current.set(chatId, revision)
+    return revision
+  }, [])
+  const enqueueStickyAppWatchMutation = useCallback(
+    (chatId: string, mutation: () => Promise<unknown>): Promise<void> => {
+      const previous = stickyAppWatchQueueRef.current.get(chatId) ?? Promise.resolve()
+      const next = previous
+        .catch(() => undefined)
+        .then(async () => {
+          await mutation()
+        })
+        .catch(() => undefined)
+      stickyAppWatchQueueRef.current.set(chatId, next)
+      void next.finally(() => {
+        if (stickyAppWatchQueueRef.current.get(chatId) === next) {
+          stickyAppWatchQueueRef.current.delete(chatId)
+        }
+      })
+      return next
+    },
+    []
+  )
+  const clearStickyAppWatch = useCallback(
+    (chatId: string): void => {
+      nextStickyAppWatchRevision(chatId)
+      setResumeAppWatchSnapshot((current) => (current?.chatId === chatId ? null : current))
+      void enqueueStickyAppWatchMutation(chatId, () => window.api.stickyAppWatchClear(chatId))
+    },
+    [enqueueStickyAppWatchMutation, nextStickyAppWatchRevision]
+  )
+  const stashLiveAttachedWindow = useCallback(
+    (attachment: AttachedWindowSnapshot): void => {
+      const snapshot = stickyAppWatchStashInput(attachment)
+      const revision = nextStickyAppWatchRevision(snapshot.chatId)
+      void enqueueStickyAppWatchMutation(snapshot.chatId, () =>
+        window.api.stickyAppWatchStash(snapshot)
+      ).then(async () => {
+        if (
+          currentChatIdRef.current !== snapshot.chatId ||
+          liveAttachedWindowRef.current?.chatId === snapshot.chatId ||
+          stickyAppWatchRevisionRef.current.get(snapshot.chatId) !== revision
+        ) {
+          return
+        }
+        try {
+          const result = await window.api.stickyAppWatchGet(snapshot.chatId)
+          if (
+            currentChatIdRef.current === snapshot.chatId &&
+            liveAttachedWindowRef.current?.chatId !== snapshot.chatId &&
+            stickyAppWatchRevisionRef.current.get(snapshot.chatId) === revision
+          ) {
+            setResumeAppWatchSnapshot(result.snapshot?.chatId === snapshot.chatId ? result.snapshot : null)
+          }
+        } catch {
+          // A failed resume-hint refresh is not authority to infer an attachment.
+        }
+      })
+    },
+    [enqueueStickyAppWatchMutation, nextStickyAppWatchRevision]
+  )
+  const reconcileAttachedWindowStatus = useCallback(
+    (chatId: string, status: NativeWindowCoordinatorRendererStatus): AttachedWindowSnapshot | null => {
+      const next = attachedWindowFromStatus(status)
+      const previous = liveAttachedWindowRef.current
+      if (next) {
+        // Re-picking in the same chat is a live replacement, not a loss that
+        // should surface a resume card. Only a different chat displaces an
+        // attachment into a resumable historical snapshot.
+        if (previous && previous.chatId !== next.chatId) {
+          liveAttachedWindowRef.current = null
+          stashLiveAttachedWindow(previous)
+        }
+        liveAttachedWindowRef.current = next
+      } else if (previous?.chatId === chatId) {
+        liveAttachedWindowRef.current = null
+        stashLiveAttachedWindow(previous)
+      }
+
+      setAttachedWindow((current) => {
+        if (next) return next
+        if (!next && current?.chatId === chatId) return null
+        return current
+      })
+      return next
+    },
+    [stashLiveAttachedWindow]
+  )
   useEffect(() => {
     const chatId = currentChat?.appChatId
     setDiffActionMenuOpenByChatId((current) => {
@@ -3109,7 +3213,8 @@ function App(): React.JSX.Element {
       document.removeEventListener('keydown', closeFromEscape, true)
     }
   }, [diffActionMenuOpen])
-  const [isAttachingWindow, setIsAttachingWindow] = useState(false)
+  const [attachingWindowChatId, setAttachingWindowChatId] = useState<string | null>(null)
+  const isAttachingWindow = attachingWindowChatId === (currentChat?.appChatId || null)
   const [pendingPlanChoiceByChatId, setPendingPlanChoiceForChat] =
     usePerChatState<PlanChoiceState | null>(null)
   const [pendingProposedPlanByChatId, setPendingProposedPlanForChat] =
@@ -5077,25 +5182,66 @@ function App(): React.JSX.Element {
   }, [isFxEnabled, fxBurstClass])
 
   useEffect(() => {
-    if (isChatPopoutWindow) {
+    if (isChatPopoutWindow) return undefined
+    return window.api.onAttachedWindowChanged((event) => {
+      reconcileAttachedWindowStatus(event.chatId, event.status)
+    })
+  }, [isChatPopoutWindow, reconcileAttachedWindowStatus])
+
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    if (isChatPopoutWindow || !chatId) {
       setAttachedWindow(null)
       return
     }
     let cancelled = false
+    const applyStatus = (status: NativeWindowCoordinatorRendererStatus): void => {
+      if (cancelled || currentChatIdRef.current !== chatId) return
+      reconcileAttachedWindowStatus(chatId, status)
+    }
     void window.api
-      .attachWindowStatus()
-      .then(({ snapshot }) => {
-        if (!cancelled) setAttachedWindow(snapshot)
-      })
+      .attachWindowStatus(chatId)
+      .then(applyStatus)
       .catch(() => undefined)
-    const unsubscribe = window.api.onAttachedWindowChanged((snapshot) => {
-      setAttachedWindow(snapshot)
-    })
     return () => {
       cancelled = true
-      unsubscribe?.()
     }
-  }, [isChatPopoutWindow])
+  }, [currentChat?.appChatId, isChatPopoutWindow, reconcileAttachedWindowStatus])
+
+  // A resume hint is for a lost/replaced attachment only. A live attachment
+  // for this chat always wins, so switching focus never manufactures a false
+  // "Resume" card for a Screen Watch session that still exists in main.
+  useEffect(() => {
+    const chatId = currentChat?.appChatId || null
+    if (
+      isChatPopoutWindow ||
+      !chatId ||
+      currentChatAttachedWindow ||
+      liveAttachedWindowRef.current?.chatId === chatId
+    ) {
+      setResumeAppWatchSnapshot(null)
+      return
+    }
+    let cancelled = false
+    const revision = stickyAppWatchRevisionRef.current.get(chatId) ?? 0
+    void window.api
+      .stickyAppWatchGet(chatId)
+      .then(({ snapshot }) => {
+        if (
+          cancelled ||
+          currentChatIdRef.current !== chatId ||
+          liveAttachedWindowRef.current?.chatId === chatId ||
+          (stickyAppWatchRevisionRef.current.get(chatId) ?? 0) !== revision
+        ) {
+          return
+        }
+        setResumeAppWatchSnapshot(snapshot?.chatId === chatId ? snapshot : null)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [currentChat?.appChatId, currentChatAttachedWindow?.generation, isChatPopoutWindow])
 
   // triggerSendConfirmation moved INTO <Composer> (Slice B) with its
   // sendConfirmationTimeoutRef + isSendConfirming state, so each pane runs
@@ -9793,8 +9939,8 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleAttachWindow = async (requestedOwnerChatId?: string) => {
-    if (isAttachingWindow) return
+  const handleAttachWindow = async (requestedChatId?: string) => {
+    if (attachingWindowChatId) return
     if (screenWatchUnavailableReason) {
       setRawLogs((prev) => [
         ...prev,
@@ -9805,136 +9951,67 @@ function App(): React.JSX.Element {
       ])
       return
     }
-    // Capture ownership before the native picker yields. Focus can move to
-    // another multiview pane while the user is choosing a window, but the
-    // completed attachment still belongs to the pane that initiated it.
-    const attachmentOwnerChatId =
-      requestedOwnerChatId?.trim() || currentChatIdRef.current || currentChat?.appChatId || null
-    setIsAttachingWindow(true)
+    const chatId =
+      requestedChatId?.trim() || currentChatIdRef.current || currentChat?.appChatId || null
+    if (!chatId) return
+    setAttachingWindowChatId(chatId)
     try {
-      const result = await window.api.attachWindowPick()
-      if (result.cancelled) return
-      if (!result.ok) {
+      const result = await window.api.attachWindowPick(chatId)
+      const attachment = reconcileAttachedWindowStatus(chatId, result.status)
+      if (attachment?.chatId === chatId) {
+        // A successful interactive re-pick supersedes any old resume hint for
+        // this exact chat. Do not clear a hint merely because focus changed.
+        clearStickyAppWatch(chatId)
+      }
+      const warning = result.warning
+      if (warning) {
         setRawLogs((prev) => [
           ...prev,
           {
             type: 'info',
-            content: `Attach window failed: ${result.error || 'unknown error'}`
+            content: warning
           }
         ])
-        return
       }
-      if (result.snapshot) {
-        setAttachedWindow(result.snapshot)
-        // 1.0.5-AU — Record the chat that owns this attachment so
-        // the cross-chat auto-detach effect knows when to clear.
-        const ownerChatId = attachmentOwnerChatId
-        attachedWindowOwnerChatIdRef.current = ownerChatId
-        // M11 — a fresh attach supersedes any remembered stash for this chat.
-        if (ownerChatId) {
-          setResumeAppWatchSnapshot((prev) => (prev?.chatId === ownerChatId ? null : prev))
-          void window.api.stickyAppWatchClear?.(ownerChatId)
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'info',
+          content: `Attach window failed: ${error instanceof Error ? error.message : String(error)}`
         }
-      }
+      ])
     } finally {
-      setIsAttachingWindow(false)
+      setAttachingWindowChatId((current) => (current === chatId ? null : current))
     }
   }
 
-  const handleDetachWindow = async (expectedOwnerChatId?: string) => {
-    // M11 — a USER-initiated detach is intentional: clear any sticky stash for
-    // this chat so we don't offer to resume something they deliberately stopped.
-    const ownerChatId = attachedWindowOwnerChatIdRef.current
-    if (expectedOwnerChatId?.trim() && ownerChatId !== expectedOwnerChatId.trim()) return
-    setAttachedWindow(null)
-    // 1.0.5-AU — Clear ownership marker too so a subsequent
-    // chat-switch effect doesn't try to detach again.
-    attachedWindowOwnerChatIdRef.current = null
-    if (ownerChatId) {
-      setResumeAppWatchSnapshot((prev) => (prev?.chatId === ownerChatId ? null : prev))
-      void window.api.stickyAppWatchClear?.(ownerChatId)
+  const handleDetachWindow = async (expectedChatId?: string) => {
+    const chatId =
+      expectedChatId?.trim() || currentChatIdRef.current || currentChat?.appChatId || null
+    const attachment = attachedWindow
+    if (!chatId || !attachment || attachment.chatId !== chatId) return
+    const live = liveAttachedWindowRef.current
+    if (live?.chatId === chatId && live.generation === attachment.generation) {
+      liveAttachedWindowRef.current = null
     }
+    // User intent is never a resume candidate. Clear before the asynchronous
+    // detach so a subsequent revoke event cannot stash this attachment again.
+    clearStickyAppWatch(chatId)
+    setAttachedWindow((current) => (current?.chatId === chatId ? null : current))
     try {
-      await window.api.attachWindowDetach()
-    } catch {
-      // Optimistic clear — main has already received the request, daemon
-      // detach is best-effort.
+      const result = await window.api.attachWindowDetach(chatId, attachment.generation)
+      reconcileAttachedWindowStatus(chatId, result.status)
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'info',
+          content: `Detach window failed: ${error instanceof Error ? error.message : String(error)}`
+        }
+      ])
     }
   }
-
-  // 1.0.5-AU — Auto-detach when the active chat changes to anything
-  // other than the chat that owns the current attachment. Keeps
-  // each chat's Screen Watch surface honest: if you attached in
-  // Chat A and switched to Chat B, the chip should not show
-  // "Watching <app>" anymore, and Chat B's tools should not be
-  // able to observe Chat A's stream.
-  //
-  // M11 (1.0.7) — sticky AppWatch: BEFORE the auto-detach clears state, stash
-  // the attachment metadata keyed by the owner chat (persisted main-side). When
-  // the user returns to that chat the resume-loader effect below surfaces a
-  // one-tap "Resume watching <app>". A USER detach (handleDetachWindow) clears
-  // the stash instead — only an auto-detach-on-switch is "sticky".
-  //
-  // Triggered on every `currentChat?.appChatId` change, including
-  // initial mount (no-op when no attachment exists yet) and chat
-  // creation (when switching from null to a new chat — also a
-  // no-op because the previous chatId was null and the
-  // attachedWindow is null too).
-  useEffect(() => {
-    const currentChatId = currentChat?.appChatId || null
-    const ownerChatId = attachedWindowOwnerChatIdRef.current
-    if (!attachedWindow) return
-    if (!ownerChatId) return
-    if (ownerChatId === currentChatId) return
-    // Multiview: the owner chat can still be visible in a non-focused pane even
-    // when another pane takes focus. Only tear down its live capture once the
-    // chat is no longer shown anywhere — otherwise a stray pane click kills a
-    // capture the user is still watching.
-    if (multiview.paneChatIds.includes(ownerChatId)) return
-    // Different chat is active — stash for resume, then detach. The detach
-    // clears React state + the ref + sends the IPC; stashing first preserves
-    // what the owner chat was watching.
-    void window.api.stickyAppWatchStash?.({
-      chatId: ownerChatId,
-      windowMeta: attachedWindow.windowMeta,
-      attachedAt: attachedWindow.attachedAt,
-      wasStreaming: Boolean(attachedWindow.streaming)
-    })
-    // Detach WITHOUT clearing the stash (handleDetachWindow clears it, so do
-    // the detach inline here).
-    setAttachedWindow(null)
-    attachedWindowOwnerChatIdRef.current = null
-    void window.api.attachWindowDetach().catch(() => undefined)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId, multiview.paneChatIds])
-
-  // M11 (1.0.7) — resume loader. On switching TO a chat, fetch its remembered
-  // sticky-AppWatch snapshot (if any) so the composer can offer to resume.
-  // Cleared while an attachment is live (the chip shows "Watching" instead).
-  useEffect(() => {
-    const chatId = currentChat?.appChatId || null
-    if (isChatPopoutWindow || !chatId || attachedWindow) {
-      setResumeAppWatchSnapshot(null)
-      return
-    }
-    let cancelled = false
-    const request = window.api.stickyAppWatchGet?.(chatId)
-    void request
-      ?.then((res) => {
-        if (cancelled) return
-        const snap = res?.snapshot
-        setResumeAppWatchSnapshot(
-          snap && snap.chatId === chatId
-            ? { chatId: snap.chatId, windowMeta: snap.windowMeta, wasStreaming: snap.wasStreaming }
-            : null
-        )
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId, attachedWindow, isChatPopoutWindow])
 
   // handleComposerDragEnter/Over/Leave/Drop + handleComposerPaste moved INTO
   // <Composer> (Slice B) with their imageDragCounterRef + isComposerDragOver
@@ -26102,7 +26179,7 @@ function App(): React.JSX.Element {
     isEnsembleChat: isCurrentEnsembleChat,
     selectedParticipant,
     activeGoal: currentActiveGoal,
-    attachedWindow,
+    attachedWindow: currentChatAttachedWindow,
     handleCancelCommand: handleCancel,
     handlePickFilesCommand: handlePickImages,
     handleCopyTranscriptCommand: handleCopyCurrentTranscript,
@@ -26410,7 +26487,7 @@ function App(): React.JSX.Element {
   const handleMultiviewPaneToggleScreenWatch = useCallback(
     (_paneIndex: number, chatId: string) => {
       if (screenWatchUnavailableReason) return
-      if (attachedWindow && attachedWindowOwnerChatIdRef.current === chatId) {
+      if (attachedWindow?.chatId === chatId) {
         void handleDetachWindow(chatId)
         return
       }
@@ -26922,8 +26999,7 @@ function App(): React.JSX.Element {
           isEnsembleChat: chat.chatKind === 'ensemble',
           selectedParticipant: slashParticipant,
           activeGoal: chat.activeGoal || null,
-          attachedWindow:
-            attachedWindowOwnerChatIdRef.current === chat.appChatId ? attachedWindow : null,
+          attachedWindow: attachedWindow?.chatId === chat.appChatId ? attachedWindow : null,
           handleCancelCommand: () => handleCancelMultiviewPane(paneIndex, chat.appChatId),
           handlePickFilesCommand: () =>
             handleMultiviewPanePickAttachments(paneIndex, chat.appChatId),
@@ -27149,8 +27225,7 @@ function App(): React.JSX.Element {
       resolveOllamaContextLength: resolveLiveOllamaContextLength
     })
     const viewerDualTelemetry = Boolean(viewerChat.chatKind === 'ensemble')
-    const viewerAttachedWindow =
-      attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null
+    const viewerAttachedWindow = attachedWindow?.chatId === viewerChatId ? attachedWindow : null
     const viewerResumeAppWatchSnapshot =
       resumeAppWatchSnapshot?.chatId === viewerChatId ? resumeAppWatchSnapshot : null
     const viewerScreenWatchTitle = viewerAttachedWindow
@@ -27994,12 +28069,9 @@ function App(): React.JSX.Element {
       externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
       // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
       lastNonCustomModelType: viewerSelectedModel,
-      // screen-watch: the composer-row button reflects THIS pane's ownership; the
-      // pane chrome's corner-action remains the pane-scoped toggle.
-      attachedWindow:
-        attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
-      isAttachingWindow:
-        attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
+      // Screen Watch state is supplied only for the matching chat-scoped status.
+      attachedWindow: attachedWindow?.chatId === viewerChatId ? attachedWindow : null,
+      isAttachingWindow: attachingWindowChatId === viewerChatId
       // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
       // roster/config, queue, and steer controls above are explicitly pane-owned.
       // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
@@ -29208,12 +29280,9 @@ function App(): React.JSX.Element {
         externalPathGrantPromptBusy: paneExternalPathGrantPromptBusy,
         // custom-model "clear" reverts to THIS pane's model, not the focused chat's.
         lastNonCustomModelType: viewerSelectedModel,
-        // screen-watch: the composer-row button reflects THIS pane's ownership; the
-        // pane chrome's corner-action remains the pane-scoped toggle.
-        attachedWindow:
-          attachedWindowOwnerChatIdRef.current === viewerChatId ? attachedWindow : null,
-        isAttachingWindow:
-          attachedWindowOwnerChatIdRef.current === viewerChatId ? isAttachingWindow : false
+        // Screen Watch state is supplied only for the matching chat-scoped status.
+        attachedWindow: attachedWindow?.chatId === viewerChatId ? attachedWindow : null,
+        isAttachingWindow: attachingWindowChatId === viewerChatId
         // TODO(per-pane): Gemini memory remains focused-only. Trust, Ensemble
         // roster/config, queue, and steer controls above are explicitly pane-owned.
         // TODO(per-pane): duplicate-chat shares draft — `setChatPromptDraft` is
@@ -29268,7 +29337,7 @@ function App(): React.JSX.Element {
       handleSaveExecutionGraph,
       humanCollaborationInviteHealthByChatId,
       imageAttachmentsByChatId,
-      isAttachingWindow,
+      attachingWindowChatId,
       isMultiviewSplit,
       openHumanCollaborationRemoteSetup,
       pendingHumanCollaborationInviteChatIds,
@@ -29314,7 +29383,7 @@ function App(): React.JSX.Element {
     ...composerStableBase,
     prompt,
     approvalMode,
-    attachedWindow,
+    attachedWindow: currentChatAttachedWindow,
     claudeFastMode,
     claudeReasoningEffort,
     claudeReasoningOptions,

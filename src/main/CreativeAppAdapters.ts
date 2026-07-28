@@ -21,11 +21,9 @@ export type CreativeRiskTier =
   | 'destructive-expensive'
 
 export interface CreativeAttachedWindowMeta {
-  windowID?: number
   title?: string
   bundleID?: string
   applicationName?: string
-  pid?: number
 }
 
 export interface CreativeCapability {

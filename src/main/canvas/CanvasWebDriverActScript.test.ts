@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { actScript, CLEAR_SECRET_REDACTION_SCRIPT, REDACT_SECRETS_SCRIPT } from './CanvasWebDriver'
+import {
+  actScript,
+  CANVAS_ISOLATED_STATE_KEY,
+  CLEAR_SECRET_REDACTION_SCRIPT,
+  REDACT_SECRETS_SCRIPT,
+  SNAPSHOT_SCRIPT
+} from './CanvasWebDriver'
 import type { CanvasActionInput } from './canvasTypes'
 
 /**
@@ -23,6 +29,8 @@ interface StubElement {
   isConnected: boolean
   parentElement: StubElement | null
   children: StubElement[]
+  childNodes: Array<StubElement | { nodeType: 3; textContent: string }>
+  textContent: string
   className: string
   value?: string
   checked?: boolean
@@ -34,6 +42,7 @@ interface StubElement {
   readonly childElementCount: number
   getAttribute(name: string): string | null
   hasAttribute(name: string): boolean
+  matches(selector: string): boolean
   contains(other: unknown): boolean
   getBoundingClientRect(): {
     left: number
@@ -67,6 +76,8 @@ function makeElement(
     isConnected: opts.isConnected !== false,
     parentElement: null,
     children: [],
+    childNodes: [],
+    textContent: '',
     className: opts.className || '',
     clicks: 0,
     focuses: 0,
@@ -81,6 +92,18 @@ function makeElement(
     },
     hasAttribute(name) {
       return Object.prototype.hasOwnProperty.call(el.attrs, name)
+    },
+    matches(selector) {
+      const type = (el.attrs.type || '').toLowerCase()
+      const autocomplete = (el.attrs.autocomplete || '').toLowerCase()
+      return (
+        (selector.includes('input[type=password]') &&
+          el.tagName === 'INPUT' &&
+          type === 'password') ||
+        (selector.includes('autocomplete*="password"') && autocomplete.includes('password')) ||
+        (selector.includes('autocomplete="one-time-code"') && autocomplete === 'one-time-code') ||
+        (selector.includes('[data-tw-secret]') && el.hasAttribute('data-tw-secret'))
+      )
     },
     contains(other) {
       if (other === el) return true
@@ -117,6 +140,7 @@ function makeElement(
 
 function appendChild(parent: StubElement, child: StubElement): StubElement {
   parent.children.push(child)
+  parent.childNodes.push(child)
   child.parentElement = parent
   return child
 }
@@ -139,6 +163,10 @@ interface HarnessOptions {
   /** What document.elementFromPoint returns; defaults to the target itself. */
   hitTest?: StubElement | null
   selectorElement?: StubElement
+  /** Page-world registry after a hostile whole-global replacement. */
+  pageRefElement?: StubElement
+  /** Isolated renderer-side trusted-input epoch at dispatch time. */
+  trustedInputEpoch?: number
   /**
    * Runs during dispatch so a test can simulate the page reacting. Receives the
    * live document stub so the mutation is one the script can actually observe.
@@ -164,11 +192,24 @@ function runAct(action: CanvasActionInput, opts: HarnessOptions): ActOutcome {
     innerWidth: 1280,
     innerHeight: 800,
     __twCanvas__: {
-      refs: opts.refElement && action.ref ? { [action.ref]: opts.refElement } : {},
+      refs:
+        (opts.pageRefElement ?? opts.refElement) && action.ref
+          ? { [action.ref]: opts.pageRefElement ?? opts.refElement }
+          : {},
       ids:
         opts.recordedIdentity !== undefined && action.ref
           ? { [action.ref]: opts.recordedIdentity }
           : {}
+    }
+  }
+  const isolatedGlobal: Record<string, unknown> = {
+    [CANVAS_ISOLATED_STATE_KEY]: {
+      refs: opts.refElement && action.ref ? { [action.ref]: opts.refElement } : {},
+      ids:
+        opts.recordedIdentity !== undefined && action.ref
+          ? { [action.ref]: opts.recordedIdentity }
+          : {},
+      trustedInputEpoch: opts.trustedInputEpoch ?? 0
     }
   }
 
@@ -187,9 +228,10 @@ function runAct(action: CanvasActionInput, opts: HarnessOptions): ActOutcome {
     'location',
     'MouseEvent',
     'Event',
+    'globalThis',
     `return ${source}`
   )
-  return evaluate(win, doc, loc, StubEvent, StubEvent) as ActOutcome
+  return evaluate(win, doc, loc, StubEvent, StubEvent, isolatedGlobal) as ActOutcome
 }
 
 /** Mirrors the __twIdentity digest for a stub element. */
@@ -223,7 +265,77 @@ function identityOf(el: StubElement): string {
   return `${el.tagName}|${el.getAttribute('role') || ''}|${el.getAttribute('type') || ''}|${label}|${path}`
 }
 
+function runSnapshot(
+  attrs: Record<string, string>,
+  value: string
+): {
+  result: { root: { value?: string } }
+  listeners: Array<(event: { isTrusted?: boolean }) => void>
+  state: { trustedInputEpoch: number }
+} {
+  const body = makeElement('body')
+  appendChild(body, makeElement('input', { attrs, value }))
+  const listeners: Array<(event: { isTrusted?: boolean }) => void> = []
+  const isolatedGlobal: Record<string, unknown> = {
+    addEventListener: (_type: string, listener: unknown) => {
+      if (typeof listener === 'function') {
+        listeners.push(listener as (event: { isTrusted?: boolean }) => void)
+      }
+    }
+  }
+  const win = {
+    innerWidth: 1280,
+    innerHeight: 800,
+    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+  }
+  const doc = { body, title: 'Snapshot' }
+  const evaluate = new Function(
+    'window',
+    'document',
+    'location',
+    'globalThis',
+    `return ${SNAPSHOT_SCRIPT}`
+  )
+  const result = evaluate(win, doc, { href: 'http://localhost:5173/' }, isolatedGlobal) as {
+    root: { value?: string }
+  }
+  return {
+    result,
+    listeners,
+    state: isolatedGlobal[CANVAS_ISOLATED_STATE_KEY] as { trustedInputEpoch: number }
+  }
+}
+
 describe('canvas actuation preconditions', () => {
+  it('binds ref actions to the isolated snapshot registry after page-global replacement', () => {
+    const original = makeElement('button', { attrs: { 'aria-label': 'Save' } })
+    const attacker = makeElement('button', { attrs: { 'aria-label': 'Delete everything' } })
+    const result = runAct(
+      { kind: 'click', ref: 'e1' },
+      {
+        refElement: original,
+        pageRefElement: attacker,
+        recordedIdentity: identityOf(original)
+      }
+    )
+
+    expect(result.executed).toBe(true)
+    expect(original.clicks).toBe(1)
+    expect(attacker.clicks).toBe(0)
+  })
+
+  it('atomically refuses an action when the isolated trusted-input epoch changed', () => {
+    const button = makeElement('button')
+    const result = runAct(
+      { kind: 'click', ref: 'e1', expectedInputEpoch: 4 },
+      { refElement: button, trustedInputEpoch: 5 }
+    )
+
+    expect(result.executed).toBe(false)
+    expect(result.refusalReason).toBe('stale_input_epoch')
+    expect(button.clicks).toBe(0)
+  })
+
   it('refuses a detached target instead of reporting a phantom success', () => {
     // The D1 regression. Before the fix this returned { ok: true, found: true }.
     const button = makeElement('button', { isConnected: false })
@@ -398,6 +510,36 @@ describe('canvas actuation preconditions', () => {
   })
 })
 
+describe('snapshot secret and trusted-input boundaries', () => {
+  it.each([
+    ['password', { type: 'password' }],
+    ['revealed password autocomplete', { type: 'text', autocomplete: 'current-password' }],
+    ['one-time-code autocomplete', { type: 'text', autocomplete: 'one-time-code' }],
+    ['author secret marker', { type: 'text', 'data-tw-secret': '' }]
+  ])('redacts the snapshot value for every %s selector', (_label, attrs) => {
+    const { result } = runSnapshot(attrs, 'secret-visible-value')
+
+    expect(result.root.value).toBe('[redacted]')
+  })
+
+  it('keeps an ordinary non-secret field value observable', () => {
+    const { result } = runSnapshot({ type: 'text', autocomplete: 'username' }, 'ada')
+
+    expect(result.root.value).toBe('ada')
+  })
+
+  it('increments the renderer epoch only for browser-trusted input events', () => {
+    const { listeners, state } = runSnapshot({ type: 'text' }, 'ordinary')
+    expect(listeners.length).toBeGreaterThan(0)
+
+    for (const listener of listeners) listener({ isTrusted: false })
+    expect(state.trustedInputEpoch).toBe(0)
+
+    listeners[0]?.({ isTrusted: true })
+    expect(state.trustedInputEpoch).toBe(1)
+  })
+})
+
 /**
  * Screenshot-side credential protection. Snapshots already redact secret input
  * VALUES, but a screenshot captures the rendered field, so it needs its own
@@ -431,35 +573,47 @@ describe('screenshot secret redaction', () => {
     return n
   }
 
-  function runRedaction(fields: Array<{ width: number; height: number }>): {
+  function runRedaction(fields: Array<{ width: number; height: number; focused?: boolean }>): {
     count: number
     layer: FakeNode | null
     selector: string
+    status: string
   } {
     let selector = ''
     const root = node('html')
     const byId = new Map<string, FakeNode>()
+    const fieldNodes = fields.map((field) => {
+      const fieldNode = {
+        getBoundingClientRect: () => ({
+          left: 10,
+          top: 20,
+          width: field.width,
+          height: field.height
+        }),
+        contains: (candidate: unknown) => candidate === fieldNode
+      }
+      return { field, fieldNode }
+    })
     const doc = {
       querySelectorAll: (sel: string) => {
         selector = sel
-        return fields.map((f) => ({
-          getBoundingClientRect: () => ({
-            left: 10,
-            top: 20,
-            width: f.width,
-            height: f.height
-          })
-        }))
+        return fieldNodes.map(({ fieldNode }) => fieldNode)
       },
+      activeElement: fieldNodes.find(({ field }) => field.focused)?.fieldNode ?? null,
       getElementById: (id: string) => byId.get(id) ?? null,
       createElement: (tagName: string) => node(tagName),
       documentElement: root
     }
     const evaluate = new Function('document', `return ${REDACT_SECRETS_SCRIPT}`)
-    const count = evaluate(doc) as number
+    const result = evaluate(doc) as { status: string; secretsRedacted: number }
     const layer = root.children[0] ?? null
     if (layer) byId.set('__twSecretRedaction', layer)
-    return { count, layer, selector }
+    return {
+      count: result.secretsRedacted,
+      layer,
+      selector,
+      status: result.status
+    }
   }
 
   it('paints one opaque box per visible secret field', () => {
@@ -496,6 +650,25 @@ describe('screenshot secret redaction', () => {
     const { count } = runRedaction([{ width: 0, height: 0 }])
 
     expect(count).toBe(0)
+  })
+
+  it('reports a focused secret before creating any screenshot overlay', () => {
+    const { count, layer, status } = runRedaction([{ width: 200, height: 30, focused: true }])
+
+    expect(status).toBe('focused_secret')
+    expect(count).toBe(0)
+    expect(layer).toBeNull()
+  })
+
+  it('reports probe failure instead of treating an unreadable page as secret-free', () => {
+    const doc = {
+      querySelectorAll: () => {
+        throw new Error('page blocked the probe')
+      }
+    }
+    const evaluate = new Function('document', `return ${REDACT_SECRETS_SCRIPT}`)
+
+    expect(evaluate(doc)).toEqual({ status: 'probe_failed', secretsRedacted: 0 })
   })
 
   it('the teardown script removes the overlay by id', () => {
