@@ -20,7 +20,6 @@ cd "$root" || exit 0
 staged="$(git diff --cached --name-only --diff-filter=ACMR)"
 [ -z "$staged" ] && exit 0
 
-self_pid=$$
 warn=0
 block=0
 
@@ -30,6 +29,23 @@ to_epoch() {
   date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
   date -u -d "$iso" +%s 2>/dev/null && return 0
   echo ""
+}
+
+# ── ownership helper: this hook is a transient child of git, so $$ never
+# equals the long-lived session pid recorded in a marker. "Our own claim"
+# means the marker's pid is an ANCESTOR of this process — the session host
+# that raised the claim is the one committing through us right now. No
+# ancestor match ⇒ foreign (fail safe: a genuinely-yours claim raised from a
+# different terminal blocks like anyone else's; TW_ALLOW_CLAIMED covers it).
+is_own_claim() {
+  local claim_pid="$1" cur=$$ depth=0
+  [ -n "$claim_pid" ] || return 1
+  while [ -n "$cur" ] && [ "$cur" -gt 1 ] 2>/dev/null && [ "$depth" -lt 25 ]; do
+    [ "$cur" = "$claim_pid" ] && return 0
+    cur="$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d '[:space:]')"
+    depth=$((depth + 1))
+  done
+  return 1
 }
 
 now="$(date -u +%s)"
@@ -47,7 +63,7 @@ for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
   m_agent="$(sed -nE 's/^agent:[[:space:]]*(.+)$/\1/p' "$marker" | head -1)"
 
   # Our own claim never blocks us.
-  [ -n "$m_pid" ] && [ "$m_pid" = "$self_pid" ] && continue
+  is_own_claim "$m_pid" && continue
   # A marker with no pid predates the format; advise, never block.
   if [ -z "$m_pid" ]; then
     printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
@@ -132,7 +148,7 @@ shopt -s nullglob
 for marker in .WORK-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
   m_pid="$(sed -nE 's/^pid:[[:space:]]*([0-9]+).*/\1/p' "$marker" | head -1)"
-  [ "$m_pid" = "$self_pid" ] || continue
+  is_own_claim "$m_pid" || continue
   printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
 done
 shopt -u nullglob
@@ -148,7 +164,9 @@ for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
   m_pid="$(sed -nE 's/^pid:[[:space:]]*([0-9]+).*/\1/p' "$marker" | head -1)"
   m_exp="$(sed -nE 's/^expires:[[:space:]]*([0-9TZ:-]+).*/\1/p' "$marker" | head -1)"
-  [ -n "$m_pid" ] && [ "$m_pid" = "$self_pid" ] && continue
+  # Your own decayed marker gets the personal nag from section 4, not the
+  # adoption nag.
+  is_own_claim "$m_pid" && continue
   decayed=0
   if [ -n "$m_pid" ] && ! kill -0 "$m_pid" 2>/dev/null; then
     decayed=1

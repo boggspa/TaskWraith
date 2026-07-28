@@ -143,7 +143,7 @@ frontmatter:
 ---
 session: <session id>
 agent: <provider/model, e.g. claude, codex>
-pid: <owning process id>
+pid: <the long-lived session host pid — ownership is recognized by ancestry from it>
 started: <ISO-8601 UTC>
 expires: <ISO-8601 UTC — the moment rescuers should move in, not the task's outer bound>
 worktree: <path, only if your edits live outside the main tree>
