@@ -7707,6 +7707,43 @@
 }
 
 /* ============================================================
+ * WELCOME HUES — NEWER PROVIDERS
+ * --------------------------------------------------------------
+ * The base welcome map in 03-composer-welcome-activity.css predates
+ * Pi, Mistral, and AntiGravity, so all three inherited Gemini blue.
+ * Extend both hooks used by the welcome hero: `--welcome-provider-color`
+ * paints the complete General-chat greeting, while
+ * `--workspace-name-glow-color` paints the emphasized workspace name.
+ *
+ * AntiGravity's Gemini API and AGY/ToS-risk lanes deliberately share the
+ * same provider id, so the AntiGravity rule covers both model-id variants.
+ * ============================================================ */
+
+.app-transcript.provider-pi .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-pi-color);
+}
+
+.app-transcript.provider-mistral .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-mistral-color);
+}
+
+.app-transcript.provider-antigravity .welcome-hero h1 strong {
+  --welcome-provider-color: var(--provider-antigravity-color);
+}
+
+.workspace-name-glow.provider-pi {
+  --workspace-name-glow-color: var(--provider-pi-color);
+}
+
+.workspace-name-glow.provider-mistral {
+  --workspace-name-glow-color: var(--provider-mistral-color);
+}
+
+.workspace-name-glow.provider-antigravity {
+  --workspace-name-glow-color: var(--provider-antigravity-color);
+}
+
+/* ============================================================
  * WELCOME CONTRAST — ALABASTER / OBSIDIAN APP THEMES
  * --------------------------------------------------------------
  * These are system-theme overrides only. Do not key off the
