@@ -78,6 +78,7 @@ import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
 import { staleTrustedSessionDemotionPatch } from '../lib/chatComposerSelection'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
+import { WelcomeProviderHighlight } from '../components/WelcomeProviderHighlight'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import {
   extractFirstEnsembleDmTarget,
@@ -2042,9 +2043,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <>
                     <h1>
                       <span>New workflow in </span>
-                      <strong className={`workspace-name-glow provider-${currentProvider}`}>
+                      <WelcomeProviderHighlight
+                        provider={currentProvider}
+                        modelId={contextModelId}
+                      >
                         {currentWorkspace?.displayName ?? 'this workspace'}
-                      </strong>
+                      </WelcomeProviderHighlight>
                     </h1>
                     <p>
                       Describe the recurring task. It captures the current provider and run
@@ -2054,9 +2058,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 ) : (
                   <>
                     <h1>
-                      <strong className={`workspace-name-glow provider-${currentProvider}`}>
+                      <WelcomeProviderHighlight
+                        provider={currentProvider}
+                        modelId={contextModelId}
+                      >
                         {workflowForCurrentChat?.name ?? 'Workflow'}
-                      </strong>
+                      </WelcomeProviderHighlight>
                     </h1>
                     <p>
                       {workflowIntervalMinutes != null
@@ -2071,9 +2078,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               <div className="welcome-hero">
                 <h1>
                   <span>{welcomeCopy.heading.beforeWorkspace}</span>
-                  <strong className={`workspace-name-glow provider-${currentProvider}`}>
+                  <WelcomeProviderHighlight provider={currentProvider} modelId={contextModelId}>
                     {welcomeCopy.heading.workspaceName}
-                  </strong>
+                  </WelcomeProviderHighlight>
                   <span>{welcomeCopy.heading.afterWorkspace}</span>
                 </h1>
                 {welcomeCopy.subheading ? <p>{welcomeCopy.subheading}</p> : null}
