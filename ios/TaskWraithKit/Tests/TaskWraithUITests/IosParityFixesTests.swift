@@ -349,6 +349,29 @@ struct IosParityFixesTests {
         #expect(QuestionRow.canAnswerQuestion(threadId: nil, taskCards: [canAnswer]) == false)
     }
 
+    /// Approval decisions mirror the question gate: without the thread's
+    /// `approve` capability the card is view-only up front, instead of live
+    /// buttons whose taps come back "Denied." from the Mac's capability gate
+    /// while the auto-deny countdown runs.
+    @MainActor
+    @Test func approvalDecisionsRequireExplicitThreadCapability() throws {
+        let canApprove = try remoteTaskCard(
+            #"{"id":"card-1","threadId":"thread-1","capabilities":{"approve":true}}"#)
+        let cannotApprove = try remoteTaskCard(
+            #"{"id":"card-2","threadId":"thread-2","capabilities":{"approve":false}}"#)
+        let unknownCapabilities = try remoteTaskCard(#"{"id":"card-3","threadId":"thread-3"}"#)
+
+        #expect(ApprovalRow.canDecideApproval(threadId: "thread-1", taskCards: [canApprove]) == true)
+        #expect(ApprovalRow.canDecideApproval(threadId: "card-1", taskCards: [canApprove]) == true)
+        #expect(
+            ApprovalRow.canDecideApproval(threadId: "thread-2", taskCards: [cannotApprove]) == false)
+        #expect(
+            ApprovalRow.canDecideApproval(threadId: "thread-3", taskCards: [unknownCapabilities])
+                == false)
+        #expect(ApprovalRow.canDecideApproval(threadId: "missing", taskCards: [canApprove]) == false)
+        #expect(ApprovalRow.canDecideApproval(threadId: nil, taskCards: [canApprove]) == false)
+    }
+
     @MainActor
     @Test func approvalActionsReflectAdvertisedDecisionSet() throws {
         let actions = ApprovalActionDescriptor.visibleActions(from: [

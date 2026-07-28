@@ -2211,7 +2211,7 @@ public enum BridgeAction {
         approvalMode: String? = nil, workflowMode: String? = nil,
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
-        reasoningEffort: String? = nil,
+        reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
@@ -2233,6 +2233,11 @@ public enum BridgeAction {
         if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
             payload["extraWorkspaceIds"] = extraWorkspaceIds
         }
+        // Same wire dicts composerPrompt ships; the Mac materializes them into
+        // the durable transcript-media store at enqueue time.
+        if let imageAttachments, !imageAttachments.isEmpty {
+            payload["imageAttachments"] = imageAttachments
+        }
         applyFastAndThinking(
             &payload, provider: provider,
             fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
@@ -2245,7 +2250,7 @@ public enum BridgeAction {
         approvalMode: String? = nil, workflowMode: String? = nil,
         permissionPresetId: String? = nil,
         model: String? = nil, extraWorkspaceIds: [String]? = nil,
-        reasoningEffort: String? = nil,
+        reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
@@ -2267,6 +2272,11 @@ public enum BridgeAction {
         }
         if let extraWorkspaceIds, !extraWorkspaceIds.isEmpty {
             payload["extraWorkspaceIds"] = extraWorkspaceIds
+        }
+        // Scheduled prompts ride the same durable queue as queued ones; the
+        // Mac materializes the images at enqueue so they survive until run-at.
+        if let imageAttachments, !imageAttachments.isEmpty {
+            payload["imageAttachments"] = imageAttachments
         }
         applyFastAndThinking(
             &payload, provider: provider,

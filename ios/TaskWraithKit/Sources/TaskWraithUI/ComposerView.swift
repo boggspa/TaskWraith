@@ -277,8 +277,14 @@ struct Composer: View {
         #endif
     }
     private var canQueueCurrentPrompt: Bool {
+        // Attachments queue fine on solo threads (the Mac materializes them
+        // into the durable media store at enqueue). The ensemble FIFO is
+        // text-only, so an ensemble prompt with images keeps the button
+        // hidden rather than silently dropping the attachments.
         providerAdmission.isLive
-            && isRunActive && newTaskWorkspaceId == nil && !isEmpty && !hasImageAttachments
+            && isRunActive && newTaskWorkspaceId == nil
+            && (!isEmpty || (hasImageAttachments && !card.isEnsemble))
+            && !(card.isEnsemble && hasImageAttachments)
     }
     private var canScheduleFromThisComposer: Bool {
         providerAdmission.isLive
@@ -295,8 +301,11 @@ struct Composer: View {
         if !canScheduleFromThisComposer {
             return "Scheduling requires a workspace-backed chat."
         }
-        if hasImageAttachments {
-            return "Scheduled image attachments from paired devices are not supported yet."
+        // Existing threads schedule through the same durable queue that now
+        // materializes attachments at enqueue; only the new-task lane still
+        // lacks attachment plumbing.
+        if hasImageAttachments, newTaskWorkspaceId?.isEmpty == false {
+            return "Scheduled image attachments are not supported for new tasks yet."
         }
         if isEmpty {
             return "Prompt required"
@@ -1136,6 +1145,17 @@ struct Composer: View {
             return
         }
 
+        // Desktop queue-on-busy parity, client side: a send landing while this
+        // solo thread's run is live queues behind it — honest "Queued." toast
+        // and an immediate queue chip — instead of round-tripping to the Mac's
+        // busy-gate (which would queue it anyway). This is also what the
+        // Return key does mid-run. Ensembles fall through to continueTask:
+        // their steer lane injects into the live round by design.
+        if isRunActive && !card.isEnsemble {
+            queueCurrent()
+            return
+        }
+
         let submittedText = text
         #if canImport(UIKit)
             let submittedAttachments = attachments
@@ -1186,33 +1206,51 @@ struct Composer: View {
     private func queueCurrent() {
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !hasImageAttachments else { return }
         if card.isEnsemble {
+            // The ensemble FIFO is text-only; attachments never reach here
+            // (canQueueCurrentPrompt hides the button for that combination).
+            guard !trimmed.isEmpty, !hasImageAttachments else { return }
             model.queueEnsemblePrompt(card, prompt: trimmed)
-        } else {
-            model.queueComposerPrompt(
-                card, prompt: trimmed,
-                approvalMode: bridgeApprovalMode,
-                workflowMode: bridgeWorkflowMode,
-                permissionPresetId: bridgePermissionPresetId,
-                model: selectedModelId,
-                providerOverride: canChangeProvider ? selectedProvider : nil,
-                reasoningEffort: selectedReasoningEffort,
-                extraWorkspaceIds: extraWorkspaceIds,
-                fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking)
+            text = ""
+            return
         }
+        #if canImport(UIKit)
+            let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
+                twEncodeImageAttachment($0.image, name: $0.name)
+            }
+        #else
+            let encoded: [[String: Any]] = []
+        #endif
+        guard !trimmed.isEmpty || !encoded.isEmpty else { return }
+        model.queueComposerPrompt(
+            card, prompt: trimmed,
+            approvalMode: bridgeApprovalMode,
+            workflowMode: bridgeWorkflowMode,
+            permissionPresetId: bridgePermissionPresetId,
+            model: selectedModelId,
+            providerOverride: canChangeProvider ? selectedProvider : nil,
+            reasoningEffort: selectedReasoningEffort,
+            imageAttachments: encoded.isEmpty ? nil : encoded,
+            extraWorkspaceIds: extraWorkspaceIds,
+            fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking)
         text = ""
+        #if canImport(UIKit)
+            attachments = []
+        #endif
     }
 
     private func scheduleCurrent(runAt: Date) {
         guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !hasImageAttachments, canScheduleFromThisComposer else { return }
+        guard !trimmed.isEmpty, canScheduleFromThisComposer else { return }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let scheduledRunAt = formatter.string(from: runAt)
 
         if let workspaceId = newTaskWorkspaceId, !workspaceId.isEmpty {
+            // New-task scheduling has no attachment plumbing yet — the
+            // validation reason keeps the sheet from reaching here with any.
+            guard !hasImageAttachments else { return }
             model.startTask(
                 workspaceId: workspaceId, provider: selectedProvider, prompt: trimmed,
                 model: selectedModelId,
@@ -1223,6 +1261,13 @@ struct Composer: View {
                 fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 scheduledRunAt: scheduledRunAt)
         } else {
+            #if canImport(UIKit)
+                let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
+                    twEncodeImageAttachment($0.image, name: $0.name)
+                }
+            #else
+                let encoded: [[String: Any]] = []
+            #endif
             model.queueComposerPrompt(
                 card, prompt: trimmed,
                 approvalMode: bridgeApprovalMode,
@@ -1231,9 +1276,13 @@ struct Composer: View {
                 model: selectedModelId,
                 providerOverride: canChangeProvider ? selectedProvider : nil,
                 reasoningEffort: selectedReasoningEffort,
+                imageAttachments: encoded.isEmpty ? nil : encoded,
                 extraWorkspaceIds: extraWorkspaceIds,
                 fastModeEnabled: selectedFastMode, kimiThinkingEnabled: effectiveKimiThinking,
                 scheduledRunAt: scheduledRunAt)
+            #if canImport(UIKit)
+                attachments = []
+            #endif
         }
         text = ""
     }

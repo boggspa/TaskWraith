@@ -60,6 +60,19 @@ struct ApprovalRow: View {
     private var destructiveActions: [ApprovalActionDescriptor] {
         approvalActions.filter { $0.id != primaryAction?.id && $0.destructive }
     }
+    private var canDecide: Bool {
+        Self.canDecideApproval(threadId: card.threadId, taskCards: model.taskCards)
+    }
+
+    /// Mirrors `QuestionRow.canAnswerQuestion`: decisions need the thread's
+    /// `approve` capability. Without this gate a monitor-only device showed
+    /// live Allow buttons and only learned otherwise from a rejected ack —
+    /// while the auto-deny countdown kept running.
+    static func canDecideApproval(threadId: String?, taskCards: [RemoteTaskCard]) -> Bool {
+        guard let threadId, !threadId.isEmpty else { return false }
+        let task = taskCards.first { $0.id == threadId || $0.threadId == threadId }
+        return task?.capabilities?.approve == true
+    }
 
     private var bodyLooksTechnical: Bool {
         let text = card.body ?? ""
@@ -135,6 +148,7 @@ struct ApprovalRow: View {
             HStack(spacing: 7) {
                 if let primaryAction {
                     primaryDecisionButton(primaryAction)
+                        .disabled(!canDecide)
                 }
                 if !menuActions.isEmpty {
                     Menu {
@@ -157,6 +171,7 @@ struct ApprovalRow: View {
                         .background(accent.opacity(0.14), in: Capsule())
                         .foregroundStyle(accent)
                     }
+                    .disabled(!canDecide)
                 }
                 Spacer(minLength: 0)
                 if !destructiveActions.isEmpty {
@@ -177,7 +192,15 @@ struct ApprovalRow: View {
                     }
                     .accessibilityLabel("More approval actions")
                     .accessibilityHint("Includes denial and cancellation actions.")
+                    .disabled(!canDecide)
                 }
+            }
+            if !canDecide {
+                // Same wording as QuestionRow's gate, so a monitor-only
+                // device reads consistently across both card kinds.
+                Text("Waiting for thread permissions from your Mac.")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
             }
         }
         .padding(.vertical, 2)
@@ -231,6 +254,9 @@ struct ApprovalDetailSheet: View {
     private var approvalActions: [ApprovalActionDescriptor] {
         ApprovalActionDescriptor.visibleActions(from: card.actions)
     }
+    private var canDecide: Bool {
+        ApprovalRow.canDecideApproval(threadId: card.threadId, taskCards: model.taskCards)
+    }
 
     var body: some View {
         NavigationStack {
@@ -266,6 +292,12 @@ struct ApprovalDetailSheet: View {
                     VStack(spacing: 8) {
                         ForEach(approvalActions) { action in
                             decisionButton(action)
+                                .disabled(!canDecide)
+                        }
+                        if !canDecide {
+                            Text("Waiting for thread permissions from your Mac.")
+                                .font(.caption2)
+                                .foregroundStyle(TWTheme.textTertiary)
                         }
                     }
                     .padding(.top, 4)

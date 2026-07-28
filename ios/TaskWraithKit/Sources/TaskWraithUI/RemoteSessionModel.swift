@@ -5365,18 +5365,21 @@ public final class RemoteSessionModel: ObservableObject {
 
     /// Queue a solo-chat prompt behind the active run. The Mac owns the
     /// durable FIFO as RunQueueJob records so every paired client sees the
-    /// same pending stack.
+    /// same pending stack. Image attachments ride the same wire dicts the
+    /// live send uses; the Mac materializes them at enqueue time.
     public func queueComposerPrompt(
         _ card: RemoteTaskCard, prompt: String, approvalMode: String? = nil,
         workflowMode: String? = nil, permissionPresetId: String? = nil,
         model: String? = nil, providerOverride: String? = nil,
-        reasoningEffort: String? = nil, extraWorkspaceIds: [String]? = nil,
+        reasoningEffort: String? = nil, imageAttachments: [[String: Any]]? = nil,
+        extraWorkspaceIds: [String]? = nil,
         fastModeEnabled: Bool? = nil, kimiThinkingEnabled: Bool? = nil,
         scheduledRunAt: String? = nil
     ) {
         guard !card.isEnsemble, let thread = card.threadId else { return }
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let hasAttachments = !(imageAttachments ?? []).isEmpty
+        guard !trimmed.isEmpty || hasAttachments else { return }
         let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
         guard let provider = providerOverride ?? card.provider else { return }
         let action =
@@ -5386,7 +5389,7 @@ public final class RemoteSessionModel: ObservableObject {
                 approvalMode: approvalMode, workflowMode: workflowMode,
                 permissionPresetId: permissionPresetId, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
-                reasoningEffort: reasoningEffort,
+                reasoningEffort: reasoningEffort, imageAttachments: imageAttachments,
                 fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
             : BridgeAction.composerSchedulePrompt(
                 workspaceId: ws, threadId: thread, provider: provider, text: trimmed,
@@ -5394,7 +5397,7 @@ public final class RemoteSessionModel: ObservableObject {
                 approvalMode: approvalMode, workflowMode: workflowMode,
                 permissionPresetId: permissionPresetId, model: model,
                 extraWorkspaceIds: extraWorkspaceIds,
-                reasoningEffort: reasoningEffort,
+                reasoningEffort: reasoningEffort, imageAttachments: imageAttachments,
                 fastModeEnabled: fastModeEnabled, kimiThinkingEnabled: kimiThinkingEnabled)
         send(
             action,
