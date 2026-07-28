@@ -310,6 +310,7 @@ import {
   type ResolveScheduledAttachments
 } from '../ScheduledAttachmentDurability'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
+import { consolidateAgenticWorkspaceGrants } from '../settings/MainSanitizers'
 import {
   DEFAULT_STALL_BACKSTOP_MS,
   findStalledScheduledTasks,
@@ -4276,8 +4277,11 @@ export class AppStore {
         ...defaultSettings.welcomeHeatmapPrefs,
         ...(storedWelcomeHeatmapPrefs || {})
       },
+      // Normalize legacy per-provider rows into the 'agents' wildcard at the
+      // read boundary so "granted for this workspace" is provider-equal from
+      // the first resolve after boot, not only after the next re-grant.
       agenticWorkspaceGrants: Array.isArray(stored.agenticWorkspaceGrants)
-        ? stored.agenticWorkspaceGrants
+        ? consolidateAgenticWorkspaceGrants(stored.agenticWorkspaceGrants)
         : [],
       nativeSubAgentRequests:
         stored.nativeSubAgentRequests === 'provider' ||

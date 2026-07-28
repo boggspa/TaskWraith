@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
@@ -603,7 +604,116 @@ export function sanitizeAgenticWorkspaceGrants(
     }
     grants.push(grant)
   }
-  return grants
+  return consolidateAgenticWorkspaceGrants(grants)
+}
+
+// Workspace mutation grants are workspace-scoped ('agents'); canvasInteraction
+// is the one grantable service that is surface-scoped instead, so a wildcard
+// row for it could never be honored by the gate (PermissionService refuses
+// canvasInteraction at the workspace tier). Its legacy rows pass through as-is.
+const CONSOLIDATABLE_WORKSPACE_GRANT_SERVICE_IDS = new Set<AgenticServiceId>(
+  [...GRANTABLE_AGENTIC_SERVICE_IDS].filter((service) => service !== 'canvasInteraction')
+)
+
+function workspaceGrantConsolidationKey(grant: AgenticWorkspaceGrant): string | null {
+  if (!grant || typeof grant !== 'object') return null
+  if (typeof grant.workspacePath !== 'string' || !grant.workspacePath.trim()) return null
+  if (
+    typeof grant.provider !== 'string' ||
+    !AGENTIC_WORKSPACE_GRANT_PROVIDER_IDS.has(grant.provider as AgenticWorkspaceGrantProviderId)
+  ) {
+    return null
+  }
+  if (
+    typeof grant.service !== 'string' ||
+    !CONSOLIDATABLE_WORKSPACE_GRANT_SERVICE_IDS.has(grant.service as AgenticServiceId)
+  ) {
+    return null
+  }
+  return `${resolve(grant.workspacePath)}\u0000${grant.service}`
+}
+
+/**
+ * Collapse legacy per-provider workspace grants into the 'agents' wildcard so
+ * "granted once for this workspace" holds for every provider immediately —
+ * not only after the next accept re-mints the row. One consented provider is
+ * the workspace-level consent; the merge keeps the earliest grant date and the
+ * latest update, and keeps an expiry only when every merged row carried one
+ * (the latest wins). Runs on settings load and on every grants patch;
+ * idempotent and order-stable. Rows that are not workspace-consolidatable
+ * (malformed shapes, unknown providers, canvasInteraction) pass through
+ * untouched.
+ */
+export function consolidateAgenticWorkspaceGrants(
+  grants: AgenticWorkspaceGrant[]
+): AgenticWorkspaceGrant[] {
+  const groups = new Map<string, AgenticWorkspaceGrant[]>()
+  for (const grant of grants) {
+    const key = workspaceGrantConsolidationKey(grant)
+    if (!key) continue
+    const group = groups.get(key)
+    if (group) group.push(grant)
+    else groups.set(key, [grant])
+  }
+  const emitted = new Set<string>()
+  const result: AgenticWorkspaceGrant[] = []
+  for (const grant of grants) {
+    const key = workspaceGrantConsolidationKey(grant)
+    if (!key) {
+      result.push(grant)
+      continue
+    }
+    if (emitted.has(key)) continue
+    emitted.add(key)
+    const group = groups.get(key) || [grant]
+    const alreadyNormalized =
+      group.length === 1 &&
+      group[0].provider === 'agents' &&
+      resolve(group[0].workspacePath) === group[0].workspacePath
+    if (alreadyNormalized) {
+      result.push(group[0])
+      continue
+    }
+    const base = group.find((member) => member.provider === 'agents') || group[0]
+    let createdAt = base.createdAt
+    let createdAtMs = Date.parse(base.createdAt)
+    let updatedAt = base.updatedAt
+    let updatedAtMs = Date.parse(base.updatedAt)
+    let everyExpires = true
+    let maxExpiresAt = ''
+    let maxExpiresAtMs = Number.NEGATIVE_INFINITY
+    for (const member of group) {
+      const created = Date.parse(member.createdAt)
+      if (Number.isFinite(created) && (!Number.isFinite(createdAtMs) || created < createdAtMs)) {
+        createdAtMs = created
+        createdAt = member.createdAt
+      }
+      const updated = Date.parse(member.updatedAt)
+      if (Number.isFinite(updated) && (!Number.isFinite(updatedAtMs) || updated > updatedAtMs)) {
+        updatedAtMs = updated
+        updatedAt = member.updatedAt
+      }
+      const expires = Date.parse(member.expiresAt || '')
+      if (!Number.isFinite(expires)) {
+        everyExpires = false
+      } else if (expires > maxExpiresAtMs) {
+        maxExpiresAtMs = expires
+        maxExpiresAt = member.expiresAt as string
+      }
+    }
+    const merged: AgenticWorkspaceGrant = {
+      id: base.id,
+      workspacePath: resolve(base.workspacePath),
+      provider: 'agents',
+      service: base.service,
+      createdAt,
+      updatedAt,
+      expiresOn: 'workspace_revocation'
+    }
+    if (everyExpires && maxExpiresAt) merged.expiresAt = maxExpiresAt
+    result.push(merged)
+  }
+  return result
 }
 
 export function sanitizeAgenticNetworkPolicy(

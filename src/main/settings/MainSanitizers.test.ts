@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMainSanitizers,
+  consolidateAgenticWorkspaceGrants,
   normalizeEnsembleRunIdentity,
   normalizeAuditRunIdentity,
   sanitizeAuditOrchestration,
@@ -1474,15 +1475,18 @@ describe('MainSanitizers settings patches', () => {
       updatedAt: '2026-07-20T00:00:00.000Z',
       expiresOn: 'workspace_revocation' as const
     }
+    // Legacy per-provider rows consolidate to the 'agents' wildcard on the way
+    // through the sanitizer — the workspace, not the provider, is the unit of
+    // consent. Row identity and timestamps survive the rewrite.
     const sanitized = sanitizeSettingsPatch({ agenticWorkspaceGrants: [grant] })
-    expect(sanitized.agenticWorkspaceGrants).toEqual([grant])
+    expect(sanitized.agenticWorkspaceGrants).toEqual([{ ...grant, provider: 'agents' }])
     const publishGrant = {
       ...grant,
       id: 'grant-publish-1',
       service: 'externalPublish' as const
     }
     expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [publishGrant] }).agenticWorkspaceGrants).toEqual([
-      publishGrant
+      { ...publishGrant, provider: 'agents' }
     ])
 
     // The 'agents' wildcard provider is accepted for workspace-scoped mutation grants.
@@ -1511,10 +1515,110 @@ describe('MainSanitizers settings patches', () => {
         null
       ]
     })
-    expect(mixed.agenticWorkspaceGrants).toEqual([grant])
+    expect(mixed.agenticWorkspaceGrants).toEqual([{ ...grant, provider: 'agents' }])
     expect('agenticWorkspaceGrants' in sanitizeSettingsPatch({ agenticWorkspaceGrants: 'nope' })).toBe(
       false
     )
+  })
+
+  it('consolidates legacy per-provider workspace grants into one agents row per workspace/service', () => {
+    const base = {
+      workspacePath: '/Users/chris/repo',
+      service: 'fileChanges' as const,
+      expiresOn: 'workspace_revocation' as const
+    }
+    const codex = {
+      ...base,
+      id: 'grant-codex',
+      provider: 'codex' as const,
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:00.000Z'
+    }
+    const gemini = {
+      ...base,
+      id: 'grant-gemini',
+      provider: 'gemini' as const,
+      // Trailing slash on purpose: the resolved path is the dedupe key.
+      workspacePath: '/Users/chris/repo/',
+      createdAt: '2026-04-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z'
+    }
+    const shell = {
+      ...base,
+      id: 'grant-shell',
+      provider: 'codex' as const,
+      service: 'shellCommands' as const,
+      createdAt: '2026-05-02T00:00:00.000Z',
+      updatedAt: '2026-05-02T00:00:00.000Z'
+    }
+    const otherWorkspace = {
+      ...codex,
+      id: 'grant-elsewhere',
+      workspacePath: '/Users/chris/other'
+    }
+
+    const merged = consolidateAgenticWorkspaceGrants([codex, gemini, shell, otherWorkspace])
+    expect(merged).toEqual([
+      {
+        id: 'grant-codex', // first member's id — stable across repeated runs
+        workspacePath: '/Users/chris/repo',
+        provider: 'agents',
+        service: 'fileChanges',
+        createdAt: '2026-04-01T00:00:00.000Z', // earliest consent in the group
+        updatedAt: '2026-06-01T00:00:00.000Z', // latest touch in the group
+        expiresOn: 'workspace_revocation'
+      },
+      { ...shell, provider: 'agents' },
+      { ...otherWorkspace, provider: 'agents' }
+    ])
+    // Idempotent: a second pass changes nothing.
+    expect(consolidateAgenticWorkspaceGrants(merged)).toEqual(merged)
+  })
+
+  it('keeps an existing agents row id, unions expiry, and leaves canvasInteraction rows alone', () => {
+    const agentsRow = {
+      id: 'grant-agents-keep',
+      workspacePath: '/Users/chris/repo',
+      provider: 'agents' as const,
+      service: 'fileChanges' as const,
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z',
+      expiresOn: 'workspace_revocation' as const
+    }
+    const legacy = {
+      ...agentsRow,
+      id: 'grant-legacy',
+      provider: 'codex' as const,
+      createdAt: '2026-05-01T00:00:00.000Z',
+      updatedAt: '2026-05-01T00:00:00.000Z'
+    }
+    const kept = consolidateAgenticWorkspaceGrants([legacy, agentsRow])
+    expect(kept).toHaveLength(1)
+    expect(kept[0].id).toBe('grant-agents-keep')
+    expect(kept[0].createdAt).toBe('2026-05-01T00:00:00.000Z')
+
+    // Expiry survives only when EVERY merged row expires (latest wins); one
+    // open-ended consent makes the merged grant open-ended.
+    const expiringA = { ...legacy, id: 'e1', expiresAt: '2026-08-01T00:00:00.000Z' }
+    const expiringB = {
+      ...legacy,
+      id: 'e2',
+      provider: 'gemini' as const,
+      expiresAt: '2026-09-01T00:00:00.000Z'
+    }
+    const bothExpire = consolidateAgenticWorkspaceGrants([expiringA, expiringB])
+    expect(bothExpire[0].expiresAt).toBe('2026-09-01T00:00:00.000Z')
+    const oneOpenEnded = consolidateAgenticWorkspaceGrants([expiringA, legacy])
+    expect(oneOpenEnded[0].expiresAt).toBeUndefined()
+
+    // canvasInteraction has no workspace tier (surface-scoped), so its rows
+    // are never rewritten to a wildcard the gate could not honor.
+    const canvasRow = {
+      ...legacy,
+      id: 'grant-canvas',
+      service: 'canvasInteraction' as const
+    }
+    expect(consolidateAgenticWorkspaceGrants([canvasRow])).toEqual([canvasRow])
   })
 
 })
