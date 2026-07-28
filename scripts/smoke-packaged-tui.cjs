@@ -729,8 +729,8 @@ function prepareDarwinSmokeBundle(packageRoot, userDataPath) {
   return smokePackageRoot
 }
 
-function runChecked(command, arguments, label) {
-  const result = spawnSync(command, arguments, {
+function runChecked(command, commandArgs, label) {
+  const result = spawnSync(command, commandArgs, {
     encoding: 'utf8',
     timeout: helpTimeoutMs
   })
