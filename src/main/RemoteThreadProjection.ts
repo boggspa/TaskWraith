@@ -17,9 +17,10 @@
  *   - `row.id === message.id` — the persisted desktop message id, so a
  *     remote deep-link / "jump to row" resolves to the exact desktop
  *     row (the desktop side brings it in-window via TV4 `scrollToRow`).
- *   - Bounded: `latestN` caps to `n`, `aroundRow` to `2·radius+1`,
- *     `beforeRow` to `n`, `attention` to `maxAttentionRows`, `summaryOnly`
- *     to 0 rows.
+ *   - Bounded: `latestN` caps to `n` rows; `latestViewportN` caps to `n`
+ *     transcript display units (and may include multiple rows from one
+ *     tool/thinking viewport); `aroundRow` caps to `2·radius+1`, `beforeRow`
+ *     to `n`, `attention` to `maxAttentionRows`, `summaryOnly` to 0 rows.
  *   - Additive: this never replaces raw-event forwarding; the bridge
  *     emits a snapshot alongside the existing per-pair event fan-out.
  *
@@ -424,6 +425,7 @@ export function remoteSpeakerForMessage(
 
 export type RemoteProjectionMode =
   | { kind: 'latestN'; n: number }
+  | { kind: 'latestViewportN'; n: number }
   | { kind: 'beforeRow'; rowId: string; n: number }
   | { kind: 'aroundRow'; rowId: string; radius: number }
   | { kind: 'attention' }
@@ -893,9 +895,9 @@ export interface RemoteThreadSnapshot {
   threadId: string
   schemaVersion: 1
   mode: RemoteProjectionMode
-  /** BOUNDED by `mode` — never the full history. */
+  /** BOUNDED by `mode` — never an unrequested full-history dump. */
   rows: RemoteThreadRow[]
-  /** Total projectable rows in the thread (one per message). */
+  /** Total projectable rows after fan-out and duplicate-restatement folding. */
   totalRows: number
   /** Index into the full thread of `rows[0]` (0 for filtered modes). */
   windowStartIndex: number
@@ -2815,6 +2817,68 @@ function clampIndex(value: number, lo: number, hi: number): number {
 }
 
 /**
+ * iOS folds adjacent tool/thinking rows with the same run + speaker into one
+ * settled viewport. Return that viewport key for rows eligible for the fold,
+ * or null when the row consumes its own display-unit slot.
+ *
+ * This mirrors `twCanCollapseIntoStack` + `toolBurstKey` without projecting
+ * every historical row first. Structured cards stay standalone even when
+ * persisted on a tool row, matching the phone's unfoldable-card guard.
+ */
+function activityViewportKey(
+  message: ChatMessage,
+  fallbackPooledAgentIdentity: RemotePooledAgentIdentity | undefined,
+  speakerForMessage: ((message: ChatMessage) => string | undefined) | undefined
+): string | null {
+  if (message.role !== 'tool') return null
+  if ((buildToolSummary(message)?.activityCount ?? 0) === 0) return null
+  if (
+    buildAgentQuestion(message) ||
+    buildProposedPlan(message) ||
+    buildParticipantHealth(message) ||
+    buildSubThreadReturn(message) ||
+    isFanoutResultMessage(message) ||
+    buildRunFailure(message)
+  ) {
+    return null
+  }
+
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  const pooledAgentIdentity = buildPooledAgentIdentity(metadata) || fallbackPooledAgentIdentity
+  const speaker = pooledAgentIdentity?.nickname || speakerForMessage?.(message) || ''
+  return `${message.runId ?? `row:${message.id}`}|${speaker}`
+}
+
+/**
+ * Find the oldest raw row belonging to the latest `n` iOS display units.
+ * Adjacent activity rows sharing a viewport key consume one unit together;
+ * ordinary transcript rows and structured cards each consume one.
+ */
+function latestViewportWindowStart(
+  messages: readonly ChatMessage[],
+  rawN: number,
+  viewportKeyFor: (message: ChatMessage) => string | null
+): number {
+  const n = clampIndex(rawN, 0, messages.length)
+  if (n === 0) return messages.length
+
+  let start = messages.length
+  let units = 0
+  let newerViewportKey: string | null = null
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const viewportKey = viewportKeyFor(messages[index])
+    const continuesNewerViewport = viewportKey !== null && viewportKey === newerViewportKey
+    if (!continuesNewerViewport) {
+      if (units >= n) break
+      units += 1
+    }
+    start = index
+    newerViewportKey = viewportKey
+  }
+  return start
+}
+
+/**
  * True only for a plain assistant text bubble carrying NO structured payload —
  * the one row kind safe to fold as a duplicate restatement. Mirrors buildRow's
  * structure detection exactly so a row with a tool card, sub-thread return,
@@ -2884,7 +2948,8 @@ export function collapseConsecutiveAssistantRestatements(
 /**
  * Project a thread's messages + runs into a bounded snapshot for the
  * Remote Console. Pure: same inputs → same output (pass `generatedAt`
- * for determinism). Never returns more rows than the mode allows.
+ * for determinism). `latestViewportN` may return more than `n` rows only when
+ * those rows form one of its bounded activity viewports.
  */
 export function projectRemoteThread(
   messages: ChatMessage[],
@@ -2981,12 +3046,12 @@ export function projectRemoteThread(
   // enlarged (bounded payload growth); older long messages still collapse
   // behind "Show more". Resolved off `visible` — the collapse keeps the FIRST
   // of a run of identical restatements, so that id is the one the client
-  // actually renders. Scoped to the routine `latestN` push: `aroundRow`/
+  // actually renders. Scoped to the routine latest-window pushes: `aroundRow`/
   // `beforeRow` are targeted fetches whose caller sets the cap deliberately
   // (e.g. Show-more sends its own 32000), and the latest reply never falls in
   // a `beforeRow` (load-older) window — so the bump belongs only here.
   let latestAssistantRowId: string | null = null
-  if (opts.mode.kind === 'latestN') {
+  if (opts.mode.kind === 'latestN' || opts.mode.kind === 'latestViewportN') {
     for (let i = visible.length - 1; i >= 0; i -= 1) {
       if (visible[i]?.role === 'assistant') {
         latestAssistantRowId = visible[i].id
@@ -3123,6 +3188,20 @@ export function projectRemoteThread(
       windowStartIndex: start,
       hasMoreAbove: start > 0,
       hasMoreBelow: end < totalRows
+    }
+  }
+
+  if (opts.mode.kind === 'latestViewportN') {
+    const start = latestViewportWindowStart(visible, opts.mode.n, (message) =>
+      activityViewportKey(message, fallbackPooledAgentIdentity, opts.speakerForMessage)
+    )
+    const slice = visible.slice(start)
+    return {
+      ...base,
+      rows: capRowThumbnails(slice.map((m) => toRow(m, attentionFor(m)))),
+      windowStartIndex: start,
+      hasMoreAbove: start > 0,
+      hasMoreBelow: false
     }
   }
 

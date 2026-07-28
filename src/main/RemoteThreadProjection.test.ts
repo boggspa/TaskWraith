@@ -215,6 +215,174 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('latestViewportN', () => {
+    it('keeps ordinary transcript rows at one display unit each', () => {
+      const snap = project({ kind: 'latestViewportN', n: 3 })
+
+      expect(snap.rows.map((row) => row.id)).toEqual(['m7', 'm8', 'm9'])
+      expect(snap.windowStartIndex).toBe(7)
+      expect(snap.hasMoreAbove).toBe(true)
+    })
+
+    it('counts one adjacent tool and thinking stack as one display unit', () => {
+      const activityRows = Array.from({ length: 6 }, (_, index) =>
+        msg(index + 2, {
+          id: `activity-${index}`,
+          role: 'tool',
+          content: '',
+          runId: 'run-1',
+          toolActivities: [
+            activity({
+              id: `activity-entry-${index}`,
+              ...(index === 2
+                ? {
+                    toolName: 'thinking',
+                    displayName: 'Thinking',
+                    resultSummary: 'Tracing the hydration window.'
+                  }
+                : {})
+            })
+          ]
+        })
+      )
+      const snap = project({ kind: 'latestViewportN', n: 3 }, [
+        msg(0, { id: 'prompt', role: 'user' }),
+        msg(1, { id: 'first-answer', role: 'assistant' }),
+        ...activityRows,
+        msg(9, { id: 'final-answer', role: 'assistant' })
+      ])
+
+      expect(snap.rows.map((row) => row.id)).toEqual([
+        'first-answer',
+        ...activityRows.map((row) => row.id),
+        'final-answer'
+      ])
+      expect(snap.rows).toHaveLength(8)
+      expect(snap.rows.find((row) => row.id === 'activity-2')?.thinking?.preview).toContain(
+        'Tracing the hydration window.'
+      )
+      expect(snap.windowStartIndex).toBe(1)
+      expect(snap.hasMoreAbove).toBe(true)
+    })
+
+    it('starts a new activity viewport when the speaker changes', () => {
+      const toolRow = (id: string): ChatMessage =>
+        msg(1, {
+          id,
+          role: 'tool',
+          content: '',
+          runId: 'shared-run',
+          toolActivities: [activity({ id: `entry-${id}` })]
+        })
+      const snap = project(
+        { kind: 'latestViewportN', n: 2 },
+        [
+          msg(0, { id: 'older-answer', role: 'assistant' }),
+          toolRow('alice-1'),
+          toolRow('alice-2'),
+          toolRow('bob-1'),
+          toolRow('bob-2'),
+          msg(6, { id: 'final-answer', role: 'assistant' })
+        ],
+        [],
+        {
+          speakerForMessage: (message) => {
+            if (message.id.startsWith('alice-')) return 'Alice'
+            if (message.id.startsWith('bob-')) return 'Bob'
+            return undefined
+          }
+        }
+      )
+
+      expect(snap.rows.map((row) => row.id)).toEqual(['bob-1', 'bob-2', 'final-answer'])
+      expect(snap.windowStartIndex).toBe(3)
+      expect(snap.hasMoreAbove).toBe(true)
+    })
+
+    it('keeps structured tool cards outside adjacent activity viewports', () => {
+      const toolRow = (id: string): ChatMessage =>
+        msg(1, {
+          id,
+          role: 'tool',
+          content: '',
+          runId: 'run-1',
+          toolActivities: [activity({ id: `entry-${id}` })]
+        })
+      const snap = project({ kind: 'latestViewportN', n: 3 }, [
+        toolRow('tool-before'),
+        msg(2, {
+          id: 'returned-result',
+          role: 'tool',
+          runId: 'run-1',
+          content: '↩ Result from Codex sub-thread:\n\nChecked the projection.',
+          metadata: {
+            kind: 'subThreadReturn',
+            subThreadId: 'child-1',
+            subThreadProvider: 'codex'
+          },
+          toolActivities: [activity({ id: 'return-entry' })]
+        }),
+        toolRow('tool-after'),
+        msg(4, { id: 'final-answer', role: 'assistant' })
+      ])
+
+      expect(snap.rows.map((row) => row.id)).toEqual([
+        'returned-result',
+        'tool-after',
+        'final-answer'
+      ])
+      expect(snap.rows[0].subThreadReturn?.subThreadId).toBe('child-1')
+      expect(snap.hasMoreAbove).toBe(true)
+    })
+
+    it('counts a complete fan-out lane as one display unit', () => {
+      const laneMetadata = {
+        ensembleRoundId: 'round-1',
+        ensembleParticipantId: 'seat-1',
+        ensembleLaneId: 'lane-1',
+        ensembleLaneIntent: 'read' as const,
+        ensembleProvider: 'claude',
+        ensembleRole: 'Scout'
+      }
+      const laneTools = Array.from({ length: 12 }, (_, index) =>
+        msg(index + 2, {
+          id: `lane-tool-${index}`,
+          role: 'tool',
+          content: '',
+          runId: 'lane-run',
+          metadata: { ...laneMetadata, kind: 'ensembleParticipantTools' },
+          toolActivities: [activity({ id: `lane-entry-${index}` })]
+        })
+      )
+      const snap = project({ kind: 'latestViewportN', n: 2 }, [
+        msg(0, { id: 'older-answer', role: 'assistant' }),
+        msg(1, {
+          id: 'lane-start',
+          role: 'assistant',
+          content: 'Scanning.',
+          runId: 'lane-run',
+          metadata: { ...laneMetadata, kind: 'ensembleParticipant' }
+        }),
+        ...laneTools,
+        msg(14, {
+          id: 'lane-finish',
+          role: 'assistant',
+          content: 'Scan complete.',
+          runId: 'lane-run',
+          metadata: { ...laneMetadata, kind: 'ensembleParticipant' }
+        }),
+        msg(15, { id: 'final-answer', role: 'assistant' })
+      ])
+
+      expect(snap.totalRows).toBe(3)
+      expect(snap.rows.map((row) => row.id)).toEqual(['lane-start', 'final-answer'])
+      expect(snap.rows[0].fanoutResult?.laneId).toBe('lane-1')
+      expect(snap.rows[0].toolSummary?.activityCount).toBe(12)
+      expect(snap.windowStartIndex).toBe(1)
+      expect(snap.hasMoreAbove).toBe(true)
+    })
+  })
+
   describe('latest assistant reply rides at full length (no settle-shrink)', () => {
     const PREVIEW = REMOTE_IOS_PREVIEW_MAX
     const LONG_A = 'A'.repeat(PREVIEW + 3000) // > preview, < expand ceiling
