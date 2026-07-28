@@ -17,7 +17,7 @@ import {
   discoverAuthenticatedAgyModels,
   type AuthenticatedAgyModelDiscoveryDependencies
 } from './AntigravityModelDiscovery'
-import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import { antigravityAgyStaticModels, offerableAgyModels } from './AntigravityAgyStaticModels'
 import { resolveAgyCliBinary } from './AntigravityCli'
 
 export interface AntigravityCombinedCatalogModel {
@@ -193,7 +193,7 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     agy.status === 'ok'
       ? agy.value
       : agyBinary.status === 'ok' && Boolean(agyBinary.value?.binaryPath)
-        ? antigravityAgyStaticModels()
+        ? offerableAgyModels(antigravityAgyStaticModels())
         : []
   for (const model of agyRows) {
     if (!isSafeModelRow(model) || seen.has(model.id)) continue

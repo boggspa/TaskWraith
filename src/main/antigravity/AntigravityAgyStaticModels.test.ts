@@ -1,17 +1,37 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANTIGRAVITY_AGY_STATIC_MODEL_IDS,
-  antigravityAgyStaticModels
+  antigravityAgyStaticModels,
+  isResoldFirstPartyAgyModelId,
+  offerableAgyModels
 } from './AntigravityAgyStaticModels'
 import { parseAgyModels } from './AntigravityCli'
 import { isAntigravityGeminiApiModelCandidate } from './AntigravityCombinedModeDispatch'
 
 describe('antigravityAgyStaticModels', () => {
-  it('offers the observed official catalogue', () => {
+  it('offers the Gemini families and refuses resold first-party models', () => {
     expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.6-flash-high')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('claude-sonnet-4-6')
-    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gpt-oss-120b-medium')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).toContain('gemini-3.1-pro-low')
+    // claude-*/gpt-oss-* exist in agy's catalogue but are never offered:
+    // dispatching first-party models resold through the ban-risk lane
+    // compounds the ToS exposure (the Pi anti-circumvention doctrine).
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('claude-sonnet-4-6')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('claude-opus-4-6-thinking')
+    expect(ANTIGRAVITY_AGY_STATIC_MODEL_IDS).not.toContain('gpt-oss-120b-medium')
     expect(antigravityAgyStaticModels().length).toBe(ANTIGRAVITY_AGY_STATIC_MODEL_IDS.length)
+  })
+
+  it('filters resold first-party ids out of any model list', () => {
+    expect(isResoldFirstPartyAgyModelId('claude-sonnet-4-6')).toBe(true)
+    expect(isResoldFirstPartyAgyModelId('claude-opus-4-6-thinking')).toBe(true)
+    expect(isResoldFirstPartyAgyModelId('gpt-oss-120b-medium')).toBe(true)
+    expect(isResoldFirstPartyAgyModelId('gemini-3.6-flash-high')).toBe(false)
+    const filtered = offerableAgyModels([
+      { id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' },
+      { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
+      { id: 'gpt-oss-120b-medium', label: 'gpt-oss-120b-medium' }
+    ])
+    expect(filtered.map((model) => model.id)).toEqual(['gemini-3.6-flash-high'])
   })
 
   // `agy models` prints bare ids with no display column, so live rows take the

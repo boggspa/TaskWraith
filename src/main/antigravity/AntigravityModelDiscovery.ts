@@ -14,7 +14,7 @@ import {
   type AgyModelProbeDependencies,
   type AgyProcessCaptureResult
 } from './AntigravityCli'
-import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import { antigravityAgyStaticModels, offerableAgyModels } from './AntigravityAgyStaticModels'
 import {
   readCachedAgyModels,
   writeCachedAgyModels,
@@ -135,16 +135,20 @@ export async function discoverAuthenticatedAgyModels(
       // turn a good discovery into a failed one. The `.catch` is load-bearing —
       // `void` alone discards the promise WITHOUT a rejection handler, so a
       // writer that rejects becomes an unhandled rejection in the main process.
+      // The cache stores the UNFILTERED catalogue (it mirrors agy's output);
+      // the resold-model policy is applied on the way OUT of every source so
+      // a policy change never requires a cache invalidation.
       void (deps.writeCachedModels ?? writeCachedAgyModels)(result.models, deps.cache).catch(
         () => {}
       )
-      return result.models
+      const offerable = offerableAgyModels(result.models)
+      if (offerable.length > 0) return offerable
     }
   } catch {
     // Fall through to cache, then floor, rather than hiding the provider.
   }
 
-  const cached = await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache)
+  const cached = offerableAgyModels(await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache))
   if (cached.length > 0) return cached
-  return antigravityAgyStaticModels()
+  return offerableAgyModels(antigravityAgyStaticModels())
 }
