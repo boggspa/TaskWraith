@@ -50,6 +50,36 @@ Two CI gates enforce this rather than relying on you reading it:
   injected into agent sessions as doctrine, so hidden text in it is an
   instruction channel that a human cannot see in a diff.
 
+Two rules keep the ratchet honest, because the gate as written can be
+satisfied in a way that is much worse than the problem:
+
+- **A file you ADD must be born formatted.** New files have no history, so
+  formatting them costs nothing — no `git blame` churn, no conflicts with
+  open branches. This is the whole backlog-prevention rule, and skipping it
+  is what turns the ratchet red. Verified 2026-07-27: 92 files were added
+  in one cycle and exactly 18 of them were unformatted, which was the
+  entire regression.
+- **Never format a large existing file to pay the ratchet down.** The
+  baseline is a *count*, not a set of paths, so the gate cannot tell the
+  difference between "you formatted the new file you just added" and "you
+  reformatted a monolith to buy headroom for it". The second is the
+  cheapest way to make the number go green and the most destructive thing
+  you can do to the tree: measured 2026-07-27, `src/main/index.ts` is
+  48,861 lines and a reformat rewrites ~2,558 of them; `App.tsx` is 30,481
+  lines and rewrites ~3,421. That is thousands of unrelated lines, `git
+  blame` destroyed across two files everything depends on, and a conflict
+  in every open worktree — to satisfy a counter. Fix the file you dirtied.
+
+The same reasoning forbids format-on-touch: editing one line of a large
+unformatted file must not reformat the file. Leave the surrounding style
+alone.
+
+Note the denominator moves. `consideredFiles` grows as tracked files are
+added (2,968 → 3,053 over one cycle), so a red ratchet is not automatically
+someone's mistake — check whether newly-added files are the cause before
+attributing it, and check whether *your* touched files changed status
+rather than assuming.
+
 None of the above is authority to change what any code does. Formatting
 work is formatting only.
 
@@ -58,6 +88,107 @@ changes should preserve the surrounding style and format only the files
 or regions that were deliberately touched. Use scoped formatting or
 targeted `prettier-ignore` comments only when the formatting change is
 part of the task.
+
+---
+
+## Concurrent work in this repo
+
+Several agents — Claude, Codex, Cursor, and others — work in this single
+checkout at the same time, on unrelated features, with no coordinator. These
+rules exist because every one of them has already been violated at cost.
+
+### The one thing to understand first
+
+A work marker is a **promise about the future** ("I am going to keep editing
+this"). Promises rot: sessions crash, get reassigned, or finish one task and
+silently start another. Git, by contrast, records the **present** and cannot
+lie about it. So:
+
+> **Marker absence is absence of evidence, never evidence of quiescence.**
+
+Proven three times in 30 hours: every marker down while a session sat mid-edit
+on an uncommitted test; a session that dropped its marker and immediately
+picked up new work without re-raising; and a truthful "tree clean, nothing in
+flight" report that was false twenty minutes later. In the last case a naive
+marker check would have gone green on top of a half-written 17-file feature.
+
+Split the two questions and use the right tool for each:
+
+| Question | Answer with |
+| --- | --- |
+| Is anything uncommitted right now? | `git status --porcelain`. **Never a marker.** |
+| Is someone about to touch a file that is clean right now? | A marker. This is its only job. |
+
+### Before you write
+
+1. **`git status --porcelain` first.** If files you intend to touch are already
+   dirty, they belong to someone else. Do not edit them, do not stage them, do
+   not revert them. Pick different work or ask.
+2. **Read any live markers** (`ls -1a | grep -E '^(SHIP-HOLD|\.WORK-IN-PROGRESS|SESSION-IN-PROGRESS)'`).
+   Never write that check as a bare `ls A-* B-*`: under zsh a single missing
+   glob triggers `nomatch` and aborts the whole command, printing nothing,
+   which reads exactly like "no markers".
+3. **Raise your own marker before your first edit to a clean file** — not "when
+   you start", which is fuzzy and skippable. First write is the trigger.
+
+### Marker format — it must self-expire
+
+Staleness has to be mechanical, not a judgement call. Name the file
+`.WORK-IN-PROGRESS-<slug>.md` at the repo root (untracked, gitignored) with
+frontmatter:
+
+```yaml
+---
+session: <session id>
+agent: <provider/model, e.g. claude, codex>
+pid: <owning process id>
+started: <ISO-8601 UTC>
+expires: <ISO-8601 UTC, a few hours out>
+paths:
+  - src/main/Thing.ts
+---
+one line on what you are doing and what you are NOT touching
+```
+
+A reader treats a marker as **blocking** only if the pid is alive *and* the
+clock is inside `expires`; otherwise it is advisory. That way a crashed or
+forgotten claim decays on its own instead of blocking the tree forever. This
+is the same liveness model the credential authority already uses (owner pid
+plus process birth identity) — copy it rather than inventing another.
+
+Drop your marker in the same breath as your final commit. If you finish one
+task and pick up another, **re-raise** — the old marker does not cover new work.
+
+### Prefer a worktree; it cannot go stale
+
+For anything larger than a quick fix, work in a `git worktree` on its own
+branch. Collision becomes structurally impossible, and `git worktree list` is
+a registry that reflects reality rather than intent, so it cannot drift. This
+is strictly better than any marker and is already normal here. When a task is
+explicitly out of the current release, a worktree is the answer, not a marker.
+
+### Committing
+
+- **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.** Other
+  sessions' files live in this tree and bulk staging sweeps them into your
+  commit. Diff-audit what you staged before committing.
+- **Never `git stash`** while another session may be live — it pockets their
+  uncommitted work too.
+- Do not revert, format, or "tidy" a file you did not change.
+- If a shared file (`index.ts`, `store/types.ts`, `App.tsx`) is dirty when you
+  need it, that is a collision: coordinate rather than merging blind.
+
+### Before anything irreversible
+
+Publishing, tagging, and force-pushing require all of:
+
+1. no live markers,
+2. `git status --porcelain` shows nothing you do not own, and
+3. no other session committed in the last few minutes or is still running.
+
+Also confirm what you are about to tag is actually pushed —
+`git rev-list --count origin/master..master`. A commit can be built from,
+verified locally, and tagged while origin has never seen it.
 
 ---
 
