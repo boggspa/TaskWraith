@@ -39,6 +39,7 @@ import {
   type ApiSpendWindowKey,
   type CalendarMonthSpendMeter
 } from '../lib/apiSpendAggregation'
+import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import {
   buildOllamaMemorySpend,
   formatOllamaMemoryAvgCell,
@@ -413,7 +414,9 @@ function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): Comp
 }
 
 function compactMistralCell(
-  mistralQuota: MistralQuotaMeterViewProps | undefined
+  mistralQuota: MistralQuotaMeterViewProps | undefined,
+  currency?: DisplayCurrency,
+  locale?: string
 ): CompactQuotaCell | null {
   const snapshot = mistralQuota?.snapshot
   if (!snapshot) return null
@@ -424,8 +427,12 @@ function compactMistralCell(
   const ceilingFromVendor =
     estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
   const resetText = formatResetShort({ resetAt: estimate.cycleResetsAt })
-  const spentText = `${spendFromVendor ? '' : '~'}$${estimate.spentUsd.toFixed(2)}`
-  const ceilingText = `${ceilingFromVendor ? '' : '~'}$${estimate.estimatedCeilingUsd.toFixed(2)}`
+  // Figures are USD; render in the user's display currency (Settings →
+  // General) via the shared FX table — the reverse of the conversion the
+  // console reading went through on entry, so a €0.32 reading reads €0.32.
+  const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
+  const spentText = `${spendFromVendor ? '' : '~'}${money(estimate.spentUsd)}`
+  const ceilingText = `${ceilingFromVendor ? '' : '~'}${money(estimate.estimatedCeilingUsd)}`
   const sourceText = measured ? 'Mistral-sourced figures' : 'estimated locally'
   const title = [
     `Mistral monthly: ${estimate.label}`,
@@ -459,13 +466,17 @@ function compactMistralCell(
 export function CompactModelUsageGrid({
   quotaEntries,
   grokUsage,
-  mistralQuota
+  mistralQuota,
+  currency,
+  locale
 }: {
   quotaEntries: ModelUsageAggregate[]
   grokUsage?: GrokCreditsMeterViewProps
   mistralQuota?: MistralQuotaMeterViewProps
+  currency?: DisplayCurrency
+  locale?: string
 }) {
-  const mistralCell = compactMistralCell(mistralQuota)
+  const mistralCell = compactMistralCell(mistralQuota, currency, locale)
   const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
   // The AGY column appears only once a manual quota refresh has produced a
   // snapshot (the agy /usage probe is manual-only by doctrine — the
@@ -1327,6 +1338,8 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
             quotaEntries={quotaEntries}
             grokUsage={grokUsage}
             mistralQuota={mistralQuota}
+            currency={apiSpend?.currency}
+            locale={apiSpend?.locale}
           />
         )}
         <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
@@ -1350,7 +1363,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                  * reason Grok is: `ProviderUsageBlock` renders only
                  * `entry.windows`, and this seat has no vendor-reported window
                  * to put there. The view self-hides when no cycle is persisted. */}
-                <MistralQuotaMeterView {...mistralQuota} />
+                <MistralQuotaMeterView
+                  {...mistralQuota}
+                  currency={apiSpend?.currency}
+                  locale={apiSpend?.locale}
+                />
               </div>
             )}
           </div>

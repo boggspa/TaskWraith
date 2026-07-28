@@ -457,6 +457,21 @@ describe('ModelUsageCard', () => {
     expect(html).not.toMatch(/>\d+%<\/td>/)
   })
 
+  it('renders the compact Mistral figure in the display currency', () => {
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[]}
+        mistralQuota={{ snapshot: mistralSnapshot(8), loading: false }}
+        currency="EUR"
+        locale="en-GB"
+      />
+    )
+    // $8 → €7.36 at 0.92; the cell and its tooltip both convert.
+    expect(html).toContain('>~€7.36</td>')
+    expect(html).toContain('~€7.36 of')
+    expect(html).not.toContain('$8.00')
+  })
+
   it('adds the AGY column only when an antigravity quota snapshot exists', () => {
     const withAgy = renderToStaticMarkup(
       <CompactModelUsageGrid

@@ -54,6 +54,7 @@ import type {
   MistralQuotaFigureSource
 } from '../../../main/mistral/MistralQuotaEstimate'
 import { formatResetShort } from '../lib/UsageFormat'
+import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import { providerPlanName } from '../lib/providerPlanName'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
@@ -75,10 +76,6 @@ const SEEDED_TOOLTIP = [
 
 const MONEY_TOOLTIP = 'Estimated spend this cycle — projected locally, never billed or reported.'
 
-function formatUsd(value: number): string {
-  const safe = Number.isFinite(value) && value > 0 ? value : 0
-  return `$${safe.toFixed(2)}`
-}
 
 /** Where each half of a vendor-sourced reading came from, stated plainly. */
 function sourcePhrase(source: MistralQuotaFigureSource): string {
@@ -109,13 +106,21 @@ export interface MistralQuotaMeterViewProps {
   /** null until the seat has been run at least once — the row stays hidden. */
   snapshot: MistralQuotaSnapshot | null
   loading: boolean
+  /** The user's display currency (Settings → General). The estimate's figures
+   *  are USD; the same FX table that converted the console reading INTO USD on
+   *  entry converts them back for display, so a €0.32 reading reads as €0.32.
+   *  Defaults to USD when unset (tests, older callers). */
+  currency?: DisplayCurrency
+  locale?: string
 }
 
 /** Pure presentational meter — no IPC, no state. Reuses the Model Usage card's
  *  provider/quota markup so it reads as a sibling of the metered providers. */
 export function MistralQuotaMeterView({
   snapshot,
-  loading
+  loading,
+  currency,
+  locale
 }: MistralQuotaMeterViewProps): ReactElement | null {
   // No cycle ⇒ no row at all. Deliberately not a "loading"/"unavailable"
   // placeholder: there is nothing pending to wait for, and an empty Mistral row
@@ -136,8 +141,9 @@ export function MistralQuotaMeterView({
   const resetsAt = formatResetShort({ resetAt: estimate.cycleResetsAt })
   const planName =
     snapshot.plan === 'unknown' ? undefined : providerPlanName('mistral', snapshot.plan)
-  const spent = formatUsd(estimate.spentUsd)
-  const ceiling = formatUsd(estimate.estimatedCeilingUsd)
+  const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
+  const spent = money(estimate.spentUsd)
+  const ceiling = money(estimate.estimatedCeilingUsd)
   const title = measured
     ? vendorTooltip(estimate)
     : calibrated
