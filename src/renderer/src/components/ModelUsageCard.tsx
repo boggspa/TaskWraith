@@ -160,6 +160,7 @@ const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
   kimi: 'Kimi',
   cursor: 'Cursor',
   grok: 'Grok',
+  antigravity: 'AGY',
   mistral: 'Mistral'
 }
 const COMPACT_USAGE_ROWS = [
@@ -335,6 +336,19 @@ function compactCellsForEntry(
     return cells
   }
 
+  if (provider === 'antigravity') {
+    // agy /usage reports one remaining% per model family (Gemini only,
+    // post resold-model purge) on Google's five-hour refresh cycle — there
+    // is no separate weekly pool. First window → 5H; a second, if the panel
+    // ever grows one, lands on WK. Tooltips carry the panel's own
+    // "refresh:" text via compactWindowCell, so the truth travels with the
+    // number even if Google changes the cadence.
+    const windows = entry?.windows ?? []
+    assign('fiveHour', windows[0])
+    assign('weekly', windows[1])
+    return cells
+  }
+
   if (provider === 'kimi') {
     assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
     assign('weekly', findCompactWindow(entry, isWeeklyWindow))
@@ -451,13 +465,23 @@ export function CompactModelUsageGrid({
   mistralQuota?: MistralQuotaMeterViewProps
 }) {
   const mistralCell = compactMistralCell(mistralQuota)
-  const providers = mistralCell
-    ? [...COMPACT_USAGE_BASE_PROVIDERS, 'mistral' as const]
-    : COMPACT_USAGE_BASE_PROVIDERS
+  const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
+  // The AGY column appears only once a manual quota refresh has produced a
+  // snapshot (the agy /usage probe is manual-only by doctrine — the
+  // heartbeat serves cache), so non-opted-in users never see the column.
+  const antigravityCells = compactCellsForEntry(
+    'antigravity',
+    entriesByProvider.get('antigravity')
+  )
+  const hasAntigravityCells = Object.keys(antigravityCells).length > 0
+  const providers = [
+    ...COMPACT_USAGE_BASE_PROVIDERS,
+    ...(hasAntigravityCells ? (['antigravity'] as const) : []),
+    ...(mistralCell ? (['mistral'] as const) : [])
+  ]
   const rows = mistralCell
     ? COMPACT_USAGE_ROWS
     : COMPACT_USAGE_ROWS.filter((row) => row.key !== 'monthly')
-  const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
   const cellsByProvider = new Map(
     providers.map((provider) => [
       provider,

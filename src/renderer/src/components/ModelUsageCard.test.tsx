@@ -453,6 +453,36 @@ describe('ModelUsageCard', () => {
     expect(html).not.toMatch(/>\d+%<\/td>/)
   })
 
+  it('adds the AGY column only when an antigravity quota snapshot exists', () => {
+    const withAgy = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [
+              {
+                id: 'gemini-models',
+                label: 'Gemini models',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '85% left · refresh: 2026-07-24T12:00:00.000Z',
+                usedPercent: 15
+              }
+            ]
+          })
+        ]}
+      />
+    )
+    // Manual-only doctrine: the column exists because a manual /usage probe
+    // produced a snapshot; the single Gemini family quota rides the 5H row
+    // (Google's five-hour refresh cycle) with the panel truth in the title.
+    expect(withAgy).toContain('>AGY</th>')
+    expect(withAgy).toContain('Gemini models')
+
+    const withoutAgy = renderToStaticMarkup(<CompactModelUsageGrid quotaEntries={[]} />)
+    expect(withoutAgy).not.toContain('>AGY</th>')
+  })
+
   it('drops the compact Mistral estimate hedge for Mistral-sourced figures', () => {
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
