@@ -295,7 +295,8 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     try {
       if (request.toolName === OLLAMA_TOOL_HELP_NAME) {
         const output = buildOllamaToolDocSection(
-          String(request.arguments.name ?? request.arguments.tool ?? '')
+          String(request.arguments.name ?? request.arguments.tool ?? ''),
+          request.taskWraithMcpProfileId
         )
         return { ok: true, output }
       }

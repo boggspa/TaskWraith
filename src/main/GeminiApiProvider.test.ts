@@ -7,6 +7,7 @@ import {
   tryRunGeminiApi,
   type GeminiApiProviderDeps
 } from './GeminiApiProvider'
+import { gatewayToolDefinitions } from './mcp/McpToolGateway'
 import { AppStore } from './store'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
 import type {
@@ -779,6 +780,27 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     expect(
       filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v5').map((tool) => tool.name)
     ).toEqual(['ensemble_bossman_control'])
+  })
+
+  it('never widens native API declarations with the gateway-v9 hidden retry tool', () => {
+    const tools = [makeMcpTool('read_file'), makeMcpTool('request_tool_permission')]
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v8').map((tool) => tool.name)
+    ).toEqual(['read_file'])
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v9').map((tool) => tool.name)
+    ).toEqual(['read_file'])
+  })
+
+  it('gives a receipted gateway API seat the virtual gateway without declaring retry directly', () => {
+    const tools = [
+      makeMcpTool('read_file'),
+      makeMcpTool('request_tool_permission'),
+      ...gatewayToolDefinitions()
+    ]
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v9').map((tool) => tool.name)
+    ).toEqual(['read_file', 'capability_search', 'capability_invoke'])
   })
 
   it('passes function declarations on every generateContentStream call', async () => {

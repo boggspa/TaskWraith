@@ -124,7 +124,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
 
   it('name-lists the gateway profile goal lifecycle tools', () => {
     const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
-    // Exact gateway-v8 membership includes the lifecycle mutators required by
+    // Exact gateway-v9 membership includes the lifecycle mutators required by
     // long-horizon work; the older goal_update alias remains in the tail.
     expect(prompt).toContain('goal_read')
     expect(prompt).toContain('update_goal')

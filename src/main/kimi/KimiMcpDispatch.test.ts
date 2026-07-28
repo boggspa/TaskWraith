@@ -212,9 +212,12 @@ describe('createKimiMcpDispatch', () => {
     }
   })
 
-  it('makes Sketch direct for v8 Kimi seats without drifting a v7 receipt', async () => {
+  it('keeps Sketch direct for v8 and v9 Kimi seats without drifting a v7 receipt', async () => {
     const listFor = async (
-      taskWraithMcpProfileId: 'taskwraith-gateway-v7' | 'taskwraith-gateway-v8'
+      taskWraithMcpProfileId:
+        | 'taskwraith-gateway-v7'
+        | 'taskwraith-gateway-v8'
+        | 'taskwraith-gateway-v9'
     ) => {
       const dispatch = createKimiMcpDispatch({
         route: { appRunId: 'kimi-run-sketch', appChatId: 'chat-sketch' },
@@ -238,9 +241,11 @@ describe('createKimiMcpDispatch', () => {
 
     const v7 = await listFor('taskwraith-gateway-v7')
     const v8 = await listFor('taskwraith-gateway-v8')
+    const v9 = await listFor('taskwraith-gateway-v9')
     for (const tool of ['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update']) {
       expect(v7).not.toContain(tool)
       expect(v8).toContain(tool)
+      expect(v9).toContain(tool)
     }
   })
 

@@ -793,6 +793,10 @@ export type TaskWraithMcpProfileId =
   // The mesh variant preserves the same posture-selected Mesh direct surface.
   | 'taskwraith-gateway-v8'
   | 'taskwraith-gateway-v8-mesh'
+  // v9 adds one-shot permission retry through capability discovery without
+  // changing either v8 direct birth catalogue.
+  | 'taskwraith-gateway-v9'
+  | 'taskwraith-gateway-v9-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

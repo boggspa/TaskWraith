@@ -3,12 +3,12 @@
 **Platform:** Electron + iOS (behavior applies to any local Ollama-backed participant)
 
 ## What it is
-Local models run through Ollama use the same TaskWraith capability catalog and permission gates as cloud providers, but the top-level tool list stays compact. The current gateway profile advertises **39 direct tools** plus `capability_search` and `capability_invoke`. Specialized tools remain available behind the gateway instead of inflating the model's function list.
+Local models run through Ollama use the same TaskWraith capability catalog and permission gates as cloud providers, but the top-level tool list stays compact. The current gateway profile advertises **41 direct tools** plus `capability_search` and `capability_invoke`. Specialized tools remain available behind the gateway instead of inflating the model's function list.
 
 <!-- screenshot-pending: Provider Tools view showing Ollama's gateway profile and compact direct tool surface -->
 
 ## How the surface is shaped
-1. **Direct surface (39 tools).** Common workspace reads and edits, shell and Git actions, user decisions, goals/todos, delegation, and Ensemble coordination are callable by their own names.
+1. **Direct surface (41 tools).** Common workspace reads and edits, shell and Git actions, user decisions, goals/todos, delegation, and Ensemble coordination are callable by their own names.
 2. **Discovery gateway.** For a specialized capability, the model calls `capability_search` with a short description. The result includes exact names and schemas that are eligible for that run.
 3. **Hidden-tool invocation.** The model passes a discovered name and arguments to `capability_invoke`. The target keeps its original approval policy, workspace and network guards, write locks, budgets, media handling, and audit identity.
 4. **Legacy lookup.** Ollama still accepts `tool_help` for backwards-compatible schema lookup, but new prompts teach `capability_search` followed by `capability_invoke`.

@@ -255,7 +255,7 @@ export function ollamaLocalToolSystemPrompt(
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  // Advertise the immutable gateway-v8 direct set, not the full catalogue. The
+  // Advertise the immutable gateway-v9 direct set, not the full catalogue. The
   // tail stays executable through capability_invoke and is reachable through
   // progressive discovery or legacy tool_help. Read-only receives the shared
   // safe set; Plan additionally receives its approval-gated instruments.

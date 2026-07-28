@@ -11,7 +11,7 @@ Capture replacements are being made against latest-source development apps. Use 
 ## Needs privacy-safe setup
 
 - `settings-and-configuration__devices-tab` — use a demo or redacted pairing state; never publish a live QR code or device credential.
-- `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile (39 direct tools plus capability search/invoke) without exposing local endpoints or paths.
+- `settings-and-configuration__local-model-tool-surface` — show the current Ollama gateway profile (41 direct tools plus capability search/invoke) without exposing local endpoints or paths.
 
 ## Needs live or transient desktop state
 

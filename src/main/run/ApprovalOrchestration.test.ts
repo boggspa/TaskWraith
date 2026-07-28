@@ -5,6 +5,7 @@ import {
   createMainApprovalOrchestration,
   type RequestAgenticServiceApprovalDeps
 } from './ApprovalOrchestration'
+import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
 
 /**
@@ -699,6 +700,125 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     expect(registerMain.mock.calls[0]?.[1]).toMatchObject({
       title: 'Route sub-agent natively?',
       body: 'claude wants a native sub-agent.'
+    })
+  })
+
+  it('(m2c) keeps exact retry detail live while redacting durable canvas_fill values', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+    const secret = '__CANVAS_FILL_RETRY_SECRET__'
+    const registerMain = vi.fn((_approvalId: string, _info: Record<string, unknown>) => {
+      order.push('registerMain')
+      return true
+    })
+    deps.getApprovalService = vi.fn(() => ({
+      registerGeminiTool: vi.fn(),
+      registerMain
+    })) as never
+
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'codex',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest({
+        method: 'toolPermissionRetry',
+        remoteIncomplete: true,
+        preview: {
+          toolName: 'canvas_fill',
+          params: { canvasId: 'canvas-1', ref: 'field-1', value: secret },
+          permissionRetry: {
+            targetArgumentsSha256: 'a'.repeat(64),
+            exactArguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret }
+          }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(registerMain.mock.calls[0]?.[1]).toMatchObject({ remoteIncomplete: true })
+    const durableEventPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls[0]?.[5]
+    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls[0]?.[2]
+    const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2]
+    expect(JSON.stringify(durableEventPayload)).not.toContain(secret)
+    expect(JSON.stringify(durableLedgerPayload)).not.toContain(secret)
+    expect(JSON.stringify(durableEventPayload)).toContain('[redacted]')
+    expect(JSON.stringify(durableEventPayload)).toContain('exactArgumentsRedacted')
+    expect(JSON.stringify(livePayload)).toContain(secret)
+  })
+
+  it('(m2d) redacts nested retry values and their dictionary-testable fingerprint', () => {
+    const secret = '__NESTED_CANVAS_FILL_SECRET__'
+    const durable = redactCanvasFillValueForDurableStorage({
+      permissionRetry: {
+        targetArgumentsSha256: 'b'.repeat(64),
+        arguments: {
+          name: 'request_tool_permission',
+          arguments: {
+            toolName: 'mcp__TaskWraith__canvas_fill',
+            arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret }
+          }
+        }
+      }
+    })
+    expect(JSON.stringify(durable)).not.toContain(secret)
+    expect(durable.permissionRetry.targetArgumentsSha256).toBeUndefined()
+    expect(durable.permissionRetry).toMatchObject({
+      targetArgumentsFingerprintRedacted: true
+    })
+    expect(durable.permissionRetry.arguments.arguments.arguments).toMatchObject({
+      canvasId: 'canvas-1',
+      ref: 'field-1',
+      value: '[redacted]',
+      valueRedacted: true
+    })
+  })
+
+  it('(m2e) redacts JSON-encoded native canvas_fill arguments under prefixed identities', () => {
+    const secret = '__STRINGIFIED_CANVAS_FILL_SECRET__'
+    const durable = redactCanvasFillValueForDurableStorage({
+      toolName: 'mcp__TaskWraith__canvas_fill',
+      arguments: JSON.stringify({ canvasId: 'canvas-1', ref: 'field-1', value: secret })
+    })
+
+    expect(JSON.stringify(durable)).not.toContain(secret)
+    const durableRecord = durable as Record<string, unknown>
+    expect(durableRecord.argumentsRedacted).toBe(true)
+    expect(JSON.parse(String(durableRecord.arguments))).toMatchObject({
+      canvasId: 'canvas-1',
+      ref: 'field-1',
+      value: '[redacted]',
+      valueRedacted: true
+    })
+  })
+
+  it('(m2f) detects a fill target inside a stringified retry envelope', () => {
+    const secret = '__STRINGIFIED_RETRY_CANVAS_FILL_SECRET__'
+    const durable = redactCanvasFillValueForDurableStorage({
+      toolName: 'capability_invoke',
+      params: JSON.stringify({
+        name: 'request_tool_permission',
+        arguments: {
+          toolName: 'canvas_fill',
+          arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret },
+          failure: `permission denied while typing ${secret}`,
+          rationale: secret
+        }
+      })
+    })
+
+    expect(JSON.stringify(durable)).not.toContain(secret)
+    const durableRecord = durable as Record<string, unknown>
+    expect(durableRecord.paramsRedacted).toBe(true)
+    expect(JSON.parse(String(durableRecord.params))).toMatchObject({
+      name: 'request_tool_permission',
+      arguments: {
+        toolName: 'canvas_fill',
+        arguments: { value: '[redacted]', valueRedacted: true },
+        failure: '[redacted canvas_fill narrative]',
+        failureRedacted: true,
+        rationale: '[redacted canvas_fill narrative]',
+        rationaleRedacted: true
+      }
     })
   })
 

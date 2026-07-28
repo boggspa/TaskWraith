@@ -24,9 +24,12 @@ export const TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
 export const TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v8'
 export const TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   'taskwraith-gateway-v8-mesh'
+export const TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v9'
+export const TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v9-mesh'
 /** Current birth profile for a fresh, persistently fenceable gateway session. */
 export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID
 /** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
@@ -78,7 +81,9 @@ export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcp
     value === TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID ||
-    value === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+    value === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -193,7 +198,7 @@ export function resolveTaskWraithMcpProfile(input: {
     if (input.profileReceiptCanPersist !== false) {
       return {
         profileId: input.meshCanvasParticipantCanRequest
-          ? TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+          ? TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
           : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: input.meshCanvasParticipantCanRequest
           ? 'fresh_gateway_mesh_participant'
@@ -209,7 +214,7 @@ export function resolveTaskWraithMcpProfile(input: {
 
   return {
     profileId: input.meshCanvasParticipantCanRequest
-      ? TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+      ? TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
       : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
     source: input.meshCanvasParticipantCanRequest
       ? 'fresh_gateway_mesh_participant'
@@ -436,7 +441,9 @@ export function isGatewayTaskWraithMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -455,7 +462,9 @@ export function isPortableEnsembleControlMcpProfile(
     profileId === TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -465,7 +474,8 @@ export function isMeshCanvasDirectTaskWraithMcpProfile(
 ): boolean {
   return (
     profileId === TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
   )
 }
 
@@ -475,7 +485,9 @@ export function isSketchCanvasDirectTaskWraithMcpProfile(
 ): boolean {
   return (
     profileId === TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
   )
 }
 

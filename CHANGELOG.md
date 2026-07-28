@@ -11,6 +11,7 @@ to answer.
 ### Added
 
 - **Narrow managed-window QA lane (macOS).** A packaged TaskWraith build can now self-launch an exact isolated QA instance after human approval; global Gemini/Cursor MCP registrations stay instance-neutral while each managed child receives its exact route. For a current run-owned macOS 15.2+ window, the user separately chooses Screen Watch observation and View & Control. The native Canvas path is AX-only and lease-bound, refuses secrets, and asks the user to confirm every exact click; it is neither general desktop control nor a sandbox for the process under test.
+- **One-shot tool-permission retry.** Fresh gateway sessions can ask the user to retry one exact failed tool invocation after a permission-like boundary without minting a session or workspace grant. Immutable older profiles stay unchanged; route, workspace, network, external-path, provider-specific, liveness, and dedicated-approval guards are rechecked, and exact review remains desktop-only when a paired device cannot display the full request.
 
 ## 1.9.1 - 2026-07-28
 

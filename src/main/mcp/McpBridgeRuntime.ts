@@ -1701,10 +1701,14 @@ export function handleMcpJsonRpcMessage(
     // run, so non-audit runs never see these tools. tools/call is NOT gated here
     // (audit tools route via the registered audit context in the broker).
     const auditSubset = (deps.env?.TASKWRAITH_MCP_AUDIT ?? process.env.TASKWRAITH_MCP_AUDIT) === '1'
-    const allTools = deps.getMcpToolDefinitions().filter((tool) =>
-      portableEnsembleControl
-        ? tool.name !== 'ensemble_bossman_control'
-        : tool.name !== 'ensemble_control'
+    const allTools = deps.getMcpToolDefinitions().filter(
+      (tool) =>
+        // Permission retry is a gateway-v9 hidden capability. It must never
+        // widen a pre-existing full/core/direct tools/list snapshot.
+        tool.name !== 'request_tool_permission' &&
+        (portableEnsembleControl
+          ? tool.name !== 'ensemble_bossman_control'
+          : tool.name !== 'ensemble_control')
     )
     const directTools =
       safeSubsetOnly || coreSubsetOnly || gatewaySubsetOnly

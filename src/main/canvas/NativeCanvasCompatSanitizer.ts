@@ -61,12 +61,25 @@ function isToolEnvelope(value: JsonRecord): boolean {
   )
 }
 
+function permissionRetryTarget(value: JsonRecord): CanvasMcpToolName | null {
+  for (const key of ['arguments', 'parameters', 'params', 'input'] as const) {
+    const request = recordFromMaybeJson(value[key])
+    if (!request || typeof request.toolName !== 'string') continue
+    const canonical = canonicalTaskWraithToolName(request.toolName)
+    if (isCanvasMcpToolName(canonical)) return canonical
+  }
+  return null
+}
+
 function gatewayTarget(value: JsonRecord): CanvasMcpToolName | null {
   for (const key of ['arguments', 'parameters', 'params', 'input'] as const) {
     const container = recordFromMaybeJson(value[key])
     if (!container || typeof container.name !== 'string') continue
     const canonical = canonicalTaskWraithToolName(container.name)
     if (isCanvasMcpToolName(canonical)) return canonical
+    if (canonical !== 'request_tool_permission') continue
+    const retryTarget = permissionRetryTarget(container)
+    if (retryTarget) return retryTarget
   }
   return null
 }
@@ -92,6 +105,10 @@ export function nativeCanvasCompatToolName(value: unknown, depth = 0): CanvasMcp
       if (typeof value[key] !== 'string') continue
       const canonical = canonicalTaskWraithToolName(value[key] as string)
       if (isCanvasMcpToolName(canonical)) return canonical
+      if (canonical === 'request_tool_permission') {
+        const target = permissionRetryTarget(value)
+        if (target) return target
+      }
       if (canonical === 'capability_invoke') {
         const target = gatewayTarget(value)
         if (target) return target

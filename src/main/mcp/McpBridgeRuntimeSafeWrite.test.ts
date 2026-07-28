@@ -1089,6 +1089,35 @@ describe('MCP bridge stream writes', () => {
     expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file', 'apply_patch'])
   })
 
+  it('does not widen legacy direct catalogues with the gateway-v9 permission retry tool', () => {
+    const chunks: string[] = []
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'request_tool_permission' }
+        ],
+        stdout: {
+          write: vi.fn((chunk: string) => {
+            chunks.push(chunk)
+            return true
+          })
+        } as never
+      },
+      '/tmp/taskwraith.sock',
+      'token-1',
+      { jsonrpc: '2.0', id: 91, method: 'tools/list' },
+      'line'
+    )
+
+    const response = JSON.parse(chunks.join('').trim()) as {
+      result: { tools: Array<{ name: string }> }
+    }
+    expect(response.result.tools.map((tool) => tool.name)).toEqual(['read_file'])
+  })
+
   it('advertises only the gateway direct set plus gateway and audit tools', () => {
     const chunks: string[] = []
     const stream = {

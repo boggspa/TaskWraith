@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 
 import { buildOllamaToolDocSection, buildOllamaToolsMarkdown } from './OllamaToolsDoc'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
-import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 
 const TOOLS_MD = resolve(__dirname, '../../../resources/Tools.md')
 const generated = buildOllamaToolsMarkdown()
@@ -46,7 +46,7 @@ describe('resources/Tools.md', () => {
   })
 
   it('uses direct examples only for the compact profile and gateway examples for the tail', () => {
-    const directNames = new Set<string>(GATEWAY_V8_MCP_DIRECT_TOOLS)
+    const directNames = new Set<string>(GATEWAY_V9_MCP_DIRECT_TOOLS)
     for (const name of TASKWRAITH_MCP_TOOLS) {
       expect(generated).toContain(
         directNames.has(name)
@@ -71,6 +71,14 @@ describe('resources/Tools.md', () => {
     )
     expect(section).toContain('under Plan and every other posture where it is permitted')
     expect(section).not.toContain('unless granted')
+  })
+
+  it('describes permission retry as elicitation rather than a pre-existing grant', () => {
+    const section = buildOllamaToolDocSection('request_tool_permission')
+    expect(section).toContain(
+      '- Access: permission elicitation — callable under Read-Only/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
+    )
+    expect(section).not.toContain('denied under Read-Only/Plan')
   })
 
   it.each(['canvas_screenshot', 'canvas_eval'])(
@@ -108,5 +116,24 @@ describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {
     const section = buildOllamaToolDocSection('not_a_real_tool')
     expect(section).toContain('Unknown tool "not_a_real_tool"')
     expect(section).toContain('write_file')
+  })
+
+  it('keeps the retry schema hidden from gateway-v8 help and visible to gateway-v9', () => {
+    const v8List = buildOllamaToolDocSection('', 'taskwraith-gateway-v8')
+    const v8Lookup = buildOllamaToolDocSection(
+      'request_tool_permission',
+      'taskwraith-gateway-v8'
+    )
+    const v9List = buildOllamaToolDocSection('', 'taskwraith-gateway-v9')
+    const v9Lookup = buildOllamaToolDocSection(
+      'request_tool_permission',
+      'taskwraith-gateway-v9'
+    )
+
+    expect(v8List).not.toContain('request_tool_permission')
+    expect(v8Lookup).toContain('Unknown tool "request_tool_permission"')
+    expect(v8Lookup).not.toContain('## request_tool_permission')
+    expect(v9List).toContain('request_tool_permission')
+    expect(v9Lookup).toContain('## request_tool_permission')
   })
 })

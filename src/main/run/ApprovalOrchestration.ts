@@ -28,42 +28,11 @@ import {
   canvasEvalApprovalPayloadForDurableStorage,
   type CanvasEvalApprovalReceipt
 } from '../canvas/CanvasEvalAudit'
+import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
+import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
-}
-
-/**
- * Strip `canvas_fill`'s typed value from a DURABLE approval payload.
- *
- * The canvas preview passes the tool's raw args through as `preview.params` so
- * the human can see what is about to be typed — correct for the live prompt, but
- * that payload is also written to the durable run-event store and the approval
- * ledger, so whatever the agent typed was retained there indefinitely. The
- * catalogue tells models the typed value is never recorded; that was true of the
- * canvas audit log (which deliberately logs only the target) and not of this
- * path.
- *
- * Same live-vs-durable split canvas_eval already uses: the human sees the real
- * thing in a transient prompt, the permanent record keeps only the shape of it.
- * The key is preserved rather than deleted so a reader can still tell a value
- * was supplied.
- */
-function redactCanvasFillValueForDurableStorage<T>(payload: T): T {
-  if (!isRecord(payload)) return payload
-  const redactParams = (node: unknown): unknown => {
-    if (!isRecord(node)) return node
-    if (node.toolName !== 'canvas_fill') return node
-    if (!isRecord(node.params) || typeof node.params.value !== 'string') return node
-    return {
-      ...node,
-      params: { ...node.params, value: '[redacted]', valueRedacted: true }
-    }
-  }
-  const next: Record<string, unknown> = { ...payload }
-  if (isRecord(next.preview)) next.preview = redactParams(next.preview)
-  if (isRecord(next.params)) next.params = redactParams(next.params)
-  return next as T
 }
 
 /**
@@ -253,7 +222,8 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
       preview?: unknown
       workspacePath?: string
       actions?: AgentApprovalAction[]
-      resolveAction?: (action: AgentApprovalAction) => void
+      remoteIncomplete?: boolean
+      resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
     }
   ): Promise<boolean> => {
     if (deps.isApprovalAdmissionBlocked?.(route?.appRunId, request.workspacePath, route?.appChatId))
@@ -280,6 +250,7 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         // below, not from this registration.
         title: request.title,
         body: request.body,
+        remoteIncomplete: request.remoteIncomplete,
         allowedActions: actions,
         resolveAction: request.resolveAction,
         resolve: resolveApproval
@@ -308,15 +279,18 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         preview: { ...(isRecord(request.preview) ? request.preview : {}), actions },
         actions
       }
+      const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
+        toolPermissionRetryApprovalPayloadForDurableStorage(approvalPayload)
+      )
       deps.appendDurableRunEventForRoute(
         provider,
         routed,
         'approval_request',
         'control',
         request.title,
-        approvalPayload
+        durableApprovalPayload
       )
-      deps.recordApprovalLedgerRequest(provider, routed, approvalPayload, {
+      deps.recordApprovalLedgerRequest(provider, routed, durableApprovalPayload, {
         workspacePath: request.workspacePath,
         metadata: { mainAuthority: true }
       })
@@ -345,6 +319,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       runId?: string
       forcePrompt?: boolean
       externalPathDetection?: PendingExternalPathDetection
+      resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
       /**
        * Main-process-only receipt hook. It exposes the generated prompt id to
        * the executor so signed-elevated operations can bind execution to the
@@ -721,6 +696,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         externalPathDetection,
         requestOnly,
         allowedActions: actions,
+        resolveAction: request.resolveAction,
         resolve: resolveApproval
       })
       if (registered === false) {

@@ -552,6 +552,7 @@ describe('ApprovalService — lifecycle cancellation', () => {
     const mainResolve = vi.fn()
     const mainResolveAction = vi.fn()
     const toolResolve = vi.fn()
+    const toolResolveAction = vi.fn()
     const kimiChild = { kill: vi.fn() } as never
 
     expect(
@@ -567,7 +568,8 @@ describe('ApprovalService — lifecycle cancellation', () => {
         provider: 'claude',
         service: 'mcpTools',
         runId: 'r-1',
-        resolve: toolResolve
+        resolve: toolResolve,
+        resolveAction: toolResolveAction
       })
     ).toBe(true)
     expect(
@@ -610,8 +612,9 @@ describe('ApprovalService — lifecycle cancellation', () => {
       kimi: 0,
       hostCommand: 0
     })
-    expect(mainResolveAction).toHaveBeenCalledWith('cancel')
+    expect(mainResolveAction).toHaveBeenCalledWith('cancel', 'system')
     expect(mainResolve).toHaveBeenCalledWith(false)
+    expect(toolResolveAction).toHaveBeenCalledWith('cancel', 'system')
     expect(toolResolve).toHaveBeenCalledWith(false)
     expect(spies.respondToKimiWireRequest).toHaveBeenCalledWith(
       kimiChild,
@@ -867,9 +870,26 @@ describe('ApprovalService — resolve dispatch', () => {
     const ok = await svc.resolve('native-1', 'useProviderNative')
 
     expect(ok).toBe(true)
-    expect(resolveAction).toHaveBeenCalledWith('useProviderNative')
+    expect(resolveAction).toHaveBeenCalledWith('useProviderNative', 'user')
     expect(spies.permissionService.isApprovedAction).not.toHaveBeenCalledWith('useProviderNative')
     expect(resolveFn).toHaveBeenCalledWith(true)
+  })
+
+  it('Gemini-tool approvals report the exact action and decision source to the caller', async () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolveAction = vi.fn()
+    svc.registerGeminiTool('tool-decline-1', {
+      provider: 'claude',
+      service: 'fileChanges',
+      runId: 'r-1',
+      resolveAction,
+      resolve: vi.fn()
+    })
+
+    await svc.resolve('tool-decline-1', 'decline', { decisionSource: 'user' })
+
+    expect(resolveAction).toHaveBeenCalledWith('decline', 'user')
   })
 
   it('Main: TaskWraith sub-thread action resolves false so provider-native tool is denied', async () => {
@@ -1541,10 +1561,11 @@ describe('paired-device approval projection', () => {
     expect(card?.actions).toContain('accept')
   })
 
-  it('withholds accept when the device cannot see the whole request', () => {
+  it('withholds and rejects remote accept when the device cannot see the whole request', async () => {
     // Approving what you cannot see is the thing being prevented.
     const { deps } = makeDeps()
     const service = new ApprovalService(deps)
+    const resolve = vi.fn()
     service.registerGeminiTool('a-4', {
       provider: 'claude',
       service: 'mcpTools',
@@ -1552,11 +1573,37 @@ describe('paired-device approval projection', () => {
       remoteBody: 'To: one@example.com, two@example.com…',
       remoteIncomplete: true,
       allowedActions: ['accept', 'decline', 'cancel'],
-      resolve: () => {}
+      resolve
     })
     const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-4')
     expect(card?.actions).toEqual(['decline', 'cancel'])
     expect(card?.body).toContain('open TaskWraith on the Mac')
+    expect(await service.resolve('a-4', 'accept', { origin: 'remote' })).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it('keeps exact main-process retry approvals decline-only on paired devices', async () => {
+    const { deps, spies } = makeDeps()
+    const service = new ApprovalService(deps)
+    const resolve = vi.fn()
+    service.registerMain('retry-1', {
+      provider: 'ollama',
+      runId: 'run-1',
+      title: 'Allow Ollama to retry write_file once?',
+      body: 'The exact invocation is available on the desktop.',
+      remoteIncomplete: true,
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve
+    })
+
+    const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'retry-1')
+    expect(card?.actions).toEqual(['decline', 'cancel'])
+    expect(card?.body).toContain('review the exact invocation')
+    expect(await service.resolve('retry-1', 'accept', { origin: 'remote' })).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('desktop-only'))
+    expect(await service.resolve('retry-1', 'decline', { origin: 'remote' })).toBe(true)
+    expect(resolve).toHaveBeenCalledWith(false)
   })
 
   it('still describes an approval that carries no prompt text', () => {

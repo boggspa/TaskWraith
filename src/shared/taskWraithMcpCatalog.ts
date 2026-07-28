@@ -180,6 +180,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   // Critical for vague prompts, mid-task decision forks, and plan-mode
   // clarification alike. Universally auto-allowed.
   'ask_user_question',
+  // Exact, one-shot escalation after an apparent permission-boundary failure.
+  // The tool itself is auto-allowed so a restricted seat can reach the existing
+  // approval modal; it performs no target action unless the human accepts.
+  'request_tool_permission',
   // Persistent thread goal lifecycle. The user owns objective set/clear via
   // /goal and composer controls; agents may read and update lifecycle only.
   'goal_read',

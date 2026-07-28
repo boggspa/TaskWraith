@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { READ_ONLY_MCP_ADVERTISE_TOOLS } from '../mcp/McpAutoAllowedTools'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
-import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import {
   OLLAMA_TOOL_HELP_NAME,
   buildOllamaOpeningMessages,
@@ -16,10 +16,10 @@ describe('Ollama capability gateway exposure', () => {
   it('advertises both gateway functions with exact bounded schemas', () => {
     const definitions = ollamaNativeToolDefinitions('provider_parity')
     const names = definitions.map((definition) => definition.function.name)
-    expect(names.slice(0, GATEWAY_V8_MCP_DIRECT_TOOLS.length)).toEqual([
-      ...GATEWAY_V8_MCP_DIRECT_TOOLS
+    expect(names.slice(0, GATEWAY_V9_MCP_DIRECT_TOOLS.length)).toEqual([
+      ...GATEWAY_V9_MCP_DIRECT_TOOLS
     ])
-    expect(names).toHaveLength(GATEWAY_V8_MCP_DIRECT_TOOLS.length + 3)
+    expect(names).toHaveLength(GATEWAY_V9_MCP_DIRECT_TOOLS.length + 3)
     expect(names).toEqual(expect.arrayContaining([...CAPABILITY_GATEWAY_TOOL_NAMES]))
 
     const search = definitions.find(
@@ -68,7 +68,7 @@ describe('Ollama capability gateway exposure', () => {
     )
     const safeNames = new Set(READ_ONLY_MCP_ADVERTISE_TOOLS)
     expect(names).toEqual([
-      ...GATEWAY_V8_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name)),
+      ...GATEWAY_V9_MCP_DIRECT_TOOLS.filter((name) => safeNames.has(name)),
       ...CAPABILITY_GATEWAY_TOOL_NAMES,
       OLLAMA_TOOL_HELP_NAME
     ])

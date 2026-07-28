@@ -11,6 +11,7 @@ import {
   canvasEvalApprovalPayloadForDurableStorage,
   createCanvasEvalApprovalReceipt
 } from '../canvas/CanvasEvalAudit'
+import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 
 export interface ApprovalRouteContext {
   session?: {
@@ -134,11 +135,8 @@ export class AuditService {
         service === 'canvasEval' && typeof params?.script === 'string'
           ? createCanvasEvalApprovalReceipt(params.script, approvalId)
           : undefined
-      const durableRequest = canvasEvalApprovalPayloadForDurableStorage(
-        service,
-        request,
-        approvalId,
-        canvasEvalApproval
+      const durableRequest = redactCanvasFillValueForDurableStorage(
+        canvasEvalApprovalPayloadForDurableStorage(service, request, approvalId, canvasEvalApproval)
       )
       const metadataWithPosture = mergePermissionPostureMetadata(
         metadata,

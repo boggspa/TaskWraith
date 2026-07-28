@@ -92,6 +92,8 @@ import type { RunManager, RunSessionStatus } from './RunManager'
 import { buildGeminiFunctionDeclarations } from './GeminiApiToolDeclarations'
 import { buildGeminiTurnContents, type GeminiContentPart } from './GeminiApiHistoryAdapter'
 import { isPortableEnsembleControlMcpProfile } from './mcp/McpSessionProfileFence'
+import { taskWraithMcpAdvertisedToolNamesForProfile } from './mcp/McpToolProfiles'
+import { gatewayToolDefinitions } from './mcp/McpToolGateway'
 import { normalizePortableEnsembleControlArguments } from './TaskWraithMcpTools'
 
 /** Hard cap on how many tool-call rounds we permit inside a single
@@ -155,10 +157,19 @@ export function filterGeminiApiMcpToolsForProfile(
   profileId?: TaskWraithMcpProfileId | null
 ): GeminiApiMcpToolDescriptor[] {
   const portableEnsembleControl = isPortableEnsembleControlMcpProfile(profileId)
-  return definitions.filter((tool) =>
-    portableEnsembleControl
-      ? tool.name !== 'ensemble_bossman_control'
-      : tool.name !== 'ensemble_control'
+  const advertisedNames = profileId
+    ? new Set<string>(taskWraithMcpAdvertisedToolNamesForProfile(profileId))
+    : null
+  return definitions.filter(
+    (tool) =>
+      // This is hidden behind capability discovery in gateway-v9. Gemini API
+      // currently declares canonical tools directly, so advertising it here
+      // would silently widen every older receipted profile.
+      tool.name !== 'request_tool_permission' &&
+      (!advertisedNames || (typeof tool.name === 'string' && advertisedNames.has(tool.name))) &&
+      (portableEnsembleControl
+        ? tool.name !== 'ensemble_bossman_control'
+        : tool.name !== 'ensemble_control')
   )
 }
 
@@ -1088,8 +1099,14 @@ export async function tryRunGeminiApi(
     // shape ONCE per run (the tool list is stable across rounds, and the
     // converter is pure so the cost is trivial anyway). Empty array
     // disables function calling — model can only emit text.
+    const mcpDefinitions = [
+      ...deps.getMcpToolDefinitions(),
+      ...(payload.taskWraithMcpProfileId?.startsWith('taskwraith-gateway-')
+        ? gatewayToolDefinitions()
+        : [])
+    ]
     const mcpTools = filterGeminiApiMcpToolsForProfile(
-      deps.getMcpToolDefinitions(),
+      mcpDefinitions,
       payload.taskWraithMcpProfileId
     )
     const functionDeclarations = mcpTools.length ? buildGeminiFunctionDeclarations(mcpTools) : []

@@ -100,12 +100,14 @@ const visibleCodePoint = (character: string): string => {
   const isVariationSelector =
     (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
     (codePoint >= 0xe0100 && codePoint <= 0xe01ef)
+  const isUnicodeTag = codePoint >= 0xe0000 && codePoint <= 0xe007f
   if (
     !reviewGrammarName &&
     !controlName &&
     !isControl &&
     !isUnpairedSurrogate &&
-    !isVariationSelector
+    !isVariationSelector &&
+    !isUnicodeTag
   ) {
     return character
   }
@@ -116,6 +118,8 @@ const visibleCodePoint = (character: string): string => {
       ? 'UNPAIRED SURROGATE'
       : isVariationSelector
         ? 'VARIATION SELECTOR'
+        : isUnicodeTag
+          ? 'UNICODE TAG'
         : 'CONTROL')
   return `\u27e8${label} U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}\u27e9`
 }
@@ -176,6 +180,44 @@ export const formatApprovalFieldForReview = (value: string): string => {
   return output
 }
 
+const controlVisibleJsonValue = (value: unknown, ancestors: Set<object>): unknown => {
+  if (typeof value === 'string') return formatApprovalFieldForReview(value)
+  if (!value || typeof value !== 'object') return value
+  if (ancestors.has(value)) throw new TypeError('Circular approval arguments')
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) {
+      return value.map((entry) => controlVisibleJsonValue(entry, ancestors))
+    }
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+        .map(([key, entry]) => [
+          formatApprovalFieldForReview(key),
+          controlVisibleJsonValue(entry, ancestors)
+        ])
+    )
+  } finally {
+    ancestors.delete(value)
+  }
+}
+
+/**
+ * Canonical JSON for the transient one-shot retry review.
+ *
+ * Only argument-owned strings are made control-visible. JSON's generated line
+ * breaks and indentation stay intact, so a reviewer can distinguish structure
+ * from a newline, bidi override, or zero-width character inside an argument.
+ */
+export const formatToolPermissionRetryExactArgumentsForReview = (value: unknown): string => {
+  try {
+    const formatted = JSON.stringify(controlVisibleJsonValue(value, new Set<object>()), null, 2)
+    return typeof formatted === 'string' ? formatted : ''
+  } catch {
+    return ''
+  }
+}
+
 /** Outlook approval fields, in the order a reviewer reads them. */
 const OUTLOOK_FIELD_ROWS: ReadonlyArray<{ key: string; label: string }> = [
   { key: 'to', label: 'To' },
@@ -203,6 +245,24 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
   const canvasEvalReview = canvasEvalScript
     ? formatCanvasEvalScriptForReview(canvasEvalScript)
     : ''
+  const permissionRetry =
+    preview.permissionRetry &&
+    typeof preview.permissionRetry === 'object' &&
+    !Array.isArray(preview.permissionRetry)
+      ? (preview.permissionRetry as Record<string, unknown>)
+      : null
+  const permissionRetryExactArgumentsReview =
+    permissionRetry && Object.prototype.hasOwnProperty.call(permissionRetry, 'exactArguments')
+      ? formatToolPermissionRetryExactArgumentsForReview(permissionRetry.exactArguments)
+      : ''
+  const permissionRetryTargetToolName =
+    typeof permissionRetry?.targetToolName === 'string'
+      ? formatApprovalFieldForReview(permissionRetry.targetToolName)
+      : ''
+  const permissionRetryArgumentsSha256 =
+    typeof permissionRetry?.targetArgumentsSha256 === 'string'
+      ? formatApprovalFieldForReview(permissionRetry.targetArgumentsSha256)
+      : ''
   const taskPreview = typeof preview.task === 'string' ? preview.task : ''
   const patchPreview =
     typeof preview.patchPreview === 'string'
@@ -264,6 +324,7 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
     cwd ||
     toolName ||
     canvasEvalScript ||
+    permissionRetryExactArgumentsReview ||
     launchContextPreview ||
     taskPreview ||
     patchPreview ||
@@ -307,6 +368,25 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
           <small>
             Angle-bracket tokens are literal invisible/control characters in the script that will
             execute.
+          </small>
+        </div>
+      )}
+      {permissionRetryExactArgumentsReview && (
+        <div className="agent-approval-preview-block canvas-eval-exact-review tool-permission-retry-exact-review">
+          <span>Exact arguments for this one-shot retry (control-visible)</span>
+          {(permissionRetryTargetToolName || permissionRetryArgumentsSha256) && (
+            <div className="canvas-eval-review-metadata">
+              {permissionRetryTargetToolName && <>Target: {permissionRetryTargetToolName}</>}
+              {permissionRetryTargetToolName && permissionRetryArgumentsSha256 && <>{' \u00b7 '}</>}
+              {permissionRetryArgumentsSha256 && (
+                <>Arguments SHA-256: {permissionRetryArgumentsSha256}</>
+              )}
+            </div>
+          )}
+          <pre dir="ltr">{permissionRetryExactArgumentsReview}</pre>
+          <small>
+            JSON line breaks and indentation show structure. Angle-bracket tokens identify exact
+            invisible or control characters in argument keys and values.
           </small>
         </div>
       )}

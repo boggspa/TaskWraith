@@ -2,9 +2,14 @@ import {
   createTaskWraithMcpToolDefinitions,
   type TaskWraithMcpToolDefinition
 } from '../McpToolCatalog'
-import { GATEWAY_V8_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
+import {
+  filterTaskWraithMcpToolDefinitionsForProfile,
+  GATEWAY_V9_MCP_DIRECT_TOOLS,
+  taskWraithMcpAdvertisedToolNamesForProfile
+} from '../mcp/McpToolProfiles'
+import type { TaskWraithMcpProfileId } from '../store/types'
 
-const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_V8_MCP_DIRECT_TOOLS)
+const OLLAMA_DIRECT_TOOL_NAMES: ReadonlySet<string> = new Set(GATEWAY_V9_MCP_DIRECT_TOOLS)
 
 /**
  * Reproducible generator for `resources/Tools.md` — a full, drift-checked
@@ -110,6 +115,9 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   if (def.name === 'canvas_eval') {
     return 'signed-elevated — denied under Read-Only; approval-gated under Plan and prompts every permitted call with exact desktop review'
   }
+  if (def.name === 'request_tool_permission') {
+    return 'permission elicitation — callable under Read-Only/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply'
+  }
   if (annotations.readOnlyHint === true) return 'read-only (no approval needed)'
   if (annotations.destructiveHint === true) {
     return 'mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)'
@@ -151,7 +159,7 @@ export function buildOllamaToolsMarkdown(): string {
     '{"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}',
     '```',
     '',
-    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_V8_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
+    `The ${defs.length} tools below are the full TaskWraith surface. ${GATEWAY_V9_MCP_DIRECT_TOOLS.length} common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.`,
     ''
   ]
   for (const def of defs) {
@@ -169,9 +177,21 @@ export function buildOllamaToolsMarkdown(): string {
  * text-protocol local model fetch a tool's exact arguments on demand instead of
  * guessing — without reading the whole doc (which read_file can't reach anyway).
  */
-export function buildOllamaToolDocSection(name: string): string {
+export function buildOllamaToolDocSection(
+  name: string,
+  profileId?: TaskWraithMcpProfileId | null
+): string {
   const wanted = String(name || '').trim()
-  const defs = createTaskWraithMcpToolDefinitions()
+  const allDefinitions = createTaskWraithMcpToolDefinitions()
+  const defs = profileId
+    ? profileId.startsWith('taskwraith-gateway-')
+      ? filterTaskWraithMcpToolDefinitionsForProfile(profileId, allDefinitions)
+      : allDefinitions.filter((definition) =>
+          (taskWraithMcpAdvertisedToolNamesForProfile(profileId) as readonly string[]).includes(
+            definition.name
+          )
+        )
+    : allDefinitions
   const allNames = defs.map((entry) => entry.name).join(', ')
   if (!wanted) {
     return `All ${defs.length} TaskWraith tools (prefer capability_search; call tool_help with an exact name for its schema, then use capability_invoke for hidden tools): ${allNames}.`

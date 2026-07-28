@@ -316,7 +316,9 @@ describe('ProviderLaunchAuthorityDigest', () => {
       'taskwraith-gateway-v7',
       'taskwraith-gateway-v7-mesh',
       'taskwraith-gateway-v8',
-      'taskwraith-gateway-v8-mesh'
+      'taskwraith-gateway-v8-mesh',
+      'taskwraith-gateway-v9',
+      'taskwraith-gateway-v9-mesh'
     ] as const
     const digests = new Set<string>()
     for (const profileId of profileIds) {
@@ -328,6 +330,21 @@ describe('ProviderLaunchAuthorityDigest', () => {
       digests.add(providerLaunchAuthorityDigest(input))
     }
     expect(digests.size).toBe(profileIds.length)
+  })
+
+  it('accepts the current gateway-v9 tool-surface identities', () => {
+    for (const taskWraithMcpProfileId of [
+      'taskwraith-gateway-v9',
+      'taskwraith-gateway-v9-mesh'
+    ] as const) {
+      const current = {
+        ...codex,
+        tools: { ...codex.tools, taskWraithMcpProfileId }
+      }
+      expect(buildProviderLaunchAuthority(current).tools.taskWraithMcpProfileId).toBe(
+        taskWraithMcpProfileId
+      )
+    }
   })
 
   it('is deterministic across object insertion order', () => {

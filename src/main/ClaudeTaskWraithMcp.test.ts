@@ -11,8 +11,8 @@ import {
 import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V8_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
+  GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
@@ -23,7 +23,7 @@ import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
@@ -145,8 +145,8 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args).not.toContain('--core-subset')
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V8_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V8_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(GATEWAY_V9_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_V9_MCP_ADVERTISE_TOOLS) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
@@ -162,7 +162,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
   it('adds direct Mesh Canvas tools to the fresh non-denied participant profile', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
-      profileId: TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+      profileId: TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
     })
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
@@ -172,9 +172,9 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(
-      TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID
     )
-    expect(allowed).toHaveLength(GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS.length * 2)
+    expect(allowed).toHaveLength(GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS.length * 2)
     expect(allowed).toContain('mesh_scene_present')
     expect(allowed).toContain('mcp__TaskWraith__mesh_scene_present')
     expect(allowed).toContain('canvas_sketch_update')

@@ -80,8 +80,10 @@ export interface PendingMainApproval {
   /** Prompt text, so a paired device sees which request it is deciding. */
   title?: string
   body?: string
+  /** Exact request detail is available only in the desktop preview. */
+  remoteIncomplete?: boolean
   allowedActions?: AgentApprovalAction[]
-  resolveAction?: (action: AgentApprovalAction) => void
+  resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
   resolve: (allowed: boolean) => void
 }
 
@@ -118,6 +120,7 @@ export interface PendingGeminiToolApproval {
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
   allowedActions?: AgentApprovalAction[]
+  resolveAction?: (action: AgentApprovalAction, decisionSource: 'user' | 'system') => void
   resolve: (allowed: boolean) => void
 }
 
@@ -508,14 +511,21 @@ export class ApprovalService {
   listProjectionCards(): MobileApprovalCard[] {
     const cards: MobileApprovalCard[] = []
     for (const [approvalId, info] of this.pendingMain.entries()) {
+      const withholdAccept = info.remoteIncomplete === true
       cards.push(
         this.projectApprovalCard(approvalId, info.provider, {
           workspacePath: info.workspacePath,
           runId: info.runId,
           threadId: info.appChatId,
           title: info.title || 'Approval requested',
-          body: info.body || 'Main-process approval is waiting for a decision.',
-          allowedActions: info.allowedActions
+          body: withholdAccept
+            ? `${info.body || 'Main-process approval is waiting for a decision.'}\n\nOpen TaskWraith on the Mac to review the exact invocation before approving. You may decline from this device.`
+            : info.body || 'Main-process approval is waiting for a decision.',
+          allowedActions: withholdAccept
+            ? (info.allowedActions || []).filter(
+                (action) => action === 'decline' || action === 'cancel'
+              )
+            : info.allowedActions
         })
       )
     }
@@ -769,6 +779,18 @@ export class ApprovalService {
     const decisionSource = options?.decisionSource ?? 'user'
     const extraMetadata = options?.extraMetadata ?? {}
 
+    const remotelyAcceptedIncompleteRequest =
+      options?.origin === 'remote' &&
+      approvalActionResumesExecution(action) &&
+      (this.pendingMain.get(requestId)?.remoteIncomplete === true ||
+        this.pendingGeminiTool.get(requestId)?.remoteIncomplete === true)
+    if (remotelyAcceptedIncompleteRequest) {
+      this.deps.log(
+        `[ApprovalService] blocked remote acceptance of incomplete approval ${requestId}; exact review is desktop-only`
+      )
+      return false
+    }
+
     const remotelyAcceptedCanvasEval =
       options?.origin === 'remote' &&
       (this.pendingGeminiTool.get(requestId)?.service === 'canvasEval' ||
@@ -836,7 +858,7 @@ export class ApprovalService {
       })
       this.pendingMain.delete(requestId)
       this.deps.runManager.clearApproval(requestId)
-      pendingMain.resolveAction?.(action)
+      pendingMain.resolveAction?.(action, decisionSource)
       const allowed =
         action === 'useProviderNative'
           ? true
@@ -915,6 +937,7 @@ export class ApprovalService {
         action: resolvedAction,
         ...(pendingGeminiTool.surfaceId ? { surfaceId: pendingGeminiTool.surfaceId } : {})
       })
+      pendingGeminiTool.resolveAction?.(resolvedAction, decisionSource)
       pendingGeminiTool.resolve(allowed)
       return true
     }
@@ -1326,7 +1349,7 @@ export class ApprovalService {
         appChatId: pending.appChatId,
         workspacePath: pending.workspacePath
       })
-      pending.resolveAction?.('cancel')
+      pending.resolveAction?.('cancel', 'system')
       pending.resolve(false)
     }
     for (const [approvalId, pending] of [...this.pendingGeminiTool]) {
@@ -1344,6 +1367,7 @@ export class ApprovalService {
         appRunId: pending.runId,
         workspacePath: pending.workspacePath
       })
+      pending.resolveAction?.('cancel', 'system')
       pending.resolve(false)
     }
     for (const [approvalId, pending] of [...this.pendingKimi]) {

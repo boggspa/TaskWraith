@@ -3176,6 +3176,49 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'request_tool_permission',
+      description:
+        'After a TaskWraith tool or native tool fails because of an apparent permission, policy, sandbox, or read-only boundary, ask the user to allow one exact retry. ' +
+        'Do not use this after the user explicitly declined or cancelled an approval, for ordinary tool errors, or speculatively before a failure. ' +
+        'Pass the exact failed TaskWraith tool name and arguments plus the failure text. TaskWraith validates the request, shows its existing approval modal, consumes acceptance immediately, and returns the retried target tool result. ' +
+        'The approval is one-shot: it does not create a session or workspace grant, and route, workspace, network, external-path, tool-specific, and liveness guards remain enforced.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: true
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          toolName: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 120,
+            description: 'Exact canonical TaskWraith tool name that failed.'
+          },
+          arguments: {
+            type: 'object',
+            description: 'Exact arguments from the failed invocation.'
+          },
+          failure: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 4000,
+            description: 'The permission-like error or tool output from the failed invocation.'
+          },
+          rationale: {
+            type: 'string',
+            maxLength: 600,
+            description:
+              'Optional concise explanation of why this exact retry is needed to continue.'
+          }
+        },
+        required: ['toolName', 'arguments', 'failure'],
+        additionalProperties: false
+      }
+    },
+    {
       name: 'goal_read',
       description:
         'Read the active TaskWraith thread goal. A goal is the persistent objective and stopping condition for this chat; it is separate from todo_write checklists.',

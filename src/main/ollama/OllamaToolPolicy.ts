@@ -180,3 +180,42 @@ export function assertOllamaProtectedWritePaths(
   }
 }
 
+/**
+ * Apply Ollama's two non-grantable tool guards as one boundary. Callers that
+ * route through a wrapper or an approved retry must invoke this again for the
+ * resolved target immediately before dispatch.
+ */
+export function assertOllamaResolvedToolPolicy(
+  toolName: string,
+  args: Record<string, unknown>,
+  context: WorkspaceToolContext,
+  cwd: string
+): void {
+  assertOllamaMutationIntent(toolName, args)
+  assertOllamaProtectedWritePaths(toolName, args, context, cwd)
+}
+
+export function ollamaResolvedToolPolicyError(input: {
+  toolName: string
+  args: Record<string, unknown>
+  workspacePath: string
+  appChatId?: string
+}): string | null {
+  const context: WorkspaceToolContext = {
+    scope: 'workspace',
+    cwd: input.workspacePath,
+    workspacePath: input.workspacePath,
+    appChatId: input.appChatId
+  }
+  try {
+    assertOllamaResolvedToolPolicy(
+      input.toolName,
+      input.args,
+      context,
+      input.workspacePath
+    )
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}

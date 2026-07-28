@@ -245,6 +245,42 @@ describe('AuditService', () => {
     })
   })
 
+  it('redacts canvas_fill values from automatic allow and deny ledger decisions', () => {
+    const { deps, records } = makeDeps()
+    const service = new AuditService(deps)
+    const secret = '__AUTO_CANVAS_FILL_SECRET__'
+
+    for (const decision of ['autoDeny', 'autoAllow'] as const) {
+      service.recordAutomaticApprovalDecision(
+        'codex',
+        { appRunId: 'run-1', appChatId: 'chat-1' },
+        'canvasInteraction',
+        '/workspace',
+        {
+          method: 'codex-mcp/canvas_fill',
+          title: 'Canvas fill',
+          body: 'canvas_fill',
+          preview: {
+            kind: 'tool',
+            toolName: 'canvas_fill',
+            params: { canvasId: 'canvas-1', ref: 'field-1', value: secret }
+          }
+        },
+        decision,
+        'policy',
+        'request'
+      )
+    }
+
+    expect(JSON.stringify(records)).not.toContain(secret)
+    for (const record of records) {
+      expect(record.preview).toMatchObject({
+        toolName: 'canvas_fill',
+        params: { value: '[redacted]', valueRedacted: true }
+      })
+    }
+  })
+
   it('binds automatic approval decisions to the route permission posture', () => {
     const permissionPosture = {
       schemaVersion: 1,

@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   formatCanvasEvalScriptForReview,
+  formatToolPermissionRetryExactArgumentsForReview,
   renderAgentApprovalPreview
 } from './agentApprovalPreview'
 
@@ -98,14 +99,16 @@ describe('agent approval preview', () => {
     expect(markup).not.toContain('\u0000')
   })
 
-  it('makes BMP and supplementary variation selectors explicit', () => {
-    const script = `text\uFE0Fmore\u{E0100}end`
+  it('makes variation selectors and Unicode tag characters explicit', () => {
+    const script = `text\uFE0Fmore\u{E0100}tag\u{E0061}end`
     const formatted = formatCanvasEvalScriptForReview(script)
 
     expect(formatted).toContain('⟨VARIATION SELECTOR U+FE0F⟩')
     expect(formatted).toContain('⟨VARIATION SELECTOR U+E0100⟩')
+    expect(formatted).toContain('⟨UNICODE TAG U+E0061⟩')
     expect(formatted).not.toContain('\uFE0F')
     expect(formatted).not.toContain('\u{E0100}')
+    expect(formatted).not.toContain('\u{E0061}')
   })
 
   it('cannot spoof a control marker or generated line prefix with literal script text', () => {
@@ -120,6 +123,61 @@ describe('agent approval preview', () => {
     const literalPrefix = formatCanvasEvalScriptForReview('a⟨LF U+000A⟩\n   2 │ b')
     expect(generatedSecondLine).not.toBe(literalPrefix)
     expect(literalPrefix).toContain('⟨LITERAL BOX DRAWINGS LIGHT VERTICAL U+2502⟩')
+  })
+
+  it('renders canonical exact arguments for a one-shot permission retry', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool-permission-retry',
+        permissionRetry: {
+          targetToolName: 'write_file',
+          targetArgumentsSha256: 'a'.repeat(64),
+          exactArguments: {
+            zLast: true,
+            nested: { second: 2, first: 1 },
+            aFirst: ['one', 'two']
+          }
+        }
+      })!
+    )
+
+    expect(markup).toContain('Exact arguments for this one-shot retry (control-visible)')
+    expect(markup).toContain('Target: write_file')
+    expect(markup).toContain(`Arguments SHA-256: ${'a'.repeat(64)}`)
+    expect(markup.indexOf('&quot;aFirst&quot;')).toBeLessThan(markup.indexOf('&quot;nested&quot;'))
+    expect(markup.indexOf('&quot;nested&quot;')).toBeLessThan(markup.indexOf('&quot;zLast&quot;'))
+    expect(markup.indexOf('&quot;first&quot;')).toBeLessThan(markup.indexOf('&quot;second&quot;'))
+  })
+
+  it('makes controls, bidi, zero-width text, and review-grammar literals safe in retry JSON', () => {
+    const exactArguments = {
+      'unsafe\u202Ekey': {
+        text: 'start\u200B\u0000\u{E0061}\nend⟨LF U+000A⟩'
+      }
+    }
+    const formatted = formatToolPermissionRetryExactArgumentsForReview(exactArguments)
+
+    expect(formatted).toContain('⟨RIGHT-TO-LEFT OVERRIDE U+202E⟩')
+    expect(formatted).toContain('⟨ZERO WIDTH SPACE U+200B⟩')
+    expect(formatted).toContain('⟨CONTROL U+0000⟩')
+    expect(formatted).toContain('⟨UNICODE TAG U+E0061⟩')
+    expect(formatted).toContain('⟨LF U+000A⟩')
+    expect(formatted).toContain('⟨LITERAL LEFT ANGLE BRACKET U+27E8⟩')
+    expect(formatted).toContain('⟨LITERAL RIGHT ANGLE BRACKET U+27E9⟩')
+    expect(formatted).not.toContain('\u202E')
+    expect(formatted).not.toContain('\u200B')
+    expect(formatted).not.toContain('\u0000')
+    expect(formatted).not.toContain('\u{E0061}')
+
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        permissionRetry: { exactArguments }
+      })!
+    )
+    expect(markup).toContain('Exact arguments for this one-shot retry (control-visible)')
+    expect(markup).not.toContain('\u202E')
+    expect(markup).not.toContain('\u200B')
+    expect(markup).not.toContain('\u0000')
   })
 })
 

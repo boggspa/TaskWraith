@@ -106,12 +106,21 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       expect(autoAllowedTools.has(tool)).toBe(false)
     }
   })
+
+  it('lets every posture reach one-shot permission elicitation without auto-running its target', () => {
+    expect(autoAllowedTools.has('request_tool_permission')).toBe(true)
+    expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('request_tool_permission')
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('request_tool_permission')
+    ).toBe(false)
+  })
 })
 
 describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
   it('advertises the safe coordination + read tools to a read-only seat', () => {
     for (const tool of [
       'ask_user_question',
+      'request_tool_permission',
       'ensemble_yield',
       'read_file',
       'find_files',
@@ -191,6 +200,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
   it('matches the safe coordination + read tools', () => {
     for (const tool of [
       'ask_user_question',
+      'request_tool_permission',
       'ensemble_yield',
       'ensemble_send',
       'read_file',

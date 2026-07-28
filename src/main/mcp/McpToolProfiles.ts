@@ -437,6 +437,33 @@ export const GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v9 makes exact one-shot permission retry discoverable. It stays
+ * hidden because agents need it only after a permission-like failure; both
+ * direct catalogues remain exact clones of their immutable v8 predecessors.
+ */
+export const GATEWAY_V9_ADDED_TOOL_NAMES = Object.freeze([
+  'request_tool_permission'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V9_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V8_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V9_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V9_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V9_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
 type GatewayV8MeshTransportToolDefinition = {
   name: string
   description?: string
@@ -637,6 +664,16 @@ export const GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+export const GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V9_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V9_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -649,6 +686,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v9') return GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v8') return GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v7' || profileId === 'taskwraith-gateway-v7-mesh') {
@@ -666,12 +705,32 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v9-mesh') return GATEWAY_V9_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v9') return GATEWAY_V9_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v8') return GATEWAY_V8_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v7-mesh') return GATEWAY_V7_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v7') return GATEWAY_V7_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v6') return GATEWAY_V6_MCP_DIRECT_TOOLS
   return GATEWAY_MCP_DIRECT_TOOLS
+}
+
+/**
+ * Freeze canonical target validation to the union the provider session was
+ * born with. Direct and discoverable names are separate transport concerns;
+ * neither may be widened by later additions to the live global catalogue.
+ */
+export function filterTaskWraithMcpToolDefinitionsForProfile<
+  TDefinition extends { readonly name: string }
+>(
+  profileId: TaskWraithMcpProfileId | null | undefined,
+  definitions: readonly TDefinition[]
+): TDefinition[] {
+  const names = new Set<string>([
+    ...taskWraithGatewayDirectToolNamesForProfile(profileId),
+    ...taskWraithGatewayHiddenToolNamesForProfile(profileId)
+  ])
+  return definitions.filter((definition) => names.has(definition.name))
 }
 
 const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
@@ -700,7 +759,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v8 promotes Sketch to direct for every fresh seat; the mesh variant keeps
   // the current participant-posture-selected Mesh family direct as well.
   'taskwraith-gateway-v8': GATEWAY_V8_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v8-mesh': GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v8-mesh': GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS,
+  // v9 adds permission retry through discovery without growing either direct
+  // catalogue.
+  'taskwraith-gateway-v9': GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v9-mesh': GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<TaskWraithMcpProfileId, readonly TaskWraithMcpAdvertisedToolName[]>
 
 /** Exact immutable membership for each receiptable profile id. */

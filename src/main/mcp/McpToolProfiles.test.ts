@@ -37,9 +37,17 @@ import {
   GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS,
   GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
   GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V9_ADDED_TOOL_NAMES,
+  GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V9_MCP_DIRECT_TOOLS,
+  GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
+  GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   compactGatewayV8MeshToolDefinitionsForTransport,
+  filterTaskWraithMcpToolDefinitionsForProfile,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
   taskWraithGatewayDirectToolNamesForProfile,
@@ -91,7 +99,14 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
       GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS,
       GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES,
-      GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V9_ADDED_TOOL_NAMES,
+      GATEWAY_V9_MCP_DIRECT_TOOLS,
+      GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -266,9 +281,9 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
       }).length
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
-    const freshGatewayChars = serializedChars(GATEWAY_V8_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
+    const freshGatewayChars = serializedChars(GATEWAY_V9_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
     const freshMeshGatewayChars = serializedChars(
-      GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
       gatewayToolDefinitions(),
       compactGatewayV8MeshToolDefinitionsForTransport
     )
@@ -318,15 +333,17 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // enum member. Mesh definitions remain behind v7 discovery on the normal
     // gateway profile, so no direct gateway transport bytes are spent.
     // Re-measured 2026-07-28 after first-class Sketch policy/catalogue routing:
-    // full is 137,005; the immutable v1 gateway is 39,869; fresh v8 is 36,985.
+    // full is 137,005; the immutable v1 gateway is 39,869; v8 is 36,985.
     // The v8-mesh specialist profile compacts long-form Mesh/Sketch wire prose
     // while preserving every direct tool, typed schema, enum, required field,
-    // and annotation. Both fresh variants stay below the transport ceiling.
+    // and annotation. Both variants stay below the transport ceiling.
     // Re-measured after rebasing over the Captain fan-out guidance: each
     // catalogue grows by the same 66 characters; membership is unchanged.
     // Re-measured after the native AppDrive contract expanded the full-only
     // canvas_open_launch guidance. Direct gateway membership and bytes are
     // unchanged, so all three transport catalogues retain their prior budgets.
+    // Gateway-v9 adds permission retry only to capability discovery, so its
+    // direct transport catalogues remain byte-identical to v8.
     expect(fullChars).toBe(138_100)
     expect(gatewayChars).toBe(39_935)
     expect(gatewayChars).toBeLessThan(40_000)
@@ -516,7 +533,15 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V7_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
-      ...GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V8_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -541,6 +566,16 @@ describe('catalogue reachability', () => {
     expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toEqual([
       ...GATEWAY_V6_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V7_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)
+    expect(GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V9_ADDED_TOOL_NAMES
+    ])
+    expect(GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V9_ADDED_TOOL_NAMES
     ])
     for (const tool of [
       ...GATEWAY_V3_ADDED_TOOL_NAMES,
@@ -584,6 +619,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v8-mesh')).toBe(
       GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v9')).toBe(
+      GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v9-mesh')).toBe(
+      GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v5')).toBe(
@@ -604,6 +645,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v8-mesh')).toBe(
       GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
     )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v9')).toBe(
+      GATEWAY_V9_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v9-mesh')).toBe(
+      GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
+    )
   })
 
   it('keeps Mesh Canvas discoverable normally and direct for the non-denied run variant', () => {
@@ -618,15 +665,33 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v7-mesh')).toBe(
       GATEWAY_V7_MESH_MCP_DIRECT_TOOLS
     )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v8')).toBe(
+      GATEWAY_V8_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v8-mesh')).toBe(
+      GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v9')).toBe(
+      GATEWAY_V9_MCP_DIRECT_TOOLS
+    )
+    expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v9-mesh')).toBe(
+      GATEWAY_V9_MESH_MCP_DIRECT_TOOLS
+    )
+    expect(GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES).toContain('request_tool_permission')
+    expect(GATEWAY_V9_MCP_DIRECT_TOOLS).not.toContain('request_tool_permission')
   })
 
-  it('promotes all Sketch Canvas verbs only on v8 direct birth catalogues', () => {
+  it('keeps the v8 Sketch Canvas promotion direct in v8 and later birth catalogues', () => {
     expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES)
     for (const profile of [
       GATEWAY_V8_MCP_DIRECT_TOOLS,
       GATEWAY_V8_MCP_ADVERTISE_TOOLS,
       GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
-      GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
+      GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V9_MCP_DIRECT_TOOLS,
+      GATEWAY_V9_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V9_MESH_MCP_DIRECT_TOOLS,
+      GATEWAY_V9_MESH_MCP_ADVERTISE_TOOLS
     ]) {
       expect(new Set(profile).size).toBe(profile.length)
     }
@@ -635,6 +700,8 @@ describe('catalogue reachability', () => {
       expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
       expect(GATEWAY_V8_MCP_DIRECT_TOOLS).toContain(tool)
       expect(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS).toContain(tool)
+      expect(GATEWAY_V9_MCP_DIRECT_TOOLS).toContain(tool)
+      expect(GATEWAY_V9_MESH_MCP_DIRECT_TOOLS).toContain(tool)
     }
     expect(taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v8')).toBe(
       GATEWAY_V8_MCP_DIRECT_TOOLS
@@ -644,5 +711,45 @@ describe('catalogue reachability', () => {
     )
     expect(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS).toContain('ensemble_roster_edit')
     expect(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES).toEqual(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)
+  })
+
+  it('pins the exact immutable v8 and v8-mesh membership snapshots', () => {
+    expect(GATEWAY_V8_MCP_DIRECT_TOOLS).toHaveLength(41)
+    expect(nameHash(GATEWAY_V8_MCP_DIRECT_TOOLS)).toBe(
+      'c6cfb8832f7b4e231b5b51e7ad72ea77cd8814a42bca89312c62a1b5299792f6'
+    )
+    expect(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS).toHaveLength(50)
+    expect(nameHash(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS)).toBe(
+      'afff045b39034e6df9ded9f5a1407c2298e0d22ce8f1b8507cdd24aa117f7c20'
+    )
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).toHaveLength(141)
+    expect(nameHash(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES)).toBe(
+      'f1ece0dc0169aa910c08347c675128143ecb101a3a486a4713b714edad9a4992'
+    )
+    expect(nameHash(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES)).toBe(
+      'f1ece0dc0169aa910c08347c675128143ecb101a3a486a4713b714edad9a4992'
+    )
+  })
+
+  it('adds one-shot permission retry only to immutable v9 hidden catalogues', () => {
+    expect(GATEWAY_V9_ADDED_TOOL_NAMES).toEqual(['request_tool_permission'])
+    expect(GATEWAY_V9_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V8_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_V9_MESH_MCP_DIRECT_TOOLS).toEqual(GATEWAY_V8_MESH_MCP_DIRECT_TOOLS)
+    expect(GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES).not.toContain('request_tool_permission')
+    expect(GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES).not.toContain('request_tool_permission')
+    expect(GATEWAY_V9_MCP_HIDDEN_TOOL_NAMES).toContain('request_tool_permission')
+    expect(GATEWAY_V9_MESH_MCP_HIDDEN_TOOL_NAMES).toContain('request_tool_permission')
+  })
+
+  it('fences retry targets to the immutable direct and hidden v9 union', () => {
+    const names = filterTaskWraithMcpToolDefinitionsForProfile(
+      'taskwraith-gateway-v9',
+      createTaskWraithMcpToolDefinitions()
+    ).map((definition) => definition.name)
+    expect(names).toContain('write_file')
+    expect(names).toContain('run_shell_command')
+    expect(names).toContain('request_tool_permission')
+    expect(names).not.toContain('ensemble_bossman_control')
+    expect(names).toHaveLength(new Set(names).size)
   })
 })

@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 180 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 181 tools below are the full TaskWraith surface. 41 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -964,6 +964,15 @@ Pause the turn and surface a question to the user via a modal card. Use this whe
 - Required args: question
 - Optional args: options, context
 - Example: `{"taskwraith_tool":{"name":"ask_user_question","arguments":{"question":"text"}}}`
+
+## request_tool_permission
+
+After a TaskWraith tool or native tool fails because of an apparent permission, policy, sandbox, or read-only boundary, ask the user to allow one exact retry. Do not use this after the user explicitly declined or cancelled an approval, for ordinary tool errors, or speculatively before a failure. Pass the exact failed TaskWraith tool name and arguments plus the failure text. TaskWraith validates the request, shows its existing approval modal, consumes acceptance immediately, and returns the retried target tool result. The approval is one-shot: it does not create a session or workspace grant, and route, workspace, network, external-path, tool-specific, and liveness guards remain enforced.
+
+- Access: permission elicitation — callable under Read-Only/Plan; the exact target runs only after one-shot user approval and all non-grantable guards still apply
+- Required args: toolName, arguments, failure
+- Optional args: rationale
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"request_tool_permission","arguments":{"toolName":"text","arguments":{},"failure":"text"}}}}`
 
 ## goal_read
 

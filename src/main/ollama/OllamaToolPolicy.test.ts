@@ -6,6 +6,8 @@ import type { WorkspaceToolContext } from '../mcp/WorkspaceToolExecutors'
 import {
   assertOllamaMutationIntent,
   assertOllamaProtectedWritePaths,
+  assertOllamaResolvedToolPolicy,
+  ollamaResolvedToolPolicyError,
   ollamaShellApprovalPreviewMetadata,
   ollamaShellRiskLabels,
   ollamaTextDiffPreview,
@@ -81,6 +83,31 @@ describe('Ollama tool policy', () => {
         workspace
       )
     ).toThrow(/CI\/workflow configuration is protected/)
+  })
+
+  it('reapplies non-grantable policy to a resolved wrapper or retry target', () => {
+    expect(() =>
+      assertOllamaResolvedToolPolicy(
+        'write_file',
+        { path: 'notes/ok.md' },
+        context,
+        workspace
+      )
+    ).toThrow(/requires an intent or summary/)
+    expect(
+      ollamaResolvedToolPolicyError({
+        toolName: 'write_file',
+        args: { path: 'package.json', intent: 'Change the package.' },
+        workspacePath: workspace
+      })
+    ).toMatch(/control file is protected/)
+    expect(
+      ollamaResolvedToolPolicyError({
+        toolName: 'write_file',
+        args: { path: 'notes/ok.md', intent: 'Write the requested note.' },
+        workspacePath: workspace
+      })
+    ).toBeNull()
   })
 
   it('rejects path escapes while allowing ordinary workspace edits', () => {

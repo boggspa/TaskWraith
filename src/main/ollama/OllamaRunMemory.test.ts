@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CANVAS_FILL_RESULT_REDACTED,
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
   createEmptyOllamaSessionMemory,
@@ -153,6 +154,84 @@ describe('OllamaRunMemory', () => {
     expect(JSON.stringify(persisted)).not.toContain('LEGACY_CANVAS_SCRIPT_SECRET')
     expect(JSON.stringify(persisted)).not.toContain('LEGACY_CANVAS_RESULT_SECRET')
     expect(persisted.trajectory?.[0]?.resultSummary).toBe(CANVAS_EVAL_RESULT_REDACTED)
+  })
+
+  it('redacts canvas_fill values and retry guidance across direct and gateway memory routes', () => {
+    const secret = '__OLLAMA_CANVAS_FILL_MEMORY_SECRET__'
+    const routes = [
+      {
+        toolName: 'canvas_fill',
+        args: { canvasId: 'canvas-1', ref: 'field-1', value: secret }
+      },
+      {
+        toolName: 'capability_invoke',
+        args: {
+          name: 'canvas_fill',
+          arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret }
+        }
+      },
+      {
+        toolName: 'request_tool_permission',
+        args: {
+          toolName: 'canvas_fill',
+          arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret },
+          failure: 'permission denied'
+        }
+      },
+      {
+        toolName: 'capability_invoke',
+        args: {
+          name: 'request_tool_permission',
+          arguments: {
+            toolName: 'canvas_fill',
+            arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret },
+            failure: 'permission denied'
+          }
+        }
+      }
+    ]
+    let memory = createEmptyOllamaSessionMemory('ornith:35b')
+    for (const route of routes) {
+      memory = appendOllamaTrajectoryEntry(memory, {
+        ...route,
+        ok: false,
+        resultSummary: JSON.stringify({
+          error: 'permission denied',
+          permissionRetry: route,
+          secret
+        })
+      })
+    }
+    const persisted = pruneOllamaSessionMemoryForPersist(memory)
+    expect(JSON.stringify(persisted)).not.toContain(secret)
+    expect(persisted.trajectory).toHaveLength(routes.length)
+    for (const entry of persisted.trajectory || []) {
+      expect(entry.effectiveToolName).toBe('canvas_fill')
+      expect(entry.argsSummary).toContain('value=[redacted]')
+      expect(entry.resultSummary).toBe(CANVAS_FILL_RESULT_REDACTED)
+    }
+    expect(persisted.workingMemory).toContain(CANVAS_FILL_RESULT_REDACTED)
+  })
+
+  it('re-sanitizes legacy canvas_fill memory at the final persistence boundary', () => {
+    const secret = '__LEGACY_CANVAS_FILL_MEMORY_SECRET__'
+    const persisted = pruneOllamaSessionMemoryForPersist({
+      ...createEmptyOllamaSessionMemory('ornith:35b'),
+      workingMemory: secret,
+      toolTurnCount: 1,
+      trajectory: [
+        {
+          toolName: 'request_tool_permission',
+          effectiveToolName: 'canvas_fill',
+          argsSummary: `request_tool_permission target=canvas_fill value=${secret}`,
+          ok: false,
+          resultSummary: secret
+        }
+      ]
+    })
+
+    expect(JSON.stringify(persisted)).not.toContain(secret)
+    expect(persisted.trajectory?.[0]?.resultSummary).toBe(CANVAS_FILL_RESULT_REDACTED)
   })
 
   it('keeps ensemble Ollama memory buckets isolated by safe seat key', () => {

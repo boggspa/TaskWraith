@@ -339,6 +339,8 @@ export interface OllamaToolExecutionRequest {
   appChatId?: string
   appRunId?: string
   toolControlTier?: OllamaToolControlTier
+  /** Immutable MCP catalogue receipt for profile-aware tool_help lookup. */
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
 }
 
 export interface OllamaToolExecutionResult {
@@ -1614,7 +1616,7 @@ export function ollamaNativeToolDefinitions(
   }
 ): OllamaNativeToolDefinition[] {
   const compact = Boolean(options?.compact)
-  // Advertise the immutable gateway-v8 direct set as native function defs (not
+  // Advertise the immutable gateway-v9 direct set as native function defs (not
   // the full catalogue). The tail remains executable through capability_invoke
   // and discoverable through the gateway or legacy tool_help. Read-only receives
   // the shared safe set; Plan additionally receives its approval-gated instruments.
@@ -3062,7 +3064,8 @@ export async function runOllamaProvider(
           workspacePath: payload.workspace!,
           appChatId: route.appChatId || payload.appChatId,
           appRunId: route.appRunId || payload.appRunId,
-          toolControlTier
+          toolControlTier,
+          taskWraithMcpProfileId: payload.taskWraithMcpProfileId
         }
         const hostCommandProjection = deps.createHostCommandProjection?.(toolExecutionRequest)
         const harnessGate = harnessEnabled

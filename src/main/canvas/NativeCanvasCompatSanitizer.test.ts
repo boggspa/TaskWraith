@@ -23,6 +23,56 @@ describe('NativeCanvasCompatSanitizer', () => {
     ).toBe('canvas_network')
   })
 
+  it('projects a nested permission-retry Canvas wrapper without persisting fill values', () => {
+    const secret = '__NATIVE_RETRY_FILL_SECRET__'
+    const wrapper = {
+      type: 'tool_use',
+      tool_id: 'provider-retry-1',
+      tool_name: 'capability_invoke',
+      parameters: {
+        name: 'request_tool_permission',
+        arguments: {
+          toolName: 'canvas_fill',
+          arguments: { canvasId: 'canvas-1', ref: 'field-1', value: secret },
+          failure: 'permission denied'
+        }
+      },
+      provider: 'codex'
+    }
+    expect(nativeCanvasCompatToolName(wrapper)).toBe('canvas_fill')
+
+    const projected = createNativeCanvasCompatSanitizer().sanitize(
+      wrapper,
+      'codex:run-retry'
+    ) as Record<string, unknown>
+    expect(projected).toMatchObject({
+      type: 'tool_use',
+      tool_name: 'canvas_fill',
+      parameters: { redacted: true }
+    })
+    expect(JSON.stringify(projected)).not.toContain(secret)
+    expect(JSON.stringify(projected)).not.toContain('provider-retry-1')
+
+    const directWrapper = {
+      type: 'tool_use',
+      tool_id: 'legacy-full-retry-1',
+      tool_name: 'request_tool_permission',
+      parameters: wrapper.parameters.arguments,
+      provider: 'claude'
+    }
+    expect(nativeCanvasCompatToolName(directWrapper)).toBe('canvas_fill')
+    const directProjection = createNativeCanvasCompatSanitizer().sanitize(
+      directWrapper,
+      'claude:legacy-full-run'
+    )
+    expect(JSON.stringify(directProjection)).not.toContain(secret)
+    expect(directProjection).toMatchObject({
+      type: 'tool_use',
+      tool_name: 'canvas_fill',
+      parameters: { redacted: true }
+    })
+  })
+
   it('projects Canvas use/results to metadata only and keeps a stable opaque id', () => {
     const sanitizer = createNativeCanvasCompatSanitizer()
     const use = sanitizer.sanitize(
