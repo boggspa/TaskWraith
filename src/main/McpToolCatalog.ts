@@ -1,6 +1,7 @@
 import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
 import {
   BLACKBOARD_MAX_KEY_LEN,
@@ -2897,8 +2898,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           preset: {
             type: 'object',
-            description:
-              'Preferred for import_preset: one compact roster object. TaskWraith generates id, createdAt, updatedAt, and exportedAt; orchestrationMode defaults to turn_bound and maxParticipants defaults to 20. Mutually exclusive with path and json.',
+            description: `Preferred for import_preset: one compact roster object. TaskWraith generates id, createdAt, updatedAt, and exportedAt; orchestrationMode defaults to turn_bound and maxParticipants defaults to ${MAX_ENSEMBLE_PARTICIPANTS}. Mutually exclusive with path and json.`,
             properties: {
               name: { type: 'string' },
               orchestrationMode: {
@@ -2921,7 +2921,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               participants: {
                 type: 'array',
                 minItems: 1,
-                maxItems: 20,
+                maxItems: MAX_ENSEMBLE_PARTICIPANTS,
                 items: {
                   type: 'object',
                   properties: {

@@ -1,5 +1,6 @@
 import type { EnsembleParticipant } from './store/types'
 import { resolveYieldTargetDetail } from './services/EnsembleMentionAlias'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
 /**
  * A short-lived authority checkpoint attached to a Boss/Captain serial run.
@@ -51,7 +52,7 @@ function normalizeSelectors(values: readonly string[] | undefined): string[] {
   return values
     .map((value) => value.trim())
     .filter(Boolean)
-    .slice(0, 20)
+    .slice(0, MAX_ENSEMBLE_PARTICIPANTS)
 }
 
 /**

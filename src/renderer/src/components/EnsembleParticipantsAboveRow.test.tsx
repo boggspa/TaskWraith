@@ -1096,7 +1096,7 @@ describe('EnsembleParticipantsAboveRow', () => {
 
   it('keeps the unified add trigger disabled at the roster cap', () => {
     const chat = makeChat(
-      Array.from({ length: 20 }, (_, index) =>
+      Array.from({ length: 30 }, (_, index) =>
         makeParticipant({
           id: `ensemble-participant-${index + 1}`,
           provider: 'codex',
@@ -1108,14 +1108,14 @@ describe('EnsembleParticipantsAboveRow', () => {
     const html = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow
         chat={chat}
-        selectedParticipantId="ensemble-participant-20"
+        selectedParticipantId="ensemble-participant-30"
         onSelectParticipant={() => undefined}
         onChatChange={() => undefined}
       />
     )
 
     expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
-    expect(html).toContain('Ensembles support up to 20 participants.')
+    expect(html).toContain('Ensembles support up to 30 participants.')
   })
 
   it('keeps the unified add trigger disabled while an Ensemble round is live', () => {
@@ -1329,7 +1329,7 @@ describe('EnsembleParticipantsAboveRow', () => {
   })
 
   describe('computeEnsembleChipRowDistribution', () => {
-    it('matches the balanced ≤5-per-row product spec for every count up to the 20 cap', () => {
+    it('matches the balanced ≤5-per-row product spec for every count up to the 30 cap', () => {
       // Verbatim from the product spec: rows only expand to accommodate
       // participants; remainder lands on the LATER rows.
       const expected: Record<number, number[]> = {
@@ -1352,7 +1352,17 @@ describe('EnsembleParticipantsAboveRow', () => {
         17: [4, 4, 4, 5],
         18: [4, 4, 5, 5],
         19: [4, 5, 5, 5],
-        20: [5, 5, 5, 5]
+        20: [5, 5, 5, 5],
+        21: [4, 4, 4, 4, 5],
+        22: [4, 4, 4, 5, 5],
+        23: [4, 4, 5, 5, 5],
+        24: [4, 5, 5, 5, 5],
+        25: [5, 5, 5, 5, 5],
+        26: [4, 4, 4, 4, 5, 5],
+        27: [4, 4, 4, 5, 5, 5],
+        28: [4, 4, 5, 5, 5, 5],
+        29: [4, 5, 5, 5, 5, 5],
+        30: [5, 5, 5, 5, 5, 5]
       }
       for (const [count, rows] of Object.entries(expected)) {
         expect(computeEnsembleChipRowDistribution(Number(count)), `count ${count}`).toEqual(rows)
@@ -1360,7 +1370,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
 
     it('yields index-aligned grid spans that fill each 60-track row exactly', () => {
-      for (let count = 6; count <= 20; count++) {
+      for (let count = 6; count <= 30; count++) {
         const spans = computeEnsembleChipGridSpans(count)
         expect(spans.length, `count ${count}`).toBe(count)
         // Every span divides the track count exactly (3→20, 4→15, 5→12)…

@@ -8,7 +8,10 @@ import {
   parseSingleAgentRosterPresetExport,
   queuePendingEnsembleRosterPresetApply
 } from './EnsembleRosterPresetApply'
-import type { EnsembleRosterPreset } from './EnsembleRosterPresetContract'
+import {
+  MAX_ROSTER_PRESET_PARTICIPANTS,
+  type EnsembleRosterPreset
+} from './EnsembleRosterPresetContract'
 import type { ChatRecord, EnsembleParticipant } from './store/types'
 
 function participant(
@@ -60,7 +63,7 @@ function ensembleChat(): ChatRecord {
     chatKind: 'ensemble',
     ensemble: {
       enabled: true,
-      maxParticipants: 20,
+      maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
       orchestrationMode: 'turn_bound',
       participants: [boss, captain, worker],
       bossmanParticipantId: boss.id,
@@ -157,7 +160,7 @@ describe('EnsembleRosterPresetApply', () => {
           createdAt: 1_784_316_912_899,
           updatedAt: 1_784_316_912_899,
           orchestrationMode: 'turn_bound',
-          maxParticipants: 20
+          maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS
         }
       ]
     })

@@ -118,8 +118,8 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toMatch(/data-filter-ordinal="6"[\s\S]*?grid-row-start:10;grid-column-start:1/)
   })
 
-  it('caps participant columns at ten rows before adding a column', () => {
-    const participants = Array.from({ length: 20 }, (_, index) =>
+  it('adds a third ten-row filter column for a full 30-participant roster', () => {
+    const participants = Array.from({ length: 30 }, (_, index) =>
       participant({
         id: `participant-${index + 1}`,
         role: `P${index + 1}`,
@@ -136,14 +136,18 @@ describe('TranscriptParticipantFilterRail', () => {
       />
     )
 
-    expect(html).toContain('data-column-count="2"')
+    expect(html).toContain('data-column-count="3"')
     expect(html).toContain('data-row-offset="0"')
     expect(html).toContain('data-filter-ordinal="1"')
     expect(html).toContain('data-filter-ordinal="10"')
     expect(html).toContain('data-filter-ordinal="11"')
     expect(html).toContain('data-filter-ordinal="20"')
+    expect(html).toContain('data-filter-ordinal="21"')
+    expect(html).toContain('data-filter-ordinal="30"')
     expect(html).toMatch(/data-filter-ordinal="11"[\s\S]*?grid-row-start:1;grid-column-start:2/)
     expect(html).toMatch(/data-filter-ordinal="20"[\s\S]*?grid-row-start:10;grid-column-start:2/)
+    expect(html).toMatch(/data-filter-ordinal="21"[\s\S]*?grid-row-start:1;grid-column-start:3/)
+    expect(html).toMatch(/data-filter-ordinal="30"[\s\S]*?grid-row-start:10;grid-column-start:3/)
     expect(html).toContain('System messages')
   })
 

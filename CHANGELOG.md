@@ -79,7 +79,9 @@ generic label. The composer gains an above-row minimizer while keeping the
 primary workspace row visible. Upstream hue parity lands across the
 transcript, composer, Ensemble chrome, and context surfaces — and on iOS
 remote rows and pickers — so a Pi or Ollama seat wears its upstream's colour
-everywhere it appears.
+everywhere it appears. Ensemble rosters now support up to **30 participants**;
+at full size, the composer remains in balanced five-seat rows and the transcript
+filter rail expands to a third column.
 
 ### The workshop refuses to trip over itself
 

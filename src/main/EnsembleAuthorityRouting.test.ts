@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { resolveAuthoritySelection } from './EnsembleAuthorityRouting'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import type { EnsembleParticipant } from './store/types'
 
 const participants: EnsembleParticipant[] = [
@@ -81,5 +82,30 @@ describe('resolveAuthoritySelection', () => {
         callerParticipantId: 'boss'
       })
     ).toEqual({ ok: false, error: 'ambiguous_selector', selector: 'Reviewer' })
+  })
+
+  it('keeps every pending seat in a full 30-participant panel', () => {
+    const fullPanel = Array.from({ length: MAX_ENSEMBLE_PARTICIPANTS }, (_, index) => ({
+      id: index === 0 ? 'boss' : `worker-${index}`,
+      provider: index === 0 ? ('claude' as const) : ('codex' as const),
+      enabled: true,
+      role: index === 0 ? 'Boss' : `Worker ${index}`,
+      order: index + 1,
+      instructions: index === 0 ? 'Coordinate.' : `Implement lane ${index}.`,
+      permissionPresetId: index === 0 ? ('default' as const) : ('workspace_write' as const)
+    }))
+    const pendingParticipants = fullPanel.slice(1)
+
+    const result = resolveAuthoritySelection({
+      participantIds: pendingParticipants.map((participant) => participant.id),
+      participants: fullPanel,
+      pendingParticipants,
+      callerParticipantId: 'boss'
+    })
+
+    expect(result).toMatchObject({ ok: true })
+    if (!result.ok) return
+    expect(result.selected).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS - 1)
+    expect(result.skipped).toEqual([])
   })
 })

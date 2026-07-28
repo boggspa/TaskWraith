@@ -12,6 +12,7 @@ import {
   formatSameProviderDisambiguationNote,
   formatToolTraceSummary,
   getOrderedEnsembleParticipants,
+  MAX_ENSEMBLE_PARTICIPANTS,
   OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS,
   OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS,
   resolveOllamaEnsembleTranscriptBudget
@@ -205,14 +206,8 @@ describe('Ensemble prompt composition', () => {
     ])
   })
 
-  // 1.0.5-EW1 — global ceiling raised 8 → 12.
-  // 1.0.5-EW46 — global ceiling raised 12 → 18. A panel with an
-  // 18-participant roster + `maxParticipants: 18` must keep all 18
-  // through the prompt builder; pre-EW1 the constant would have
-  // silently clamped to 8 and the user would lose 4 participants
-  // from the prompt context without warning.
-  it('honors an 18-participant panel at the new global ceiling', () => {
-    const extras = Array.from({ length: 15 }, (_, idx) => ({
+  it('honors a full panel at the global ceiling', () => {
+    const extras = Array.from({ length: MAX_ENSEMBLE_PARTICIPANTS - 3 }, (_, idx) => ({
       id: `extra-${idx + 1}`,
       provider: 'codex' as const,
       enabled: true,
@@ -221,15 +216,15 @@ describe('Ensemble prompt composition', () => {
       order: 4 + idx,
       permissionPresetId: 'workspace_write' as const
     }))
-    const eighteenParticipant: EnsembleConfig = {
+    const fullPanel: EnsembleConfig = {
       ...ensemble,
-      maxParticipants: 18,
+      maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
       participants: [...ensemble.participants, ...extras]
     }
-    const ids = getOrderedEnsembleParticipants(eighteenParticipant).map((p) => p.id)
-    expect(ids).toHaveLength(18)
+    const ids = getOrderedEnsembleParticipants(fullPanel).map((p) => p.id)
+    expect(ids).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS)
     expect(ids.slice(0, 3)).toEqual(['claude', 'codex', 'gemini'])
-    expect(ids).toContain('extra-15')
+    expect(ids).toContain(`extra-${MAX_ENSEMBLE_PARTICIPANTS - 3}`)
   })
 
   // 1.0.4-AR2 — `maxParticipants` of 0 / NaN / negative is treated as

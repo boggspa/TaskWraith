@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
 describe('agent-authored Ensemble roster MCP schema', () => {
   it('advertises the canonical preset import on the existing roster tool', () => {
@@ -19,6 +20,18 @@ describe('agent-authored Ensemble roster MCP schema', () => {
     expect(properties?.path?.type).toBe('string')
     expect(properties?.json).toMatchObject({ type: 'string', maxLength: 1_000_000 })
     expect(properties?.preset?.type).toBe('object')
+    const presetSchema = properties?.preset as
+      | {
+          description?: string
+          properties?: {
+            participants?: { maxItems?: number }
+          }
+        }
+      | undefined
+    expect(presetSchema?.description).toContain(
+      `maxParticipants defaults to ${MAX_ENSEMBLE_PARTICIPANTS}`
+    )
+    expect(presetSchema?.properties?.participants?.maxItems).toBe(MAX_ENSEMBLE_PARTICIPANTS)
     expect(properties?.apply?.type).toBe('boolean')
     expect(rosterEdit?.description).toMatch(/single-provider chat/i)
     expect(rosterEdit?.description).toMatch(/do not call shell, file, or time tools/i)

@@ -7,6 +7,7 @@ import type {
   PooledAgentIdentitySnapshot,
   ProviderId
 } from './store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
 /**
  * Portable Ensemble roster-preset interchange contract.
@@ -20,7 +21,7 @@ export const ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT = 'taskwraith.ensembleRosterPr
 export const ENSEMBLE_ROSTER_PRESET_EXPORT_VERSION = 1
 
 export const MIN_ROSTER_PRESET_PARTICIPANTS = 1
-export const MAX_ROSTER_PRESET_PARTICIPANTS = 20
+export const MAX_ROSTER_PRESET_PARTICIPANTS = MAX_ENSEMBLE_PARTICIPANTS
 
 const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'off',

@@ -8,6 +8,7 @@ import type {
   SessionActivityLedgerEntry,
   ToolActivity
 } from './store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -75,12 +76,9 @@ import {
   resolveBoundedCompactionPrefixMessageIds
 } from './PromptComposition'
 
-// 1.0.4-AR2 — mirror of the renderer ceiling
-// (`EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS`). Keep
-// these two constants in sync; a divergence would let the renderer
-// add a participant the prompt builder then silently truncates,
-// confusing the user about why a participant they enabled never
-// spoke.
+// 1.0.4-AR2 — this ceiling originally mirrored a renderer-local
+// constant. It now comes from shared/ensembleLimits so a renderer/main
+// divergence cannot make the prompt builder silently truncate a seat.
 //
 // 1.0.5-EW1 — Ceiling raised 8 → 12 in step with the renderer
 // (chip strip now wraps at 7+ to a 6-column grid).
@@ -91,7 +89,9 @@ import {
 // parity-guard tests (EnsembleDefaults / BridgeActionPayload) assert
 // against THIS constant instead of a literal that goes stale on the
 // next cap change.
-export const MAX_ENSEMBLE_PARTICIPANTS = 20
+// 1.9.1 — Ceiling raised 20 → 30; balanced five-chip rows extend to six
+// rows and the transcript filter rail grows from two columns to three.
+export { MAX_ENSEMBLE_PARTICIPANTS }
 
 export interface BuildEnsemblePromptInput {
   chat: ChatRecord

@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
@@ -284,10 +285,6 @@ export type EnsembleQueuedPromptMutationResult = {
  * const isn't reachable from the main process.
  */
 const ENSEMBLE_GLOBAL_USAGE_WORKSPACE_ID = '__taskwraith_global_chats__'
-// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS (a fanout can
-// target every roster peer, so the two ceilings must match).
-const MAX_ENSEMBLE_FANOUT_TARGETS = 20
-
 const DEFAULT_CONTINUATION_HOP_LIMIT = 6
 const MAX_BOSSMAN_SUMMONS_PER_PARTICIPANT_PER_ROUND = 3
 const MAX_CONTINUATION_HOP_LIMIT = 500
@@ -1628,7 +1625,7 @@ function normalizeTargetList(value: unknown): string[] {
     return value
       .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
       .filter(Boolean)
-      .slice(0, MAX_ENSEMBLE_FANOUT_TARGETS)
+      .slice(0, MAX_ENSEMBLE_PARTICIPANTS)
   }
   if (typeof value === 'string' && value.trim()) return [value.trim()]
   return []

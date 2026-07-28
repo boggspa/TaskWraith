@@ -3,6 +3,7 @@ import {
   cloneEnsembleRosterPreset,
   ENSEMBLE_ROSTER_PRESET_EXPORT_FORMAT,
   isEnsembleRosterPreset,
+  MAX_ROSTER_PRESET_PARTICIPANTS,
   parseEnsembleRosterPresetJson,
   type EnsembleRosterPreset
 } from './EnsembleRosterPresetContract'
@@ -107,7 +108,7 @@ describe('EnsembleRosterPresetContract', () => {
     expect(isEnsembleRosterPreset(malformedStage)).toBe(false)
 
     const oversized = preset()
-    oversized.maxParticipants = 21
+    oversized.maxParticipants = MAX_ROSTER_PRESET_PARTICIPANTS + 1
     expect(isEnsembleRosterPreset(oversized)).toBe(false)
 
     const nonFinite = preset()

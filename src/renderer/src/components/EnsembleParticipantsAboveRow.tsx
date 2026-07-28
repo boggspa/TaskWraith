@@ -31,6 +31,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import type {
   ChatRecord,
   ComposerStyle,
@@ -98,12 +99,9 @@ import { SegmentedControl } from './SegmentedControl'
 // 1.0.5-EW46 — Ceiling raised 12 → 18 (three rows of the then-6-column
 // grid).
 //
-// 1.7.x — Ceiling 18 → 20 and the wrapped layout reworked from a fixed
-// 6-column grid to balanced rows of AT MOST 5 chips (4 rows max at the
-// 20 cap), so role names truncate less. Keep in sync with the
-// main-process copies (EnsembleRosterMutation.ts, EnsemblePrompt.ts)
-// and MAX_ROSTER_PRESET_PARTICIPANTS in ensembleRosterPresets.ts.
-const MAX_ENSEMBLE_PARTICIPANTS = 20
+// 1.7.x — The wrapped layout moved from a fixed six-column grid to
+// balanced rows of AT MOST 5 chips. The shared ceiling now permits up to
+// six rows while keeping role names readable.
 // A one-seat roster is a solo chat wearing ensemble chrome, so the live floor
 // is TWO — see `ensembleRosterFloor.ts` for the rule and its exemptions.
 // Removal does not stop AT the floor: dropping below it switches Ensemble off

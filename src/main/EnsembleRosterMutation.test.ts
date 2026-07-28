@@ -180,7 +180,7 @@ describe('evaluateRosterEdit', () => {
   })
 
   it('exports the main-side roster bounds and assignable preset ceiling', () => {
-    expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(20)
+    expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(30)
     expect(ASSIGNABLE_PERMISSION_PRESETS).toEqual([
       'read_only',
       'plan',

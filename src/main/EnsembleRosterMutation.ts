@@ -6,6 +6,7 @@ import type {
   PermissionPresetId,
   ProviderId
 } from './store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 
 /**
  * Clear slim-prompt delivery receipts only when the participant still names
@@ -54,9 +55,9 @@ const ENSEMBLE_STAGE_ROLES = new Set<string>([
   'background'
 ])
 
-// 1.7.x — 18 → 20 in step with the renderer strip's balanced rows of
-// at most 5 chips (EnsembleParticipantsAboveRow.MAX_ENSEMBLE_PARTICIPANTS).
-export const MAX_ENSEMBLE_PARTICIPANTS = 20
+// The mutation guard shares the product-wide ceiling with prompt assembly,
+// presets, the bridge, the renderer, and fan-out.
+export { MAX_ENSEMBLE_PARTICIPANTS }
 
 export const ASSIGNABLE_PERMISSION_PRESETS = [
   'read_only',

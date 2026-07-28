@@ -42,6 +42,7 @@
  */
 
 import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import {
   isReservedBranchName,
   isReservedWorktreeName
@@ -507,12 +508,9 @@ export interface BridgeCreateThreadParticipant {
   role?: string
 }
 
-// 1.7.x — 18 → 20 in step with MAX_ENSEMBLE_PARTICIPANTS so phone-side
-// roster edits accept the same panel sizes the Mac strip allows.
-// Exported so the decode tests build their at-cap / oversized fixtures
-// from this constant (with a cross-seam parity assertion against
-// EnsemblePrompt's MAX_ENSEMBLE_PARTICIPANTS) instead of literals.
-export const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = 20
+// Phone-side roster edits use the shared desktop ceiling. The bridge-named
+// export remains for wire-contract callers and parity tests.
+export const MAX_BRIDGE_ENSEMBLE_PARTICIPANTS = MAX_ENSEMBLE_PARTICIPANTS
 
 export interface BridgeCreateThreadAction extends BridgeActionMetadata {
   kind: 'createThread'
