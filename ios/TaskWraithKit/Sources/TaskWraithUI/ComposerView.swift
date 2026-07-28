@@ -315,7 +315,8 @@ struct Composer: View {
     private var catalogs: [ProviderModelCatalog] {
         twOfferedProviderCatalogs(
             model.providerModels,
-            including: [card.provider, selectedProvider].compactMap { $0 })
+            including: [card.provider, selectedProvider].compactMap { $0 },
+            allowedProviders: model.allowedProvidersForWorkspace(card.workspaceId))
     }
 
     private var dynamicallySelectableProviderIds: Set<String> {

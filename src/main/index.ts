@@ -47546,19 +47546,15 @@ if (isGeminiMcpBridgeProcess) {
       void (async () => {
         const broadcaster = bridgeBroadcasterRef
         if (!broadcaster) return
-        const configuredSnapshot = getConfiguredProviderSnapshot()
-        const antigravityModels = configuredSnapshot.modelsByProvider?.antigravity ?? []
-        const remoteProviders: ProviderId[] = [
-          ...LIVE_SELECTABLE_PROVIDER_IDS,
-          ...(configuredSnapshot.providerIds.includes('antigravity')
-            ? (['antigravity'] as ProviderId[])
-            : [])
-        ]
+        // Remote catalog = the live-selectable set, full stop. Antigravity's
+        // desktop conditional offer deliberately does NOT project here: the
+        // allowlist is seeded from PROVIDER_OPTIONS, so no workspace can ever
+        // grant it to a paired device — broadcasting its models made the
+        // phone offer a provider the Mac would refuse on every send (F6).
+        const remoteProviders: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
         const providers = await Promise.all(
           remoteProviders.map(async (provider) => {
-            const models = (provider === 'antigravity'
-              ? antigravityModels
-              : await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
+            const models = (await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
               id?: unknown
               label?: unknown
               isDefault?: unknown

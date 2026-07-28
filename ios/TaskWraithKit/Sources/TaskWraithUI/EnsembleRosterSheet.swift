@@ -64,7 +64,9 @@ public struct EnsembleRosterSheet: View {
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
 
     private var catalogs: [ProviderModelCatalog] {
-        twOfferedProviderCatalogs(model.providerModels)
+        twOfferedProviderCatalogs(
+            model.providerModels,
+            allowedProviders: model.allowedProvidersForWorkspace(workspaceId))
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {

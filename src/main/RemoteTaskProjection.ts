@@ -397,6 +397,11 @@ export interface RemoteTaskCapabilities {
   externalPublish?: boolean
   pin?: boolean
   yolo?: boolean
+  /** The workspace allowlist's provider grant, so the phone's picker can
+   * reflect what a send will actually be accepted for instead of learning
+   * it from a post-send denial toast. Absent = no signal (older host or no
+   * allowlist entry) — the phone must NOT hide providers on absence. */
+  allowedProviders?: string[]
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean

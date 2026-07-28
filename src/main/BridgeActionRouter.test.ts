@@ -721,6 +721,44 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toMatch(/composerPrompt|execution wiring pending/i)
     })
 
+    it('denies a never-dispatchable provider before the allowlist ever runs', async () => {
+      const allowlist = seedAllowlist()
+      const router = new BridgeActionRouter({ allowlist })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'composerPrompt',
+            workspaceId: 'ws-allowed',
+            threadId: 't-1',
+            text: 'hello',
+            provider: 'antigravity',
+            approvalMode: 'default'
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBytes: 10,
+        payloadBase64: wire
+      })) as { accepted: boolean; reasonCode?: string; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('providerNotDispatchable')
+      expect(result.message).toMatch(/cannot be dispatched from a paired device/i)
+    })
+
+    it('denies a never-dispatchable provider on prepareStartTurn even in permissive-dev', async () => {
+      const router = new BridgeActionRouter({ permissiveDev: true })
+      const result = (await router.route('bridge.requestPrepareStartTurnAck', {
+        pairID: 'pair-1',
+        workspaceID: 'ws-allowed',
+        provider: 'antigravity'
+      })) as { accepted: boolean; reasonCode?: string; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('providerNotDispatchable')
+      expect(result.message).toMatch(/cannot be dispatched from a paired device/i)
+    })
+
     it('audits accepted capability-gated actionAck decisions by device id', async () => {
       const allowlist = seedAllowlist()
       const { ledger, records } = makeAuditLedger()
