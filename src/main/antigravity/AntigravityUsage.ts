@@ -21,6 +21,41 @@ export const AGY_USAGE_TUI_ARGS = ['--sandbox', '--mode', 'plan'] as const
 export const AGY_USAGE_COMMAND = '/usage\r'
 export const AGY_USAGE_FRESH_TTL_MS = 5 * 60 * 1000
 
+/** Minimum spacing between /usage PROBE ATTEMPTS (success or not). Applies to
+ * the manual refresh button; the automatic meter heartbeat never probes at
+ * all (see agyUsageProbeDecision). Keyed on attempts, not successes, so a
+ * mashed button during a failing probe cannot retry-spam the lane. */
+export const AGY_USAGE_MANUAL_MIN_INTERVAL_MS = 5 * 60 * 1000
+
+/**
+ * Decide what a quota request may do. The doctrine (2026-07-28): every
+ * /usage probe is a real authenticated agy session, so cadence is the
+ * fingerprint — only an explicit user action (`force`) may EVER spawn one,
+ * and even that is clamped to one attempt per AGY_USAGE_MANUAL_MIN_INTERVAL_MS.
+ * The 90-second meter heartbeat and any other automatic caller serves the
+ * cache or reports unavailable; it must never reach the PTY. The clamp is
+ * enforced here in main, so renderer button-mashing cannot route around it.
+ */
+export function agyUsageProbeDecision(input: {
+  force: boolean
+  nowMs: number
+  cacheFetchedAtMs: number | null
+  lastAttemptAtMs: number | null
+}): 'serve-cache' | 'probe' | 'unavailable' {
+  const hasCache = input.cacheFetchedAtMs !== null
+  if (!input.force) {
+    return hasCache ? 'serve-cache' : 'unavailable'
+  }
+  const cacheFresh =
+    input.cacheFetchedAtMs !== null && input.nowMs - input.cacheFetchedAtMs < AGY_USAGE_FRESH_TTL_MS
+  if (cacheFresh) return 'serve-cache'
+  const attemptClamped =
+    input.lastAttemptAtMs !== null &&
+    input.nowMs - input.lastAttemptAtMs < AGY_USAGE_MANUAL_MIN_INTERVAL_MS
+  if (attemptClamped) return hasCache ? 'serve-cache' : 'unavailable'
+  return 'probe'
+}
+
 const MAX_CAPTURED_OUTPUT = 80_000
 const MAX_QUOTA_GROUPS = 4
 const MAX_LABEL_LENGTH = 120
@@ -98,20 +133,13 @@ function boundedLabel(value: string): string | null {
 
 function isSupportedQuotaGroup(value: string): boolean {
   const normalized = cleanPanelLine(value).toLowerCase()
-  return [
-    'gemini',
-    'gemini model',
-    'gemini models',
-    'claude + gpt',
-    'claude + gpt model',
-    'claude + gpt models',
-    'claude & gpt',
-    'claude & gpt model',
-    'claude & gpt models',
-    'claude and gpt',
-    'claude and gpt model',
-    'claude and gpt models'
-  ].includes(normalized)
+  // Gemini pools ONLY. The Claude + GPT pool is deliberately not surfaced:
+  // the resold first-party models were removed from the agy offer entirely
+  // (AntigravityAgyStaticModels — using third-party models through the
+  // ban-risk lane compounds the ToS exposure, mirroring the Pi
+  // anti-circumvention wall), so metering a pool the app never dispatches
+  // to would only advertise it.
+  return ['gemini', 'gemini model', 'gemini models'].includes(normalized)
 }
 
 function parseRemainingPercent(value: string): { value: number; display: string } | null {

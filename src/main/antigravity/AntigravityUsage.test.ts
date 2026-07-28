@@ -7,6 +7,9 @@ import {
   stripAgyUsageTerminalControls,
   type AgyPtyLike,
   type AgyUsageProbeDependencies
+,
+  agyUsageProbeDecision,
+  AGY_USAGE_MANUAL_MIN_INTERVAL_MS
 } from './AntigravityUsage'
 import { isAuthenticatedAgyRateLimitConnection } from './AntigravityCombinedModelCatalog'
 
@@ -64,10 +67,13 @@ function immediateTimers(): Pick<AgyUsageProbeDependencies, 'setTimer' | 'clearT
 }
 
 describe('parseAgyUsagePanel', () => {
-  it('keeps only exact observed tier, groups, remaining percentages, and reset text', () => {
+  it('keeps only the Gemini pool — resold-model pools are never surfaced', () => {
     const parsed = parseAgyUsagePanel(observedPanel())
 
     expect(parsed.planType).toBe('Antigravity Starter')
+    // The panel also prints a "Claude + GPT models" pool; those models were
+    // removed from the agy offer entirely, so metering the pool would only
+    // advertise the extra-ToS-risk lane. Gemini is the whole story.
     expect(parsed.windows).toMatchObject([
       {
         label: 'Gemini models',
@@ -75,14 +81,9 @@ describe('parseAgyUsagePanel', () => {
         usedPercent: 15,
         resetAt: '2026-07-24T12:00:00.000Z',
         limitLabel: '85% remaining · refresh: 2026-07-24T12:00:00.000Z'
-      },
-      {
-        label: 'Claude + GPT models',
-        remainingPercent: 20,
-        usedPercent: 80,
-        limitLabel: '20% remaining · refresh: Jul 30, 09:00 UTC'
       }
     ])
+    expect(parsed.windows).toHaveLength(1)
   })
 
   it('fails closed for output without an official usage heading or supported groups', () => {
@@ -91,13 +92,10 @@ describe('parseAgyUsagePanel', () => {
     expect(parseAgyUsagePanel('Usage\nGemini models\n105% remaining').windows).toEqual([])
   })
 
-  it('accepts the documented pool labels with or without the visual "models" suffix', () => {
+  it('accepts Gemini pool labels with or without the "models" suffix and skips the rest', () => {
     expect(
       parseAgyUsagePanel('Usage\nGemini\n85% remaining\nClaude & GPT\n20% remaining').windows
-    ).toMatchObject([
-      { label: 'Gemini', remainingPercent: 85 },
-      { label: 'Claude & GPT', remainingPercent: 20 }
-    ])
+    ).toMatchObject([{ label: 'Gemini', remainingPercent: 85 }])
   })
 
   it('strips terminal controls before inspecting the panel', () => {
@@ -176,7 +174,7 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
       configured: true,
       planType: 'Antigravity Starter'
     })
-    expect(snapshot.windows).toHaveLength(2)
+    expect(snapshot.windows).toHaveLength(1)
     expect(spawnPty).toHaveBeenCalledWith(
       '/Users/test/.local/bin/agy',
       AGY_USAGE_TUI_ARGS,
@@ -229,5 +227,77 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
       expect(snapshot.windows).toBeUndefined()
       expect(snapshot.error).toMatch(/^Quota unavailable:/)
     }
+  })
+})
+
+
+describe('agyUsageProbeDecision', () => {
+  const T0 = 1_000_000
+
+  it('never lets an automatic caller reach the PTY — cache or unavailable', () => {
+    expect(
+      agyUsageProbeDecision({ force: false, nowMs: T0, cacheFetchedAtMs: null, lastAttemptAtMs: null })
+    ).toBe('unavailable')
+    // Even an arbitrarily stale cache is served rather than refreshed.
+    expect(
+      agyUsageProbeDecision({
+        force: false,
+        nowMs: T0 + 24 * 60 * 60 * 1000,
+        cacheFetchedAtMs: T0,
+        lastAttemptAtMs: T0
+      })
+    ).toBe('serve-cache')
+  })
+
+  it('lets the first manual refresh probe, then clamps mashing to the window', () => {
+    expect(
+      agyUsageProbeDecision({ force: true, nowMs: T0, cacheFetchedAtMs: null, lastAttemptAtMs: null })
+    ).toBe('probe')
+    expect(
+      agyUsageProbeDecision({
+        force: true,
+        nowMs: T0 + 30_000,
+        cacheFetchedAtMs: null,
+        lastAttemptAtMs: T0
+      })
+    ).toBe('unavailable')
+    expect(
+      agyUsageProbeDecision({
+        force: true,
+        nowMs: T0 + 30_000,
+        cacheFetchedAtMs: T0,
+        lastAttemptAtMs: T0
+      })
+    ).toBe('serve-cache')
+    expect(
+      agyUsageProbeDecision({
+        force: true,
+        nowMs: T0 + AGY_USAGE_MANUAL_MIN_INTERVAL_MS + 1,
+        cacheFetchedAtMs: T0,
+        lastAttemptAtMs: T0
+      })
+    ).toBe('probe')
+  })
+
+  it('serves a fresh cache to a manual refresh without spawning', () => {
+    expect(
+      agyUsageProbeDecision({
+        force: true,
+        nowMs: T0 + 60_000,
+        cacheFetchedAtMs: T0,
+        lastAttemptAtMs: T0 - 10 * 60 * 1000
+      })
+    ).toBe('serve-cache')
+  })
+
+  it('clamps on ATTEMPT time, not success — a failing probe cannot retry-spam', () => {
+    expect(
+      agyUsageProbeDecision({
+        force: true,
+        nowMs: T0 + 60_000,
+        cacheFetchedAtMs: null,
+        lastAttemptAtMs: T0
+      })
+    ).toBe('unavailable')
   })
 })
