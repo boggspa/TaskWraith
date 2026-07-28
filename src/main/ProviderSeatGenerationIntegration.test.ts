@@ -64,6 +64,39 @@ describe('provider seat generation main-process integration', () => {
     expect(seatApply).not.toContain('!== bootstrapInput.systemPromptFingerprint')
   })
 
+  it('greppable lint: every sessionless Kimi session/new takes the recovery prompt', () => {
+    // Ship-notes class (1.9.0 postmortem): prose landmines do not prevent
+    // regressions — this pin is the mechanical form of the 2026-07-28 live
+    // catch. buildKimiProductionSessionPlan used to select the recovery
+    // prompt only for requested-but-unauthorized (legacy-posture) resumes;
+    // a seat rotation nulls the requested session AFTER composition, so a
+    // real rotation (k2.7→k3) opened session/new on the slim resume prompt
+    // and answered "I don't have a codeword for this thread".
+    const kimiPlanSource = fs.readFileSync(
+      new URL('./kimi/KimiProductionContainment.ts', import.meta.url),
+      'utf8'
+    )
+    const planBody = (() => {
+      const start = kimiPlanSource.indexOf('export function buildKimiProductionSessionPlan(')
+      const end = kimiPlanSource.indexOf('export function', start + 1)
+      expect(start).toBeGreaterThanOrEqual(0)
+      return kimiPlanSource.slice(start, end)
+    })()
+    // The sessionless branch must prefer the composed recovery prompt…
+    expect(planBody).toContain('prompt: input.resumeFallbackPrompt || input.prompt')
+    // …and must never re-gate that selection on the requested session id.
+    expect(planBody).not.toMatch(/requested\s*\?\s*input\.resumeFallbackPrompt/)
+
+    // Wiring seam: the dispatch call site must actually pass the fallback.
+    // Dropping this line starves the plan silently — no unit test fails,
+    // every rotated Kimi turn goes context-blind (the orphan-input class).
+    const kimiDispatch = sourceBetween(
+      'buildKimiProductionSessionPlan({',
+      'legacyResumeRejected'
+    )
+    expect(kimiDispatch).toContain('resumeFallbackPrompt: payload.resumeFallbackPrompt')
+  })
+
   it('surfaces real context-dropping rotations as a system transcript notice', () => {
     const seatApply = sourceBetween(
       'function applyProviderSeatGeneration(',
