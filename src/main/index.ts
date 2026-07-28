@@ -386,7 +386,7 @@ import {
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
-import { extractThreadId } from './BridgeRunEventSink'
+import { extractRunId, extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
 import {
   externalGitRepositoryRootIsSelfContained,
@@ -837,7 +837,8 @@ import {
 } from './services/MaintenanceCompactionRegistry'
 import {
   persistRemoteImageAttachments,
-  purgeLegacyRemoteAttachmentTempRoot
+  purgeLegacyRemoteAttachmentTempRoot,
+  type RemoteImageAttachmentInput
 } from './RemoteAttachmentPersistence'
 import {
   quiescePreparedHistoryDeletion,
@@ -7034,7 +7035,22 @@ const executionGraphAdapterContext = new AsyncLocalStorage<{
 const providerAdapterInvocationTokens = new Map<string, object>()
 const remoteComposerInternalDispatches = new WeakMap<
   BridgeComposerPromptAction,
-  { appRunId: string; queueRunId: string }
+  {
+    appRunId: string
+    queueRunId: string
+    /** Attachment files persisted at ENQUEUE time for a queued prompt.
+     * Carried here — never on the wire action — so only the internal
+     * queue-dispatch lane can name Mac-local paths; a paired device's own
+     * composerPrompt still ships base64 attachments that are materialized
+     * on arrival. */
+    imagePaths?: string[]
+    imageThumbnails?: Array<{
+      dataBase64: string
+      mimeType: string
+      width: number
+      height: number
+    }>
+  }
 >()
 
 function executionGraphOwnsOrAnchorsRunId(runId: string | undefined): boolean {
@@ -23160,9 +23176,17 @@ function externalPathApprovalTitle(): string {
 
 function externalPathApprovalBody(detection: PendingExternalPathDetection): string {
   const label = providerLabel(detection.provider)
-  return detection.access === 'write'
-    ? `${label} wants to edit a file outside the workspace.`
-    : `${label} wants to read a file outside the workspace.`
+  const verb = detection.access === 'write' ? 'edit' : 'read'
+  // The PATH is the whole decision. The desktop renders it from the
+  // structured preview, but a paired device only ever sees this body — a
+  // grant button next to "wants to read a file outside the workspace." is
+  // asking the user to approve a path they were never shown. Middle-truncate
+  // long paths (the tail names the file, the head names the volume).
+  const path =
+    detection.path.length > 220
+      ? `${detection.path.slice(0, 96)}…${detection.path.slice(-120)}`
+      : detection.path
+  return `${label} wants to ${verb} a file outside the workspace:\n${path}`
 }
 
 function externalPathApprovalPreview(detection: PendingExternalPathDetection): {
@@ -36409,6 +36433,11 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     let scheduleRemoteComposerQueuePumpRef: (() => void) | null = null
+    /** Settles the remote-queue job that owns an exiting run (see the
+     * agent-exit subscriber). Ref for the same reason as the pump ref: the
+     * queue closure is constructed later than the subscribers that need it. */
+    let settleRemoteComposerQueueJobForExitRef: ((chatId: string, runId: string | null) => void) | null =
+      null
     const remoteGitService = new GitService()
     const MAX_REMOTE_GIT_FILES = 200
     const REMOTE_GIT_SNAPSHOT_DEBOUNCE_MS = 250
@@ -36682,7 +36711,13 @@ if (isGeminiMcpBridgeProcess) {
         }
         remoteComposerInternalDispatches.set(action, {
           appRunId: dispatch.appRunId,
-          queueRunId: dispatch.queueRunId
+          queueRunId: dispatch.queueRunId,
+          ...(leased.request?.remoteComposer?.imagePaths?.length
+            ? {
+                imagePaths: leased.request.remoteComposer.imagePaths,
+                imageThumbnails: leased.request.remoteComposer.imageThumbnails ?? []
+              }
+            : {})
         })
         try {
           const result = await createBridgeActionExecutor().executeComposerPrompt(action)
@@ -36787,6 +36822,31 @@ if (isGeminiMcpBridgeProcess) {
         remoteComposerQueuePumpTimer.unref?.()
       }
       scheduleRemoteComposerQueuePumpRef = () => scheduleRemoteComposerQueuePump()
+      // A queue-dispatched run reuses its job's runId, but nothing main-side
+      // ever settled the job when that run ended: the only settler lived in
+      // the renderer's own executeRun context, which bridge runs never enter.
+      // The leftover starting/active job kept remoteComposerChatIsBusy true
+      // FOREVER for that chat — blocking every later queued prompt until a
+      // restart's recovery pass. Settle on the run's own exit instead.
+      const settleRemoteComposerQueueJobForExit = (chatId: string, runId: string | null): void => {
+        // No run id extracted ⇒ cannot attribute; never settle by chat alone —
+        // a 'starting' job for the NEXT prompt may be mid-dispatch.
+        if (!runId) return
+        const jobs = AppStore.getRunQueueJobs({
+          chatId,
+          statuses: ['starting', 'active', 'cancelling']
+        }).filter((job) => job.request?.remoteComposer && job.runId === runId)
+        for (const job of jobs) {
+          getRunRepository().transitionRunQueueJob(job.runId, 'completed', {
+            statusReason: 'Run finished.'
+          })
+          const chat = AppStore.getChat(chatId)
+          const workspaceId = job.request?.remoteComposer?.workspaceId
+          if (chat && workspaceId) broadcastRemoteComposerQueueChange(chat, workspaceId)
+        }
+        if (jobs.length > 0) scheduleRemoteComposerQueuePump()
+      }
+      settleRemoteComposerQueueJobForExitRef = settleRemoteComposerQueueJobForExit
       const steerRemoteComposerQueueJob = async (
         job: RunQueueJob,
         chat: ChatRecord
@@ -36854,7 +36914,7 @@ if (isGeminiMcpBridgeProcess) {
         kimiThinkingEnabled?: boolean
         contextTurns?: number
         extraWorkspaceIds?: string[]
-        imageAttachments?: unknown[]
+        imageAttachments?: RemoteImageAttachmentInput[]
         scheduledRunAt?: string
       }): Promise<{ ok: boolean; queueId?: string; reason?: string }> => {
         const chat = AppStore.getChat(action.threadId)
@@ -36867,12 +36927,6 @@ if (isGeminiMcpBridgeProcess) {
         if (!text) return { ok: false, reason: 'Prompt is empty' }
         const schedule = normalizeRemoteComposerScheduledRunAt(action.scheduledRunAt)
         if (schedule.reason) return { ok: false, reason: schedule.reason }
-        if (action.imageAttachments?.length) {
-          return {
-            ok: false,
-            reason: 'Queued image attachments from paired devices are not supported yet'
-          }
-        }
         const provider = assertLiveProviderId(action.provider)
         const scope = chatScope(chat)
         const workspace =
@@ -36898,6 +36952,34 @@ if (isGeminiMcpBridgeProcess) {
           ...(action.approvalMode ? { approvalMode: action.approvalMode } : {}),
           policyFingerprint: bridgeAllowlist.fingerprint(),
           evaluatedAt: new Date().toISOString()
+        }
+        // Attachments are materialized NOW (post-allowlist, so a denial can't
+        // orphan files), not at flush: the queue is durable across restarts,
+        // so the images must be too — the job records paths into the
+        // chat-owned transcript-media store, never raw base64 (which would
+        // bloat every run-queue persistence write).
+        let queuedImagePaths: string[] = []
+        let queuedImageThumbnails: Array<{
+          dataBase64: string
+          mimeType: string
+          width: number
+          height: number
+        }> = []
+        if (action.imageAttachments?.length) {
+          try {
+            const persisted = persistRemoteImageAttachments({
+              appChatId: chat.appChatId,
+              attachments: action.imageAttachments,
+              store: getTranscriptMediaAssetStore()
+            })
+            queuedImagePaths = persisted.map((attachment) => attachment.path)
+            queuedImageThumbnails = buildBridgeImageThumbnails(
+              persisted.map((attachment) => attachment.buffer)
+            )
+          } catch (err) {
+            console.warn('[remote-composer-queue] failed to persist attachments:', err)
+            return { ok: false, reason: 'Attached images could not be stored for queueing' }
+          }
         }
         const queueId = `remote-queue-${randomUUID()}`
         const workflowMode: ChatWorkflowMode = action.workflowMode === 'plan' ? 'plan' : 'normal'
@@ -37029,6 +37111,9 @@ if (isGeminiMcpBridgeProcess) {
               ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
               ...(action.extraWorkspaceIds?.length
                 ? { extraWorkspaceIds: action.extraWorkspaceIds }
+                : {}),
+              ...(queuedImagePaths.length
+                ? { imagePaths: queuedImagePaths, imageThumbnails: queuedImageThumbnails }
                 : {})
             }
           }
@@ -39062,6 +39147,51 @@ if (isGeminiMcpBridgeProcess) {
         },
         composerPromptFn: async (action) => {
           const internalQueueDispatch = remoteComposerInternalDispatches.get(action)
+          // Desktop parity — queue-on-busy (the renderer's
+          // shouldQueueRunBeforeDispatch): a phone send landing while this
+          // thread's run is live used to dispatch a COMPETING run that
+          // resumed the live run's own provider session and produced
+          // nothing ("sent it and it died"). It now joins the durable
+          // remote queue and flushes when the run ends. Internal flush
+          // dispatches bypass the gate — they ARE the queue draining, and
+          // the busy predicate would see their own leased job. Ensemble
+          // chats keep their own steer lane (ensembleSteerFn) untouched.
+          if (!internalQueueDispatch && remoteComposerChatIsBusy(action.threadId)) {
+            const busyChat = AppStore.getChat(action.threadId)
+            if (busyChat && !busyChat.ensemble) {
+              const queued = await queueRemoteComposerPrompt({
+                workspaceId: action.workspaceId,
+                threadId: action.threadId,
+                provider: action.provider,
+                text: action.text,
+                approvalMode: action.approvalMode,
+                workflowMode: action.workflowMode,
+                permissionPresetId: action.permissionPresetId,
+                model: action.model,
+                reasoningEffort: action.reasoningEffort,
+                claudeReasoningEffort: action.claudeReasoningEffort,
+                grokReasoningEffort: action.grokReasoningEffort,
+                cursorReasoningEffort: action.cursorReasoningEffort,
+                cursorFastMode: action.cursorFastMode,
+                claudeFastMode: action.claudeFastMode,
+                codexServiceTier: action.codexServiceTier,
+                kimiFastMode: action.kimiFastMode,
+                kimiThinkingEnabled: action.kimiThinkingEnabled,
+                contextTurns: action.contextTurns,
+                extraWorkspaceIds: action.extraWorkspaceIds,
+                imageAttachments: action.imageAttachments
+              })
+              if (queued.ok) {
+                return {
+                  dispatched: false,
+                  appRunId: null,
+                  queuedBehindActiveRun: true,
+                  queueId: queued.queueId
+                }
+              }
+              return { dispatched: false, appRunId: null, reason: queued.reason }
+            }
+          }
           // T72 — global chats are conversational from the phone, but every
           // phone-origin turn runs READ-ONLY: approvalMode is forced to
           // provider-plan here regardless of what arrived (the allowlist already
@@ -39259,7 +39389,20 @@ if (isGeminiMcpBridgeProcess) {
             width: number
             height: number
           }> = []
-          if (action.imageAttachments?.length) {
+          if (internalQueueDispatch?.imagePaths?.length) {
+            // Queued-prompt flush: the images were materialized at ENQUEUE
+            // time and ride the internal dispatch entry — never the wire
+            // action, so a paired device cannot name Mac-local paths. The
+            // WeakMap membership IS the authorization for these paths.
+            iosImagePaths = internalQueueDispatch.imagePaths
+            for (const imagePath of iosImagePaths) {
+              authorizeImagePreviewPath(imagePath, {
+                mainAuthority: true,
+                appChatId: action.threadId
+              })
+            }
+            iosImageThumbnails = internalQueueDispatch.imageThumbnails ?? []
+          } else if (action.imageAttachments?.length) {
             try {
               const persisted = persistRemoteImageAttachments({
                 appChatId: action.threadId,
@@ -39892,6 +40035,10 @@ if (isGeminiMcpBridgeProcess) {
         if (!threadId || !bridgeBroadcasterRef) return
         if (event.channel === 'agent-exit') {
           remoteLiveSnapshotScheduler.clear(threadId)
+          // Settle the queue job this exit belongs to (queue-dispatched runs
+          // reuse the job's runId) — otherwise the job wedges in
+          // starting/active and the chat reads busy forever.
+          settleRemoteComposerQueueJobForExitRef?.(threadId, extractRunId(event.payload))
           // Terminal status for DESKTOP-initiated runs persists via the
           // renderer's save shortly after exit. Re-push once the record
           // settles via targeted deltas: threadSnapshot covers the transcript,
@@ -39899,7 +40046,14 @@ if (isGeminiMcpBridgeProcess) {
           setTimeout(() => {
             const chat = AppStore.getChat(threadId)
             const workspaceId = canonicalRemoteWorkspaceId(chat?.workspaceId)
-            if (!chat || !workspaceId) return
+            if (!chat || !workspaceId) {
+              // Global chats have no canonical workspace id and were skipping
+              // the ENTIRE convergence block — including the queue pump, so a
+              // prompt queued on a global chat stalled until the next enqueue
+              // or an app restart. The pump is chat-agnostic; always arm it.
+              scheduleRemoteComposerQueuePumpRef?.()
+              return
+            }
             publishRemoteAgentExitConvergenceDeltas({
               pushThreadSnapshot: () => pushRemoteThreadSnapshot(chat, workspaceId),
               pushTaskCardDelta: () => pushRemoteTaskCardDelta(chat.appChatId),

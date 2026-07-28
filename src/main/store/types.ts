@@ -5492,6 +5492,17 @@ export interface RunQueueRequestSnapshot {
     contextTurns?: number
     extraWorkspaceIds?: string[]
     scheduledRunAt?: string
+    /** Phone-attached images, materialized into the chat-owned transcript
+     * media store AT ENQUEUE time (durable across restart) — never raw
+     * base64 in the job record, which would bloat run-queue persistence.
+     * Consumed only by the internal queue-dispatch lane. */
+    imagePaths?: string[]
+    imageThumbnails?: Array<{
+      dataBase64: string
+      mimeType: string
+      width: number
+      height: number
+    }>
   }
 }
 

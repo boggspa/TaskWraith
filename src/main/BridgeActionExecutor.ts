@@ -648,6 +648,10 @@ export interface MainProcessActionExecutorDependencies {
     dispatched: boolean
     appRunId: string | null
     reason?: string
+    /** The thread's run was live, so the prompt joined the durable remote
+     * queue instead of dispatching (desktop queue-on-busy parity). */
+    queuedBehindActiveRun?: boolean
+    queueId?: string
   }>
   composerQueuePromptFn?: (action: BridgeComposerQueuedPromptAction) => Promise<{
     ok: boolean
@@ -1676,6 +1680,23 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     )
     try {
       const result = await this.deps.composerPromptFn(action)
+      if (result.queuedBehindActiveRun) {
+        // Not a failure: the thread's run was live, so the prompt joined
+        // the durable remote queue (desktop queue-on-busy parity) and will
+        // dispatch when the run ends. The queued stack reaches the phone
+        // via the task-card projection that follows.
+        return {
+          executed: true,
+          message: 'Queued behind the active run.',
+          data: {
+            queuedBehindActiveRun: true,
+            ...(result.queueId ? { queueId: result.queueId } : {}),
+            workspaceId: action.workspaceId,
+            threadId: action.threadId,
+            provider: action.provider
+          }
+        }
+      }
       if (result.dispatched) {
         // `appRunId` may be null: the dispatcher acks at ACCEPTANCE and
         // runs preflight/dispatch async so the phone's ack window isn't

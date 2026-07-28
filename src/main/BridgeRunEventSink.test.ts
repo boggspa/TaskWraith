@@ -185,3 +185,19 @@ describe('makeBridgeRunEventSink', () => {
     expect(forwardedChannels).toEqual(channels)
   })
 })
+
+describe('extractRunId', () => {
+  it('reads appRunId from the direct and nested payload shapes', async () => {
+    const { extractRunId } = await import('./BridgeRunEventSink')
+    expect(extractRunId({ appRunId: 'run-1', appChatId: 'chat-1' })).toBe('run-1')
+    expect(extractRunId({ data: { appRunId: 'run-2' } })).toBe('run-2')
+  })
+
+  it('returns null when absent — callers must skip, never settle by chat alone', async () => {
+    const { extractRunId } = await import('./BridgeRunEventSink')
+    expect(extractRunId({ appChatId: 'chat-1' })).toBeNull()
+    expect(extractRunId({ appRunId: '' })).toBeNull()
+    expect(extractRunId(null)).toBeNull()
+    expect(extractRunId('run-1')).toBeNull()
+  })
+})

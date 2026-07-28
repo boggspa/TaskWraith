@@ -134,3 +134,23 @@ export function extractThreadId(payload: unknown): string | null {
   }
   return null
 }
+
+/** Best-effort extraction of `appRunId`, mirroring extractThreadId's shapes.
+ * Used to settle the remote-composer queue job that owns an exiting run —
+ * a queue-dispatched run reuses its job's runId, so this id IS the job id.
+ * Null when absent; callers must treat that as "cannot attribute" and skip,
+ * never as "settle everything for the chat". */
+export function extractRunId(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.appRunId === 'string' && record.appRunId.length > 0) {
+    return record.appRunId
+  }
+  if (typeof record.data === 'object' && record.data !== null) {
+    const inner = record.data as Record<string, unknown>
+    if (typeof inner.appRunId === 'string' && inner.appRunId.length > 0) {
+      return inner.appRunId
+    }
+  }
+  return null
+}

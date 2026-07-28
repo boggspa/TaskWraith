@@ -1314,6 +1314,27 @@ describe('MainProcessActionExecutor.executeComposerPrompt', () => {
     expect(result.message).toMatch(/not registered/)
   })
 
+  it('acks a queued-behind-active-run outcome as SUCCESS, not failure', async () => {
+    // Desktop queue-on-busy parity: a send that lands mid-run joins the
+    // durable remote queue. The phone must hear success ("Queued…"), not a
+    // dispatch failure — and never see a competing run.
+    const composerPromptFn = vi.fn().mockResolvedValue({
+      dispatched: false,
+      appRunId: null,
+      queuedBehindActiveRun: true,
+      queueId: 'remote-queue-123'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, composerPromptFn })
+    const result = await executor.executeComposerPrompt(sample.composerPrompt)
+    expect(result.executed).toBe(true)
+    expect(result.message).toMatch(/queued behind the active run/i)
+    expect(result.data).toMatchObject({
+      queuedBehindActiveRun: true,
+      queueId: 'remote-queue-123',
+      threadId: 't-1'
+    })
+  })
+
   it('reports executed=false when composerPromptFn throws', async () => {
     const composerPromptFn = vi.fn().mockRejectedValue(new Error('preflight blew up'))
     const log = vi.fn()
