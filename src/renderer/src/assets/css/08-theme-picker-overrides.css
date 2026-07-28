@@ -9736,7 +9736,11 @@
 
 .composer-combined-picker-row:hover,
 .composer-combined-picker-row.is-highlighted {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--model-row-accent, var(--accent)) 18%,
+    transparent
+  );
 }
 
 .composer-combined-picker-row.is-selected {
@@ -9822,7 +9826,11 @@
 }
 
 .composer-combined-picker-check {
-  color: color-mix(in srgb, var(--accent) 86%, var(--text-primary));
+  color: color-mix(
+    in srgb,
+    var(--model-row-accent, var(--accent)) 86%,
+    var(--text-primary)
+  );
   font-size: 11px;
   flex-shrink: 0;
 }
@@ -9849,7 +9857,11 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: color-mix(in srgb, var(--accent) 70%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--model-row-accent, var(--accent)) 70%,
+    transparent
+  );
   opacity: 0.75;
 }
 [data-composer-style="codex"] .composer-combined-picker-fast-indicator {

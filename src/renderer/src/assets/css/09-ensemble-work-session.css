@@ -4777,6 +4777,18 @@
   justify-content: center;
   width: 16px;
   height: 16px;
+  border-radius: 5px;
+  background: color-mix(
+    in srgb,
+    var(--ensemble-round-provider-accent, var(--accent)) 10%,
+    transparent
+  );
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--ensemble-round-provider-accent, var(--accent)) 30%,
+      transparent
+    );
 }
 
 .ensemble-round-card-provider svg {
