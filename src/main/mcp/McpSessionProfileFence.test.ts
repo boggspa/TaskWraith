@@ -11,9 +11,12 @@ import {
   TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
+  isSketchCanvasDirectTaskWraithMcpProfile,
   isGatewayV2TaskWraithMcpProfile,
   isTaskWraithMcpProfileId,
   isTaskWraithMcpProfileReceiptForSession,
@@ -43,7 +46,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
-      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID)
     }
   })
 
@@ -135,7 +138,9 @@ describe('resolveTaskWraithMcpProfile', () => {
       TASKWRAITH_GATEWAY_V5_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID,
       TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
     ]) {
       expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
       // Load-bearing: this predicate drives the gateway-subset launch arg and
@@ -151,6 +156,8 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID)).toBe(false)
   })
 
   it('selects the mesh-direct catalogue for a fresh participant that may request access', () => {
@@ -160,7 +167,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         meshCanvasParticipantCanRequest: true
       })
     ).toEqual({
-      profileId: TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
+      profileId: TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID,
       source: 'fresh_gateway_mesh_participant'
     })
     expect(
@@ -169,7 +176,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         meshCanvasParticipantCanRequest: false
       })
     ).toEqual({
-      profileId: TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
+      profileId: TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID,
       source: 'fresh_gateway_default'
     })
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(
@@ -178,6 +185,24 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)).toBe(
       false
     )
+    expect(isMeshCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID)).toBe(
+      true
+    )
+  })
+
+  it('promotes Sketch only on v8 births while preserving every v7 receipt', () => {
+    expect(isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)).toBe(
+      false
+    )
+    expect(
+      isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)
+    ).toBe(false)
+    expect(isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID)).toBe(
+      true
+    )
+    expect(
+      isSketchCanvasDirectTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID)
+    ).toBe(true)
   })
 
   it('never lets participant eligibility override a persisted session receipt', () => {

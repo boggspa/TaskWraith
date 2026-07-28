@@ -91,6 +91,35 @@ describe('createKimiMcpDispatch', () => {
     expect(names).not.toContain('ensemble_bossman_control')
   })
 
+  it('makes Sketch direct for v8 Kimi seats without drifting a v7 receipt', async () => {
+    const listFor = async (taskWraithMcpProfileId: 'taskwraith-gateway-v7' | 'taskwraith-gateway-v8') => {
+      const dispatch = createKimiMcpDispatch({
+        route: { appRunId: 'kimi-run-sketch', appChatId: 'chat-sketch' },
+        taskWraithMcpProfileId,
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'canvas_sketch_open' },
+          { name: 'canvas_sketch_get' },
+          { name: 'canvas_sketch_update' }
+        ],
+        dispatchBrokerRequest: vi.fn()
+      })
+      const response = await dispatch({ jsonrpc: '2.0', id: 89, method: 'tools/list' })
+      return (
+        (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+      ).map((tool) => tool.name)
+    }
+
+    const v7 = await listFor('taskwraith-gateway-v7')
+    const v8 = await listFor('taskwraith-gateway-v8')
+    for (const tool of ['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update']) {
+      expect(v7).not.toContain(tool)
+      expect(v8).toContain(tool)
+    }
+  })
+
   it('returns null for notifications without touching the broker', async () => {
     const dispatchBrokerRequest = vi.fn()
     const dispatch = createKimiMcpDispatch({

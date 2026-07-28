@@ -6,7 +6,8 @@ import {
 import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
 import {
   isMeshCanvasDirectTaskWraithMcpProfile,
-  isPortableEnsembleControlMcpProfile
+  isPortableEnsembleControlMcpProfile,
+  isSketchCanvasDirectTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
 import type { TaskWraithMcpProfileId } from '../store/types'
 
@@ -45,6 +46,9 @@ export function createKimiMcpDispatch(
         : {}),
       ...(isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
         ? { TASKWRAITH_MCP_MESH_DIRECT: '1' }
+        : {}),
+      ...(isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
+        ? { TASKWRAITH_MCP_SKETCH_DIRECT: '1' }
         : {}),
       TASKWRAITH_PARENT_PROVIDER: 'kimi',
       TASKWRAITH_RUN_ID: options.route.appRunId || '',

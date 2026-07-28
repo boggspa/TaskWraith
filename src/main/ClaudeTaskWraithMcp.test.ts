@@ -11,16 +11,19 @@ import {
 import {
   CORE_MCP_ADVERTISE_TOOLS,
   GATEWAY_V7_MCP_ADVERTISE_TOOLS,
-  GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS
+  GATEWAY_V8_MCP_ADVERTISE_TOOLS,
+  GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
 } from './mcp/McpToolProfiles'
 import {
   GEMINI_MCP_MESH_DIRECT_ARG,
-  GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG
+  GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
+  GEMINI_MCP_SKETCH_DIRECT_ARG
 } from './mcp/McpBridgeRuntime'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
-  TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
 } from './mcp/McpSessionProfileFence'
 
 // Phase I3 (Claude initiator): the Claude SDK + CLI fallback gain the
@@ -137,15 +140,19 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).toContain(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
-    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG)
+    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
     expect(taskWraith.args).not.toContain('--core-subset')
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
-    expect(allowed).toHaveLength(GATEWAY_V7_MCP_ADVERTISE_TOOLS.length * 2)
-    for (const tool of GATEWAY_V7_MCP_ADVERTISE_TOOLS) {
+    expect(allowed).toHaveLength(GATEWAY_V8_MCP_ADVERTISE_TOOLS.length * 2)
+    for (const tool of GATEWAY_V8_MCP_ADVERTISE_TOOLS) {
       expect(allowed).toContain(tool)
       expect(allowed).toContain(`mcp__TaskWraith__${tool}`)
     }
+    expect(allowed).toContain('canvas_sketch_open')
+    expect(allowed).toContain('canvas_sketch_get')
+    expect(allowed).toContain('canvas_sketch_update')
     expect(allowed).toContain('ensemble_control')
     expect(allowed).not.toContain('ensemble_bossman_control')
     expect(allowed).not.toContain('image_generate')
@@ -155,32 +162,55 @@ describe('buildClaudeTaskWraithMcpServers', () => {
   it('adds direct Mesh Canvas tools to the fresh non-denied participant profile', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
-      profileId: TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
+      profileId: TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
     })
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).toContain(GEMINI_MCP_MESH_DIRECT_ARG)
-    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_MESH_DIRECT_ARG)
+    expect(taskWraith.args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(taskWraith.args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
 
     const allowed = buildClaudeTaskWraithAllowedToolNames(
-      TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID
     )
-    expect(allowed).toHaveLength(GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS.length * 2)
+    expect(allowed).toHaveLength(GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS.length * 2)
     expect(allowed).toContain('mesh_scene_present')
     expect(allowed).toContain('mcp__TaskWraith__mesh_scene_present')
+    expect(allowed).toContain('canvas_sketch_update')
+    expect(allowed).toContain('ensemble_roster_edit')
+  })
+
+  it('keeps Sketch behind discovery for a pinned v7 gateway receipt', () => {
+    const servers = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID
+    })
+    const taskWraith = servers?.TaskWraith
+    expect(taskWraith?.type).toBe('stdio')
+    if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
+    expect(taskWraith.args).not.toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    const allowed = buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID)
+    expect(allowed).toHaveLength(GATEWAY_V7_MCP_ADVERTISE_TOOLS.length * 2)
+    expect(allowed).not.toContain('canvas_sketch_update')
   })
 
   it('strips stale subset flags when the pinned profile is full', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
-      bridgeArgs: [...fixture.bridgeArgs, '--core-subset', '--gateway-subset']
+      bridgeArgs: [
+        ...fixture.bridgeArgs,
+        '--core-subset',
+        '--gateway-subset',
+        '--sketch-direct'
+      ]
     })
     const taskWraith = servers?.TaskWraith
     expect(taskWraith?.type).toBe('stdio')
     if (!taskWraith || taskWraith.type !== 'stdio') throw new Error('TaskWraith server missing')
     expect(taskWraith.args).not.toContain('--core-subset')
     expect(taskWraith.args).not.toContain('--gateway-subset')
+    expect(taskWraith.args).not.toContain('--sketch-direct')
   })
 
   it('adds user-managed stdio servers beside the TaskWraith bridge', () => {

@@ -412,6 +412,104 @@ export const GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...CAPABILITY_GATEWAY_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
+/**
+ * Gateway-v8 promotes Sketch Canvas to a first-class direct surface for every
+ * fresh seat. The separate bridge flag preserves v1-v7 receipts exactly:
+ * older sessions keep Sketch behind capability discovery, while v8 births see
+ * open/get/update without a search round-trip. Per-call permission still comes
+ * from the active run posture.
+ */
+export const GATEWAY_V8_ADDED_TOOL_NAMES = Object.freeze([
+  'canvas_sketch_open',
+  'canvas_sketch_get',
+  'canvas_sketch_update'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V8_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V7_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V8_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V8_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V8_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+export const GATEWAY_V8_MESH_MCP_DIRECT_TOOLS = Object.freeze([
+  ...GATEWAY_V8_MCP_DIRECT_TOOLS,
+  ...GATEWAY_V7_ADDED_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...GATEWAY_V8_MESH_MCP_DIRECT_TOOLS,
+  ...CAPABILITY_GATEWAY_TOOL_NAMES
+] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
+
+type GatewayV8MeshTransportToolDefinition = {
+  name: string
+  description?: string
+  inputSchema?: Record<string, unknown>
+}
+
+/**
+ * The combined Mesh + Sketch direct catalogue needs concise wire guidance to
+ * remain below the 40k transport ceiling without demoting any established
+ * direct tool. Long-form prose is replaced with bounded guidance: names, typed
+ * schemas, required fields, enums, annotations, and tools/call behavior are
+ * unchanged. Canonical definitions remain untouched for every other profile.
+ */
+const GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS = Object.freeze({
+  mesh_scene_create: 'Create a chat-owned 3D scene. Gated; returns sceneId.',
+  mesh_scene_list: 'List chat-owned 3D scenes. Read-only.',
+  mesh_scene_inspect: "Read a scene's nodes, materials, camera, settings, and bindings.",
+  mesh_scene_import: 'Import a workspace GLB/glTF/OBJ into a scene. Gated.',
+  mesh_scene_apply:
+    'Apply node/scene/fact/binding ops. Rotation is Euler degrees; binding source is object_data or node_property; numericTransform is scale/offset. Gated.',
+  mesh_scene_set_material: 'Set node PBR material and optional workspace texture. Gated.',
+  mesh_scene_present: 'Present a scene in the Mesh Canvas dock. Gated.',
+  mesh_scene_close: 'Close its presentation without deleting the scene. Gated.',
+  mesh_scene_delete: 'Delete a chat-owned scene and unreferenced assets. Gated.',
+  canvas_sketch_open:
+    "Open/restore this chat's Sketch Canvas. Read-only-safe; returns canvasId.",
+  canvas_sketch_get: 'Read Sketch elements and updatedAt. Read-only.',
+  canvas_sketch_update:
+    'Append/replace/clear/delete rect/ellipse/line/arrow/text/path elements. Respect expectedUpdatedAt; retry user_busy, reread on stale_document. Gated.'
+} satisfies Partial<Record<TaskWraithMcpToolName, string>>)
+
+function stripSchemaDescriptionFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripSchemaDescriptionFields)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== 'description')
+      .map(([key, nested]) => [key, stripSchemaDescriptionFields(nested)])
+  )
+}
+
+export function compactGatewayV8MeshToolDefinitionsForTransport<
+  T extends GatewayV8MeshTransportToolDefinition
+>(definitions: readonly T[]): T[] {
+  const descriptions = GATEWAY_V8_MESH_COMPACT_TOOL_DESCRIPTIONS as Readonly<
+    Record<string, string | undefined>
+  >
+  return definitions.map((definition) => {
+    const description = descriptions[definition.name]
+    if (!description) return definition
+    return {
+      ...definition,
+      description,
+      ...(definition.inputSchema
+        ? {
+            inputSchema: stripSchemaDescriptionFields(definition.inputSchema) as Record<
+              string,
+              unknown
+            >
+          }
+        : {})
+    }
+  })
+}
+
 const GATEWAY_MCP_TOOL_SET: ReadonlySet<string> = new Set(GATEWAY_MCP_ADVERTISE_TOOLS)
 const GATEWAY_MCP_DIRECT_TOOL_SET: ReadonlySet<string> = new Set(GATEWAY_MCP_DIRECT_TOOLS)
 
@@ -526,6 +624,19 @@ export const GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V7_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+/**
+ * Direct promotion does not mutate the hidden capability universe: Sketch was
+ * already discoverable there, and Mesh mirrors this direct+discoverable shape.
+ * Keeping the exact v7 array also preserves capability-search compatibility.
+ */
+export const GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
+export const GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -538,6 +649,8 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v8') return GATEWAY_V8_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v7' || profileId === 'taskwraith-gateway-v7-mesh') {
     return GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES
   }
@@ -553,6 +666,8 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v8-mesh') return GATEWAY_V8_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v8') return GATEWAY_V8_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v7-mesh') return GATEWAY_V7_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v7') return GATEWAY_V7_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v6') return GATEWAY_V6_MCP_DIRECT_TOOLS
@@ -581,7 +696,11 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-gateway-v7': GATEWAY_V7_MCP_ADVERTISE_TOOLS,
   // This is selected from a participant's current non-denied run posture. It
   // is a catalogue variant, not a permission class; `ask` still prompts.
-  'taskwraith-gateway-v7-mesh': GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v7-mesh': GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS,
+  // v8 promotes Sketch to direct for every fresh seat; the mesh variant keeps
+  // the current participant-posture-selected Mesh family direct as well.
+  'taskwraith-gateway-v8': GATEWAY_V8_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v8-mesh': GATEWAY_V8_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,
   readonly TaskWraithMcpAdvertisedToolName[]

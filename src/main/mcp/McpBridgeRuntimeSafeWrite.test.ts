@@ -18,6 +18,7 @@ import {
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_SKETCH_DIRECT_ARG,
   McpBridgeRuntime,
   brokerRequest,
   handleMcpJsonRpcMessage,
@@ -1143,6 +1144,98 @@ describe('MCP bridge stream writes', () => {
     ).toContain('mesh_scene_present')
   })
 
+  it('adds all Sketch Canvas verbs only for a v8 sketch-direct gateway receipt', () => {
+    const tools = [
+      { name: 'read_file' },
+      { name: 'canvas_sketch_open' },
+      { name: 'canvas_sketch_get' },
+      { name: 'canvas_sketch_update' },
+      { name: 'ensemble_roster_edit' },
+      { name: 'video_encode_clip' }
+    ]
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => tools,
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        '/tmp/taskwraith.sock',
+        'token-1',
+        { jsonrpc: '2.0', id: 25, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
+    }
+    const legacy = list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    const fresh = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_SKETCH_DIRECT: '1'
+    })
+    const freshMesh = list({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_SKETCH_DIRECT: '1',
+      TASKWRAITH_MCP_MESH_DIRECT: '1'
+    })
+    for (const tool of ['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update']) {
+      expect(legacy).not.toContain(tool)
+      expect(fresh).toContain(tool)
+      expect(freshMesh).toContain(tool)
+    }
+    expect(fresh).toContain('ensemble_roster_edit')
+    expect(freshMesh).toContain('ensemble_roster_edit')
+  })
+
+  it('forwards direct Sketch calls only when the v8 receipt flag is present', async () => {
+    const call = async (env: Record<string, string>) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'updated' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn(() => true) } as never
+        },
+        '/tmp/taskwraith.sock',
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 26,
+          method: 'tools/call',
+          params: {
+            name: 'canvas_sketch_update',
+            arguments: { canvasId: 'sketch-1', mode: 'clear' }
+          }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return brokerRequest
+    }
+
+    const legacy = await call({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })
+    expect(legacy).not.toHaveBeenCalled()
+
+    const fresh = await call({
+      TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
+      TASKWRAITH_MCP_SKETCH_DIRECT: '1'
+    })
+    expect(fresh).toHaveBeenCalledWith(
+      '/tmp/taskwraith.sock',
+      expect.objectContaining({
+        tool: 'canvas_sketch_update',
+        arguments: { canvasId: 'sketch-1', mode: 'clear' }
+      })
+    )
+  })
+
   it('allows a hidden read-only target through capability_invoke without unwrapping it', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'found' }))
     const chunks: string[] = []
@@ -1630,6 +1723,31 @@ describe('MCP bridge stream writes', () => {
     const env: Record<string, string | undefined> = {}
     applyMcpBridgeProfileArgvToEnv(args, env)
     expect(env.TASKWRAITH_MCP_MESH_DIRECT).toBe('1')
+  })
+
+  it('carries the sketch-direct v8 receipt atomically beside the gateway profile', () => {
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpBrokerToken: () => 'token-1',
+      isDev: () => false
+    } as never)
+    const args = runtime.taskwraithMcpBridgeArgs(
+      '/tmp/taskwraith.sock',
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true
+    )
+    expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
+    expect(args).toContain(GEMINI_MCP_SKETCH_DIRECT_ARG)
+    expect(args.at(-1)).toBe(GEMINI_MCP_SKETCH_DIRECT_ARG)
+
+    const env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(args, env)
+    expect(env.TASKWRAITH_MCP_SKETCH_DIRECT).toBe('1')
   })
 
   it('translates the gateway argv receipt into the child catalogue guard', () => {

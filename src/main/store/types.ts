@@ -787,6 +787,10 @@ export type TaskWraithMcpProfileId =
   // effective run posture; its catalogue receipt is never an authority grant.
   | 'taskwraith-gateway-v7'
   | 'taskwraith-gateway-v7-mesh'
+  // v8 promotes the three Sketch Canvas verbs to the direct birth catalogue.
+  // The mesh variant preserves the same posture-selected Mesh direct surface.
+  | 'taskwraith-gateway-v8'
+  | 'taskwraith-gateway-v8-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

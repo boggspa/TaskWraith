@@ -1259,6 +1259,7 @@ import {
   isGatewayTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSketchCanvasDirectTaskWraithMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpProfileReceiptForSession,
@@ -2610,6 +2611,7 @@ interface TaskWraithMcpBridgeArgOptions {
   gatewaySubset?: boolean
   portableEnsembleControl?: boolean
   meshDirect?: boolean
+  sketchDirect?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -2623,7 +2625,8 @@ function taskwraithMcpBridgeArgs(
     options.coreSubset === true,
     options.gatewaySubset === true,
     options.portableEnsembleControl === true,
-    options.meshDirect === true
+    options.meshDirect === true,
+    options.sketchDirect === true
   )
 }
 
@@ -18736,7 +18739,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           portableEnsembleControl: isPortableEnsembleControlMcpProfile(
             payload.taskWraithMcpProfileId
           ),
-          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+          meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          )
         }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
@@ -19515,7 +19521,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       grokMcpServers = [
         {
@@ -20407,7 +20416,10 @@ async function runMistralAcpProvider(
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       mistralMcpServers = [
         {
@@ -21799,7 +21811,8 @@ function getCodexClient(
       bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
         gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId)
       }),
       parentProvider: 'codex',
       userMcpServers
