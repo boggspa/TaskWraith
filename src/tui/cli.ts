@@ -164,7 +164,8 @@ async function connectedSnapshot(options: CliOptions): Promise<TaskWraithTuiStat
       overlay: 'none',
       overlayIndex: 0,
       scrollOffset: 0,
-      animationFrame: 0
+      animationFrame: 0,
+      tuneEffortIndex: 0
     }
   } finally {
     client.close()

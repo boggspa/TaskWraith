@@ -86,15 +86,27 @@ width-1 ASCII invariant are in [`DESIGN.md`](./DESIGN.md).
 | `Ctrl+A` / `Ctrl+E`       | Jump to the start / end of the composer              |
 | `Ctrl+O`                  | Toggle the context lens                              |
 | `Ctrl+K`                  | Toggle the thread picker                             |
+| `Ctrl+G`                  | Toggle the tune lens (model/reasoning, or seats)     |
 | `Ctrl+P`                  | Toggle the command reference                         |
 | `Page Up` / `Page Down`   | Scroll the transcript                                |
 | `Esc`                     | Close the active lens                                |
 | `Ctrl+U`                  | Clear the composer                                   |
 | `Ctrl+C`                  | Clear a non-empty composer; press again to leave     |
 
-Slash commands are `/context`, `/threads`, `/help`, `/cancel`, and `/quit`.
-Cancellation is always an explicit command and is still validated by Electron
-main. Bracketed paste is enabled: a multi-line code block stays one prompt,
+Slash commands are `/context`, `/threads`, `/model`, `/seats`, `/help`,
+`/cancel`, and `/quit`. Cancellation is always an explicit command and is still
+validated by Electron main.
+
+The tune lens is a deliberately narrow preview surface. On a solo thread it
+stages a model/reasoning switch **within the thread's current provider**: the
+host projects the same curated rows the App picker falls back to, the staged
+choice is shown beside the HUD identity, and it rides the next send through the
+canonical composer action, where the host validates it against its own offers.
+On an ensemble thread the same lens lists the roster and `Enter` toggles a
+seat's enabled flag immediately through the same main-owned roster action the
+paired-device surfaces use; disabled seats stay listed so they can be
+re-enabled. Providers whose catalogues are machine- or key-dependent (Ollama
+installs, Pi upstreams) report themselves locked and hand back to the App. Bracketed paste is enabled: a multi-line code block stays one prompt,
 with preserved line breaks shown as `↵` inside the one-row composer viewport.
 
 ## Terminal layout
@@ -151,22 +163,35 @@ The client can currently:
 - list workspaces and threads;
 - select a thread and receive transcript/run updates;
 - send a prompt to an existing solo thread through the normal composer action;
+- request the host's model/reasoning offers for a solo thread and stage one
+  offered pair on the next send;
 - steer/start an existing ensemble through the ensemble action path;
+- enable/disable an existing ensemble seat through the main-owned roster
+  action;
 - cancel a solo run or an ensemble round through their respective main-owned
   action paths.
 
 The facade derives workspace, provider, model, reasoning, and live run identity
 from canonical AppStore records. Client input cannot nominate a different
-provider, permission posture, workspace, or run id.
+provider, permission posture, workspace, or run id. Model/reasoning selection
+is offer-bound: the wire format carries no provider field, the facade validates
+every selection against the offers it would project for that thread right now,
+and a seat toggle can only reference an existing participant id — the client
+can never compose roster entries.
 
 ## Intentional v1 omissions
 
 The TUI does not imitate desktop glass, blur, refraction, floating shadows,
 hover previews, drag-and-drop, persistent animated backgrounds, stacked
-modals, canvas/media, or rich documents. It also does not yet edit providers,
-models, permissions, grants, rosters, or create threads. Those richer mutations
-stay in the Electron UI until they have a purpose-built terminal interaction
-and an equally strong authority contract.
+modals, canvas/media, or rich documents. It also does not switch providers,
+edit permissions or grants, compose or reorder rosters, manage roster presets,
+or create threads. The 2026-07-28 tune-lens amendment admitted exactly two
+mutations because they are pure projections of existing main-owned paths —
+staged model/reasoning within the current provider, and seat enable/disable —
+while everything renderer-owned (roster presets) or authority-expanding
+(workspace grants, permissions, provider switching) stays in the Electron UI
+until it has a purpose-built terminal interaction and an equally strong
+authority contract.
 
 This boundary leaves a clean future route: the local-control host can move from
 Electron main into a dedicated TaskWraith daemon without rewriting the

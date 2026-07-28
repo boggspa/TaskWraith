@@ -9,6 +9,7 @@ type TaskWraithLocalControlExecutor = Pick<
   | 'executeCancelRun'
   | 'executeEnsembleSteer'
   | 'executeEnsembleCancelRound'
+  | 'executeEnsembleRosterUpdate'
 >
 type TaskWraithLocalControlExecutorFactory = () => TaskWraithLocalControlExecutor
 
@@ -28,6 +29,7 @@ export async function installTaskWraithLocalControl(
     executeCancelRun: (action) => executor().executeCancelRun(action),
     executeEnsembleSteer: (action) => executor().executeEnsembleSteer(action),
     executeEnsembleCancelRound: (action) => executor().executeEnsembleCancelRound(action),
+    executeEnsembleRosterUpdate: (action) => executor().executeEnsembleRosterUpdate(action),
     log: (line) => console.log(line)
   }).catch((error) => {
     console.error('Failed to start TaskWraith local-control sidecar host', error)

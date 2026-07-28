@@ -91,6 +91,14 @@ export interface TuiGlyphSet {
   selection: string
   separator: string
 
+  // Tune lens (model/reasoning + seats).
+  /** An ensemble seat that is enabled for upcoming rounds. */
+  seatEnabled: string
+  /** An ensemble seat that is disabled (kept on the roster, skipped). */
+  seatDisabled: string
+  /** A staged model/reasoning change that applies on the next send. */
+  pendingChange: string
+
   // Reasoning ladder.
   reasoningOn: string
   reasoningOff: string
@@ -132,6 +140,10 @@ export const TUI_GLYPHS_UNICODE: TuiGlyphSet = {
   ellipsis: '…',
   selection: '›',
   separator: '·',
+
+  seatEnabled: '■',
+  seatDisabled: '□',
+  pendingChange: '→',
 
   reasoningOn: '✦',
   reasoningOff: '·',
@@ -176,6 +188,10 @@ export const TUI_GLYPHS_ASCII: TuiGlyphSet = {
   ellipsis: '~',
   selection: '>',
   separator: '.',
+
+  seatEnabled: 'x',
+  seatDisabled: '.',
+  pendingChange: '>',
 
   reasoningOn: '#',
   reasoningOff: '.',

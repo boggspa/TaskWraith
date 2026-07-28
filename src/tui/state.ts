@@ -1,6 +1,7 @@
 import type {
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
+  TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
@@ -13,12 +14,20 @@ export type TuiConnectionState =
   | 'offline'
   | 'incompatible-protocol'
   | 'demo'
-export type TuiOverlay = 'none' | 'context' | 'threads' | 'help'
+export type TuiOverlay = 'none' | 'context' | 'threads' | 'help' | 'tune'
 
 export interface TuiNotice {
   text: string
   tone: 'neutral' | 'good' | 'warning' | 'error'
   expiresAt?: number
+}
+
+/** A staged model/reasoning choice. Rides the NEXT composer.send; the host
+ * validates it against its own offers and remains the authority. */
+export interface TuiPendingSelection {
+  model: string
+  label?: string
+  reasoningEffort?: string
 }
 
 export interface TaskWraithTuiState {
@@ -34,6 +43,12 @@ export interface TaskWraithTuiState {
   scrollOffset: number
   animationFrame: number
   notice?: TuiNotice
+  /** Host-projected model/reasoning offers for the tune lens (solo threads). */
+  offers?: TaskWraithControlThreadOffers
+  offersLoading?: boolean
+  /** Reasoning column index for the highlighted tune-lens model row. */
+  tuneEffortIndex: number
+  pendingSelection?: TuiPendingSelection
 }
 
 function row(
@@ -262,6 +277,7 @@ export function createTaskWraithTuiDemoState(now = Date.now()): TaskWraithTuiSta
     overlay: 'none',
     overlayIndex: 0,
     scrollOffset: 0,
-    animationFrame: 0
+    animationFrame: 0,
+    tuneEffortIndex: 0
   }
 }
