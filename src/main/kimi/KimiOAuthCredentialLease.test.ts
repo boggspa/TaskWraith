@@ -85,7 +85,7 @@ function request(f: Awaited<ReturnType<typeof fixture>>, isolatedHome = f.homeA)
 }
 
 describe('KimiOAuthCredentialAuthority', () => {
-  it('leases OAuth across the whole seat lifetime while API-key concurrency stays outside this authority', async () => {
+  it('serializes a borrowed OAuth credential across its full private-home lifetime', async () => {
     const f = await fixture()
     const first = authority({ pid: 101, instanceId: 'first' })
     const acquired = await first.acquire(request(f))

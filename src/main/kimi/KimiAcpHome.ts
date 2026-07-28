@@ -2,17 +2,19 @@
 // TaskWraith-owned directory so a contained ACP seat gets: only the
 // TaskWraith-curated config (telemetry off + deny wall + no standing allow
 // rules), empty plugins/skills (no auto-loaded MCP servers / hooks / skills),
-// and a 0600 seeded credential copy that is removed on every exit path. The
-// default remains a throwaway per-run home; resumable seats retain only Kimi's
-// native session files between turns.
+// and a narrowly shared OAuth credential projection that is removed on every
+// exit path. The default remains a throwaway per-run home; resumable seats
+// retain only Kimi's native session files between turns.
 //
-// Why seed the credential: an isolated home with an empty credentials/ dir
-// fails session/new with -32000 (the B5 paradox). Seeding the real credential
-// into the isolated home resolves it (verified: session/new OK) while keeping
-// the isolation — the token lives only for the process and is removed after.
+// Why project the credential directories: an isolated home with an empty
+// credentials/ dir fails session/new with -32000 (the B5 paradox). Kimi Code
+// already locks its short OAuth refresh transition when processes share its
+// credentials/ + oauth/ directories. Projecting only those directories keeps
+// the seat's config, plugins, skills, and session history isolated while letting
+// multiple TaskWraith seats (and ordinary Kimi CLIs) coordinate refresh safely.
 //
-// fs is injected so the seed/teardown logic is unit-testable without touching
-// the real ~/.kimi-code.
+// fs is injected so credential projection and teardown remain unit-testable
+// without touching the real ~/.kimi-code.
 
 import {
   buildKimiIsolatedConfig,
@@ -25,6 +27,7 @@ import type {
   KimiOAuthCredentialLeaseAcquireResult,
   KimiOAuthCredentialLeaseRequest
 } from './KimiOAuthCredentialLease'
+import type { KimiOAuthCredentialProjectionRequest } from './KimiOAuthCredentialProjection'
 
 export interface KimiHomeFs {
   readFile: (path: string) => Promise<string>
@@ -48,8 +51,15 @@ export interface KimiHomeFs {
   }>
   realpath?: (path: string) => Promise<string>
   /**
-   * Required for OAuth-backed production seats. The returned durable lease
-   * owns the single-use refresh credential from seed through writeback.
+   * Production OAuth path: projects the real credential + refresh-lock
+   * directories into this isolated seat without sharing its other home state.
+   */
+  prepareOAuthCredentialProjection?: (
+    request: KimiOAuthCredentialProjectionRequest
+  ) => Promise<void>
+  /**
+   * Legacy/test fallback for older lease-only integrations. Production uses
+   * prepareOAuthCredentialProjection so independent Kimi seats can coexist.
    */
   acquireOAuthCredentialLease?: (
     request: KimiOAuthCredentialLeaseRequest
@@ -282,11 +292,10 @@ export async function prepareKimiIsolatedHome(
     }
   }
 
-  // Kimi Code issues single-use OAuth refresh tokens. The authority lease is
-  // acquired before seeding and remains held across the entire provider
-  // lifetime. That prevents two managed seats from copying the same refresh
-  // token, while its durable record lets the next admitted seat recover a
-  // rotated credential after a host crash.
+  // Production OAuth seats project Kimi's own credential store and short-lived
+  // refresh lock, so Kimi coordinates only the refresh transition while all
+  // seats remain runnable. Keep the durable full-lifetime lease solely as a
+  // compatibility fallback for older test/integration adapters.
   let oauthCredentialLease: KimiOAuthCredentialLease | null = null
   const persistRotatedCredential = async (): Promise<void> => {
     if (!oauthCredentialLease) return
@@ -355,9 +364,9 @@ export async function prepareKimiIsolatedHome(
     }
   }
 
-  // OAuth seats require a copied credential. Hosted canaries instead use a
-  // protected, non-rotating API key in config.toml and deliberately have no
-  // fake or disposable OAuth credential file.
+  // OAuth seats share Kimi's own credential storage plus refresh lock. Hosted
+  // canaries instead use a protected, non-rotating API key in config.toml and
+  // deliberately have no OAuth credential file.
   const sourceCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
   const hasOAuthCredential = await fs.exists(sourceCredential)
   if (!hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig)) {
@@ -369,28 +378,32 @@ export async function prepareKimiIsolatedHome(
     }
   }
 
+  const prepareOAuthCredentialProjection = fs.prepareOAuthCredentialProjection
+  const acquireOAuthCredentialLease = fs.acquireOAuthCredentialLease
   if (hasOAuthCredential) {
-    if (!fs.acquireOAuthCredentialLease) {
+    if (!prepareOAuthCredentialProjection && !acquireOAuthCredentialLease) {
       return {
         ok: false,
         reason: 'error',
         message:
-          'TaskWraith cannot start managed Kimi OAuth without its durable credential authority.'
+          'TaskWraith cannot start managed Kimi OAuth without its shared credential projection.'
       }
     }
-    const acquired = await fs.acquireOAuthCredentialLease({
-      sourceHome,
-      isolatedHome: homeDir,
-      boundaryRoot
-    })
-    if (!acquired.ok) {
-      return {
-        ok: false,
-        reason: 'error',
-        message: acquired.message
+    if (!prepareOAuthCredentialProjection) {
+      const acquired = await acquireOAuthCredentialLease!({
+        sourceHome,
+        isolatedHome: homeDir,
+        boundaryRoot
+      })
+      if (!acquired.ok) {
+        return {
+          ok: false,
+          reason: 'error',
+          message: acquired.message
+        }
       }
+      oauthCredentialLease = acquired.lease
     }
-    oauthCredentialLease = acquired.lease
   }
 
   try {
@@ -402,8 +415,16 @@ export async function prepareKimiIsolatedHome(
     // A prior process crash or provider upgrade may have left unknown top-level
     // material. Keep only the two proven native-continuity entries.
     if (input.preserveSessionState) await scrubDurableHome(false)
-    await fs.mkdir(fs.join(homeDir, 'credentials'))
-    await fs.mkdir(fs.join(homeDir, 'oauth'))
+    if (hasOAuthCredential && prepareOAuthCredentialProjection) {
+      await prepareOAuthCredentialProjection({
+        sourceHome,
+        isolatedHome: homeDir,
+        boundaryRoot
+      })
+    } else {
+      await fs.mkdir(fs.join(homeDir, 'credentials'))
+      await fs.mkdir(fs.join(homeDir, 'oauth'))
+    }
     // Empty plugins/skills so nothing auto-loads (dossier B4/I3).
     await fs.mkdir(fs.join(homeDir, 'plugins'))
     await fs.mkdir(fs.join(homeDir, 'skills'))
@@ -416,8 +437,9 @@ export async function prepareKimiIsolatedHome(
     })
     await fs.writeFile(fs.join(homeDir, 'config.toml'), isolatedConfig, 0o600)
 
-    // OAuth seats seed the exact snapshot owned by their durable lease. API-key
-    // profiles authenticate from the curated config and leave these empty.
+    // Legacy adapters seed an owned snapshot. Production OAuth seats already
+    // share Kimi's verified credential store; API-key profiles leave both
+    // directories empty.
     await oauthCredentialLease?.seedIntoIsolatedHome()
     await fs.chmod(fs.join(homeDir, 'credentials'), 0o700)
     await fs.chmod(fs.join(homeDir, 'oauth'), 0o700)

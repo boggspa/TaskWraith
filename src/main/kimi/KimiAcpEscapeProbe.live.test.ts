@@ -14,7 +14,7 @@ import type { AcpPermissionRequest } from '../acp/AcpProtocol'
 import { grokReadOnlyShellRequestAllowed } from '../grok/GrokReadOnlyShell'
 import { runKimiAcpTurn, type KimiAcpFs } from './KimiAcpClient'
 import { hasConfiguredKimiApiKey, prepareKimiIsolatedHome } from './KimiAcpHome'
-import { acquireKimiOAuthCredentialLease } from './KimiOAuthCredentialLease'
+import { prepareKimiOAuthCredentialProjection } from './KimiOAuthCredentialProjection'
 import { hasDeniedToolCall, type KimiLiveToolCallEvidence } from './KimiAcpLiveEvidence'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './KimiToolPolicy'
 
@@ -93,7 +93,7 @@ const homeFsAdapter = {
   },
   rm: (path: string) => fsp.rm(path, { recursive: true, force: true }),
   join: (...parts: string[]) => join(...parts),
-  acquireOAuthCredentialLease: acquireKimiOAuthCredentialLease
+  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
 }
 
 interface ProbeEvidence {

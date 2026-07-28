@@ -287,7 +287,32 @@ describe('prepareKimiIsolatedHome', () => {
     if (second.ok) await second.cleanup()
   })
 
-  it('holds one OAuth lease from prepare through cleanup and blocks a second seat', async () => {
+  it('allows OAuth seats to prepare concurrently through a shared credential projection', async () => {
+    const { fs, files, dirs, modes } = makeFakeFs(seededSource())
+    fs.prepareOAuthCredentialProjection = async ({ sourceHome, isolatedHome }) => {
+      dirs.add(`${isolatedHome}/credentials`)
+      dirs.add(`${isolatedHome}/oauth`)
+      for (const relative of ['credentials/kimi-code.json', 'oauth/kimi-code', 'device_id']) {
+        const source = `${sourceHome}/${relative}`
+        if (!files.has(source)) continue
+        const destination = `${isolatedHome}/${relative}`
+        files.set(destination, files.get(source) as string)
+        modes.set(destination, 0o600)
+      }
+    }
+
+    const [first, second] = await Promise.all([
+      prepareKimiIsolatedHome({ runId: 'oauth-a', homeDir: '/oauth-a', sourceHome: '/src', fs }),
+      prepareKimiIsolatedHome({ runId: 'oauth-b', homeDir: '/oauth-b', sourceHome: '/src', fs })
+    ])
+
+    expect(first).toMatchObject({ ok: true })
+    expect(second).toMatchObject({ ok: true })
+    if (first.ok) await first.cleanup()
+    if (second.ok) await second.cleanup()
+  })
+
+  it('keeps the legacy lease-only fallback serial for older integration adapters', async () => {
     const { fs } = makeFakeFs(seededSource())
     const first = await prepareKimiIsolatedHome({
       runId: 'oauth-a',

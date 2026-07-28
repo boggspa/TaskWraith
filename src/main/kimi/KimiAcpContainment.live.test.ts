@@ -32,7 +32,7 @@ import {
   findUnsafeWorkspaceKimiConfig,
   hasConfiguredKimiApiKey
 } from './KimiAcpHome'
-import { acquireKimiOAuthCredentialLease } from './KimiOAuthCredentialLease'
+import { prepareKimiOAuthCredentialProjection } from './KimiOAuthCredentialProjection'
 import { runKimiAcpTurn, type KimiAcpFs } from './KimiAcpClient'
 import { classifyKimiToolPermission, isKimiSafeMcpTool } from './KimiToolPolicy'
 import {
@@ -122,7 +122,7 @@ const homeFsAdapter = {
   },
   rm: (p: string) => fsp.rm(p, { recursive: true, force: true }),
   join: (...x: string[]) => join(...x),
-  acquireOAuthCredentialLease: acquireKimiOAuthCredentialLease
+  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
 }
 
 interface TraceEvidence {

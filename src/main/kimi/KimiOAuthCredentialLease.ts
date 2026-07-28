@@ -452,9 +452,11 @@ async function atomicWritePrivateFile(root: string, path: string, data: Buffer):
 }
 
 /**
- * Cross-seat and cross-process authority for Kimi Code's single-use OAuth
- * refresh token. A durable record spans seed → provider lifetime → writeback;
- * a short private transition lock serializes claim/recovery/release changes.
+ * Durable authority for integrations that must temporarily borrow an OAuth
+ * credential into a private home. A record spans seed → provider lifetime →
+ * writeback; a short private transition lock serializes claim/recovery/release
+ * changes. Kimi production instead shares Kimi Code's own credential store and
+ * per-refresh lock, so independent Kimi seats do not take this full-run lease.
  */
 export class KimiOAuthCredentialAuthority {
   private readonly pid: number
@@ -1115,12 +1117,4 @@ async function defaultProcessIdentity(pid: number): Promise<string | null> {
     })
   }
   return null
-}
-
-const productionKimiOAuthCredentialAuthority = new KimiOAuthCredentialAuthority()
-
-export function acquireKimiOAuthCredentialLease(
-  request: KimiOAuthCredentialLeaseRequest
-): Promise<KimiOAuthCredentialLeaseAcquireResult> {
-  return productionKimiOAuthCredentialAuthority.acquire(request)
 }

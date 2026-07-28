@@ -90,7 +90,7 @@ import {
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
 import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
-import { acquireKimiOAuthCredentialLease } from './kimi/KimiOAuthCredentialLease'
+import { prepareKimiOAuthCredentialProjection } from './kimi/KimiOAuthCredentialProjection'
 import { runKimiAcpTurn } from './kimi/KimiAcpClient'
 import {
   KIMI_ACP_PRODUCTION_POSTURE_VERSION,
@@ -20900,7 +20900,7 @@ const kimiHomeFsAdapter: KimiHomeFs = {
   readdir: (path) => fs.readdir(path),
   lstat: (path) => fs.lstat(path),
   realpath: (path) => fs.realpath(path),
-  acquireOAuthCredentialLease: acquireKimiOAuthCredentialLease
+  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
 }
 
 /** Node fs adapter for the TaskWraith-owned per-run synthetic Kimi cwd. */

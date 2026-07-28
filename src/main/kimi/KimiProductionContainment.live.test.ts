@@ -16,7 +16,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 import { runKimiAcpTurn } from './KimiAcpClient'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
 import { hasConfiguredKimiApiKey, prepareKimiIsolatedHome } from './KimiAcpHome'
-import { acquireKimiOAuthCredentialLease } from './KimiOAuthCredentialLease'
+import { prepareKimiOAuthCredentialProjection } from './KimiOAuthCredentialProjection'
 import { hasDeniedToolCall, type KimiLiveToolCallEvidence } from './KimiAcpLiveEvidence'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './KimiHttpMcpBridge'
 import { createKimiMcpDispatch } from './KimiMcpDispatch'
@@ -97,7 +97,7 @@ const homeFsAdapter = {
   readdir: (path: string) => fsp.readdir(path),
   lstat: (path: string) => fsp.lstat(path),
   realpath: (path: string) => fsp.realpath(path),
-  acquireOAuthCredentialLease: acquireKimiOAuthCredentialLease
+  prepareOAuthCredentialProjection: prepareKimiOAuthCredentialProjection
 }
 
 const privateCwdFsAdapter: KimiPrivateCwdFs = {
