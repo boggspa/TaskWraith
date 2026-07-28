@@ -8303,7 +8303,7 @@ Next action:
     })
   })
 
-  it('queues a Boss pending participant provider/model swap until round end', async () => {
+  it('applies a Boss pending participant seat change before its upcoming turn', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.bossmanAutoApprovals = {
@@ -8349,64 +8349,18 @@ Next action:
 
     expect(result).toMatchObject({
       ok: true,
-      participantId: 'codex',
-      deferred: true
+      participantId: 'codex'
     })
-    expect(result.message).toContain('It will apply after this round finishes.')
+    expect(result.deferred).toBeUndefined()
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
     ).toMatchObject({
-      provider: 'codex',
-      model: 'codex-model',
-      role: 'Worker'
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      role: 'Quota relief',
+      instructions: 'Pick up the implementation if Codex quota is tight.',
+      reasoningEffort: 'medium'
     })
-    expect(
-      harness.chat.ensemble!.activeRound?.participants.find(
-        (participant) => participant.participantId === 'codex'
-      )
-    ).toMatchObject({
-      provider: 'codex',
-      role: 'Worker',
-      status: 'idle'
-    })
-
-    const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
-    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
-      type: 'content',
-      text: 'Seat change will apply after this turn.'
-    })
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      activeRoute,
-      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1]).toMatchObject({
-      provider: 'codex',
-      model: 'codex-model',
-      ensembleRun: {
-        participantId: 'codex',
-        role: 'Worker'
-      }
-    })
-
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
-    )
-
-    await vi.waitFor(() =>
-      expect(
-        harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
-      ).toMatchObject({
-        provider: 'kimi',
-        model: 'kimi-k2.7-code',
-        role: 'Quota relief',
-        instructions: 'Pick up the implementation if Codex quota is tight.',
-        reasoningEffort: 'medium'
-      })
-    )
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
         ?.promptShellVersion
@@ -8424,13 +8378,55 @@ Next action:
         (participant) => participant.participantId === 'codex'
       )
     ).toMatchObject({
-      provider: 'codex',
-      role: 'Worker',
-      status: 'skipped'
+      provider: 'kimi',
+      role: 'Quota relief',
+      status: 'idle'
+    })
+
+    const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
+    harness.orchestrator.handleProviderOutput('claude', activeRoute, {
+      type: 'content',
+      text: 'Seat change applied before the pending turn.'
+    })
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      activeRoute,
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      reasoningEffort: 'medium',
+      ensembleRun: {
+        participantId: 'codex',
+        role: 'Quota relief'
+      }
+    })
+
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Updated Kimi seat completed its turn.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 5 } }
+    )
+
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      provider: 'kimi',
+      role: 'Quota relief',
+      status: 'answered'
     })
   })
 
-  it('queues a Boss roster provider/model swap for the actively executing participant until round end', async () => {
+  it('queues a Boss seat swap only until the active execution boundary', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.bossmanAutoApprovals = {
@@ -8476,7 +8472,7 @@ Next action:
       'Authoritative seat change queued for Boss'
     )
     expect(harness.chat.messages.at(-1)?.content).toContain(
-      'It will apply after this round finishes.'
+      'It will apply when that participant finishes its current execution.'
     )
 
     const activeRoute = { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' }
@@ -8502,8 +8498,8 @@ Next action:
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
     ).toMatchObject({
-      provider: 'claude',
-      model: 'claude-model',
+      provider: 'codex',
+      model: 'gpt-5.5',
       role: 'Boss'
     })
 
@@ -8513,21 +8509,12 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
 
-    await vi.waitFor(() =>
-      expect(
-        harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
-      ).toMatchObject({
-        provider: 'codex',
-        model: 'gpt-5.5',
-        role: 'Boss'
-      })
-    )
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'claude'
       )
     ).toMatchObject({
-      provider: 'claude',
+      provider: 'codex',
       role: 'Boss',
       status: 'answered'
     })
@@ -8538,12 +8525,14 @@ Next action:
       oldValue: expect.stringContaining('Claude / claude-model'),
       newValue: expect.stringContaining('Codex / gpt-5.5')
     })
-    expect(harness.chat.messages.at(-1)?.content).toContain(
-      'Authoritative seat change applied after round for Boss'
-    )
+    expect(
+      harness.chat.messages.some((message) =>
+        message.content.includes('Authoritative seat change applied at execution boundary for Boss')
+      )
+    ).toBe(true)
   })
 
-  it('queues a user-requested seat swap for the actively executing participant', async () => {
+  it('merges active-seat picker edits and applies them at the execution boundary', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -8571,6 +8560,21 @@ Next action:
       status: 'queued',
       participantId: 'claude'
     })
+    const postureResult = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: {
+        reasoningEffort: 'xhigh',
+        permissionPresetId: 'workspace_write'
+      },
+      changedBy: 'user',
+      reason: 'User finished configuring the active seat.'
+    })
+    expect(postureResult).toMatchObject({
+      ok: true,
+      status: 'queued',
+      participantId: 'claude'
+    })
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
     ).toMatchObject({
@@ -8588,8 +8592,13 @@ Next action:
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
     ).toMatchObject({
-      provider: 'claude',
-      model: 'claude-model'
+      provider: 'codex',
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh',
+      permissionPresetId: 'workspace_write',
+      runtimeProfileId: 'runtime-active-seat',
+      serviceTier: 'fast',
+      linkedProviderSessionId: null
     })
 
     harness.orchestrator.handleProviderOutput(
@@ -8598,27 +8607,16 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
 
-    await vi.waitFor(() =>
-      expect(
-        harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
-      ).toMatchObject({
-        provider: 'codex',
-        model: 'gpt-5.5',
-        runtimeProfileId: 'runtime-active-seat',
-        serviceTier: 'fast',
-        linkedProviderSessionId: null
-      })
-    )
     expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
       changedBy: 'user',
       target: 'claude',
       oldValue: expect.stringContaining('Claude / claude-model'),
       newValue: expect.stringContaining('Codex / gpt-5.5'),
-      reason: 'User changed the active seat.'
+      reason: 'User finished configuring the active seat.'
     })
   })
 
-  it('queues a user-requested inactive participant provider/model swap until round end', async () => {
+  it('applies an inactive participant provider/model/reasoning/permission change immediately', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -8633,7 +8631,9 @@ Next action:
       participant: {
         provider: 'kimi',
         model: 'kimi-k2.7-code',
-        role: 'Quota relief'
+        role: 'Quota relief',
+        reasoningEffort: 'high',
+        permissionPresetId: 'read_only'
       },
       changedBy: 'user',
       reason: 'User changed an inactive seat.'
@@ -8641,24 +8641,27 @@ Next action:
 
     expect(result).toMatchObject({
       ok: true,
-      status: 'queued',
+      status: 'applied',
       participantId: 'codex'
     })
-    expect(result.message).toContain('It will apply after this round finishes.')
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
     ).toMatchObject({
-      provider: 'codex',
-      model: 'codex-model',
-      role: 'Worker'
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      role: 'Quota relief',
+      reasoningEffort: 'high',
+      permissionPresetId: 'read_only'
     })
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'codex'
       )
     ).toMatchObject({
-      provider: 'codex',
-      role: 'Worker',
+      provider: 'kimi',
+      role: 'Quota relief',
+      reasoningEffort: 'high',
+      permissionPresetId: 'read_only',
       status: 'idle'
     })
 
@@ -8669,36 +8672,34 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1]).toMatchObject({
-      provider: 'codex',
-      model: 'codex-model',
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      reasoningEffort: 'high',
+      approvalMode: 'plan',
       ensembleRun: {
         participantId: 'codex',
-        role: 'Worker'
+        role: 'Quota relief'
       }
     })
     harness.orchestrator.handleProviderOutput(
-      'codex',
+      'kimi',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Updated idle seat completed its turn.' }
+    )
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'result', status: 'success', stats: { total_tokens: 5 } }
     )
 
-    await vi.waitFor(() =>
-      expect(
-        harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
-      ).toMatchObject({
-        provider: 'kimi',
-        model: 'kimi-k2.7-code',
-        role: 'Quota relief'
-      })
-    )
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
         (participant) => participant.participantId === 'codex'
       )
     ).toMatchObject({
-      provider: 'codex',
-      role: 'Worker',
-      status: 'skipped'
+      provider: 'kimi',
+      role: 'Quota relief',
+      status: 'answered'
     })
     expect(harness.chat.ensemble!.sessionActivityLedger?.at(-1)).toMatchObject({
       changedBy: 'user',
@@ -8706,9 +8707,66 @@ Next action:
       oldValue: expect.stringContaining('Codex / codex-model'),
       newValue: expect.stringContaining('Kimi / kimi-k2.7-code')
     })
-    expect(harness.chat.messages.at(-1)?.content).toContain(
-      'Authoritative seat change applied after round for Worker'
+  })
+
+  it('defers a fanned-out participant change only until its lane finishes', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants[1].permissionPresetId = 'read_only'
+    harness.chat.ensemble!.participants[1].stageRole = 'background'
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review while the worker handles a parallel lane.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Worker'],
+      prompt: 'Handle the parallel implementation lane.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['codex'] })
+
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: {
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        reasoningEffort: 'high',
+        permissionPresetId: 'workspace_write'
+      },
+      changedBy: 'user',
+      reason: 'Update the worker while its fan-out lane is active.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'queued',
+      participantId: 'codex'
+    })
+    expect(
+      harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+    ).toMatchObject({
+      provider: 'codex',
+      model: 'codex-model',
+      permissionPresetId: 'read_only'
+    })
+
+    completeDispatchedRun(harness, 1)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.find((participant) => participant.id === 'codex')
+      ).toMatchObject({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        reasoningEffort: 'high',
+        permissionPresetId: 'workspace_write'
+      })
     )
+
+    completeDispatchedRun(harness, 0)
   })
 
   it('keeps a pinned MCP profile on the same seat session across an idle model change', async () => {
@@ -10805,19 +10863,19 @@ Next action:
     })
   })
 
-  it('ends a Continuous pass before auto-continuing when a provider/model swap is queued', async () => {
+  it('uses an immediate idle-seat change later in the same Continuous pass', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 8
     harness.chat.activeGoal = buildActiveGoal('continuous-seat-swap')
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
-      prompt: 'Complete one pass, then apply the queued seat swap.',
+      prompt: 'Use the updated worker later in this pass.',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    const queued = await harness.orchestrator.requestParticipantSeatChange({
+    const applied = await harness.orchestrator.requestParticipantSeatChange({
       chatId: 'ensemble-chat',
       participantId: 'codex',
       participant: {
@@ -10826,9 +10884,9 @@ Next action:
         role: 'Replacement worker'
       },
       changedBy: 'user',
-      reason: 'Swap the worker before another Continuous pass.'
+      reason: 'Swap the worker before its upcoming turn.'
     })
-    expect(queued).toMatchObject({ ok: true, status: 'queued', participantId: 'codex' })
+    expect(applied).toMatchObject({ ok: true, status: 'applied', participantId: 'codex' })
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -10837,11 +10895,23 @@ Next action:
     )
     completeDispatchedRun(harness, 0)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      ensembleRun: {
+        participantId: 'codex',
+        role: 'Replacement worker'
+      }
+    })
     harness.orchestrator.handleProviderOutput(
-      'codex',
+      'kimi',
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'content', text: 'First pass implementation complete.' }
     )
+    harness.chat.activeGoal = {
+      ...harness.chat.activeGoal!,
+      status: 'completed'
+    }
     completeDispatchedRun(harness, 1)
 
     await vi.waitFor(() =>
@@ -10857,11 +10927,9 @@ Next action:
     })
     expect(
       harness.chat.messages.some((message) =>
-        message.content.includes(
-          'Continuous mode: ending this pass to apply 1 queued provider/model seat change before another pass.'
-        )
+        message.content.includes('queued provider/model seat change before another pass')
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('does not queue or announce a seat change that re-applies the running seat', async () => {
