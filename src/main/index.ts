@@ -59,6 +59,18 @@ import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
 import { isPlaceholderThreadTitle, normalizeThreadTitle } from '../shared/threadTitles'
 import {
+  appendAttachedImageFilesNote,
+  describeImageAttachmentRefusal,
+  providerDeliversImageAttachments
+} from './ProviderImageAttachmentSupport'
+import {
+  ClaudeImageAttachmentError,
+  claudeImageUserMessageStream,
+  loadClaudeImageAttachmentContents,
+  type ClaudeImageAttachmentContent
+} from './ClaudeImageContent'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import {
   isTaskWraithHelperProcess,
   shouldSuppressMacAppPresentation
 } from './HelperProcessPresentation'
@@ -6207,6 +6219,15 @@ async function expandPdfAttachmentsForDispatch<T extends PdfAttachmentLike>(
 
 async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<void> {
   const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
+  // No-silent-omission gate for every dispatch lane (desktop, bridge, queue,
+  // graph all pass through here before their adapter): a lane with no image
+  // transport refuses the run instead of letting the model truthfully claim
+  // nothing was attached while the UI shows a thumbnail.
+  if (imagePaths.length > 0 && !providerDeliversImageAttachments(payload.provider)) {
+    throw new Error(
+      describeImageAttachmentRefusal(providerLabel(payload.provider), imagePaths.length)
+    )
+  }
   const pdfPaths = imagePaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
   if (pdfPaths.length === 0) return
   const appChatId = requireNonEmptyString(payload.appChatId, 'PDF dispatch chat id')
@@ -17268,6 +17289,28 @@ function projectVisibleProviderSetupFailure(input: {
   )
 }
 
+/** Best-effort rescue for attachments Claude's API won't take as-is (HEIC
+ * from an iPhone photo picker, >5MB scans): decode via nativeImage, downscale
+ * to Anthropic's recommended long edge, re-encode JPEG. Null means the bytes
+ * are not decodable as an image here — the loader then refuses loudly. */
+async function convertImageBufferForClaudeAttachment(
+  imagePath: string,
+  buffer: Buffer
+): Promise<ClaudeImageAttachmentContent | null> {
+  try {
+    let image = nativeImage.createFromBuffer(buffer)
+    if (image.isEmpty()) image = nativeImage.createFromPath(imagePath)
+    if (image.isEmpty()) return null
+    const size = image.getSize()
+    const resized = size.width > 1568 ? image.resize({ width: 1568 }) : image
+    const jpegBuffer = resized.toJPEG(85)
+    if (!jpegBuffer.byteLength) return null
+    return { mediaType: 'image/jpeg', dataBase64: jpegBuffer.toString('base64') }
+  } catch {
+    return null
+  }
+}
+
 function settleVisibleProviderSetupFailure(input: {
   sender: Electron.WebContents
   provider: ProviderId
@@ -18567,6 +18610,27 @@ async function tryRunClaudeSdk(
   }
   let sdkTransportAdopted = false
   try {
+    // Image attachments ride the SDK's STREAMING INPUT as base64 content
+    // blocks on the one user message. The options bag has no `images` field
+    // (the old `images:` line was silently ignored — the model never saw a
+    // byte) and the CLI fallback has no image transport at all, so a load
+    // failure must settle the run rather than degrade to a lane that would
+    // drop the attachment. Loaded BEFORE the transport boundary so a bad
+    // attachment never spawns a provider.
+    let claudePromptInput: string | AsyncIterable<SDKUserMessage> = claudeDispatchPrompt(payload)
+    if (payload.imagePaths?.length) {
+      const imageContents = await loadClaudeImageAttachmentContents(payload.imagePaths, {
+        readFile: (imagePath) => fs.readFile(imagePath),
+        convertToSupported: convertImageBufferForClaudeAttachment
+      })
+      claudePromptInput = claudeImageUserMessageStream(
+        claudeDispatchPrompt(payload),
+        imageContents
+      )
+      console.log(
+        `[claude-sdk] delivering ${imageContents.length} image attachment(s) as content blocks for run=${route.appRunId}`
+      )
+    }
     // From this point the SDK may synchronously construct/spawn provider
     // transport before returning its iterator. Never replay the turn through
     // the CLI after crossing this boundary, even when query() itself throws.
@@ -18574,7 +18638,7 @@ async function tryRunClaudeSdk(
     const stream = query({
       // Sessionless dispatch (incl. a seat rotation that nulled the session
       // after composition) sends the full-context recovery prompt.
-      prompt: claudeDispatchPrompt(payload),
+      prompt: claudePromptInput,
       options: {
         cwd: payload.workspace!,
         model: model === 'default' ? undefined : model,
@@ -18613,7 +18677,6 @@ async function tryRunClaudeSdk(
         // don't double-emit the final response.
         includePartialMessages: true,
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-        ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
         ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
         ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
         ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
@@ -18666,6 +18729,38 @@ async function tryRunClaudeSdk(
     })
     return true
   } catch (error) {
+    // An attachment that cannot be delivered is a terminal, non-fallback
+    // failure: the CLI lane has no image transport, so replaying there
+    // would dispatch with the image silently omitted — the exact lie this
+    // path exists to prevent. Settle with the loader's honest copy.
+    if (error instanceof ClaudeImageAttachmentError) {
+      settleClaudeSdkTerminal({
+        runManager,
+        runId: route.appRunId,
+        status: 'failed',
+        project: () => {
+          sendAgentCompatError(event.sender, 'claude', error.message, state)
+          sendAgentCompatLine(
+            event.sender,
+            'claude',
+            {
+              type: 'result',
+              status: 'failed',
+              subtype: 'error',
+              stats: {},
+              provider: 'claude',
+              fallback: false
+            },
+            state
+          )
+          sendAgentCompatExit(event.sender, 'claude', 1, state)
+        },
+        onError: (phase, settleError) => {
+          console.error(`[claude-sdk] image-refusal ${phase} failed:`, settleError)
+        }
+      })
+      return true
+    }
     const runStatus = runManager.get(route.appRunId)?.status
     const decision = decideClaudeSdkFailure({
       error,
@@ -18929,6 +19024,35 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     return
   }
 
+  // The installed Claude CLI has no image flag and no way to carry image
+  // content in -p mode; the old `--image` argv here was an invalid option
+  // that would have killed the spawn outright. Refuse the replay honestly
+  // instead of dispatching with the attachment silently omitted.
+  if (payload.imagePaths?.length) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(
+      event.sender,
+      'claude',
+      'The Claude CLI fallback cannot deliver image attachments, so the turn was not replayed with the images silently omitted. Retry when the Claude Agent SDK lane is available, or remove the attachment.',
+      route
+    )
+    sendAgentCompatLine(
+      event.sender,
+      'claude',
+      {
+        type: 'result',
+        status: 'failed',
+        subtype: 'error',
+        stats: {},
+        provider: 'claude',
+        fallback: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'claude', 1, route)
+    return
+  }
+
   const model = normalizeCliProviderModel('claude', payload.model)
   const buildBaseArgs = (): string[] => [
     ...buildClaudeCliArgs({
@@ -18945,8 +19069,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       model,
       providerSessionId: payload.providerSessionId || null,
       claudeReasoningEffort: payload.claudeReasoningEffort || null,
-      claudeFastMode: payload.claudeFastMode,
-      imagePaths: payload.imagePaths || null
+      claudeFastMode: payload.claudeFastMode
     }),
     // External grants are consumed only by the TaskWraith broker. Opaque
     // provider CLIs never receive widened native directory authority.
@@ -29479,7 +29602,14 @@ async function runGeminiProvider(
     args.push('--include-directories', imageDir)
   })
 
-  args.push('--prompt', payload.prompt, '--output-format', 'stream-json')
+  // --include-directories makes the attachments READABLE, but nothing named
+  // them — the model truthfully reported seeing no image. Delivery on this
+  // lane = access grant + the prompt telling it which files to read.
+  const geminiPromptForDispatch = payload.imagePaths?.length
+    ? appendAttachedImageFilesNote(payload.prompt, payload.imagePaths)
+    : payload.prompt
+
+  args.push('--prompt', geminiPromptForDispatch, '--output-format', 'stream-json')
 
   const resolved = await resolveCliProviderBinary('gemini', payload.runtimeProfile)
   if (!resolved.binaryPath) {
@@ -39948,6 +40078,21 @@ if (isGeminiMcpBridgeProcess) {
             }
             iosImageThumbnails = internalQueueDispatch.imageThumbnails ?? []
           } else if (action.imageAttachments?.length) {
+            // Truth check BEFORE materializing anything: a live phone send
+            // with attachments to a lane that has no image transport gets an
+            // immediate honest refusal toast instead of a run whose model
+            // denies seeing the image. (Queued sends settle the same way via
+            // the central dispatch gate + the catch below.)
+            if (!providerDeliversImageAttachments(provider)) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: describeImageAttachmentRefusal(
+                  providerLabel(provider),
+                  action.imageAttachments.length
+                )
+              }
+            }
             try {
               const persisted = persistRemoteImageAttachments({
                 appChatId: action.threadId,
@@ -40526,6 +40671,15 @@ if (isGeminiMcpBridgeProcess) {
               }
             })
             .catch((err) => {
+              // A rejected dispatch (e.g. the attachment no-silent-omission
+              // gate) must still seal the already-registered transcript, or
+              // the phone shows a permanent Working row — the ghost-run
+              // class all over again.
+              finalizeBridgeRunTranscript(
+                runId,
+                'failed',
+                err instanceof Error ? err.message : String(err)
+              )
               if (internalQueueDispatch) {
                 const classification = classifyRemoteComposerQueueDispatchFailure({
                   queueRunId: internalQueueDispatch.queueRunId,

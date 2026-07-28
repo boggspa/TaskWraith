@@ -145,15 +145,12 @@ describe('buildClaudeCliArgs', () => {
     expect(args[args.indexOf('--resume') + 1]).toBe('sess-123')
   })
 
-  it('emits one --image flag per supplied image path in order', () => {
-    const args = buildClaudeCliArgs({
-      ...base,
-      imagePaths: ['/tmp/a.png', '/tmp/b.png']
-    })
-    const imageFlags = args
-      .map((value, index) => (value === '--image' ? args[index + 1] : null))
-      .filter((value): value is string => value !== null)
-    expect(imageFlags).toEqual(['/tmp/a.png', '/tmp/b.png'])
+  it('never emits an image flag — the installed CLI has none', () => {
+    // `--image` was an invalid option (claude --help lists no image flag);
+    // spawning with it would kill the fallback outright. Image delivery is
+    // the SDK lane's job; the fallback refuses image runs upstream.
+    const args = buildClaudeCliArgs(base)
+    expect(args).not.toContain('--image')
   })
 
   it('passes the permissionMode through verbatim', () => {

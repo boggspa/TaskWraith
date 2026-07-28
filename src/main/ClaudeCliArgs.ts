@@ -44,7 +44,6 @@ export interface BuildClaudeCliArgsInput {
   providerSessionId?: string | null
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
-  imagePaths?: string[] | null
 }
 
 export function claudeFastModeSettingsArg(value: boolean | null | undefined): string | null {
@@ -97,8 +96,8 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
   if (fastModeSettings) {
     args.push('--settings', fastModeSettings)
   }
-  for (const imagePath of input.imagePaths || []) {
-    args.push('--image', imagePath)
-  }
+  // No image flag on purpose: the installed CLI has none (`--image` was an
+  // invalid option that would kill the spawn). Image attachments are the SDK
+  // lane's job (ClaudeImageContent); the CLI fallback refuses them upstream.
   return args
 }
