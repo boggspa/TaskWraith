@@ -378,6 +378,74 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('workspace')
   })
 
+  it("resolves 'agents' workspace grants for every provider; legacy rows stay provider-scoped", () => {
+    // Lockstep with PermissionService.hasWorkspaceGrant: if the resolver
+    // misses the wildcard, unattended lanes resolve 'ask' and auto-deny on
+    // timeout while the approval gate would have allowed.
+    for (const provider of ['codex', 'claude', 'grok'] as const) {
+      const resolved = resolveEffectiveRunPermissions({
+        provider,
+        workspacePath: '/repo',
+        settings: settings({
+          agenticWorkspaceGrants: [
+            {
+              id: 'workspace-grant-agents',
+              provider: 'agents',
+              workspacePath: '/repo',
+              service: 'shellCommands',
+              createdAt: '2026-07-28T00:00:00.000Z',
+              updatedAt: '2026-07-28T00:00:00.000Z'
+            }
+          ]
+        }),
+        presetId: 'default'
+      })
+      expect(resolved.workspaceGrantServiceIds).toEqual(['shellCommands'])
+      expect(resolved.agenticServices.shellCommands).toBe('workspace')
+    }
+
+    const legacy = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-legacy',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'shellCommands',
+            createdAt: '2026-07-28T00:00:00.000Z',
+            updatedAt: '2026-07-28T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'default'
+    })
+    expect(legacy.workspaceGrantServiceIds).toEqual([])
+    expect(legacy.agenticServices.shellCommands).toBe('ask')
+  })
+
+  it("an 'agents' grant cannot resurrect the canvasInteraction workspace tier", () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-agents-canvas',
+            provider: 'agents',
+            workspacePath: '/repo',
+            service: 'canvasInteraction',
+            createdAt: '2026-07-28T00:00:00.000Z',
+            updatedAt: '2026-07-28T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'default'
+    })
+    expect(resolved.workspaceGrantServiceIds).toEqual([])
+  })
+
   it('does not sign malformed or expired workspace grants into the run posture', () => {
     for (const expiresAt of ['not-a-date', '2000-01-01T00:00:00.000Z']) {
       const resolved = resolveEffectiveRunPermissions({

@@ -6,6 +6,7 @@ import {
   type DesktopToolExecutorDeps
 } from './DesktopToolExecutors'
 import type {
+  AgenticWorkspaceGrant,
   AppSettings,
   ChatRecord,
   HandoffCard,
@@ -56,6 +57,7 @@ function event(input: Partial<RunEventRecord> = {}): RunEventRecord {
 
 function createExecutor(input: {
   chats: ChatRecord[]
+  settings?: AppSettings
   replays?: Record<string, RunEventReplay>
   rawEvents?: RunEventRecord[]
   providerAuth?: DesktopToolExecutorDeps['providerAuth']
@@ -73,7 +75,7 @@ function createExecutor(input: {
       set: () => undefined
     },
     store: {
-      getSettings: () => ({} as AppSettings),
+      getSettings: () => input.settings || ({} as AppSettings),
       getApprovalLedger: () => [],
       getProviderUsageSnapshot: () => null,
       getChat: (chatId) => chats.get(chatId) || null,
@@ -344,5 +346,55 @@ describe('DesktopToolExecutors Codex auth projection', () => {
     })
     expect(getCodexStatusSnapshot).toHaveBeenCalledOnce()
     expect(getCliProviderStatus).not.toHaveBeenCalled()
+  })
+})
+
+describe('DesktopToolExecutors approval status workspace grants', () => {
+  it("reports 'agents' wildcard grants alongside the caller's own legacy rows", () => {
+    const grants: AgenticWorkspaceGrant[] = [
+      {
+        id: 'grant-agents',
+        provider: 'agents',
+        workspacePath: '/workspace',
+        service: 'fileChanges',
+        createdAt: '2026-07-28T00:00:00.000Z',
+        updatedAt: '2026-07-28T00:00:00.000Z'
+      },
+      {
+        id: 'grant-legacy-codex',
+        provider: 'codex',
+        workspacePath: '/workspace',
+        service: 'fileChanges',
+        createdAt: '2026-07-28T00:00:00.000Z',
+        updatedAt: '2026-07-28T00:00:00.000Z'
+      },
+      {
+        id: 'grant-agents-elsewhere',
+        provider: 'agents',
+        workspacePath: '/elsewhere',
+        service: 'fileChanges',
+        createdAt: '2026-07-28T00:00:00.000Z',
+        updatedAt: '2026-07-28T00:00:00.000Z'
+      }
+    ]
+    const { executor } = createExecutor({
+      chats: [chat('chat-a', [])],
+      settings: { agenticWorkspaceGrants: grants } as AppSettings
+    })
+
+    // 'agents' rows report for any caller; the legacy codex row stays scoped
+    // to codex; the other-workspace row is filtered by path.
+    const claudeResult = executor.executeApprovalStatus(activeContext, {}, 'claude') as {
+      workspaceGrants: AgenticWorkspaceGrant[]
+    }
+    expect(claudeResult.workspaceGrants.map((grant) => grant.id)).toEqual(['grant-agents'])
+
+    const codexResult = executor.executeApprovalStatus(activeContext, {}, 'codex') as {
+      workspaceGrants: AgenticWorkspaceGrant[]
+    }
+    expect(codexResult.workspaceGrants.map((grant) => grant.id)).toEqual([
+      'grant-agents',
+      'grant-legacy-codex'
+    ])
   })
 })

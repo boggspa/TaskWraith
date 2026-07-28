@@ -483,7 +483,11 @@ function workspaceGrantServiceIdsFor(
   const normalizedWorkspace = resolve(workspacePath)
   const serviceIds = new Set<AgenticServiceId>()
   for (const grant of grants) {
-    if (grant.provider !== provider) continue
+    // Lockstep with PermissionService.hasWorkspaceGrant: 'agents' rows cover
+    // every provider; legacy per-provider rows match only their own. If the
+    // resolver and the gate disagree here, unattended lanes resolve 'ask',
+    // time out, and auto-deny — the exact silent-failure the wildcard fixes.
+    if (grant.provider !== 'agents' && grant.provider !== provider) continue
     if (!grant.workspacePath || resolve(grant.workspacePath) !== normalizedWorkspace) continue
     if (grant.expiresAt) {
       const expiresAt = Date.parse(grant.expiresAt)

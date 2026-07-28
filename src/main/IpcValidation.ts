@@ -19,6 +19,7 @@ type ArgSpec =
   | 'optionalArray'
   | 'provider'
   | 'optionalProvider'
+  | 'workspaceGrantProvider'
   | 'approvalAction'
   | 'settingsPatch'
   | 'chatRecord'
@@ -90,7 +91,11 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-settings': [],
   'update-settings': ['settingsPatch'],
   'upsert-agentic-workspace-grant': ['provider', 'workspacePath', 'string'],
-  'remove-agentic-workspace-grant': ['provider', 'workspacePath', 'string'],
+  // Removal must also accept the 'agents' wildcard rows that
+  // PermissionService.upsertWorkspaceGrant stores. 'agents' is deliberately NOT
+  // in PROVIDERS: the plain 'provider' spec guards provider-admission channels
+  // (login terminals, runtime profiles) where a wildcard must never pass.
+  'remove-agentic-workspace-grant': ['workspaceGrantProvider', 'workspacePath', 'string'],
   'get-workspaces': [],
   'add-or-update-workspace': ['workspacePath', 'optionalObject'],
   'remove-workspace': ['string'],
@@ -696,6 +701,11 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
     (typeof value !== 'string' || !PROVIDERS.has(value))
   )
     throw new Error(`${label} must be a known provider.`)
+  if (
+    spec === 'workspaceGrantProvider' &&
+    (typeof value !== 'string' || (value !== 'agents' && !PROVIDERS.has(value)))
+  )
+    throw new Error(`${label} must be a known provider or 'agents'.`)
   if (spec === 'approvalAction' && (typeof value !== 'string' || !APPROVAL_ACTIONS.has(value)))
     throw new Error(`${label} must be a known approval action.`)
   if (spec === 'runQueueStatus' && (typeof value !== 'string' || !RUN_QUEUE_STATUSES.has(value)))

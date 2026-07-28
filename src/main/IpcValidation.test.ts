@@ -85,6 +85,29 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('cancel-scheduled-task', [''])).toThrow(/non-empty/)
   })
 
+  it("accepts the 'agents' wildcard only for workspace-grant removal", () => {
+    // PermissionService stores consolidated grants under provider 'agents';
+    // the removal channel must accept that value or those rows are
+    // irrevocable from the grant lists.
+    expect(() =>
+      validateIpcArgs('remove-agentic-workspace-grant', ['agents', '/repo', 'fileChanges'])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('remove-agentic-workspace-grant', ['claude', '/repo', 'fileChanges'])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('remove-agentic-workspace-grant', ['martians', '/repo', 'fileChanges'])
+    ).toThrow(/known provider or 'agents'/)
+    // Minting still names the requesting provider, and provider-admission
+    // channels must never accept the wildcard.
+    expect(() =>
+      validateIpcArgs('upsert-agentic-workspace-grant', ['agents', '/repo', 'fileChanges'])
+    ).toThrow(/known provider/)
+    expect(() => validateIpcArgs('provider:open-login-terminal', ['agents'])).toThrow(
+      /known provider/
+    )
+  })
+
   it('shape-gates the execution graph command surface', () => {
     expect(() => validateIpcArgs('execution-graphs:diagnostics', [])).not.toThrow()
     expect(() => validateIpcArgs('execution-graphs:list', [])).not.toThrow()

@@ -1946,7 +1946,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       services: settings.agenticServices,
       workspaceGrants: (settings.agenticWorkspaceGrants || []).filter(
         (grant) =>
-          grant.provider === provider &&
+          (grant.provider === 'agents' || grant.provider === provider) &&
           (!workspacePath || resolve(grant.workspacePath) === resolve(workspacePath))
       ),
       filter,
