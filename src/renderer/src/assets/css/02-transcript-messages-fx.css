@@ -5802,17 +5802,14 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   padding: var(--space-xs) var(--space-md);
 }
 
-/* Ensemble round-status / handback chrome (round opened/closed, @-mention
- * routing, "control returned to you"). Orchestration STATE CHANGES, not
- * participant prose — a rim highlight + faint tint marks them as system
- * authority instead of the muted system-note styling. Box-shadow + background
- * only (no padding/border added) so the row's measured height is unchanged. */
+/* Ensemble round-status / handback lines stay visually satellite, like other
+ * system notes. Keep the semantic hook for global-scope de-emphasis and future
+ * non-container treatments, but explicitly suppress card chrome here. */
 .message-bubble.system.system-round-status {
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
-  border-radius: 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .subthread-return-message {

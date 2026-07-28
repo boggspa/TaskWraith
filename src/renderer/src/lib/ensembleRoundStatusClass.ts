@@ -5,9 +5,8 @@ import type { ChatMessage } from '../../../main/store/types'
  * handback chrome line — round opened/closed, @-mention routing, "control
  * returned to you". The orchestrator emits these as `role: 'system'` with
  * `metadata.kind === 'ensembleRoundStatus'`. They are orchestration STATE
- * CHANGES, so the renderer accents them (a left bar + faint tint) to read as
- * system authority rather than blending into the muted system-note styling
- * shared with participant prose.
+ * CHANGES, so the renderer retains a semantic hook for context-specific
+ * presentation while leaving the message itself as uncontained satellite text.
  *
  * Returns the space-prefixed class to append to the bubble, or '' otherwise.
  */
