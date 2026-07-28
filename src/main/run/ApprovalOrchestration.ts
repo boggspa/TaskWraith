@@ -273,6 +273,13 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         workspacePath: request.workspacePath,
         runId: routed.appRunId,
         appChatId: routed.appChatId,
+        // Without these a paired device is offered Allow for a card reading
+        // "Approval requested" — deciding on text it was never shown (the
+        // exact failure the Gemini-tool registration documents). The desktop
+        // never noticed: its modal reads title/body from the IPC payload
+        // below, not from this registration.
+        title: request.title,
+        body: request.body,
         allowedActions: actions,
         resolveAction: request.resolveAction,
         resolve: resolveApproval

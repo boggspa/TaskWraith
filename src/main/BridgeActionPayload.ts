@@ -47,12 +47,28 @@ import {
   isReservedWorktreeName
 } from '../shared/worktreeNamespace'
 
-export type BridgeApprovalDecision =
-  | 'accept'
-  | 'acceptForSession'
-  | 'acceptForWorkspace'
-  | 'decline'
-  | 'cancel'
+/** Wire mirror of the store's `AgentApprovalAction` — kept literal (this
+ * module deliberately avoids store imports) with a lockstep test in
+ * BridgeActionPayload.test.ts. The extended members matter: the projection
+ * forwards each approval's `allowedActions` verbatim and iOS renders them
+ * (`useProviderNative` as the PRIMARY button on sub-agent routing prompts),
+ * so a decision the decoder rejects is a button that silently denies. The
+ * per-approval `allowedActions` check inside `ApprovalService.resolve` stays
+ * the real authority on which of these any given card may use. */
+export const BRIDGE_APPROVAL_DECISIONS = [
+  'accept',
+  'acceptForSession',
+  'acceptForWorkspace',
+  'decline',
+  'cancel',
+  'useProviderNative',
+  'useTaskWraithSubthread',
+  'grantExternalPathRead',
+  'grantExternalPathEdit',
+  'declineExternalPath'
+] as const
+
+export type BridgeApprovalDecision = (typeof BRIDGE_APPROVAL_DECISIONS)[number]
 
 export interface BridgeActionMetadata {
   /** Client-generated id for stale/replay protection. Optional so older
@@ -1650,13 +1666,7 @@ function isApprovalReply(v: Record<string, unknown>): boolean {
 }
 
 function isBridgeApprovalDecision(value: unknown): value is BridgeApprovalDecision {
-  return (
-    value === 'accept' ||
-    value === 'acceptForSession' ||
-    value === 'acceptForWorkspace' ||
-    value === 'decline' ||
-    value === 'cancel'
-  )
+  return (BRIDGE_APPROVAL_DECISIONS as readonly unknown[]).includes(value)
 }
 
 function isQuestionReply(v: Record<string, unknown>): boolean {

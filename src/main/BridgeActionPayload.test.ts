@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  BRIDGE_APPROVAL_DECISIONS,
   BRIDGE_WORKFLOW_ID_MAX_CHARS,
   BridgeActionPayloadDecodeError,
   MAX_BRIDGE_ENSEMBLE_PARTICIPANTS,
@@ -9,9 +10,11 @@ import {
   payloadIsMutating,
   payloadRequiresWorkspaceGating,
   workspaceIdFromPayload,
-  type BridgeActionPayload
+  type BridgeActionPayload,
+  type BridgeApprovalDecision
 } from './BridgeActionPayload'
 import { MAX_ENSEMBLE_PARTICIPANTS } from './EnsemblePrompt'
+import type { AgentApprovalAction } from './store/types'
 
 function encode(obj: unknown): string {
   return Buffer.from(JSON.stringify(obj), 'utf-8').toString('base64')
@@ -47,13 +50,7 @@ describe('decodeBridgeActionPayload', () => {
     })
 
     it('decodes all approval decisions', () => {
-      for (const decision of [
-        'accept',
-        'acceptForSession',
-        'acceptForWorkspace',
-        'decline',
-        'cancel'
-      ] as const) {
+      for (const decision of BRIDGE_APPROVAL_DECISIONS) {
         const wire = encode({
           kind: 'approvalReply',
           workspaceId: 'ws-1',
@@ -67,6 +64,53 @@ describe('decodeBridgeActionPayload', () => {
           expect(payload.decision).toBe(decision)
         }
       }
+    })
+
+    it('keeps the wire decision union in lockstep with AgentApprovalAction', () => {
+      // The projection forwards each approval's allowedActions verbatim and
+      // iOS renders a button per entry — a store action the wire decoder
+      // rejects is a button that silently denies (useProviderNative was the
+      // PRIMARY button on sub-agent routing prompts when this was caught).
+      const storeActions: AgentApprovalAction[] = [
+        'accept',
+        'acceptForSession',
+        'acceptForWorkspace',
+        'decline',
+        'cancel',
+        'useProviderNative',
+        'useTaskWraithSubthread',
+        'grantExternalPathRead',
+        'grantExternalPathEdit',
+        'declineExternalPath'
+      ]
+      // Compile-time: every store action is a valid wire decision (and the
+      // fixture above must enumerate the whole store union to typecheck).
+      const asWire: BridgeApprovalDecision[] = storeActions
+      expect(new Set(asWire)).toEqual(new Set(BRIDGE_APPROVAL_DECISIONS))
+      // Runtime: the decoder accepts every one of them.
+      for (const decision of storeActions) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({
+            kind: 'approvalReply',
+            workspaceId: 'ws-1',
+            threadId: 't-1',
+            toolCallId: 'tc-1',
+            decision
+          })
+        )
+        expect(payload.kind).toBe('approvalReply')
+      }
+      // And still refuses an invented one.
+      const { payload: unknown } = decodeBridgeActionPayload(
+        encode({
+          kind: 'approvalReply',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          toolCallId: 'tc-1',
+          decision: 'acceptForever'
+        })
+      )
+      expect(unknown.kind).toBe('unknown')
     })
 
     it('decodes a questionReply', () => {

@@ -672,6 +672,36 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     expect(deps.getApprovalService).toHaveBeenCalled()
   })
 
+  // (m2b) The registration must carry the request's own title/body. They were
+  // silently dropped here for months: the desktop modal reads them from the
+  // IPC payload instead, so only PAIRED DEVICES saw the fallback — an
+  // "Approval requested" card offering Allow for text the phone never got.
+  it('(m2b) registers the pending main approval WITH the request title and body', async () => {
+    const order: string[] = []
+    const deps = makeMainDeps(order)
+    const registerMain = vi.fn((_approvalId: string, _info: Record<string, unknown>) => {
+      order.push('registerMain')
+      return true
+    })
+    deps.getApprovalService = vi.fn(() => ({
+      registerGeminiTool: vi.fn(),
+      registerMain
+    })) as never
+
+    createMainApprovalOrchestration(deps)(
+      mainSender,
+      'gemini',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      mainRequest({ title: 'Route sub-agent natively?', body: 'claude wants a native sub-agent.' })
+    )
+    await Promise.resolve()
+
+    expect(registerMain.mock.calls[0]?.[1]).toMatchObject({
+      title: 'Route sub-agent natively?',
+      body: 'claude wants a native sub-agent.'
+    })
+  })
+
   // (m3) Null approval service cannot own the pending resolver, so fail closed
   // before creating a durable or visible approval that can never settle.
   it('(m3) a null approval service fails closed before emitting a main-authority prompt', async () => {
