@@ -172,6 +172,12 @@ explicitly out of the current release, a worktree is the answer, not a marker.
 - **Stage by explicit path. Never `git add -A`, `git add .`, or `-u`.** Other
   sessions' files live in this tree and bulk staging sweeps them into your
   commit. Diff-audit what you staged before committing.
+- **In a large shared file, stage hunks — not the file.** `git add -p -- <file>`.
+  Pathspec-adding a monolith takes *every* change in it, including hunks another
+  session left there mid-edit; you then commit their half-written work under
+  your message and they lose it on their next checkout. `index.ts` is ~49k lines
+  and `App.tsx` ~30k: assume someone else is in there. The remainder staying
+  unstaged after you commit is the expected, healthy state during a hot session.
 - **Never `git stash`** while another session may be live — it pockets their
   uncommitted work too.
 - Do not revert, format, or "tidy" a file you did not change.
@@ -189,6 +195,28 @@ Publishing, tagging, and force-pushing require all of:
 Also confirm what you are about to tag is actually pushed —
 `git rev-list --count origin/master..master`. A commit can be built from,
 verified locally, and tagged while origin has never seen it.
+
+### The hook, for the agent who never read this file
+
+Docs bind only the agents that read them, so the load-bearing checks also run
+at the git layer, which every provider goes through:
+
+```bash
+npm run hooks:install        # git config core.hooksPath .githooks
+```
+
+[`.githooks/pre-commit`](.githooks/pre-commit) **blocks exactly one thing** —
+staging a path claimed by a marker whose owning pid is alive and whose expiry
+has not passed. Everything else advises: whole-file staging of a >5,000-line
+file, forty-plus staged paths, and your own claim still being up. One block and
+otherwise quiet is deliberate; a hook that cries wolf gets disabled, and a
+disabled hook protects nothing.
+
+`TW_ALLOW_CLAIMED=1 git commit …` overrides a claim you know to be wrong. Use
+it rather than deleting someone's marker.
+
+Hooks are not cloned by a fresh checkout and only fire at commit time, so this
+is a backstop, not a guarantee — the rules above still stand on their own.
 
 ---
 

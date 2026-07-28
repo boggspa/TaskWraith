@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# TaskWraith concurrent-work backstop.
+#
+# Several agents from different providers share this one checkout. AGENTS.md
+# states the rules; this hook is the part that binds an agent which never read
+# them, because every provider shells out to git.
+#
+# It is deliberately narrow. A hook that cries wolf gets disabled, and a
+# disabled hook protects nothing — so exactly one condition BLOCKS (staging a
+# path another live session has claimed) and everything else advises.
+#
+# Enable:  git config core.hooksPath .githooks
+# Override once: TW_ALLOW_CLAIMED=1 git commit ...
+
+set -uo pipefail
+
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$root" || exit 0
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -z "$staged" ] && exit 0
+
+self_pid=$$
+warn=0
+block=0
+
+# ── epoch helper: GNU and BSD date disagree; unparseable means "do not block".
+to_epoch() {
+  local iso="$1"
+  date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null && return 0
+  date -u -d "$iso" +%s 2>/dev/null && return 0
+  echo ""
+}
+
+now="$(date -u +%s)"
+
+# ── 1. BLOCK: staging a path claimed by another LIVE session ────────────────
+# Live means: owning pid still exists AND the claim has not expired. A crashed
+# or abandoned marker decays by itself rather than freezing the tree, which is
+# the whole reason the format carries pid and expires.
+shopt -s nullglob
+for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
+  [ -f "$marker" ] || continue
+
+  m_pid="$(sed -nE 's/^pid:[[:space:]]*([0-9]+).*/\1/p' "$marker" | head -1)"
+  m_exp="$(sed -nE 's/^expires:[[:space:]]*([0-9TZ:-]+).*/\1/p' "$marker" | head -1)"
+  m_agent="$(sed -nE 's/^agent:[[:space:]]*(.+)$/\1/p' "$marker" | head -1)"
+
+  # Our own claim never blocks us.
+  [ -n "$m_pid" ] && [ "$m_pid" = "$self_pid" ] && continue
+  # A marker with no pid predates the format; advise, never block.
+  if [ -z "$m_pid" ]; then
+    printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
+    warn=1
+    continue
+  fi
+  # Dead owner ⇒ stale claim.
+  kill -0 "$m_pid" 2>/dev/null || continue
+  # Expired ⇒ stale claim. Unparseable ⇒ treat as live (fail safe, but only
+  # after the pid check above, so a dead session still cannot block).
+  if [ -n "$m_exp" ]; then
+    exp_epoch="$(to_epoch "$m_exp")"
+    if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
+      continue
+    fi
+  fi
+
+  # Claim is live. Does it overlap what we are staging?
+  # Read ONLY the list under `paths:`, and accept any path shape — an earlier
+  # version required a dot-extension, which silently ignored claims on
+  # extensionless files like `.githooks/pre-commit` and made the block a no-op.
+  claimed="$(awk '
+    /^paths:[[:space:]]*$/ { inpaths = 1; next }
+    inpaths && /^[[:space:]]*-[[:space:]]+/ {
+      sub(/^[[:space:]]*-[[:space:]]+/, "")
+      sub(/[[:space:]]+$/, "")
+      gsub(/^["'"'"']|["'"'"']$/, "")
+      if (length($0)) print
+      next
+    }
+    inpaths { inpaths = 0 }
+  ' "$marker")"
+  [ -z "$claimed" ] && continue
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    if printf '%s\n' "$staged" | grep -qxF "$path"; then
+      if [ -z "${TW_ALLOW_CLAIMED:-}" ]; then
+        printf '\n  BLOCKED  %s is claimed by a live session (pid %s, %s)\n' \
+          "$path" "$m_pid" "${m_agent:-unknown agent}"
+        printf '           claim: %s\n' "$marker"
+        block=1
+      else
+        printf '  override: committing %s despite live claim in %s\n' "$path" "$marker"
+        warn=1
+      fi
+    fi
+  done <<< "$claimed"
+done
+shopt -u nullglob
+
+# ── 2. ADVISE: whole-file staging of a monolith ─────────────────────────────
+# Staging a large shared file wholesale sweeps in any hunks another session
+# left there. `git add -p` stages only your own. Threshold is high on purpose:
+# this should fire on index.ts and App.tsx, not on ordinary modules.
+MONOLITH_LINES=5000
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  case "$f" in *.ts|*.tsx|*.js|*.jsx|*.css) ;; *) continue ;; esac
+  lines="$(wc -l < "$f" 2>/dev/null | tr -d ' ')"
+  [ -z "$lines" ] && continue
+  if [ "$lines" -ge "$MONOLITH_LINES" ]; then
+    # Unstaged remainder in the same file means hunks were picked — that is the
+    # good case, so stay quiet.
+    if git diff --quiet -- "$f" 2>/dev/null; then
+      printf '  note: staged all of %s (%s lines). If another session also edits it,\n' "$f" "$lines"
+      printf '        prefer `git add -p -- %s` so you commit only your hunks.\n' "$f"
+      warn=1
+    fi
+  fi
+done <<< "$staged"
+
+# ── 3. ADVISE: breadth that looks like a bulk add ───────────────────────────
+count="$(printf '%s\n' "$staged" | grep -c . || true)"
+if [ "${count:-0}" -ge 40 ]; then
+  printf '  note: %s files staged. `git add -A`/`.` sweeps other sessions in —\n' "$count"
+  printf '        confirm every path is yours (AGENTS.md: stage by explicit path).\n'
+  warn=1
+fi
+
+# ── 4. ADVISE: your own claim is expiring ───────────────────────────────────
+shopt -s nullglob
+for marker in .WORK-IN-PROGRESS-*.md; do
+  [ -f "$marker" ] || continue
+  m_pid="$(sed -nE 's/^pid:[[:space:]]*([0-9]+).*/\1/p' "$marker" | head -1)"
+  [ "$m_pid" = "$self_pid" ] || continue
+  printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
+done
+shopt -u nullglob
+
+if [ "$block" -eq 1 ]; then
+  printf '\n  Another session is editing that file right now. Coordinate, pick different\n'
+  printf '  work, or re-run with TW_ALLOW_CLAIMED=1 if you know the claim is wrong.\n\n'
+  exit 1
+fi
+
+[ "$warn" -eq 1 ] && printf '\n'
+exit 0
