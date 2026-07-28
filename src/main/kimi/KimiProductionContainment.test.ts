@@ -463,6 +463,30 @@ describe('Kimi production ACP containment', () => {
     ).toEqual({ prompt: 'full', resumeSessionId: null, legacyResumeRejected: true })
   })
 
+  it('seeds a rotation-nulled sessionless dispatch with the recovery prompt', () => {
+    // The seat check nulls requestedResumeSessionId AFTER composition on a
+    // real rotation (e.g. a model switch). The fresh session/new must carry
+    // the full-context recovery prompt, not the slim resume prompt.
+    expect(
+      buildKimiProductionSessionPlan({
+        prompt: 'slim',
+        resumeFallbackPrompt: 'full',
+        requestedResumeSessionId: null,
+        persistedPostureVersion: undefined
+      })
+    ).toEqual({ prompt: 'full', resumeSessionId: null, legacyResumeRejected: false })
+  })
+
+  it('keeps a genuinely fresh chat on the plain prompt — no fallback composed', () => {
+    expect(
+      buildKimiProductionSessionPlan({
+        prompt: 'work',
+        requestedResumeSessionId: null,
+        persistedPostureVersion: undefined
+      })
+    ).toEqual({ prompt: 'work', resumeSessionId: null, legacyResumeRejected: false })
+  })
+
   it('builds the exact gateway-only production composition and rejects no gateway', () => {
     const gateway = {
       name: 'taskwraith',

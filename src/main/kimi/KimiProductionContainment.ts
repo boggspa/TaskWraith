@@ -304,8 +304,15 @@ export function buildKimiProductionSessionPlan(input: {
   if (resumeAuthorized) {
     return { prompt: input.prompt, resumeSessionId: requested, legacyResumeRejected: false }
   }
+  // ANY sessionless session/new takes the full-context recovery prompt when
+  // one was composed — not just the legacy-posture rejection. The provider
+  // seat check can null the requested session AFTER composition (a real
+  // rotation, e.g. a model switch); gating on `requested` sent the slim
+  // resume prompt into a fresh session — context-blind (caught live 07-28:
+  // k2.7→k3 switch answered "I don't have a codeword"). A genuinely fresh
+  // chat composes no fallback, so this stays the plain prompt there.
   return {
-    prompt: requested ? input.resumeFallbackPrompt || input.prompt : input.prompt,
+    prompt: input.resumeFallbackPrompt || input.prompt,
     resumeSessionId: null,
     legacyResumeRejected: Boolean(requested)
   }
