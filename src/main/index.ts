@@ -1398,9 +1398,14 @@ import { PiKeyStore } from './pi/PiKeyStore'
 import { createPiIsolatedHome } from './pi/PiIsolatedHome'
 import {
   enrichPiCerebrasRateLimitError,
+  isPiCerebrasRateLimitError,
   normalizePiCerebrasMaxCompletionTokens,
   writePiCerebrasCompletionCapOverride
 } from './pi/PiCerebrasCompletionCap'
+import {
+  PI_CEREBRAS_429_BACKOFF_MS,
+  PiCerebrasRateGovernor
+} from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
 import {
@@ -16749,6 +16754,14 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
         enrichPiCerebrasRateLimitError(state.model, evt.text),
         state
       )
+      if (isPiCerebrasRateLimitError(state.model, evt.text)) {
+        // Floor the next Cerebras slot a full window out, and (solo only)
+        // schedule the one-shot automatic re-run of this turn. Must happen
+        // in THIS frame: the terminal-exit handler deletes the failover
+        // snapshot this retry re-dispatches from.
+        piCerebrasRateGovernor.note429()
+        schedulePiCerebrasRateRetry(state)
+      }
     }
     state.terminalResultFailed = failed
     state.completed = true
@@ -19380,6 +19393,136 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
 // never widen the seat beyond the policy wall.
 let piKeyStoreRef: PiKeyStore | null = null
 
+/** Shared dispatch-slot timeline for the Cerebras upstream. runPiProvider is
+ * the single choke-point both solo chats and ensemble seats flow through, so
+ * reserving here serializes a fan-out stampede AND spaces solo turns. */
+const piCerebrasRateGovernor = new PiCerebrasRateGovernor()
+/** One automatic retry per failed run, ever (in-memory; restart forgets). */
+const piCerebrasRetriedRunIds = new Set<string>()
+
+/** Visible, idempotent transcript row for the scheduled Cerebras retry —
+ * plain system message (the seat-rotation notice pattern): no new card
+ * vocabulary on either platform. */
+function appendPiCerebrasRetryNotice(appChatId: string, failedRunId: string, delayMs: number): void {
+  const chat = AppStore.getChat(appChatId)
+  if (!chat) return
+  const messageId = `pi-cerebras-retry-${failedRunId}`
+  if (chat.messages.some((message) => message.id === messageId)) return
+  const seconds = Math.round(delayMs / 1000)
+  const updated: ChatRecord = {
+    ...chat,
+    messages: [
+      ...chat.messages,
+      {
+        id: messageId,
+        role: 'system',
+        content: `Cerebras rate window hit — TaskWraith will retry this turn automatically in about ${seconds} seconds.`,
+        timestamp: new Date().toISOString(),
+        runId: failedRunId,
+        metadata: { kind: 'piCerebrasRateRetry', provider: 'pi' }
+      }
+    ],
+    updatedAt: Date.now()
+  }
+  AppStore.saveChat(updated)
+  broadcastChatUpdated(updated)
+}
+
+/** After the backoff, faithfully re-run the failed turn once — same provider,
+ * same posture (re-signed for the new run id), fresh run id. Mirrors the
+ * ProviderAutoFailover snapshot re-dispatch, minus the reroute. */
+function schedulePiCerebrasRateRetry(state: CliProviderStreamState): void {
+  const failedRunId = state.appRunId
+  const appChatId = state.appChatId
+  if (!failedRunId || !appChatId) return
+  // Ensemble rounds own their seats' lifecycle — the governor spaces their
+  // dispatches, but a rogue solo re-dispatch must never join a round.
+  if (state.ensembleRun) return
+  if (piCerebrasRetriedRunIds.has(failedRunId)) return
+  // Peek (never consume) the failover snapshot — the terminal-exit handler
+  // deletes it moments after this frame, so copy what we need now.
+  const snapshot = failoverSnapshotByRun.get(failedRunId)
+  if (!snapshot) return
+  if (
+    scheduledOccurrenceOwners.isAppRunIdLiveOwned(failedRunId) ||
+    AppStore.getScheduledTasks().some((task) => task.runId === failedRunId)
+  ) {
+    return
+  }
+  piCerebrasRetriedRunIds.add(failedRunId)
+  const snap: FailoverRunSnapshot = { ...snapshot }
+  const sender = state.sender
+  const failedAtIso = new Date().toISOString()
+  appendPiCerebrasRetryNotice(appChatId, failedRunId, PI_CEREBRAS_429_BACKOFF_MS)
+  setTimeout(() => {
+    try {
+      firePiCerebrasRateRetry({ snap, appChatId, failedRunId, failedAtIso, sender })
+    } catch (error) {
+      console.warn('[pi-cerebras-retry] re-dispatch failed', error)
+    }
+  }, PI_CEREBRAS_429_BACKOFF_MS)
+}
+
+function firePiCerebrasRateRetry(args: {
+  snap: FailoverRunSnapshot
+  appChatId: string
+  failedRunId: string
+  failedAtIso: string
+  sender: Electron.WebContents
+}): void {
+  const dispatch = dispatchRunWithProviderPauseRef
+  if (!dispatch) return
+  const chat = AppStore.getChat(args.appChatId)
+  if (!chat) return
+  // The user (or anything else) moved on: a run newer than the failure means
+  // this retry would stomp live work — drop it silently.
+  const superseded = (chat.runs || []).some(
+    (run) =>
+      run.runId !== args.failedRunId &&
+      typeof run.startedAt === 'string' &&
+      run.startedAt > args.failedAtIso
+  )
+  if (superseded) return
+  const snap = args.snap
+  const payload: AgentRunPayload = {
+    provider: 'pi',
+    scope: snap.scope,
+    workspace: snap.workspace,
+    prompt: snap.prompt,
+    activeGoal: snap.activeGoal,
+    appRunId: createFallbackRunId('pi'),
+    appChatId: args.appChatId,
+    approvalMode: snap.approvalMode,
+    workflowMode: snap.workflowMode === 'plan' ? 'plan' : 'normal',
+    model: snap.model,
+    reasoningEffort: snap.reasoningEffort,
+    serviceTier: snap.serviceTier,
+    runtimeProfileId: snap.runtimeProfileId,
+    handoffSourceRunId: args.failedRunId,
+    ...(snap.effectivePermissions ? { effectivePermissions: snap.effectivePermissions } : {})
+  }
+  // Same provider, same posture, new run id: an honest main-side re-sign of
+  // the identical permission map (no escalation surface — mirrors the
+  // ProviderAutoFailover baseline signing).
+  payload.effectivePermissionsSignature = signRunPosture(
+    payload.approvalMode,
+    payload.effectivePermissions,
+    {
+      provider: payload.provider,
+      scope: payload.scope,
+      appRunId: payload.appRunId,
+      appChatId: payload.appChatId,
+      prompt: payload.prompt,
+      workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
+      runtimeProfileId: payload.runtimeProfileId
+    }
+  )
+  console.info(
+    `[pi-cerebras-retry] re-dispatching ${args.failedRunId} as ${payload.appRunId} after the rate window`
+  )
+  void dispatch(payload, { sender: args.sender })
+}
+
 async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('pi', payload)
   payload.providerSessionId = null
@@ -19443,6 +19586,30 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
           AppStore.getSettings().piCerebrasMaxCompletionTokens
         )
       : undefined
+
+  if (upstream === 'cerebras') {
+    // Reserve a dispatch slot on the shared Cerebras timeline. Concurrent
+    // ensemble seats each reserve here and serialize onto spaced slots; after
+    // an observed 429 the governor floors the slot a full window out. The
+    // reservation happens before spawn, so a held run is visibly waiting
+    // rather than burning the provider's RPM window with doomed requests.
+    const { waitMs } = piCerebrasRateGovernor.reserveDispatchSlot()
+    if (waitMs > 0) {
+      sendAgentCompatLine(
+        event.sender,
+        'pi',
+        {
+          type: 'provider_warning',
+          provider: 'pi',
+          severity: 'warning',
+          title: 'Pi',
+          message: `Holding ${Math.round(waitMs / 1000)}s for the Cerebras rate window (project keys allow ~5 requests/min; concurrent seats are serialized).`
+        },
+        route
+      )
+      await new Promise((resolve) => setTimeout(resolve, waitMs))
+    }
+  }
 
   // Pi has no generic MCP client. Its managed Ensemble extension below is a
   // separate, fixed coordination surface, never a claim that Pi has the full
