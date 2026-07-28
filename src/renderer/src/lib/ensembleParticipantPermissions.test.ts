@@ -90,7 +90,7 @@ describe('applyParticipantPermissionsToEnsemble', () => {
     expect(applyParticipantPermissionsToEnsemble(source, 'missing')).toBe(source)
   })
 
-  it('does not directly overwrite participant permissions during a live round', () => {
+  it('can prepare the full immutable permission change while a live round is present', () => {
     const source = ensembleChat()
     source.ensemble!.activeRound = {
       roundId: 'round-1',
@@ -125,11 +125,11 @@ describe('applyParticipantPermissionsToEnsemble', () => {
 
     const updated = applyParticipantPermissionsToEnsemble(source, 'p1')
 
-    expect(updated).toBe(source)
+    expect(updated).not.toBe(source)
     expect(
       updated.ensemble?.participants.map((participant) => participant.permissionPresetId)
-    ).toEqual(['plan', 'read_only', 'default'])
-    expect(updated.ensemble?.sessionActivityLedger).toBeUndefined()
+    ).toEqual(['plan', 'plan', 'plan'])
+    expect(updated.ensemble?.sessionActivityLedger).toHaveLength(4)
   })
 
   it('audits copied override changes without disclosing granted paths', () => {

@@ -657,8 +657,9 @@ import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
 import { ChatUpdateHydrationQueue } from './lib/chatUpdateHydrationQueue'
 import { resolveChatHydration } from './lib/chatHydrationMerge'
 import {
-  APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE,
-  applyParticipantPermissionsToEnsemble
+  applyParticipantPermissionsToEnsemble,
+  cloneParticipantPermissionPatch,
+  resolveParticipantPermissionPatch
 } from './lib/ensembleParticipantPermissions'
 import {
   buildPinnedMessageSummaries,
@@ -20040,7 +20041,8 @@ function App(): React.JSX.Element {
     setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
   }, [])
   // Model, reasoning, and permission clicks can be one rapid picker edit.
-  // Preserve their order so each authoritative response builds on the last.
+  // Preserve chat-wide order so multi-seat mutations such as "Apply to all"
+  // build every authoritative response on the previous canonical snapshot.
   const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const requestAuthoritativeParticipantSeatChange = useCallback(
     (
@@ -20050,7 +20052,7 @@ function App(): React.JSX.Element {
     ): boolean => {
       const participant = buildRuntimeSeatPatch(patch)
       if (!participant) return false
-      const queueKey = `${sourceChat.appChatId}:${participantId}`
+      const queueKey = sourceChat.appChatId
       const previous = authoritativeParticipantSeatChangeQueueRef.current.get(queueKey)
       const request = (previous || Promise.resolve())
         .catch(() => undefined)
@@ -20232,7 +20234,15 @@ function App(): React.JSX.Element {
             : await refreshSingleChat(chatId).catch(() => null)
         if (!canonical) return
         if (isEnsembleActiveRoundDispatchLive(canonical.ensemble?.activeRound)) {
-          window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)
+          const permissionPatch = resolveParticipantPermissionPatch(canonical, participantId)
+          if (!permissionPatch || !canonical.ensemble) return
+          for (const participant of canonical.ensemble.participants) {
+            requestAuthoritativeParticipantSeatChange(
+              canonical,
+              participant.id,
+              cloneParticipantPermissionPatch(permissionPatch)
+            )
+          }
           return
         }
         updateChatById(chatId, (source) =>
@@ -20242,7 +20252,7 @@ function App(): React.JSX.Element {
         )
       })()
     },
-    [refreshSingleChat, updateChatById]
+    [refreshSingleChat, requestAuthoritativeParticipantSeatChange, updateChatById]
   )
   const updateEnsembleOrchestrationModeForChat = useCallback(
     (chatId: string, mode: EnsembleOrchestrationMode): void => {

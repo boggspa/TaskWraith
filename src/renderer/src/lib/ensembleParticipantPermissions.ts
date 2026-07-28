@@ -1,10 +1,38 @@
 import type { ChatRecord } from '../../../main/store/types'
-import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
 import { clonePermissionOverrides } from './ensembleRosterPresets'
 import { withSessionActivityLedger } from './sessionActivityLedger'
 
-export const APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE =
-  'Finish the current Ensemble round before applying permissions to the full roster.'
+export interface EnsembleParticipantPermissionPatch {
+  permissionPresetId: NonNullable<
+    ChatRecord['ensemble']
+  >['participants'][number]['permissionPresetId']
+  permissionOverrides: NonNullable<
+    ChatRecord['ensemble']
+  >['participants'][number]['permissionOverrides']
+}
+
+export function resolveParticipantPermissionPatch(
+  source: ChatRecord,
+  participantId: string
+): EnsembleParticipantPermissionPatch | null {
+  const selected = source.ensemble?.participants.find(
+    (participant) => participant.id === participantId
+  )
+  if (!selected) return null
+  return {
+    permissionPresetId: selected.permissionPresetId,
+    permissionOverrides: clonePermissionOverrides(selected.permissionOverrides)
+  }
+}
+
+export function cloneParticipantPermissionPatch(
+  patch: EnsembleParticipantPermissionPatch
+): EnsembleParticipantPermissionPatch {
+  return {
+    permissionPresetId: patch.permissionPresetId,
+    permissionOverrides: clonePermissionOverrides(patch.permissionOverrides)
+  }
+}
 
 /** Apply one participant's permission posture to the full roster atomically. */
 export function applyParticipantPermissionsToEnsemble(
@@ -12,9 +40,8 @@ export function applyParticipantPermissionsToEnsemble(
   participantId: string
 ): ChatRecord {
   const ensemble = source.ensemble
-  const selected = ensemble?.participants.find((participant) => participant.id === participantId)
-  if (!ensemble || !selected) return source
-  if (isEnsembleActiveRoundDispatchLive(ensemble.activeRound)) return source
+  const permissionPatch = resolveParticipantPermissionPatch(source, participantId)
+  if (!ensemble || !permissionPatch) return source
 
   const patched: ChatRecord = {
     ...source,
@@ -22,8 +49,7 @@ export function applyParticipantPermissionsToEnsemble(
       ...ensemble,
       participants: ensemble.participants.map((participant) => ({
         ...participant,
-        permissionPresetId: selected.permissionPresetId,
-        permissionOverrides: clonePermissionOverrides(selected.permissionOverrides)
+        ...cloneParticipantPermissionPatch(permissionPatch)
       })),
       updatedAt: new Date().toISOString()
     },

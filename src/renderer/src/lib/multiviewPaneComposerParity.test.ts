@@ -250,21 +250,24 @@ describe('Multiview pane Composer context parity', () => {
     expect(applyPermissions).toContain(
       'applyParticipantPermissionsToEnsemble(source, participantId)'
     )
-    expect(applyPermissions).toContain(
-      'window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)'
-    )
+    expect(applyPermissions).toContain('requestAuthoritativeParticipantSeatChange(')
+    expect(applyPermissions).toContain('cloneParticipantPermissionPatch(permissionPatch)')
     expect(applyPermissions).toContain(
       'isEnsembleActiveRoundDispatchLive(source.ensemble?.activeRound)'
     )
     expect(applyPermissions).toContain('await refreshSingleChat(chatId).catch(() => null)')
-    const alertIndex = applyPermissions.indexOf(
-      'window.alert(APPLY_PERMISSIONS_TO_ALL_ACTIVE_ROUND_MESSAGE)'
+    const liveRoundIndex = applyPermissions.indexOf(
+      'isEnsembleActiveRoundDispatchLive(canonical.ensemble?.activeRound)'
+    )
+    const requestIndex = applyPermissions.indexOf(
+      'requestAuthoritativeParticipantSeatChange('
     )
     const updateIndex = applyPermissions.indexOf('updateChatById(chatId, (source) =>')
-    expect(alertIndex).toBeGreaterThan(-1)
-    expect(updateIndex).toBeGreaterThan(alertIndex)
+    expect(liveRoundIndex).toBeGreaterThan(-1)
+    expect(requestIndex).toBeGreaterThan(liveRoundIndex)
+    expect(updateIndex).toBeGreaterThan(requestIndex)
     expect(applyPermissions.slice(updateIndex)).not.toContain('window.alert(')
-    expect(applyPermissions).not.toContain('for (const participant')
+    expect(applyPermissions).toContain('for (const participant')
     expect(applyPermissions.match(/updateChatById\(/g)).toHaveLength(1)
     expect(source).not.toContain('setSelectedParticipantId(')
     expect(source).toContain('setSelectedParticipantForChat(updatedChat.appChatId, null)')
