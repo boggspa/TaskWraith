@@ -20,8 +20,12 @@
 //     on small-send-button shells like claude);
 //   - font = the shell's font design; text colour = shell.palette.textPrimary;
 //   - a manual placeholder label (UITextView has none);
-//   - return inserts a newline (send is the separate button), matching
-//     axis:.vertical — NOT submit-on-return.
+//   - return SUBMITS (`onSubmit`) — on-screen the key is labelled "send", and a
+//     hardware Return matches the desktop composer's Enter-sends. A newline is
+//     still reachable two ways: hardware Shift+Return (a prioritised
+//     UIKeyCommand), and pasted/dictated text (multi-character insertions are
+//     never intercepted). An in-flight IME composition's Return commits the
+//     marked text as normal — intercepting it would break CJK entry.
 //
 // This file is UIKit-only (the shipping target). The macOS `swift build` used
 // for compile-checks has no UIKit, so the composer keeps a plain `TextField`
@@ -30,6 +34,20 @@
 
 import SwiftUI
 import TaskWraithKit
+
+/// Pure decision for the composer's Return interception, kept outside the
+/// UIKit guard so the macOS test build can pin it. Return SUBMITS exactly when
+/// the inserted text is one lone newline, a submit action exists, no IME
+/// composition is being committed (a CJK keyboard's Return commits marked text
+/// — intercepting it would break entry), and the Shift+Return key command has
+/// not latched this insertion as a deliberate newline. Everything else —
+/// pasted/dictated multi-character text included — inserts as typed.
+func twComposerReturnSubmits(
+    replacement: String, hasSubmitAction: Bool, isCommittingMarkedText: Bool,
+    newlineLatched: Bool
+) -> Bool {
+    replacement == "\n" && hasSubmitAction && !isCommittingMarkedText && !newlineLatched
+}
 
 #if canImport(UIKit)
     import UIKit
@@ -52,11 +70,38 @@ import TaskWraithKit
         return UIFont(descriptor: base.fontDescriptor, size: pointSize)
     }
 
+    /// UITextView subclass whose only job is the Shift+Return newline: a
+    /// prioritised key command intercepts the hardware chord before the system
+    /// inserts a plain "\n" (which the delegate would submit), and the
+    /// `allowNextNewline` latch lets that one programmatic insertion pass the
+    /// delegate's Return interception.
+    final class TWComposerTextView: UITextView {
+        var allowNextNewline = false
+
+        override var keyCommands: [UIKeyCommand]? {
+            let shiftReturn = UIKeyCommand(
+                input: "\r", modifierFlags: .shift, action: #selector(insertNewlineFromShiftReturn))
+            // Without priority the system handles shift+return as an ordinary
+            // Return (shift ignored) and the command never fires.
+            shiftReturn.wantsPriorityOverSystemBehavior = true
+            return [shiftReturn]
+        }
+
+        @objc private func insertNewlineFromShiftReturn() {
+            allowNextNewline = true
+            insertText("\n")
+            allowNextNewline = false
+        }
+    }
+
     struct MentionTextView: UIViewRepresentable {
         @Binding var text: String
         /// Bridges the composer's focus state (was `@FocusState`) to the text
         /// view's first-responder status, both directions.
         @Binding var focused: Bool
+        /// Return-key submit action (the same action as the send button). When
+        /// nil the field keeps the old newline-on-return behaviour.
+        var onSubmit: (() -> Void)? = nil
         /// Ensemble participants used to resolve @mention tokens to a provider hue
         /// (empty = no tinting). Same resolution the transcript uses, so composer
         /// and transcript colour identical tokens identically.
@@ -79,7 +124,7 @@ import TaskWraithKit
         func makeCoordinator() -> Coordinator { Coordinator(self) }
 
         func makeUIView(context: Context) -> UITextView {
-            let textView = UITextView()
+            let textView = TWComposerTextView()
             textView.delegate = context.coordinator
             textView.backgroundColor = .clear
             textView.textContainerInset = UIEdgeInsets(
@@ -94,7 +139,10 @@ import TaskWraithKit
             textView.isScrollEnabled = false  // hug content until the 2-line cap
             textView.scrollsToTop = false
             textView.adjustsFontForContentSizeCategory = true
-            textView.returnKeyType = .default  // return = newline (axis:.vertical parity)
+            // With a submit action the on-screen key says "send" and Return
+            // submits (desktop Enter parity; Shift+Return = newline). Without
+            // one, the old newline-on-return behaviour stands.
+            textView.returnKeyType = onSubmit == nil ? .default : .send
             textView.textContainer.lineBreakMode = .byWordWrapping
             textView.typingAttributes = [
                 .font: font, .foregroundColor: UIColor(textColor),
@@ -348,6 +396,24 @@ import TaskWraithKit
 
             func cappedHeight(font: UIFont, maxLines: Int, inset: CGFloat) -> CGFloat {
                 lineFragmentHeight(for: font) * CGFloat(maxLines) + inset * 2
+            }
+
+            func textView(
+                _ textView: UITextView, shouldChangeTextIn range: NSRange,
+                replacementText text: String
+            ) -> Bool {
+                // See twComposerReturnSubmits for the full contract (IME
+                // commit and Shift+Return latch pass through; paste/dictation
+                // are multi-character and never match).
+                let submits = twComposerReturnSubmits(
+                    replacement: text,
+                    hasSubmitAction: parent.onSubmit != nil,
+                    isCommittingMarkedText: textView.markedTextRange != nil,
+                    newlineLatched: (textView as? TWComposerTextView)?.allowNextNewline == true
+                )
+                guard submits else { return true }
+                parent.onSubmit?()
+                return false
             }
 
             func textViewDidChange(_ textView: UITextView) {

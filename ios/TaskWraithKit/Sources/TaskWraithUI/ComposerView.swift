@@ -636,6 +636,10 @@ struct Composer: View {
             MentionTextView(
                 text: $text,
                 focused: $inputFocused,
+                // Return sends, exactly like the send button (desktop Enter
+                // parity); hardware Shift+Return inserts the newline. Pasted
+                // and dictated newlines are untouched.
+                onSubmit: { sendCurrent() },
                 participants: mentionParticipants,
                 font: twUIComposerFont(shell.fontDesign, scale: appScale),
                 textColor: shell.palette.textPrimary,
