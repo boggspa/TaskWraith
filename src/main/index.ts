@@ -1475,7 +1475,7 @@ import {
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import {
-  AGY_USAGE_FRESH_TTL_MS,
+  agyUsageProbeDecision,
   fetchAuthenticatedAgyQuotaSnapshot,
   type AgyPtyLike
 } from './antigravity/AntigravityUsage'
@@ -15839,6 +15839,7 @@ let grokUsageProbeCache: { snapshot: GrokUsageSnapshot; fetchedAt: number } | nu
 // observed snapshots so normal quota refreshes do not repeatedly open it.
 // The authenticated configured-provider snapshot is still checked before this
 // cache is read, so consent withdrawal or a disconnected S4 state fails closed.
+let antigravityUsageProbeLastAttemptAt: number | null = null
 let antigravityUsageProbeCache: {
   snapshot: NormalizedProviderUsageSnapshot
   fetchedAt: number
@@ -46281,13 +46282,27 @@ if (isGeminiMcpBridgeProcess) {
       fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
         fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
       fetchAuthenticatedQuota: async (settings, force) => {
-        if (
-          !force &&
-          antigravityUsageProbeCache &&
-          Date.now() - antigravityUsageProbeCache.fetchedAt < AGY_USAGE_FRESH_TTL_MS
-        ) {
+        // Every /usage probe is a real authenticated agy session, so cadence
+        // is the fingerprint. The decision helper enforces the doctrine:
+        // automatic callers (the 90s meter heartbeat) are cache-only and can
+        // NEVER reach the PTY; only the manual refresh (`force`) may probe,
+        // clamped to one ATTEMPT per AGY_USAGE_MANUAL_MIN_INTERVAL_MS —
+        // enforced here in main so button-mashing cannot route around it.
+        const probeDecision = agyUsageProbeDecision({
+          force: force === true,
+          nowMs: Date.now(),
+          cacheFetchedAtMs: antigravityUsageProbeCache?.fetchedAt ?? null,
+          lastAttemptAtMs: antigravityUsageProbeLastAttemptAt
+        })
+        if (probeDecision === 'serve-cache' && antigravityUsageProbeCache) {
           return antigravityUsageProbeCache.snapshot
         }
+        if (probeDecision !== 'probe') {
+          // Unavailable-until-manual-refresh: same shape the unauthenticated
+          // lane reports, so every surface degrades identically.
+          return fetchAuthenticatedAgyQuotaSnapshot(settings, false, {})
+        }
+        antigravityUsageProbeLastAttemptAt = Date.now()
 
         // A private temporary cwd keeps the documented interactive panel out
         // of a real workspace. It is removed only when this exact probe made
