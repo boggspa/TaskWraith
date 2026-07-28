@@ -201,7 +201,8 @@ function collectAttribution(messages: ChatMessage[]): {
     if (provider) {
       const participantId = metaString(message, 'ensembleParticipantId')
       const model = metaString(message, 'ensembleModel')
-      const attributionKey = participantId || `${provider}\u0000${role || ''}\u0000${model || ''}`
+      const attributionKey =
+        participantId || `${provider}\u0000${role || ''}\u0000${model || ''}`
       if (!attributionKeys.has(attributionKey)) {
         attributionKeys.add(attributionKey)
         attributions.push({ participantId, provider, role, model })

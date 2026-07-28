@@ -20,16 +20,14 @@
   -webkit-backdrop-filter: none;
   pointer-events: auto;
 }
-.composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact
-  .ensemble-roster-preset-picker-chip {
+.composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact .ensemble-roster-preset-picker-chip {
   position: relative;
   z-index: 1;
   pointer-events: auto;
   background: color-mix(in srgb, currentColor 5%, transparent);
   border-color: color-mix(in srgb, currentColor 14%, transparent);
 }
-[data-composer-style='cursor']
+[data-composer-style="cursor"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-label {
@@ -162,12 +160,7 @@
       color-mix(in srgb, var(--accent-color) 34%, transparent),
       transparent 52%
     ),
-    linear-gradient(
-      135deg,
-      rgb(255 255 255 / 0.96),
-      rgb(255 255 255 / 0.52) 48%,
-      rgb(255 255 255 / 0.72)
-    );
+    linear-gradient(135deg, rgb(255 255 255 / 0.96), rgb(255 255 255 / 0.52) 48%, rgb(255 255 255 / 0.72));
   box-shadow:
     inset 0 1px 2px rgb(255 255 255 / 0.92),
     inset -2px -3px 5px rgb(0 0 0 / 0.22),
@@ -209,26 +202,22 @@
   background:
     radial-gradient(circle at 32% 22%, rgb(255 255 255 / 0.98), transparent 0 16%),
     radial-gradient(circle at 42% 32%, rgb(255 255 255 / 0.72), transparent 0 34%),
-    linear-gradient(
-      135deg,
-      rgb(255 255 255 / 0.96),
-      rgb(255 255 255 / 0.52) 48%,
-      rgb(255 255 255 / 0.72)
-    );
+    linear-gradient(135deg, rgb(255 255 255 / 0.96), rgb(255 255 255 / 0.52) 48%, rgb(255 255 255 / 0.72));
   box-shadow:
     inset 0 1px 2px rgb(255 255 255 / 0.92),
     inset -2px -3px 5px rgb(0 0 0 / 0.22),
     0 1px 5px rgb(0 0 0 / 0.34);
 }
-:root[data-advanced-fx-refraction='true'][data-advanced-fx-intensity='cinematic']
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="cinematic"]
   .composer-ensemble-context-slider::-webkit-slider-thumb,
-:root[data-advanced-fx-refraction='true'][data-advanced-fx-intensity='epic']
+:root[data-advanced-fx-refraction="true"][data-advanced-fx-intensity="epic"]
   .composer-ensemble-context-slider::-webkit-slider-thumb {
   filter: url(#tw-glass-refract);
 }
-:root[data-reduce-transparency='true']
+:root[data-reduce-transparency="true"]
   .composer-ensemble-context-slider::-webkit-slider-runnable-track,
-:root[data-reduce-transparency='true'] .composer-ensemble-context-slider::-webkit-slider-thumb {
+:root[data-reduce-transparency="true"]
+  .composer-ensemble-context-slider::-webkit-slider-thumb {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -320,7 +309,7 @@
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter.is-success {
   color: color-mix(in srgb, var(--status-success, #46a758) 88%, var(--text-primary) 12%) !important;
 }
-:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:not(:has(.ensemble-above-row))
   > .composer-above-bar:not(:first-child) {
   border-top-left-radius: 14px;
@@ -401,7 +390,7 @@
   transform-origin: top right;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-new-menu {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   color: var(--surface-text);
@@ -414,7 +403,7 @@
   background: var(--tw-popover-glass-bg);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .sidebar-new-menu.sidebar-shared-create-menu {
   background: var(--tw-popover-glass-bg);
 }
@@ -447,7 +436,7 @@
   transition: background 100ms ease;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-new-menu-item {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu-item {
   color: var(--surface-text);
 }
 
@@ -461,9 +450,7 @@
   color: color-mix(in srgb, var(--text-primary) 76%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-new-menu-item
-  .sf-symbol-icon {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu-item .sf-symbol-icon {
   color: color-mix(in srgb, var(--surface-text) 68%, transparent);
 }
 
@@ -507,12 +494,8 @@
   color: var(--text-primary);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-new-menu-item:hover
-  .sf-symbol-icon,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-new-menu-item:focus-visible
-  .sf-symbol-icon {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu-item:hover .sf-symbol-icon,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu-item:focus-visible .sf-symbol-icon {
   color: var(--surface-text);
 }
 
@@ -538,9 +521,7 @@
   padding: 8px 10px;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-new-menu
-  > button:not(.sidebar-new-menu-item) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .sidebar-new-menu > button:not(.sidebar-new-menu-item) {
   color: var(--surface-text);
 }
 
@@ -586,7 +567,8 @@
   transform-origin: top center;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .workspace-board-creator-sheet {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .workspace-board-creator-sheet {
   --sidebar-picker-bg-solid: var(--surface-1, #ffffff);
   border-color: var(--surface-border);
   background: color-mix(in srgb, var(--sidebar-picker-bg-solid) 75%, transparent);
@@ -671,16 +653,14 @@
   opacity: 0.5;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .sidebar-board-creator-title,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-board-creator-actions
-  button,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-board-creator-field
-  input,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .sidebar-board-creator-field
-  select {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-title,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-actions button,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-field input,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .sidebar-board-creator-field select {
   color: var(--surface-text);
 }
 
@@ -798,10 +778,7 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
-  transition:
-    background 120ms ease,
-    opacity 120ms ease,
-    box-shadow 120ms ease;
+  transition: background 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
 }
 .queued-messages-row.is-dragging {
   opacity: 0.45;
@@ -857,10 +834,7 @@
   font-size: 11px;
   font-weight: 500;
   cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .queued-messages-row-action:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -951,13 +925,13 @@
 /* Light-mode tweaks — the dark composer-bg fallback would over-
  * darken on light themes. Mirror the same flat-tint pattern other
  * above-row siblings use in light mode. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .queued-messages-above-row {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .queued-messages-above-row {
   background: var(--surface-2);
   border-color: color-mix(in srgb, var(--panel-border) 80%, transparent);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
   color: var(--text-primary);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .queued-steer-menu {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .queued-steer-menu {
   border-color: var(--surface-border);
   background: var(--tw-popover-glass-bg);
   box-shadow:
@@ -1210,22 +1184,19 @@
  * flex:1 chip strip reclaims that slack and its centred chips re-balance. No
  * overall width change. Sibling-guarded so it only kicks in when BOTH buttons
  * are present (e.g. not at the cap, where the + is hidden). */
-:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .ensemble-above-row {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row {
   gap: 6px;
 }
-:is([data-composer-style='codex'], [data-composer-style='chatgpt']) .ensemble-above-row-controls,
-:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
-  .ensemble-above-row-roster-actions {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-controls,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions {
   gap: 6px;
 }
-:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
-  .ensemble-above-row-roster-actions
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant:has(+ .ensemble-above-remove-participant) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
-  .ensemble-above-row-roster-actions
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant
   + .ensemble-above-remove-participant {
   margin-left: -6px;
@@ -1273,10 +1244,7 @@
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
-  transition:
-    border-color 120ms ease,
-    background 120ms ease,
-    opacity 120ms ease,
+  transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease,
     box-shadow 120ms ease;
   /* 1.0.4-AQ2 — chips are interactive pills, never text-select
    * targets. The pointer-event drag (see ParticipantChip's
@@ -1439,8 +1407,7 @@
 .ensemble-above-chip.is-selected {
   border-color: transparent;
   background: transparent;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent-color) 55%, transparent),
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color) 55%, transparent),
     0 0 16px color-mix(in srgb, var(--accent-color) 40%, transparent);
 }
 
@@ -1485,9 +1452,7 @@
   transform: none;
   border-style: dashed;
   border-color: color-mix(in srgb, var(--accent-color) 42%, transparent);
-  transition:
-    opacity 80ms ease,
-    border-color 80ms ease;
+  transition: opacity 80ms ease, border-color 80ms ease;
 }
 
 .ensemble-above-chip-drag-ghost {
@@ -1774,7 +1739,7 @@
   color: var(--text-primary);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-chip-tooltip {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip-tooltip {
   background: color-mix(in srgb, var(--surface-1, #ffffff) 92%, transparent);
   border-color: var(--surface-border);
   box-shadow:
@@ -2007,7 +1972,7 @@
   gap: 10px;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-overflow {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-overflow {
   background: var(--tw-popover-glass-bg);
   border-color: var(--surface-border);
   box-shadow:
@@ -2015,13 +1980,13 @@
     0 18px 44px rgba(0, 0, 0, 0.14);
 }
 
-[data-reduce-transparency='true'] .ensemble-above-overflow {
+[data-reduce-transparency="true"] .ensemble-above-overflow {
   background: var(--tw-glass-solid) !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-reduce-transparency='true']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-reduce-transparency="true"]
   .ensemble-above-overflow {
   background: var(--tw-glass-solid) !important;
   color: var(--surface-text);
@@ -2046,18 +2011,34 @@
 
 .ensemble-above-overflow-toggle.is-enabled[aria-pressed='true'] {
   --segmented-action-foreground: var(--success, #34d399);
-  --segmented-action-border: color-mix(in srgb, var(--success, #34d399) 48%, var(--panel-border));
+  --segmented-action-border: color-mix(
+    in srgb,
+    var(--success, #34d399) 48%,
+    var(--panel-border)
+  );
   --segmented-action-bg: color-mix(in srgb, var(--success, #34d399) 16%, transparent);
-  --segmented-action-hover-bg: color-mix(in srgb, var(--success, #34d399) 24%, transparent);
+  --segmented-action-hover-bg: color-mix(
+    in srgb,
+    var(--success, #34d399) 24%,
+    transparent
+  );
   color: var(--segmented-action-foreground);
   box-shadow: 0 0 10px color-mix(in srgb, var(--success, #34d399) 24%, transparent);
 }
 
 .ensemble-above-overflow-toggle.is-auto[aria-pressed='true'] {
   --segmented-action-foreground: var(--warning, #f5b14c);
-  --segmented-action-border: color-mix(in srgb, var(--warning, #f5b14c) 52%, var(--panel-border));
+  --segmented-action-border: color-mix(
+    in srgb,
+    var(--warning, #f5b14c) 52%,
+    var(--panel-border)
+  );
   --segmented-action-bg: color-mix(in srgb, var(--warning, #f5b14c) 17%, transparent);
-  --segmented-action-hover-bg: color-mix(in srgb, var(--warning, #f5b14c) 26%, transparent);
+  --segmented-action-hover-bg: color-mix(
+    in srgb,
+    var(--warning, #f5b14c) 26%,
+    transparent
+  );
   color: var(--segmented-action-foreground);
   box-shadow: 0 0 10px color-mix(in srgb, var(--warning, #f5b14c) 25%, transparent);
 }
@@ -2370,19 +2351,19 @@
  * surface-text — the same tokens the composer-surface uses, so
  * it reads as the same surface-family pill.
  * ============================================================ */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-row {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-row {
   background: var(--surface-2);
   border-color: var(--surface-border);
   color: var(--surface-text);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-chip {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip {
   /* Chip is naked by default after 1.0.3 polish; light-mode override
    * no longer needs a per-chip background. Only the `.is-selected`
    * pill rules below need a light-mode tweak. */
   color: rgba(29, 29, 31, 0.84);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .ensemble-above-chip
   .ensemble-above-chip-status {
   /* Pre-1.0.3 light-mode treatment set a pill background here. With
@@ -2396,13 +2377,10 @@
 /* Per-shell light-mode overrides — Gemini / Kimi / Codex-unified
  * still want their accent borders but on a light base, mirroring
  * the composer-surface light-mode treatment. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
-  .ensemble-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
-  .queued-messages-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
-  .composer-above-bar,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
@@ -2410,13 +2388,10 @@
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
-  .ensemble-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
-  .queued-messages-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
-  .composer-above-bar,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
@@ -2424,9 +2399,8 @@
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='modular']
-  .ensemble-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='modular']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="modular"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: color-mix(in srgb, var(--surface-2) 88%, transparent);
@@ -2434,11 +2408,9 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   color: var(--surface-text);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
-  .ensemble-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
-  .queued-messages-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact {
   background: var(--surface-2);
@@ -2446,7 +2418,7 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   color: var(--surface-text);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='claude']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
@@ -2459,13 +2431,7 @@
  * the same white pill family as its sibling chrome above, not a
  * darker contrasting surface). The purple accent moves to the
  * border only, kept subtle so it doesn't fight the bright base. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  ) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: #e3e3e9;
   border-color: color-mix(in srgb, #000000 12%, transparent);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
@@ -2478,7 +2444,7 @@
  * they paint a dirty gray tint that breaks the white pill
  * appearance. Per-provider dark-mode rules at lines 24462+ still
  * apply when the theme is dark. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-row::before {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-row::before {
   display: none;
 }
 /* Terminal + Stub shells keep their dark / paper aesthetics in
@@ -2496,24 +2462,21 @@
 /* 1.0.5-EW22 — Light-mode selected glow. Same satellite chrome
  * as dark mode but the spread layer needs slightly more intensity
  * to read against bright surfaces. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .ensemble-above-chip.is-selected {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip.is-selected {
   border-color: transparent;
   background: transparent;
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent-color) 65%, transparent),
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color) 65%, transparent),
     0 0 14px color-mix(in srgb, var(--accent-color) 48%, transparent);
   color: rgba(29, 29, 31, 0.92);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])
-  .ensemble-above-chip.is-drag-over {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-chip.is-drag-over {
   border-color: var(--accent-color);
   background: color-mix(in srgb, var(--accent-color) 10%, var(--surface-2));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color) 60%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-ensemble-mode,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-mode {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-mode,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-mode {
   /* 1.0.3 polish — softer light-mode treatment matching the
    * composer-chip neutral palette. Was heavier (surface-2 84% / border
    * 78%) which read as "this is a separate UI" — now the toggle reads
@@ -2522,8 +2485,8 @@
   border-color: color-mix(in srgb, var(--surface-border) 50%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .composer-ensemble-hop-meter,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .ensemble-above-hop-meter {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-ensemble-hop-meter,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .ensemble-above-hop-meter {
   background: color-mix(in srgb, var(--accent-color) 12%, var(--surface-2));
 }
 
@@ -2536,38 +2499,10 @@
  * win the cascade, mirroring the same pattern. The chip-strip
  * also gets the same strip so the unified container is the only
  * visible chrome (matches the dark-mode unified treatment). */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > .composer-above-bar,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > .ensemble-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > .queued-messages-above-row,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > .ensemble-roster-preset-picker.is-compact {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-roster-preset-picker.is-compact {
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -2589,14 +2524,7 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']):is(
-    [data-composer-style='codex'],
-    [data-composer-style='chatgpt']
-  )
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > *:not(:first-child) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -2751,7 +2679,7 @@
   transform: scale(0.97);
 }
 
-:root[data-reduce-motion='true'] .composer-ensemble-hop-meter.is-clickable:active:not(:disabled) {
+:root[data-reduce-motion="true"] .composer-ensemble-hop-meter.is-clickable:active:not(:disabled) {
   transform: none;
 }
 
@@ -2927,7 +2855,7 @@
  * override exists in dark mode), so the chip strip's base rule
  * already matches the Create-PR sibling exactly. */
 
-[data-composer-style='claude'] .ensemble-above-chip.is-selected {
+[data-composer-style="claude"] .ensemble-above-chip.is-selected {
   border-color: color-mix(in srgb, var(--accent-color) 65%, transparent);
   background: color-mix(in srgb, var(--accent-color) 16%, transparent);
   box-shadow: none;
@@ -2936,18 +2864,16 @@
 /* Claude shell — detached above-row pills (real Claude app layout).
  * Each stack child is its own 14px textarea-family bubble; the stack
  * carries NO outer frame. Mirrors the Gemini/Kimi detached-pill pattern. */
-[data-composer-style='claude'] .composer-above-bar-stack:has(.ensemble-above-row) {
+[data-composer-style="claude"] .composer-above-bar-stack:has(.ensemble-above-row) {
   gap: 4px;
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   overflow: visible;
 }
-[data-composer-style='claude'] .ensemble-above-row,
-[data-composer-style='claude']
-  .composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact,
-[data-composer-style='claude'] .queued-messages-above-row {
+[data-composer-style="claude"] .ensemble-above-row,
+[data-composer-style="claude"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact,
+[data-composer-style="claude"] .queued-messages-above-row {
   border-radius: 14px;
   /* Exact same frame as the Create-PR row (07:~3841): #151515 solid,
    * white-9% hairline, 14px radius, 12px vertical padding — every
@@ -2958,31 +2884,31 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   padding: 12px 14px;
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 }
 /* Queue items stay flat inside the Claude shell pill — no nested capsule. */
-[data-composer-style='claude'] .queued-messages-row {
+[data-composer-style="claude"] .queued-messages-row {
   border-radius: 0;
   background: transparent;
   border: 0;
 }
 /* Interactive chips inside these rows join the shell's squared
  * rounded-rect language (8px, same as the git-row chips). */
-[data-composer-style='claude'] .ensemble-above-chip,
-[data-composer-style='claude'] .ensemble-above-row-skip,
-[data-composer-style='claude']
+[data-composer-style="claude"] .ensemble-above-chip,
+[data-composer-style="claude"] .ensemble-above-row-skip,
+[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
   border-radius: 8px;
 }
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   + .ensemble-above-row {
   margin-top: 4px;
 }
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
@@ -2990,7 +2916,7 @@
   border-color: color-mix(in srgb, #ffffff 14%, transparent);
 }
 /* Kill provider tint + agent-aura per-row rims on detached Claude rows. */
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row)
   > :is(
@@ -3000,7 +2926,7 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::before,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura
   > :is(
@@ -3010,7 +2936,7 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-running
   > :is(
@@ -3020,7 +2946,7 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-approval
   > :is(
@@ -3030,7 +2956,7 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::after,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-failed
   > :is(
@@ -3046,21 +2972,21 @@
   box-shadow: none !important;
   animation: none !important;
 }
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-running,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-approval,
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura.fx-status-failed {
   box-shadow: none !important;
 }
-[data-composer-style='claude']
+[data-composer-style="claude"]
   .app-transcript
   .composer-above-bar-stack:has(.ensemble-above-row).fx-agent-aura::after {
   display: none !important;
@@ -3076,11 +3002,9 @@
  * 94%` / provider-blue 18% border / `0 4px 28px` shadow).
  * Queued-messages share the same blue shell chrome so the DOM
  * hierarchy (stack → above-row → flat items) matches ensemble. */
-[data-composer-style='gemini'] .ensemble-above-row,
-[data-composer-style='gemini'] .queued-messages-above-row,
-[data-composer-style='gemini']
-  .composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="gemini"] .ensemble-above-row,
+[data-composer-style="gemini"] .queued-messages-above-row,
+[data-composer-style="gemini"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 28px;
   background: color-mix(in srgb, #0e1218 94%, transparent);
   border: 1px solid color-mix(in srgb, var(--provider-gemini-color) 18%, transparent);
@@ -3088,14 +3012,14 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='gemini']
+[data-composer-style="gemini"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
   background: color-mix(in srgb, var(--provider-gemini-color) 8%, transparent);
   border-color: color-mix(in srgb, var(--provider-gemini-color) 22%, transparent);
 }
-[data-composer-style='gemini'] .ensemble-above-chip.is-selected {
+[data-composer-style="gemini"] .ensemble-above-chip.is-selected {
   border-color: color-mix(in srgb, var(--provider-gemini-color) 65%, transparent);
   background: color-mix(in srgb, var(--provider-gemini-color) 16%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-gemini-color) 50%, transparent);
@@ -3106,9 +3030,9 @@
  * Kimi composer-surface chrome (18px radius / `#0a0a0c 96%` /
  * `#ffffff 8%` border / `0 4px 16px` shadow) so the strip reads
  * as a matching pill. Queue rows share the same shell chrome. */
-[data-composer-style='kimi'] .ensemble-above-row,
-[data-composer-style='kimi'] .queued-messages-above-row,
-[data-composer-style='kimi'] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="kimi"] .ensemble-above-row,
+[data-composer-style="kimi"] .queued-messages-above-row,
+[data-composer-style="kimi"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 18px;
   background: color-mix(in srgb, #1f2227 92%, transparent);
   border: 1px solid color-mix(in srgb, #ffffff 14%, transparent);
@@ -3116,14 +3040,14 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='kimi']
+[data-composer-style="kimi"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
   background: color-mix(in srgb, var(--provider-kimi-color) 8%, transparent);
   border-color: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
 }
-[data-composer-style='kimi'] .ensemble-above-chip.is-selected {
+[data-composer-style="kimi"] .ensemble-above-chip.is-selected {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 65%, transparent);
   background: color-mix(in srgb, var(--provider-kimi-color) 18%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--provider-kimi-color) 50%, transparent);
@@ -3136,11 +3060,9 @@
  * pass, match the textarea chrome instead of the flat above-bar
  * so the chip strip reads as a matching sibling pill to the
  * composer below. Queue rows share the same shell chrome. */
-[data-composer-style='modular'] .ensemble-above-row,
-[data-composer-style='modular'] .queued-messages-above-row,
-[data-composer-style='modular']
-  .composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="modular"] .ensemble-above-row,
+[data-composer-style="modular"] .queued-messages-above-row,
+[data-composer-style="modular"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 18px;
   background: color-mix(in srgb, var(--composer-bg-solid) 88%, transparent);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
@@ -3151,10 +3073,8 @@
 
 /* Satellite shell — fully satellite: no row containers, only floating
  * labels + text-token chips. Wider gap matches the above-bar family. */
-[data-composer-style='satellite'] .ensemble-above-row,
-[data-composer-style='satellite']
-  .composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="satellite"] .ensemble-above-row,
+[data-composer-style="satellite"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
@@ -3166,18 +3086,18 @@
   -webkit-backdrop-filter: none !important;
   overflow: visible;
 }
-[data-composer-style='satellite'] .ensemble-above-row {
+[data-composer-style="satellite"] .ensemble-above-row {
   isolation: auto;
   overflow: visible;
 }
-[data-composer-style='satellite'] .ensemble-above-row::before,
-[data-composer-style='satellite'] .ensemble-above-row::after {
+[data-composer-style="satellite"] .ensemble-above-row::before,
+[data-composer-style="satellite"] .ensemble-above-row::after {
   display: none !important;
   content: none !important;
   background: none !important;
   box-shadow: none !important;
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura
   > .ensemble-above-row::after {
@@ -3185,14 +3105,14 @@
   content: none !important;
   box-shadow: none !important;
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-label {
   color: color-mix(in srgb, var(--text-primary) 52%, transparent);
   letter-spacing: 0.06em;
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
@@ -3203,20 +3123,20 @@
   border-radius: 8px;
   color: color-mix(in srgb, var(--text-primary) 78%, transparent);
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip:hover:not(:disabled) {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--text-primary) 6%, transparent) !important;
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip-save {
   border: 1px dashed color-mix(in srgb, var(--text-primary) 18%, transparent) !important;
 }
-[data-composer-style='satellite']
+[data-composer-style="satellite"]
   .app-transcript
   .composer-above-bar-stack.fx-agent-aura
   > .ensemble-roster-preset-picker.is-compact::after {
@@ -3224,13 +3144,13 @@
   content: none !important;
   box-shadow: none !important;
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='satellite']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
   color: rgba(29, 29, 31, 0.84);
 }
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='satellite']
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="satellite"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-label {
@@ -3241,8 +3161,8 @@
  * radius + dotted-line gradient overlay. Mirror the existing
  * `.composer-above-bar` stub styling so the chip strip reads as
  * part of the same notebook-page family. */
-[data-composer-style='stub'] .ensemble-above-row,
-[data-composer-style='stub'] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="stub"] .ensemble-above-row,
+[data-composer-style="stub"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   background:
     repeating-linear-gradient(135deg, rgba(255, 248, 230, 0.04) 0 2px, transparent 2px 6px),
     color-mix(in srgb, #fcf6e6 14%, var(--composer-bg-solid));
@@ -3258,10 +3178,8 @@
 /* Terminal shell — mirror the existing `.composer-above-bar`
  * terminal styling exactly: 2px radius, #0a0e0a bg, #00ff88
  * lime hairline, monospace, 4px 10px padding, no shadow. */
-[data-composer-style='terminal'] .ensemble-above-row,
-[data-composer-style='terminal']
-  .composer-above-bar-stack
-  > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="terminal"] .ensemble-above-row,
+[data-composer-style="terminal"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   background: color-mix(in srgb, #0a0e0a 78%, transparent);
   border: 1px solid color-mix(in srgb, #00ff88 18%, transparent);
   border-radius: 2px;
@@ -3273,12 +3191,12 @@
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='terminal'] .ensemble-above-chip {
+[data-composer-style="terminal"] .ensemble-above-chip {
   border-radius: 2px;
   border-color: color-mix(in srgb, #00ff88 22%, transparent);
   font-family: var(--font-mono);
 }
-[data-composer-style='terminal']
+[data-composer-style="terminal"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-chip {
@@ -3286,12 +3204,12 @@
   border-color: color-mix(in srgb, #00ff88 22%, transparent);
   font-family: var(--font-mono);
 }
-[data-composer-style='terminal']
+[data-composer-style="terminal"]
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact
   .ensemble-roster-preset-picker-browse,
-[data-composer-style='terminal'] .composer-ensemble-orchestration-row,
-[data-composer-style='terminal']
+[data-composer-style="terminal"] .composer-ensemble-orchestration-row,
+[data-composer-style="terminal"]
   .composer-ensemble-orchestration-row
   :is(
     .composer-orchestration-cell-label,
@@ -3304,7 +3222,7 @@
   color: color-mix(in srgb, #ccffe4 84%, transparent) !important;
   font-family: var(--font-mono);
 }
-[data-composer-style='terminal'] .ensemble-above-chip.is-selected {
+[data-composer-style="terminal"] .ensemble-above-chip.is-selected {
   border-color: color-mix(in srgb, #00ff88 65%, transparent);
   background: color-mix(in srgb, #00ff88 14%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, #00ff88 50%, transparent);
@@ -3345,16 +3263,15 @@
   z-index: 1;
 }
 :is(
-    .app-transcript.provider-gemini,
-    .app-transcript.provider-codex,
-    .app-transcript.provider-claude,
-    .app-transcript.provider-kimi,
-    .app-transcript.provider-grok,
-    .app-transcript.provider-cursor,
-    .app-transcript.provider-ollama,
-    .app-transcript.provider-ensemble
-  )
-  .ensemble-above-row::before {
+  .app-transcript.provider-gemini,
+  .app-transcript.provider-codex,
+  .app-transcript.provider-claude,
+  .app-transcript.provider-kimi,
+  .app-transcript.provider-grok,
+  .app-transcript.provider-cursor,
+  .app-transcript.provider-ollama,
+  .app-transcript.provider-ensemble
+) .ensemble-above-row::before {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 22%)),
@@ -3365,15 +3282,11 @@
     color-mix(in srgb, var(--transcript-provider-color) 8%, rgb(0 0 0 / 22%))
   );
 }
-[data-composer-style='claude'] .ensemble-above-row::before {
+[data-composer-style="claude"] .ensemble-above-row::before {
   display: none;
 }
 
-:is([data-composer-style='codex'], [data-composer-style='chatgpt'])
-  .composer-above-bar-stack:has(
-    :is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)
-  )
-  > .ensemble-above-row::before {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row::before {
   display: none;
 }
 
@@ -3407,52 +3320,31 @@
   border-right-color: color-mix(in srgb, var(--theme-border-accent) 72%, transparent);
 }
 
-[data-appearance='solid'] .app-sidebar,
-[data-reduce-transparency='true'] .app-sidebar {
-  background-color: color-mix(
-    in srgb,
-    var(--sidebar-bg-solid) var(--sidebar-opacity-100),
-    transparent
-  );
+[data-appearance="solid"] .app-sidebar,
+[data-reduce-transparency="true"] .app-sidebar {
+  background-color: color-mix(in srgb, var(--sidebar-bg-solid) var(--sidebar-opacity-100), transparent);
   background-image: var(--theme-gradient-sidebar);
 }
 
-[data-appearance='soft_glass'] .app-sidebar {
+[data-appearance="soft_glass"] .app-sidebar {
   background-color: color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-36), transparent);
   background-image:
     var(--theme-gradient-sidebar),
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, var(--sidebar-alpha-006)),
-      rgba(255, 255, 255, var(--sidebar-alpha-002))
-    );
+    linear-gradient(180deg, rgba(255, 255, 255, var(--sidebar-alpha-006)), rgba(255, 255, 255, var(--sidebar-alpha-002)));
 }
 
-[data-appearance='native_glass'][data-reduce-transparency='false'] .app-sidebar {
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar {
   background:
     var(--theme-gradient-sidebar),
     color-mix(in srgb, var(--sidebar-bg) var(--sidebar-opacity-42), transparent) !important;
   border-right-color: color-mix(in srgb, var(--theme-border-accent) 58%, transparent) !important;
 }
 
-:is(
-    [data-theme='light'],
-    [data-theme='mist'],
-    [data-theme='sage']
-  )[data-appearance='native_glass'][data-reduce-transparency='false']
-  .app-sidebar {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-sidebar {
   background:
     var(--theme-gradient-sidebar),
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, var(--sidebar-alpha-042)),
-      rgba(255, 255, 255, var(--sidebar-alpha-026))
-    ) !important;
-  border-right-color: color-mix(
-    in srgb,
-    var(--theme-border-accent) 46%,
-    rgba(0, 0, 0, 0.08)
-  ) !important;
+    linear-gradient(180deg, rgba(255, 255, 255, var(--sidebar-alpha-042)), rgba(255, 255, 255, var(--sidebar-alpha-026))) !important;
+  border-right-color: color-mix(in srgb, var(--theme-border-accent) 46%, rgba(0, 0, 0, 0.08)) !important;
 }
 
 .app-transcript,
@@ -3460,8 +3352,8 @@
   background-image: var(--theme-gradient-transcript);
 }
 
-[data-appearance='native_glass'][data-reduce-transparency='false'] .app-transcript,
-[data-appearance='native_glass'][data-reduce-transparency='false'] .app-settings-pane {
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript,
+[data-appearance="native_glass"][data-reduce-transparency="false"] .app-settings-pane {
   background-image: var(--theme-gradient-transcript) !important;
 }
 
@@ -3469,18 +3361,8 @@
  * light palettes) whenever this transcript has no mounted sky layer. Keep the
  * overlay out of the way only for the pane that actually owns Sky/Weather —
  * the master FX switch can stay on while an individual pane's sky is off. */
-:is(
-    [data-theme='light'],
-    [data-theme='mist'],
-    [data-theme='sage']
-  )[data-appearance='native_glass'][data-reduce-transparency='false']
-  .app-transcript:not(:has(> .sky-visual-fx)),
-:is(
-    [data-theme='light'],
-    [data-theme='mist'],
-    [data-theme='sage']
-  )[data-appearance='native_glass'][data-reduce-transparency='false']
-  .app-settings-pane {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-transcript:not(:has(> .sky-visual-fx)),
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-appearance="native_glass"][data-reduce-transparency="false"] .app-settings-pane {
   background-image: var(--theme-gradient-transcript) !important;
 }
 
@@ -3492,8 +3374,7 @@
   border-color: color-mix(in srgb, var(--theme-border-accent) 74%, transparent);
 }
 
-[data-appearance='native_glass'][data-reduce-transparency='false']
-  :is(.app-inspector, .app-file-editor) {
+[data-appearance="native_glass"][data-reduce-transparency="false"] :is(.app-inspector, .app-file-editor) {
   background-image: var(--theme-gradient-panel) !important;
   border-color: color-mix(in srgb, var(--theme-border-accent) 62%, transparent) !important;
 }
@@ -3502,11 +3383,8 @@
 .diff-studio-toolbar,
 .diff-detail-header,
 .file-editor-header {
-  background-image: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--theme-chroma-1) 10%, transparent),
-    transparent 62%
-  );
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--theme-chroma-1) 10%, transparent), transparent 62%);
   border-color: color-mix(in srgb, var(--theme-border-accent) 42%, var(--panel-border));
 }
 
@@ -3534,7 +3412,7 @@
  * the transcript shell that normally provides a stable reading plane.
  * Keep these windows on solid app-palette surfaces with rim highlights;
  * do not inherit the transcript/composer glass wash. */
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio']) {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"]) {
   min-width: 0;
   --text-secondary: color-mix(in srgb, var(--text-primary) 76%, transparent);
   --text-tertiary: color-mix(in srgb, var(--text-primary) 62%, transparent);
@@ -3561,14 +3439,8 @@
     inset 0 0 0 1px var(--popout-border);
 }
 
-:is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
-  )
-  .popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio']) {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"]) {
   --text-secondary: color-mix(in srgb, var(--text-primary) 82%, transparent);
   --text-tertiary: color-mix(in srgb, var(--text-primary) 68%, transparent);
   --text-muted: color-mix(in srgb, var(--text-primary) 56%, transparent);
@@ -3589,8 +3461,7 @@
   --diff-del-text: #8f1f2d;
 }
 
-[data-theme='obsidian']
-  .popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio']) {
+[data-theme="obsidian"] .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"]) {
   --text-primary: rgba(248, 244, 238, 0.94);
   --text-secondary: rgba(248, 244, 238, 0.74);
   --text-tertiary: rgba(248, 244, 238, 0.58);
@@ -3613,12 +3484,11 @@
   --diff-hunk: #c8c0d2;
 }
 
-[data-theme='alabaster']
-  .popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio']) {
+[data-theme="alabaster"] .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"]) {
   --text-primary: rgba(18, 21, 27, 0.94);
   --text-secondary: rgba(18, 21, 27, 0.74);
-  --text-tertiary: rgba(18, 21, 27, 0.6);
-  --text-muted: rgba(18, 21, 27, 0.5);
+  --text-tertiary: rgba(18, 21, 27, 0.60);
+  --text-muted: rgba(18, 21, 27, 0.50);
   --panel-border: rgba(18, 21, 27, 0.15);
   --popout-window-bg: #f4f3ef;
   --popout-panel-bg: #fbfaf6;
@@ -3647,7 +3517,7 @@
   min-width: 0;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.popout-body .app-file-editor, .popout-diff-studio) {
   --text-primary: inherit;
   --text-secondary: inherit;
@@ -3658,7 +3528,7 @@
   background-image: none !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.popout-header, .diff-studio-toolbar, .diff-detail-header, .file-editor-header) {
   background-color: var(--popout-toolbar-bg) !important;
   background-image: none !important;
@@ -3667,30 +3537,28 @@
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-files, .diff-file-list) {
   background-color: var(--popout-list-bg) !important;
   background-image: none !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.diff-detail, .file-editor-code-surface) {
   background-color: var(--popout-editor-bg) !important;
   background-image: none !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-lines-section {
   background-color: var(--popout-line-bg) !important;
   background-image: none !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(
     .file-editor-filter,
-    .segmented-control-action:not(.segmented-control-action--primary):not(
-        .segmented-control-action--danger
-      ),
+    .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger),
     .diff-file-badge
   ) {
   color: var(--text-primary);
@@ -3698,134 +3566,116 @@
   border-color: var(--popout-border);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .segmented-control-action--primary {
   color: var(--popout-primary-action-text);
   border-color: color-mix(in srgb, var(--accent) 72%, var(--popout-border));
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  .segmented-control-action:not(.segmented-control-action--primary):not(
-    .segmented-control-action--danger
-  ):hover {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger):hover {
   background-color: color-mix(in srgb, var(--accent) 12%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-file-badge.created {
   background-color: color-mix(in srgb, var(--success) 16%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-file-badge.modified {
   background-color: color-mix(in srgb, var(--accent) 16%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-file-badge.deleted {
   background-color: color-mix(in srgb, var(--danger) 16%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-file-badge.untracked {
   background-color: color-mix(in srgb, var(--warning) 18%, var(--popout-control-bg)) !important;
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   .diff-file-badge.noise {
   background-color: var(--popout-control-bg) !important;
   color: var(--text-muted);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-row, .diff-file-row, .file-editor-placeholder) {
   color: var(--text-secondary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.diff-detail, .file-editor-filter, .file-editor-textarea) {
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  :is(
-    .file-editor-row.active,
-    .diff-file-row.selected,
-    .diff-detail-header,
-    .file-editor-header strong
-  ) {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  :is(.file-editor-row.active, .diff-file-row.selected, .diff-detail-header, .file-editor-header strong) {
   color: var(--text-primary);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-row:disabled, .file-editor-row.directory) {
   opacity: 0.84;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-row.file:hover:not(:disabled), .diff-file-row:hover) {
   background-color: var(--popout-row-hover-bg) !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.file-editor-row.active, .diff-file-row.selected) {
   background-color: var(--popout-row-selected-bg) !important;
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  :is(
-    .diff-line-gutter,
-    .diff-lines-section-header,
-    .file-editor-status,
-    .file-editor-file-size,
-    .popout-status
-  ) {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  :is(.diff-line-gutter, .diff-lines-section-header, .file-editor-status, .file-editor-file-size, .popout-status) {
   color: var(--text-muted);
   border-color: var(--panel-border);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
   :is(.diff-line-gutter, .diff-lines-section-header, .diff-line.meta) {
   background-color: var(--popout-subtle-bg);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  .diff-line.add
-  :is(.diff-line-code, .diff-line-gutter) {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  .diff-line.add :is(.diff-line-code, .diff-line-gutter) {
   background-color: var(--diff-add-bg);
   color: var(--diff-add-text);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  .diff-line.del
-  :is(.diff-line-code, .diff-line-gutter) {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  .diff-line.del :is(.diff-line-code, .diff-line-gutter) {
   background-color: var(--diff-del-bg);
   color: var(--diff-del-text);
 }
 
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  .diff-line
-  + .diff-line,
-.popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
-  .diff-file-row
-  + .diff-file-row {
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  .diff-line + .diff-line,
+.popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
+  .diff-file-row + .diff-file-row {
   border-color: var(--panel-border);
 }
 
-.popout-root[data-popout-kind='file-editor'] .file-editor-code-surface .cm-editor,
-.popout-root[data-popout-kind='file-editor'] .file-editor-code-surface .cm-scroller {
+.popout-root[data-popout-kind="file-editor"] .file-editor-code-surface .cm-editor,
+.popout-root[data-popout-kind="file-editor"] .file-editor-code-surface .cm-scroller {
   color: var(--text-primary);
   background-color: var(--popout-editor-bg);
 }
 
-.popout-root[data-popout-kind='file-editor']
-  .file-editor-code-surface
-  :is(.cm-gutters, .cm-activeLine, .cm-activeLineGutter) {
+.popout-root[data-popout-kind="file-editor"]
+  .file-editor-code-surface :is(.cm-gutters, .cm-activeLine, .cm-activeLineGutter) {
   color: var(--text-muted);
   background-color: color-mix(in srgb, var(--accent) 8%, var(--popout-editor-bg));
   border-color: var(--panel-border);
@@ -3840,7 +3690,7 @@
     grid-template-columns: minmax(160px, 42vw) minmax(0, 1fr) !important;
   }
 
-  .popout-root:is([data-popout-kind='file-editor'], [data-popout-kind='diff-studio'])
+  .popout-root:is([data-popout-kind="file-editor"], [data-popout-kind="diff-studio"])
     :is(.file-editor-file-size, .diff-file-badge) {
     display: none;
   }
@@ -3850,7 +3700,7 @@
  * The earlier popout block still provides legacy fallbacks; this later
  * family-scoped block is the authoritative File Editor / Diff Studio /
  * Workbench surface. */
-.popout-root[data-popout-family='workspace'] {
+.popout-root[data-popout-family="workspace"] {
   --text-secondary: color-mix(in srgb, var(--text-primary) 78%, transparent);
   --text-tertiary: color-mix(in srgb, var(--text-primary) 58%, transparent);
   --text-muted: color-mix(in srgb, var(--text-primary) 46%, transparent);
@@ -3893,8 +3743,7 @@
   --diff-del-text: #ffaca2;
   --diff-del-gutter-text: #ff6f66;
   --diff-hunk: #8ba4ff;
-  --diff-ui-font:
-    'SF Pro Text', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --diff-ui-font: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   color: var(--text-primary);
   background: var(--popout-window-bg) !important;
   background-image: none !important;
@@ -3903,14 +3752,8 @@
     inset 0 0 0 1px var(--popout-rim);
 }
 
-:is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
-  )
-  .popout-root[data-popout-family='workspace'] {
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
+  .popout-root[data-popout-family="workspace"] {
   --text-secondary: color-mix(in srgb, var(--text-primary) 82%, transparent);
   --text-tertiary: color-mix(in srgb, var(--text-primary) 64%, transparent);
   --text-muted: color-mix(in srgb, var(--text-primary) 52%, transparent);
@@ -3947,7 +3790,7 @@
   --diff-hunk: #4264aa;
 }
 
-[data-theme='obsidian'] .popout-root[data-popout-family='workspace'] {
+[data-theme="obsidian"] .popout-root[data-popout-family="workspace"] {
   --popout-window-bg: #08070a;
   --popout-panel-bg: #0f0d12;
   --popout-toolbar-bg: #18161c;
@@ -3971,7 +3814,7 @@
   --diff-hunk: #c8c0d2;
 }
 
-[data-theme='alabaster'] .popout-root[data-popout-family='workspace'] {
+[data-theme="alabaster"] .popout-root[data-popout-family="workspace"] {
   --popout-window-bg: #f4f3ef;
   --popout-panel-bg: #fbfaf6;
   --popout-toolbar-bg: #fffefa;
@@ -3984,7 +3827,7 @@
   --diff-line-border: rgba(18, 21, 27, 0.09);
 }
 
-.popout-root[data-popout-family='workspace'] .popout-header {
+.popout-root[data-popout-family="workspace"] .popout-header {
   min-height: 54px;
   background: var(--popout-toolbar-bg) !important;
   background-image: none !important;
@@ -3994,15 +3837,15 @@
     0 1px 0 color-mix(in srgb, #000 18%, transparent);
 }
 
-.popout-root[data-popout-family='workspace'] .popout-title-line {
+.popout-root[data-popout-family="workspace"] .popout-title-line {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.popout-root[data-popout-family='workspace'] .popout-title-icon,
-.popout-root[data-popout-family='workspace'] .workbench-nav-icon {
+.popout-root[data-popout-family="workspace"] .popout-title-icon,
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon {
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
@@ -4014,7 +3857,7 @@
     0 8px 22px var(--popout-shadow);
 }
 
-.popout-root[data-popout-family='workspace'] .popout-title-icon {
+.popout-root[data-popout-family="workspace"] .popout-title-icon {
   width: 30px;
   height: 30px;
   border-radius: 9px;
@@ -4022,8 +3865,8 @@
   white-space: normal;
 }
 
-.popout-root[data-popout-family='workspace'] .popout-title-icon svg,
-.popout-root[data-popout-family='workspace'] .workbench-nav-icon svg {
+.popout-root[data-popout-family="workspace"] .popout-title-icon svg,
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon svg {
   width: 18px;
   height: 18px;
   fill: none;
@@ -4033,31 +3876,19 @@
   stroke-linejoin: round;
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(
-    .popout-body .app-file-editor,
-    .popout-diff-studio,
-    .popout-diff-studio > div,
-    .workbench-shell
-  ) {
+.popout-root[data-popout-family="workspace"]
+  :is(.popout-body .app-file-editor, .popout-diff-studio, .popout-diff-studio > div, .workbench-shell) {
   background: var(--popout-panel-bg) !important;
   background-image: none !important;
 }
 
-.popout-root[data-popout-family='workspace'] .app-file-editor {
+.popout-root[data-popout-family="workspace"] .app-file-editor {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(
-    .popout-header,
-    .file-editor-header,
-    .diff-studio-toolbar,
-    .diff-detail-header,
-    .workbench-toolbar,
-    .workbench-bottom-bar
-  ) {
+.popout-root[data-popout-family="workspace"]
+  :is(.popout-header, .file-editor-header, .diff-studio-toolbar, .diff-detail-header, .workbench-toolbar, .workbench-bottom-bar) {
   background-color: var(--popout-toolbar-bg) !important;
   background-image: none !important;
   border-color: var(--popout-rim) !important;
@@ -4065,44 +3896,42 @@
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(.file-editor-files, .diff-file-list, .workbench-navigator) {
   background-color: var(--popout-list-bg) !important;
   background-image: none !important;
   border-color: var(--popout-rim) !important;
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(.diff-detail, .file-editor-code-surface, .workbench-main, .workbench-stage, .workbench-pane) {
   background-color: var(--popout-editor-bg) !important;
   background-image: none !important;
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-stage {
+.popout-root[data-popout-family="workspace"] .workbench-stage {
   box-shadow: inset 1px 0 0 var(--popout-rim);
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(.workbench-breadcrumbs, .workbench-status, .workbench-bottom-bar > span) {
   color: var(--text-muted);
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-breadcrumbs > span > span:last-child {
+.popout-root[data-popout-family="workspace"] .workbench-breadcrumbs > span > span:last-child {
   color: var(--text-secondary);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-lines-section {
+.popout-root[data-popout-family="workspace"] .diff-lines-section {
   background-color: var(--popout-editor-bg) !important;
   background-image: none !important;
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(
     .file-editor-filter,
     .diff-file-filter,
-    .segmented-control-action:not(.segmented-control-action--primary):not(
-        .segmented-control-action--danger
-      ),
+    .segmented-control-action:not(.segmented-control-action--primary):not(.segmented-control-action--danger),
     .diff-file-badge,
     .diff-toolbar-count,
     .diff-stage-count-chip,
@@ -4115,19 +3944,19 @@
   border-color: var(--popout-pill-border);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-file-filter:focus {
+.popout-root[data-popout-family="workspace"] .diff-file-filter:focus {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--popout-pill-border));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 13%, transparent);
 }
 
-.popout-root[data-popout-family='workspace'] .segmented-control-action {
+.popout-root[data-popout-family="workspace"] .segmented-control-action {
   --segmented-action-foreground: var(--text-primary);
   --segmented-action-border: var(--popout-pill-border);
   --segmented-action-bg: var(--popout-control-bg);
   --segmented-action-hover-bg: color-mix(in srgb, var(--accent) 12%, var(--popout-control-bg));
 }
 
-.popout-root[data-popout-family='workspace'] .segmented-control-action--primary {
+.popout-root[data-popout-family="workspace"] .segmented-control-action--primary {
   --segmented-action-foreground: var(--accent);
   --segmented-action-border: color-mix(in srgb, var(--accent) 70%, var(--popout-rim));
   --segmented-action-bg: color-mix(in srgb, var(--accent) 70%, transparent);
@@ -4135,68 +3964,68 @@
   color: var(--popout-primary-action-text);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip > strong {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip > strong {
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip {
   max-width: none;
   min-width: max-content;
   cursor: pointer;
   font: inherit;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip > span {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip > span {
   overflow: visible;
   text-overflow: clip;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip[data-active='true'] {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-active="true"] {
   color: var(--text-primary);
   background-color: var(--popout-row-selected-bg) !important;
   border-color: var(--popout-row-selected-rim);
   box-shadow: inset 0 0 0 1px var(--popout-row-selected-rim);
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(.diff-file-badge.created, .diff-detail-stat-badge[data-status='created']) {
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.created, .diff-detail-stat-badge[data-status="created"]) {
   color: var(--popout-status-created-text);
   background-color: var(--popout-status-created-bg) !important;
   border-color: color-mix(in srgb, var(--success) 36%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(
     .diff-file-badge.modified,
-    .diff-detail-stat-badge[data-status='modified'],
-    .diff-detail-stat-badge[data-status='renamed']
+    .diff-detail-stat-badge[data-status="modified"],
+    .diff-detail-stat-badge[data-status="renamed"]
   ) {
   color: var(--popout-status-modified-text);
   background-color: var(--popout-status-modified-bg) !important;
   border-color: color-mix(in srgb, var(--accent) 36%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(.diff-file-badge.deleted, .diff-detail-stat-badge[data-status='deleted']) {
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.deleted, .diff-detail-stat-badge[data-status="deleted"]) {
   color: var(--popout-status-deleted-text);
   background-color: var(--popout-status-deleted-bg) !important;
   border-color: color-mix(in srgb, var(--danger) 40%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(.diff-file-badge.untracked, .diff-detail-stat-badge[data-status='untracked']) {
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-file-badge.untracked, .diff-detail-stat-badge[data-status="untracked"]) {
   color: var(--popout-status-untracked-text);
   background-color: var(--popout-status-untracked-bg) !important;
   border-color: color-mix(in srgb, var(--warning) 42%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace'] .diff-file-badge.noise {
+.popout-root[data-popout-family="workspace"] .diff-file-badge.noise {
   color: var(--text-muted);
   background-color: var(--popout-pill-bg) !important;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge,
-.popout-root[data-popout-family='workspace'] .diff-detail-stat-badge {
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge,
+.popout-root[data-popout-family="workspace"] .diff-detail-stat-badge {
   min-height: 0;
   padding: 0;
   border: 0;
@@ -4205,50 +4034,50 @@
   box-shadow: none;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge {
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge {
   display: inline-flex;
   align-items: baseline;
   gap: 4px;
   font-weight: 650;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge,
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge.created,
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge.modified,
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge.deleted,
-.popout-root[data-popout-family='workspace'] .diff-file-row .diff-file-badge.untracked,
-.popout-root[data-popout-family='workspace'] .diff-detail-stat-badge[data-status] {
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.created,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.modified,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.deleted,
+.popout-root[data-popout-family="workspace"] .diff-file-row .diff-file-badge.untracked,
+.popout-root[data-popout-family="workspace"] .diff-detail-stat-badge[data-status] {
   background-color: transparent !important;
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(
-    .diff-stage-count-chip[data-stage-group='unstaged'],
-    .diff-stage-count-chip[data-stage-group='mixed']
+    .diff-stage-count-chip[data-stage-group="unstaged"],
+    .diff-stage-count-chip[data-stage-group="mixed"]
   ) {
   border-color: color-mix(in srgb, var(--warning) 42%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip[data-stage-group='staged'] {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-stage-group="staged"] {
   border-color: color-mix(in srgb, var(--success) 42%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace'] .diff-stage-count-chip[data-stage-group='untracked'] {
+.popout-root[data-popout-family="workspace"] .diff-stage-count-chip[data-stage-group="untracked"] {
   border-color: color-mix(in srgb, var(--accent) 42%, var(--popout-pill-border));
 }
 
-.popout-root[data-popout-family='workspace'] .diff-view-toggle {
+.popout-root[data-popout-family="workspace"] .diff-view-toggle {
   --segmented-control-border: var(--popout-pill-border);
   --segmented-control-bg: var(--popout-control-bg);
   --segmented-segment-active-bg: color-mix(in srgb, var(--accent) 16%, var(--popout-pill-bg));
   --segmented-segment-active-ring: color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-view-toggle .segmented-control-segment {
+.popout-root[data-popout-family="workspace"] .diff-view-toggle .segmented-control-segment {
   color: var(--text-secondary);
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(
     .diff-view-toggle .segmented-control-segment:hover,
     .diff-view-toggle .segmented-control-segment:focus-visible
@@ -4256,23 +4085,21 @@
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family='workspace']
-  .diff-view-toggle
-  .segmented-control-segment.is-active {
+.popout-root[data-popout-family="workspace"] .diff-view-toggle .segmented-control-segment.is-active {
   color: var(--text-primary);
 }
 
-.popout-root[data-popout-family='workspace'] .segmented-control-action--primary {
+.popout-root[data-popout-family="workspace"] .segmented-control-action--primary {
   color: var(--popout-primary-action-text);
   border-color: color-mix(in srgb, var(--accent) 70%, var(--popout-rim));
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-navigator {
+.popout-root[data-popout-family="workspace"] .workbench-navigator {
   padding: 12px 9px;
   gap: 8px;
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-nav-item {
+.popout-root[data-popout-family="workspace"] .workbench-nav-item {
   min-height: 78px;
   align-items: center;
   text-align: center;
@@ -4280,7 +4107,7 @@
   box-shadow: inset 0 1px 0 var(--popout-top-rim);
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-nav-icon {
+.popout-root[data-popout-family="workspace"] .workbench-nav-icon {
   width: 32px;
   height: 32px;
   margin-bottom: 2px;
@@ -4288,7 +4115,7 @@
   overflow: visible;
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-nav-item.active {
+.popout-root[data-popout-family="workspace"] .workbench-nav-item.active {
   border-color: var(--popout-row-selected-rim);
   background-color: var(--popout-row-selected-bg) !important;
   box-shadow:
@@ -4296,18 +4123,19 @@
     inset 0 1px 0 var(--popout-top-rim);
 }
 
-.popout-root[data-popout-family='workspace'] .workbench-nav-item.active .workbench-nav-icon {
+.popout-root[data-popout-family="workspace"] .workbench-nav-item.active .workbench-nav-icon {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 48%, var(--popout-pill-border));
   background: color-mix(in srgb, var(--accent) 14%, var(--popout-pill-bg));
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(.file-editor-row.file:hover:not(:disabled), .diff-file-row:hover, .workbench-nav-item:hover) {
   background-color: var(--popout-row-hover-bg) !important;
 }
 
-.popout-root[data-popout-family='workspace'] :is(.file-editor-row.active, .diff-file-row.selected) {
+.popout-root[data-popout-family="workspace"]
+  :is(.file-editor-row.active, .diff-file-row.selected) {
   background-color: var(--popout-row-selected-bg) !important;
   border-color: var(--popout-row-selected-rim) !important;
   box-shadow:
@@ -4315,16 +4143,12 @@
     inset 0 1px 0 var(--popout-top-rim);
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(
-    .diff-line + .diff-line,
-    .diff-file-row + .diff-file-row,
-    .file-editor-row + .file-editor-row
-  ) {
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-line + .diff-line, .diff-file-row + .diff-file-row, .file-editor-row + .file-editor-row) {
   border-color: var(--popout-rim);
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(
     .popout-title-block,
     .workbench-navigator,
@@ -4351,19 +4175,19 @@
   font-family: var(--diff-ui-font);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-detail,
-.popout-root[data-popout-family='workspace'] .diff-detail-body,
-.popout-root[data-popout-family='workspace'] .diff-lines-root {
+.popout-root[data-popout-family="workspace"] .diff-detail,
+.popout-root[data-popout-family="workspace"] .diff-detail-body,
+.popout-root[data-popout-family="workspace"] .diff-lines-root {
   color: var(--diff-code-text);
   background: var(--diff-code-bg) !important;
 }
 
-.popout-root[data-popout-family='workspace'] .diff-lines-stack,
-.popout-root[data-popout-family='workspace'] .diff-lines-virtual-window {
+.popout-root[data-popout-family="workspace"] .diff-lines-stack,
+.popout-root[data-popout-family="workspace"] .diff-lines-virtual-window {
   background: var(--diff-code-bg);
 }
 
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
   :is(.diff-lines-column-header, .diff-lines-floating-header) {
   color: var(--text-secondary);
   background-color: var(--diff-header-bg) !important;
@@ -4371,95 +4195,87 @@
   box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-lines-section-header {
+.popout-root[data-popout-family="workspace"] .diff-lines-section-header {
   color: var(--diff-hunk);
   background-color: var(--diff-meta-bg) !important;
   border-color: var(--diff-line-border);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line,
-.popout-root[data-popout-family='workspace'] .diff-line-split {
+.popout-root[data-popout-family="workspace"] .diff-line,
+.popout-root[data-popout-family="workspace"] .diff-line-split {
   color: var(--diff-code-text);
   background: var(--diff-code-bg);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line-gutter {
+.popout-root[data-popout-family="workspace"] .diff-line-gutter {
   color: var(--diff-gutter-text);
   background: var(--diff-gutter-bg);
   border-color: var(--diff-line-border);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line-code,
-.popout-root[data-popout-family='workspace'] .diff-line-split-code {
+.popout-root[data-popout-family="workspace"] .diff-line-code,
+.popout-root[data-popout-family="workspace"] .diff-line-split-code {
   color: var(--diff-code-text);
   border-color: var(--diff-line-border);
 }
 
-.popout-root[data-popout-family='workspace'] :is(.diff-line.meta, .diff-line-split.meta) {
+.popout-root[data-popout-family="workspace"] :is(.diff-line.meta, .diff-line-split.meta) {
   color: var(--text-muted);
   background-color: var(--diff-meta-bg);
 }
 
-.popout-root[data-popout-family='workspace'] :is(.diff-line.hunk, .diff-line-split.hunk) {
+.popout-root[data-popout-family="workspace"] :is(.diff-line.hunk, .diff-line-split.hunk) {
   color: var(--diff-hunk);
   background-color: var(--diff-meta-bg);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line.add :is(.diff-line-code, .diff-line-gutter),
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
+  .diff-line.add
+  :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family="workspace"]
   .diff-line-split.add
   :is(.diff-line-gutter.new, .diff-line-split-code.new) {
   background-color: var(--diff-add-bg);
   color: var(--diff-add-text);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line.add .diff-line-gutter,
-.popout-root[data-popout-family='workspace'] .diff-line-split.add .diff-line-gutter.new {
+.popout-root[data-popout-family="workspace"] .diff-line.add .diff-line-gutter,
+.popout-root[data-popout-family="workspace"] .diff-line-split.add .diff-line-gutter.new {
   background-color: var(--diff-add-gutter-bg);
   color: var(--diff-add-gutter-text);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line.del :is(.diff-line-code, .diff-line-gutter),
-.popout-root[data-popout-family='workspace']
+.popout-root[data-popout-family="workspace"]
+  .diff-line.del
+  :is(.diff-line-code, .diff-line-gutter),
+.popout-root[data-popout-family="workspace"]
   .diff-line-split.del
   :is(.diff-line-gutter.old, .diff-line-split-code.old) {
   background-color: var(--diff-del-bg);
   color: var(--diff-del-text);
 }
 
-.popout-root[data-popout-family='workspace'] .diff-line.del .diff-line-gutter,
-.popout-root[data-popout-family='workspace'] .diff-line-split.del .diff-line-gutter.old {
+.popout-root[data-popout-family="workspace"] .diff-line.del .diff-line-gutter,
+.popout-root[data-popout-family="workspace"] .diff-line-split.del .diff-line-gutter.old {
   background-color: var(--diff-del-gutter-bg);
   color: var(--diff-del-gutter-text);
 }
 
-.popout-root[data-popout-family='workspace']
-  :is(
-    .diff-line + .diff-line,
-    .diff-line-split + .diff-line-split,
-    .diff-line + .diff-line-split,
-    .diff-line-split + .diff-line
-  ) {
+.popout-root[data-popout-family="workspace"]
+  :is(.diff-line + .diff-line, .diff-line-split + .diff-line-split, .diff-line + .diff-line-split, .diff-line-split + .diff-line) {
   border-color: var(--diff-line-border);
 }
 
 .settings-panel-header {
-  background-image: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--theme-chroma-2) 10%, transparent),
-    transparent 60%
-  );
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, var(--theme-chroma-2) 10%, transparent), transparent 60%);
 }
 
 .settings-composer-preview-card {
   border-color: color-mix(in srgb, var(--theme-border-accent) 52%, transparent);
   background-image:
     var(--theme-gradient-panel),
-    radial-gradient(
-      circle at 12% 0%,
-      color-mix(in srgb, var(--accent) 10%, transparent),
-      transparent 36%
-    );
+    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 36%);
 }
 
 /* Ensemble chats keep `provider-*` on the transcript for legacy runtime
@@ -4473,11 +4289,11 @@
   --ensemble-shell-tint-4: var(--ensemble-provider-4, var(--ensemble-shell-tint-3));
 }
 
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-surface {
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface {
   border-color: color-mix(in srgb, var(--ensemble-shell-tint-1) 18%, var(--composer-border));
 }
 
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-surface:focus-within {
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface:focus-within {
   border-color: color-mix(in srgb, var(--ensemble-shell-tint-1) 38%, var(--composer-border));
   box-shadow:
     var(--composer-shadow),
@@ -4492,7 +4308,7 @@
  * tints into a 2-tone hairline + a faint multi gradient. Resolves the
  * shard-03 "ENSEMBLE rim deferred" TODO. Tint-based, so light + dark both
  * work without a separate variant. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.chat-kind-ensemble
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow:
@@ -4507,9 +4323,9 @@
   );
 }
 
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-surface::before,
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface::before,
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
   background: linear-gradient(
     90deg,
     color-mix(in srgb, var(--ensemble-shell-tint-1) 22%, transparent),
@@ -4524,23 +4340,19 @@
     inset -42px 0 52px -30px color-mix(in srgb, var(--ensemble-shell-tint-4) 24%, transparent);
 }
 
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
   display: block;
 }
 
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .ensemble-above-row {
+[data-composer-style="default"] .app-transcript.chat-kind-ensemble .ensemble-above-row {
   border-color: color-mix(in srgb, var(--ensemble-shell-tint-1) 22%, var(--composer-border));
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .composer-surface {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface {
   border-color: color-mix(in srgb, var(--ensemble-shell-tint-1) 20%, var(--surface-border));
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .composer-surface:focus-within {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface:focus-within {
   border-color: color-mix(in srgb, var(--ensemble-shell-tint-1) 28%, var(--surface-border));
   box-shadow:
     0 4px 22px rgba(0, 0, 0, 0.12),
@@ -4548,15 +4360,9 @@
     0 0 24px color-mix(in srgb, var(--ensemble-shell-tint-3) 10%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .composer-surface::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .composer-above-bar::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .ensemble-above-row::before {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-surface::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
   display: block;
   opacity: 0.42;
   background: linear-gradient(
@@ -4579,10 +4385,10 @@
  * same tinted overlay the composer surface already carries. Keep the
  * scope away from Codex/Claude: those shells have bespoke above-row
  * presentation that should remain unchanged. */
-[data-composer-style='gemini'] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
-[data-composer-style='gemini'] .app-transcript.chat-kind-ensemble .ensemble-above-row::before,
-[data-composer-style='kimi'] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
-[data-composer-style='kimi'] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
+[data-composer-style="gemini"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+[data-composer-style="gemini"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before,
+[data-composer-style="kimi"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+[data-composer-style="kimi"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
   display: block !important;
   opacity: 0.72;
   background: linear-gradient(
@@ -4599,24 +4405,12 @@
     inset -42px 0 52px -30px color-mix(in srgb, var(--ensemble-shell-tint-4) 22%, transparent);
 }
 
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
-  .app-transcript.chat-kind-ensemble
-  .composer-above-bar::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='gemini']
-  .app-transcript.chat-kind-ensemble
-  .ensemble-above-row::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
-  .app-transcript.chat-kind-ensemble
-  .composer-above-bar::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='kimi']
-  .app-transcript.chat-kind-ensemble
-  .ensemble-above-row::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .composer-above-bar::before,
-:is([data-theme='light'], [data-theme='mist'], [data-theme='sage'])[data-composer-style='default']
-  .app-transcript.chat-kind-ensemble
-  .ensemble-above-row::before {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .composer-above-bar::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="default"] .app-transcript.chat-kind-ensemble .ensemble-above-row::before {
   display: block !important;
   opacity: 0.5;
   background: linear-gradient(
@@ -4648,7 +4442,7 @@
  * Create-PR / Ensemble / Steer-Queue rows read as translucent
  * segments of the same instrument as `.composer-surface`.
  * ============================================================ */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
@@ -4657,15 +4451,15 @@
   backdrop-filter: blur(20px) saturate(155%);
   -webkit-backdrop-filter: blur(20px) saturate(155%);
 }
-[data-appearance='native_glass'][data-reduce-transparency='false']
-  [data-composer-style='default']
+[data-appearance="native_glass"][data-reduce-transparency="false"]
+  [data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4681,7 +4475,7 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4696,13 +4490,13 @@
   box-shadow: none !important;
 }
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
   )
-  [data-composer-style='default']
+  [data-composer-style="default"]
   .app-transcript
   :is(
     .composer-above-bar,
@@ -4718,13 +4512,13 @@
   -webkit-backdrop-filter: blur(20px) saturate(155%);
 }
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
   )
-  [data-composer-style='default']
+  [data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4739,7 +4533,7 @@
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack.fx-agent-aura.fx-status-running
@@ -4751,7 +4545,7 @@
 /* Merged instrument — kill per-row tint overlays inside the stack so
  * segments read as neutral glass (shard 09 ensemble rules re-enable
  * ::before on `.composer-above-bar` / `.ensemble-above-row` elsewhere). */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4769,13 +4563,13 @@
 
 /* Light themes — default-shell above-row label legibility on glass. */
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
   )
-  [data-composer-style='default']
+  [data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4789,26 +4583,26 @@
   color: rgba(29, 29, 31, 0.84) !important;
 }
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
   )
-  [data-composer-style='default']
+  [data-composer-style="default"]
   .app-transcript
   .composer-above-bar
   :is(.composer-above-bar-branch, .composer-above-bar-branch svg) {
   color: rgba(29, 29, 31, 0.84) !important;
 }
 :is(
-    [data-theme='light'],
-    [data-theme='citrus'],
-    [data-theme='mist'],
-    [data-theme='sage'],
-    [data-theme='alabaster']
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
   )
-  [data-composer-style='default']
+  [data-composer-style="default"]
   .app-transcript
   .composer-above-bar
   .composer-above-bar-secondary-branch:not(
@@ -4818,7 +4612,7 @@
 }
 
 /* Telemetry footer — reinforce glass frame (shard 03; late override). */
-[data-composer-style='default'] .app-transcript .composer-telemetry-row {
+[data-composer-style="default"] .app-transcript .composer-telemetry-row {
   background: transparent !important;
   border-top: 0 !important;
 }
@@ -4832,7 +4626,7 @@
  * overlap). Ensemble tint ::before rules (this shard ~2285+) and
  * provider-gradient ::before on `.ensemble-above-row` (~1779+) also
  * fight the neutral cap. This block wins last in shard 09. */
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack {
@@ -4842,39 +4636,43 @@
   box-shadow: var(--composer-shadow) !important;
   border-color: var(--native-instrument-glass-border) !important;
 }
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-surface,
-[data-composer-style='default'] .app-transcript.chat-kind-ensemble .composer-surface:focus-within {
+[data-composer-style="default"]
+  .app-transcript.chat-kind-ensemble
+  .composer-surface,
+[data-composer-style="default"]
+  .app-transcript.chat-kind-ensemble
+  .composer-surface:focus-within {
   border-color: var(--native-instrument-glass-border) !important;
   box-shadow:
     inset 0 1px 0 color-mix(in srgb, var(--text-primary) 7%, transparent),
     0 18px 46px color-mix(in srgb, #000000 24%, transparent),
     0 0 0 1px color-mix(in srgb, var(--text-primary) 9%, transparent) !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.chat-kind-ensemble
   .composer-surface:not(.fx-agent-aura)::after {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 5%, transparent) !important;
   background: none !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-surface.fx-agent-aura,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-surface.fx-agent-aura.fx-status-running,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-surface.fx-agent-aura.fx-status-approval,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-surface.fx-agent-aura.fx-status-failed {
   box-shadow: var(--composer-shadow) !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4885,12 +4683,12 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::before,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.chat-kind-ensemble
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
   > :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row)::before,
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4901,7 +4699,7 @@
   box-shadow: none !important;
   animation: none !important;
 }
-[data-composer-style='default']
+[data-composer-style="default"]
   .app-transcript.chat-kind-ensemble
   .composer-area:has(.composer-above-bar-stack)
   .composer-above-bar-stack
@@ -4986,7 +4784,11 @@
     transparent
   );
   box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--ensemble-round-provider-accent, var(--accent)) 30%, transparent);
+    color-mix(
+      in srgb,
+      var(--ensemble-round-provider-accent, var(--accent)) 30%,
+      transparent
+    );
 }
 
 .ensemble-round-card-provider svg {

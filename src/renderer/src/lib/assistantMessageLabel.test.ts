@@ -29,7 +29,11 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses the Alibaba brand and Qwen 3.5 badge for the 9B Ollama model', () => {
     expect(
-      formatAssistantMessageLabel(assistant({ providerModel: 'qwen3.5:9b' }), 'Ollama', 'ollama')
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'qwen3.5:9b' }),
+        'Ollama',
+        'ollama'
+      )
     ).toEqual({
       label: 'Alibaba',
       provider: 'ollama',
@@ -40,7 +44,11 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses the Google brand for Gemma through Ollama', () => {
     expect(
-      formatAssistantMessageLabel(assistant({ providerModel: 'gemma4:12b' }), 'Ollama', 'ollama')
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'gemma4:12b' }),
+        'Ollama',
+        'ollama'
+      )
     ).toEqual({
       label: 'Google',
       provider: 'ollama',
@@ -51,7 +59,11 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses the OpenAI brand for GPT OSS through Ollama', () => {
     expect(
-      formatAssistantMessageLabel(assistant({ providerModel: 'gpt-oss' }), 'Ollama', 'ollama')
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'gpt-oss' }),
+        'Ollama',
+        'ollama'
+      )
     ).toEqual({
       label: 'OpenAI',
       provider: 'ollama',
@@ -62,7 +74,11 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses the Deep Reinforce brand for Ornith through Ollama', () => {
     expect(
-      formatAssistantMessageLabel(assistant({ providerModel: 'ornith:35b' }), 'Ollama', 'ollama')
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'ornith:35b' }),
+        'Ollama',
+        'ollama'
+      )
     ).toEqual({
       label: 'Deep Reinforce',
       provider: 'ollama',
@@ -73,7 +89,11 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses the Liquid brand for LFM through Ollama', () => {
     expect(
-      formatAssistantMessageLabel(assistant({ providerModel: 'lfm2.5:8b' }), 'Ollama', 'ollama')
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'lfm2.5:8b' }),
+        'Ollama',
+        'ollama'
+      )
     ).toEqual({
       label: 'Liquid',
       provider: 'ollama',

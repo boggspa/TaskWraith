@@ -121,7 +121,8 @@ export function ContextCompactionCard({
   const failed = record.kind === 'failed'
   const provider = (telemetry.provider || message.metadata?.provider) as ProviderId | undefined
   const providerClass =
-    typeof message.metadata?.displayHueClass === 'string' && message.metadata.displayHueClass
+    typeof message.metadata?.displayHueClass === 'string' &&
+    message.metadata.displayHueClass
       ? message.metadata.displayHueClass
       : provider
   const metaLabel = contextCompactionMessageMetaLabel(message)

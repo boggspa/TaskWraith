@@ -150,7 +150,9 @@ function MeterRow({
     <div
       className={`context-meter-row provider-${row.providerClass}${
         focused ? ' context-meter-row--focused' : ''
-      }${severity !== 'ok' ? ` context-meter-row--${severity}` : ''}`}
+      }${
+        severity !== 'ok' ? ` context-meter-row--${severity}` : ''
+      }`}
       data-provider-hue={row.providerClass}
       style={
         {

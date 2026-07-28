@@ -121,7 +121,9 @@ describe('EnsembleFanoutResultCard', () => {
       )
 
       expect(html).toContain(`provider-${brand.hueClass}`)
-      expect(html).toContain(`--accent:var(--provider-${brand.hueClass}-color, var(--accent))`)
+      expect(html).toContain(
+        `--accent:var(--provider-${brand.hueClass}-color, var(--accent))`
+      )
       expect(html).not.toContain('provider-pi')
     }
   })

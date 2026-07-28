@@ -26,8 +26,14 @@ function message(
     ensembleModel?: string
   } = {}
 ): ChatMessage {
-  const { roundId, ensembleParticipantId, ensembleProvider, ensembleRole, ensembleModel, ...rest } =
-    overrides
+  const {
+    roundId,
+    ensembleParticipantId,
+    ensembleProvider,
+    ensembleRole,
+    ensembleModel,
+    ...rest
+  } = overrides
   const metadata: Record<string, unknown> = { ...(rest.metadata as object) }
   if (roundId) metadata.ensembleRoundId = roundId
   if (ensembleParticipantId) metadata.ensembleParticipantId = ensembleParticipantId

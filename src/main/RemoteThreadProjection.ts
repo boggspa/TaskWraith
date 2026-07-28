@@ -52,7 +52,10 @@ import {
   extractMcpImageBlocksFromRawResult
 } from './services/TranscriptMediaService'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
-import { matchOllamaBrand, resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
+import {
+  matchOllamaBrand,
+  resolveHealthEntryPresentation
+} from '../shared/ollamaBrandTable'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import {
   usageCacheCreationInputTokens,
@@ -144,7 +147,10 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
 const DEFAULT_MODEL_SENTINELS = new Set(['', 'default', 'cli-default', 'custom', 'best'])
 const CODEX_DEFAULT_SENTINELS = new Set(['auto', 'pro', 'flash', 'flash-lite'])
 
-function canonicalRateModelId(provider: ProviderId | undefined, model: string | undefined): string {
+function canonicalRateModelId(
+  provider: ProviderId | undefined,
+  model: string | undefined
+): string {
   const trimmed = (model || '').trim()
   const key = trimmed.toLowerCase()
   const fallback = provider ? DEFAULT_RATE_MODEL_BY_PROVIDER[provider] : undefined
@@ -369,7 +375,8 @@ export function soloSpeakerForMessage(
   return (message) => {
     if (message.role !== 'assistant' && message.role !== 'tool') return undefined
     if (message.metadata?.ensembleProvider) return undefined
-    const provider = (message.metadata?.ensembleProvider as ProviderId | undefined) ?? chatProvider
+    const provider =
+      (message.metadata?.ensembleProvider as ProviderId | undefined) ?? chatProvider
     if (!provider) return undefined
     let label = PROVIDER_LABELS[provider] ?? provider
     const run = typeof message.runId === 'string' ? runById.get(message.runId) : undefined
@@ -593,7 +600,9 @@ export function indexRemoteAgentQuestionAnswers(
       replyRowId: message.id
     }
     const marker =
-      typeof metadata.respondedToMessageId === 'string' ? metadata.respondedToMessageId.trim() : ''
+      typeof metadata.respondedToMessageId === 'string'
+        ? metadata.respondedToMessageId.trim()
+        : ''
     if (marker) byMarker.set(marker, entry)
     const questionId = typeof metadata.questionId === 'string' ? metadata.questionId.trim() : ''
     if (questionId) byMarker.set(`agent-question-${questionId}`, entry)
@@ -1276,10 +1285,7 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
 }
 
 function normalizedToolName(toolName: string | undefined): string {
-  return (toolName || '')
-    .trim()
-    .toLowerCase()
-    .replace(/^mcp__[^_]+__/i, '')
+  return (toolName || '').trim().toLowerCase().replace(/^mcp__[^_]+__/i, '')
 }
 
 function isThinkingTraceToolName(toolName: string | undefined): boolean {
@@ -1605,10 +1611,7 @@ function buildProposedPlan(message: ChatMessage): RemoteProposedPlan | undefined
   if (!status || !PROPOSED_PLAN_STATUSES.has(status)) return undefined
   const title = stringField(plan.title, 160)
   const bodyRaw = typeof plan.body === 'string' ? plan.body : ''
-  const { preview: bodyPreview, truncated } = sanitizePreview(
-    bodyRaw,
-    REMOTE_PROPOSED_PLAN_BODY_MAX
-  )
+  const { preview: bodyPreview, truncated } = sanitizePreview(bodyRaw, REMOTE_PROPOSED_PLAN_BODY_MAX)
   // Neither a usable title nor a body — nothing worth a card.
   if (!title && !bodyPreview) return undefined
   const artifactPath = stringField(plan.artifactPath, 260)
@@ -1829,11 +1832,16 @@ function messageProviderHueClass(
   metadata: Record<string, unknown> | undefined
 ): string | undefined {
   if (!metadata) return undefined
-  const provider = providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
+  const provider =
+    providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
   if (!provider) return undefined
-  const model = stringField(metadata.ensembleModel, 120) || stringField(metadata.guestModel, 120)
-  return resolveHealthEntryPresentation(provider, model, PROVIDER_LABELS[provider] ?? provider)
-    .displayHueClass
+  const model =
+    stringField(metadata.ensembleModel, 120) || stringField(metadata.guestModel, 120)
+  return resolveHealthEntryPresentation(
+    provider,
+    model,
+    PROVIDER_LABELS[provider] ?? provider
+  ).displayHueClass
 }
 
 function buildRow(
@@ -1846,10 +1854,7 @@ function buildRow(
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
-  const { preview, truncated } = sanitizePreview(
-    subThreadReturn?.body ?? message.content,
-    previewMax
-  )
+  const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
     id: message.id,
     role: message.role,
@@ -1891,7 +1896,7 @@ function buildRow(
   }
   const pooledAgentIdentity =
     buildPooledAgentIdentity(metadata) ||
-    (message.role === 'assistant' || message.role === 'tool'
+    ((message.role === 'assistant' || message.role === 'tool')
       ? fallbackPooledAgentIdentity
       : undefined)
   if (pooledAgentIdentity) {
@@ -2212,10 +2217,7 @@ function mergeEnsembleFileChanges(
 ): RemoteRunFileChangeCounts | undefined {
   if (parts.length === 0) return undefined
   const sumKey = (key: keyof RemoteRunFileChangeCounts): number =>
-    parts.reduce(
-      (acc, part) => acc + (typeof part[key] === 'number' ? (part[key] as number) : 0),
-      0
-    )
+    parts.reduce((acc, part) => acc + (typeof part[key] === 'number' ? (part[key] as number) : 0), 0)
   const sumOptional = (key: keyof RemoteRunFileChangeCounts): number | undefined => {
     let total = 0
     let present = false
@@ -2448,7 +2450,9 @@ function mergeOptionalCount(lhs: number | undefined, rhs: number | undefined): n
 
 function mergeToolStatus(lhs: DiffFileStatus | undefined, rhs: DiffFileStatus): DiffFileStatus {
   if (!lhs) return rhs
-  return (TOOL_FILE_STATUS_PRIORITY[rhs] ?? 0) > (TOOL_FILE_STATUS_PRIORITY[lhs] ?? 0) ? rhs : lhs
+  return (TOOL_FILE_STATUS_PRIORITY[rhs] ?? 0) > (TOOL_FILE_STATUS_PRIORITY[lhs] ?? 0)
+    ? rhs
+    : lhs
 }
 
 function addToolFileChange(
@@ -2495,8 +2499,7 @@ function summarizeRunToolFileChanges(
     createdFiles: files.filter((file) => file.status === 'created' || file.status === 'untracked')
       .length,
     modifiedFiles: files.filter(
-      (file) =>
-        file.status !== 'created' && file.status !== 'untracked' && file.status !== 'deleted'
+      (file) => file.status !== 'created' && file.status !== 'untracked' && file.status !== 'deleted'
     ).length,
     deletedFiles: files.filter((file) => file.status === 'deleted').length,
     files: boundRunChangedFiles(files)

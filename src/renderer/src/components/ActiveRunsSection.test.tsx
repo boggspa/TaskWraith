@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
-import { getActiveRunChatLabel, resolveActiveRunProviderDisplay } from './ActiveRunsSection'
+import {
+  getActiveRunChatLabel,
+  resolveActiveRunProviderDisplay
+} from './ActiveRunsSection'
 
 function job(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   return {

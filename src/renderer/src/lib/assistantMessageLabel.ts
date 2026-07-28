@@ -70,7 +70,9 @@ const pooledAgentIdentityForMessage = (
         ? record.agentId.trim()
         : ''
   const nickname =
-    typeof record.nickname === 'string' && record.nickname.trim() ? record.nickname.trim() : ''
+    typeof record.nickname === 'string' && record.nickname.trim()
+      ? record.nickname.trim()
+      : ''
   const iconKind = record.iconKind
   const hue = Number(record.hue)
   if (
@@ -139,7 +141,9 @@ const formatAssistantMessageLabel = (
         ? `${getProviderLabel(guestProvider)} / ${guestRole}`
         : `Guest / ${guestRole}`,
       provider: guestProvider,
-      providerClass: guestProvider ? resolveProviderHueClass(guestProvider, guestModel) : null,
+      providerClass: guestProvider
+        ? resolveProviderHueClass(guestProvider, guestModel)
+        : null,
       modelBadge: guestProvider && guestModel ? shortModelName(guestProvider, '', guestModel) : null
     })
   }
