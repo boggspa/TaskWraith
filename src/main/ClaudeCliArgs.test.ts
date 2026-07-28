@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildClaudeCliArgs,
+  claudeDispatchPrompt,
   claudeFastModeSettingsArg,
   normalizeClaudeEffortFlag,
   normalizeClaudeEffortFlagForModel
@@ -190,5 +191,32 @@ describe('claudeFastModeSettingsArg', () => {
   it('returns null for unset values', () => {
     expect(claudeFastModeSettingsArg(null)).toBeNull()
     expect(claudeFastModeSettingsArg(undefined)).toBeNull()
+  })
+})
+
+describe('claudeDispatchPrompt', () => {
+  it('sends the slim prompt when a session will be resumed', () => {
+    expect(
+      claudeDispatchPrompt({
+        prompt: 'slim',
+        providerSessionId: 'sess-1',
+        resumeFallbackPrompt: 'seeded recovery prompt'
+      })
+    ).toBe('slim')
+  })
+
+  it('sends the full-context recovery prompt on a sessionless dispatch', () => {
+    expect(
+      claudeDispatchPrompt({
+        prompt: 'slim',
+        providerSessionId: null,
+        resumeFallbackPrompt: 'seeded recovery prompt'
+      })
+    ).toBe('seeded recovery prompt')
+  })
+
+  it('falls back to the plain prompt when no recovery prompt was composed', () => {
+    expect(claudeDispatchPrompt({ prompt: 'slim' })).toBe('slim')
+    expect(claudeDispatchPrompt({ prompt: 'slim', resumeFallbackPrompt: '' })).toBe('slim')
   })
 })

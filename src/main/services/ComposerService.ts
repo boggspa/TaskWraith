@@ -548,16 +548,25 @@ export class ComposerService {
     const composed = composeRunPrompt(promptInput)
     // The slim native-resume prompt and this full-context recovery prompt are
     // signed together below. AcpTurnClient selects the latter only when Kimi
-    // cannot rehydrate the saved session and must use session/new.
+    // cannot rehydrate the saved session and must use session/new; the Claude
+    // lanes select it when the seat rotation nulls providerSessionId after
+    // composition (claudeDispatchPrompt), so a rotated conversation is seeded
+    // with the compaction summary + compact transcript instead of starting
+    // cold.
     const codexNativeSessionResume = Boolean(
       provider === 'codex' && resumeDecision.sessionId
     )
+    const claudeNativeSessionResume = Boolean(
+      provider === 'claude' && resumeDecision.sessionId
+    )
     const resumeFallbackPrompt =
-      kimiNativeSessionResume || codexNativeSessionResume
+      kimiNativeSessionResume || codexNativeSessionResume || claudeNativeSessionResume
         ? composeRunPrompt({
             ...promptInput,
             ...(kimiNativeSessionResume ? { nativeSessionResume: false } : {}),
-            ...(codexNativeSessionResume ? { resumeSessionId: undefined } : {})
+            ...(codexNativeSessionResume || claudeNativeSessionResume
+              ? { resumeSessionId: undefined }
+              : {})
           }).contextualPrompt
         : undefined
 

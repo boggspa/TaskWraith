@@ -1007,7 +1007,13 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     ((provider === 'kimi' && !nativeKimiSessionResume) ||
       provider === 'grok' ||
       provider === 'cursor' ||
-      provider === 'mistral')
+      provider === 'mistral' ||
+      // Session-resuming providers get the summary only on a sessionless
+      // dispatch (fresh chat after compaction, or a seat rotation that
+      // dropped the session): a resumed session already contains the
+      // compacted history it summarizes.
+      (provider === 'claude' && !resumeSessionId) ||
+      (provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork))
       ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
       : ''
   const kimiNeedsContextInjection = provider === 'kimi' && !nativeKimiSessionResume
@@ -1041,6 +1047,17 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
+  // Claude resumes natively, so a resumable session is authoritative — but a
+  // sessionless dispatch on a chat WITH history (a seat rotation that dropped
+  // the session mid-dispatch, a lost/deleted CLI session file, or a
+  // cross-provider reroute) was context-blind until 2026-07-28. Seed it the
+  // same way cold Codex/Gemini runs are seeded. A genuinely new chat has no
+  // messages, so this is a no-op there. Pi is deliberately ABSENT here: its
+  // CLI session is chat-deterministic (--session-id derived from the chat id,
+  // payload.providerSessionId ignored at spawn and never recorded), so its
+  // native session always carries the history — injecting would duplicate the
+  // conversation on every turn.
+  const claudeNeedsContextInjection = provider === 'claude' && !resumeSessionId
   const ollamaPromptIntent =
     provider === 'ollama'
       ? classifyOllamaPromptIntent(finalPrompt, {
@@ -1055,6 +1072,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     mistralNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
+    claudeNeedsContextInjection ||
     ollamaNeedsContextInjection
 
   let contextTurnsApplied = shouldAppendContextForRun
@@ -1108,11 +1126,13 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
                 ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
                 : ollamaNeedsContextInjection
                   ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
-                  : provider !== 'gemini'
-                    ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-                    : resumeSessionId
-                      ? 'Context turns: 0 (resuming Gemini CLI session context)'
-                      : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+                  : claudeNeedsContextInjection
+                    ? `Context turns: ${contextTurnsApplied} (${providerLabel}: no resumable session — seeding compact conversation context)`
+                    : provider !== 'gemini'
+                      ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+                      : resumeSessionId
+                        ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                        : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined

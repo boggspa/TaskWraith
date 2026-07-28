@@ -51,6 +51,23 @@ export function claudeFastModeSettingsArg(value: boolean | null | undefined): st
   return typeof value === 'boolean' ? JSON.stringify({ fastMode: value }) : null
 }
 
+/** Select the prompt for a Claude dispatch (SDK and CLI lanes share this
+ * rule). A resumable session carries its own history, so the slim prompt is
+ * correct. A sessionless dispatch — fresh chat, lost CLI session, or a seat
+ * rotation that nulled providerSessionId AFTER composition — must send the
+ * full-context recovery prompt (compaction summary + compact transcript)
+ * composed for exactly this case, so the conversation is seeded rather than
+ * starting cold. Prompt and fallback are HMAC-signed together in the run
+ * posture; selecting between them here never mutates the signed payload. */
+export function claudeDispatchPrompt(payload: {
+  prompt: string
+  providerSessionId?: string | null
+  resumeFallbackPrompt?: string | null
+}): string {
+  if (payload.providerSessionId) return payload.prompt
+  return payload.resumeFallbackPrompt || payload.prompt
+}
+
 export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
   const args: string[] = [
     '-p',

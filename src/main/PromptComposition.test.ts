@@ -1414,6 +1414,84 @@ describe('composeRunPrompt ollama workflow-hint intent', () => {
   })
 })
 
+describe('composeRunPrompt sessionless resume-provider seeding', () => {
+  const summary = {
+    text: 'Decisions: ship slice 1. Open task: wire tests.',
+    createdAt: '2026-07-02T10:00:00Z'
+  }
+  const priorTurn = message({
+    id: 'prior',
+    role: 'assistant',
+    content: 'PRIOR detail from the earlier session.',
+    timestamp: '2026-07-02T11:00:00Z'
+  })
+
+  it('seeds a sessionless Claude dispatch with summary + compact transcript', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Continue the work.',
+      messages: [priorTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      contextCompactionSummary: summary
+    })
+
+    expect(result.contextualPrompt).toContain('Prior session summary (context was compacted')
+    expect(result.contextualPrompt).toContain('PRIOR detail from the earlier session.')
+    expect(result.contextualPrompt).toContain('Current user request:\nContinue the work.')
+    expect(result.contextualPrompt.indexOf('Prior session summary')).toBeLessThan(
+      result.contextualPrompt.indexOf('PRIOR detail')
+    )
+    expect(result.applicationLog).toContain('no resumable session — seeding compact conversation context')
+  })
+
+  it('keeps a resumable Claude session slim — its history is authoritative', () => {
+    const result = composeRunPrompt({
+      provider: 'claude',
+      finalPrompt: 'Continue the work.',
+      messages: [priorTurn],
+      chatContextTurns: 6,
+      resumeSessionId: 'claude-session-1',
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Claude',
+      contextCompactionSummary: summary
+    })
+
+    expect(result.contextualPrompt).not.toContain('Prior session summary')
+    expect(result.contextualPrompt).not.toContain('PRIOR detail')
+    expect(result.contextTurnsApplied).toBe(0)
+    expect(result.applicationLog).toContain('provider/session history is authoritative')
+  })
+
+  it('never injects for Pi — its chat-deterministic session already carries the history', () => {
+    // Pi ignores payload.providerSessionId at spawn (--session-id derives
+    // from the chat id) and never records one, so composeRunPrompt sees
+    // !resumeSessionId on EVERY pi turn. Injecting here would duplicate the
+    // conversation each turn on top of pi's own native session history.
+    const result = composeRunPrompt({
+      provider: 'pi',
+      finalPrompt: 'Continue the work.',
+      messages: [priorTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Pi',
+      contextCompactionSummary: summary
+    })
+
+    expect(result.contextualPrompt).not.toContain('PRIOR detail')
+    expect(result.contextualPrompt).not.toContain('Prior session summary')
+    expect(result.contextTurnsApplied).toBe(0)
+    expect(result.applicationLog).toContain('provider/session history is authoritative')
+  })
+})
+
 describe('composeRunPrompt host-compaction summary injection', () => {
   const summary = {
     text: 'Decisions: ship slice 1. Open task: wire tests.',
