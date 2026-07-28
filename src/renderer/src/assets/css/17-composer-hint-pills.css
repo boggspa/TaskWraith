@@ -142,10 +142,10 @@
   transform: rotate(180deg);
 }
 
-/* The two direct workspace rows exist in Cursor/Codex/ChatGPT shells, while
- * every other above-row is collected in the shared stack. Keep both shapes in
- * one transition contract so no shell-specific DOM is needed. `max-block-size`
- * lets the composer pull upward as the rows duck down behind its input. */
+/* The direct workspace rows exist in Cursor/Codex/ChatGPT shells, while every
+ * other above-row is collected in the shared stack. A primary workspace row is
+ * deliberately exempt: it stays available as the user's current-workspace
+ * anchor, while every sibling row ducks down behind the typing surface. */
 .composer-area {
   --composer-above-row-visibility-delay: 0ms;
 }
@@ -155,7 +155,12 @@
 }
 
 :is(.composer-area, .composer-primary-stack)
-  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+  > :is(
+    .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
+    .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
+  ),
+.composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  > :not(.composer-workspace-above-row--primary),
 .composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
   max-height: 96rem;
   max-block-size: 96rem;
@@ -171,11 +176,18 @@
     visibility 0s linear var(--composer-above-row-visibility-delay);
 }
 
-.composer-area--above-rows-minimized
-  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
-.composer-area--above-rows-minimized
-  > .composer-primary-stack
-  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+[data-composer-style]
+  .app-transcript
+  .composer-area--above-rows-minimized
+  :is(
+    .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
+    .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
+  ),
+[data-composer-style]
+  .app-transcript
+  .composer-area--above-rows-minimized
+  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  > :not(.composer-workspace-above-row--primary),
 .composer-area--above-rows-minimized
   .composer-surface
   > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
@@ -198,12 +210,20 @@
   transform-origin: bottom center;
 }
 
-/* In the native console shell, a non-empty (but now visually collapsed) stack
- * would otherwise retain its merged-frame seam. The state class restores the
- * same standalone top edge used when the chat never had above rows. */
+/* The stack still lays out the persistent primary row, so remove only the
+ * gaps that used to sit between it and the now-zero-height siblings. */
+.composer-area--above-rows-minimized
+  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary) {
+  gap: 0 !important;
+}
+
+/* In the native console shell, a non-empty (but fully collapsed) stack would
+ * otherwise retain its merged-frame seam. Keep that seam whenever the primary
+ * workspace row remains visible; only restore the standalone edge when no row
+ * survives the minimized state. */
 [data-composer-style='default']
   .app-transcript
-  .composer-area--above-rows-minimized
+  .composer-area--above-rows-minimized:not(:has(.composer-workspace-above-row--primary))
   .composer-surface {
   margin-top: 0 !important;
 }
@@ -214,7 +234,12 @@
   }
 
   :is(.composer-area, .composer-primary-stack)
-    > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+    > :is(
+      .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
+      .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
+    ),
+  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+    > :not(.composer-workspace-above-row--primary),
   .composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
   .composer-above-rows-toggle-glyph {
     transition-duration: 1ms;
@@ -227,7 +252,13 @@
 
 [data-reduce-motion='true']
   :is(.composer-area, .composer-primary-stack)
-  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+  > :is(
+    .composer-above-bar-stack:not(:has(> .composer-workspace-above-row--primary)),
+    .composer-above-bar--cursor-lead:not(.composer-workspace-above-row--primary)
+  ),
+[data-reduce-motion='true']
+  .composer-above-bar-stack:has(> .composer-workspace-above-row--primary)
+  > :not(.composer-workspace-above-row--primary),
 [data-reduce-motion='true']
   .composer-surface
   > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
