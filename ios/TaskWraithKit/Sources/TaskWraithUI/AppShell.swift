@@ -132,10 +132,15 @@ public struct RootView: View {
                     .error where showShellDuringDrop,
                     .idle where showShellDuringDrop,
                     .awaitingMacConfirm where showShellDuringDrop:
-                    ConnectedShell(model: model)
-                        .overlay(alignment: .top) {
-                            connectionBanner
-                        }
+                    // In-flow ABOVE the shell (same treatment as DemoModeBanner),
+                    // never an overlay: an overlaid banner sat on top of the
+                    // toolbar and swallowed its taps, so during a long outage
+                    // Settings — where hosts are managed and re-pairing lives —
+                    // was unreachable and the only escape was killing the app.
+                    VStack(spacing: 0) {
+                        connectionBanner
+                        ConnectedShell(model: model)
+                    }
                 case .idle, .connecting, .awaitingMacConfirm, .error:
                     NavigationStack { PairingView(model: model) }
                 }
