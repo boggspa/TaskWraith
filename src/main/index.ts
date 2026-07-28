@@ -2026,6 +2026,9 @@ const remoteQuestionRegistry = new RemoteQuestionRegistry({
   defaultTtlMs: AGENT_QUESTION_TIMEOUT_MS
 })
 let bridgeBroadcasterRef: BridgeBroadcaster | null = null
+/** The single pending post-establish rehydrate (see onDeviceEstablished). Module
+ * scope so a bridge restart re-arms rather than leaking the previous timer. */
+let postEstablishRehydrateTimer: ReturnType<typeof setTimeout> | null = null
 const remoteBridgeRunEventFilter = createRemoteBridgeRunEventInterestFilter()
 function requestThrottledRemoteProjectionSnapshot(): void {
   bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
@@ -41566,7 +41569,19 @@ if (isGeminiMcpBridgeProcess) {
           // EMPTY snapshot as authoritative and shows "connected, no
           // chats". A delayed, throttle-cleared second snapshot re-seeds
           // it (projections are idempotent by envelopeId).
-          setTimeout(async () => {
+          //
+          // COALESCED to a single pending rehydrate. A phone that re-handshakes
+          // repeatedly (the 2026-07-28 reconnect storm: 152 establishes on one
+          // live transport) used to stack one of these per establish, and each
+          // is heavyweight — a full chat-store sweep, up to N chat deletions,
+          // a throttle-cleared broadcastSnapshot and two more broadcasts. 152 of
+          // them queued on Electron main starve the very TRANSPORT_PONG the
+          // phone's next action preflight is waiting for, which makes the phone
+          // dial AGAIN. Only the newest establish's rehydrate is worth running
+          // (the work is idempotent and whole-state), so re-arm instead of stack.
+          if (postEstablishRehydrateTimer) clearTimeout(postEstablishRehydrateTimer)
+          postEstablishRehydrateTimer = setTimeout(async () => {
+            postEstablishRehydrateTimer = null
             const broadcaster = bridgeBroadcasterRef
             if (!broadcaster) return
             // Reap abandoned remote drafts (welcome-card drafts the user
@@ -41600,7 +41615,8 @@ if (isGeminiMcpBridgeProcess) {
             broadcaster.broadcastSnapshot()
             remoteFirstLaunchStateTrigger?.()
             console.log('[remote-bridge] post-establish rehydrate snapshot sent')
-          }, 1500).unref?.()
+          }, 1500)
+          postEstablishRehydrateTimer.unref?.()
         },
         pairingStore: new RemotePairingStore(
           join(app.getPath('userData'), 'bridge', 'remote-pairing.json'),

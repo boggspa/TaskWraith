@@ -1115,6 +1115,11 @@ public final class RemoteSessionModel: ObservableObject {
     private var trustedReconnectAttempt: Int?
     /// Single-flight policy for APNs / foreground / path / health wakes.
     private var reconnectCoordinator = ReconnectCoordinator()
+    #if DEBUG
+        /// How many times `reconnectTrusted()` actually began a dial — the
+        /// number the reconnect-storm regression test pins.
+        private(set) var trustedReconnectDialsForTesting = 0
+    #endif
 
     private func startPathMonitor() {
         guard pathMonitor == nil else { return }
@@ -1515,6 +1520,9 @@ public final class RemoteSessionModel: ObservableObject {
         guard !isDemo else { return }  // demo is standalone — never auto-redial
         guard let record = pairingStore.load().selectedHost else { return }
         guard identityReady() else { return }
+        #if DEBUG
+            trustedReconnectDialsForTesting += 1
+        #endif
         // A fresh walk supersedes any queued auto-retry (attempt count keeps
         // growing so the backoff curve survives across walks).
         cancelAutoReconnect(resetAttempts: false)
@@ -6694,13 +6702,45 @@ public final class RemoteSessionModel: ObservableObject {
 
         guard hasStoredPairing else { throw TransportError.hostUnavailable }
         if announceWake { lastActionMessage = "Trying to wake your Mac…" }
-        autoReconnectAttempt = 0
-        reconnectTrusted()
+        recoverFromUnavailableHostForAction()
         guard await waitForRemoteWakeConnection(timeoutMs: 12_000), let retryClient = client
         else { throw TransportError.hostUnavailable }
         return try await retryClient.requestSerialized(
             "bridge.requestActionAck", paramsData: paramsData, timeoutMs: timeoutMs)
     }
+
+    /// Recovery for an action whose peer-liveness preflight failed. It MUST go
+    /// through the single-flight coordinator.
+    ///
+    /// A bare `reconnectTrusted()` here was the reconnect-storm amplifier: EVERY
+    /// phone→host action funnels through `requestActionAckWithWake`, so a burst
+    /// of them (an establish fires setWatchedThread + threadSnapshotRequest +
+    /// gitSnapshot + the APNs registration at once) each started its OWN dial.
+    /// `reconnectTrusted()` opens with `teardown()`, which nils the client its
+    /// siblings are mid-`request()` on — their `checkPeerAlive()` then fails
+    /// instantly (`guard established`), reports `hostUnavailable`, and dials
+    /// again. Self-sustaining: after a host restart on 2026-07-28 the phone
+    /// re-established the E2EE session 152 times over ONE live transport
+    /// (host log: 152 "post-establish rehydrate snapshot sent", a single
+    /// "transport established", and 38 "[e2ee] clientAuth signature invalid"
+    /// from overlapping handshakes) until iOS killed the app.
+    ///
+    /// The coordinator collapses the burst: the first failure starts/supersedes
+    /// one dial and flips `phase` to `.connecting` synchronously, so every
+    /// sibling coalesces into it (`.ignore`) and simply waits for that dial via
+    /// `waitForRemoteWakeConnection`. A genuinely asleep Mac still gets its
+    /// wake dial — only the duplicates are dropped.
+    private func recoverFromUnavailableHostForAction() {
+        requestReconnect(.health, socketAlive: false)
+    }
+
+    #if DEBUG
+        /// Test seam for the storm guarantee: N concurrent action recoveries
+        /// must produce exactly ONE trusted dial.
+        func recoverFromUnavailableHostForActionForTesting() {
+            recoverFromUnavailableHostForAction()
+        }
+    #endif
 
     nonisolated static func actionFailureMessage(
         _ error: Error, phase: SessionPhase
