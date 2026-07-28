@@ -1202,6 +1202,11 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     public let roundId: String?
     public let status: String?
     public let activeParticipantId: String?
+    /// Seats working right now. Wire key `workingParticipantIds`. Derived on
+    /// the Mac from the round's lane states so the phone and the desktop agree
+    /// on who is still going rather than each computing it; absent (not empty)
+    /// when no round is live, and absent entirely on older Mac builds.
+    public let workingParticipantIds: [String]?
     public let bossmanParticipantId: String?
     /// The user-designated Captain (second-in-command). Wire key
     /// `secondInCommandParticipantId` — MUST match the Mac projection exactly.
@@ -1612,6 +1617,11 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         /// exactly as it does on the desktop.
         public struct FanoutResult: Codable, Sendable, Equatable {
             public let laneId: String?
+            /// The seat that produced this lane. Joins the card to
+            /// `RemoteEnsembleState.workingParticipantIds` so a still-running
+            /// lane can shimmer its rim (desktop parity). Absent on older Mac
+            /// builds ⇒ the card simply never shimmers.
+            public let participantId: String?
             /// "read" / "write" / "none" — an optional String, never an enum,
             /// so an unknown intent from a newer Mac degrades to the generic
             /// "Fan-out lane" label instead of failing the whole row decode.

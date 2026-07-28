@@ -118,3 +118,77 @@ struct FanoutAndRunFailureRowTests {
         #expect(twIsPlainSystemNoticeRow(notice))
     }
 }
+
+/// The working-lane rim shimmer: a fan-out puts several lane cards on screen at
+/// once, and the lit rim is how you find the one still going. The Mac derives
+/// the working set (`RemoteEnsembleState.workingParticipantIds`) so the phone
+/// never computes a second, drifting answer — these pin the wire contract and
+/// the join.
+@Suite("Fan-out working-lane shimmer")
+struct FanoutWorkingLaneTests {
+    private func row(_ json: String) throws -> RemoteThreadSnapshot.Row {
+        try JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: Data(json.utf8))
+    }
+
+    private func ensembleState(_ json: String) throws -> RemoteEnsembleState {
+        try JSONDecoder().decode(RemoteEnsembleState.self, from: Data(json.utf8))
+    }
+
+    @Test func decodesTheParticipantIdThatJoinsACardToTheWorkingSet() throws {
+        let lane = try row(
+            """
+            {"id":"lane-a","role":"assistant","kind":"assistant","preview":"Lane output.",
+             "fanoutResult":{"laneId":"lane-round-1-reader-with-hyphens-1",
+                             "participantId":"reader-with-hyphens","provider":"codex"}}
+            """)
+        #expect(lane.fanoutResult?.participantId == "reader-with-hyphens")
+    }
+
+    @Test func tolerose_olderMacWithoutParticipantId() throws {
+        // An older Mac omits the key; the card must still decode and simply
+        // never shimmer. No signal beats a wrong one.
+        let lane = try row(
+            """
+            {"id":"lane-a","role":"assistant","kind":"assistant","preview":"Lane output.",
+             "fanoutResult":{"laneId":"lane-a","provider":"codex"}}
+            """)
+        #expect(lane.fanoutResult != nil)
+        #expect(lane.fanoutResult?.participantId == nil)
+    }
+
+    @Test func decodesTheWorkingParticipantIds() throws {
+        let state = try ensembleState(
+            """
+            {"threadId":"t1","status":"running",
+             "workingParticipantIds":["reader-1","writer-2"]}
+            """)
+        #expect(state.workingParticipantIds == ["reader-1", "writer-2"])
+    }
+
+    @Test func tolerates_olderMacWithoutWorkingParticipantIds() throws {
+        let state = try ensembleState("""
+            {"threadId":"t1","status":"running"}
+            """)
+        #expect(state.workingParticipantIds == nil)
+    }
+
+    /// The join the row view performs, asserted directly: only a card whose
+    /// participant is in the set shimmers, and a card with no participant id
+    /// never does regardless of what the set contains.
+    private func shimmers(participantId: String?, working: Set<String>) -> Bool {
+        guard let participantId, !participantId.isEmpty, !working.isEmpty else { return false }
+        return working.contains(participantId)
+    }
+
+    @Test func lightsOnlyTheWorkingLane() {
+        let working: Set<String> = ["reader-1"]
+        #expect(shimmers(participantId: "reader-1", working: working))
+        #expect(!shimmers(participantId: "writer-2", working: working))
+    }
+
+    @Test func staysDarkWithNoParticipantIdOrEmptySet() {
+        #expect(!shimmers(participantId: nil, working: ["reader-1"]))
+        #expect(!shimmers(participantId: "", working: ["reader-1"]))
+        #expect(!shimmers(participantId: "reader-1", working: []))
+    }
+}

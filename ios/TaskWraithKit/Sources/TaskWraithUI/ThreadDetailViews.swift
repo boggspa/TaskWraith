@@ -420,6 +420,13 @@ struct ThreadDetailView: View {
     private var transcriptParticipants: [RemoteEnsembleState.Participant] {
         ensembleState?.displayParticipants ?? []
     }
+    /// Seats the Mac says are working, for the fan-out lane rim shimmer.
+    /// Read straight off the projection — deriving it here from participant
+    /// status would be a second implementation of a predicate the Mac already
+    /// owns, and the two would drift.
+    private var workingParticipantIds: Set<String> {
+        Set(ensembleState?.workingParticipantIds ?? [])
+    }
     private var liveAccent: Color {
         threadAgentIdentity?.accent
             ?? TWTheme.providerAccent(liveProvider, modelId: liveModel, modelLabel: liveModel)
@@ -947,7 +954,8 @@ struct ThreadDetailView: View {
                 agentIdentity: threadAgentIdentity,
                 isExpanding: model.expandingRows.contains(row.id),
                 participants: transcriptParticipants,
-                isPinned: isMessagePinned(row.id)
+                isPinned: isMessagePinned(row.id),
+                workingParticipantIds: workingParticipantIds
             )
             .equatable()
         case .toolBurst(_, let rows, _):
@@ -969,7 +977,8 @@ struct ThreadDetailView: View {
                     agentIdentity: threadAgentIdentity,
                     isExpanding: model.expandingRows.contains(row.id),
                     participants: transcriptParticipants,
-                    isPinned: isMessagePinned(row.id)
+                    isPinned: isMessagePinned(row.id),
+                    workingParticipantIds: workingParticipantIds
                 )
                 .equatable()
             }
@@ -1738,7 +1747,8 @@ struct ThreadDetailView: View {
                 agentIdentity: threadAgentIdentity,
                 isExpanding: model.expandingRows.contains(row.id),
                 participants: transcriptParticipants,
-                isPinned: isMessagePinned(row.id)
+                isPinned: isMessagePinned(row.id),
+                workingParticipantIds: workingParticipantIds
             )
             .equatable()
         case .text(_, let content, let isTail):
@@ -3521,6 +3531,9 @@ struct EnsembleFanoutResultHeader: View {
 struct TWFanoutCardChrome: ViewModifier {
     let enabled: Bool
     let accent: Color
+    /// This lane's seat is still working — run the rim chase. Defaulted so the
+    /// non-ensemble callers stay untouched.
+    var working: Bool = false
 
     func body(content: Content) -> some View {
         content
@@ -3539,6 +3552,70 @@ struct TWFanoutCardChrome: ViewModifier {
                 RoundedRectangle(cornerRadius: 12)
                     .strokeBorder(enabled ? accent.opacity(0.5) : .clear, lineWidth: 1.2)
             )
+            .overlay(
+                TWFanoutWorkingRim(accent: accent)
+                    .opacity(enabled && working ? 1 : 0)
+                    // Kept mounted and faded rather than branched in/out, for
+                    // the same reason `enabled` is a flag and not an `if`: a
+                    // conditional here would give the row a second view
+                    // identity and re-mount every MarkdownLite body the moment
+                    // a lane started or stopped.
+                    .animation(.easeOut(duration: 0.22), value: enabled && working)
+                    .allowsHitTesting(false)
+            )
+    }
+}
+
+/// The working-lane rim chase — iOS parity with the desktop's
+/// `.ensemble-fanout-result-card.is-working` conic sweep.
+///
+/// A fan-out puts several lane cards on screen at once and they finish at
+/// different times, so the lit rim is the one still going. Same job, same look,
+/// different substrate: CSS rotates a conic gradient through a registered
+/// `@property` angle; SwiftUI has `AngularGradient`, whose `angle` can be
+/// animated directly, so the shape stays put and only the sweep moves.
+///
+/// Stroking the shape (rather than rotating it) is what keeps this correct on a
+/// non-square card — rotating a `RoundedRectangle` would visibly tumble the
+/// corners instead of running light around them.
+private struct TWFanoutWorkingRim: View {
+    let accent: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var angle: Double = 0
+
+    /// One lap. Matches the desktop's 3.6s so the two platforms read as the
+    /// same effect rather than two different tempos.
+    private static let lapSeconds: Double = 3.6
+
+    private var sweep: AngularGradient {
+        AngularGradient(
+            gradient: Gradient(stops: [
+                .init(color: accent.opacity(0.0), location: 0.0),
+                .init(color: accent.opacity(0.0), location: 0.52),
+                .init(color: accent.opacity(0.26), location: 0.74),
+                .init(color: accent.opacity(0.62), location: 0.92),
+                .init(color: accent.opacity(0.95), location: 0.98),
+                .init(color: accent.opacity(0.0), location: 1.0)
+            ]),
+            center: .center,
+            angle: .degrees(angle)
+        )
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(sweep, lineWidth: 1.6)
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.linear(duration: Self.lapSeconds).repeatForever(autoreverses: false))
+                {
+                    angle = 360
+                }
+            }
+            // Under Reduce Motion the rim stays lit at its rest angle rather
+            // than vanishing: which lane is working is information, and it
+            // should survive turning motion off.
+            .accessibilityHidden(true)
     }
 }
 
@@ -3760,6 +3837,15 @@ struct ThreadRowView: View, Equatable {
     let isExpanding: Bool
     let participants: [RemoteEnsembleState.Participant]
     let isPinned: Bool
+    /// Seats still working, straight from the Mac's projection. Defaulted so
+    /// the callers that render outside a live ensemble need not thread it.
+    ///
+    /// This is an explicit input rather than something derived from
+    /// `participants` BECAUSE of the equality gate below: participant `status`
+    /// is deliberately excluded from `twParticipantsSignature` (it churns every
+    /// token), so a shimmer derived from it would never re-render on or off.
+    /// The projected set only changes when a lane starts or finishes.
+    var workingParticipantIds: Set<String> = []
 
     // Compare ONLY the inputs that change rendering. The `model` reference is
     // constant (same object) so it's excluded; participant `status`/`order`
@@ -3776,6 +3862,10 @@ struct ThreadRowView: View, Equatable {
             && lhs.agentIdentity == rhs.agentIdentity
             && lhs.isExpanding == rhs.isExpanding
             && lhs.isPinned == rhs.isPinned
+            // Compared even though participant status is not: this set changes
+            // only at lane start/finish, and it is what turns the fan-out rim
+            // shimmer on and off.
+            && lhs.workingParticipantIds == rhs.workingParticipantIds
             && twParticipantsSignature(lhs.participants)
                 == twParticipantsSignature(rhs.participants)
     }
@@ -3808,6 +3898,16 @@ struct ThreadRowView: View, Equatable {
     private var fanoutAccent: Color {
         guard let fanout = row.fanoutResult else { return accentColor }
         return TWTheme.providerAccent(fanout.brandProviderKey)
+    }
+    /// This lane's seat is still going — drives the rim chase. A card whose
+    /// message predates the projected `participantId` never shimmers, which is
+    /// the right way to degrade: no signal beats a wrong one.
+    private var isFanoutLaneWorking: Bool {
+        guard hasFanoutResultCard, !workingParticipantIds.isEmpty,
+            let participantId = row.fanoutResult?.participantId,
+            !participantId.isEmpty
+        else { return false }
+        return workingParticipantIds.contains(participantId)
     }
 
     var body: some View {
@@ -3996,7 +4096,11 @@ struct ThreadRowView: View, Equatable {
                     .disabled(isExpanding)
                 }
             }
-            .modifier(TWFanoutCardChrome(enabled: hasFanoutResultCard, accent: fanoutAccent))
+            .modifier(
+                TWFanoutCardChrome(
+                    enabled: hasFanoutResultCard,
+                    accent: fanoutAccent,
+                    working: isFanoutLaneWorking))
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
