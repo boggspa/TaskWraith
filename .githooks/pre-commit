@@ -137,6 +137,36 @@ for marker in .WORK-IN-PROGRESS-*.md; do
 done
 shopt -u nullglob
 
+# ── 5. ADVISE: a decayed claim is still standing ────────────────────────────
+# Expired or owner-dead markers are adoptable (AGENTS.md: "Adopting a decayed
+# claim"). Saying so at the next commit — by anyone — is what stops an
+# abandoned marker outliving its session for hours: on 2026-07-28 a finished
+# session's marker sat looking owned because its idle host pid stayed alive.
+# Advisory only: the pid check in section 1 already stopped it blocking.
+shopt -s nullglob
+for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
+  [ -f "$marker" ] || continue
+  m_pid="$(sed -nE 's/^pid:[[:space:]]*([0-9]+).*/\1/p' "$marker" | head -1)"
+  m_exp="$(sed -nE 's/^expires:[[:space:]]*([0-9TZ:-]+).*/\1/p' "$marker" | head -1)"
+  [ -n "$m_pid" ] && [ "$m_pid" = "$self_pid" ] && continue
+  decayed=0
+  if [ -n "$m_pid" ] && ! kill -0 "$m_pid" 2>/dev/null; then
+    decayed=1
+  fi
+  if [ "$decayed" -eq 0 ] && [ -n "$m_exp" ]; then
+    exp_epoch="$(to_epoch "$m_exp")"
+    if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
+      decayed=1
+    fi
+  fi
+  if [ "$decayed" -eq 1 ]; then
+    printf '  note: %s is decayed (expired or owner dead) — adoptable. Harvest its\n' "$marker"
+    printf '        paths/worktree, then delete it (AGENTS.md: Adopting a decayed claim).\n'
+    warn=1
+  fi
+done
+shopt -u nullglob
+
 if [ "$block" -eq 1 ]; then
   printf '\n  Another session is editing that file right now. Coordinate, pick different\n'
   printf '  work, or re-run with TW_ALLOW_CLAIMED=1 if you know the claim is wrong.\n\n'

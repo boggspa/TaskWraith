@@ -127,7 +127,9 @@ Split the two questions and use the right tool for each:
 2. **Read any live markers** (`ls -1a | grep -E '^(SHIP-HOLD|\.WORK-IN-PROGRESS|SESSION-IN-PROGRESS)'`).
    Never write that check as a bare `ls A-* B-*`: under zsh a single missing
    glob triggers `nomatch` and aborts the whole command, printing nothing,
-   which reads exactly like "no markers".
+   which reads exactly like "no markers". A *decayed* marker (expired, or its
+   pid dead) is not noise — it is work to adopt; see "Adopting a decayed
+   claim" below.
 3. **Raise your own marker before your first edit to a clean file** — not "when
    you start", which is fuzzy and skippable. First write is the trigger.
 
@@ -143,7 +145,8 @@ session: <session id>
 agent: <provider/model, e.g. claude, codex>
 pid: <owning process id>
 started: <ISO-8601 UTC>
-expires: <ISO-8601 UTC, a few hours out>
+expires: <ISO-8601 UTC — the moment rescuers should move in, not the task's outer bound>
+worktree: <path, only if your edits live outside the main tree>
 paths:
   - src/main/Thing.ts
 ---
@@ -156,8 +159,50 @@ forgotten claim decays on its own instead of blocking the tree forever. This
 is the same liveness model the credential authority already uses (owner pid
 plus process birth identity) — copy it rather than inventing another.
 
-Drop your marker in the same breath as your final commit. If you finish one
-task and pick up another, **re-raise** — the old marker does not cover new work.
+Read the two liveness signals **asymmetrically**. `expires` is the authority:
+past it, the claim is decayed no matter what the pid says. The pid exists only
+to decay a claim *early* when a session dies; it can never extend one.
+Interactive CLI hosts (a `codex` or `claude` REPL) routinely sit alive and
+idle long after their session's work has ended — proven 2026-07-28, when a
+finished session's pid stayed up for four hours past expiry and read as
+"still working" to the next agent. Pid-alive means nothing; pid-dead means
+dead.
+
+Size `expires` accordingly: it is when you would *want* someone to move in if
+you went silent. Take an hour and **renew** (rewrite the marker with a later
+`expires`) when you need more, rather than taking an afternoon up front and
+going dark inside it. A lease that outlives the work by hours is how an
+abandoned claim impersonates a live one.
+
+Drop your marker in the same breath as your final commit — before the host
+process goes idle, not "at the end of the session"; an idle-but-alive host is
+exactly what makes an abandoned claim look owned. If you finish one task and
+pick up another, **re-raise** — the old marker does not cover new work. And if
+your in-flight edits live anywhere but the main tree, say where with
+`worktree:` — a claim that decays with finished work stranded in an unnamed
+worktree forces the next session to go spelunking. The 2026-07-28 harvest
+recovered a completed, uncommitted fix only because the worktree happened to
+share the marker's slug.
+
+### Adopting a decayed claim
+
+A marker whose `expires` has passed or whose pid is dead is not noise to step
+around — its lane is **adoptable**, and adoption has its own small protocol:
+
+1. **Confirm decay.** Expired, or `kill -0 <pid>` fails. An alive pid past
+   expiry is still decayed (see above).
+2. **Hunt for stranded work before your first edit.** Check the marker's
+   `paths:` in `git status`, and check its `worktree:` (or `git worktree list`
+   for the marker's slug). A session that died mid-task leaves half-done work;
+   one that finished and never landed leaves *complete* work. Both are worth
+   more than your re-derivation of them.
+3. **Land or explicitly discard what you find — never silently duplicate it.**
+   Credit the originating session in the commit message: its work, your
+   landing.
+4. **Clean up.** Delete the marker and remove any harvested worktree. Deleting
+   a *decayed* marker is part of adoption; deleting a *live* one is still
+   forbidden — `TW_ALLOW_CLAIMED=1` exists for a live claim you know to be
+   wrong.
 
 ### Prefer a worktree; it cannot go stale
 
@@ -208,9 +253,10 @@ npm run hooks:install        # git config core.hooksPath .githooks
 [`.githooks/pre-commit`](.githooks/pre-commit) **blocks exactly one thing** —
 staging a path claimed by a marker whose owning pid is alive and whose expiry
 has not passed. Everything else advises: whole-file staging of a >5,000-line
-file, forty-plus staged paths, and your own claim still being up. One block and
-otherwise quiet is deliberate; a hook that cries wolf gets disabled, and a
-disabled hook protects nothing.
+file, forty-plus staged paths, your own claim still being up, and a decayed
+claim still standing (adopt or delete it). One block and otherwise quiet is
+deliberate; a hook that cries wolf gets disabled, and a disabled hook protects
+nothing.
 
 `TW_ALLOW_CLAIMED=1 git commit …` overrides a claim you know to be wrong. Use
 it rather than deleting someone's marker.
