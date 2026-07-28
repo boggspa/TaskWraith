@@ -2,10 +2,7 @@ import { useEffect, useMemo, useState, type JSX } from 'react'
 import type { ChatRun, ProviderId, RunEventReplay } from '../../../main/store/types'
 import { classifyRunEvent } from '../lib/RunEventClassifier'
 import { humaniseModelId } from '../lib/modelDisplayName'
-import {
-  resolveOllamaDisplayBrand,
-  resolveProviderHueClass
-} from '../lib/ollamaDisplayBrand'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { DigitOdometer } from './DigitOdometer'
 
