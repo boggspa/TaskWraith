@@ -9,10 +9,7 @@ import type { PermissionService } from '../PermissionService'
 import { rendererSafeSettings } from './settingsHandlers'
 
 export interface AgenticWorkspaceGrantHandlerDeps {
-  permissionService: Pick<
-    PermissionService,
-    'upsertWorkspaceGrant' | 'removeWorkspaceGrant'
-  >
+  permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
   getSettings: () => AppSettings
   assertProviderId: (provider: ProviderId) => ProviderId
   assertLiveProviderId: (provider: ProviderId) => ProviderId

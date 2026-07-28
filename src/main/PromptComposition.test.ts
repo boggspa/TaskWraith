@@ -1445,7 +1445,9 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
     expect(result.contextualPrompt.indexOf('Prior session summary')).toBeLessThan(
       result.contextualPrompt.indexOf('PRIOR detail')
     )
-    expect(result.applicationLog).toContain('no resumable session — seeding compact conversation context')
+    expect(result.applicationLog).toContain(
+      'no resumable session — seeding compact conversation context'
+    )
   })
 
   it('keeps a resumable Claude session slim — its history is authoritative', () => {
