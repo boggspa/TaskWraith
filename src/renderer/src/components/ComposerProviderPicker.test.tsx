@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
 import {
   ComposerProviderPicker,
@@ -62,6 +63,23 @@ describe('ComposerProviderPicker trigger', () => {
     expect(html).toContain('provider-alibaba')
     expect(html).toContain('Alibaba')
     expect(html).toContain('--composer-provider-accent:var(--provider-alibaba-color, currentColor)')
+  })
+
+  it('applies every Pi upstream hue + label override from the active model', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const activeModelId = Object.keys(PI_MODEL_LABELS).find((id) =>
+        id.startsWith(`${upstream}/`)
+      )
+      expect(activeModelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      const html = renderTrigger({ provider: 'pi', activeModelId })
+
+      expect(html).toContain(`provider-${brand.hueClass}`)
+      expect(html).toContain(`>${brand.label}<`)
+      expect(html).toContain(
+        `--composer-provider-accent:var(--provider-${brand.hueClass}-color, currentColor)`
+      )
+      expect(html).toContain('data-provider-logo="pi"')
+    }
   })
 })
 

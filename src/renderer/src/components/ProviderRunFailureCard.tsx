@@ -4,6 +4,7 @@ import {
   formatProviderRunFailureTimestamp,
   type ProviderRunFailureLine
 } from '../lib/providerRunFailureSnippet'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { MessageActionsChip } from './MessageActionsChip'
 
@@ -26,6 +27,8 @@ export function ProviderRunFailureCard({
   if (!metadata || metadata.kind !== 'providerRunFailure') return null
 
   const provider = (metadata.provider as ProviderId | undefined) || 'gemini'
+  const model = typeof metadata.model === 'string' ? metadata.model : ''
+  const providerClass = resolveProviderHueClass(provider, model)
   const exitCode = typeof metadata.exitCode === 'number' ? metadata.exitCode : null
   const headline =
     typeof metadata.headline === 'string' && metadata.headline.trim()
@@ -60,7 +63,7 @@ export function ProviderRunFailureCard({
 
   return (
     <div
-      className={`provider-run-failure-card provider-${provider}${exitCode === 130 ? ' is-cancelled' : ''}`}
+      className={`provider-run-failure-card provider-${providerClass}${exitCode === 130 ? ' is-cancelled' : ''}`}
       role="alert"
       aria-label={headline}
       onContextMenu={onContextMenu ? (event) => onContextMenu(event, copyText) : undefined}

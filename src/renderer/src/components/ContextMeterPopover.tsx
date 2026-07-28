@@ -17,6 +17,7 @@ import { formatContextTokens } from '../lib/contextWindows'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import { contextPressureSeverity } from '../../../shared/contextCompaction'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderName } from './Sidebar'
 import { ContextWheel, ContextCompactionIcon } from './AppChromeSymbols'
 
@@ -26,10 +27,10 @@ import { ContextWheel, ContextCompactionIcon } from './AppChromeSymbols'
 // one really wants compacting" cue. Deliberately distinct from the ≥80/≥95
 // warn/critical severity used for the bar + %: the icon nudges earlier so the
 // user acts before a seat is genuinely pressed.
-function compactionIconAccent(percent: number, provider: ProviderId): string {
+function compactionIconAccent(percent: number, providerClass: string): string {
   if (percent >= 85) return 'var(--danger, #e54d4d)'
   if (percent >= 60) return '#ff7d1a'
-  return `var(--provider-${provider}-color, var(--accent))`
+  return `var(--provider-${providerClass}-color, var(--accent))`
 }
 
 interface ContextMeterPopoverProps {
@@ -77,9 +78,16 @@ interface RowView {
   primary: string
   detail: string
   provider: ProviderId
+  providerClass: string
   usedTokens: number
   windowTokens: number
   percent: number
+}
+
+export function contextMeterRowHueClass(
+  row: Pick<ContextMeterRow, 'provider' | 'modelId'>
+): string {
+  return resolveProviderHueClass(row.provider, row.modelId)
 }
 
 function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
@@ -92,6 +100,7 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
     primary,
     detail,
     provider: row.provider,
+    providerClass: contextMeterRowHueClass(row),
     usedTokens: row.usedTokens,
     windowTokens: row.windowTokens,
     percent: row.percent
@@ -120,7 +129,7 @@ function MeterRow({
   onConfirmCompact?: () => void
   onCancelCompact?: () => void
 }): React.JSX.Element {
-  const accent = `var(--provider-${row.provider}-color, var(--accent))`
+  const accent = `var(--provider-${row.providerClass}-color, var(--accent))`
   const pctText = `${Math.round(row.percent)}%`
   const amount =
     row.windowTokens > 0
@@ -131,7 +140,7 @@ function MeterRow({
   // speaker is locked out so a manual compaction can't collide with its turn.
   const nothingToCompact = row.percent < 1
   const compactDisabled = nothingToCompact || Boolean(speaking)
-  const compactAccent = compactionIconAccent(row.percent, row.provider)
+  const compactAccent = compactionIconAccent(row.percent, row.providerClass)
   const compactTitle = speaking
     ? `${row.primary} is speaking — auto-compaction handles the active seat`
     : nothingToCompact
@@ -139,9 +148,17 @@ function MeterRow({
       : `Compact ${row.primary}`
   return (
     <div
-      className={`context-meter-row${focused ? ' context-meter-row--focused' : ''}${
+      className={`context-meter-row provider-${row.providerClass}${
+        focused ? ' context-meter-row--focused' : ''
+      }${
         severity !== 'ok' ? ` context-meter-row--${severity}` : ''
       }`}
+      data-provider-hue={row.providerClass}
+      style={
+        {
+          '--context-meter-row-accent': accent
+        } as React.CSSProperties
+      }
     >
       <div className="context-meter-row-head">
         <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
@@ -301,11 +318,14 @@ export function ContextMeterPopover({
   const isCursorShell = composerStyle === 'cursor' || composerStyle === 'chatgpt'
   const triggerSeverity = contextPressureSeverity(trackedPercent)
   const showCompactAction = Boolean(onCompactContext) && triggerSeverity !== 'ok'
+  const popoverProviderClass =
+    participantRows || rows.length !== 1 ? provider : rows[0]?.providerClass || provider
 
   const popoverContent = open && position && rows.length > 0 && (
     <div
       ref={popoverRef}
-      className={`composer-combined-picker-popover context-meter-popover provider-${provider} shell-${composerStyle}`}
+      className={`composer-combined-picker-popover context-meter-popover provider-${popoverProviderClass} shell-${composerStyle}`}
+      data-provider-hue={popoverProviderClass}
       style={{
         position: 'fixed',
         left: `${position.left}px`,

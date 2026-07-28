@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   ensembleFanoutLaneIntent,
@@ -100,6 +101,31 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('provider-alibaba')
     expect(html).toContain('--accent:var(--provider-alibaba-color, var(--accent))')
     expect(html).not.toContain('provider-ollama')
+  })
+
+  it('spoofs every Pi upstream accent on its fan-out viewport card', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      const html = renderToStaticMarkup(
+        <EnsembleFanoutResultCard
+          message={fanoutMessage({
+            metadata: {
+              ...fanoutMessage().metadata,
+              ensembleProvider: 'pi',
+              ensembleModel: model
+            }
+          })}
+          onPreviewImage={() => {}}
+        />
+      )
+
+      expect(html).toContain(`provider-${brand.hueClass}`)
+      expect(html).toContain(
+        `--accent:var(--provider-${brand.hueClass}-color, var(--accent))`
+      )
+      expect(html).not.toContain('provider-pi')
+    }
   })
 
   it('labels write-intent lanes as writer fan-out', () => {

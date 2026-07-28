@@ -299,6 +299,15 @@ export function TranscriptParticipantFilterRail({
     gridPlacement?: CSSProperties
   ): ReactElement => {
     const active = activeFilterKeys.has(item.key)
+    const providerHueClass = item.provider
+      ? resolveProviderHueClass(item.provider, item.participant?.model)
+      : null
+    const buttonStyle = providerHueClass
+      ? ({
+          ...(gridPlacement || {}),
+          '--participant-filter-accent': `var(--provider-${providerHueClass}-color, var(--accent))`
+        } as CSSProperties)
+      : gridPlacement
     return (
       <button
         key={item.key}
@@ -306,13 +315,14 @@ export function TranscriptParticipantFilterRail({
         className={`transcript-participant-filter-button${
           active ? ' is-active' : ''
         }${item.kind === 'system' ? ' is-system' : ''}${
-          item.provider ? ` provider-${item.provider}` : ''
+          providerHueClass ? ` provider-${providerHueClass}` : ''
         }`}
+        data-provider-hue={providerHueClass || undefined}
         data-filter-ordinal={item.ordinal}
         aria-pressed={active}
         aria-label={itemAccessibleLabel(item, active)}
         title={item.title}
-        style={gridPlacement}
+        style={buttonStyle}
         onClick={() => onToggleFilter(item.key)}
       >
         {item.kind === 'participant' && (

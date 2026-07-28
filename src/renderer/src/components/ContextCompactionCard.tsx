@@ -120,6 +120,11 @@ export function ContextCompactionCard({
   const { telemetry } = record
   const failed = record.kind === 'failed'
   const provider = (telemetry.provider || message.metadata?.provider) as ProviderId | undefined
+  const providerClass =
+    typeof message.metadata?.displayHueClass === 'string' &&
+    message.metadata.displayHueClass
+      ? message.metadata.displayHueClass
+      : provider
   const metaLabel = contextCompactionMessageMetaLabel(message)
 
   const detailParts: string[] = []
@@ -143,7 +148,7 @@ export function ContextCompactionCard({
   return (
     <div
       className={`context-compaction-row ${failed ? 'is-failed' : 'is-completed'}${
-        provider ? ` provider-${provider}` : ''
+        providerClass ? ` provider-${providerClass}` : ''
       }`}
       role="group"
       aria-label={ariaLabel}

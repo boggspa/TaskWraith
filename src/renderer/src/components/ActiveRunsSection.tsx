@@ -6,7 +6,10 @@ import type {
   RunQueueJob,
   RunQueueJobStatus
 } from '../../../main/store/types'
-import { resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
+import {
+  resolveOllamaDisplayBrand,
+  resolveProviderHueClass
+} from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { isRunQueueJobVisibleForChat } from '../lib/runningChatVisibility'
 
@@ -280,7 +283,9 @@ export function resolveActiveRunProviderDisplay(
   const provider = resolveActiveRunProvider(job.provider, chat?.provider)
   const modelId = resolveActiveRunModelId(job, chat)
   const brand = provider === 'ollama' ? resolveOllamaDisplayBrand(modelId) : null
-  const providerClass = brand?.providerClass || provider || 'unknown'
+  const providerClass = provider
+    ? resolveProviderHueClass(provider, modelId)
+    : 'unknown'
   const providerColor = provider
     ? `var(--provider-${providerClass}-color, var(--provider-${provider}-color, var(--accent)))`
     : 'var(--accent)'

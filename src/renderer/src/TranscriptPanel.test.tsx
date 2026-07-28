@@ -415,6 +415,60 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).not.toContain('run-card')
   })
 
+  it('uses the Pi upstream hue for participant status transcript headers', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'pi-status',
+              role: 'system',
+              content: 'Scout yielded.',
+              timestamp: '2026-07-28T00:00:00.000Z',
+              metadata: {
+                kind: 'ensembleParticipantStatus',
+                ensembleProvider: 'pi',
+                ensembleRole: 'Scout',
+                ensembleModel: 'mistral/devstral-2512'
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('message-meta provider-mistral')
+    expect(html).not.toContain('message-meta provider-pi')
+  })
+
+  it('uses the Pi upstream hue for provider-generated close-out badges', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'pi-closeout',
+              role: 'system',
+              content: 'Task complete.',
+              timestamp: '2026-07-28T00:00:00.000Z',
+              metadata: {
+                kind: TASKWRAITH_CLOSEOUT_KIND,
+                closeoutSource: 'currentProvider',
+                closeoutProvider: 'pi',
+                closeoutModel: 'cerebras/gpt-oss-120b'
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('taskwraith-closeout-badge provider-cerebras')
+    expect(html).not.toContain('taskwraith-closeout-badge provider-pi')
+  })
+
   it('prepends participant-style headers to thinking trace viewports', () => {
     const participant = ensembleParticipant({
       id: 'codex-captain',

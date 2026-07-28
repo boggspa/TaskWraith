@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState, type JSX } from 'react'
 import type { ChatRun, ProviderId, RunEventReplay } from '../../../main/store/types'
 import { classifyRunEvent } from '../lib/RunEventClassifier'
 import { humaniseModelId } from '../lib/modelDisplayName'
-import { resolveOllamaDisplayBrand } from '../lib/ollamaDisplayBrand'
+import {
+  resolveOllamaDisplayBrand,
+  resolveProviderHueClass
+} from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { DigitOdometer } from './DigitOdometer'
 
@@ -217,19 +220,19 @@ function getRunProviderDisplay(
   run: ChatRun,
   provider: ProviderId
 ): { label: string; providerClass: string } {
+  const model = run.actualModel || run.requestedModel || ''
   if (provider === 'ollama') {
-    const model = run.actualModel || run.requestedModel || ''
     const modelLabel = humaniseModelId('ollama', model)
     const brand = resolveOllamaDisplayBrand(model, modelLabel)
     return {
       label: brand?.modelLabel || modelLabel || getProviderLabel(provider),
-      providerClass: brand?.providerClass || provider
+      providerClass: resolveProviderHueClass(provider, model, modelLabel)
     }
   }
 
   return {
     label: getProviderLabel(provider),
-    providerClass: provider
+    providerClass: resolveProviderHueClass(provider, model)
   }
 }
 

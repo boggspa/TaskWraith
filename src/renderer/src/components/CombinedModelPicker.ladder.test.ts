@@ -280,6 +280,25 @@ describe('reasoning ladder visual taper', () => {
     expect(low.match(/class="composer-combined-picker-ladder-sparkle"/g)).toHaveLength(3)
     expect(low.match(/class="composer-combined-picker-ladder-shimmer-band"/g)).toHaveLength(1)
   })
+
+  it('uses the selected Pi upstream hue for reasoning ladder FX', () => {
+    const ladder = buildLadderModel('pi', [
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High' }
+    ])
+    const html = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'pi',
+        modelId: 'deepseek/deepseek-v4-pro',
+        ladder,
+        selectedReasoning: 'high',
+        onSelectReasoning: () => undefined,
+        onInteract: () => undefined
+      })
+    )
+
+    expect(html).toContain('--ladder-accent:var(--provider-deepseek-color, var(--accent))')
+  })
 })
 
 describe('chipReasoningSparkleTier', () => {

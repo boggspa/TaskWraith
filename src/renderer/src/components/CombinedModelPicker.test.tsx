@@ -1,12 +1,14 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
   emptyProviderModelsLabel,
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
+  modelPickerHueClass,
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition
 } from './CombinedModelPicker'
@@ -214,6 +216,63 @@ describe('CombinedModelPicker', () => {
     expect(html).not.toContain('provider-glyph-ollama')
     // The spoof hue remains on the surrounding chip; official artwork is not tinted.
     expect(html).not.toContain('--provider-accent:')
+  })
+
+  it('uses every selected Pi model upstream hue without changing its runtime provider mark', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const id = Object.keys(PI_MODEL_LABELS).find((model) =>
+        model.startsWith(`${upstream}/`)
+      )
+      expect(id, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      const model = { id: id!, label: PI_MODEL_LABELS[id!] }
+      const html = renderToStaticMarkup(
+        <CombinedModelPicker
+          provider="pi"
+          composerStyle="default"
+          modelOptions={[model]}
+          providerGroups={[{ provider: 'pi', label: 'Pi', modelOptions: [model] }]}
+          selectedModelId={model.id}
+          onSelectModel={() => undefined}
+          onSelectProviderModel={() => undefined}
+          reasoningOptions={[]}
+          selectedReasoning=""
+          onSelectReasoning={() => undefined}
+        />
+      )
+
+      expect(modelPickerHueClass('pi', model.id, model.label)).toBe(brand.hueClass)
+      expect(html).toContain('data-provider="pi"')
+      expect(html).toContain(`data-provider-hue="${brand.hueClass}"`)
+      expect(html).toContain(
+        `--chip-accent:var(--provider-${brand.hueClass}-color, var(--accent))`
+      )
+      expect(html).toContain('data-provider-logo="pi"')
+    }
+  })
+
+  it('uses the model-row accent variable for row interactions and affordances', () => {
+    const css = readFileSync(
+      new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+      'utf8'
+    )
+    const blocks = (selector: string): string[] =>
+      [...css.matchAll(new RegExp(`${selector}\\s*\\{[\\s\\S]*?\\}`, 'g'))].map(
+        (match) => match[0]
+      )
+
+    expect(css).toMatch(
+      /\.composer-combined-picker-row:hover,\s*\.composer-combined-picker-row\.is-highlighted\s*\{[\s\S]*?var\(--model-row-accent, var\(--accent\)\)/
+    )
+    expect(
+      blocks('\\.composer-combined-picker-check').some((block) =>
+        block.includes('var(--model-row-accent, var(--accent))')
+      )
+    ).toBe(true)
+    expect(
+      blocks('\\.composer-combined-picker-fast-indicator').some((block) =>
+        block.includes('var(--model-row-accent, var(--accent))')
+      )
+    ).toBe(true)
   })
 
   it('flattens provider groups without losing provider order or duplicate model ids', () => {

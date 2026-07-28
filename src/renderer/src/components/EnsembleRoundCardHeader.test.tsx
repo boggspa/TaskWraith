@@ -73,4 +73,32 @@ describe('EnsembleRoundCardHeader', () => {
     expect(expanded).not.toContain('border-color:')
     expect(css).not.toContain('.ensemble-round-card-chevron')
   })
+
+  it('uses each Pi participant model hue without collapsing same-seat speakers', () => {
+    const message = roundHeaderMessage()
+    const data = message.metadata?.ensembleRoundHeader as Record<string, unknown>
+    data.attributions = [
+      {
+        participantId: 'pi-deepseek',
+        provider: 'pi',
+        role: 'Scout',
+        model: 'deepseek/deepseek-v4-pro'
+      },
+      {
+        participantId: 'pi-mistral',
+        provider: 'pi',
+        role: 'Reviewer',
+        model: 'mistral/devstral-2512'
+      }
+    ]
+
+    const html = renderToStaticMarkup(
+      <EnsembleRoundCardHeader message={message} onSetExpanded={() => {}} />
+    )
+    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('provider-mistral')
+    expect(html).toContain('data-provider-hue="deepseek"')
+    expect(html).toContain('data-provider-hue="mistral"')
+    expect(html.match(/class="ensemble-round-card-provider provider-/g)).toHaveLength(2)
+  })
 })

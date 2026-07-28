@@ -35,6 +35,7 @@ import {
 import { ensembleRoundStatusClass } from '../lib/ensembleRoundStatusClass'
 import { getChatProvider } from '../lib/chatScope'
 import { getProviderLabel } from '../lib/providerLabels'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { formatAssistantMessageLabel } from '../lib/assistantMessageLabel'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import { shortModelName } from '../lib/composerChipFormat'
@@ -4474,6 +4475,9 @@ export const TranscriptPanel = memo(
                           typeof msg.metadata?.closeoutModel === 'string'
                             ? msg.metadata.closeoutModel.replace(/^Apple\s+/, '').trim()
                             : ''
+                        const closeoutProviderClass = closeoutProvider
+                          ? resolveProviderHueClass(closeoutProvider, closeoutModel)
+                          : null
                         const badge =
                           source === 'deterministicFallback'
                             ? null
@@ -4488,7 +4492,9 @@ export const TranscriptPanel = memo(
                             {badge && (
                               <span
                                 className={`message-meta-model-badge taskwraith-closeout-badge${
-                                  closeoutProvider ? ` provider-${closeoutProvider}` : ''
+                                  closeoutProviderClass
+                                    ? ` provider-${closeoutProviderClass}`
+                                    : ''
                                 }`}
                                 title={
                                   closeoutProvider
@@ -4616,6 +4622,10 @@ export const TranscriptPanel = memo(
                             }
                           : null
                       if (statusMeta?.provider) {
+                        const statusProviderClass = resolveProviderHueClass(
+                          statusMeta.provider,
+                          statusMeta.model
+                        )
                         const label = statusMeta.role
                           ? `${getProviderLabel(statusMeta.provider)} / ${statusMeta.role}`
                           : getProviderLabel(statusMeta.provider)
@@ -4623,7 +4633,7 @@ export const TranscriptPanel = memo(
                           ? shortModelName(statusMeta.provider, '', statusMeta.model)
                           : ''
                         return (
-                          <div className={`message-meta provider-${statusMeta.provider}`}>
+                          <div className={`message-meta provider-${statusProviderClass}`}>
                             <span className="message-meta-label">{label}</span>
                             {statusModelBadge && (
                               <span

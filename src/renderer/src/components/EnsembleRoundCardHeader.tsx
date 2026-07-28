@@ -1,6 +1,8 @@
 import React from 'react'
+import type { CSSProperties } from 'react'
 import type { ChatMessage, ProviderId } from '../../../main/store/types'
 import { readEnsembleRoundHeader } from '../lib/ensembleRoundCards'
+import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderName, ProviderBadgeIcon } from './Sidebar'
 
 /**
@@ -36,6 +38,15 @@ export function EnsembleRoundCardHeader({
   if (!data) return null
 
   const { roundId, roundIndex, roundCount, expanded, providers, roles, bodyMessageCount } = data
+  const attributions =
+    data.attributions && data.attributions.length > 0
+      ? data.attributions
+      : providers.map((provider, index) => ({
+          participantId: null,
+          provider,
+          role: roles[index] || null,
+          model: null
+        }))
   const summaryLine = data.summary || data.promptPreview || null
 
   const countLabel = `${bodyMessageCount} ${bodyMessageCount === 1 ? 'message' : 'messages'}`
@@ -62,21 +73,36 @@ export function EnsembleRoundCardHeader({
             <span className="ensemble-round-card-index-total"> / {roundCount}</span>
           )}
         </span>
-        {providers.length > 0 && (
+        {attributions.length > 0 && (
           <span className="ensemble-round-card-providers" aria-hidden="true">
-            {providers.map((provider, i) => (
-              <span
-                key={provider}
-                className={`ensemble-round-card-provider provider-${provider}`}
-                title={
-                  roles[i]
-                    ? `${getProviderName(provider as ProviderId)} / ${roles[i]}`
-                    : getProviderName(provider as ProviderId)
-                }
-              >
-                <ProviderBadgeIcon provider={provider as ProviderId} />
-              </span>
-            ))}
+            {attributions.map((attribution, index) => {
+              const provider = attribution.provider as ProviderId
+              const hueClass = resolveProviderHueClass(provider, attribution.model)
+              return (
+                <span
+                  key={
+                    attribution.participantId ||
+                    `${attribution.provider}:${attribution.model || ''}:${index}`
+                  }
+                  className={`ensemble-round-card-provider provider-${hueClass}`}
+                  data-provider={attribution.provider}
+                  data-provider-hue={hueClass}
+                  data-model={attribution.model || undefined}
+                  style={
+                    {
+                      '--ensemble-round-provider-accent': `var(--provider-${hueClass}-color, var(--accent))`
+                    } as CSSProperties
+                  }
+                  title={
+                    attribution.role
+                      ? `${getProviderName(provider)} / ${attribution.role}`
+                      : getProviderName(provider)
+                  }
+                >
+                  <ProviderBadgeIcon provider={provider} />
+                </span>
+              )
+            })}
           </span>
         )}
         <span className="ensemble-round-card-count">{countLabel}</span>

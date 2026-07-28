@@ -55,6 +55,25 @@ export type {
   CombinedModelPickerReasoningOption
 } from '../lib/combinedModelPickerTypes'
 
+export function modelPickerHueClass(
+  provider: string | undefined | null,
+  modelId?: string | null,
+  modelLabel?: string | null
+): string {
+  return resolveProviderHueClass(provider, modelId, modelLabel)
+}
+
+function modelPickerAccentStyle(
+  provider: string | undefined | null,
+  modelId?: string | null,
+  modelLabel?: string | null
+): React.CSSProperties {
+  const hueClass = modelPickerHueClass(provider, modelId, modelLabel)
+  return {
+    '--model-row-accent': `var(--provider-${hueClass}-color, var(--accent))`
+  } as React.CSSProperties
+}
+
 /**
  * Empty-state text for a provider group with no rows.
  *
@@ -747,6 +766,7 @@ function ladderStopBottom(index: number): string {
 
 export function ReasoningLadderSlider({
   provider,
+  modelId,
   ladder,
   selectedReasoning,
   onSelectReasoning,
@@ -755,6 +775,7 @@ export function ReasoningLadderSlider({
   onInteract
 }: {
   provider: ProviderId
+  modelId?: string
   ladder: LadderModel
   selectedReasoning: string
   onSelectReasoning: (value: string) => void
@@ -783,6 +804,7 @@ export function ReasoningLadderSlider({
   // and taper smoothly to full intensity/density at Ultra/Ultracode (index 6).
   const fxProfile = reasoningLadderFxProfile(interactive ? displayIndex : 0)
   const fillHeight = ladderStopBottom(displayIndex)
+  const providerHueClass = modelPickerHueClass(provider, modelId)
   const fxTier = interactive
     ? displayIndex === LADDER_MAX_INDEX
       ? 'ultracode'
@@ -813,7 +835,7 @@ export function ReasoningLadderSlider({
       style={
         {
           '--ladder-accent': interactive
-            ? `var(--provider-${provider}-color, var(--accent))`
+            ? `var(--provider-${providerHueClass}-color, var(--accent))`
             : 'var(--text-secondary)'
         } as React.CSSProperties
       }
@@ -1248,7 +1270,7 @@ export function CombinedModelPicker({
     resolveProviderBrandLabel(provider, selectedModelOption.id) ||
     selectedProviderGroup?.label ||
     getProviderName(provider)
-  const providerHueClass = resolveProviderHueClass(
+  const providerHueClass = modelPickerHueClass(
     provider,
     selectedModelOption.id,
     selectedModelOption.label
@@ -1558,6 +1580,10 @@ export function CombinedModelPicker({
                 type="button"
                 className={`composer-combined-picker-row composer-combined-picker-provider-row ${active ? 'is-selected' : ''} ${idx === providerHighlight && focusedColumn === 'provider' ? 'is-highlighted' : ''}`}
                 data-ollama-provider-class={group.providerClass}
+                data-provider-hue={group.providerClass}
+                style={{
+                  '--model-row-accent': `var(--provider-${group.providerClass}-color, var(--accent))`
+                } as React.CSSProperties}
                 disabled={disabled}
                 onMouseEnter={() => {
                   setFocusedColumn('provider')
@@ -1635,6 +1661,11 @@ export function CombinedModelPicker({
                   const rowIndex = modelOffset + optionIndex
                   const selected = group.provider === provider && option.id === selectedModelId
                   const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
+                  const rowHueClass = modelPickerHueClass(
+                    group.provider,
+                    option.id,
+                    option.label
+                  )
                   // Grouped view spans providers, so the lane is decided by THIS
                   // row's provider — not the picker's currently selected one.
                   const requiresApiKey = modelRequiresApiKey(group.provider, option.id)
@@ -1654,6 +1685,8 @@ export function CombinedModelPicker({
                           : ''
                       }`}
                       data-provider-model={`${group.provider}:${option.id}`}
+                      data-provider-hue={rowHueClass}
+                      style={modelPickerAccentStyle(group.provider, option.id, option.label)}
                       disabled={Boolean(disabled || option.disabled)}
                       aria-pressed={selected}
                       title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
@@ -1726,6 +1759,7 @@ export function CombinedModelPicker({
               )
               // Single-provider view: every row belongs to the picker's provider.
               const requiresApiKey = modelRequiresApiKey(provider, option.id)
+              const rowHueClass = modelPickerHueClass(provider, option.id, option.label)
               return (
                 <button
                   key={option.id}
@@ -1735,6 +1769,8 @@ export function CombinedModelPicker({
                   } ${option.disabled ? 'is-disabled' : ''} ${
                     idx === modelHighlight && focusedColumn === 'model' ? 'is-highlighted' : ''
                   }`}
+                  data-provider-hue={rowHueClass}
+                  style={modelPickerAccentStyle(provider, option.id, option.label)}
                   disabled={Boolean(disabled || option.disabled)}
                   aria-pressed={option.id === selectedModelId}
                   title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
@@ -1798,6 +1834,7 @@ export function CombinedModelPicker({
           <div className="composer-combined-picker-column-header">Reasoning</div>
           <ReasoningLadderSlider
             provider={provider}
+            modelId={selectedModelOption.id}
             ladder={ladder}
             selectedReasoning={selectedReasoning}
             onSelectReasoning={onSelectReasoning}
@@ -1818,6 +1855,11 @@ export function CombinedModelPicker({
             <button
               type="button"
               className={`composer-combined-picker-row composer-combined-picker-fast-toggle ${fastModeEnabled ? 'is-selected' : ''}`}
+              style={modelPickerAccentStyle(
+                provider,
+                selectedModelOption.id,
+                selectedModelOption.label
+              )}
               onClick={() => {
                 if (disabled || !fastModeCapable) return
                 onToggleFastMode?.()

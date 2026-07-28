@@ -41,4 +41,28 @@ describe('ParticipantHealthCard', () => {
 
     expect(renderToStaticMarkup(<ParticipantHealthCard message={message} />)).toBe('')
   })
+
+  it('repairs legacy frozen Pi seat presentation from the stamped model', () => {
+    const message = healthMessage()
+    message.metadata = {
+      kind: 'ensembleParticipantHealth',
+      okCount: 1,
+      totalCount: 1,
+      entries: [
+        {
+          participantId: 'deepseek-reviewer',
+          provider: 'pi',
+          model: 'deepseek/deepseek-v4-pro',
+          displayProviderLabel: 'Pi',
+          displayHueClass: 'pi',
+          role: 'Reviewer',
+          status: 'ok'
+        }
+      ]
+    }
+
+    const html = renderToStaticMarkup(<ParticipantHealthCard message={message} />)
+    expect(html).toContain('participant-health-chip provider-deepseek')
+    expect(html).toContain('DeepSeek / Reviewer')
+  })
 })

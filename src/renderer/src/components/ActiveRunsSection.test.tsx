@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
+import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   getActiveRunChatLabel,
   resolveActiveRunProviderDisplay
@@ -88,5 +89,28 @@ describe('resolveActiveRunProviderDisplay', () => {
     expect(display.provider).toBe('gemini')
     expect(display.label).toBe('Gemini')
     expect(display.providerClass).toBe('gemini')
+  })
+
+  it('uses every Pi upstream hue for an active run', () => {
+    for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
+      const display = resolveActiveRunProviderDisplay(
+        job({
+          provider: 'pi',
+          request: {
+            selectedModelType: 'custom',
+            customModel: modelId
+          } as RunQueueJob['request']
+        }),
+        chat('pi')
+      )
+
+      expect(display.label).toBe('Pi')
+      expect(display.providerClass).toBe(brand.hueClass)
+      expect(display.style['--active-run-provider-color']).toContain(
+        `--provider-${brand.hueClass}-color`
+      )
+    }
   })
 })

@@ -2,6 +2,7 @@ import { createRef } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
+import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
 import {
   TRANSCRIPT_SYSTEM_FILTER_KEY,
   transcriptParticipantFilterKey
@@ -168,6 +169,50 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('data-provider-logo="ollama"')
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).not.toContain('provider-glyph-ollama')
+  })
+
+  it('spoofs every Pi participant filter accent from its upstream model', () => {
+    const modelsByHue = [
+      ['deepseek/deepseek-v4-flash', 'deepseek'],
+      ['zai/glm-5.2', 'zai'],
+      ['qwen-token-plan/qwen3.7-max', 'qwen'],
+      ['minimax/MiniMax-M3', 'minimax'],
+      ['mistral/devstral-2512', 'mistral'],
+      ['groq/openai/gpt-oss-120b', 'groq'],
+      ['cerebras/zai-glm-4.7', 'cerebras']
+    ] as const
+    expect(Object.keys(PI_MODEL_LABELS)).toEqual(
+      expect.arrayContaining(modelsByHue.map(([model]) => model))
+    )
+
+    const html = renderToStaticMarkup(
+      <TranscriptParticipantFilterRail
+        currentChat={ensembleChat(
+          modelsByHue.map(([model], index) =>
+            participant({
+              id: `pi-${index}`,
+              provider: 'pi',
+              role: `Pi ${index + 1}`,
+              model,
+              order: index + 1
+            })
+          )
+        )}
+        activeFilterKeys={new Set(['participant:pi-0'])}
+        scrollRef={createRef<HTMLDivElement>()}
+        contentRef={createRef<HTMLDivElement>()}
+        onToggleFilter={() => {}}
+      />
+    )
+
+    for (const [, hue] of modelsByHue) {
+      expect(html).toContain(`provider-${hue}`)
+      expect(html).toContain(`data-provider-hue="${hue}"`)
+      expect(html).toContain(
+        `--participant-filter-accent:var(--provider-${hue}-color, var(--accent))`
+      )
+    }
+    expect(html).not.toContain('data-provider-hue="pi"')
   })
 
   it('does not render for non-ensemble chats', () => {

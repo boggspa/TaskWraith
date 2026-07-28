@@ -92,6 +92,31 @@ describe('ContextCompactionCard', () => {
     expect(contextCompactionMessageMetaLabel(message)).toBe('Codex / Worker')
   })
 
+  it('uses the frozen Pi upstream hue for the transcript row', () => {
+    const message = makeMessage({
+      metadata: {
+        kind: 'contextCompaction',
+        provider: 'pi',
+        displayParticipantLabel: 'DeepSeek / Worker',
+        displayHueClass: 'deepseek',
+        contextCompaction: {
+          kind: 'completed',
+          telemetry: {
+            provider: 'pi',
+            trigger: 'auto',
+            preTokens: 120000,
+            postTokens: 16000
+          }
+        }
+      }
+    })
+
+    const html = renderToStaticMarkup(<ContextCompactionCard message={message} />)
+    expect(html).toContain('provider-deepseek')
+    expect(html).toContain('DeepSeek / Worker')
+    expect(html).not.toContain('provider-pi')
+  })
+
   it('exposes the failed bit + meta label for the collapsed one-liner lane', () => {
     const failed = makeMessage({
       metadata: {
