@@ -72,6 +72,7 @@ import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
+import { ComposerAboveRowsToggleButton } from '../components/ComposerAboveRowsToggleButton'
 import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
@@ -1352,6 +1353,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   }, [currentComposerChatId, prompt])
   const [isSendConfirming, setIsSendConfirming] = useState(false)
   const [isComposerDragOver, setIsComposerDragOver] = useState(false)
+  const [areComposerAboveRowsMinimized, setAreComposerAboveRowsMinimized] = useState(false)
   const [voiceCaptureState, setVoiceCaptureState] = useState<ComposerVoiceCaptureState>(
     EMPTY_COMPOSER_VOICE_CAPTURE_STATE
   )
@@ -1885,12 +1887,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       isCurrentEnsembleChat ||
       queuedMessagesAboveRowEntries.length > 0)
   const nativeNoAboveRowsClass =
-    appearance.composerStyle === 'default' && !hasComposerAboveRows
+    appearance.composerStyle === 'default' &&
+    (!hasComposerAboveRows || areComposerAboveRowsMinimized)
       ? ' composer-surface--native-no-above-rows'
       : ''
 
   return (
-          <div className={`composer-area interface-${interfaceStyle}`} ref={composerAreaRef}>
+          <div
+            className={`composer-area interface-${interfaceStyle}${
+              areComposerAboveRowsMinimized ? ' composer-area--above-rows-minimized' : ''
+            }`}
+            ref={composerAreaRef}
+          >
             {shouldShowGhostCompanion && <GhostCompanion />}
             {/*
               Phase K-followup — Removed `provider-shell-status-row`.
@@ -4923,6 +4931,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                <CanvasComposerButton
 	                  chatId={currentChat?.appChatId ?? null}
 	                  composerStyle={appearance.composerStyle}
+	                />
+	                <ComposerAboveRowsToggleButton
+	                  minimized={areComposerAboveRowsMinimized}
+	                  onToggle={setAreComposerAboveRowsMinimized}
 	                />
 	                </div>
                 <div className="composer-telemetry-side composer-telemetry-side--left">

@@ -91,3 +91,146 @@
   transition: opacity 120ms ease;
   transform: translate(0, -50%);
 }
+
+/* ── Composer above-row minimise toggle ────────────────────────────────────
+ * This is intentionally a plain pressed button rather than another picker:
+ * workspace/git, ensemble, queue, and attachment rows already own their
+ * controls. The button just lets the typing surface reclaim that vertical
+ * space. It joins the bottom telemetry cluster after Canvas, so its left-facing
+ * hint always unfolds toward the other satellite glyphs. */
+.composer-above-rows-toggle-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 58%, transparent);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-above-rows-toggle-button:hover,
+.composer-above-rows-toggle-button:focus-visible {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-above-rows-toggle-button.is-active {
+  color: color-mix(in srgb, var(--accent) 84%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.composer-above-rows-toggle-button .composer-control-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.composer-above-rows-toggle-glyph {
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.composer-above-rows-toggle-button.is-active .composer-above-rows-toggle-glyph {
+  transform: rotate(180deg);
+}
+
+/* The two direct workspace rows exist in Cursor/Codex/ChatGPT shells, while
+ * every other above-row is collected in the shared stack. Keep both shapes in
+ * one transition contract so no shell-specific DOM is needed. `max-block-size`
+ * lets the composer pull upward as the rows duck down behind its input. */
+.composer-area {
+  --composer-above-row-visibility-delay: 0ms;
+}
+
+.composer-area--above-rows-minimized {
+  --composer-above-row-visibility-delay: 260ms;
+}
+
+:is(.composer-area, .composer-primary-stack)
+  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+.composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
+  max-height: 96rem;
+  max-block-size: 96rem;
+  visibility: visible;
+  transition:
+    max-height 260ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    max-block-size 260ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    margin-block 260ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    padding-block 220ms ease,
+    border-block-width 220ms ease,
+    opacity 140ms ease,
+    transform 260ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    visibility 0s linear var(--composer-above-row-visibility-delay);
+}
+
+.composer-area--above-rows-minimized
+  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+.composer-area--above-rows-minimized
+  > .composer-primary-stack
+  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+.composer-area--above-rows-minimized
+  .composer-surface
+  > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles) {
+  min-height: 0 !important;
+  min-block-size: 0 !important;
+  max-height: 0 !important;
+  max-block-size: 0 !important;
+  margin-block: 0 !important;
+  padding-block: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  overflow: hidden !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none !important;
+  transform: translateY(12px) scaleY(0.94);
+  transform-origin: bottom center;
+}
+
+/* In the native console shell, a non-empty (but now visually collapsed) stack
+ * would otherwise retain its merged-frame seam. The state class restores the
+ * same standalone top edge used when the chat never had above rows. */
+[data-composer-style='default']
+  .app-transcript
+  .composer-area--above-rows-minimized
+  .composer-surface {
+  margin-top: 0 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-area--above-rows-minimized {
+    --composer-above-row-visibility-delay: 1ms;
+  }
+
+  :is(.composer-area, .composer-primary-stack)
+    > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+  .composer-surface > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
+  .composer-above-rows-toggle-glyph {
+    transition-duration: 1ms;
+  }
+}
+
+[data-reduce-motion='true'] .composer-area--above-rows-minimized {
+  --composer-above-row-visibility-delay: 1ms;
+}
+
+[data-reduce-motion='true']
+  :is(.composer-area, .composer-primary-stack)
+  > :is(.composer-above-bar-stack, .composer-above-bar--cursor-lead),
+[data-reduce-motion='true']
+  .composer-surface
+  > :is(.composer-chips, .composer-attachment-tray, .composer-top-toggles),
+[data-reduce-motion='true'] .composer-above-rows-toggle-glyph {
+  transition-duration: 1ms;
+}

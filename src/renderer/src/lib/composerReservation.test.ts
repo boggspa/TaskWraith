@@ -9,10 +9,18 @@ import {
 const fakeStack = (rows: number): Element =>
   ({ querySelectorAll: () => ({ length: rows }) }) as unknown as Element
 
-const fakeComposer = (getHeight: () => number, getRows: () => number): HTMLElement =>
+const fakeComposer = (
+  getHeight: () => number,
+  getRows: () => number,
+  isAboveRowsMinimized: () => boolean = () => false
+): HTMLElement =>
   ({
     getBoundingClientRect: () => ({ height: getHeight() }) as DOMRect,
-    querySelector: () => fakeStack(getRows())
+    querySelector: () => fakeStack(getRows()),
+    classList: {
+      contains: (className: string) =>
+        className === 'composer-area--above-rows-minimized' && isAboveRowsMinimized()
+    }
   }) as unknown as HTMLElement
 
 const fakeTranscript = () => {
@@ -163,6 +171,31 @@ describe('bindComposerReservation', () => {
 
     cleanupA()
     cleanupB()
+  })
+
+  it('drops the extra transcript clearance while composer above rows are minimized', () => {
+    let minimized = false
+    const transcript = fakeTranscript()
+    const observers = observerHarness()
+    const cleanup = bindComposerReservation({
+      transcript: transcript.element,
+      composerArea: fakeComposer(
+        () => 287,
+        () => 3,
+        () => minimized
+      ),
+      resizeObserverCtor: observers.ResizeObserverCtor,
+      mutationObserverCtor: observers.MutationObserverCtor,
+      windowTarget: null
+    })
+
+    expect(transcript.values.get('--composer-above-row-clearance')).toBe('40px')
+
+    minimized = true
+    observers.mutationCallbacks[0]?.()
+
+    expect(transcript.values.get('--composer-above-row-clearance')).toBe('0px')
+    cleanup()
   })
 
   it('uses window resize as a no-ResizeObserver fallback and ignores zero height', () => {

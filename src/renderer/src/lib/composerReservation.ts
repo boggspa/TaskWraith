@@ -67,9 +67,12 @@ export function bindComposerReservation({
     if (!Number.isFinite(measuredHeight) || measuredHeight <= 0) return
     const height = Math.ceil(measuredHeight)
     const aboveRowStack = composerArea.querySelector('.composer-above-bar-stack')
-    const aboveRowClearance = composerAboveRowClearancePx(
-      countComposerAboveRowStrips(aboveRowStack)
+    const aboveRowsMinimized = composerArea.classList.contains(
+      'composer-area--above-rows-minimized'
     )
+    const aboveRowClearance = aboveRowsMinimized
+      ? 0
+      : composerAboveRowClearancePx(countComposerAboveRowStrips(aboveRowStack))
     if (height === lastWrittenHeight && aboveRowClearance === lastAboveRowClearance) return
     lastWrittenHeight = height
     lastAboveRowClearance = aboveRowClearance
