@@ -2839,12 +2839,56 @@ function settleDeniedProviderTransportLaunch(route: AgentRunRoute): void {
   settleProviderRunWithoutTransport(runManager, route.appRunId)
 }
 
+/** Diagnostic mirror of `providerRunPersistenceAuthorized` — names the limb
+ * that denies, for terminal-flush discard warnings. Never used to authorize. */
+function explainProviderRunPersistenceDenial(
+  provider: ProviderId,
+  route: { appRunId?: string; appChatId?: string }
+): string {
+  const appRunId = route.appRunId?.trim()
+  const appChatId = route.appChatId?.trim()
+  if (!appRunId || !appChatId) return 'route-incomplete'
+  const expected = providerRunPersistenceAuthorities.get(appRunId)
+  if (!expected) return 'authority-released'
+  const session = runManager.get(appRunId)
+  if (!session) return 'session-missing'
+  if (session.provider !== provider) return `provider-mismatch(${session.provider})`
+  if (session.appChatId !== appChatId) return `chat-mismatch(${session.appChatId})`
+  if (!isActiveRunSessionStatus(session.status) && !isTerminalRunSessionStatus(session.status)) {
+    return `status(${session.status})`
+  }
+  const current = currentProviderRunPersistenceAuthority(appChatId, session.workspacePath)
+  if (!current) return 'no-current-authority'
+  return historyClearAdmissionGate.authorizeRunPersistence(expected, current)
+    ? 'authorized-on-recheck'
+    : 'incarnation-mismatch'
+}
+
 function releaseProviderRunPersistenceAuthority(appRunId: string | undefined): void {
+  if (process.env.TASKWRAITH_DEBUG_AUTHORITY === '1' && appRunId) {
+    const caller = (new Error().stack || '').split('\n').slice(2, 5).join(' <= ')
+    console.warn(`[authority] release run=${appRunId} ${caller}`)
+  }
   const normalizedRunId = appRunId?.trim()
   if (!normalizedRunId) return
   const authority = providerRunPersistenceAuthorities.get(normalizedRunId)
   if (authority) historyClearAdmissionGate.releaseRunPersistence(authority)
   providerRunPersistenceAuthorities.delete(normalizedRunId)
+}
+
+/**
+ * Terminal cleanup for a MAIN-OWNED transcript finalizer (bridge /
+ * execution-graph / background sub-thread flushers): both persistence holds
+ * together. The RunManager onChange terminal cleanup DEFERS these releases
+ * while a finalizer still owns the run — its terminal flush runs a tick after
+ * finish() (run-diff capture defers it), and releasing the authority under it
+ * made the flush unauthorized, silently discarding the seal and the final
+ * assistant text. Every terminal path of the flush machinery must therefore
+ * release both holds itself, through this helper.
+ */
+function releaseMainOwnedRunPersistenceHolds(runId: string): void {
+  releaseProviderSessionPersistenceDecision(runId)
+  releaseProviderRunPersistenceAuthority(runId)
 }
 
 function globalHistoryClearInProgress(): boolean {
@@ -6669,10 +6713,16 @@ function sealBridgeChatRunRecord(
 ): void {
   if (historyClearAdmissionBlocked(state.runId, undefined, state.chatId)) return
   if (
-    !providerRunPersistenceAuthorized(state.provider, {
-      appRunId: state.runId,
-      appChatId: state.chatId
-    })
+    !providerRunPersistenceAuthorized(
+      state.provider,
+      {
+        appRunId: state.runId,
+        appChatId: state.chatId
+      },
+      // The fallback only ever runs at terminal time — the session is
+      // expected to be terminal (see the terminal-flush comment above).
+      { allowTerminal: true }
+    )
   ) {
     return
   }
@@ -7464,17 +7514,41 @@ runManager.onChange((event) => {
     )
   ) {
     if (isTerminalRunSessionStatus(event.session.status)) {
+      // A main-owned transcript finalizer (bridge/execution-graph entry in
+      // bridgeRunTranscripts, or a background sub-thread flusher) may still
+      // owe this run its TERMINAL FLUSH, which runs a tick later than the
+      // finish() that fired this event (the run-diff capture defers it).
+      // Releasing the persistence authority here made that flush
+      // unauthorized, so the seal AND the final assistant text were silently
+      // discarded — the stale-run reconciler then swept the run and a
+      // SUCCESSFUL turn surfaced as "Run failed". Same rule as the exit
+      // handler: main-owned finalizers release only after their async
+      // terminal flush — every terminal path of the flush machinery does its
+      // own release.
+      const finalizerPending =
+        bridgeRunTranscripts.has(event.session.runId) ||
+        backgroundSubThreadTranscripts.has(event.session.runId)
+      if (process.env.TASKWRAITH_DEBUG_AUTHORITY === '1') {
+        console.warn(
+          `[authority] onChange terminal-unauthorized run=${event.session.runId} status=${event.session.status} finalizerPending=${finalizerPending} limb=${explainProviderRunPersistenceDenial(
+            event.session.provider,
+            { appRunId: event.session.runId, appChatId: event.session.appChatId }
+          )}`
+        )
+      }
       clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
       executionGraphComposedPayloads.delete(event.session.runId)
       executionGraphDispatchesInFlight.delete(event.session.runId)
       executionGraphAdapterAdmissions.delete(event.session.runId)
-      discardExecutionGraphRunTranscript(event.session.runId)
-      backgroundSubThreadTranscripts.delete(event.session.runId)
       projectReferenceContextAuditServiceRef?.release(event.session.runId)
       externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
       cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
-      releaseProviderSessionPersistenceDecision(event.session.runId)
-      releaseProviderRunPersistenceAuthority(event.session.runId)
+      if (!finalizerPending) {
+        discardExecutionGraphRunTranscript(event.session.runId)
+        backgroundSubThreadTranscripts.delete(event.session.runId)
+        releaseProviderSessionPersistenceDecision(event.session.runId)
+        releaseProviderRunPersistenceAuthority(event.session.runId)
+      }
       cleanupRunItemEventState(event.session.runId)
     }
     return
@@ -7585,7 +7659,20 @@ runManager.onChange((event) => {
     // renderer already applied it).
     finalizePendingEnsembleRosterPresetForTerminalRun(event.session)
     recordProviderSeatCacheEvidenceForRun(event.session)
-    releaseProviderRunPersistenceAuthority(event.session.runId)
+    // A pending main-owned finalizer (bridge transcript / background
+    // sub-thread flusher) still needs this authority for its TERMINAL FLUSH,
+    // which runs a tick after the finish() that fired this event. Releasing
+    // here made that flush unauthorized — the seal and the final assistant
+    // text were silently discarded, and a SUCCESSFUL run later surfaced as
+    // "Run failed" once the stale-run reconciler swept the unsealed record.
+    // The finalizer releases both holds on every one of its terminal paths
+    // (releaseMainOwnedRunPersistenceHolds).
+    if (
+      !bridgeRunTranscripts.has(event.session.runId) &&
+      !backgroundSubThreadTranscripts.has(event.session.runId)
+    ) {
+      releaseProviderRunPersistenceAuthority(event.session.runId)
+    }
   }
   void appShellStatsService.refresh().catch((err) => {
     console.warn(
@@ -8552,7 +8639,7 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
     if (leaked) {
       if (leaked.flushTimer) clearTimeout(leaked.flushTimer)
       bridgeRunTranscripts.delete(settlement.runId)
-      releaseProviderSessionPersistenceDecision(settlement.runId)
+      releaseMainOwnedRunPersistenceHolds(settlement.runId)
     }
     console.warn(
       `[chat-run-reconciler] settled stale ChatRun chat=${settlement.chatId} run=${settlement.runId} was=${settlement.previousStatus}: ${CHAT_RUN_STALE_REASON}`
@@ -9799,15 +9886,21 @@ function seedAgentDrivenSubThreadTranscript(args: {
 function flushBackgroundSubThreadTranscript(runId: string, final = false): void {
   const state = backgroundSubThreadTranscripts.get(runId)
   if (!state) return
+  // allowTerminal on the FINAL flush: same class as the bridge flusher — the
+  // session is already terminal by the time the deferred terminal flush runs.
   if (
-    !providerRunPersistenceAuthorized(state.provider, {
-      appRunId: state.runId,
-      appChatId: state.chatId
-    })
+    !providerRunPersistenceAuthorized(
+      state.provider,
+      {
+        appRunId: state.runId,
+        appChatId: state.chatId
+      },
+      { allowTerminal: final }
+    )
   ) {
     if (state.flushTimer) clearTimeout(state.flushTimer)
     backgroundSubThreadTranscripts.delete(runId)
-    releaseProviderSessionPersistenceDecision(runId)
+    releaseMainOwnedRunPersistenceHolds(runId)
     return
   }
   if (state.flushTimer) {
@@ -9908,7 +10001,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
 
   if (final) {
     backgroundSubThreadTranscripts.delete(runId)
-    releaseProviderSessionPersistenceDecision(runId)
+    releaseMainOwnedRunPersistenceHolds(runId)
     settleSubThreadWorkerRun(
       state.chatId,
       state.runId,
@@ -10607,15 +10700,39 @@ function sealExecutionGraphRunTranscript(
 function flushBridgeRunTranscript(runId: string, final = false): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  // The TERMINAL flush must accept a terminal session: in-process lanes
+  // (ollama) finish synchronously — result line → finalize (whose async diff
+  // capture defers this flush a tick) → exit → runManager.finish — so by the
+  // time the final flush runs, the session is already terminal. Without
+  // allowTerminal the auth check rejected it and the seal (status, endedAt,
+  // AND the streamed assistant reply) was silently discarded — the run then
+  // read 'running' forever and the stale-run reconciler later stamped a
+  // SUCCESSFUL run 'failed'. Spawn providers only dodged this by racing the
+  // process-exit event. The incarnation gate below still applies either way.
   if (
-    !providerRunPersistenceAuthorized(state.provider, {
-      appRunId: state.runId,
-      appChatId: state.chatId
-    })
+    !providerRunPersistenceAuthorized(
+      state.provider,
+      {
+        appRunId: state.runId,
+        appChatId: state.chatId
+      },
+      { allowTerminal: final }
+    )
   ) {
+    if (final) {
+      // A discarded TERMINAL flush is never routine — it drops the seal and
+      // the reply. Say so; the silent version of this path cost a day of
+      // ghost-run archaeology.
+      console.warn(
+        `[bridge-run] terminal flush for run=${runId} (${state.provider}) was not persistence-authorized (${explainProviderRunPersistenceDenial(
+          state.provider,
+          { appRunId: state.runId, appChatId: state.chatId }
+        )}); discarding unsealed`
+      )
+    }
     if (state.flushTimer) clearTimeout(state.flushTimer)
     bridgeRunTranscripts.delete(runId)
-    releaseProviderSessionPersistenceDecision(runId)
+    releaseMainOwnedRunPersistenceHolds(runId)
     return
   }
   if (state.flushTimer) {
@@ -10794,7 +10911,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
     // Cleanup BEFORE the push tail: a broadcaster hiccup below must not leak
     // the entry — a leaked terminal entry blocks the stale-run reconciler.
     bridgeRunTranscripts.delete(runId)
-    releaseProviderSessionPersistenceDecision(runId)
+    releaseMainOwnedRunPersistenceHolds(runId)
   }
   try {
     if (final) {
@@ -10909,7 +11026,7 @@ function finalizeBridgeRunTranscript(
       const leaked = bridgeRunTranscripts.get(runId)
       if (leaked?.flushTimer) clearTimeout(leaked.flushTimer)
       bridgeRunTranscripts.delete(runId)
-      releaseProviderSessionPersistenceDecision(runId)
+      releaseMainOwnedRunPersistenceHolds(runId)
       try {
         sealBridgeChatRunRecord(state, {
           status: resolvedStatus,
