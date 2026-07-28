@@ -2439,6 +2439,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'test_result_summary',
     'run_timeline',
     'raw_provider_events',
+    'request_tool_permission',
     // Appearance of TaskWraith itself — an agent-accessed capability rather
     // than a workspace or canvas one, so it groups with the other tools that
     // act on the running app.

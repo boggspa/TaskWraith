@@ -243,6 +243,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'codex_reasoning':
       return 'reasoning'
     case 'approval_status':
+    case 'request_tool_permission':
       return 'approval'
     case 'provider_auth_status':
     case 'provider_usage_status':
