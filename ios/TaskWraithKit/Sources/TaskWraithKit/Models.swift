@@ -294,9 +294,10 @@ public struct WelcomeDashboard: Codable, Sendable {
         public let provider: String
         public let label: String
         /// CSS/theme hue class sent by the Mac — `provider-<id>`, or the
-        /// spoofed Ollama brand class (e.g. `provider-alibaba`). Optional so
-        /// older Mac builds that don't send it still decode (falls back to the
-        /// runtime provider hue). Mirrors desktop WelcomeUsageModelDatum.
+        /// spoofed model-upstream brand class (e.g. Pi DeepSeek or Ollama
+        /// Alibaba). Optional so older Mac builds that don't send it still
+        /// decode (falls back to the runtime provider hue). Mirrors desktop
+        /// WelcomeUsageModelDatum.
         public let colorClass: String?
         public let inputTokens: Int
         public let outputTokens: Int
@@ -304,8 +305,8 @@ public struct WelcomeDashboard: Codable, Sendable {
         public let percent: Double
 
         /// Provider key for `TWTheme.providerAccent` — strips the `provider-`
-        /// prefix off `colorClass` (so Ollama brands resolve to their spoofed
-        /// hue) and falls back to the runtime provider.
+        /// prefix off `colorClass` (so Pi/Ollama upstream brands resolve to
+        /// their spoofed hue) and falls back to the runtime provider.
         public var accentProviderKey: String {
             if let cls = colorClass, cls.hasPrefix("provider-") {
                 return String(cls.dropFirst("provider-".count))
@@ -1404,6 +1405,10 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         /// tag minus the #pN handle: "Provider / Role (Model)". Absent for
         /// solo chats and user rows.
         public let speaker: String?
+        /// Frozen model-aware hue class from the Mac projection. Pi/Ollama rows
+        /// use their selected upstream brand; ordinary providers use their id.
+        /// Optional for compatibility with older Mac snapshots.
+        public let providerHueClass: String?
         /// Frozen pooled-Agent display identity for this row, when present.
         public let pooledAgentIdentity: PooledAgentIdentity?
         public struct PooledAgentIdentity: Codable, Sendable, Equatable {

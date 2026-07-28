@@ -2946,29 +2946,73 @@ struct ThreadEmptyWelcomeCanvas: View {
 /// Provider parsed from a speaker label — "Codex · gpt-5.4" / "Gemini /
 /// Researcher (2.5 Flash)" → accent color, mirroring the desktop's
 /// provider-tinted transcript names.
-@MainActor func providerAccentFromSpeaker(_ speaker: String?, fallback: Color) -> Color {
-    guard let speaker, !speaker.isEmpty else { return fallback }
-    let segments = speaker.split(whereSeparator: { $0 == "·" || $0 == "/" }).map {
-        String($0).trimmingCharacters(in: .whitespaces)
-    }
-    guard let head = segments.first, !head.isEmpty else { return fallback }
+func providerHueClassFromSpeaker(_ speaker: String?) -> String? {
+    guard let speaker = speaker?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !speaker.isEmpty
+    else { return nil }
+    let separator =
+        [speaker.firstIndex(of: "·"), speaker.firstIndex(of: "/")]
+        .compactMap { $0 }
+        .min()
+    let head =
+        separator.map { String(speaker[..<$0]).trimmingCharacters(in: .whitespaces) }
+        ?? speaker
+    guard !head.isEmpty else { return nil }
+    let rest =
+        separator.map {
+            String(speaker[speaker.index(after: $0)...])
+                .trimmingCharacters(in: .whitespaces)
+        } ?? ""
     let headLower = head.lowercased()
-    let rest = segments.dropFirst().joined(separator: " ")
 
     // Ollama speakers either carry the spoofed brand name in the head
     // (post brand-aware projection — "Alibaba · …") or the raw model in a
     // later segment ("Ollama · qwen3:4b"). Resolve either to the brand hue.
     if headLower == "ollama" {
-        return TWTheme.providerAccent("ollama", modelId: rest, modelLabel: rest)
+        return OllamaDisplayBrands.providerHueClass(
+            provider: "ollama", modelId: rest, modelLabel: rest)
+    }
+    // Preserve the slash in a Pi wire id. Splitting every "/" (the old
+    // implementation) turned `deepseek/deepseek-v4-flash` into two unrelated
+    // words and made every solo Pi row fall back to generic slate.
+    if headLower == "pi" {
+        let resolved = OllamaDisplayBrands.providerHueClass(
+            provider: "pi", modelId: rest, modelLabel: rest)
+        if resolved != "pi" { return resolved }
+        let restLower = rest.lowercased()
+        // Older ensemble snapshots carried only the human model chip in the
+        // speaker string (`Pi / Worker (GLM-5.2)`), not the wire id. Match the
+        // longest curated label first so `GLM-4.7 (Cerebras)` cannot collapse
+        // onto the shorter Z.ai `GLM-4.7` row.
+        if let wireId = PiBrandTable.modelLabels
+            .sorted(by: { $0.value.count > $1.value.count })
+            .first(where: { restLower.contains($0.value.lowercased()) })?.key,
+            let brand = PiBrandTable.brand(forWireModelId: wireId)
+        {
+            return brand.hueClass
+        }
+        return "pi"
     }
     if let brand = OllamaDisplayBrands.all.first(where: {
         $0.providerLabel.lowercased() == headLower || $0.providerClass == headLower
     }) {
-        return TWTheme.providerAccent(brand.providerClass)
+        return brand.providerClass
     }
-    let known = ["gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "qwen", "ornith"]
-    guard known.contains(headLower) else { return fallback }
-    return TWTheme.providerAccent(headLower)
+    if let brand = PiBrandTable.upstreams.values.first(where: {
+        $0.label.lowercased() == headLower || $0.hueClass == headLower
+    }) {
+        return brand.hueClass
+    }
+    let known = [
+        "gemini", "codex", "claude", "kimi", "grok", "cursor", "ollama", "pi", "mistral",
+        "qwen", "ornith",
+    ]
+    return known.contains(headLower) ? headLower : nil
+}
+
+@MainActor func providerAccentFromSpeaker(_ speaker: String?, fallback: Color) -> Color {
+    guard let providerClass = providerHueClassFromSpeaker(speaker) else { return fallback }
+    return TWTheme.providerAccent(providerClass)
 }
 
 struct ThreadAgentIdentity: Equatable {
@@ -3220,17 +3264,22 @@ func participantHealthEntryPresentation(
     let stampedClass = entry.displayHueClass?.trimmingCharacters(in: .whitespacesAndNewlines)
     let hasStampedLabel = stampedLabel?.isEmpty == false
     let hasStampedClass = stampedClass?.isEmpty == false
-    let isOllama = provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ollama"
+    let providerKey =
+        provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    let brandLabel = OllamaDisplayBrands.brandLabel(
+        provider: providerKey, modelId: model, modelLabel: model)
+    let brandClass = OllamaDisplayBrands.providerHueClass(
+        provider: providerKey, modelId: model, modelLabel: model)
 
-    if isOllama, let brand = OllamaDisplayBrands.resolve(modelId: model, modelLabel: model) {
-        let labelIsGeneric = stampedLabel?.lowercased() == "ollama"
-        let classIsGeneric = stampedClass?.lowercased() == "ollama"
+    if let brandLabel, brandClass != providerKey {
+        let labelIsGeneric = stampedLabel?.lowercased() == providerKey
+        let classIsGeneric = stampedClass?.lowercased() == providerKey
         if !hasStampedLabel || !hasStampedClass || labelIsGeneric || classIsGeneric {
             return ParticipantHealthEntryPresentation(
                 providerName: labelIsGeneric || !hasStampedLabel
-                    ? brand.providerLabel : stampedLabel!,
+                    ? brandLabel : stampedLabel!,
                 providerClass: classIsGeneric || !hasStampedClass
-                    ? brand.providerClass : stampedClass!)
+                    ? brandClass : stampedClass!)
         }
     }
 
@@ -4253,6 +4302,9 @@ struct ThreadRowView: View, Equatable {
         if let identity = activeAgentIdentity {
             return identity.accent
         }
+        if let providerHueClass = row.providerHueClass, !providerHueClass.isEmpty {
+            return TWTheme.providerAccent(providerHueClass)
+        }
         if row.speaker != nil {
             return providerAccentFromSpeaker(row.speaker, fallback: TWTheme.chroma2)
         }
@@ -4266,6 +4318,9 @@ struct ThreadRowView: View, Equatable {
     private var labelColor: Color {
         if let identity = activeAgentIdentity {
             return identity.accent
+        }
+        if let providerHueClass = row.providerHueClass, !providerHueClass.isEmpty {
+            return TWTheme.providerAccent(providerHueClass)
         }
         if row.speaker != nil {
             return providerAccentFromSpeaker(row.speaker, fallback: TWTheme.chroma2)
@@ -4865,6 +4920,9 @@ struct ToolBurstRowView: View, Equatable {
         if let agentIdentity {
             return agentIdentity.accent
         }
+        if let providerHueClass = firstRow?.providerHueClass, !providerHueClass.isEmpty {
+            return TWTheme.providerAccent(providerHueClass)
+        }
         if let speaker = firstRow?.speaker {
             return providerAccentFromSpeaker(speaker, fallback: TWTheme.chroma2)
         }
@@ -4874,6 +4932,9 @@ struct ToolBurstRowView: View, Equatable {
     private var labelColor: Color {
         if let agentIdentity {
             return agentIdentity.accent
+        }
+        if let providerHueClass = firstRow?.providerHueClass, !providerHueClass.isEmpty {
+            return TWTheme.providerAccent(providerHueClass)
         }
         if let speaker = firstRow?.speaker {
             return providerAccentFromSpeaker(speaker, fallback: TWTheme.chroma2)

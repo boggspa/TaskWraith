@@ -923,6 +923,7 @@ struct Composer: View {
                         primary: role.isEmpty ? providerName : role,
                         detail: detailParts.joined(separator: " · "),
                         provider: entry.provider,
+                        model: entry.model,
                         usedTokens: entry.contextTokens ?? 0,
                         windowTokens: ContextWindows.resolve(
                             provider: entry.provider, model: entry.model))
@@ -942,6 +943,7 @@ struct Composer: View {
                 primary: TWTheme.providerLabel(providerStr),
                 detail: active.model ?? "",
                 provider: providerStr,
+                model: active.model,
                 usedTokens: used,
                 windowTokens: ContextWindows.resolve(provider: providerStr, model: active.model))
         ]

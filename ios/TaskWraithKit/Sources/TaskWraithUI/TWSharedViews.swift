@@ -1610,6 +1610,19 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         currentCatalog?.models.first(where: { $0.isDefault == true })
             ?? currentCatalog?.models.first
     }
+    private var resolvedSelectedModel: ModelOption? {
+        guard let currentCatalog else { return nil }
+        if let modelId {
+            return currentCatalog.models.first { $0.id == modelId }
+        }
+        return resolvedDefaultModel
+    }
+    private var selectedModelAccent: Color {
+        TWTheme.providerAccent(
+            provider,
+            modelId: modelId ?? resolvedDefaultModel?.id,
+            modelLabel: resolvedSelectedModel?.label)
+    }
     private var resolvedListWidth: CGFloat {
         listWidth ?? (showsSidecar ? 200 : 208)
     }
@@ -1770,22 +1783,27 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     @ViewBuilder
     private func modelRows(for catalog: ProviderModelCatalog) -> some View {
         let isCurrentProvider = catalog.provider.lowercased() == provider.lowercased()
-        let accent = TWTheme.providerAccent(catalog.provider)
+        let defaultModel =
+            catalog.models.first(where: { $0.isDefault == true }) ?? catalog.models.first
+        let defaultAccent = TWTheme.providerAccent(
+            catalog.provider, modelId: defaultModel?.id, modelLabel: defaultModel?.label)
         if catalog.models.isEmpty {
             pickerRow(
                 title: "Default",
                 selected: isCurrentProvider && modelId == nil,
-                accent: accent
+                accent: defaultAccent
             ) {
                 selectProviderDefault(in: catalog)
             }
         } else {
             ForEach(catalog.models) { option in
+                let optionAccent = TWTheme.providerAccent(
+                    catalog.provider, modelId: option.id, modelLabel: option.label)
                 pickerRow(
                     title: option.label ?? option.id,
                     selected: isCurrentProvider
                         && (modelId == option.id || (modelId == nil && option.isDefault == true)),
-                    accent: accent,
+                    accent: optionAccent,
                     disabled: option.disabled == true,
                     fast: modelSupportsFast(provider: catalog.provider, modelId: option.id)
                 ) {
@@ -1833,14 +1851,14 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
             if !enabledLadderIndices.isEmpty {
                 Text(currentLadderLabel)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(TWTheme.providerAccent(provider))
+                    .foregroundStyle(selectedModelAccent)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .frame(maxWidth: .infinity)
                 ReasoningLadder(
                     enabledIndices: enabledLadderIndices,
                     reasoningEffort: ladderEffortBinding,
-                    accent: TWTheme.providerAccent(provider),
+                    accent: selectedModelAccent,
                     provider: provider
                 )
             } else if alwaysShowsSidecar {
@@ -1894,7 +1912,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
                         .padding(.vertical, 4)
                         .frame(maxWidth: .infinity)
                         .background(
-                            Capsule().fill(TWTheme.providerAccent(provider)))
+                            Capsule().fill(selectedModelAccent))
                 }
                 .buttonStyle(.plain)
             }
@@ -1931,7 +1949,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
 
     @ViewBuilder
     private func fastPill(for state: FastControl) -> some View {
-        let accent = TWTheme.providerAccent(provider)
+        let accent = selectedModelAccent
         let on: Bool = {
             switch state {
             case .toggle(let v): return v

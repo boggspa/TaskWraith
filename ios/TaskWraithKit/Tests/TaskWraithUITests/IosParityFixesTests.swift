@@ -483,6 +483,69 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func participantHealthRepairsEveryGenericPiUpstreamStamp() throws {
+        let representatives = [
+            ("deepseek/deepseek-v4-flash", "DeepSeek", "deepseek"),
+            ("zai/glm-5.2", "Z.ai", "zai"),
+            ("qwen-token-plan/qwen3.7-max", "Qwen", "qwen"),
+            ("minimax/MiniMax-M3", "MiniMax", "minimax"),
+            ("mistral/devstral-2512", "Mistral", "mistral"),
+            ("groq/openai/gpt-oss-120b", "Groq", "groq"),
+            ("cerebras/zai-glm-4.7", "Cerebras", "cerebras"),
+        ]
+
+        for (model, label, hue) in representatives {
+            let entry = try decode(
+                RemoteThreadSnapshot.Row.ParticipantHealth.Entry.self,
+                """
+                {
+                  "participantId":"p-\(hue)",
+                  "provider":"pi",
+                  "model":"\(model)",
+                  "displayProviderLabel":"Pi",
+                  "displayHueClass":"pi",
+                  "role":"Worker",
+                  "status":"ok"
+                }
+                """)
+            let presentation = participantHealthEntryPresentation(entry)
+            #expect(presentation.providerName == label)
+            #expect(presentation.providerClass == hue)
+        }
+    }
+
+    @Test func speakerHueParserPreservesPiWireIdsAndRecognizesBrandLabels() {
+        #expect(
+            providerHueClassFromSpeaker("Pi · deepseek/deepseek-v4-flash") == "deepseek")
+        #expect(
+            providerHueClassFromSpeaker("Pi · groq/openai/gpt-oss-120b") == "groq")
+        #expect(providerHueClassFromSpeaker("Cerebras / Worker") == "cerebras")
+        #expect(providerHueClassFromSpeaker("Ollama · qwen3.5:9b") == "alibaba")
+        #expect(providerHueClassFromSpeaker("Pi / Worker (GLM-5.2)") == "zai")
+        #expect(providerHueClassFromSpeaker("Pi / Worker · GLM-5.2") == "zai")
+        #expect(
+            providerHueClassFromSpeaker("Pi / Worker (GLM-4.7 (Cerebras))") == "cerebras")
+    }
+
+    @Test func remoteRowDecodesFrozenProviderHueClass() throws {
+        let row = try decode(
+            RemoteThreadSnapshot.Row.self,
+            """
+            {
+              "id":"pi-row",
+              "role":"assistant",
+              "kind":"assistant",
+              "speaker":"Pi / Worker",
+              "providerHueClass":"mistral",
+              "preview":"Done.",
+              "truncated":false,
+              "timestamp":"2026-07-03T18:40:00Z"
+            }
+            """)
+        #expect(row.providerHueClass == "mistral")
+    }
+
+    @MainActor
     @Test func workingParticipantLabelUsesProviderRoleAndHumanModelVariant() {
         #expect(
             twWorkingParticipantLabel(provider: "ollama", role: "Qwen35", model: "qwen3.5:9b")

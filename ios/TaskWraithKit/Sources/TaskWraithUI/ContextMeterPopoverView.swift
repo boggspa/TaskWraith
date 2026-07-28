@@ -17,6 +17,7 @@ struct ContextMeterRowVM: Identifiable {
     /// Secondary muted line — model (solo) or "Provider · model" (ensemble).
     let detail: String
     let provider: String
+    let model: String?
     let usedTokens: Int
     let windowTokens: Int
     var percent: Double {
@@ -67,7 +68,8 @@ private struct ContextMeterRowView: View {
     let row: ContextMeterRowVM
 
     var body: some View {
-        let accent = TWTheme.providerAccent(row.provider)
+        let accent = TWTheme.providerAccent(
+            row.provider, modelId: row.model, modelLabel: row.model)
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Circle().fill(accent).frame(width: 7, height: 7)

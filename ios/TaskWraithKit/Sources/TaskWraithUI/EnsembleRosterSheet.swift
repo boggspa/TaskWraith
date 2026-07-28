@@ -524,7 +524,11 @@ public struct EnsembleRosterSheet: View {
 
     private func participantRow(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
         let unavailable = !isProviderAvailable(entry.provider)
-        let accent = unavailable ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
+        let accent =
+            unavailable
+            ? TWTheme.textMuted
+            : TWTheme.providerAccent(
+                entry.provider, modelId: entry.model, modelLabel: entry.model)
         let status = roundStatus(for: entry.id)
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         let subtitle = "\(TWTheme.providerLabel(entry.provider)) · \(entry.model ?? "CLI Default")"
