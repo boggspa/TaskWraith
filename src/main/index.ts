@@ -36924,7 +36924,14 @@ if (isGeminiMcpBridgeProcess) {
           return { ok: false, reason: 'Thread does not belong to the requested workspace' }
         }
         const text = action.text.trim()
-        if (!text) return { ok: false, reason: 'Prompt is empty' }
+        // Attachment-only prompts are wire-legal on the live composer lane
+        // (isComposerPrompt requires text to be a string, not non-empty), and
+        // the busy-gate routes live sends here — so the queue must accept the
+        // same shape or a mid-run image-only send bounces with "Prompt is
+        // empty" where the idle send would have worked.
+        if (!text && !action.imageAttachments?.length) {
+          return { ok: false, reason: 'Prompt is empty' }
+        }
         const schedule = normalizeRemoteComposerScheduledRunAt(action.scheduledRunAt)
         if (schedule.reason) return { ok: false, reason: schedule.reason }
         const provider = assertLiveProviderId(action.provider)
