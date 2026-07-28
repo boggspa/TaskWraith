@@ -425,6 +425,10 @@ export type AgenticServiceId =
   // the generic `mcpTools` service can't silently auto-allow app-mutating canvas
   // interactions (the P1-review exfil concern).
   | 'canvasInteraction'
+  // Structured edits to the chat-owned Sketch Canvas. Separate from web
+  // canvasInteraction so prompt-free sketching never grants click/fill control
+  // over an authenticated preview.
+  | 'sketchCanvas'
   // Declarative, chat-owned 3D scenes and their imported local assets. This is
   // deliberately separate from canvasInteraction: granting control of a web
   // preview must not grant scene authoring/import, and vice versa.
@@ -607,6 +611,10 @@ export interface AgenticServicesSettings {
   mcpTools: AgenticServicePolicy
   subThreadDelegation: AgenticServicePolicy
   canvasInteraction: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before first-class Sketch
+  // Canvas. Sketch edits default to 'allow'; run presets still clamp Recon to
+  // deny and Plan to per-invocation ask.
+  sketchCanvas?: AgenticServicePolicy
   // Optional for back-compat with settings persisted before Mesh Canvas. It is
   // grantable and defaults to 'ask' in the sanitizer/resolver.
   meshCanvas?: AgenticServicePolicy
@@ -779,6 +787,10 @@ export type TaskWraithMcpProfileId =
   // effective run posture; its catalogue receipt is never an authority grant.
   | 'taskwraith-gateway-v7'
   | 'taskwraith-gateway-v7-mesh'
+  // v8 promotes the three Sketch Canvas verbs to the direct birth catalogue.
+  // The mesh variant preserves the same posture-selected Mesh direct surface.
+  | 'taskwraith-gateway-v8'
+  | 'taskwraith-gateway-v8-mesh'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -1010,7 +1022,7 @@ export type ConcurrentLaneIntent = 'none' | 'read' | 'write'
 
 export type ConcurrentLaneWriteScopeKind = 'path' | 'glob' | 'workspace'
 
-export type ConcurrentLaneWriteScopeApprover = 'boss' | 'user-preflight'
+export type ConcurrentLaneWriteScopeApprover = 'boss' | 'captain' | 'user-preflight'
 
 /**
  * Approved mutation envelope for a concurrent writer lane. The lane may still
@@ -1112,8 +1124,9 @@ export interface EnsembleRoundState {
   /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string
-  /** Backup Boss captured at round start. This participant remains
-   * standby authority unless the primary Boss is unavailable. */
+  /** Backup Boss captured at round start. This participant remains standby
+   * for controlling authority unless the primary Boss is unavailable, but may
+   * independently invoke configured fan-out powers. */
   secondInCommandParticipantId?: string
   /** Participant ids present at the start of the round. Used to detect
    * replacement/addition commands that would exceed the round baseline. */
@@ -1625,9 +1638,9 @@ export interface EnsembleConfig {
   /** Optional user-designated Ensemble manager. No Boss is assigned by
    * default; controls are rejected unless the active run belongs to this id. */
   bossmanParticipantId?: string
-  /** Optional user-designated Captain. This seat uses Boss-like
-   * controls only when the primary Boss is missing, disabled, unreachable,
-   * or failed for the active round. */
+  /** Optional user-designated Captain. This seat may always use configured
+   * fan-out powers; other Boss-like controls remain available only when the
+   * primary Boss is missing, disabled, unreachable, or failed for the round. */
   secondInCommandParticipantId?: string
   /** Opt-in auto-approval preference. The current runtime only records and
    * surfaces this explicit consent; approval execution remains constrained by
@@ -1807,8 +1820,8 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / meshCanvas / canvasEval / crossThreadRead / threadMessage /
-  // mediaEditing / mediaRecording are approval-grant buckets, not
+  // canvasInteraction / sketchCanvas / meshCanvas / canvasEval / crossThreadRead /
+  // threadMessage / mediaEditing / mediaRecording are approval-grant buckets, not
   // provider-capability contract rows — excluded like subThreadDelegation. (The
   // media tools are already advertised under the MCP/tool surface; they don't get
   // their own contract row. Thread messaging is harness-owned and identical on
@@ -1817,6 +1830,7 @@ export type ProviderToolingCapabilityId =
       AgenticServiceId,
       | 'subThreadDelegation'
       | 'canvasInteraction'
+      | 'sketchCanvas'
       | 'meshCanvas'
       | 'canvasEval'
       | 'crossThreadRead'

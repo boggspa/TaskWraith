@@ -245,7 +245,8 @@ export function resolveCatalogToolName(rawToolName: string): TaskWraithMcpToolNa
  *  - audio/video media → `mediaEditing` (dedicated grant bucket + audit)
  *  - file mutations / staged git → `fileChanges`
  *  - sub-thread delegation → `subThreadDelegation`
- *  - canvas click/fill/sketch mutate → `canvasInteraction`
+ *  - canvas click/fill → `canvasInteraction`
+ *  - structured Sketch Canvas edits → `sketchCanvas`
  *  - canvas eval (RCE) → `canvasEval` (signed-elevated, never auto-allowed)
  *  - cross-thread recall reads → `crossThreadRead`
  *  - peer thread messages → `threadMessage`
@@ -281,13 +282,10 @@ export function catalogToolAgenticService(toolName: string): AgenticServiceId {
   if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread') {
     return 'subThreadDelegation'
   }
-  if (
-    toolName === 'canvas_click' ||
-    toolName === 'canvas_fill' ||
-    toolName === 'canvas_sketch_update'
-  ) {
+  if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
     return 'canvasInteraction'
   }
+  if (toolName === 'canvas_sketch_update') return 'sketchCanvas'
   if (toolName === 'canvas_eval') return 'canvasEval'
   if ((MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(toolName)) {
     return 'meshCanvas'

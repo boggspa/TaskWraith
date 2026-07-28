@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppearanceMode,
   ChatRecord,
+  EnsembleRoundState,
   ChatRun,
   ComposerStyle,
   DiffFileSummary,
@@ -25,7 +26,10 @@ import type {
   WorkspaceBoardDefinition
 } from './store/types'
 import { normalizeThreadTitle } from '../shared/threadTitles'
-import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
+import {
+  LIVE_ENSEMBLE_LANE_STATUSES,
+  isEnsembleRoundDispatchLive
+} from '../shared/ensembleRoundLifecycle'
 import type {
   TaskWraithPluginActivatedMobileProjection,
   TaskWraithPluginRemoteCapability
@@ -572,6 +576,21 @@ export interface RemoteEnsembleState {
   status: 'idle' | 'running' | 'completed' | 'cancelled' | 'failed'
   orchestrationMode?: string
   activeParticipantId?: string
+  /**
+   * Seats whose work is live RIGHT NOW, so a remote client can mark the
+   * matching fan-out lane cards as still-running (the phone's parity with the
+   * desktop rim shimmer).
+   *
+   * Derived HERE rather than on the client on purpose. The desktop computes the
+   * same set in `deriveActiveEnsembleWorkingPresentations`, and a second
+   * implementation on the phone would eventually disagree — leaving a card
+   * marked busy after its seat finished, which is the one thing a "who is still
+   * working" signal must never do. Projecting the answer keeps one derivation.
+   *
+   * Absent (not empty) when the round is not a live fan-out, so an older client
+   * that ignores the field behaves exactly as before.
+   */
+  workingParticipantIds?: string[]
   bossmanParticipantId?: string
   secondInCommandParticipantId?: string
   continuationHops?: number
@@ -1503,6 +1522,23 @@ function latestRunContextTokens(
   return best
 }
 
+/** The seats a remote client should render as still working. See the field doc
+ *  on {@link RemoteEnsembleState.workingParticipantIds}. */
+function workingParticipantIdsForRound(
+  activeRound: EnsembleRoundState | undefined,
+  projectedRoundStatus: RemoteEnsembleState['status']
+): string[] {
+  if (projectedRoundStatus !== 'running' || !activeRound) return []
+  const ids = new Set<string>()
+  for (const lane of Object.values(activeRound.lanes || {})) {
+    if (lane && LIVE_ENSEMBLE_LANE_STATUSES.has(lane.status)) ids.add(lane.participantId)
+  }
+  // The serial/boss turn has no lane record, so without this a non-concurrent
+  // round would project nobody working at all.
+  if (activeRound.activeParticipantId) ids.add(activeRound.activeParticipantId)
+  return [...ids].sort()
+}
+
 export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState | undefined {
   const ensemble = chat.ensemble
   if (!ensemble) return undefined
@@ -1520,6 +1556,10 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     orchestrationMode: activeRound?.orchestrationMode ?? ensemble.orchestrationMode,
     activeParticipantId:
       projectedRoundStatus === 'running' ? activeRound?.activeParticipantId : undefined,
+    ...(() => {
+      const working = workingParticipantIdsForRound(activeRound, projectedRoundStatus)
+      return working.length > 0 ? { workingParticipantIds: working } : {}
+    })(),
     bossmanParticipantId: ensemble.bossmanParticipantId,
     secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
     continuationHops: activeRound?.continuationHops,

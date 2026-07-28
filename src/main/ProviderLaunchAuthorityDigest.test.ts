@@ -305,15 +305,29 @@ describe('ProviderLaunchAuthorityDigest', () => {
     }
   })
 
-  it('accepts gateway-v2 as a distinct signed tool-surface identity', () => {
-    const gatewayV2 = {
-      ...codex,
-      tools: { ...codex.tools, taskWraithMcpProfileId: 'taskwraith-gateway-v2' as const }
+  it('accepts every gateway generation as a distinct signed tool-surface identity', () => {
+    const profileIds = [
+      'taskwraith-gateway-v1',
+      'taskwraith-gateway-v2',
+      'taskwraith-gateway-v3',
+      'taskwraith-gateway-v4',
+      'taskwraith-gateway-v5',
+      'taskwraith-gateway-v6',
+      'taskwraith-gateway-v7',
+      'taskwraith-gateway-v7-mesh',
+      'taskwraith-gateway-v8',
+      'taskwraith-gateway-v8-mesh'
+    ] as const
+    const digests = new Set<string>()
+    for (const profileId of profileIds) {
+      const input = {
+        ...codex,
+        tools: { ...codex.tools, taskWraithMcpProfileId: profileId }
+      }
+      expect(buildProviderLaunchAuthority(input).tools.taskWraithMcpProfileId).toBe(profileId)
+      digests.add(providerLaunchAuthorityDigest(input))
     }
-    expect(buildProviderLaunchAuthority(gatewayV2).tools.taskWraithMcpProfileId).toBe(
-      'taskwraith-gateway-v2'
-    )
-    expect(providerLaunchAuthorityDigest(gatewayV2)).not.toBe(providerLaunchAuthorityDigest(codex))
+    expect(digests.size).toBe(profileIds.length)
   })
 
   it('is deterministic across object insertion order', () => {

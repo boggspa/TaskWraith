@@ -557,7 +557,7 @@ runs only when explicitly delegated.
   admission/budget checks must pass. Bare `@BG` is rejected as ambiguous when
   more than one BG seat matches.
 - Mention/yield launches are always capped to read-only posture. Scoped
-  mutations must use the existing Boss-authorized
+  mutations must use the existing Boss- or Captain-authorized
   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
   writeScopes=...)` path.
 - BG lanes never inherit Trusted Session and cannot own Boss, Captain, Work

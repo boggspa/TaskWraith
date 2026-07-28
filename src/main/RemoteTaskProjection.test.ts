@@ -1561,3 +1561,96 @@ describe('projected text cannot disguise itself', () => {
     expect(card.body).toContain('example.com')
   })
 })
+
+describe('buildRemoteEnsembleState — working participant ids', () => {
+  function roundChat(round: Record<string, unknown>): ChatRecord {
+    return chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        participants: [
+          { id: 'reader-1', provider: 'codex', role: 'Reader', enabled: true, order: 0 },
+          { id: 'writer-2', provider: 'claude', role: 'Writer', enabled: true, order: 1 }
+        ],
+        activeRound: { prompt: 'Go.', startedAt: ISO, participants: [], ...round }
+      }
+    } as unknown as Partial<ChatRecord>)
+  }
+
+  it('projects every seat whose lane is still live', () => {
+    const state = buildRemoteEnsembleState(
+      roundChat({
+        roundId: 'round-1',
+        status: 'running',
+        lanes: {
+          'lane-1': { laneId: 'lane-1', participantId: 'reader-1', status: 'running' },
+          'lane-2': { laneId: 'lane-2', participantId: 'writer-2', status: 'completed' }
+        }
+      })
+    )
+    expect(state?.workingParticipantIds).toEqual(['reader-1'])
+  })
+
+  it('counts blocked and awaiting-approval lanes as still working', () => {
+    // The seat has not finished — it is waiting on something, and it is very
+    // likely the one holding the round up. Dropping the signal there would
+    // make the straggler the one card that ISN'T marked.
+    const state = buildRemoteEnsembleState(
+      roundChat({
+        roundId: 'round-1',
+        status: 'running',
+        lanes: {
+          'lane-1': { laneId: 'lane-1', participantId: 'reader-1', status: 'blocked' },
+          'lane-2': {
+            laneId: 'lane-2',
+            participantId: 'writer-2',
+            status: 'awaiting-approval'
+          }
+        }
+      })
+    )
+    expect(state?.workingParticipantIds).toEqual(['reader-1', 'writer-2'])
+  })
+
+  it('includes the serial active participant, which has no lane record', () => {
+    const state = buildRemoteEnsembleState(
+      roundChat({
+        roundId: 'round-1',
+        status: 'running',
+        activeParticipantId: 'writer-2',
+        // A serial round is only projected as running when the active seat is
+        // actually live (isEnsembleRoundDispatchLive); an empty participants
+        // list projects 'completed' and correctly reports nobody working.
+        participants: [
+          { participantId: 'writer-2', provider: 'claude', role: 'Writer', status: 'running' }
+        ]
+      })
+    )
+    expect(state?.status).toBe('running')
+    expect(state?.workingParticipantIds).toEqual(['writer-2'])
+  })
+
+  it('omits the field entirely once the round is no longer running', () => {
+    // Absent rather than empty, so an older client that ignores the key and a
+    // newer one that reads it agree that nobody is working.
+    const state = buildRemoteEnsembleState(
+      roundChat({
+        roundId: 'round-1',
+        status: 'completed',
+        lanes: { 'lane-1': { laneId: 'lane-1', participantId: 'reader-1', status: 'running' } }
+      })
+    )
+    expect(state?.workingParticipantIds).toBeUndefined()
+  })
+
+  it('deduplicates a seat that is both lane-live and the active participant', () => {
+    const state = buildRemoteEnsembleState(
+      roundChat({
+        roundId: 'round-1',
+        status: 'running',
+        activeParticipantId: 'reader-1',
+        lanes: { 'lane-1': { laneId: 'lane-1', participantId: 'reader-1', status: 'running' } }
+      })
+    )
+    expect(state?.workingParticipantIds).toEqual(['reader-1'])
+  })
+})

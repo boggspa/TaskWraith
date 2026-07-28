@@ -36,7 +36,7 @@ function buildLiveEnvironment(input: {
       instanceEpoch: input.instanceEpoch,
       bridgeLogEpoch: input.bridgeLogEpoch
     },
-    profile: { safeSubset: true, gatewaySubset: true }
+    profile: { safeSubset: true, gatewaySubset: true, sketchDirect: true }
   })
 }
 
@@ -82,6 +82,8 @@ describe('MCP bridge route-from-env authority', () => {
     })
     expect(parsedA.value.profile).toMatchObject({ safeSubset: true, gatewaySubset: true })
     expect(parsedA.value.profile.planSubset).toBe(false)
+    expect(parsedA.value.profile.sketchDirect).toBe(true)
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },
       parentProvider: 'cursor',
@@ -206,12 +208,18 @@ describe('MCP bridge route-from-env authority', () => {
 
     const missingProfile = { ...built.env }
     delete missingProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]
+    const missingSketchProfile = { ...built.env }
+    delete missingSketchProfile[MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]
     const malformedProfile = {
       ...built.env,
       [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: 'yes'
     }
 
     expect(parseMcpBridgeRouteFromEnv(missingProfile)).toEqual({
+      ok: false,
+      reason: 'invalid-profile-environment'
+    })
+    expect(parseMcpBridgeRouteFromEnv(missingSketchProfile)).toEqual({
       ok: false,
       reason: 'invalid-profile-environment'
     })

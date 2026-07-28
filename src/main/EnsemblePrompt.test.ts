@@ -386,6 +386,30 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Codex / Worker: Implement changes.')
   })
 
+  it('teaches Captain that fan-out remains available while Boss is healthy', () => {
+    const captainConfig: EnsembleConfig = {
+      ...ensemble,
+      bossmanParticipantId: 'claude',
+      secondInCommandParticipantId: 'codex'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: { ...chat(), ensemble: captainConfig },
+      config: captainConfig,
+      participant: captainConfig.participants[1],
+      currentPrompt: 'Dispatch the reviewers.',
+      roundId: 'round-captain-fanout'
+    })
+
+    expect(prompt).toContain(
+      'you share all configured fan-out powers with Boss and may use listed fan-out tools even while Boss is available'
+    )
+    expect(prompt).toContain('For non-fan-out authority you remain standby')
+    expect(prompt).toContain(
+      'broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
+    )
+    expect(prompt).not.toContain('active Captain after Boss unavailability')
+  })
+
   it('does not add a role boundary contract for solo-participant rounds', () => {
     const soloEnsemble: EnsembleConfig = {
       ...ensemble,

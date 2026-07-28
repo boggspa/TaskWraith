@@ -1267,7 +1267,7 @@ import {
   taskWraithGatewayDirectToolNamesForProfile,
   taskWraithGatewayHiddenToolNamesForProfile
 } from './mcp/McpToolProfiles'
-import { meshCanvasParticipantHasPregrantedAuthority } from './mcp/MeshCanvasRunAuthority'
+import { meshCanvasParticipantCanRequestAccess } from './mcp/MeshCanvasRunAuthority'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
@@ -1275,6 +1275,7 @@ import {
   isGatewayTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
   isPortableEnsembleControlMcpProfile,
+  isSketchCanvasDirectTaskWraithMcpProfile,
   isTaskWraithMcpAuthorizedEphemeralReroute,
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpProfileReceiptForSession,
@@ -2629,6 +2630,8 @@ interface TaskWraithMcpBridgeArgOptions {
   gatewaySubset?: boolean
   portableEnsembleControl?: boolean
   meshDirect?: boolean
+  sketchDirect?: boolean
+  auditSubset?: boolean
 }
 
 function taskwraithMcpBridgeArgs(
@@ -2642,7 +2645,9 @@ function taskwraithMcpBridgeArgs(
     options.coreSubset === true,
     options.gatewaySubset === true,
     options.portableEnsembleControl === true,
-    options.meshDirect === true
+    options.meshDirect === true,
+    options.sketchDirect === true,
+    options.auditSubset === true
   )
 }
 
@@ -12124,7 +12129,8 @@ function resolveNativeApprovalPreflight(args: {
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
     // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
     // externalPublish is grantable, but read_only / plan keep it approval-only.
-    // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+    // plan-preset instruments (canvasInteraction/sketchCanvas/mediaEditing) are
+    // approval-only:
     // a standing/session grant must not zero-click them under `plan` (W7-b rung).
     neverAutoAllow:
       args.service === 'canvasEval' ||
@@ -15182,7 +15188,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
-    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+    meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
   })
@@ -15197,7 +15203,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
-    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+    meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
   })
@@ -17537,12 +17543,14 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
   // Canvas click/fill get the dedicated grant bucket on the Claude canUseTool
   // gate too (it fires before previewForGeminiMcpTool), so a prior mcpTools
   // grant can't silently auto-allow app-mutating canvas interactions.
-  if (
-    normalized.includes('canvas_click') ||
-    normalized.includes('canvas_fill') ||
-    normalized.includes('canvas_sketch_update')
-  ) {
+  if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
     return 'canvasInteraction'
+  }
+  // Structured Sketch edits are deliberately independent of authenticated web
+  // Canvas control: Default Approval may auto-allow the former without silently
+  // granting click/fill authority.
+  if (normalized.includes('canvas_sketch_update')) {
+    return 'sketchCanvas'
   }
   // Arbitrary eval (RCE) gets its own signed-elevated bucket on the Claude gate
   // too — never auto-allowed by a grant/preset/YOLO.
@@ -18926,6 +18934,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
             payload.taskWraithMcpProfileId
           ),
           meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+            payload.taskWraithMcpProfileId
+          ),
           auditSubset: Boolean(payload.auditRun)
         },
         isolatedInstanceId:
@@ -19620,7 +19631,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       grokMcpServers = [
         {
@@ -20512,7 +20526,10 @@ async function runMistralAcpProvider(
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(
           payload.taskWraithMcpProfileId
         ),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        )
       })
       mistralMcpServers = [
         {
@@ -21906,7 +21923,8 @@ function getCodexClient(
       bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
         gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
         portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId)
+        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId)
       }),
       parentProvider: 'codex',
       userMcpServers
@@ -28948,6 +28966,9 @@ async function runGeminiProvider(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
+          payload.taskWraithMcpProfileId
+        ),
         auditSubset: Boolean(payload.auditRun)
       },
       isolatedInstanceId:
@@ -48661,7 +48682,8 @@ if (isGeminiMcpBridgeProcess) {
             workspacePath: registeredWorkspace,
             profile: {
               safeSubset: geminiReadOnlyAdvertise,
-              portableEnsembleControl: true
+              portableEnsembleControl: true,
+              sketchDirect: true
             },
             isolatedInstanceId:
               instanceLaunchPosture.kind === 'packaged-isolated'

@@ -264,6 +264,12 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       expect(isReadOnlyAdvertisedTool(tool)).toBe(false)
     }
   })
+
+  it('advertises Sketch open/get to read_only while keeping updates gated', () => {
+    expect(isReadOnlyAdvertisedTool('canvas_sketch_open')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_sketch_get')).toBe(true)
+    expect(isReadOnlyAdvertisedTool('canvas_sketch_update')).toBe(false)
+  })
 })
 
 describe('PLAN_MCP_ADVERTISE_TOOLS / isPlanAdvertisedTool (plan-seat bridge scope)', () => {

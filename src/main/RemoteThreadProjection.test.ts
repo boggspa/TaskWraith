@@ -2610,3 +2610,38 @@ describe('RemoteThreadSnapshot — peer thread-message inbox', () => {
     expect(snap.threadMessageInbox).not.toHaveProperty('oldestPendingAt')
   })
 })
+
+describe('fan-out lane working-state projection', () => {
+  function laneMessage(metadata: Record<string, unknown>): ChatMessage {
+    return {
+      id: 'lane-msg',
+      role: 'assistant',
+      content: 'lane output',
+      timestamp: '2026-01-01T00:00:05.000Z',
+      metadata: { kind: 'ensembleParticipant', ensembleProvider: 'codex', ...metadata }
+    } as ChatMessage
+  }
+
+  it('projects the participantId so a client can join the card to the working set', () => {
+    // Not derivable on the client: the lane id is
+    // `lane-${roundId}-${participantId}-${attempt}`, and a participant id may
+    // itself contain hyphens, so splitting it back apart is guesswork.
+    const snapshot = project({ kind: 'latestN', n: 5 }, [
+      laneMessage({
+        ensembleLaneId: 'lane-round-1-reader-with-hyphens-1',
+        ensembleParticipantId: 'reader-with-hyphens'
+      })
+    ])
+    const fanout = snapshot.rows.find((row) => row.fanoutResult)?.fanoutResult
+    expect(fanout?.participantId).toBe('reader-with-hyphens')
+  })
+
+  it('omits participantId rather than inventing one when the metadata lacks it', () => {
+    const snapshot = project({ kind: 'latestN', n: 5 }, [
+      laneMessage({ ensembleLaneId: 'lane-round-1-reader-1' })
+    ])
+    const fanout = snapshot.rows.find((row) => row.fanoutResult)?.fanoutResult
+    expect(fanout?.laneId).toBe('lane-round-1-reader-1')
+    expect(fanout?.participantId).toBeUndefined()
+  })
+})

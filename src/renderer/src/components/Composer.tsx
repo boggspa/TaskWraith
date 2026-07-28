@@ -1886,9 +1886,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     ((showWorkspaceGitAboveRows && !isWelcomeChat && Boolean(currentWorkspace)) ||
       isCurrentEnsembleChat ||
       queuedMessagesAboveRowEntries.length > 0)
+  const hasPersistentPrimaryWorkspaceAboveRow = Boolean(
+    showWorkspaceGitAboveRows && !isWelcomeChat && currentWorkspace
+  )
   const nativeNoAboveRowsClass =
     appearance.composerStyle === 'default' &&
-    (!hasComposerAboveRows || areComposerAboveRowsMinimized)
+    (!hasComposerAboveRows ||
+      (areComposerAboveRowsMinimized && !hasPersistentPrimaryWorkspaceAboveRow))
       ? ' composer-surface--native-no-above-rows'
       : ''
 
@@ -2105,7 +2109,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 const primaryWorkspaceAboveBar =
                   !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
                     <div
-                      className={`composer-above-bar style-unified composer-workspace-above-row${
+                      className={`composer-above-bar style-unified composer-workspace-above-row composer-workspace-above-row--primary${
                         aboveRowsFloatAboveStack ? ' composer-above-bar--cursor-lead' : ''
                       }`}
                     >

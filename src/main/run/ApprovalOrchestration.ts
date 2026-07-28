@@ -515,7 +515,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // externalPublish is grantable, but read_only / plan keep it approval-only:
     // each publish action prompts, while workspace_write / trusted full_access
     // may auto-allow through the normal audited policy path.
-    // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
+    // plan-preset instruments (canvasInteraction/sketchCanvas/mediaEditing) are
+    // approval-only:
     // a standing/session grant must NOT zero-click them under `plan` (standing
     // instrument grants are the conformance-gated W7-b rung), so they join
     // neverAutoAllow here — which forces the prompt on every auto-allow path below.

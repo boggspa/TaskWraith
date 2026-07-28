@@ -33,6 +33,7 @@ const effectivePermissions = (
     mcpTools: 'ask',
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
+    sketchCanvas: 'deny',
     meshCanvas: 'deny',
     crossThreadRead: 'deny',
     threadMessage: 'deny',
@@ -101,10 +102,12 @@ describe('taskWraithToolServiceIfKnown', () => {
 })
 
 describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
-  it('routes canvas app/sketch mutations to canvasInteraction, leaves reads on mcpTools', () => {
+  it('keeps web Canvas control separate from Sketch mutation, leaving reads on mcpTools', () => {
     expect(taskWraithToolAgenticService('canvas_click')).toBe('canvasInteraction')
     expect(taskWraithToolAgenticService('canvas_fill')).toBe('canvasInteraction')
-    expect(taskWraithToolAgenticService('canvas_sketch_update')).toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_sketch_update')).toBe('sketchCanvas')
+    expect(taskWraithToolAgenticService('canvas_sketch_update')).not.toBe('canvasInteraction')
+    expect(taskWraithToolAgenticService('canvas_sketch_open')).toBe('mcpTools')
     expect(taskWraithToolAgenticService('canvas_sketch_get')).toBe('mcpTools')
     expect(taskWraithToolAgenticService('canvas_snapshot')).toBe('mcpTools')
     expect(taskWraithToolAgenticService('canvas_open_launch')).toBe('mcpTools')
@@ -328,6 +331,7 @@ describe('effectiveAgenticSettings', () => {
     // Read-only canvasInteraction deny must survive the effective-settings merge
     // (it previously got dropped here — P1 review GAP 2).
     expect(merged.agenticServices.canvasInteraction).toBe('deny')
+    expect(merged.agenticServices.sketchCanvas).toBe('deny')
     // Same guarantee for canvas_eval (RCE): read-only deny must survive the merge.
     expect(merged.agenticServices.canvasEval).toBe('deny')
   })
@@ -349,6 +353,7 @@ describe('effectiveAgenticSettings', () => {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
+      sketchCanvas: 'allow',
       meshCanvas: 'ask',
       crossThreadRead: 'ask',
       threadMessage: 'ask',

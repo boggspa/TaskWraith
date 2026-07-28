@@ -150,6 +150,7 @@ describe('toolNameToFamily', () => {
     expect(toolNameToFamily('canvas_open')).toBe('canvas')
     expect(toolNameToFamily('canvas_screenshot')).toBe('canvas')
     expect(toolNameToFamily('canvas_eval')).toBe('canvas')
+    expect(toolNameToFamily('mesh_scene_present')).toBe('canvas')
   })
 
   it('maps media tools to image/audio/video families', () => {

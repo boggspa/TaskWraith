@@ -218,6 +218,7 @@ describe('B-mode global broker helpers', () => {
         TASKWRAITH_MCP_GATEWAY_SUBSET: '1',
         TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '0',
         TASKWRAITH_MCP_MESH_DIRECT: '1',
+        TASKWRAITH_MCP_SKETCH_DIRECT: '1',
         TASKWRAITH_MCP_AUDIT: '1'
       }
     })

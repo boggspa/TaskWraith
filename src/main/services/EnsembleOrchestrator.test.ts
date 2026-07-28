@@ -14777,6 +14777,65 @@ Next action:
     expect(harness.dispatched).toHaveLength(1)
   })
 
+  it('lets Captain request broad read-only fan-out while Boss is available', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.secondInCommandParticipantId = 'captain'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'captain',
+        provider: 'codex',
+        enabled: true,
+        role: 'Captain',
+        instructions: 'Coordinate parallel work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'boss',
+        provider: 'claude',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Own controlling authority.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Captain starts while Boss remains healthy.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const captainRunId = harness.dispatched[0].appRunId
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('captain')
+    // The general control resolver still keeps Captain on standby.
+    expect(
+      harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
+    ).toBeUndefined()
+
+    const result = await harness.orchestrator.fanoutForRun(captainRunId, {
+      prompt: 'Review in parallel.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      participantIds: ['reviewer']
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeDispatchedRun(harness, 1)
+  })
+
   it('1.0.8: ensemble_fanout dispatches an explicit read-only target in a lane', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
@@ -16880,6 +16939,96 @@ Next action:
         reason: 'locked_writer_not_authorized',
         assignedBossmanParticipantId: 'codex'
       })
+    } finally {
+      if (previousWrite === undefined) {
+        delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+      } else {
+        process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = previousWrite
+      }
+    }
+  })
+
+  it('lets Captain dispatch locked writer variants while Boss is available', async () => {
+    const previousWrite = process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
+    process.env.TASKWRAITH_CONCURRENT_WRITE_LANES = '1'
+    try {
+      const harness = makeHarness()
+      harness.chat.ensemble = {
+        ...harness.chat.ensemble!,
+        bossmanParticipantId: 'boss',
+        secondInCommandParticipantId: 'captain',
+        fanoutPolicy: 'locked_writers_with_boss',
+        participants: [
+          {
+            id: 'captain',
+            provider: 'codex',
+            enabled: true,
+            role: 'Captain',
+            instructions: 'Coordinate parallel work.',
+            order: 1,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'boss',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Own controlling authority.',
+            order: 2,
+            permissionPresetId: 'workspace_write'
+          },
+          {
+            id: 'worker',
+            provider: 'kimi',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Implement.',
+            order: 3,
+            permissionPresetId: 'workspace_write',
+            stageRole: 'worker'
+          }
+        ]
+      }
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Captain starts while Boss remains healthy.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      const captainRunId = harness.dispatched[0].appRunId
+      expect(
+        harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
+      ).toBeUndefined()
+
+      const result = await harness.orchestrator.fanoutForRun(captainRunId, {
+        targets: ['Worker'],
+        prompt: 'Implement only the worker slice.',
+        mode: 'locked_writers',
+        targetStage: 'workers',
+        writeScopes: { Worker: ['src/worker/**'] },
+        isolation: 'off'
+      })
+
+      expect(result).toMatchObject({
+        ok: true,
+        mode: 'locked_writers',
+        targetStage: 'workers',
+        participantIds: ['worker']
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(Object.values(harness.chat.ensemble?.activeRound?.lanes || {})).toEqual([
+        expect.objectContaining({
+          intent: 'write',
+          approvedWriteScopes: [
+            expect.objectContaining({
+              kind: 'glob',
+              path: 'src/worker/**',
+              approvedBy: 'captain'
+            })
+          ]
+        })
+      ])
+      completeDispatchedRun(harness, 1)
     } finally {
       if (previousWrite === undefined) {
         delete process.env.TASKWRAITH_CONCURRENT_WRITE_LANES
@@ -19405,7 +19554,7 @@ describe('I-drop regression — leading assistant content delta preservation', (
   }
 })
 
-describe('ensemble_fanout_all (Boss full-roster fan-out)', () => {
+describe('ensemble_fanout_all (authority full-roster fan-out)', () => {
   const rosterParticipants = (): EnsembleParticipant[] => [
     {
       id: 'codex',
@@ -19436,7 +19585,7 @@ describe('ensemble_fanout_all (Boss full-roster fan-out)', () => {
     }
   ]
 
-  it('rejects a non-Boss caller even with explicit targets', async () => {
+  it('rejects a non-authority caller even with explicit targets', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.chat.ensemble!.bossmanParticipantId = 'claude'
@@ -19454,6 +19603,44 @@ describe('ensemble_fanout_all (Boss full-roster fan-out)', () => {
     })
     expect(result).toMatchObject({ ok: false, error: 'not_authorized' })
     expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('lets Captain fan out the full roster while Boss is available', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+    harness.chat.ensemble!.secondInCommandParticipantId = 'codex'
+    harness.chat.ensemble!.participants = rosterParticipants()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Captain starts while Boss remains healthy.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const captainRunId = harness.dispatched[0].appRunId
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    expect(
+      harness.orchestrator.listParticipantsForRun(captainRunId).bossmanAuthorityRole
+    ).toBeUndefined()
+
+    const fanout = harness.orchestrator.fanoutAllForRun(captainRunId, {
+      prompt: 'All hands: take your assigned system.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(
+      harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
+    ).toEqual(['claude', 'kimi'])
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    await expect(fanout).resolves.toMatchObject({
+      ok: true,
+      participantIds: ['claude', 'kimi']
+    })
   })
 
   it('dispatches every idle seat under its OWN posture, ignoring fan-out policy off', async () => {

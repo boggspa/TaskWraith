@@ -1,7 +1,7 @@
 import { ollamaGptOssFewShotTrajectories } from './OllamaModelProtocol'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 import type { OllamaPromptIntent } from './OllamaPromptIntent'
-import type { OllamaToolControlTier } from '../store/types'
+import type { OllamaToolControlTier, TaskWraithMcpProfileId } from '../store/types'
 import {
   normalizeOllamaToolControlTier,
   ollamaAdvertisedToolNames,
@@ -245,17 +245,25 @@ function describeTool(toolName: OllamaToolName): string | null {
 export function ollamaLocalToolSystemPrompt(
   tier: OllamaToolControlTier | string | undefined | null = 'read_only',
   modelId?: string | null,
-  options: { intent?: OllamaPromptIntent; networkAccess?: string | null; readOnly?: boolean } = {}
+  options: {
+    intent?: OllamaPromptIntent
+    networkAccess?: string | null
+    readOnly?: boolean
+    plan?: boolean
+    taskWraithMcpProfileId?: TaskWraithMcpProfileId | null
+  } = {}
 ): string {
   const intent = options.intent ?? 'workspace'
   const normalizedTier = normalizeOllamaToolControlTier(tier)
-  // Advertise the immutable gateway-v1 direct set, not the full catalogue. The
+  // Advertise the immutable gateway-v8 direct set, not the full catalogue. The
   // tail stays executable through capability_invoke and is reachable through
-  // progressive discovery or legacy tool_help. A read-only/plan posture receives the exact
-  // intersection with the shared safe advertise set.
+  // progressive discovery or legacy tool_help. Read-only receives the shared
+  // safe set; Plan additionally receives its approval-gated instruments.
   const tools = ollamaAdvertisedToolNames({
     networkAccess: options.networkAccess,
-    readOnly: options.readOnly
+    readOnly: options.readOnly,
+    plan: options.plan,
+    taskWraithMcpProfileId: options.taskWraithMcpProfileId
   })
   const hasWebTools = tools.includes('web_search') || tools.includes('web_fetch')
   const familyLines = modelId?.trim()
@@ -305,7 +313,9 @@ export function ollamaLocalToolSystemPrompt(
     'More TaskWraith tools exist beyond these. Use capability_search with a short task query to get the best exact schemas, then capability_invoke with the returned tool name and arguments. Legacy tool_help can still fetch one exact schema (or list names) with {"taskwraith_tool":{"name":"tool_help","arguments":{"name":"<tool or empty to list>"}}}, but hidden tools must be executed through capability_invoke.',
     'Paths must stay inside the active workspace.',
     options.readOnly
-      ? 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'
+      ? options.plan
+        ? 'This run is PLAN-scoped: general file edits, shell, and publishing are unavailable. Listed visual/media instruments may pause for a user approval modal; request them only when they advance the plan.'
+        : 'This run is READ-ONLY: file edits, shell, and publishing are unavailable and not listed above. Do not attempt them — read, search, and answer, and say plainly if the task would require a write you cannot make.'
       : 'File edits, shell, and publishing are governed by the run\'s permission role: TaskWraith either shows the user an approval modal or blocks the tool. If a tool is blocked, say so and continue with what you can do.',
     'Use ask_user_question when the request is too ambiguous to continue safely or when a mid-task choice belongs to the user.',
     'After a tool result returns, answer normally or request one more tool with the same JSON shape. Do not invent file contents or workspace facts when a tool result is needed.'

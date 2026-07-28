@@ -5120,6 +5120,7 @@ export function SettingsPanel({
   const networkPolicyLabel = (value: AgenticNetworkPolicy): string =>
     NETWORK_POLICY_OPTIONS.find((option) => option.value === value)?.label ?? value
   const canvasInteractionPolicy = agenticServices.canvasInteraction ?? 'ask'
+  const sketchCanvasPolicy = agenticServices.sketchCanvas ?? 'allow'
   const externalPublishPolicy = agenticServices.externalPublish ?? 'ask'
   const mediaEditingPolicy = agenticServices.mediaEditing ?? 'ask'
   const safetyPolicyRows = [
@@ -5177,6 +5178,16 @@ export function SettingsPanel({
       display: agenticPolicyLabel(canvasInteractionPolicy),
       tone: policyTone(canvasInteractionPolicy),
       description: 'Agents can click and fill preview UI when the workspace policy permits it.'
+    },
+    {
+      id: 'sketch',
+      label: 'Sketch Canvas',
+      scope: 'Chat',
+      value: sketchCanvasPolicy,
+      display: agenticPolicyLabel(sketchCanvasPolicy),
+      tone: policyTone(sketchCanvasPolicy),
+      description:
+        'Agents can edit structured shapes and text in chat-owned sketches; opening and reading stay available to read-only seats.'
     },
     {
       id: 'media',
@@ -7442,6 +7453,34 @@ export function SettingsPanel({
                       onChange={(e) =>
                         updateAgenticService(
                           'canvasInteraction',
+                          e.target.value as AgenticServicePolicy
+                        )
+                      }
+                    >
+                      {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      Sketch Canvas
+                      <small>
+                        Whether agents can edit structured shapes and text in chat-owned sketches.
+                        Default &apos;Always allow&apos; keeps sketches fluid; Plan still asks for
+                        every edit, and read-only seats can only open and inspect.
+                      </small>
+                    </span>
+                    <select
+                      className="settings-select"
+                      value={agenticServices.sketchCanvas ?? 'allow'}
+                      disabled={agenticServicesManagedLocked}
+                      onChange={(e) =>
+                        updateAgenticService(
+                          'sketchCanvas',
                           e.target.value as AgenticServicePolicy
                         )
                       }

@@ -129,7 +129,7 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
         label: 'Web QA tools',
         description: 'Browser and canvas inspection tools for local web app verification.',
         risk: 'medium',
-        agenticServices: ['mcpTools', 'canvasInteraction'],
+        agenticServices: ['mcpTools', 'canvasInteraction', 'sketchCanvas'],
         networkScopes: ['localhost']
       },
       {
@@ -144,7 +144,8 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
     permissions: {
       agenticServices: {
         mcpTools: 'ask',
-        canvasInteraction: 'ask'
+        canvasInteraction: 'ask',
+        sketchCanvas: 'allow'
       },
       networkScopes: ['localhost']
     },

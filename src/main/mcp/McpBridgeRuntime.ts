@@ -26,6 +26,8 @@ import {
   type CapabilityGatewayToolName
 } from './McpToolGateway'
 import {
+  compactGatewayV8MeshToolDefinitionsForTransport,
+  GATEWAY_V8_ADDED_TOOL_NAMES,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool
 } from './McpToolProfiles'
@@ -120,6 +122,10 @@ export const GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG = '--portable-ensemble-con
 // never dispatch authority: main checks the active participant/run posture on
 // every Mesh Canvas call.
 export const GEMINI_MCP_MESH_DIRECT_ARG = '--mesh-direct'
+// Sketch Canvas direct-discovery profile flag. v8 sessions carry it for their
+// whole lifetime; older pinned gateway receipts omit it and keep Sketch behind
+// capability discovery.
+export const GEMINI_MCP_SKETCH_DIRECT_ARG = '--sketch-direct'
 // Audit scope flag. Direct bridge children carry this in argv; static helpers
 // carry the complete profile receipt in their route environment. Unlike
 // safe-subset this does NOT restrict tools/call — audit tools route through the
@@ -155,6 +161,7 @@ export function applyMcpBridgeProfileArgvToEnv(
     env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL = '1'
   }
   if (argv.includes(GEMINI_MCP_MESH_DIRECT_ARG)) env.TASKWRAITH_MCP_MESH_DIRECT = '1'
+  if (argv.includes(GEMINI_MCP_SKETCH_DIRECT_ARG)) env.TASKWRAITH_MCP_SKETCH_DIRECT = '1'
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
 
@@ -923,13 +930,15 @@ function isCoreMcpAdvertisedForSeat(name: string, portableEnsembleControl = fals
 function isGatewayMcpAdvertisedForSeat(
   name: string,
   portableEnsembleControl = false,
-  meshDirect = false
+  meshDirect = false,
+  sketchDirect = false
 ): boolean {
   return (
     (isGatewayMcpAdvertisedTool(name) &&
       (!portableEnsembleControl || name !== 'ensemble_bossman_control')) ||
     (portableEnsembleControl && name === 'ensemble_control') ||
-    (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name))
+    (meshDirect && (MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(name)) ||
+    (sketchDirect && (GATEWAY_V8_ADDED_TOOL_NAMES as readonly string[]).includes(name))
   )
 }
 
@@ -1162,6 +1171,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
+  GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1654,7 +1664,7 @@ export function handleMcpJsonRpcMessage(
       (deps.env?.TASKWRAITH_MCP_SAFE_SUBSET ?? process.env.TASKWRAITH_MCP_SAFE_SUBSET) === '1'
     // Plan-tier bridge seat (TASKWRAITH_MCP_PLAN_SUBSET=1, layered on safe-subset):
     // widen the advertised set from the strict read-only subset to ALSO include the
-    // plan instruments (canvas actuation + media), which stay host-gated on the main
+    // plan instruments (canvas actuation + Sketch + media), which stay host-gated on the main
     // side. A read_only seat (flag absent) keeps the strict subset.
     const planSubset =
       (deps.env?.TASKWRAITH_MCP_PLAN_SUBSET ?? process.env.TASKWRAITH_MCP_PLAN_SUBSET) === '1'
@@ -1675,6 +1685,9 @@ export function handleMcpJsonRpcMessage(
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
     const meshDirect =
       (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
+    const sketchDirect =
+      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
+        process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
     // Audit role-run bridge (TASKWRAITH_MCP_AUDIT=1): additionally advertise the
     // audit_* tool namespace so the role-run can record findings/verdicts/profile.
     // The flag is set per-run at the provider spawn site and never on a normal
@@ -1693,12 +1706,21 @@ export function handleMcpJsonRpcMessage(
               (!safeSubsetOnly || isAdvertisedForSeat(tool.name)) &&
               (!coreSubsetOnly || isCoreMcpAdvertisedForSeat(tool.name, portableEnsembleControl)) &&
               (!gatewaySubsetOnly ||
-                isGatewayMcpAdvertisedForSeat(tool.name, portableEnsembleControl, meshDirect))
+                isGatewayMcpAdvertisedForSeat(
+                  tool.name,
+                  portableEnsembleControl,
+                  meshDirect,
+                  sketchDirect
+                ))
           )
         : allTools
+    const transportDirectTools =
+      gatewaySubsetOnly && meshDirect && sketchDirect
+        ? compactGatewayV8MeshToolDefinitionsForTransport(directTools)
+        : directTools
     const baseTools = gatewaySubsetOnly
-      ? [...directTools, ...gatewayToolDefinitions()]
-      : directTools
+      ? [...transportDirectTools, ...gatewayToolDefinitions()]
+      : transportDirectTools
     const tools = auditSubset ? [...baseTools, ...auditToolDefinitions()] : baseTools
     writeMcpResponse(id, { tools }, transport, stdout)
     return
@@ -1733,6 +1755,9 @@ export function handleMcpJsonRpcMessage(
         process.env.TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL) === '1'
     const meshDirect =
       (deps.env?.TASKWRAITH_MCP_MESH_DIRECT ?? process.env.TASKWRAITH_MCP_MESH_DIRECT) === '1'
+    const sketchDirect =
+      (deps.env?.TASKWRAITH_MCP_SKETCH_DIRECT ??
+        process.env.TASKWRAITH_MCP_SKETCH_DIRECT) === '1'
     if (portableEnsembleControlRequested && !portableEnsembleControl) {
       writeMcpError(
         id,
@@ -1778,7 +1803,8 @@ export function handleMcpJsonRpcMessage(
     const safeSubsetOnly =
       (deps.env?.TASKWRAITH_MCP_SAFE_SUBSET ?? process.env.TASKWRAITH_MCP_SAFE_SUBSET) === '1'
     // Plan seats widen the allowed set to the plan instruments (canvas actuation +
-    // media), which are still host-gated in the broker (they are not auto-allowed).
+    // Sketch + media), which are still host-gated in the broker (they are not
+    // auto-allowed).
     // read_only seats stay on the strict read-only subset. The main-side host gate
     // remains the enforcement for the instruments; this reject just keeps
     // write/shell tools out for BOTH seats.
@@ -1829,7 +1855,12 @@ export function handleMcpJsonRpcMessage(
     if (
       gatewaySubsetOnly &&
       !gatewayToolRequested &&
-      !isGatewayMcpAdvertisedForSeat(advertisedToolName, portableEnsembleControl, meshDirect) &&
+      !isGatewayMcpAdvertisedForSeat(
+        advertisedToolName,
+        portableEnsembleControl,
+        meshDirect,
+        sketchDirect
+      ) &&
       !auditToolRequested
     ) {
       bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
@@ -2283,6 +2314,7 @@ export class McpBridgeRuntime {
     gatewaySubset = false,
     portableEnsembleControl = false,
     meshDirect = false,
+    sketchDirect = false,
     auditSubset = false
   ): string[] {
     const normalizedSocketPath = normalizeMcpSocketPathForBridgeLog(socketPath)
@@ -2335,6 +2367,7 @@ export class McpBridgeRuntime {
       // old receipted gateway sessions retain their original tool list.
       ...(portableEnsembleControl ? [GEMINI_MCP_PORTABLE_ENSEMBLE_CONTROL_ARG] : []),
       ...(meshDirect ? [GEMINI_MCP_MESH_DIRECT_ARG] : []),
+      ...(sketchDirect ? [GEMINI_MCP_SKETCH_DIRECT_ARG] : []),
       ...(auditSubset ? [GEMINI_MCP_AUDIT_SUBSET_ARG] : []),
       ...bootstrapArgs
     ]

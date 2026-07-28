@@ -124,7 +124,7 @@ describe('ollamaLocalToolSystemPrompt', () => {
 
   it('name-lists the gateway profile goal lifecycle tools', () => {
     const prompt = ollamaLocalToolSystemPrompt('provider_parity', 'ornith:9b')
-    // Exact gateway-v1 membership includes the lifecycle mutators required by
+    // Exact gateway-v8 membership includes the lifecycle mutators required by
     // long-horizon work; the older goal_update alias remains in the tail.
     expect(prompt).toContain('goal_read')
     expect(prompt).toContain('update_goal')
@@ -144,8 +144,8 @@ describe('ollamaLocalToolSystemPrompt', () => {
 
   it('drops file-edit + shell tools from the advertisement under a read-only posture', () => {
     // The `readOnly` OPTION (a real posture) is distinct from the inert `tier`
-    // first-arg: a read-only/plan seat hard-denies edits+shell, so advertising
-    // them just wastes a weak model's tool budget.
+    // first-arg: a read-only seat hard-denies edits+shell, so advertising them
+    // just wastes a weak model's tool budget.
     const readOnly = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', { readOnly: true })
     expect(readOnly).not.toContain('write_file')
     expect(readOnly).not.toContain('run_shell_command')
@@ -153,12 +153,29 @@ describe('ollamaLocalToolSystemPrompt', () => {
     // Reads/search/web stay available and the seat is told writes are unavailable.
     expect(readOnly).toContain('read_file')
     expect(readOnly).toContain('workspace_search')
+    expect(readOnly).toContain('canvas_sketch_open')
+    expect(readOnly).toContain('canvas_sketch_get')
+    expect(readOnly).not.toContain('canvas_sketch_update')
     expect(readOnly).toContain('This run is READ-ONLY')
     // Default (writable) posture still advertises the edit + shell tools.
     const writable = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b')
     expect(writable).toContain('write_file')
     expect(writable).toContain('run_shell_command')
     expect(writable).not.toContain('This run is READ-ONLY')
+  })
+
+  it('tells Plan seats that Sketch mutation pauses for approval', () => {
+    const plan = ollamaLocalToolSystemPrompt('read_only', 'qwen3.5:9b', {
+      readOnly: true,
+      plan: true
+    })
+    expect(plan).toContain('canvas_sketch_open')
+    expect(plan).toContain('canvas_sketch_get')
+    expect(plan).toContain('canvas_sketch_update')
+    expect(plan).not.toContain('write_file')
+    expect(plan).not.toContain('run_shell_command')
+    expect(plan).toContain('This run is PLAN-scoped')
+    expect(plan).toContain('approval modal')
   })
 })
 

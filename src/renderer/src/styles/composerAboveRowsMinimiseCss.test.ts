@@ -13,7 +13,11 @@ describe('composer above-row minimise control', () => {
     expect(composer).toContain('composer-area--above-rows-minimized')
     expect(composer).toContain('<ComposerAboveRowsToggleButton')
     expect(composer).toContain('onToggle={setAreComposerAboveRowsMinimized}')
-    expect(composer).toContain('(!hasComposerAboveRows || areComposerAboveRowsMinimized)')
+    expect(composer).toContain('hasPersistentPrimaryWorkspaceAboveRow')
+    expect(composer).toContain(
+      'areComposerAboveRowsMinimized && !hasPersistentPrimaryWorkspaceAboveRow'
+    )
+    expect(composer).toContain('composer-workspace-above-row--primary')
   })
 
   it('collapses every above-row shape while preserving reduced-motion support', () => {
@@ -24,6 +28,11 @@ describe('composer above-row minimise control', () => {
     expect(css).toContain('.composer-area--above-rows-minimized')
     expect(css).toContain('.composer-above-bar-stack')
     expect(css).toContain('.composer-above-bar--cursor-lead')
+    expect(css).toContain('.composer-workspace-above-row--primary')
+    expect(css).toContain(':not(:has(> .composer-workspace-above-row--primary))')
+    expect(css).toContain('> :not(.composer-workspace-above-row--primary)')
+    expect(css).toContain('gap: 0 !important')
+    expect(css).toContain('.composer-area--above-rows-minimized:not(')
     expect(css).toContain('.composer-attachment-tray')
     expect(css).toContain('max-block-size: 0 !important')
     expect(css).toContain('visibility: hidden')

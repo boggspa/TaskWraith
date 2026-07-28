@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import type { EffectiveRunPermissions } from '../store/types'
-import { meshCanvasParticipantHasPregrantedAuthority } from './MeshCanvasRunAuthority'
+import { meshCanvasParticipantCanRequestAccess } from './MeshCanvasRunAuthority'
 
 function permissions(
   meshCanvas: EffectiveRunPermissions['agenticServices']['meshCanvas'],
@@ -16,6 +17,7 @@ function permissions(
       mcpTools: 'ask',
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
+      sketchCanvas: 'allow',
       meshCanvas,
       canvasEval: 'ask',
       crossThreadRead: 'ask',
@@ -30,20 +32,48 @@ function permissions(
   }
 }
 
-describe('meshCanvasParticipantHasPregrantedAuthority', () => {
-  it('accepts an explicit participant/run allow posture', () => {
-    expect(meshCanvasParticipantHasPregrantedAuthority(permissions('allow'))).toBe(true)
+describe('meshCanvasParticipantCanRequestAccess', () => {
+  it('exposes Mesh Canvas directly for Default Approval so the call can prompt', () => {
+    const effective = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      presetId: 'default',
+      settings: {
+        agenticServices: {
+          shellCommands: 'ask',
+          fileChanges: 'ask',
+          externalPublish: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          sketchCanvas: 'allow',
+          meshCanvas: 'ask',
+          crossThreadRead: 'ask',
+          threadMessage: 'ask',
+          mediaEditing: 'ask',
+          mediaRecording: 'deny',
+          canvasEval: 'ask',
+          networkAccess: 'allow'
+        },
+        agenticWorkspaceGrants: []
+      }
+    })
+
+    expect(effective.approvalMode).toBe('default')
+    expect(effective.agenticServices.meshCanvas).toBe('ask')
+    expect(meshCanvasParticipantCanRequestAccess(effective)).toBe(true)
   })
 
-  it('requires an actual workspace grant for the workspace policy', () => {
-    expect(meshCanvasParticipantHasPregrantedAuthority(permissions('workspace'))).toBe(false)
-    expect(
-      meshCanvasParticipantHasPregrantedAuthority(permissions('workspace', ['meshCanvas']))
-    ).toBe(true)
+  it('exposes both pregranted and promptable workspace policies', () => {
+    expect(meshCanvasParticipantCanRequestAccess(permissions('allow'))).toBe(true)
+    expect(meshCanvasParticipantCanRequestAccess(permissions('workspace'))).toBe(true)
+    expect(meshCanvasParticipantCanRequestAccess(permissions('workspace', ['meshCanvas']))).toBe(
+      true
+    )
   })
 
-  it('does not mistake promptable or denied policy for a grant', () => {
-    expect(meshCanvasParticipantHasPregrantedAuthority(permissions('ask'))).toBe(false)
-    expect(meshCanvasParticipantHasPregrantedAuthority(permissions('deny'))).toBe(false)
+  it('keeps a denied or missing run posture out of the direct surface', () => {
+    expect(meshCanvasParticipantCanRequestAccess(permissions('deny'))).toBe(false)
+    expect(meshCanvasParticipantCanRequestAccess(undefined)).toBe(false)
   })
 })

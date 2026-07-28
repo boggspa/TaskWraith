@@ -13,6 +13,7 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
+      sketchCanvas: 'allow',
       meshCanvas: 'allow',
       crossThreadRead: 'allow',
       threadMessage: 'allow',

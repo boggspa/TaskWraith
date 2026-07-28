@@ -4,6 +4,8 @@ import type { ChatMessage, ToolActivity } from '../../../main/store/types'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   ensembleFanoutLaneIntent,
+  ensembleFanoutParticipantId,
+  isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage,
   readEnsembleFanoutTranscriptParts
 } from './EnsembleFanoutResultCardModel'
@@ -308,5 +310,67 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('40 earlier events hidden while collapsed.')
     expect(html).not.toContain('Fallback tool 0')
     expect(html).toContain('Fallback tool 119')
+  })
+})
+
+describe('working-lane rim shimmer', () => {
+  const WORKING = new Set(['reader-1'])
+
+  it('marks the card as working so the rim can chase', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} working onPreviewImage={() => {}} />
+    )
+    expect(html).toContain('is-working')
+    expect(html).toContain('data-lane-working="true"')
+  })
+
+  it('leaves a finished lane unmarked — the shimmer is the whole "still going" signal', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} onPreviewImage={() => {}} />
+    )
+    expect(html).not.toContain('is-working')
+    expect(html).not.toContain('data-lane-working')
+  })
+
+  it('keeps the participant accent class alongside the working class', () => {
+    // The chase colours itself from the card's --accent, so the hue class has
+    // to survive the working state or a busy lane would chase the wrong colour.
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={fanoutMessage()} working onPreviewImage={() => {}} />
+    )
+    expect(html).toContain('provider-codex')
+    expect(html).toContain('is-working')
+  })
+
+  it('lights only the lanes whose seat is in the working set', () => {
+    expect(isEnsembleFanoutLaneWorking(fanoutMessage(), WORKING)).toBe(true)
+    const otherSeat = fanoutMessage({
+      metadata: { ...fanoutMessage().metadata, ensembleParticipantId: 'writer-2' }
+    })
+    expect(isEnsembleFanoutLaneWorking(otherSeat, WORKING)).toBe(false)
+  })
+
+  it('treats an empty or absent working set as nobody working', () => {
+    expect(isEnsembleFanoutLaneWorking(fanoutMessage(), new Set())).toBe(false)
+    expect(isEnsembleFanoutLaneWorking(fanoutMessage(), null)).toBe(false)
+    expect(isEnsembleFanoutLaneWorking(fanoutMessage(), undefined)).toBe(false)
+  })
+
+  it('does not light a card whose message predates the participant id', () => {
+    // A null participant id must read as not-working rather than matching
+    // whatever happens to be first in the set.
+    const legacy = fanoutMessage({
+      metadata: { ...fanoutMessage().metadata, ensembleParticipantId: undefined }
+    })
+    expect(ensembleFanoutParticipantId(legacy)).toBeNull()
+    expect(isEnsembleFanoutLaneWorking(legacy, WORKING)).toBe(false)
+  })
+
+  it('ignores a blank participant id rather than matching on empty string', () => {
+    const blank = fanoutMessage({
+      metadata: { ...fanoutMessage().metadata, ensembleParticipantId: '   ' }
+    })
+    expect(ensembleFanoutParticipantId(blank)).toBeNull()
+    expect(isEnsembleFanoutLaneWorking(blank, new Set(['   ']))).toBe(false)
   })
 })

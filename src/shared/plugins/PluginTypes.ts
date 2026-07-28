@@ -19,6 +19,7 @@ export type TaskWraithPluginAgenticServiceId =
   | 'mcpTools'
   | 'subThreadDelegation'
   | 'canvasInteraction'
+  | 'sketchCanvas'
   | 'canvasEval'
   | 'crossThreadRead'
   | 'threadMessage'

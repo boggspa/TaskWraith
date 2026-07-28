@@ -145,15 +145,17 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'web_search',
   'web_fetch',
   'github_ci_status',
-  // TaskWraith Canvas read-only verbs. No pixels, no mutation: list/status are
-  // metadata the user already sees; snapshot/inspect run FIXED inspection
-  // scripts (not agent-supplied JS); network/console are read-only buffers.
-  // canvas_open / canvas_screenshot / canvas_resize / canvas_close stay GATED
-  // (window lifecycle + pixel egress), like browser_open.
+  // TaskWraith Canvas read-only verbs. No pixels, no workspace mutation:
+  // list/status are metadata the user already sees; snapshot/inspect run FIXED
+  // inspection scripts (not agent-supplied JS); network/console are read-only
+  // buffers. Sketch open/get are chat-owned structured-document reads: opening
+  // restores the same persisted sketch and does not navigate, fetch, or alter
+  // its elements. Web canvas_open / screenshot / resize / close stay gated.
   'canvas_list',
   'canvas_status',
   'canvas_snapshot',
   'canvas_inspect',
+  'canvas_sketch_open',
   'canvas_sketch_get',
   'canvas_network',
   'canvas_console',

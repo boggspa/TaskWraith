@@ -30,6 +30,7 @@ function permissions(
       mcpTools: 'workspace',
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',
+      sketchCanvas: 'allow',
       meshCanvas: 'ask',
       canvasEval: 'deny',
       crossThreadRead: 'deny',

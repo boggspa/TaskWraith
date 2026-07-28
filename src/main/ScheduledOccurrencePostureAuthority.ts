@@ -47,6 +47,7 @@ export const SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS = [
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'sketchCanvas',
   'meshCanvas',
   'canvasEval',
   'crossThreadRead',

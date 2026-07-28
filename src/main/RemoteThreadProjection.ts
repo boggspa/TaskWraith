@@ -626,6 +626,15 @@ export function indexRemoteAgentQuestionAnswers(
  * shipping the pair and resolving on the phone is exact parity, not a guess. */
 export interface RemoteEnsembleFanoutResult {
   laneId?: string
+  /**
+   * The seat that produced this lane. Lets a client join the card to
+   * `RemoteEnsembleState.workingParticipantIds` and mark it as still running.
+   *
+   * Not derivable from `laneId` on the client: the desktop lane id is
+   * `lane-${roundId}-${participantId}-${attempt}`, and since a participant id
+   * may itself contain hyphens, splitting it back apart is guesswork.
+   */
+  participantId?: string
   /** Lane write-intent — drives the "Writer / Reader / Fan-out lane" label. */
   intent?: 'read' | 'write' | 'none'
   provider?: ProviderId
@@ -1502,6 +1511,8 @@ function buildFanoutResult(message: ChatMessage): RemoteEnsembleFanoutResult | u
   const laneId = stringField(metadata.ensembleLaneId, 120)
   if (!laneId) return undefined
   const result: RemoteEnsembleFanoutResult = { laneId }
+  const participantId = stringField(metadata.ensembleParticipantId, 160)
+  if (participantId) result.participantId = participantId
   const intent = metadata.ensembleLaneIntent
   if (intent === 'read' || intent === 'write' || intent === 'none') result.intent = intent
   const provider = providerField(metadata.ensembleProvider)

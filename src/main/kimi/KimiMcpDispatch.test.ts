@@ -106,6 +106,7 @@ describe('createKimiMcpDispatch', () => {
       TASKWRAITH_MCP_GATEWAY_SUBSET: '0',
       TASKWRAITH_MCP_PORTABLE_ENSEMBLE_CONTROL: '1',
       TASKWRAITH_MCP_MESH_DIRECT: '1',
+      TASKWRAITH_MCP_SKETCH_DIRECT: '1',
       TASKWRAITH_MCP_AUDIT: '1',
       TASKWRAITH_PARENT_PROVIDER: 'cursor',
       TASKWRAITH_RUN_ID: 'ambient-run',
@@ -135,7 +136,8 @@ describe('createKimiMcpDispatch', () => {
           { name: 'ensemble_propose_goal_complete' },
           { name: 'ensemble_bossman_control' },
           { name: 'ensemble_control' },
-          { name: 'mesh_scene_present' }
+          { name: 'mesh_scene_present' },
+          { name: 'canvas_sketch_update' }
         ],
         dispatchBrokerRequest
       })
@@ -158,6 +160,7 @@ describe('createKimiMcpDispatch', () => {
       )
       expect(listedNames).not.toContain('ensemble_control')
       expect(listedNames).not.toContain('mesh_scene_present')
+      expect(listedNames).not.toContain('canvas_sketch_update')
       expect(listedNames).not.toContain('audit_record_finding')
 
       await expect(
@@ -191,7 +194,8 @@ describe('createKimiMcpDispatch', () => {
       for (const [id, name] of [
         [93, 'ensemble_control'],
         [94, 'mesh_scene_present'],
-        [95, 'audit_record_finding']
+        [95, 'canvas_sketch_update'],
+        [96, 'audit_record_finding']
       ] as const) {
         await expect(
           dispatch({
@@ -205,6 +209,36 @@ describe('createKimiMcpDispatch', () => {
       expect(dispatchBrokerRequest).toHaveBeenCalledTimes(2)
     } finally {
       vi.unstubAllEnvs()
+    }
+  })
+
+  it('makes Sketch direct for v8 Kimi seats without drifting a v7 receipt', async () => {
+    const listFor = async (taskWraithMcpProfileId: 'taskwraith-gateway-v7' | 'taskwraith-gateway-v8') => {
+      const dispatch = createKimiMcpDispatch({
+        route: { appRunId: 'kimi-run-sketch', appChatId: 'chat-sketch' },
+        taskWraithMcpProfileId,
+        appVersion: '1.8.4',
+        brokerToken: 'broker-token',
+        instanceEpoch: INSTANCE_EPOCH,
+        getMcpToolDefinitions: () => [
+          { name: 'read_file' },
+          { name: 'canvas_sketch_open' },
+          { name: 'canvas_sketch_get' },
+          { name: 'canvas_sketch_update' }
+        ],
+        dispatchBrokerRequest: vi.fn()
+      })
+      const response = await dispatch({ jsonrpc: '2.0', id: 89, method: 'tools/list' })
+      return (
+        (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+      ).map((tool) => tool.name)
+    }
+
+    const v7 = await listFor('taskwraith-gateway-v7')
+    const v8 = await listFor('taskwraith-gateway-v8')
+    for (const tool of ['canvas_sketch_open', 'canvas_sketch_get', 'canvas_sketch_update']) {
+      expect(v7).not.toContain(tool)
+      expect(v8).toContain(tool)
     }
   })
 

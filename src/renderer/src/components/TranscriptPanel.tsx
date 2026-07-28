@@ -118,7 +118,10 @@ import {
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
-import { isEnsembleFanoutResultMessage } from './EnsembleFanoutResultCardModel'
+import {
+  isEnsembleFanoutLaneWorking,
+  isEnsembleFanoutResultMessage
+} from './EnsembleFanoutResultCardModel'
 import { AgentQuestionCard, type AgentQuestionState } from './AgentQuestionCard'
 import { AgentQuestionTombstoneCard } from './AgentQuestionTombstoneCard'
 import {
@@ -887,6 +890,8 @@ function prefersReducedMotionNow(): boolean {
 }
 /** Stable empty expansion set so unopened tool rows share one reference. */
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
+/** Stable empty set so the no-one-working case never remounts a card's rim. */
+const EMPTY_WORKING_LANE_IDS: ReadonlySet<string> = new Set<string>()
 
 function escapeDomSelectorValue(value: string): string {
   return typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
@@ -2181,6 +2186,24 @@ export const TranscriptPanel = memo(
         ),
       [currentChat?.messages, currentChat?.runs, workingPresentations]
     )
+    // Seats whose "working…" row is live right now, so each fan-out lane card
+    // can shimmer its rim while its own seat is busy — the point being that a
+    // straggler is findable at a glance when several lanes run at once.
+    //
+    // Gated on the SAME condition as the working row below
+    // (`isThinking || hasLiveContextCompactionProgress`) and read from the SAME
+    // presentations, so a card's shimmer starts and stops with that seat's row
+    // rather than tracking a second, subtly different idea of "live". A
+    // presentation with no participantId is the non-Ensemble fallback row and
+    // belongs to no lane, so it lights nothing.
+    const workingLaneParticipantIds = useMemo<ReadonlySet<string>>(() => {
+      if (!isThinking && !hasLiveContextCompactionProgress) return EMPTY_WORKING_LANE_IDS
+      const ids = new Set<string>()
+      for (const presentation of workingPresentations) {
+        if (presentation.participantId) ids.add(presentation.participantId)
+      }
+      return ids
+    }, [hasLiveContextCompactionProgress, isThinking, workingPresentations])
     // Working-row context pressure — self-derived from the chat record with
     // the same meter lib the donut uses, so the indicator can disclose "before"
     // (occupancy ≥ warn) and presume "whilst" (token-growth stall at pressure)
@@ -4215,6 +4238,7 @@ export const TranscriptPanel = memo(
                           ? msg.runId
                           : boundaryRun?.runId
                       }
+                      working={isEnsembleFanoutLaneWorking(msg, workingLaneParticipantIds)}
                       expanded={expandedFanoutResults.has(rowKey)}
                       onExpandedChange={(expanded) => setFanoutResultExpanded(rowKey, expanded)}
                       compactDensity={compactDensity}

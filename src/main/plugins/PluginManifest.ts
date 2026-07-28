@@ -105,6 +105,7 @@ const AGENTIC_SERVICE_IDS = new Set([
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
+  'sketchCanvas',
   'canvasEval',
   'crossThreadRead',
   'threadMessage',
