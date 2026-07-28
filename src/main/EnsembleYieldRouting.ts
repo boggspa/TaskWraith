@@ -8,6 +8,7 @@ export type EnsembleYieldRejectReason =
   | 'blocked_status'
   | 'hop_limit'
   | 'authority_precedence'
+  | 'authority_routing_decision_required'
   | 'outside_scope'
   | BackgroundDispatchRejectReason
   | 'no_active_run'
@@ -30,6 +31,11 @@ export type EnsembleYieldRoutingResult =
 
 export type EnsembleYieldOutcome =
   | { kind: 'no_active_run' }
+  | {
+      kind: 'authority_routing_decision_required'
+      pass: number
+      requirement: 'later_pass_selection' | 'tagged_intervention'
+    }
   | { kind: 'yielded'; routing?: EnsembleYieldRoutingResult }
 
 export type StoredYieldRouting =

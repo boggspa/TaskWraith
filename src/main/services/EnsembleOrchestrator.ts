@@ -71,6 +71,10 @@ import {
   resolveYieldTargetDetail,
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
+import {
+  resolveAuthoritySelection,
+  type EnsembleAuthorityRoutingCheckpoint
+} from '../EnsembleAuthorityRouting'
 import type {
   EnsembleYieldOutcome,
   EnsembleYieldRoutingResult,
@@ -635,6 +639,21 @@ interface ActiveParticipantRun {
   terminalSideEffectsApplied?: boolean
   /** Participant token totals merge once, on the effective terminal flush. */
   terminalTokenTotalsApplied?: boolean
+  /**
+   * Present only for an active Boss/Captain turn that was explicitly called
+   * back by a peer or that owns a later Continuous pass. The checkpoint stays
+   * run-scoped: a provider restart cannot manufacture authority over a fresh
+   * run, and the host remains authoritative for every resulting queue edit.
+   */
+  authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
+  /** Explicit host-admitted response to the attached authority checkpoint. */
+  authorityRoutingDecision?:
+    | 'selected'
+    | 'skipped_intervention'
+    | 'skipped_participant'
+    | 'summoned'
+    | 'fanout'
+    | 'redirected'
   participant: EnsembleParticipant
   promptMessageId: string
   /**
@@ -795,6 +814,7 @@ export interface EnsembleFanoutAllResult {
     | 'invalid_isolation'
     | 'no_eligible_targets'
     | 'not_authorized'
+    | 'explicit_targets_required'
     | 'budget_exhausted'
     | 'dispatch_failed'
 }
@@ -818,6 +838,7 @@ export interface EnsembleFanoutResult {
     | 'invalid_isolation'
     | 'no_eligible_targets'
     | 'not_authorized'
+    | 'explicit_targets_required'
     | 'missing_write_scope'
     | 'invalid_write_scope'
     | 'write_lanes_disabled'
@@ -881,6 +902,8 @@ export interface EnsembleLaneResultResult {
 
 export type EnsembleBossmanControlAction =
   | 'skip_participant'
+  | 'select_participants'
+  | 'skip_intervention'
   | 'summon_participant'
   | 'stop_round'
   | 'replace_participant'
@@ -908,6 +931,8 @@ export interface EnsembleBossmanControlInput {
   targetParticipantId?: string
   targetRunId?: string
   participantIds?: string[]
+  /** Explicit role/model aliases for select_participants. */
+  participantRoles?: string[]
   prompt?: string
   reason?: string
   objective?: string
@@ -989,6 +1014,8 @@ export interface EnsembleBossmanControlResult {
     | 'stale_round'
     | 'stale_target'
     | 'stale_target_run'
+    | 'initial_pass_preserves_roster'
+    | 'authority_checkpoint_missing'
     | 'missing_prompt'
     | 'missing_replacement'
     | 'health_check_unavailable'
@@ -2985,6 +3012,10 @@ interface ActiveRoundRuntime {
   concurrentMode?: boolean
   continuationHops: number
   maxContinuationHops: number
+  /** One-based autonomous pass. Kept separately from per-seat hop accounting. */
+  continuationPass: number
+  /** Tagged authority call-ins waiting to be attached to the resulting run. */
+  pendingAuthorityRoutingCheckpoints?: Map<string, EnsembleAuthorityRoutingCheckpoint>
   continuationLimitNotified?: boolean
   /**
    * The serial continuation budget is exhausted, but terminal publication is
@@ -4417,6 +4448,40 @@ export class EnsembleOrchestrator {
   markYielded(runId: string, reason?: string, target?: string): EnsembleYieldOutcome {
     const run = this.actionableRunForTool(runId)
     if (!run) return { kind: 'no_active_run' }
+    const checkpoint = run.authorityRoutingCheckpoint
+    const chatForCheckpoint = this.deps.getChat(run.chatId)
+    const explicitCheckpointTarget = target
+      ? resolveYieldTargetDetail(
+          target,
+          chatForCheckpoint?.ensemble?.participants || [],
+          new Set([run.participant.id])
+        )
+      : undefined
+    const requiresExplicitAuthorityRoutingDecision =
+      checkpoint?.selectionRequired || checkpoint?.kind === 'tagged_intervention'
+    if (
+      requiresExplicitAuthorityRoutingDecision &&
+      !run.authorityRoutingDecision &&
+      (!target ||
+        isUserYieldTarget(target) ||
+        explicitCheckpointTarget?.kind !== 'resolved')
+    ) {
+      this.appendRoundStatus(
+        run.chatId,
+        run.roundId,
+        checkpoint?.kind === 'tagged_intervention'
+          ? `Authority routing checkpoint: ${participantDisplayName(run.participant)} must make a targeted routing decision or explicitly skip this tagged intervention before yielding.`
+          : `Authority routing checkpoint: ${participantDisplayName(run.participant)} must select pending participants or explicitly preserve the queue before yielding this later Continuous pass.`
+      )
+      return {
+        kind: 'authority_routing_decision_required',
+        pass: checkpoint.pass,
+        requirement:
+          checkpoint?.kind === 'tagged_intervention'
+            ? 'tagged_intervention'
+            : 'later_pass_selection'
+      }
+    }
     run.status = 'yielded'
     const runtime = this.roundsByChatId.get(run.chatId)
     const chat = this.deps.getChat(run.chatId)
@@ -4440,6 +4505,9 @@ export class EnsembleOrchestrator {
           })
         : undefined
       if (stored) runtime.yieldRouting = stored
+      if (routing?.ok && routing.action !== 'user') {
+        this.markAuthorityRoutingDecision(run, 'redirected')
+      }
     }
 
     this.completePendingYieldActivity(run, reason, target)
@@ -4929,11 +4997,19 @@ export class EnsembleOrchestrator {
     }
 
     if (action === 'skip_participant') {
-      return this.skipParticipantByBossman(runtime, input, targetRun)
+      return this.skipParticipantByBossman(runtime, input, caller, authority.role, targetRun)
+    }
+
+    if (action === 'select_participants') {
+      return this.selectParticipantsByBossman(runtime, input, caller, authority.role)
+    }
+
+    if (action === 'skip_intervention') {
+      return this.skipAuthorityIntervention(runtime, caller, authority.role)
     }
 
     if (action === 'summon_participant') {
-      return this.summonParticipantByBossman(runtime, input, caller.participant, authority.role)
+      return this.summonParticipantByBossman(runtime, input, caller, authority.role)
     }
 
     if (action === 'reorder_remaining') {
@@ -6368,12 +6444,133 @@ export class EnsembleOrchestrator {
     )
   }
 
+  private selectParticipantsByBossman(
+    runtime: ActiveRoundRuntime,
+    input: EnsembleBossmanControlInput,
+    caller: ActiveParticipantRun,
+    authorityRole: 'boss' | 'second_in_command'
+  ): EnsembleBossmanControlResult {
+    const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
+    if (this.isInitialAuthorityPass(runtime)) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'select_participants',
+        roundId: runtime.roundId,
+        message:
+          'Boss/Captain selection is unavailable during the initial Ensemble pass; every first-pass participant keeps its turn.',
+        error: 'initial_pass_preserves_roster'
+      }
+    }
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'select_participants',
+        roundId: runtime.roundId,
+        message: `${authorityLabel} selection rejected: active chat is no longer an Ensemble chat.`,
+        error: 'not_ensemble'
+      }
+    }
+    const remaining = runtime.remainingParticipants || []
+    const selection = resolveAuthoritySelection({
+      participantIds: input.participantIds,
+      participantRoles: input.participantRoles,
+      participants: chat.ensemble.participants,
+      pendingParticipants: remaining,
+      callerParticipantId: caller.participant.id
+    })
+    if (!selection.ok) {
+      const message =
+        selection.error === 'missing_selection'
+          ? `${authorityLabel} selection requires participantIds and/or participantRoles.`
+          : selection.error === 'ambiguous_selector'
+            ? `${authorityLabel} selection rejected: "${selection.selector}" is ambiguous. Use an exact participant id, unique role, or model.`
+            : selection.error === 'not_pending_selector'
+              ? `${authorityLabel} selection rejected: "${selection.selector}" is no longer pending in this pass.`
+              : `${authorityLabel} selection rejected: "${selection.selector}" does not resolve to a participant.`
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'select_participants',
+        roundId: runtime.roundId,
+        message,
+        error: selection.error === 'missing_selection' ? 'missing_required_field' : 'invalid_target'
+      }
+    }
+
+    const reason = input.reason || `${authorityLabel} kept this participant for the current pass.`
+    remaining.splice(0, remaining.length, ...selection.selected)
+    for (const participant of selection.skipped) {
+      this.updateParticipantState(
+        runtime.chatId,
+        runtime.roundId,
+        participant.id,
+        'skipped',
+        `${authorityLabel} did not select this participant for pass ${runtime.continuationPass}. ${reason}`
+      )
+    }
+    this.markAuthorityRoutingDecision(caller, 'selected')
+    const kept = selection.selected.map((participant) => participantDisplayName(participant))
+    const skipped = selection.skipped.map((participant) => participantDisplayName(participant))
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${authorityLabel} selected ${kept.join(', ') || 'no pending participants'} for pass ${runtime.continuationPass}.${
+        skipped.length ? ` Skipped: ${skipped.join(', ')}.` : ''
+      }`
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'select_participants',
+      roundId: runtime.roundId,
+      message: `${authorityLabel} applied an explicit participant selection for this pass.`
+    }
+  }
+
+  private skipAuthorityIntervention(
+    runtime: ActiveRoundRuntime,
+    caller: ActiveParticipantRun,
+    authorityRole: 'boss' | 'second_in_command'
+  ): EnsembleBossmanControlResult {
+    const checkpoint = caller.authorityRoutingCheckpoint
+    const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
+    if (!checkpoint) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'skip_intervention',
+        roundId: runtime.roundId,
+        message: `${authorityLabel} has no active authority-routing checkpoint to skip.`,
+        error: 'authority_checkpoint_missing'
+      }
+    }
+    this.markAuthorityRoutingDecision(caller, 'skipped_intervention')
+    this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      `${authorityLabel} explicitly preserved the current queue at its authority-routing checkpoint.`
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_bossman_control',
+      action: 'skip_intervention',
+      roundId: runtime.roundId,
+      message: `${authorityLabel} skipped the authority intervention and preserved the current queue.`
+    }
+  }
+
   private skipParticipantByBossman(
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
+    caller: ActiveParticipantRun,
+    authorityRole: 'boss' | 'second_in_command',
     targetRun?: ActiveParticipantRun
   ): EnsembleBossmanControlResult {
-    const reason = input.reason || 'Skipped by Boss.'
+    const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
+    const reason = input.reason || `Skipped by ${authorityLabel}.`
     let active = targetRun
     if (!active && runtime.activeRunId) {
       const candidate = this.runsByRunId.get(runtime.activeRunId)
@@ -6385,10 +6582,23 @@ export class EnsembleOrchestrator {
       }
     }
     if (active) {
+      if (this.isInitialAuthorityPass(runtime)) {
+        return {
+          ok: false,
+          tool: 'ensemble_bossman_control',
+          action: 'skip_participant',
+          roundId: runtime.roundId,
+          participantId: active.participant.id,
+          message:
+            'Boss/Captain cannot skip a participant during the initial Ensemble pass; every first-pass participant keeps its turn.',
+          error: 'initial_pass_preserves_roster'
+        }
+      }
       active.fanoutDispatchCancelled = true
       this.finalizeRun(active, 'skipped', reason)
       if (runtime.activeRunId === active.runId) runtime.activeRunId = undefined
       runtime.activeScoutRunIds?.delete(active.runId)
+      this.markAuthorityRoutingDecision(caller, 'skipped_participant')
       void this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
       return {
         ok: true,
@@ -6396,7 +6606,7 @@ export class EnsembleOrchestrator {
         action: 'skip_participant',
         roundId: runtime.roundId,
         participantId: active.participant.id,
-        message: `Boss skipped ${active.participant.role || active.participant.provider}.`
+        message: `${authorityLabel} skipped ${active.participant.role || active.participant.provider}.`
       }
     }
 
@@ -6424,27 +6634,40 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
+    if (this.isInitialAuthorityPass(runtime)) {
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'skip_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message:
+          'Boss/Captain cannot skip a participant during the initial Ensemble pass; every first-pass participant keeps its turn.',
+        error: 'initial_pass_preserves_roster'
+      }
+    }
     const [participant] = remaining.splice(index, 1)
     this.updateParticipantState(runtime.chatId, runtime.roundId, participant.id, 'skipped', reason)
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Boss skipped ${participant.role || participant.provider}. ${reason}`
+      `${authorityLabel} skipped ${participant.role || participant.provider}. ${reason}`
     )
+    this.markAuthorityRoutingDecision(caller, 'skipped_participant')
     return {
       ok: true,
       tool: 'ensemble_bossman_control',
       action: 'skip_participant',
       roundId: runtime.roundId,
       participantId: participant.id,
-      message: `Boss skipped pending participant ${participant.role || participant.provider}.`
+      message: `${authorityLabel} skipped pending participant ${participant.role || participant.provider}.`
     }
   }
 
   private summonParticipantByBossman(
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
-    caller: EnsembleParticipant,
+    caller: ActiveParticipantRun,
     authorityRole: 'boss' | 'second_in_command'
   ): EnsembleBossmanControlResult {
     const authorityLabel = authorityRole === 'second_in_command' ? 'Captain' : 'Boss'
@@ -6459,7 +6682,7 @@ export class EnsembleOrchestrator {
         error: 'stale_target'
       }
     }
-    if (targetParticipantId === caller.id) {
+    if (targetParticipantId === caller.participant.id) {
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
@@ -6581,6 +6804,7 @@ export class EnsembleOrchestrator {
       }
     }
     runtime.bossmanSummonCountsByParticipantId.set(target.id, previousSummonCount + 1)
+    this.markAuthorityRoutingDecision(caller, 'summoned')
     return {
       ok: true,
       tool: 'ensemble_bossman_control',
@@ -9181,6 +9405,20 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
+    if (
+      this.requiresExplicitInterventionTargets(run) &&
+      isBroadFanoutRequest(input.targets) &&
+      !targetStage
+    ) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message:
+          'ensemble_fanout: this tagged Boss/Captain intervention requires explicit participants or a targetStage/role. Use skip_intervention if no routing change is needed.',
+        error: 'explicit_targets_required'
+      }
+    }
     const fanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
     if (fanoutPolicy === 'off') {
       return {
@@ -9381,6 +9619,7 @@ export class EnsembleOrchestrator {
         }
       }
       acceptedOwnedFanout = true
+      this.markAuthorityRoutingDecision(run, 'fanout')
       this.incrementBossmanBudgetUsage(
         runtime,
         acceptedTargets.map((participant) => participant.id),
@@ -9556,6 +9795,15 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
+    if (this.requiresExplicitInterventionTargets(run) && isBroadFanoutRequest(input.targets)) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message:
+          'ensemble_fanout_all: a tagged Boss/Captain intervention must name specific participants. Use ensemble_fanout with explicit targets or skip_intervention instead.',
+        error: 'explicit_targets_required'
+      }
+    }
 
     const resolvedTargets = this.resolveFanoutAllTargets(chat, runtime, run, input.targets)
     if (!resolvedTargets.ok) {
@@ -9643,6 +9891,7 @@ export class EnsembleOrchestrator {
         }
       }
       acceptedOwnedFanout = true
+      this.markAuthorityRoutingDecision(run, 'fanout')
       this.incrementBossmanBudgetUsage(
         runtime,
         acceptedTargets.map((participant) => participant.id),
@@ -10169,6 +10418,139 @@ export class EnsembleOrchestrator {
   ): boolean {
     if (!participantId) return false
     return this.resolveBossAuthorityForCaller(chat, runtime, participantId).ok
+  }
+
+  private isInitialAuthorityPass(runtime: ActiveRoundRuntime): boolean {
+    return runtime.continuationPass <= 1
+  }
+
+  private takeAuthorityRoutingCheckpoint(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    participant: EnsembleParticipant,
+    isLane: boolean
+  ): EnsembleAuthorityRoutingCheckpoint | undefined {
+    if (isLane) return undefined
+    if (!this.resolveBossAuthorityForCaller(chat, runtime, participant.id).ok) return undefined
+
+    const tagged = runtime.pendingAuthorityRoutingCheckpoints?.get(participant.id)
+    if (tagged) {
+      runtime.pendingAuthorityRoutingCheckpoints?.delete(participant.id)
+      return tagged
+    }
+
+    if (
+      runtime.orchestrationMode === 'continuous' &&
+      !this.isInitialAuthorityPass(runtime) &&
+      (runtime.remainingParticipants?.length || 0) > 0
+    ) {
+      return {
+        kind: 'later_pass',
+        pass: runtime.continuationPass,
+        selectionRequired: true
+      }
+    }
+    return undefined
+  }
+
+  private markAuthorityRoutingDecision(
+    run: ActiveParticipantRun | undefined,
+    decision: NonNullable<ActiveParticipantRun['authorityRoutingDecision']>
+  ): void {
+    if (!run?.authorityRoutingCheckpoint) return
+    run.authorityRoutingDecision = decision
+  }
+
+  private noteUnresolvedAuthorityRoutingCheckpoint(run: ActiveParticipantRun): void {
+    const checkpoint = run.authorityRoutingCheckpoint
+    if (!checkpoint || run.authorityRoutingDecision) return
+    const requirement = checkpoint.selectionRequired
+      ? 'No explicit keep/skip, targeted fan-out, or redirect decision was received'
+      : 'No explicit interstitial routing decision was received'
+    this.appendRoundStatus(
+      run.chatId,
+      run.roundId,
+      `Authority routing checkpoint: ${requirement} from ${participantDisplayName(run.participant)}; the host preserved the existing queue.`
+    )
+  }
+
+  private requiresExplicitInterventionTargets(run: ActiveParticipantRun): boolean {
+    return (
+      run.authorityRoutingCheckpoint?.kind === 'tagged_intervention' &&
+      !run.authorityRoutingDecision
+    )
+  }
+
+  private taggedAuthorityRoutingCheckpoint(
+    runtime: ActiveRoundRuntime,
+    sourceRun: ActiveParticipantRun
+  ): EnsembleAuthorityRoutingCheckpoint {
+    return {
+      kind: 'tagged_intervention',
+      pass: runtime.continuationPass,
+      selectionRequired:
+        runtime.orchestrationMode === 'continuous' && !this.isInitialAuthorityPass(runtime),
+      sourceParticipantLabel: participantDisplayName(sourceRun.participant)
+    }
+  }
+
+  private scheduleTaggedAuthorityIntervention(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    remaining: EnsembleParticipant[],
+    sourceRun: ActiveParticipantRun,
+    matches: ParticipantMentionMatch[]
+  ): boolean {
+    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
+    const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
+    const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
+    const authorityId =
+      primary.unavailable && secondInCommandParticipantId
+        ? secondInCommandParticipantId
+        : bossmanParticipantId
+    if (!authorityId) return false
+    const authorityMatch = matches.find(
+      (match) =>
+        match.participant.id === authorityId &&
+        !match.ambiguousAmong?.length &&
+        !isBackgroundParticipant(match.participant)
+    )
+    if (!authorityMatch) return false
+
+    const checkpoint = this.taggedAuthorityRoutingCheckpoint(runtime, sourceRun)
+    const authority = authorityMatch.participant
+    const pendingIndex = remaining.findIndex((participant) => participant.id === authority.id)
+    if (pendingIndex >= 0) {
+      const [pending] = remaining.splice(pendingIndex, 1)
+      remaining.unshift(pending)
+      runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+      runtime.pendingAuthorityRoutingCheckpoints.set(authority.id, checkpoint)
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Authority checkpoint: ${participantDisplayName(authority)} was tagged by ${participantDisplayName(sourceRun.participant)} and takes precedence before the requested handoff.`
+      )
+      return true
+    }
+
+    const continuation = this.tryAppendContinuationTurn(
+      runtime,
+      remaining,
+      authority,
+      `Authority checkpoint: ${participantDisplayName(authority)} was tagged by ${participantDisplayName(sourceRun.participant)}.`,
+      { allowAnsweredParticipant: true, allowYieldedParticipant: true }
+    )
+    if (!continuation.appended) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Authority checkpoint: could not summon ${participantDisplayName(authority)} after ${participantDisplayName(sourceRun.participant)} tagged it — ${this.describeContinuationDecline(continuation)}.`
+      )
+      return false
+    }
+    runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+    runtime.pendingAuthorityRoutingCheckpoints.set(authority.id, checkpoint)
+    return true
   }
 
   private canRequestLockedWriterFanout(
@@ -10861,6 +11243,7 @@ export class EnsembleOrchestrator {
         round.maxContinuationHops ||
         chat.ensemble.maxContinuationHops ||
         DEFAULT_CONTINUATION_HOP_LIMIT,
+      continuationPass: Math.max(1, round.continuationPass || 1),
       ...(chat.activeGoal
         ? {
             roundStartGoalId: chat.activeGoal.id,
@@ -11722,6 +12105,7 @@ export class EnsembleOrchestrator {
       orchestrationMode,
       continuationHops: 0,
       maxContinuationHops,
+      continuationPass: 1,
       ...(chat.ensemble.bossmanParticipantId
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
@@ -11812,6 +12196,7 @@ export class EnsembleOrchestrator {
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
       continuationHops: 0,
       maxContinuationHops,
+      continuationPass: 1,
       ...(startAfterCancellation ? { startAfterCancellation } : {}),
       ...(selfReflective ? { selfReflective: true } : {}),
       ...(externalPathGrants.length > 0 ? { externalPathGrants: [...externalPathGrants] } : {}),
@@ -12440,7 +12825,8 @@ export class EnsembleOrchestrator {
         scoutBriefs: runtime.scoutBriefs,
         slimTurn,
         dynamicStateSnapshot,
-        effectiveApprovalMode: permissions.approvalMode
+        effectiveApprovalMode: permissions.approvalMode,
+        authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
       })
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,
@@ -12461,7 +12847,8 @@ export class EnsembleOrchestrator {
               scoutBriefs: runtime.scoutBriefs,
               slimTurn: false,
               dynamicStateSnapshot,
-              effectiveApprovalMode: permissions.approvalMode
+              effectiveApprovalMode: permissions.approvalMode,
+              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
             })}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
@@ -12668,6 +13055,7 @@ export class EnsembleOrchestrator {
         await this.waitForOwnedFanoutSettlements(runtime, run)
         if (runtime.cancelled) break
       }
+      this.noteUnresolvedAuthorityRoutingCheckpoint(run)
       const bossYieldedToUser =
         runtime.returnedControlToUser &&
         this.isBossParticipant(chat, runtime, participant.id)
@@ -12733,12 +13121,31 @@ export class EnsembleOrchestrator {
         }
       }
       const allParticipants = chat?.ensemble?.participants || []
+      const detectedParticipantTagMatches = findAllMentions(
+        run.content,
+        allParticipants,
+        new Set([participant.id])
+      ).filter(
+        (match): match is ParticipantMentionMatch =>
+          match.kind === 'participant' && match.participant.enabled
+      )
+      // An explicit yield normally wins over conversational @mentions. The
+      // active Boss/Captain is the deliberate exception: if a participant tags
+      // the authority and then yields, run the bounded authority checkpoint
+      // first, then let the requested handoff continue. This makes the tag a
+      // usable between-turn intervention rather than an accidental no-op.
+      if (routedByYieldTarget && !runtime.returnedControlToUser) {
+        this.scheduleTaggedAuthorityIntervention(
+          chat,
+          runtime,
+          remaining,
+          run,
+          detectedParticipantTagMatches
+        )
+      }
       const pendingParticipantTagMatches = routedByYieldTarget
         ? []
-        : findAllMentions(run.content, allParticipants, new Set([participant.id])).filter(
-            (match): match is ParticipantMentionMatch =>
-              match.kind === 'participant' && match.participant.enabled
-          )
+        : detectedParticipantTagMatches
       const hasRoutableForegroundMention = pendingParticipantTagMatches.some(
         (match) =>
           (!runtime.dmTargetParticipantId ||
@@ -12883,6 +13290,16 @@ export class EnsembleOrchestrator {
         if (orderedTargets.length > 0) {
           const rest = remaining.filter((entry) => !remainingTargetIds.has(entry.id))
           remaining.splice(0, remaining.length, ...orderedTargets, ...rest)
+          if (
+            priorityAuthorityMatch &&
+            remainingTargetIds.has(priorityAuthorityMatch.participant.id)
+          ) {
+            runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+            runtime.pendingAuthorityRoutingCheckpoints.set(
+              priorityAuthorityMatch.participant.id,
+              this.taggedAuthorityRoutingCheckpoint(runtime, run)
+            )
+          }
           // Spike 4 — an explicit @-mention outranks the reviewer stage gate.
           for (const target of orderedTargets) stageGateExemptIds.add(target.id)
           this.appendRoundStatus(
@@ -12915,6 +13332,13 @@ export class EnsembleOrchestrator {
               { allowAnsweredParticipant: isPriorityAuthority, allowYieldedParticipant: isPriorityAuthority }
             )
             if (continuation.appended) {
+              if (isPriorityAuthority) {
+                runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
+                runtime.pendingAuthorityRoutingCheckpoints.set(
+                  tagged.id,
+                  this.taggedAuthorityRoutingCheckpoint(runtime, run)
+                )
+              }
               // Spike 4 — an explicitly summoned extra turn outranks the
               // reviewer stage gate.
               stageGateExemptIds.add(tagged.id)
@@ -14186,6 +14610,12 @@ export class EnsembleOrchestrator {
     const laneRunSuffix = options.laneId ? `-${runId}` : ''
     const promptMessageId = `ensemble-prompt-${runtime.roundId}-${participant.id}${laneRunSuffix}`
     const assistantMessageId = `ensemble-assistant-${runtime.roundId}-${participant.id}${laneRunSuffix}`
+    const authorityRoutingCheckpoint = this.takeAuthorityRoutingCheckpoint(
+      chat,
+      runtime,
+      participant,
+      Boolean(options.laneId)
+    )
     const run: ChatRun = {
       runId,
       provider: participant.provider,
@@ -14227,6 +14657,7 @@ export class EnsembleOrchestrator {
       ...(options.approvedWriteScopes?.length
         ? { approvedWriteScopes: options.approvedWriteScopes }
         : {}),
+      ...(authorityRoutingCheckpoint ? { authorityRoutingCheckpoint } : {}),
       participant,
       promptMessageId,
       assistantMessageId,
@@ -14735,6 +15166,7 @@ export class EnsembleOrchestrator {
       fresh.push(participant)
     }
     if (fresh.length === 0) return null
+    runtime.continuationPass += 1
     this.incrementBossmanBudgetUsage(
       runtime,
       fresh.map((participant) => participant.id),
@@ -14745,7 +15177,8 @@ export class EnsembleOrchestrator {
         ? {
             ...round,
             continuationHops: runtime.continuationHops,
-            maxContinuationHops: runtime.maxContinuationHops
+            maxContinuationHops: runtime.maxContinuationHops,
+            continuationPass: runtime.continuationPass
           }
         : round
     )
@@ -14756,7 +15189,7 @@ export class EnsembleOrchestrator {
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Continuous mode: no explicit handoff — auto-continuing for another pass (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote} Mark the goal complete to stop.`
+      `Continuous mode: no explicit handoff — auto-continuing for pass ${runtime.continuationPass} (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote} Mark the goal complete to stop.`
     )
     return fresh
   }

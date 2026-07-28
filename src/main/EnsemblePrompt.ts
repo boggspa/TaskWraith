@@ -25,6 +25,7 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
 const MAX_MESSAGE_CHARS = 4000
 const MAX_TRANSCRIPT_CHARS = 24000
 import { formatScoutBriefsForPrompt, type ScoutBriefRecord } from './ScoutBrief'
+import type { EnsembleAuthorityRoutingCheckpoint } from './EnsembleAuthorityRouting'
 import {
   ollamaScoutDelegateWorkflowHint,
   type OllamaWorkflowHintIntent
@@ -129,6 +130,8 @@ export interface BuildEnsemblePromptInput {
   dynamicStateSnapshot?: EnsembleDynamicStateSnapshot
   /** Effective host approval mode, used to name Grok's per-run MCP server exactly. */
   effectiveApprovalMode?: string | null
+  /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
+  authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
 }
 
 // v4 (capability-surface repair 2026-07): tool names are now conditional on
@@ -795,6 +798,28 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     (input.participant.provider === 'codex'
       ? ' Codex runtime rule: when `ensemble_yield` is listed on the `TaskWraith` MCP server, call it directly with the target and optional reason. Never substitute `run_shell_command`, `true`, `exit 0`, or another no-op for a listed lifecycle tool.'
       : '')
+  const authorityRoutingLines = (() => {
+    const checkpoint = input.authorityRoutingCheckpoint
+    if (!checkpoint) return []
+    const source = checkpoint.sourceParticipantLabel
+      ? ` A peer (${checkpoint.sourceParticipantLabel}) explicitly tagged you for this intervention.`
+      : ''
+    if (checkpoint.selectionRequired) {
+      const routingRule =
+        checkpoint.kind === 'tagged_intervention'
+          ? '- A targeted listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision, but the target must name specific participants or a specific stage/role; do not use a broad/all target for this tagged checkpoint.'
+          : '- A listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision. Follow that tool\'s normal target policy; use `select_participants` when you need to reduce serial churn.'
+      return [
+        `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): before you end or yield, make one explicit routing decision.${source}`,
+        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats; every other pending serial seat is skipped. Or call `skip_intervention` to preserve the current queue when no routing change is needed.',
+        `${routingRule} If the needed tool is absent, state the precise selection or opt-out visibly with unique @Role/@Model names.`
+      ]
+    }
+    return [
+      `Authority routing checkpoint: you were explicitly tagged for an interstitial Boss/Captain decision.${source}`,
+      '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or say that you are preserving the queue; do not guess or fan out broadly.'
+    ]
+  })()
   const orchestrationMode =
     input.config.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeConcurrentMode = Boolean(input.config.activeRound?.concurrentMode)
@@ -1040,6 +1065,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       '',
       `You are ${participantLabel}. Your provider session from your previous turns on this panel has been resumed; the roster, rules, and your role instructions are unchanged from the full briefing you already received. Address peers exactly as before.`,
       `Round id: ${input.roundId}`,
+      ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
       ...(input.participant.stageRole
         ? [`Stage role: ${input.participant.stageRole} (unchanged).`]
         : []),
@@ -1109,6 +1135,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         ? `Continuous. This round CONTINUES AUTONOMOUSLY: after every participant has spoken it re-dispatches the roster for another pass and keeps going until the goal/tasks are complete and marked complete, the handoff-hop budget is exhausted (${continuationHops}/${maxContinuationHops} used), a permission approval stalls it, or the user stops it. Steer ordering with a unique @Role/@Model mention, or with ensemble_yield(target) only when that tool is listed. To END the round, finish the work and mark the active goal/tasks complete (e.g. call goal_complete) when that lifecycle tool is listed — restating "done" WITHOUT completing the goal just loops another pass.`
         : 'Turn-bound. Each participant speaks at most once; unique @Role/@Model mentions reorder participants who have not spoken yet. Use ensemble_yield(target) only when that tool is listed.'
     }`,
+    ...(authorityRoutingLines.length > 0 ? ['', ...authorityRoutingLines] : []),
     activeConcurrentMode
       ? hasWriteIntentLane
         ? 'Parallel policy: writer-capable lanes may run concurrently only when Boss-authorized with explicit write scopes, or when no Boss is assigned and the host has completed user-enabled write-scope claim + matrix-ack preflight. Workspace-mutating tools must stay inside the approved lane scope and acquire TaskWraith write locks before executing. If a lock or scope conflict blocks your lane, report the conflict and do not retry blindly.'

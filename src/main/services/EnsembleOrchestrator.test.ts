@@ -5874,7 +5874,7 @@ Next action:
     expect(skipMessage?.metadata?.ensembleProvider).toBe('claude')
   })
 
-  it('lets Boss skip a pending participant without dispatching them', async () => {
+  it('preserves every participant during the initial pass even when Boss requests a skip', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     const harness = makeHarness({ initialChat })
@@ -5893,11 +5893,12 @@ Next action:
         reason: 'Codex lacks context for this turn.'
       }
     )
-    expect(result.ok).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('initial_pass_preserves_roster')
     const codexState = harness.chat.ensemble?.activeRound?.participants.find(
       (participant) => participant.participantId === 'codex'
     )
-    expect(codexState?.status).toBe('skipped')
+    expect(codexState?.status).toBe('idle')
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -5907,8 +5908,197 @@ Next action:
       },
       { type: 'result', status: 'success' }
     )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      {
+        appRunId: harness.dispatched[1].appRunId,
+        appChatId: 'ensemble-chat'
+      },
+      { type: 'result', status: 'success' }
+    )
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('lets a later Continuous-pass Boss keep an explicit subset and skips every other pending seat', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.participants.push({
+      id: 'kimi',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Researcher',
+      instructions: 'Research.',
+      order: 3,
+      permissionPresetId: 'read_only'
+    })
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { continuationPass: number }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Worker'],
+        reason: 'Implementation is ready for a single writer.'
+      }
+    )
+
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'kimi'
+      )?.status
+    ).toBe('skipped')
+    expectYielded(
+      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Worker should continue.')
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
+  it('lets the active Captain select a later-pass subset after the Boss is unavailable', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.secondInCommandParticipantId = 'codex'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.participants = [
+      { ...initialChat.ensemble!.participants[0], enabled: false, role: 'Boss' },
+      { ...initialChat.ensemble!.participants[1], role: 'Captain' },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'grok',
+        provider: 'grok',
+        enabled: true,
+        role: 'Analyst',
+        instructions: 'Analyze.',
+        order: 4,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('codex')
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { continuationPass: number }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
+
+    const selection = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[0].appRunId,
+      {
+        action: 'select_participants',
+        participantRoles: ['Researcher'],
+        reason: 'Only research needs another pass.'
+      }
+    )
+
+    expect(selection).toMatchObject({ ok: true, action: 'select_participants' })
+    expect(selection.message).toContain('Captain')
+    expect(
+      harness.chat.ensemble?.activeRound?.participants.find(
+        (participant) => participant.participantId === 'grok'
+      )?.status
+    ).toBe('skipped')
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!))
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('kimi')
+  })
+
+  it('inserts a tagged Boss checkpoint before a peer yield and allows an explicit opt-out', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    initialChat.ensemble!.orchestrationMode = 'continuous'
+    initialChat.ensemble!.participants[0].role = 'Boss'
+    initialChat.ensemble!.participants.push({
+      id: 'kimi',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Researcher',
+      instructions: 'Research.',
+      order: 3,
+      permissionPresetId: 'read_only'
+    })
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Worker should inspect the implementation first.',
+        'Worker'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'codex',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: '@Boss please make the next routing decision.' }
+    )
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Researcher should prepare evidence after the authority check.',
+        'Researcher'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('claude')
+    expect(harness.dispatched[2].prompt).toContain('Authority routing checkpoint')
+
+    expect(
+      harness.orchestrator.markYielded(harness.dispatched[2].appRunId!, 'No routing change.')
+    ).toEqual({
+      kind: 'authority_routing_decision_required',
+      pass: 1,
+      requirement: 'tagged_intervention'
+    })
+    const optOut = await harness.orchestrator.bossmanControlForRun(
+      harness.dispatched[2].appRunId,
+      { action: 'skip_intervention' }
+    )
+    expect(optOut).toMatchObject({ ok: true, action: 'skip_intervention' })
+    expectYielded(
+      harness.orchestrator.markYielded(
+        harness.dispatched[2].appRunId!,
+        'Proceed with the original handoff.',
+        'Researcher'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].provider).toBe('kimi')
   })
 
   it('lets Boss explicitly re-summon an answered worker in Continuous mode', async () => {
@@ -8855,6 +9045,12 @@ Next action:
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { continuationPass: number }>
+      }
+    ).roundsByChatId.get('ensemble-chat')!
+    runtime.continuationPass = 2
     const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
       action: 'skip_participant',
       targetRunId: harness.dispatched[0].appRunId,
@@ -9654,7 +9850,7 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
     expect(
       harness.chat.messages.some((message) =>
-        message.content.includes('auto-continuing for another pass')
+        message.content.includes('auto-continuing for pass')
       )
     ).toBe(false)
   })
@@ -11713,7 +11909,7 @@ Next action:
     expect(continuousLimitStatuses(harness)).toHaveLength(1)
     const messageContents = harness.chat.messages.map((message) => message.content || '')
     const partialPassStatusIndex = messageContents.findIndex((content) =>
-      content.includes('auto-continuing for another pass (6/6 hops)')
+      content.includes('auto-continuing for pass 3 (6/6 hops)')
     )
     const limitStatusIndex = messageContents.findIndex((content) =>
       content.includes('Continuous handoff limit reached (6/6)')
@@ -19678,6 +19874,7 @@ describe('assignment-aware continuation roster narrowing', () => {
     expect(fresh).not.toBeNull()
     // codex is Boss AND assignment owner; claude (no open work) is narrowed out.
     expect(fresh!.map((entry) => entry.id)).toEqual(['codex'])
+    expect(harness.chat.ensemble?.activeRound?.continuationPass).toBe(2)
     expect(
       harness.chat.messages.some((message) =>
         /Assignment-aware pass: 1 of 2 seats/.test(message.content || '')

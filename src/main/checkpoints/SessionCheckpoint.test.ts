@@ -72,6 +72,7 @@ function makeCheckpointChat(): ChatRecord {
         orchestrationMode: 'continuous',
         continuationHops: 1,
         maxContinuationHops: 6,
+        continuationPass: 2,
         queuedPrompts: ['Run validation once this lands.'],
         pendingWakeupIds: ['wake-1'],
         participants: [
@@ -116,6 +117,7 @@ describe('SessionCheckpoint', () => {
         queueState: {
           prompt: 'Continue the release sign-off.',
           activeParticipantId: 'worker',
+          continuationPass: 2,
           queuedPrompts: ['Run validation once this lands.'],
           pendingWakeupIds: ['wake-1']
         }

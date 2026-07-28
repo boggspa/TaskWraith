@@ -1105,6 +1105,10 @@ export interface EnsembleRoundState {
   orchestrationMode?: EnsembleOrchestrationMode
   continuationHops?: number
   maxContinuationHops?: number
+  /** One-based autonomous pass within this active round. Pass 1 preserves the
+   * ordinary roster; later Continuous passes may receive an authority routing
+   * checkpoint before the Boss/Captain ends its turn. */
+  continuationPass?: number
   /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string

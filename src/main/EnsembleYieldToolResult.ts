@@ -39,6 +39,21 @@ export function buildEnsembleYieldToolResult(input: {
     }
   }
 
+  if (input.outcome.kind === 'authority_routing_decision_required') {
+    const message =
+      input.outcome.requirement === 'tagged_intervention'
+        ? `The active Boss/Captain must make a targeted interstitial routing decision for pass ${input.outcome.pass} before yielding. ` +
+          'Use skip_intervention to preserve the queue, or yield/fan out to a specific participant or role.'
+        : `The active Boss/Captain must make an explicit routing decision for Continuous pass ${input.outcome.pass} before yielding. ` +
+          'Use ensemble_control select_participants or skip_intervention, or yield to a specific participant/role.'
+    return {
+      ...base,
+      ok: false,
+      message,
+      error: 'authority_routing_decision_required'
+    }
+  }
+
   const routing = input.outcome.routing
   if (!routing) {
     return { ...base, ok: true }

@@ -1325,6 +1325,29 @@ describe('buildRemoteEnsembleState — non-ensemble chats', () => {
   })
 })
 
+describe('buildRemoteEnsembleState — continuous-pass metadata', () => {
+  it('projects the active autonomous pass number', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [{ id: 'p1', provider: 'claude', role: 'Boss', enabled: true, order: 0 }],
+          activeRound: {
+            roundId: 'round-2',
+            status: 'running',
+            prompt: 'Continue.',
+            startedAt: ISO,
+            continuationPass: 3,
+            participants: []
+          }
+        }
+      } as unknown as Partial<ChatRecord>)
+    )
+
+    expect(state?.continuationPass).toBe(3)
+  })
+})
+
 describe('buildRemoteEnsembleState — per-participant context (roster.contextTokens)', () => {
   const ensembleChat = (): ChatRecord =>
     chat({

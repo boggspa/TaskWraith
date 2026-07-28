@@ -1,0 +1,102 @@
+import type { EnsembleParticipant } from './store/types'
+import { resolveYieldTargetDetail } from './services/EnsembleMentionAlias'
+
+/**
+ * A short-lived authority checkpoint attached to a Boss/Captain serial run.
+ * It never changes provider admission or permissions; it tells the host and
+ * prompt builder that this authority turn may deliberately reshape the
+ * remaining queue before it ends.
+ */
+export interface EnsembleAuthorityRoutingCheckpoint {
+  kind: 'later_pass' | 'tagged_intervention'
+  /** One-based autonomous pass number within the active Ensemble round. */
+  pass: number
+  /** Later continuous passes require a keep/skip decision before a bare yield. */
+  selectionRequired: boolean
+  /** Present when a peer explicitly summoned the active authority by @-mention. */
+  sourceParticipantLabel?: string
+}
+
+export interface ResolveAuthoritySelectionInput {
+  /**
+   * Exact ids are preferred, but unique role/model aliases are accepted so a
+   * provider can select `Worker` without first round-tripping an id lookup.
+   */
+  participantIds?: readonly string[]
+  /** Explicit role/model selectors, kept separate for constrained tool callers. */
+  participantRoles?: readonly string[]
+  participants: readonly EnsembleParticipant[]
+  pendingParticipants: readonly EnsembleParticipant[]
+  callerParticipantId: string
+}
+
+export type AuthoritySelectionResolution =
+  | {
+      ok: true
+      selected: EnsembleParticipant[]
+      skipped: EnsembleParticipant[]
+    }
+  | {
+      ok: false
+      error:
+        | 'missing_selection'
+        | 'ambiguous_selector'
+        | 'unknown_selector'
+        | 'not_pending_selector'
+      selector?: string
+    }
+
+function normalizeSelectors(values: readonly string[] | undefined): string[] {
+  if (!values) return []
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+}
+
+/**
+ * Resolve an authority's explicit keep-list without mutating the queue. The
+ * caller owns the queue update and durable participant-status projection;
+ * keeping this resolver pure makes the first-pass and alias semantics easy to
+ * test independently of provider dispatch.
+ */
+export function resolveAuthoritySelection(
+  input: ResolveAuthoritySelectionInput
+): AuthoritySelectionResolution {
+  const selectors = [
+    ...normalizeSelectors(input.participantIds),
+    ...normalizeSelectors(input.participantRoles)
+  ]
+  if (selectors.length === 0) return { ok: false, error: 'missing_selection' }
+
+  const pendingById = new Map(
+    input.pendingParticipants.map((participant) => [participant.id, participant])
+  )
+  const selected: EnsembleParticipant[] = []
+  const selectedIds = new Set<string>()
+  const excluded = new Set([input.callerParticipantId])
+
+  for (const selector of selectors) {
+    const detail = resolveYieldTargetDetail(selector, [...input.participants], excluded)
+    if (detail.kind === 'ambiguous') {
+      return { ok: false, error: 'ambiguous_selector', selector }
+    }
+    if (detail.kind !== 'resolved') {
+      return { ok: false, error: 'unknown_selector', selector }
+    }
+    const pending = pendingById.get(detail.participant.id)
+    if (!pending) {
+      return { ok: false, error: 'not_pending_selector', selector }
+    }
+    if (!selectedIds.has(pending.id)) {
+      selectedIds.add(pending.id)
+      selected.push(pending)
+    }
+  }
+
+  return {
+    ok: true,
+    selected,
+    skipped: input.pendingParticipants.filter((participant) => !selectedIds.has(participant.id))
+  }
+}

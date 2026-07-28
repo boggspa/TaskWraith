@@ -32292,6 +32292,8 @@ async function executeGeminiMcpTool(
       const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
         action:
           args.action === 'skip_participant' ||
+          args.action === 'select_participants' ||
+          args.action === 'skip_intervention' ||
           args.action === 'summon_participant' ||
           args.action === 'stop_round' ||
           args.action === 'replace_participant' ||
@@ -32321,6 +32323,11 @@ async function executeGeminiMcpTool(
           ? args.participantIds.filter((id: unknown): id is string => typeof id === 'string')
           : Array.isArray(args.participant_ids)
             ? args.participant_ids.filter((id: unknown): id is string => typeof id === 'string')
+            : undefined,
+        participantRoles: Array.isArray(args.participantRoles)
+          ? args.participantRoles.filter((role: unknown): role is string => typeof role === 'string')
+          : Array.isArray(args.participant_roles)
+            ? args.participant_roles.filter((role: unknown): role is string => typeof role === 'string')
             : undefined,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),

@@ -25,6 +25,8 @@ describe('TaskWraith MCP tool registry', () => {
 
     expect(actionEnum).toEqual(
       expect.arrayContaining([
+        'select_participants',
+        'skip_intervention',
         'summon_participant',
         'assign_work',
         'set_round_plan',
@@ -68,6 +70,12 @@ describe('TaskWraith MCP tool registry', () => {
         params: { goal: 'Review.' }
       })
     ).toEqual({ action: 'set_round_plan', goal: 'Review.' })
+    expect(
+      normalizePortableEnsembleControlArguments('ensemble_control', {
+        action: 'select_participants',
+        params: { participantRoles: ['Reviewer'] }
+      })
+    ).toEqual({ action: 'select_participants', participantRoles: ['Reviewer'] })
   })
 
   it('does not expose a Session Activity Ledger write path to agents', () => {

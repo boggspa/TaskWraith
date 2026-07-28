@@ -1213,6 +1213,31 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Continuation-hop budget is nearly exhausted')
   })
 
+  it('gives a later-pass authority an explicit keep/skip routing checkpoint', () => {
+    const continuousEnsemble: EnsembleConfig = {
+      ...ensemble,
+      orchestrationMode: 'continuous',
+      maxContinuationHops: 6
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: continuousEnsemble,
+      participant: continuousEnsemble.participants[0],
+      currentPrompt: 'Direct the next pass.',
+      roundId: 'round-1',
+      authorityRoutingCheckpoint: {
+        kind: 'later_pass',
+        pass: 2,
+        selectionRequired: true
+      }
+    })
+
+    expect(prompt).toContain('Authority routing checkpoint (Continuous pass 2)')
+    expect(prompt).toContain('select_participants')
+    expect(prompt).toContain('skip_intervention')
+    expect(prompt).not.toContain('do not use a broad/all target')
+  })
+
   // 1.0.4-AR8 — meta-round suspension. When the chat has no workspace
   // AND the round isn't self-reflective, the Round-subject stanza
   // AND the workspace-anchored deictic rule are BOTH omitted. In a

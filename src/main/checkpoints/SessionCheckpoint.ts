@@ -32,6 +32,7 @@ export interface SessionCheckpointQueueState {
   orchestrationMode?: EnsembleRoundState['orchestrationMode']
   continuationHops?: number
   maxContinuationHops?: number
+  continuationPass?: number
   queuedPrompts: string[]
   sleepingParticipantIds: string[]
   pendingWakeupIds: string[]
@@ -144,6 +145,7 @@ export function buildSessionCheckpointFromChat(
         ...(round.maxContinuationHops !== undefined
           ? { maxContinuationHops: round.maxContinuationHops }
           : {}),
+        ...(round.continuationPass !== undefined ? { continuationPass: round.continuationPass } : {}),
         queuedPrompts: [...(round.queuedPrompts || (round.queuedPrompt ? [round.queuedPrompt] : []))],
         sleepingParticipantIds: [...(round.sleepingParticipantIds || [])],
         pendingWakeupIds: [...(round.pendingWakeupIds || [])],

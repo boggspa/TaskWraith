@@ -576,6 +576,8 @@ export interface RemoteEnsembleState {
   secondInCommandParticipantId?: string
   continuationHops?: number
   maxContinuationHops?: number
+  /** One-based autonomous pass in the active Continuous round. */
+  continuationPass?: number
   fanoutPolicy?: string
   ensembleContextChars?: number
   /** Thread-wide Boss/Captain Auto Approvals consent (bossmanAutoApprovals.
@@ -1522,6 +1524,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
+    continuationPass: activeRound?.continuationPass,
     fanoutPolicy: activeRound?.fanoutPolicy ?? ensemble.fanoutPolicy,
     ensembleContextChars: ensemble.ensembleContextChars,
     ...(ensemble.bossmanAutoApprovals?.enabled === true

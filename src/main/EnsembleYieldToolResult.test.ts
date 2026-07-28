@@ -111,4 +111,37 @@ describe('buildEnsembleYieldToolResult', () => {
       target: 'user'
     })
   })
+
+  it('keeps a later-pass authority active until it makes an explicit routing decision', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'authority_routing_decision_required',
+          pass: 3,
+          requirement: 'later_pass_selection'
+        },
+        reason: 'No routing change.'
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'authority_routing_decision_required',
+      message: expect.stringContaining('Continuous pass 3')
+    })
+  })
+
+  it('asks tagged authority call-ins to target a participant or explicitly opt out', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'authority_routing_decision_required',
+          pass: 1,
+          requirement: 'tagged_intervention'
+        }
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'authority_routing_decision_required',
+      message: expect.stringContaining('skip_intervention')
+    })
+  })
 })
