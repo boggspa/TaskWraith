@@ -67,9 +67,7 @@ describe('ComposerProviderPicker trigger', () => {
 
   it('applies every Pi upstream hue + label override from the active model', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const activeModelId = Object.keys(PI_MODEL_LABELS).find((id) =>
-        id.startsWith(`${upstream}/`)
-      )
+      const activeModelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(activeModelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       const html = renderTrigger({ provider: 'pi', activeModelId })
 
