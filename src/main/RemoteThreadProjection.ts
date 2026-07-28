@@ -52,7 +52,10 @@ import {
   extractMcpImageBlocksFromRawResult
 } from './services/TranscriptMediaService'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
-import { matchOllamaBrand } from '../shared/ollamaBrandTable'
+import {
+  matchOllamaBrand,
+  resolveHealthEntryPresentation
+} from '../shared/ollamaBrandTable'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../shared/taskWraithCloseout'
 import {
   usageCacheCreationInputTokens,
@@ -702,6 +705,10 @@ export interface RemoteThreadRow {
    * duplicate panels. Absent for solo chats and user rows, so remote
    * clients render "Agent"/"You" exactly like a solo desktop chat. */
   speaker?: string
+  /** Frozen model-aware presentation hue for a row whose runtime provider hides
+   * the selected upstream (Pi/Ollama). Optional so older clients keep decoding;
+   * ordinary providers receive their own id. */
+  providerHueClass?: string
   /** Frozen pooled-Agent display identity for this row, when the Mac transcript
    * message was authored by a saved Agent Pool participant. */
   pooledAgentIdentity?: RemotePooledAgentIdentity
@@ -1821,12 +1828,29 @@ function ensembleSystemSeatLabel(
   return role ? `${label} / ${role}` : label
 }
 
+function messageProviderHueClass(
+  metadata: Record<string, unknown> | undefined
+): string | undefined {
+  if (!metadata) return undefined
+  const provider =
+    providerField(metadata.ensembleProvider) || providerField(metadata.guestProvider)
+  if (!provider) return undefined
+  const model =
+    stringField(metadata.ensembleModel, 120) || stringField(metadata.guestModel, 120)
+  return resolveHealthEntryPresentation(
+    provider,
+    model,
+    PROVIDER_LABELS[provider] ?? provider
+  ).displayHueClass
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
   attentionKind: RemoteAttentionKind | null,
   fallbackPooledAgentIdentity?: RemotePooledAgentIdentity,
-  questionAnswers?: RemoteAgentQuestionAnswers
+  questionAnswers?: RemoteAgentQuestionAnswers,
+  runProviderHueClasses?: ReadonlyMap<string, string>
 ): RemoteThreadRow {
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
@@ -1841,6 +1865,12 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
+  const providerHueClass =
+    messageProviderHueClass(metadata) ||
+    (message.runId && message.role !== 'user' && message.role !== 'system'
+      ? runProviderHueClasses?.get(message.runId)
+      : undefined)
+  if (providerHueClass) row.providerHueClass = providerHueClass
   if (metadata?.kind === TASKWRAITH_CLOSEOUT_KIND) {
     row.speaker = 'TaskWraith'
     // Associate an ensemble-ROUND close-out with its round so the iOS
@@ -2699,6 +2729,18 @@ export function projectRemoteThread(
   const previewMax = opts.previewMaxChars ?? DEFAULT_PREVIEW_MAX
   const generatedAt = opts.generatedAt ?? new Date().toISOString()
   const fallbackPooledAgentIdentity = normalizePooledAgentIdentity(opts.pooledAgentIdentity)
+  const runProviderHueClasses = new Map<string, string>()
+  for (const run of runs ?? []) {
+    if (!run?.runId || (run.provider !== 'pi' && run.provider !== 'ollama')) continue
+    runProviderHueClasses.set(
+      run.runId,
+      resolveHealthEntryPresentation(
+        run.provider,
+        run.actualModel || run.requestedModel,
+        PROVIDER_LABELS[run.provider] ?? run.provider
+      ).displayHueClass
+    )
+  }
   const runSummary = buildRunSummary(runs, opts.costDisplay, all)
   const conversationCost = buildConversationCostSummary(runs, opts.costDisplay)
   const runSummaries = (runs ?? [])
@@ -2722,7 +2764,14 @@ export function projectRemoteThread(
       )
       .slice(0, 12)
       .map((message) =>
-        buildRow(message, previewMax, null, fallbackPooledAgentIdentity, questionAnswers)
+        buildRow(
+          message,
+          previewMax,
+          null,
+          fallbackPooledAgentIdentity,
+          questionAnswers,
+          runProviderHueClasses
+        )
       ),
     MAX_PINNED_THUMBNAIL_BASE64
   )
@@ -2777,7 +2826,8 @@ export function projectRemoteThread(
       rowPreviewMax,
       att,
       fallbackPooledAgentIdentity,
-      questionAnswers
+      questionAnswers,
+      runProviderHueClasses
     )
     const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker

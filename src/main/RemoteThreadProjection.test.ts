@@ -2402,6 +2402,24 @@ describe('RemoteThreadProjection', () => {
       const message = msg(1, { runId: 'run-1' })
       expect(labeler(message)).toBe('Codex · gpt-5.4-medium')
     })
+
+    it('freezes a solo Pi assistant hue from its linked run model', () => {
+      const snapshot = project(
+        { kind: 'latestN', n: 10 },
+        [msg(1, { runId: 'pi-solo' })],
+        [
+          {
+            runId: 'pi-solo',
+            provider: 'pi',
+            actualModel: 'deepseek/deepseek-v4-pro',
+            status: 'completed'
+          } as ChatRun
+        ]
+      )
+
+      expect(snapshot.rows[0].speaker).toBeUndefined()
+      expect(snapshot.rows[0].providerHueClass).toBe('deepseek')
+    })
   })
 
   describe('speakerForMessage (ensemble identity parity)', () => {
@@ -2421,6 +2439,58 @@ describe('RemoteThreadProjection', () => {
       // No labeler at all → identical rows, no field (solo-chat parity).
       const solo = project({ kind: 'latestN', n: 10 }, messages)
       expect(solo.rows.every((row) => row.speaker === undefined)).toBe(true)
+    })
+
+    it.each([
+      ['deepseek/deepseek-v4-flash', 'deepseek'],
+      ['zai/glm-5.2', 'zai'],
+      ['qwen-token-plan/qwen3.7-max', 'qwen'],
+      ['minimax/MiniMax-M3', 'minimax'],
+      ['mistral/devstral-2512', 'mistral'],
+      ['groq/openai/gpt-oss-120b', 'groq'],
+      ['cerebras/zai-glm-4.7', 'cerebras']
+    ])('projects the Pi %s upstream hue for ordinary ensemble rows', (model, hue) => {
+      const snapshot = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            metadata: {
+              ensembleProvider: 'pi',
+              ensembleModel: model,
+              ensembleRole: 'Worker'
+            }
+          })
+        ],
+        [],
+        { speakerForMessage: () => 'Pi / Worker' }
+      )
+
+      expect(snapshot.rows[0]).toMatchObject({
+        speaker: 'Pi / Worker',
+        providerHueClass: hue
+      })
+    })
+
+    it('projects an Ollama spoof hue without changing the runtime speaker label', () => {
+      const snapshot = project(
+        { kind: 'latestN', n: 10 },
+        [
+          msg(1, {
+            metadata: {
+              ensembleProvider: 'ollama',
+              ensembleModel: 'qwen3.5:9b',
+              ensembleRole: 'Local'
+            }
+          })
+        ],
+        [],
+        { speakerForMessage: () => 'Ollama / Local' }
+      )
+
+      expect(snapshot.rows[0]).toMatchObject({
+        speaker: 'Ollama / Local',
+        providerHueClass: 'alibaba'
+      })
     })
 
     it('seeds a frozen seat label on ensemble SYSTEM rows (yield/skip codas) and prefers displayParticipantLabel', () => {
