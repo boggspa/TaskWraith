@@ -152,11 +152,12 @@ export function resolveTaskWraithMcpProfile(input: {
   /** Exact ACP session/new eligibility; false for headless or toolless Grok. */
   grokMcpAdvertised?: boolean
   /**
-   * True only when THIS run participant was born with Mesh Canvas authority in
-   * its signed effective posture. It selects a fresh catalogue variant; it
-   * never creates a session-level permission and cannot override a receipt.
+   * True when THIS run participant's signed effective posture does not deny
+   * Mesh Canvas. It selects a fresh direct catalogue variant but grants no
+   * authority: promptable policies still pass through the per-call service
+   * gate, and a persisted provider-session receipt always wins.
    */
-  meshCanvasParticipantGranted?: boolean
+  meshCanvasParticipantCanRequest?: boolean
 }): TaskWraithMcpProfileResolution {
   const providerSessionId = nonEmptyString(input.providerSessionId)
   const storeProviderSessionId = nonEmptyString(input.storeProviderSessionId)
@@ -186,10 +187,10 @@ export function resolveTaskWraithMcpProfile(input: {
     }
     if (input.profileReceiptCanPersist !== false) {
       return {
-        profileId: input.meshCanvasParticipantGranted
+        profileId: input.meshCanvasParticipantCanRequest
           ? TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
           : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
-        source: input.meshCanvasParticipantGranted
+        source: input.meshCanvasParticipantCanRequest
           ? 'fresh_gateway_mesh_participant'
           : 'fresh_gateway_default'
       }
@@ -202,10 +203,10 @@ export function resolveTaskWraithMcpProfile(input: {
   }
 
   return {
-    profileId: input.meshCanvasParticipantGranted
+    profileId: input.meshCanvasParticipantCanRequest
       ? TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID
       : TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
-    source: input.meshCanvasParticipantGranted
+    source: input.meshCanvasParticipantCanRequest
       ? 'fresh_gateway_mesh_participant'
       : 'fresh_gateway_default'
   }

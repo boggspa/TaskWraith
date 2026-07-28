@@ -396,9 +396,10 @@ export const GATEWAY_V7_MCP_ADVERTISE_TOOLS = Object.freeze([
 
 /**
  * A separate immutable v7 birth catalogue for a participant whose CURRENT
- * signed run posture already grants Mesh Canvas. This only changes discovery;
- * every mesh call remains checked against that current participant/run posture
- * at dispatch. A persisted provider-session receipt is compatibility evidence,
+ * signed run posture does not deny Mesh Canvas. This only changes discovery:
+ * promptable Default Approval runs receive the direct surface, while every mesh
+ * call remains checked against that current participant/run posture at
+ * dispatch. A persisted provider-session receipt is compatibility evidence,
  * never a permission grant.
  */
 export const GATEWAY_V7_MESH_MCP_DIRECT_TOOLS = Object.freeze([
@@ -578,8 +579,8 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   // v7 keeps the normal direct surface compact and introduces Mesh Canvas
   // through capability discovery.
   'taskwraith-gateway-v7': GATEWAY_V7_MCP_ADVERTISE_TOOLS,
-  // This is selected from a participant's current run posture. It is a
-  // catalogue variant, not a permission class.
+  // This is selected from a participant's current non-denied run posture. It
+  // is a catalogue variant, not a permission class; `ask` still prompts.
   'taskwraith-gateway-v7-mesh': GATEWAY_V7_MESH_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,

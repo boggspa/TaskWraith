@@ -1251,7 +1251,7 @@ import {
   taskWraithGatewayDirectToolNamesForProfile,
   taskWraithGatewayHiddenToolNamesForProfile
 } from './mcp/McpToolProfiles'
-import { meshCanvasParticipantHasPregrantedAuthority } from './mcp/MeshCanvasRunAuthority'
+import { meshCanvasParticipantCanRequestAccess } from './mcp/MeshCanvasRunAuthority'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID,
@@ -15082,7 +15082,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined,
-    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+    meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
   })
@@ -15097,7 +15097,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
-    meshCanvasParticipantGranted: meshCanvasParticipantHasPregrantedAuthority(
+    meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
   })

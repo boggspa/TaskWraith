@@ -153,11 +153,11 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID)).toBe(false)
   })
 
-  it('selects the mesh-direct catalogue only for a fresh pre-authorised participant run', () => {
+  it('selects the mesh-direct catalogue for a fresh participant that may request access', () => {
     expect(
       resolveTaskWraithMcpProfile({
         provider: 'codex',
-        meshCanvasParticipantGranted: true
+        meshCanvasParticipantCanRequest: true
       })
     ).toEqual({
       profileId: TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID,
@@ -166,7 +166,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     expect(
       resolveTaskWraithMcpProfile({
         provider: 'codex',
-        meshCanvasParticipantGranted: false
+        meshCanvasParticipantCanRequest: false
       })
     ).toEqual({
       profileId: TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
@@ -180,7 +180,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     )
   })
 
-  it('never lets participant authority override a persisted session receipt', () => {
+  it('never lets participant eligibility override a persisted session receipt', () => {
     const receipt = createTaskWraithMcpProfileReceipt({
       provider: 'claude',
       providerSessionId: 'existing-session',
@@ -191,7 +191,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         provider: 'claude',
         providerSessionId: 'existing-session',
         receipt,
-        meshCanvasParticipantGranted: true
+        meshCanvasParticipantCanRequest: true
       })
     ).toEqual({ profileId: TASKWRAITH_GATEWAY_V6_MCP_PROFILE_ID, source: 'pinned_receipt' })
   })

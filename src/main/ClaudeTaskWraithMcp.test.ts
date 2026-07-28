@@ -152,7 +152,7 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
   })
 
-  it('adds direct Mesh Canvas tools only to a mesh-authorised fresh participant profile', () => {
+  it('adds direct Mesh Canvas tools to the fresh non-denied participant profile', () => {
     const servers = buildClaudeTaskWraithMcpServers({
       ...fixture,
       profileId: TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID

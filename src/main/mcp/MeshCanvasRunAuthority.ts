@@ -1,19 +1,16 @@
 import type { EffectiveRunPermissions } from '../store/types'
 
 /**
- * Whether the active participant entered this run already authorised to use
- * Mesh Canvas. This intentionally reads the signed *run* posture rather than
- * PermissionService's cross-run session-grant cache: a provider session may
- * retain a profile receipt for catalogue compatibility, but it never owns this
- * authority.
+ * Whether the active participant's signed run posture permits Mesh Canvas to
+ * be exposed as a direct tool surface. Exposure is not authority: `ask` and an
+ * ungranted `workspace` policy deliberately return true so Default Approval can
+ * request a human decision, while every invocation still passes through the
+ * ordinary meshCanvas service gate. Only an effective `deny` (or missing run
+ * posture) keeps the surface out of the participant's birth catalogue.
  */
-export function meshCanvasParticipantHasPregrantedAuthority(
+export function meshCanvasParticipantCanRequestAccess(
   effectivePermissions: EffectiveRunPermissions | null | undefined
 ): boolean {
   const policy = effectivePermissions?.agenticServices.meshCanvas
-  if (policy === 'allow') return true
-  return (
-    policy === 'workspace' &&
-    effectivePermissions?.workspaceGrantServiceIds.includes('meshCanvas') === true
-  )
+  return policy === 'ask' || policy === 'workspace' || policy === 'allow'
 }

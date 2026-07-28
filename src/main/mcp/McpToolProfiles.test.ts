@@ -493,7 +493,7 @@ describe('catalogue reachability', () => {
     )
   })
 
-  it('keeps Mesh Canvas discoverable normally and direct only for the run-authorised variant', () => {
+  it('keeps Mesh Canvas discoverable normally and direct for the non-denied run variant', () => {
     for (const tool of GATEWAY_V7_ADDED_TOOL_NAMES) {
       expect(GATEWAY_V7_MCP_DIRECT_TOOLS).not.toContain(tool)
       expect(GATEWAY_V7_MCP_HIDDEN_TOOL_NAMES).toContain(tool)
