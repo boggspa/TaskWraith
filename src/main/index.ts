@@ -64,7 +64,19 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import icon from '../../resources/icon.png?asset'
 import { startAppIconManager, applyAppIcon } from './AppIconManager'
 import trayGhostMonoline from '../../resources/tray-ghost-monoline.png?asset'
-import { normalizeThreadTitle } from '../shared/threadTitles'
+import { isPlaceholderThreadTitle, normalizeThreadTitle } from '../shared/threadTitles'
+import {
+  appendAttachedImageFilesNote,
+  describeImageAttachmentRefusal,
+  providerDeliversImageAttachments
+} from './ProviderImageAttachmentSupport'
+import {
+  ClaudeImageAttachmentError,
+  claudeImageUserMessageStream,
+  loadClaudeImageAttachmentContents,
+  type ClaudeImageAttachmentContent
+} from './ClaudeImageContent'
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import {
   isTaskWraithHelperProcess,
   shouldSuppressMacAppPresentation
@@ -299,6 +311,7 @@ import { resolveCodexMcpRouteHint, type CodexMcpRouteHint } from './codex/CodexM
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
+import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
 import {
   bridgeAssistantMessageMetadata,
   bridgeModelMetadataFromEvent,
@@ -2348,6 +2361,46 @@ remoteQuestionRegistry.subscribe((event) => {
             ? event.reason
             : record.cancellationReason
     })
+  }
+  // A remote answer resolves the parked tool but, unlike the desktop modal,
+  // has no renderer to append the `agentQuestionReply` transcript row — and
+  // that row is the ONLY evidence both platforms' tombstone classifiers
+  // accept, so a phone-answered question settled as "Skipped — no answer
+  // sent" (F11). Persist the reply here, in the one place that fires for
+  // every answer origin, shaped exactly like the desktop writer's row and
+  // idempotent on its id in case a desktop-origin path ever double-fires.
+  if (event.type === 'answered' && event.origin === 'remote' && record.threadId) {
+    try {
+      const chat = AppStore.getChat(record.threadId)
+      const replyId = `agent-question-reply-${record.questionId}`
+      if (chat && !chat.messages?.some((message) => message.id === replyId)) {
+        const replyMessage: ChatMessage = {
+          id: replyId,
+          role: 'user',
+          content: event.answer,
+          timestamp: record.resolvedAt || new Date().toISOString(),
+          metadata: {
+            kind: 'agentQuestionReply',
+            questionId: record.questionId,
+            respondedToMessageId: `agent-question-${record.questionId}`,
+            isCustomAnswer: event.isCustom
+          }
+        }
+        const updated: ChatRecord = {
+          ...chat,
+          messages: [...(chat.messages || []), replyMessage],
+          updatedAt: Date.now()
+        }
+        AppStore.saveChat(updated)
+        broadcastChatUpdated(updated)
+        pushRemoteThreadSnapshotForChat?.(updated)
+      }
+    } catch (err) {
+      console.error(
+        `[remote-question] failed to persist remote answer reply for ${record.questionId}:`,
+        err
+      )
+    }
   }
 })
 
@@ -5761,13 +5814,18 @@ function prepareIosComposerPromptChat(args: {
   const timestamp = new Date(now).toISOString()
   const prompt = action.text.trim()
   let chat = AppStore.getChat(action.threadId)
+  if (chat && prompt.length > 0 && (chat.messages || []).length === 0 &&
+      isPlaceholderThreadTitle(chat.title)) {
+    // First prompt into a pre-created phone draft adopts the derived title.
+    // The desktop applies exactly this messages.length === 0 rule in its
+    // renderer submit path, which the phone's two-step createThread →
+    // composerPrompt flow never traverses — so without this, a chat born
+    // empty on the phone stays "New Chat" forever (F13). A title the user
+    // set on the phone before sending fails the placeholder check and wins.
+    chat = { ...chat, title: normalizeThreadTitle(prompt, chat.title || 'New Chat') }
+  }
   if (!chat) {
-    const title =
-      prompt.length > 0
-        ? prompt.length > 72
-          ? `${prompt.slice(0, 69).trimEnd()}...`
-          : prompt
-        : 'New Chat'
+    const title = prompt.length > 0 ? normalizeThreadTitle(prompt, 'New Chat') : 'New Chat'
     chat = {
       appChatId: action.threadId,
       scope: workspace ? 'workspace' : 'global',
@@ -6299,6 +6357,15 @@ async function expandPdfAttachmentsForDispatch<T extends PdfAttachmentLike>(
 
 async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<void> {
   const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
+  // No-silent-omission gate for every dispatch lane (desktop, bridge, queue,
+  // graph all pass through here before their adapter): a lane with no image
+  // transport refuses the run instead of letting the model truthfully claim
+  // nothing was attached while the UI shows a thumbnail.
+  if (imagePaths.length > 0 && !providerDeliversImageAttachments(payload.provider)) {
+    throw new Error(
+      describeImageAttachmentRefusal(providerLabel(payload.provider), imagePaths.length)
+    )
+  }
   const pdfPaths = imagePaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
   if (pdfPaths.length === 0) return
   const appChatId = requireNonEmptyString(payload.appChatId, 'PDF dispatch chat id')
@@ -17374,6 +17441,28 @@ function projectVisibleProviderSetupFailure(input: {
   )
 }
 
+/** Best-effort rescue for attachments Claude's API won't take as-is (HEIC
+ * from an iPhone photo picker, >5MB scans): decode via nativeImage, downscale
+ * to Anthropic's recommended long edge, re-encode JPEG. Null means the bytes
+ * are not decodable as an image here — the loader then refuses loudly. */
+async function convertImageBufferForClaudeAttachment(
+  imagePath: string,
+  buffer: Buffer
+): Promise<ClaudeImageAttachmentContent | null> {
+  try {
+    let image = nativeImage.createFromBuffer(buffer)
+    if (image.isEmpty()) image = nativeImage.createFromPath(imagePath)
+    if (image.isEmpty()) return null
+    const size = image.getSize()
+    const resized = size.width > 1568 ? image.resize({ width: 1568 }) : image
+    const jpegBuffer = resized.toJPEG(85)
+    if (!jpegBuffer.byteLength) return null
+    return { mediaType: 'image/jpeg', dataBase64: jpegBuffer.toString('base64') }
+  } catch {
+    return null
+  }
+}
+
 function settleVisibleProviderSetupFailure(input: {
   sender: Electron.WebContents
   provider: ProviderId
@@ -18673,6 +18762,27 @@ async function tryRunClaudeSdk(
   }
   let sdkTransportAdopted = false
   try {
+    // Image attachments ride the SDK's STREAMING INPUT as base64 content
+    // blocks on the one user message. The options bag has no `images` field
+    // (the old `images:` line was silently ignored — the model never saw a
+    // byte) and the CLI fallback has no image transport at all, so a load
+    // failure must settle the run rather than degrade to a lane that would
+    // drop the attachment. Loaded BEFORE the transport boundary so a bad
+    // attachment never spawns a provider.
+    let claudePromptInput: string | AsyncIterable<SDKUserMessage> = claudeDispatchPrompt(payload)
+    if (payload.imagePaths?.length) {
+      const imageContents = await loadClaudeImageAttachmentContents(payload.imagePaths, {
+        readFile: (imagePath) => fs.readFile(imagePath),
+        convertToSupported: convertImageBufferForClaudeAttachment
+      })
+      claudePromptInput = claudeImageUserMessageStream(
+        claudeDispatchPrompt(payload),
+        imageContents
+      )
+      console.log(
+        `[claude-sdk] delivering ${imageContents.length} image attachment(s) as content blocks for run=${route.appRunId}`
+      )
+    }
     // From this point the SDK may synchronously construct/spawn provider
     // transport before returning its iterator. Never replay the turn through
     // the CLI after crossing this boundary, even when query() itself throws.
@@ -18680,7 +18790,7 @@ async function tryRunClaudeSdk(
     const stream = query({
       // Sessionless dispatch (incl. a seat rotation that nulled the session
       // after composition) sends the full-context recovery prompt.
-      prompt: claudeDispatchPrompt(payload),
+      prompt: claudePromptInput,
       options: {
         cwd: payload.workspace!,
         model: model === 'default' ? undefined : model,
@@ -18719,7 +18829,6 @@ async function tryRunClaudeSdk(
         // don't double-emit the final response.
         includePartialMessages: true,
         ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-        ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
         ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
         ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
         ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
@@ -18772,6 +18881,38 @@ async function tryRunClaudeSdk(
     })
     return true
   } catch (error) {
+    // An attachment that cannot be delivered is a terminal, non-fallback
+    // failure: the CLI lane has no image transport, so replaying there
+    // would dispatch with the image silently omitted — the exact lie this
+    // path exists to prevent. Settle with the loader's honest copy.
+    if (error instanceof ClaudeImageAttachmentError) {
+      settleClaudeSdkTerminal({
+        runManager,
+        runId: route.appRunId,
+        status: 'failed',
+        project: () => {
+          sendAgentCompatError(event.sender, 'claude', error.message, state)
+          sendAgentCompatLine(
+            event.sender,
+            'claude',
+            {
+              type: 'result',
+              status: 'failed',
+              subtype: 'error',
+              stats: {},
+              provider: 'claude',
+              fallback: false
+            },
+            state
+          )
+          sendAgentCompatExit(event.sender, 'claude', 1, state)
+        },
+        onError: (phase, settleError) => {
+          console.error(`[claude-sdk] image-refusal ${phase} failed:`, settleError)
+        }
+      })
+      return true
+    }
     const runStatus = runManager.get(route.appRunId)?.status
     const decision = decideClaudeSdkFailure({
       error,
@@ -19035,6 +19176,35 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     return
   }
 
+  // The installed Claude CLI has no image flag and no way to carry image
+  // content in -p mode; the old `--image` argv here was an invalid option
+  // that would have killed the spawn outright. Refuse the replay honestly
+  // instead of dispatching with the attachment silently omitted.
+  if (payload.imagePaths?.length) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(
+      event.sender,
+      'claude',
+      'The Claude CLI fallback cannot deliver image attachments, so the turn was not replayed with the images silently omitted. Retry when the Claude Agent SDK lane is available, or remove the attachment.',
+      route
+    )
+    sendAgentCompatLine(
+      event.sender,
+      'claude',
+      {
+        type: 'result',
+        status: 'failed',
+        subtype: 'error',
+        stats: {},
+        provider: 'claude',
+        fallback: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'claude', 1, route)
+    return
+  }
+
   const model = normalizeCliProviderModel('claude', payload.model)
   const buildBaseArgs = (): string[] => [
     ...buildClaudeCliArgs({
@@ -19051,8 +19221,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       model,
       providerSessionId: payload.providerSessionId || null,
       claudeReasoningEffort: payload.claudeReasoningEffort || null,
-      claudeFastMode: payload.claudeFastMode,
-      imagePaths: payload.imagePaths || null
+      claudeFastMode: payload.claudeFastMode
     }),
     // External grants are consumed only by the TaskWraith broker. Opaque
     // provider CLIs never receive widened native directory authority.
@@ -23289,6 +23458,10 @@ function publishRunEvent(
   runEventBus.publish({ channel, provider, payload, sender, ...options })
 }
 
+/** Trailing lone high surrogates held back per run so no wire envelope ever
+ * ends mid-pair (F14) — see the holdback block in sendAgentCompatLine. */
+const pendingCompatLoneSurrogateByRun = new Map<string, string>()
+
 function sendAgentCompatLine(
   sender: Electron.WebContents,
   provider: ProviderId,
@@ -23306,6 +23479,28 @@ function sendAgentCompatLine(
   payload = canvasEvalCompatSanitizer.sanitize(payload, canvasEvalApproval, canvasEvalScope)
   const routed = enrichAgentPayload(provider, payload, initialRoute)
   if (!providerRunPersistenceAuthorized(provider, routed)) return
+  // UTF-16 integrity for the per-delta wire lane (F14): a delta ending in a
+  // lone high surrogate serializes as an unpaired \uD8xx escape, which
+  // Swift-side JSON decoding turns into U+FFFD — and the phone accumulates
+  // deltas, so the damage is permanent there while every JS accumulator
+  // heals on concat. Hold the half back and lead the next delta with it.
+  // Cumulative restatements re-carry the whole healed turn, so a pending
+  // half is dropped rather than prepended to them.
+  if (routed.appRunId && (payload?.type === 'content' || payload?.type === 'token')) {
+    const textKey =
+      typeof payload.text === 'string' ? 'text' : typeof payload.content === 'string' ? 'content' : null
+    if (textKey) {
+      if (payload.cumulative === true || isTaggedCumulativeRestatement(payload)) {
+        pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
+      } else {
+        const held = pendingCompatLoneSurrogateByRun.get(routed.appRunId) || ''
+        const split = rejoinHeldSurrogate(held, payload[textKey] as string)
+        if (split.held) pendingCompatLoneSurrogateByRun.set(routed.appRunId, split.held)
+        else pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
+        payload[textKey] = split.emit
+      }
+    }
+  }
   const runItemEvents = runItemEventsForCompatPayload(provider, routed, payload)
   if (runItemEvents.length > 0) {
     appendDurableRunItemEvents(runItemEvents)
@@ -23458,6 +23653,10 @@ function sendAgentCompatExit(
     exitStats ? { code, stats: exitStats } : { code },
     route
   )
+  // Retire any surrogate-holdback stash for this run (see sendAgentCompatLine)
+  // — a half still pending at the terminal boundary was genuine provider
+  // garbage, and the accumulated lanes already hold everything emitted.
+  if (routed.appRunId) pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
   const scheduledSoloOwner =
     routed.appRunId && routed.appChatId
       ? scheduledOccurrenceOwners.lookupSoloExit({
@@ -29605,7 +29804,14 @@ async function runGeminiProvider(
     args.push('--include-directories', imageDir)
   })
 
-  args.push('--prompt', payload.prompt, '--output-format', 'stream-json')
+  // --include-directories makes the attachments READABLE, but nothing named
+  // them — the model truthfully reported seeing no image. Delivery on this
+  // lane = access grant + the prompt telling it which files to read.
+  const geminiPromptForDispatch = payload.imagePaths?.length
+    ? appendAttachedImageFilesNote(payload.prompt, payload.imagePaths)
+    : payload.prompt
+
+  args.push('--prompt', geminiPromptForDispatch, '--output-format', 'stream-json')
 
   const resolved = await resolveCliProviderBinary('gemini', payload.runtimeProfile)
   if (!resolved.binaryPath) {
@@ -38200,7 +38406,10 @@ if (isGeminiMcpBridgeProcess) {
               action.promptId,
               scope,
               response.answer,
-              true
+              // Older phones omit the chip-vs-typed flag; treat absent as a
+              // typed answer (the pre-flag labelling) so nothing regresses.
+              response.isCustom ?? true,
+              'remote'
             ).ok
           }
           return remoteQuestionRegistry.rejectScoped(
@@ -40356,6 +40565,21 @@ if (isGeminiMcpBridgeProcess) {
             }
             iosImageThumbnails = internalQueueDispatch.imageThumbnails ?? []
           } else if (action.imageAttachments?.length) {
+            // Truth check BEFORE materializing anything: a live phone send
+            // with attachments to a lane that has no image transport gets an
+            // immediate honest refusal toast instead of a run whose model
+            // denies seeing the image. (Queued sends settle the same way via
+            // the central dispatch gate + the catch below.)
+            if (!providerDeliversImageAttachments(provider)) {
+              return {
+                dispatched: false,
+                appRunId: null,
+                reason: describeImageAttachmentRefusal(
+                  providerLabel(provider),
+                  action.imageAttachments.length
+                )
+              }
+            }
             try {
               const persisted = persistRemoteImageAttachments({
                 appChatId: action.threadId,
@@ -40934,6 +41158,15 @@ if (isGeminiMcpBridgeProcess) {
               }
             })
             .catch((err) => {
+              // A rejected dispatch (e.g. the attachment no-silent-omission
+              // gate) must still seal the already-registered transcript, or
+              // the phone shows a permanent Working row — the ghost-run
+              // class all over again.
+              finalizeBridgeRunTranscript(
+                runId,
+                'failed',
+                err instanceof Error ? err.message : String(err)
+              )
               if (internalQueueDispatch) {
                 const classification = classifyRemoteComposerQueueDispatchFailure({
                   queueRunId: internalQueueDispatch.queueRunId,
@@ -47750,19 +47983,15 @@ if (isGeminiMcpBridgeProcess) {
       void (async () => {
         const broadcaster = bridgeBroadcasterRef
         if (!broadcaster) return
-        const configuredSnapshot = getConfiguredProviderSnapshot()
-        const antigravityModels = configuredSnapshot.modelsByProvider?.antigravity ?? []
-        const remoteProviders: ProviderId[] = [
-          ...LIVE_SELECTABLE_PROVIDER_IDS,
-          ...(configuredSnapshot.providerIds.includes('antigravity')
-            ? (['antigravity'] as ProviderId[])
-            : [])
-        ]
+        // Remote catalog = the live-selectable set, full stop. Antigravity's
+        // desktop conditional offer deliberately does NOT project here: the
+        // allowlist is seeded from PROVIDER_OPTIONS, so no workspace can ever
+        // grant it to a paired device — broadcasting its models made the
+        // phone offer a provider the Mac would refuse on every send (F6).
+        const remoteProviders: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
         const providers = await Promise.all(
           remoteProviders.map(async (provider) => {
-            const models = (provider === 'antigravity'
-              ? antigravityModels
-              : await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
+            const models = (await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
               id?: unknown
               label?: unknown
               isDefault?: unknown

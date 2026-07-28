@@ -1,5 +1,6 @@
 import type {
   TaskWraithControlEnsembleSummary,
+  TaskWraithControlModelOffer,
   TaskWraithControlParticipant,
   TaskWraithControlProviderPresentation,
   TaskWraithControlThread,
@@ -536,7 +537,7 @@ function renderContextOverlay(
         : participant.next
           ? 'next'
           : 'idle'
-      const marker = tuiStatusGlyph(status, glyphs)
+      const marker = participant.enabled ? tuiStatusGlyph(status, glyphs) : glyphs.seatDisabled
       const suffix = participant.stage === 'background' ? ' · BG' : ''
       const identity = `${index + 1} ${marker} ${terminalLabel(
         participant.displayProvider
@@ -544,7 +545,9 @@ function renderContextOverlay(
         participant.model ? ` · ${terminalLabel(participant.model)}` : ''
       }${suffix}`
       lines.push(
-        overlayValue(index ? '' : 'cast', identity, width, ansi, glyphs, participant.accent)
+        participant.enabled
+          ? overlayValue(index ? '' : 'cast', identity, width, ansi, glyphs, participant.accent)
+          : overlayValue(index ? '' : 'cast', ansi.dim(identity), width, ansi, glyphs)
       )
     })
     if (participants.length < ensemble.participants.length) {
@@ -628,10 +631,13 @@ function renderHelpOverlay(
     borderTitle('Commands', width, ansi, glyphs),
     overlayValue('Ctrl+O', 'context lens', width, ansi, glyphs),
     overlayValue('Ctrl+K', 'thread picker', width, ansi, glyphs),
+    overlayValue('Ctrl+G', 'tune lens — model/reasoning or seats', width, ansi, glyphs),
     overlayValue('Ctrl+P', 'commands', width, ansi, glyphs),
     overlayValue('PgUp/PgDn', 'scroll transcript', width, ansi, glyphs),
     overlayValue('Enter', 'send prompt / choose item', width, ansi, glyphs),
     overlayValue('Ctrl+C', 'clear input, then quit', width, ansi, glyphs),
+    overlayValue('/model', 'stage a model/reasoning switch (solo)', width, ansi, glyphs),
+    overlayValue('/seats', 'enable or disable ensemble seats', width, ansi, glyphs),
     overlayValue('/cancel', 'request cancellation of the active run', width, ansi, glyphs),
     overlayValue('/quit', 'leave the sidecar; the host keeps running', width, ansi, glyphs),
     borderedLine(
@@ -642,6 +648,132 @@ function renderHelpOverlay(
     ),
     borderBottom(width, ansi, glyphs)
   ]
+  return lines.slice(0, Math.max(1, height))
+}
+
+function tuneModelSuffix(offer: TaskWraithControlModelOffer, ansi: Ansi): string {
+  const notes: string[] = []
+  if (offer.current) notes.push('current')
+  if (offer.isDefault) notes.push('default')
+  if (offer.retiresAt) notes.push(`retires ${offer.retiresAt}`)
+  if (offer.disabled) notes.push(offer.disabledReason || 'unavailable')
+  return notes.length ? ` ${ansi.dim(`(${notes.join(' · ')})`)}` : ''
+}
+
+function renderTuneOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const thread = state.thread?.thread
+  if (!thread) {
+    return [
+      borderTitle('Tune lens', width, ansi, glyphs),
+      borderedLine(ansi.dim('Open a thread before tuning.'), width, ansi, glyphs),
+      borderBottom(width, ansi, glyphs)
+    ]
+  }
+  if (thread.ensemble) {
+    const seats = thread.ensemble.participants
+    const lines = [borderTitle('Seats (preview)', width, ansi, glyphs)]
+    if (!seats.length) {
+      lines.push(borderedLine(ansi.dim('This ensemble has no seats.'), width, ansi, glyphs))
+    } else {
+      const capacity = Math.max(1, height - 3)
+      const safeIndex = Math.max(0, Math.min(state.overlayIndex, seats.length - 1))
+      const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+      for (
+        let index = windowStart;
+        index < Math.min(seats.length, windowStart + capacity);
+        index += 1
+      ) {
+        const seat = seats[index]
+        const selected = index === safeIndex
+        const mark = seat.enabled ? glyphs.seatEnabled : glyphs.seatDisabled
+        const identity = `${terminalLabel(seat.displayProvider)} · ${terminalLabel(seat.role)}${
+          seat.model ? ` · ${terminalLabel(seat.model)}` : ''
+        }${seat.stage === 'background' ? ' · BG' : ''}`
+        const body = seat.enabled
+          ? `${ansi.color(mark, seat.accent)} ${ansi.provider(identity, seat.accent)}`
+          : ansi.dim(`${mark} ${identity}`)
+        const line = `${selected ? glyphs.selection : ' '} ${body}`
+        lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
+      }
+    }
+    lines.push(
+      borderedLine(
+        ansi.dim('↑↓ seat · Enter toggle · applies immediately · Esc close'),
+        width,
+        ansi,
+        glyphs
+      )
+    )
+    lines.push(borderBottom(width, ansi, glyphs))
+    return lines.slice(0, Math.max(1, height))
+  }
+  const offers = state.offers
+  const lines = [borderTitle('Model (preview)', width, ansi, glyphs)]
+  if (state.offersLoading) {
+    lines.push(borderedLine(ansi.dim('Fetching offers from the App…'), width, ansi, glyphs))
+  } else if (!offers) {
+    lines.push(borderedLine(ansi.dim('No model offers are available.'), width, ansi, glyphs))
+  } else if (offers.locked) {
+    lines.push(borderedLine(ansi.dim(terminalLabel(offers.locked)), width, ansi, glyphs))
+  } else {
+    lines.push(
+      overlayValue(
+        'provider',
+        terminalLabel(offers.provider.displayProvider),
+        width,
+        ansi,
+        glyphs,
+        offers.provider.accent
+      )
+    )
+    const models = offers.models
+    const capacity = Math.max(1, height - 5)
+    const safeIndex = Math.max(0, Math.min(state.overlayIndex, models.length - 1))
+    const windowStart = Math.max(0, safeIndex - Math.floor(capacity / 2))
+    for (
+      let index = windowStart;
+      index < Math.min(models.length, windowStart + capacity);
+      index += 1
+    ) {
+      const offer = models[index]
+      const selected = index === safeIndex
+      const label = terminalLabel(offer.label ?? offer.id)
+      const body = offer.disabled
+        ? ansi.dim(label)
+        : ansi.provider(label, offers.provider.accent, Boolean(offer.current))
+      const line = `${selected ? glyphs.selection : ' '} ${body}${tuneModelSuffix(offer, ansi)}`
+      lines.push(borderedLine(selected ? ansi.inverse(line) : line, width, ansi, glyphs))
+    }
+    const ladder = models[safeIndex]?.reasoningEfforts ?? []
+    if (ladder.length) {
+      const effortIndex = Math.max(0, Math.min(state.tuneEffortIndex, ladder.length - 1))
+      const efforts = ladder
+        .map((effort, index) => {
+          const label = terminalLabel(effort.id)
+          if (effort.disabled) return ansi.dim(label)
+          return index === effortIndex
+            ? ansi.provider(`[${label}]`, offers.provider.accent, true)
+            : label
+        })
+        .join(` ${ansi.dim(glyphs.separator)} `)
+      lines.push(overlayValue('reasoning', efforts, width, ansi, glyphs))
+    }
+  }
+  lines.push(
+    borderedLine(
+      ansi.dim('↑↓ model · ←→ reasoning · Enter apply on next send · Esc close'),
+      width,
+      ansi,
+      glyphs
+    )
+  )
+  lines.push(borderBottom(width, ansi, glyphs))
   return lines.slice(0, Math.max(1, height))
 }
 
@@ -657,6 +789,9 @@ function renderOverlay(
   }
   if (state.overlay === 'threads') {
     return renderThreadsOverlay(state, width, height, ansi, glyphs)
+  }
+  if (state.overlay === 'tune') {
+    return renderTuneOverlay(state, width, height, ansi, glyphs)
   }
   return renderHelpOverlay(width, height, ansi, glyphs)
 }
@@ -794,10 +929,26 @@ function renderHud(
         : thread.status === 'queued'
           ? ansi.dim('QUEUED')
           : ''
+  // A staged model/reasoning choice rides the next send; wear the provider
+  // accent because it names the identity the next turn will run as.
+  const pending =
+    state.pendingSelection && !thread.ensemble
+      ? ansi.color(
+          `${glyphs.pendingChange} ${terminalLabel(
+            state.pendingSelection.label ?? state.pendingSelection.model
+          )}${
+            state.pendingSelection.reasoningEffort
+              ? ` ${terminalLabel(state.pendingSelection.reasoningEffort)}`
+              : ''
+          }`,
+          presentation.provider.accent
+        )
+      : undefined
   const cost = terminalLabel(thread.costText)
   const right = [
     ansi.provider(provider, presentation.provider.accent),
     model,
+    pending,
     reasoningText,
     status,
     elapsed !== '—' ? elapsed : undefined,

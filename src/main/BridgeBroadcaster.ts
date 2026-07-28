@@ -807,7 +807,14 @@ export class BridgeBroadcaster {
     const decision = this.allowlist.evaluate({ workspaceId, capability: 'monitor' })
     if (!decision.allowed) return undefined
     const capabilities = new Set(capabilitiesForRemoteWorkspaceEntry(decision.entry))
+    // Project the provider grant only when the entry actually narrows one:
+    // the synthetic global-scope entry carries an empty array, and an empty
+    // list on the wire would read as "nothing allowed" and blank the picker.
+    const allowedProviders = decision.entry?.allowedProviders?.filter(
+      (provider) => typeof provider === 'string' && provider.trim().length > 0
+    )
     return {
+      ...(allowedProviders && allowedProviders.length > 0 ? { allowedProviders } : {}),
       monitor: capabilities.has('monitor'),
       approve: capabilities.has('approve'),
       answer: capabilities.has('answer'),

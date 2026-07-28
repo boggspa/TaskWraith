@@ -1,3 +1,4 @@
+import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
 import type {
   RemoteWorkspaceAllowlist,
   RemoteWorkspaceCapability
@@ -75,6 +76,7 @@ export type BridgeActionAckReasonCode =
   | 'allowlistUnavailable'
   | 'workspaceDenied'
   | 'capabilityDenied'
+  | 'providerNotDispatchable'
   | 'ownershipDenied'
   | 'actionExpired'
   | 'actionReplayed'
@@ -538,6 +540,41 @@ export class BridgeActionRouter {
       dispatchContext.approvalMode = resolvedAuthorization?.allowed
         ? resolvedAuthorization.approvalMode
         : approvalModeFromPayload(payload)
+      // "Never remotely dispatchable" (antigravity today) was only ever an
+      // accident of PROVIDER_OPTIONS membership — and the permissive-dev
+      // mode skips the allowlist entirely. Enforce it as its own invariant
+      // with an honest reason, before any allowlist consultation. Retired
+      // providers (gemini) stay admissible: retirement removes the OFFER,
+      // not the ability to continue an existing chat, and legacy allowlist
+      // entries legitimately still grant them.
+      if (
+        dispatchContext.provider &&
+        !isLiveSelectableProvider(dispatchContext.provider) &&
+        !isRetiredProvider(dispatchContext.provider)
+      ) {
+        const reason = `Provider "${dispatchContext.provider}" cannot be dispatched from a paired device.`
+        this.log(
+          `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} ws=${workspaceId} reason="${reason}"`
+        )
+        await this.auditActionDecision({
+          pairID,
+          payload,
+          capability,
+          decision: 'denied',
+          reasonCode: 'providerNotDispatchable',
+          reason,
+          metadata: { workspaceId }
+        })
+        return this.buildActionAck({
+          pairID,
+          accepted: false,
+          reasonCode: 'providerNotDispatchable',
+          payload,
+          workspaceId,
+          scope: 'once',
+          message: reason
+        })
+      }
       if (this.allowlist) {
         const decision = this.allowlist.evaluate({
           workspaceId,
@@ -803,6 +840,35 @@ export class BridgeActionRouter {
     const threadID = typeof dict.threadID === 'string' ? dict.threadID : undefined
     const provider = typeof dict.provider === 'string' ? dict.provider : undefined
     const approvalMode = typeof dict.approvalMode === 'string' ? dict.approvalMode : undefined
+
+    // Same invariant as the actionAck path, and deliberately ABOVE the
+    // permissive-dev bypass: a provider outside the live-selectable and
+    // retired-continuable sets is never remotely dispatchable, in any mode.
+    if (provider && !isLiveSelectableProvider(provider) && !isRetiredProvider(provider)) {
+      const reason = `Provider "${provider}" cannot be dispatched from a paired device.`
+      this.log(
+        `[BridgeActionRouter] DENY prepareStartTurn pairID=${pairID} ws=${workspaceID} reason="${reason}"`
+      )
+      await this.auditPrepareStartTurnDecision({
+        pairID,
+        workspaceId: workspaceID,
+        threadId: threadID,
+        decision: 'denied',
+        reasonCode: 'providerNotDispatchable',
+        reason
+      })
+      return {
+        v: 1,
+        schemaVersion: 1,
+        accepted: false,
+        reasonCode: 'providerNotDispatchable',
+        actionKind: 'prepareStartTurn',
+        workspaceId: workspaceID,
+        threadId: threadID,
+        pairId: pairID,
+        message: reason
+      }
+    }
 
     if (this.permissiveDev) {
       await this.auditPrepareStartTurnDecision({

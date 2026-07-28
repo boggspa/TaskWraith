@@ -109,6 +109,10 @@ export interface BridgeQuestionReplyAction extends BridgeActionMetadata {
   runId?: string
   promptId: string
   answer: string
+  /** True when the user typed a free-text answer; false when they tapped one
+   * of the offered option chips. Absent on older phones — treated as true
+   * (the pre-flag behavior, which labelled every remote answer custom). */
+  isCustom?: boolean
 }
 
 export interface BridgeQuestionRejectAction extends BridgeActionMetadata {
@@ -1679,7 +1683,8 @@ function isQuestionReply(v: Record<string, unknown>): boolean {
     typeof v.promptId === 'string' &&
     v.promptId.trim().length > 0 &&
     typeof v.answer === 'string' &&
-    v.answer.length <= BRIDGE_QUESTION_ANSWER_MAX_CHARS
+    v.answer.length <= BRIDGE_QUESTION_ANSWER_MAX_CHARS &&
+    (v.isCustom === undefined || typeof v.isCustom === 'boolean')
   )
 }
 

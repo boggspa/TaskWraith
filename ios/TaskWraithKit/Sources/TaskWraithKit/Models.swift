@@ -891,6 +891,10 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileRead: Bool?
     public let fileWrite: Bool?
     public let externalPublish: Bool?
+    /// The workspace allowlist's provider grant (which providers the Mac
+    /// will accept a send for in this workspace). nil/absent = no signal
+    /// (older host) — surfaces must NOT hide providers on absence.
+    public let allowedProviders: [String]?
 }
 
 /// Nested `result` inside a successful `bridge.ack` for action requests.
@@ -1905,10 +1909,14 @@ public enum BridgeAction {
         ])
     }
 
-    /// Answer an agent question.
+    /// Answer an agent question. `isCustom` is false for a tapped option
+    /// chip, true for typed free text — the Mac persists it so the settled
+    /// card can tick the chosen chip instead of labelling every remote
+    /// answer a custom one. Older hosts ignore the extra key.
     public static func questionReply(
         questionId: String, answer: String, workspaceId: String, threadId: String,
         runId: String? = nil,
+        isCustom: Bool = true,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -1918,6 +1926,7 @@ public enum BridgeAction {
             "kind": "questionReply", "actionId": actionId, "promptId": questionId,
             "questionId": questionId,
             "answer": answer, "workspaceId": workspaceId, "threadId": threadId,
+            "isCustom": isCustom,
         ]
         if let runId, !runId.isEmpty {
             payload["runId"] = runId

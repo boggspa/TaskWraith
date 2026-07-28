@@ -12,6 +12,7 @@ import {
   type TaskWraithControlHostMessage,
   type TaskWraithControlRequest,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot,
   type TaskWraithControlWelcome
 } from '../../shared/taskWraithControlProtocol'
@@ -47,7 +48,8 @@ const CLIENT_CAPABILITIES: TaskWraithControlCapability[] = [
   'compose',
   'cancel',
   'ensemble',
-  'provider-presentation'
+  'provider-presentation',
+  'configure'
 ]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -172,13 +174,31 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
 
   async sendPrompt(
     threadId: string,
-    text: string
+    text: string,
+    selection?: { model?: string; reasoningEffort?: string }
   ): Promise<{ dispatched: boolean; message: string }> {
-    return this.request('composer.send', { threadId, text })
+    return this.request('composer.send', {
+      threadId,
+      text,
+      ...(selection?.model ? { model: selection.model } : {}),
+      ...(selection?.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {})
+    })
   }
 
   async cancelRun(threadId: string): Promise<{ cancelled: boolean; message: string }> {
     return this.request('run.cancel', { threadId })
+  }
+
+  async threadOffers(threadId: string): Promise<TaskWraithControlThreadOffers> {
+    return this.request('thread.offers', { threadId })
+  }
+
+  async toggleEnsembleSeat(
+    threadId: string,
+    participantId: string,
+    enabled: boolean
+  ): Promise<{ updated: boolean; message: string }> {
+    return this.request('ensemble.seat.toggle', { threadId, participantId, enabled })
   }
 
   async ping(): Promise<{ now: number }> {

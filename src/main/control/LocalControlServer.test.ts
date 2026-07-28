@@ -87,6 +87,24 @@ describe('LocalControlServer', () => {
       cancelled: true,
       message: 'Run cancelled'
     }))
+    const threadOffers = vi.fn(() => ({
+      threadId: 'demo-thread',
+      provider: demo.thread!.thread.provider,
+      currentModel: 'claude-opus-4-8-1m',
+      models: [
+        {
+          id: 'claude-opus-4-8-1m',
+          label: 'Opus 4.8 1M',
+          current: true,
+          reasoningEfforts: [{ id: 'medium', isDefault: true }]
+        }
+      ],
+      source: 'curated' as const
+    }))
+    const toggleEnsembleSeat = vi.fn(async () => ({
+      updated: true,
+      message: 'Seat updated'
+    }))
     const server = new LocalControlServer({
       userDataPath,
       hostVersion: '1.8.9-test',
@@ -98,7 +116,9 @@ describe('LocalControlServer', () => {
           return demo.thread!
         },
         sendPrompt,
-        cancelRun
+        cancelRun,
+        threadOffers,
+        toggleEnsembleSeat
       }
     })
     await server.start()
@@ -122,6 +142,26 @@ describe('LocalControlServer', () => {
     })
     expect(sendPrompt).toHaveBeenCalledWith('demo-thread', 'hello')
     expect(cancelRun).toHaveBeenCalledWith('demo-thread')
+
+    await expect(client.threadOffers('demo-thread')).resolves.toMatchObject({
+      threadId: 'demo-thread',
+      models: [expect.objectContaining({ id: 'claude-opus-4-8-1m', current: true })]
+    })
+    expect(threadOffers).toHaveBeenCalledWith('demo-thread')
+    await expect(
+      client.sendPrompt('demo-thread', 'tuned', {
+        model: 'claude-opus-4-8-1m',
+        reasoningEffort: 'medium'
+      })
+    ).resolves.toMatchObject({ dispatched: true })
+    expect(sendPrompt).toHaveBeenLastCalledWith('demo-thread', 'tuned', {
+      model: 'claude-opus-4-8-1m',
+      reasoningEffort: 'medium'
+    })
+    await expect(client.toggleEnsembleSeat('demo-thread', 'review', false)).resolves.toMatchObject({
+      updated: true
+    })
+    expect(toggleEnsembleSeat).toHaveBeenCalledWith('demo-thread', 'review', false)
 
     const tokenMetadata = await stat(server.tokenPath)
     const discoveryMetadata = await stat(server.discoveryPath)
@@ -176,7 +216,11 @@ describe('LocalControlServer', () => {
         snapshot: () => oversizedSnapshot,
         selectThread: () => demo.thread!,
         sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
-        cancelRun: async () => ({ cancelled: true, message: 'ok' })
+        cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+        threadOffers: () => {
+          throw new Error('offers not stubbed')
+        },
+        toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
     await server.start()
@@ -204,7 +248,11 @@ describe('LocalControlServer', () => {
         snapshot: () => demo.snapshot!,
         selectThread: () => demo.thread!,
         sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
-        cancelRun: async () => ({ cancelled: true, message: 'ok' })
+        cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+        threadOffers: () => {
+          throw new Error('offers not stubbed')
+        },
+        toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
     await server.start()
@@ -233,6 +281,34 @@ describe('LocalControlServer', () => {
       ok: false,
       error: { code: 'invalid_request', message: 'unknown request method' }
     })
+    invalidRequest.write(
+      `${JSON.stringify({
+        type: 'request',
+        id: 'bad-seat-toggle',
+        method: 'ensemble.seat.toggle',
+        params: { threadId: 'demo-thread', participantId: 'lead', enabled: 'yes' }
+      })}\n`
+    )
+    await expect(readRawLine(invalidRequest)).resolves.toMatchObject({
+      type: 'response',
+      id: 'bad-seat-toggle',
+      ok: false,
+      error: { code: 'invalid_request', message: 'enabled must be a boolean' }
+    })
+    invalidRequest.write(
+      `${JSON.stringify({
+        type: 'request',
+        id: 'bad-selection',
+        method: 'composer.send',
+        params: { threadId: 'demo-thread', text: 'hi', model: 42 }
+      })}\n`
+    )
+    await expect(readRawLine(invalidRequest)).resolves.toMatchObject({
+      type: 'response',
+      id: 'bad-selection',
+      ok: false,
+      error: { code: 'invalid_request', message: 'model must be a bounded string' }
+    })
     invalidRequest.destroy()
 
     const malformed = await connectRaw(server.socketPath)
@@ -256,7 +332,11 @@ describe('LocalControlServer', () => {
         snapshot: () => never,
         selectThread: () => never,
         sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
-        cancelRun: async () => ({ cancelled: true, message: 'ok' })
+        cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+        threadOffers: () => {
+          throw new Error('offers not stubbed')
+        },
+        toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
     await server.start()
@@ -289,7 +369,11 @@ describe('LocalControlServer', () => {
         snapshot: () => snapshot,
         selectThread: () => thread,
         sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
-        cancelRun: async () => ({ cancelled: true, message: 'ok' })
+        cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+        threadOffers: () => {
+          throw new Error('offers not stubbed')
+        },
+        toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
       }
     })
     await server.start()
@@ -339,7 +423,11 @@ describe('LocalControlServer', () => {
           snapshot: () => demo.snapshot!,
           selectThread: () => demo.thread!,
           sendPrompt: async () => ({ dispatched: true, message: 'ok' }),
-          cancelRun: async () => ({ cancelled: true, message: 'ok' })
+          cancelRun: async () => ({ cancelled: true, message: 'ok' }),
+          threadOffers: () => {
+            throw new Error('offers not stubbed')
+          },
+          toggleEnsembleSeat: async () => ({ updated: false, message: 'not stubbed' })
         }
       })
 

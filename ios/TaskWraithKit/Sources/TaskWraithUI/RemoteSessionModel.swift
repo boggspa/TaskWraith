@@ -6171,7 +6171,20 @@ public final class RemoteSessionModel: ObservableObject {
         }
     #endif
 
-    public func answer(_ card: MobileQuestionCard, _ text: String) {
+    /// The workspace allowlist's provider grant as the host projects it
+    /// (WorkspaceSummary.capabilities.allowedProviders). nil = no signal —
+    /// callers must offer their full roster, never hide on nil.
+    public func allowedProvidersForWorkspace(_ workspaceId: String?) -> [String]? {
+        guard let workspaceId, !workspaceId.isEmpty else { return nil }
+        guard
+            let allowed = workspaces.first(where: { $0.workspaceId == workspaceId })?
+                .capabilities?.allowedProviders,
+            !allowed.isEmpty
+        else { return nil }
+        return allowed
+    }
+
+    public func answer(_ card: MobileQuestionCard, _ text: String, isCustom: Bool = true) {
         guard let promptId = card.resolvedId,
             let context = replyContext(
                 workspaceId: card.workspaceId, threadId: card.threadId, runId: card.runId)
@@ -6183,7 +6196,7 @@ public final class RemoteSessionModel: ObservableObject {
         send(
             BridgeAction.questionReply(
                 questionId: promptId, answer: text, workspaceId: ws, threadId: thread,
-                runId: context.runId),
+                runId: context.runId, isCustom: isCustom),
             successLabel: "Answer sent.",
             onAck: { [weak self] accepted in
                 guard let self, !accepted else { return }

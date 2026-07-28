@@ -2225,10 +2225,20 @@ func twProviderPickerOrder(_ lhs: ProviderModelCatalog, _ rhs: ProviderModelCata
 /// Builds provider pickers from product offer intent first, then overlays the
 /// paired Mac's model catalogs. Empty/transient catalogs must not hide one of
 /// the seven static providers; conditional AntiGravity remains catalog-backed.
+///
+/// `allowedProviders` is the workspace allowlist's provider grant as the host
+/// projects it (capabilities.allowedProviders). When present and non-empty it
+/// INTERSECTS the offer — the Mac would refuse a send for anything outside it,
+/// so offering more is a lie the user pays for with a post-send denial toast
+/// (F6). nil/empty = no signal (older host, global scope): offer everything,
+/// exactly as before — the anti-lockout union stays authoritative there.
+/// Referenced providers (the chat's current selection) always survive so an
+/// existing thread can still display what it is bound to.
 @MainActor
 func twOfferedProviderCatalogs(
     _ providerModels: [String: [ModelOption]],
-    including referencedProviderIds: [String] = []
+    including referencedProviderIds: [String] = [],
+    allowedProviders: [String]? = nil
 ) -> [ProviderModelCatalog] {
     let modelsByProvider = providerModels.reduce(
         into: [String: [ModelOption]]()
@@ -2240,6 +2250,10 @@ func twOfferedProviderCatalogs(
     let referenced = referencedProviderIds.map {
         $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
+    let allowed = Set(
+        (allowedProviders ?? []).map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }.filter { !$0.isEmpty })
     let providerIds = TWTheme.liveSelectableProviderIds
         .union(modelsByProvider.keys)
         .union(referenced)
@@ -2247,6 +2261,8 @@ func twOfferedProviderCatalogs(
     return providerIds
         .filter { provider in
             !provider.isEmpty
+                && (allowed.isEmpty || allowed.contains(provider)
+                    || referenced.contains(provider))
                 && TWTheme.isProviderOfferedByModelCatalog(
                     provider, models: modelsByProvider[provider] ?? [])
         }
@@ -6447,7 +6463,9 @@ public struct EditableRosterStrip: View {
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
 
     private var catalogs: [ProviderModelCatalog] {
-        twOfferedProviderCatalogs(model.providerModels)
+        twOfferedProviderCatalogs(
+            model.providerModels,
+            allowedProviders: model.allowedProvidersForWorkspace(workspaceId))
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {
@@ -10407,7 +10425,9 @@ struct SideChatsPanel: View {
     }
 
     private var catalogs: [ProviderModelCatalog] {
-        twOfferedProviderCatalogs(model.providerModels)
+        twOfferedProviderCatalogs(
+            model.providerModels,
+            allowedProviders: model.allowedProvidersForWorkspace(card?.workspaceId))
     }
     private var createCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == createProvider.lowercased() }

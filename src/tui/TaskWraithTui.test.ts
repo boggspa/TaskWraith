@@ -16,6 +16,7 @@ import {
 import {
   TASKWRAITH_CONTROL_PROTOCOL_VERSION,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot
 } from '../shared/taskWraithControlProtocol'
 import { TaskWraithTui } from './TaskWraithTui'
@@ -88,8 +89,18 @@ async function waitFor(
 interface FakeHostHandlers {
   snapshot: () => TaskWraithControlSnapshot
   selectThread: (threadId: string) => TaskWraithControlThreadSnapshot
-  sendPrompt: (threadId: string, text: string) => { dispatched: boolean; message: string }
+  sendPrompt: (
+    threadId: string,
+    text: string,
+    selection?: { model?: string; reasoningEffort?: string }
+  ) => { dispatched: boolean; message: string }
   cancelRun: (threadId: string) => { cancelled: boolean; message: string }
+  threadOffers?: (threadId: string) => TaskWraithControlThreadOffers
+  toggleEnsembleSeat?: (
+    threadId: string,
+    participantId: string,
+    enabled: boolean
+  ) => { updated: boolean; message: string }
 }
 
 class FakeControlHost {
@@ -208,11 +219,33 @@ class FakeControlHost {
         case 'thread.select':
           result = this.handlers.selectThread(String(params?.threadId))
           break
-        case 'composer.send':
-          result = this.handlers.sendPrompt(String(params?.threadId), String(params?.text))
+        case 'composer.send': {
+          const model = typeof params?.model === 'string' ? params.model : undefined
+          const reasoningEffort =
+            typeof params?.reasoningEffort === 'string' ? params.reasoningEffort : undefined
+          const selection =
+            model || reasoningEffort
+              ? { ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) }
+              : undefined
+          result = selection
+            ? this.handlers.sendPrompt(String(params?.threadId), String(params?.text), selection)
+            : this.handlers.sendPrompt(String(params?.threadId), String(params?.text))
           break
+        }
         case 'run.cancel':
           result = this.handlers.cancelRun(String(params?.threadId))
+          break
+        case 'thread.offers':
+          if (!this.handlers.threadOffers) throw new Error('unknown request method')
+          result = this.handlers.threadOffers(String(params?.threadId))
+          break
+        case 'ensemble.seat.toggle':
+          if (!this.handlers.toggleEnsembleSeat) throw new Error('unknown request method')
+          result = this.handlers.toggleEnsembleSeat(
+            String(params?.threadId),
+            String(params?.participantId),
+            Boolean(params?.enabled)
+          )
           break
         default:
           throw new Error(`unknown method ${method}`)
@@ -459,6 +492,136 @@ describe('TaskWraithTui lifecycle', () => {
     await waitFor(() => cancelRun.mock.calls.length > 0, 'ensemble run.cancel dispatched')
     expect(cancelRun).toHaveBeenCalledWith('thread-1')
   })
+
+  it('stages a model/reasoning switch from the tune lens and sends it with the next prompt', async () => {
+    const sendPrompt = vi.fn(() => ({ dispatched: true, message: 'ok' }))
+    const threadOffers = vi.fn(
+      (): TaskWraithControlThreadOffers => ({
+        threadId: 'thread-1',
+        provider: PROVIDER,
+        currentModel: 'sonnet-5',
+        currentReasoningEffort: 'medium',
+        models: [
+          {
+            id: 'sonnet-5',
+            label: 'Sonnet 5',
+            current: true,
+            reasoningEfforts: [{ id: 'low' }, { id: 'medium', isDefault: true }, { id: 'high' }],
+            defaultReasoningEffort: 'medium'
+          },
+          {
+            id: 'claude-fable-5',
+            label: 'Fable 5',
+            reasoningEfforts: [{ id: 'medium', isDefault: true }, { id: 'high' }],
+            defaultReasoningEffort: 'medium'
+          }
+        ],
+        source: 'curated'
+      })
+    )
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-tune-'))
+    const threadSnapshot = makeThreadSnapshot()
+    const snapshot = makeSnapshot([threadSnapshot.thread])
+    const host = new FakeControlHost(userDataPath, {
+      snapshot: () => snapshot,
+      selectThread: () => threadSnapshot,
+      sendPrompt,
+      cancelRun: () => ({ cancelled: true, message: 'ok' }),
+      threadOffers
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
+
+    feed(input, '') // Ctrl+G
+    await waitFor(() => output.lastFrame.includes('Model (preview)'), 'tune lens open')
+    await waitFor(() => threadOffers.mock.calls.length > 0, 'offers fetched from the host')
+    await waitFor(() => output.lastFrame.includes('Fable 5'), 'offers rendered')
+
+    // Highlight opens on the current model; move to Fable 5 and raise the effort.
+    feed(input, '[B') // down
+    feed(input, '[C') // right
+    feed(input, '\r')
+    await waitFor(() => output.lastFrame.includes('Next send uses Fable 5'), 'selection staged')
+
+    feed(input, 'run with the new model\r')
+    await waitFor(() => sendPrompt.mock.calls.length > 0, 'composer.send dispatched')
+    expect(sendPrompt).toHaveBeenCalledWith('thread-1', 'run with the new model', {
+      model: 'claude-fable-5',
+      reasoningEffort: 'high'
+    })
+  }, 8_000)
+
+  it('toggles an ensemble seat through the canonical seat action from the tune lens', async () => {
+    const toggleEnsembleSeat = vi.fn(() => ({ updated: true, message: 'Seat updated' }))
+    const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-seats-'))
+    const ensembleThread = makeThreadSnapshot({
+      chatKind: 'ensemble',
+      ensemble: {
+        preset: 'Build + Review',
+        mode: 'turn-bound',
+        fanout: 'off',
+        continuationHops: 0,
+        maxContinuationHops: 32,
+        backgroundCount: 0,
+        participants: [
+          {
+            id: 'lead',
+            provider: 'claude',
+            displayProvider: 'Claude',
+            hueKey: 'claude',
+            accent: '#8A5CF6',
+            shortCode: 'CLD',
+            role: 'Lead',
+            order: 1,
+            active: false,
+            next: false,
+            enabled: true
+          },
+          {
+            id: 'review',
+            provider: 'codex',
+            displayProvider: 'Codex',
+            hueKey: 'codex',
+            accent: '#705AFF',
+            shortCode: 'CDX',
+            role: 'Review',
+            order: 2,
+            active: false,
+            next: false,
+            enabled: false
+          }
+        ]
+      }
+    })
+    const snapshot = makeSnapshot([ensembleThread.thread])
+    const host = new FakeControlHost(userDataPath, {
+      snapshot: () => snapshot,
+      selectThread: () => ensembleThread,
+      sendPrompt: () => ({ dispatched: true, message: 'ok' }),
+      cancelRun: () => ({ cancelled: true, message: 'ok' }),
+      toggleEnsembleSeat
+    })
+    await host.start()
+    cleanup.push(() => host.stop())
+    const { tui, input, output } = startTui(userDataPath)
+
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Solo thread'), 'ensemble thread selected')
+
+    feed(input, '') // Ctrl+G
+    await waitFor(() => output.lastFrame.includes('Seats (preview)'), 'seat lens open')
+    expect(output.lastFrame).toContain('Review')
+
+    feed(input, '[B') // down to the disabled Review seat
+    feed(input, '\r') // toggle re-enables it
+    await waitFor(() => toggleEnsembleSeat.mock.calls.length > 0, 'seat toggle dispatched')
+    expect(toggleEnsembleSeat).toHaveBeenCalledWith('thread-1', 'review', true)
+    await waitFor(() => output.lastFrame.includes('Seat updated'), 'seat notice rendered')
+  }, 8_000)
 
   it('reports a missing thread without crashing when the initial thread id no longer exists', async () => {
     const { userDataPath } = await setupHost()

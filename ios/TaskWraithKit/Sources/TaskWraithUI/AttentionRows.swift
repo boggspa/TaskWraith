@@ -475,7 +475,7 @@ struct QuestionRow: View {
             if let options = card.options, !options.isEmpty {
                 TWFlowLayout(spacing: 6) {
                     ForEach(options, id: \.self) { option in
-                        Button(option) { model.answer(card, option) }
+                        Button(option) { model.answer(card, option, isCustom: false) }
                             .font(.caption.weight(.medium))
                             .buttonStyle(.bordered)
                             .controlSize(.small)
@@ -494,7 +494,7 @@ struct QuestionRow: View {
                     .accessibilityLabel("Your answer")
                     .accessibilityValue(canAnswer ? freeText : "Viewing only")
                 Button {
-                    model.answer(card, freeText)
+                    model.answer(card, freeText, isCustom: true)
                     freeText = ""
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")

@@ -53,9 +53,19 @@ function reportedSpendOnlySnapshot(): MistralQuotaSnapshot {
   return { estimate: estimateQuota(cycle, 'pro', T0), plan: 'pro', turns: 0, totalTokens: 0 }
 }
 
-function render(props: { snapshot: MistralQuotaSnapshot | null; loading?: boolean }): string {
+function render(props: {
+  snapshot: MistralQuotaSnapshot | null
+  loading?: boolean
+  currency?: 'USD' | 'GBP' | 'EUR'
+  locale?: string
+}): string {
   return renderToStaticMarkup(
-    <MistralQuotaMeterView snapshot={props.snapshot} loading={props.loading ?? false} />
+    <MistralQuotaMeterView
+      snapshot={props.snapshot}
+      loading={props.loading ?? false}
+      currency={props.currency}
+      locale={props.locale}
+    />
   )
 }
 
@@ -91,6 +101,17 @@ describe('MistralQuotaMeterView — honesty', () => {
     const html = render({ snapshot: snapshot(3.5) })
     expect(html).toContain('~$3.50')
     expect(html).toContain('never billed')
+  })
+
+  it('renders the figure in the user display currency, not always USD', () => {
+    // $3.50 → €3.22 at the baked-in 0.92 EUR/USD fallback. The whole point of
+    // wiring Settings → General currency through: a €-console user sees €.
+    const eur = render({ snapshot: snapshot(3.5), currency: 'EUR', locale: 'en-GB' })
+    expect(eur).toContain('€3.22')
+    expect(eur).not.toContain('$3.50')
+    // GBP too, at 0.79: $3.50 → £2.77 (0.79 × 3.5 = 2.765 → 2.77).
+    const gbp = render({ snapshot: snapshot(3.5), currency: 'GBP', locale: 'en-GB' })
+    expect(gbp).toContain('£2.77')
   })
 
   it('qualifies a SEEDED ceiling in place so it cannot read as a published allowance', () => {

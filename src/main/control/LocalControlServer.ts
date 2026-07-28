@@ -13,6 +13,7 @@ import {
   type TaskWraithControlHostMessage,
   type TaskWraithControlRequest,
   type TaskWraithControlSnapshot,
+  type TaskWraithControlThreadOffers,
   type TaskWraithControlThreadSnapshot,
   type TaskWraithControlWelcome
 } from '../../shared/taskWraithControlProtocol'
@@ -28,8 +29,20 @@ export interface TaskWraithLocalControlFacade {
     threadId: string,
     limit: number
   ): TaskWraithControlThreadSnapshot | Promise<TaskWraithControlThreadSnapshot>
-  sendPrompt(threadId: string, text: string): Promise<{ dispatched: boolean; message: string }>
+  sendPrompt(
+    threadId: string,
+    text: string,
+    selection?: { model?: string; reasoningEffort?: string }
+  ): Promise<{ dispatched: boolean; message: string }>
   cancelRun(threadId: string): Promise<{ cancelled: boolean; message: string }>
+  threadOffers(
+    threadId: string
+  ): TaskWraithControlThreadOffers | Promise<TaskWraithControlThreadOffers>
+  toggleEnsembleSeat(
+    threadId: string,
+    participantId: string,
+    enabled: boolean
+  ): Promise<{ updated: boolean; message: string }>
 }
 
 export interface LocalControlServerOptions {
@@ -59,7 +72,8 @@ const SERVER_CAPABILITIES = [
   'compose',
   'cancel',
   'ensemble',
-  'provider-presentation'
+  'provider-presentation',
+  'configure'
 ] as const
 
 function stableDigest(value: unknown): string {
@@ -409,18 +423,41 @@ export class LocalControlServer {
           result = snapshot
           break
         }
-        case 'composer.send':
-          result = await this.options.facade.sendPrompt(
-            request.params.threadId,
-            request.params.text
-          )
+        case 'composer.send': {
+          const { model, reasoningEffort } = request.params
+          const selection =
+            model || reasoningEffort
+              ? { ...(model ? { model } : {}), ...(reasoningEffort ? { reasoningEffort } : {}) }
+              : undefined
+          result = selection
+            ? await this.options.facade.sendPrompt(
+                request.params.threadId,
+                request.params.text,
+                selection
+              )
+            : await this.options.facade.sendPrompt(request.params.threadId, request.params.text)
           break
+        }
         case 'run.cancel':
           result = await this.options.facade.cancelRun(request.params.threadId)
           break
+        case 'thread.offers':
+          result = await this.options.facade.threadOffers(request.params.threadId)
+          break
+        case 'ensemble.seat.toggle':
+          result = await this.options.facade.toggleEnsembleSeat(
+            request.params.threadId,
+            request.params.participantId,
+            request.params.enabled
+          )
+          break
       }
       socketWrite(state.socket, { type: 'response', id: request.id, ok: true, result })
-      if (request.method === 'composer.send' || request.method === 'run.cancel') {
+      if (
+        request.method === 'composer.send' ||
+        request.method === 'run.cancel' ||
+        request.method === 'ensemble.seat.toggle'
+      ) {
         void this.poll()
       }
     } catch (error) {

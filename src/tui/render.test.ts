@@ -6,7 +6,7 @@ import { createTaskWraithTuiDemoState } from './state'
 function renderedLines(
   width: number,
   height: number,
-  overlay: 'none' | 'context' | 'threads' | 'help' = 'none'
+  overlay: 'none' | 'context' | 'threads' | 'help' | 'tune' = 'none'
 ): string[] {
   const now = Date.UTC(2026, 6, 27, 4, 55, 37)
   const state = createTaskWraithTuiDemoState(now)
@@ -50,6 +50,76 @@ describe('TaskWraith TUI renderer', () => {
     expect(output).toContain('Claude · Lead · Opus 4.8 1M')
     expect(output).toContain('Kimi · Review · K3 · BG')
     expect(output).toContain('Esc close · Ctrl+O toggle')
+  })
+
+  it('renders the seat lens for ensembles and the model lens for solo threads', () => {
+    const seatLens = renderedLines(80, 24, 'tune')
+    expect(seatLens.every((line) => visibleWidth(line) === 80)).toBe(true)
+    const seatOutput = seatLens.join('\n')
+    expect(seatOutput).toContain('Seats (preview)')
+    expect(seatOutput).toContain('Claude · Lead')
+    expect(seatOutput).toContain('↑↓ seat · Enter toggle · applies immediately · Esc close')
+
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const solo = createTaskWraithTuiDemoState(now)
+    solo.overlay = 'tune'
+    const { ensemble: _ensemble, ...soloThread } = solo.thread!.thread
+    solo.thread = { ...solo.thread!, thread: { ...soloThread, chatKind: 'single' } }
+    solo.tuneEffortIndex = 1
+    solo.offers = {
+      threadId: soloThread.id,
+      provider: soloThread.provider,
+      currentModel: 'claude-opus-4-8-1m',
+      currentReasoningEffort: 'medium',
+      models: [
+        {
+          id: 'claude-opus-4-8-1m',
+          label: 'Opus 4.8 1M',
+          current: true,
+          reasoningEfforts: [{ id: 'low' }, { id: 'medium', isDefault: true }, { id: 'high' }],
+          defaultReasoningEffort: 'medium'
+        },
+        {
+          id: 'claude-fable-5',
+          label: 'Fable 5',
+          retiresAt: '2027-01-01',
+          reasoningEfforts: [{ id: 'medium', isDefault: true }],
+          defaultReasoningEffort: 'medium'
+        }
+      ],
+      source: 'curated'
+    }
+    const modelLines = renderTaskWraithTui(solo, {
+      width: 80,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    }).split('\n')
+    expect(modelLines.every((line) => visibleWidth(line) === 80)).toBe(true)
+    const modelOutput = modelLines.join('\n')
+    expect(modelOutput).toContain('Model (preview)')
+    expect(modelOutput).toContain('Opus 4.8 1M (current)')
+    expect(modelOutput).toContain('Fable 5 (retires 2027-01-01)')
+    expect(modelOutput).toContain('low · [medium] · high')
+    expect(modelOutput).toContain('↑↓ model · ←→ reasoning · Enter apply on next send · Esc close')
+  })
+
+  it('shows a staged model selection beside the HUD identity until it is sent', () => {
+    const now = Date.UTC(2026, 6, 27, 4, 55, 37)
+    const state = createTaskWraithTuiDemoState(now)
+    const { ensemble: _ensemble, ...soloThread } = state.thread!.thread
+    state.thread = { ...state.thread!, thread: { ...soloThread, chatKind: 'single' } }
+    state.notice = undefined
+    state.pendingSelection = { model: 'claude-fable-5', label: 'Fable 5', reasoningEffort: 'high' }
+    const output = renderTaskWraithTui(state, {
+      width: 100,
+      height: 24,
+      ansi: new Ansi('none'),
+      now,
+      animationEnabled: false
+    })
+    expect(stripAnsi(output)).toContain('→ Fable 5 high')
   })
 
   it('keeps the insertion point visible when a one-line prompt exceeds its viewport', () => {

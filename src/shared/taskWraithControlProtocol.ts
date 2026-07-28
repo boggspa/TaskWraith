@@ -16,6 +16,7 @@ export type TaskWraithControlCapability =
   | 'cancel'
   | 'ensemble'
   | 'provider-presentation'
+  | 'configure'
 
 export interface TaskWraithControlWorkspace {
   id: string
@@ -154,6 +155,45 @@ export interface TaskWraithControlThreadSnapshot {
   context: TaskWraithControlThreadContext
 }
 
+export interface TaskWraithControlReasoningOffer {
+  id: string
+  isDefault?: boolean
+  disabled?: boolean
+  disabledReason?: string
+}
+
+export interface TaskWraithControlModelOffer {
+  id: string
+  label?: string
+  isDefault?: boolean
+  /** Matches the thread's current model (facade-derived, never client-set). */
+  current?: boolean
+  disabled?: boolean
+  disabledReason?: string
+  /** ISO date the provider retires this model, when known. */
+  retiresAt?: string
+  reasoningEfforts: TaskWraithControlReasoningOffer[]
+  defaultReasoningEffort?: string
+}
+
+/**
+ * The host-projected picker for one thread. Offers are derived main-side from
+ * the same curated catalogue the App picker falls back to; the client may only
+ * choose among them and can never synthesize an offer locally. A `locked`
+ * reason means the thread has no terminal-switchable models (ensemble threads,
+ * machine-dependent catalogues, retired providers) and selection must happen
+ * in the App.
+ */
+export interface TaskWraithControlThreadOffers {
+  threadId: string
+  provider: TaskWraithControlProviderPresentation
+  currentModel?: string
+  currentReasoningEffort?: string
+  models: TaskWraithControlModelOffer[]
+  source: 'curated'
+  locked?: string
+}
+
 export type TaskWraithControlRequest =
   | {
       type: 'request'
@@ -171,13 +211,30 @@ export type TaskWraithControlRequest =
       type: 'request'
       id: string
       method: 'composer.send'
-      params: { threadId: string; text: string }
+      /** `model`/`reasoningEffort` may only name ids from `thread.offers` for
+       * the same thread; the facade validates and refuses anything else. */
+      params: { threadId: string; text: string; model?: string; reasoningEffort?: string }
     }
   | {
       type: 'request'
       id: string
       method: 'run.cancel'
       params: { threadId: string }
+    }
+  | {
+      type: 'request'
+      id: string
+      method: 'thread.offers'
+      params: { threadId: string }
+    }
+  | {
+      type: 'request'
+      id: string
+      method: 'ensemble.seat.toggle'
+      /** Enable/disable one EXISTING seat by id. The client can never compose
+       * roster entries; the facade replays the canonical roster with only this
+       * flag flipped through the same main-owned roster action iOS uses. */
+      params: { threadId: string; participantId: string; enabled: boolean }
     }
   | {
       type: 'request'
@@ -286,7 +343,15 @@ export function decodeTaskWraithControlClientMessage(
     return { ok: false, error: 'request method is required' }
   }
   if (
-    !['snapshot.get', 'thread.select', 'composer.send', 'run.cancel', 'ping'].includes(value.method)
+    ![
+      'snapshot.get',
+      'thread.select',
+      'composer.send',
+      'run.cancel',
+      'thread.offers',
+      'ensemble.seat.toggle',
+      'ping'
+    ].includes(value.method)
   ) {
     return { ok: false, error: 'unknown request method' }
   }
@@ -312,9 +377,29 @@ export function decodeTaskWraithControlClientMessage(
     if (!isNonEmptyString(params.text, 12_000) || !params.text.trim()) {
       return { ok: false, error: 'composer text is required' }
     }
+    if (params.model !== undefined && !isNonEmptyString(params.model, 200)) {
+      return { ok: false, error: 'model must be a bounded string' }
+    }
+    if (params.reasoningEffort !== undefined && !isNonEmptyString(params.reasoningEffort, 40)) {
+      return { ok: false, error: 'reasoningEffort must be a bounded string' }
+    }
   }
   if (value.method === 'run.cancel' && !isNonEmptyString(params.threadId, 512)) {
     return { ok: false, error: 'threadId is required' }
+  }
+  if (value.method === 'thread.offers' && !isNonEmptyString(params.threadId, 512)) {
+    return { ok: false, error: 'threadId is required' }
+  }
+  if (value.method === 'ensemble.seat.toggle') {
+    if (!isNonEmptyString(params.threadId, 512)) {
+      return { ok: false, error: 'threadId is required' }
+    }
+    if (!isNonEmptyString(params.participantId, 200)) {
+      return { ok: false, error: 'participantId is required' }
+    }
+    if (typeof params.enabled !== 'boolean') {
+      return { ok: false, error: 'enabled must be a boolean' }
+    }
   }
   return { ok: true, message: value as unknown as TaskWraithControlRequest }
 }

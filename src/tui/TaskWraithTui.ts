@@ -1,7 +1,10 @@
 import { emitKeypressEvents } from 'node:readline'
 import type { ReadStream, WriteStream } from 'node:tty'
 import type {
+  TaskWraithControlModelOffer,
+  TaskWraithControlParticipant,
   TaskWraithControlSnapshot,
+  TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
   TaskWraithControlTranscriptRow
 } from '../shared/taskWraithControlProtocol'
@@ -48,7 +51,8 @@ function emptyState(): TaskWraithTuiState {
     overlay: 'none',
     overlayIndex: 0,
     scrollOffset: 0,
-    animationFrame: 0
+    animationFrame: 0,
+    tuneEffortIndex: 0
   }
 }
 
@@ -332,6 +336,12 @@ export class TaskWraithTui {
 
   private async openThread(threadId: string): Promise<void> {
     if (!threadId || this.selectingThread) return
+    if (threadId !== this.state.selectedThreadId) {
+      // Offers and staged selections are per-thread state.
+      this.state.offers = undefined
+      this.state.pendingSelection = undefined
+      this.state.tuneEffortIndex = 0
+    }
     if (!this.client) {
       this.state.selectedThreadId = threadId
       this.state.overlay = 'none'
@@ -424,6 +434,10 @@ export class TaskWraithTui {
       this.toggleOverlay('help')
       return
     }
+    if (key.ctrl && key.name === 'g') {
+      this.toggleTuneOverlay()
+      return
+    }
     if (key.name === 'escape') {
       this.state.overlay = 'none'
       this.render()
@@ -431,6 +445,10 @@ export class TaskWraithTui {
     }
     if (this.state.overlay === 'threads') {
       this.handleThreadPickerKey(key)
+      return
+    }
+    if (this.state.overlay === 'tune') {
+      this.handleTuneKey(key)
       return
     }
     if (this.state.overlay !== 'none') {
@@ -545,6 +563,188 @@ export class TaskWraithTui {
     this.render()
   }
 
+  /** The tune lens: seat enable/disable on ensembles, model/reasoning staging
+   * on solo threads. Both are host-validated; this surface only picks among
+   * what the facade projected. */
+  private toggleTuneOverlay(): void {
+    if (this.state.overlay === 'tune') {
+      this.state.overlay = 'none'
+      this.render()
+      return
+    }
+    if (!this.state.thread) {
+      this.setNotice('Open a thread before tuning.', 'warning', 2_500)
+      this.render()
+      return
+    }
+    this.state.overlay = 'tune'
+    this.state.overlayIndex = 0
+    this.state.tuneEffortIndex = 0
+    if (!this.state.thread.thread.ensemble) void this.loadOffers()
+    this.render()
+  }
+
+  private tuneSeats(): TaskWraithControlParticipant[] {
+    return this.state.thread?.thread.ensemble?.participants ?? []
+  }
+
+  private effortIndexFor(offers: TaskWraithControlThreadOffers, modelIndex: number): number {
+    const offer = offers.models[modelIndex]
+    if (!offer) return 0
+    const wanted = offer.current
+      ? (offers.currentReasoningEffort ?? offer.defaultReasoningEffort)
+      : offer.defaultReasoningEffort
+    return Math.max(
+      0,
+      offer.reasoningEfforts.findIndex((effort) => effort.id === wanted)
+    )
+  }
+
+  private async loadOffers(): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) return
+    if (!this.client) {
+      this.state.offers = this.state.thread
+        ? {
+            threadId,
+            provider: this.state.thread.thread.provider,
+            models: [],
+            source: 'curated',
+            locked: 'Demo mode — model offers come from the App host.'
+          }
+        : undefined
+      return
+    }
+    this.state.offersLoading = true
+    this.render()
+    try {
+      const offers = await this.client.threadOffers(threadId)
+      if (this.state.selectedThreadId !== threadId) return
+      this.state.offers = offers
+      const currentIndex = offers.models.findIndex((model) => model.current)
+      this.state.overlayIndex = Math.max(0, currentIndex)
+      this.state.tuneEffortIndex = this.effortIndexFor(offers, this.state.overlayIndex)
+    } catch (error) {
+      // Includes an older App that does not know `thread.offers` — close the
+      // lens and surface the host's own message rather than guessing.
+      this.state.offers = undefined
+      if (this.state.overlay === 'tune') this.state.overlay = 'none'
+      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 4_000)
+    } finally {
+      this.state.offersLoading = false
+      this.render()
+    }
+  }
+
+  private handleTuneKey(key: Keypress): void {
+    if (this.state.thread?.thread.ensemble) {
+      const seats = this.tuneSeats()
+      if (!seats.length) return
+      const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, seats.length - 1))
+      if (key.name === 'up') {
+        this.state.overlayIndex = Math.max(0, safeIndex - 1)
+      } else if (key.name === 'down') {
+        this.state.overlayIndex = Math.min(seats.length - 1, safeIndex + 1)
+      } else if (key.name === 'return' || key.name === 'enter' || key.name === 'space') {
+        const seat = seats[safeIndex]
+        if (seat) void this.toggleSeat(seat)
+        return
+      } else {
+        return
+      }
+      this.render()
+      return
+    }
+    const models = this.state.offers?.models ?? []
+    if (this.state.offersLoading || !models.length) return
+    const safeIndex = Math.max(0, Math.min(this.state.overlayIndex, models.length - 1))
+    if (key.name === 'up' || key.name === 'down') {
+      const nextIndex =
+        key.name === 'up' ? Math.max(0, safeIndex - 1) : Math.min(models.length - 1, safeIndex + 1)
+      this.state.overlayIndex = nextIndex
+      this.state.tuneEffortIndex = this.state.offers
+        ? this.effortIndexFor(this.state.offers, nextIndex)
+        : 0
+    } else if (key.name === 'left' || key.name === 'right') {
+      const ladder = models[safeIndex]?.reasoningEfforts ?? []
+      if (!ladder.length) return
+      const delta = key.name === 'left' ? -1 : 1
+      this.state.tuneEffortIndex = Math.max(
+        0,
+        Math.min(ladder.length - 1, this.state.tuneEffortIndex + delta)
+      )
+    } else if (key.name === 'return' || key.name === 'enter') {
+      this.applyTuneSelection(models[safeIndex])
+      return
+    } else {
+      return
+    }
+    this.render()
+  }
+
+  private applyTuneSelection(offer: TaskWraithControlModelOffer | undefined): void {
+    if (!offer || offer.disabled) {
+      this.setNotice(offer?.disabledReason || 'That model is not selectable.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    const ladder = offer.reasoningEfforts
+    const effort = ladder.length
+      ? ladder[Math.max(0, Math.min(this.state.tuneEffortIndex, ladder.length - 1))]
+      : undefined
+    if (effort?.disabled) {
+      this.setNotice(
+        effort.disabledReason || 'That reasoning effort is not selectable.',
+        'warning',
+        3_000
+      )
+      this.render()
+      return
+    }
+    const unchanged =
+      Boolean(offer.current) && (!effort || effort.id === this.state.offers?.currentReasoningEffort)
+    this.state.overlay = 'none'
+    if (unchanged) {
+      this.state.pendingSelection = undefined
+      this.setNotice('Keeping the current model.', 'neutral', 2_000)
+    } else {
+      this.state.pendingSelection = {
+        model: offer.id,
+        ...(offer.label ? { label: offer.label } : {}),
+        ...(effort ? { reasoningEffort: effort.id } : {})
+      }
+      this.setNotice(
+        `Next send uses ${offer.label ?? offer.id}${effort ? ` · ${effort.id}` : ''}`,
+        'good',
+        3_000
+      )
+    }
+    this.render()
+  }
+
+  private async toggleSeat(seat: TaskWraithControlParticipant): Promise<void> {
+    const threadId = this.state.selectedThreadId
+    if (!threadId) return
+    const nextEnabled = !seat.enabled
+    if (!this.client) {
+      seat.enabled = nextEnabled
+      this.setNotice(`${nextEnabled ? 'Enabled' : 'Disabled'} ${seat.role} (demo)`, 'good', 2_000)
+      this.render()
+      return
+    }
+    try {
+      const result = await this.client.toggleEnsembleSeat(threadId, seat.id, nextEnabled)
+      this.setNotice(
+        result.message || (result.updated ? 'Seat updated.' : 'Seat unchanged.'),
+        result.updated ? 'good' : 'warning',
+        3_000
+      )
+    } catch (error) {
+      this.setNotice(error instanceof Error ? error.message : String(error), 'error', 5_000)
+    }
+    this.render()
+  }
+
   private async submit(): Promise<void> {
     const original = this.state.input
     const text = original.trim()
@@ -574,9 +774,20 @@ export class TaskWraithTui {
       return
     }
     this.sendingPrompt = true
+    const pending = this.state.thread?.thread.ensemble ? undefined : this.state.pendingSelection
     try {
-      const result = await this.client.sendPrompt(threadId, text)
+      const result = await this.client.sendPrompt(
+        threadId,
+        text,
+        pending
+          ? {
+              model: pending.model,
+              ...(pending.reasoningEffort ? { reasoningEffort: pending.reasoningEffort } : {})
+            }
+          : undefined
+      )
       if (!result.dispatched) this.restoreComposerText(original)
+      if (result.dispatched && pending) this.state.pendingSelection = undefined
       this.setNotice(
         result.message || (result.dispatched ? 'Prompt dispatched' : 'Prompt not dispatched'),
         result.dispatched ? 'good' : 'warning',
@@ -617,6 +828,10 @@ export class TaskWraithTui {
     }
     if (command === '/cancel') {
       await this.cancelRun()
+      return
+    }
+    if (command === '/model' || command === '/seats' || command === '/tune') {
+      this.toggleTuneOverlay()
       return
     }
     this.setNotice(`Unknown command: ${raw}`, 'warning', 3_000)

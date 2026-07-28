@@ -39,6 +39,7 @@ import {
   type ApiSpendWindowKey,
   type CalendarMonthSpendMeter
 } from '../lib/apiSpendAggregation'
+import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import {
   buildOllamaMemorySpend,
   formatOllamaMemoryAvgCell,
@@ -142,15 +143,21 @@ export const API_SPEND_RENDER_ORDER: ProviderId[] = [
   'grok',
   'cursor',
   'antigravity',
-  'pi'
+  'pi',
+  // Must move in lockstep with API_SPEND_PROVIDER_ORDER in
+  // apiSpendAggregation.ts — a provider present there but missing here never
+  // renders its spend section (Mistral shipped in exactly that state, the same
+  // way Pi once did in the other direction).
+  'mistral'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520
 const SIDEBAR_USAGE_MIN_HEIGHT = 220
-// Six providers (gemini/codex/claude/kimi/cursor/grok) make the meter list
-// much taller, so the drag cap was raised 1080 → 1400 (the rendered height is
-// still bounded by `calc(100vh - 56px)` in ModelUsageCard.css so it can't
-// overflow the viewport).
+// The provider meter list (six providers when this cap was tuned; the stable
+// roster is ten identities now) makes the list much taller, so the drag cap
+// was raised 1080 → 1400 (the rendered height is still bounded by
+// `calc(100vh - 56px)` in ModelUsageCard.css so it can't overflow the
+// viewport).
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
 const COMPACT_USAGE_BASE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
@@ -167,8 +174,10 @@ const COMPACT_USAGE_ROWS = [
   { key: 'fiveHour', label: '5H' },
   { key: 'weekly', label: 'WK' },
   { key: 'extraOne', label: 'X1' },
-  { key: 'extraTwo', label: 'X2' },
-  { key: 'monthly', label: 'MO' }
+  { key: 'extraTwo', label: 'X2' }
+  // No dedicated MO row: a monthly limit is just another non-5h/non-weekly
+  // window, so — like Cursor's cycle limits and Codex Spark — it rides an
+  // Extra (X1/X2) slot. Mistral's monthly estimate lands in X1 below.
 ] as const
 
 type CompactUsageRowKey = (typeof COMPACT_USAGE_ROWS)[number]['key']
@@ -337,15 +346,12 @@ function compactCellsForEntry(
   }
 
   if (provider === 'antigravity') {
-    // agy /usage reports one remaining% per model family (Gemini only,
-    // post resold-model purge) on Google's five-hour refresh cycle — there
-    // is no separate weekly pool. First window → 5H; a second, if the panel
-    // ever grows one, lands on WK. Tooltips carry the panel's own
-    // "refresh:" text via compactWindowCell, so the truth travels with the
-    // number even if Google changes the cadence.
-    const windows = entry?.windows ?? []
-    assign('fiveHour', windows[0])
-    assign('weekly', windows[1])
+    // agy /usage reports the Gemini pool (only — resold models were purged)
+    // as two sub-limits: a Five Hour Limit and a Weekly Limit, labelled
+    // "Gemini 5H" / "Gemini Weekly" by the parser. Map by label predicate,
+    // not by position, so the panel's own ordering can't misplace them.
+    assign('fiveHour', findCompactWindow(entry, isFiveHourWindow))
+    assign('weekly', findCompactWindow(entry, isWeeklyWindow))
     return cells
   }
 
@@ -407,16 +413,10 @@ function compactGrokCell(grokUsage: GrokCreditsMeterViewProps | undefined): Comp
   }
 }
 
-const COMPACT_MISTRAL_BAND_LABELS = {
-  quiet: 'LOW',
-  moderate: 'MOD',
-  heavy: 'HIGH',
-  'near-limit': 'NEAR',
-  exceeded: 'OVER'
-} as const
-
 function compactMistralCell(
-  mistralQuota: MistralQuotaMeterViewProps | undefined
+  mistralQuota: MistralQuotaMeterViewProps | undefined,
+  currency?: DisplayCurrency,
+  locale?: string
 ): CompactQuotaCell | null {
   const snapshot = mistralQuota?.snapshot
   if (!snapshot) return null
@@ -427,8 +427,12 @@ function compactMistralCell(
   const ceilingFromVendor =
     estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
   const resetText = formatResetShort({ resetAt: estimate.cycleResetsAt })
-  const spentText = `${spendFromVendor ? '' : '~'}$${estimate.spentUsd.toFixed(2)}`
-  const ceilingText = `${ceilingFromVendor ? '' : '~'}$${estimate.estimatedCeilingUsd.toFixed(2)}`
+  // Figures are USD; render in the user's display currency (Settings →
+  // General) via the shared FX table — the reverse of the conversion the
+  // console reading went through on entry, so a €0.32 reading reads €0.32.
+  const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
+  const spentText = `${spendFromVendor ? '' : '~'}${money(estimate.spentUsd)}`
+  const ceilingText = `${ceilingFromVendor ? '' : '~'}${money(estimate.estimatedCeilingUsd)}`
   const sourceText = measured ? 'Mistral-sourced figures' : 'estimated locally'
   const title = [
     `Mistral monthly: ${estimate.label}`,
@@ -442,7 +446,11 @@ function compactMistralCell(
   const fraction = Math.max(0, Math.min(1, estimate.usedPercent / 100))
 
   return {
-    value: `${measured ? '' : '~'}${COMPACT_MISTRAL_BAND_LABELS[estimate.band]}`,
+    // Show the actual spend figure, not the qualitative band — the compact
+    // grid's "~LOW" read as an opaque label. `spentText` already carries the
+    // `~` hedge unless the number is Mistral-sourced (anchored/reported), so
+    // it reads honestly either way. The band still drives tone + the tooltip.
+    value: spentText,
     fraction,
     title,
     estimated: !measured,
@@ -458,13 +466,17 @@ function compactMistralCell(
 export function CompactModelUsageGrid({
   quotaEntries,
   grokUsage,
-  mistralQuota
+  mistralQuota,
+  currency,
+  locale
 }: {
   quotaEntries: ModelUsageAggregate[]
   grokUsage?: GrokCreditsMeterViewProps
   mistralQuota?: MistralQuotaMeterViewProps
+  currency?: DisplayCurrency
+  locale?: string
 }) {
-  const mistralCell = compactMistralCell(mistralQuota)
+  const mistralCell = compactMistralCell(mistralQuota, currency, locale)
   const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
   // The AGY column appears only once a manual quota refresh has produced a
   // snapshot (the agy /usage probe is manual-only by doctrine — the
@@ -479,9 +491,7 @@ export function CompactModelUsageGrid({
     ...(hasAntigravityCells ? (['antigravity'] as const) : []),
     ...(mistralCell ? (['mistral'] as const) : [])
   ]
-  const rows = mistralCell
-    ? COMPACT_USAGE_ROWS
-    : COMPACT_USAGE_ROWS.filter((row) => row.key !== 'monthly')
+  const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(
     providers.map((provider) => [
       provider,
@@ -493,9 +503,11 @@ export function CompactModelUsageGrid({
     cellsByProvider.set('grok', { ...cellsByProvider.get('grok'), weekly: grokCell })
   }
   if (mistralCell) {
+    // Monthly-cycle limit → the first Extra slot, matching Cursor's cycle
+    // rows. Mistral has no 5h/weekly window, so X1 is its natural home.
     cellsByProvider.set('mistral', {
       ...cellsByProvider.get('mistral'),
-      monthly: mistralCell
+      extraOne: mistralCell
     })
   }
 
@@ -1326,6 +1338,8 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
             quotaEntries={quotaEntries}
             grokUsage={grokUsage}
             mistralQuota={mistralQuota}
+            currency={apiSpend?.currency}
+            locale={apiSpend?.locale}
           />
         )}
         <div id={quotaContentId} className="model-usage-collapsible" aria-hidden={!showQuotaEntries}>
@@ -1349,7 +1363,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                  * reason Grok is: `ProviderUsageBlock` renders only
                  * `entry.windows`, and this seat has no vendor-reported window
                  * to put there. The view self-hides when no cycle is persisted. */}
-                <MistralQuotaMeterView {...mistralQuota} />
+                <MistralQuotaMeterView
+                  {...mistralQuota}
+                  currency={apiSpend?.currency}
+                  locale={apiSpend?.locale}
+                />
               </div>
             )}
           </div>

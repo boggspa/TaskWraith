@@ -132,6 +132,34 @@ struct ComposerProviderAdmissionTests {
         #expect(!dynamicProviderIds.contains("future-provider"))
     }
 
+    @MainActor
+    @Test func workspaceAllowlistIntersectsTheOffer() {
+        // Non-empty grant: only allowed providers survive the static union…
+        let narrowed = twOfferedProviderCatalogs(
+            [:], allowedProviders: ["claude", " Ollama "])
+        #expect(Set(narrowed.map(\.provider)) == ["claude", "ollama"])
+
+        // …except a referenced provider (the chat's current binding), which
+        // must stay visible so an existing thread can display itself.
+        let withReferenced = twOfferedProviderCatalogs(
+            [:], including: ["codex"], allowedProviders: ["claude"])
+        #expect(Set(withReferenced.map(\.provider)) == ["claude", "codex"])
+
+        // nil or empty grant = no signal (older host / global scope): the
+        // full anti-lockout union stands.
+        let noSignal = twOfferedProviderCatalogs([:], allowedProviders: nil)
+        #expect(Set(noSignal.map(\.provider)) == TWTheme.liveSelectableProviderIds)
+        let emptySignal = twOfferedProviderCatalogs([:], allowedProviders: [])
+        #expect(Set(emptySignal.map(\.provider)) == TWTheme.liveSelectableProviderIds)
+
+        // The grant cannot revive a provider the offer rules exclude —
+        // antigravity stays catalog-backed even when a stale allowlist
+        // entry names it.
+        let staleGrant = twOfferedProviderCatalogs(
+            [:], allowedProviders: ["claude", "antigravity"])
+        #expect(Set(staleGrant.map(\.provider)) == ["claude"])
+    }
+
     @Test func ensembleParticipantOfferUsesExplicitDynamicAdmission() {
         #expect(isEnsembleParticipantProviderOffered("cursor"))
         #expect(isEnsembleParticipantProviderOffered("pi"))

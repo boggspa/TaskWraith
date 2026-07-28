@@ -4,6 +4,7 @@ import type {
   BridgeCancelRunAction,
   BridgeComposerPromptAction,
   BridgeEnsembleCancelRoundAction,
+  BridgeEnsembleRosterUpdateAction,
   BridgeEnsembleSteerAction
 } from '../BridgeActionPayload'
 import type { BridgeActionExecutionResult } from '../BridgeActionExecutor'
@@ -23,11 +24,13 @@ import type {
 } from '../store/types'
 import type {
   TaskWraithControlEnsembleSummary,
+  TaskWraithControlModelOffer,
   TaskWraithControlParticipant,
   TaskWraithControlProviderPresentation,
   TaskWraithControlSnapshot,
   TaskWraithControlThread,
   TaskWraithControlThreadContext,
+  TaskWraithControlThreadOffers,
   TaskWraithControlThreadSnapshot,
   TaskWraithControlThreadStatus,
   TaskWraithControlTranscriptRow,
@@ -37,6 +40,18 @@ import {
   resolveTaskWraithProviderPresentation,
   taskWraithProviderLabel
 } from '../../shared/taskWraithProviderPresentation'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+// Pure Node-safe renderer-lib module (same cross-boundary precedent as
+// WelcomeDashboardRemote.ts): these are the exact curated rows the App picker
+// falls back to before IPC hydration, so the TUI can never offer a model the
+// App itself would not.
+import {
+  CLAUDE_DEFAULT_MODELS,
+  CODEX_DEFAULT_MODELS,
+  getStaticProviderModelOptions,
+  normalizeProviderModelKey,
+  type CodexModelOption
+} from '../../renderer/src/lib/providerModelDefaults'
 import { LocalControlServer, type LocalControlServerOptions } from './LocalControlServer'
 
 export interface TaskWraithControlFacadeOptions {
@@ -47,6 +62,9 @@ export interface TaskWraithControlFacadeOptions {
   executeEnsembleSteer: (action: BridgeEnsembleSteerAction) => Promise<BridgeActionExecutionResult>
   executeEnsembleCancelRound: (
     action: BridgeEnsembleCancelRoundAction
+  ) => Promise<BridgeActionExecutionResult>
+  executeEnsembleRosterUpdate: (
+    action: BridgeEnsembleRosterUpdateAction
   ) => Promise<BridgeActionExecutionResult>
   now?: () => number
 }
@@ -259,6 +277,12 @@ function ensembleForChat(chat: ChatRecord): TaskWraithControlEnsembleSummary | u
     ? getCachedRemoteEnsemblePresets().find((preset) => preset.id === config.activeRosterPresetId)
         ?.name
     : undefined
+  // Disabled seats stay in the projection (flagged `enabled: false`, after the
+  // enabled speaking order) so the seat lens can re-enable them; run-lane
+  // chrome (baton, next-seat math above) keeps filtering to enabled seats.
+  const disabledOrdered = [...config.participants]
+    .filter((participant) => !participant.enabled)
+    .sort((a, b) => a.order - b.order)
   return {
     preset: presetName || 'Custom',
     mode: round?.orchestrationMode ?? config.orchestrationMode ?? 'turn-bound',
@@ -266,7 +290,7 @@ function ensembleForChat(chat: ChatRecord): TaskWraithControlEnsembleSummary | u
     continuationHops: round?.continuationHops ?? 0,
     maxContinuationHops: round?.maxContinuationHops ?? config.maxContinuationHops ?? 0,
     backgroundCount: ordered.filter((participant) => participant.stageRole === 'background').length,
-    participants: ordered.map((participant) =>
+    participants: [...ordered, ...disabledOrdered].map((participant) =>
       participantPresentation(participant, roundById.get(participant.id), activeId, next?.id)
     )
   }
@@ -453,6 +477,61 @@ function workspaceAccessForChat(chat: ChatRecord): 'read' | 'write' {
   return permission.includes('read') || permission === 'plan' ? 'read' : 'write'
 }
 
+/** Bounded projection caps so a worst-case offers frame stays far inside the
+ * local-control line limit. */
+const TUI_MODEL_OFFER_LIMIT = 40
+const TUI_REASONING_OFFER_LIMIT = 12
+
+/**
+ * The curated picker rows for one provider, or a locked reason. Only rows the
+ * App picker itself would present as its static fallback are ever offered;
+ * machine-dependent catalogues (Ollama installs, Pi upstream keys) stay
+ * App-side rather than offering models that would fail at dispatch.
+ */
+function curatedRowsForProvider(provider: string): CodexModelOption[] | { locked: string } {
+  if (!isLiveSelectableProvider(provider)) {
+    return { locked: 'This provider cannot be switched here — manage it in the App.' }
+  }
+  switch (provider) {
+    case 'codex':
+      return CODEX_DEFAULT_MODELS
+    case 'claude':
+      return CLAUDE_DEFAULT_MODELS
+    case 'kimi':
+    case 'grok':
+    case 'cursor':
+    case 'mistral':
+      return getStaticProviderModelOptions(provider)
+    case 'ollama':
+      return { locked: 'Ollama models follow the local install — pick them in the App.' }
+    case 'pi':
+      return { locked: 'Pi upstream models follow your configured keys — pick them in the App.' }
+    default:
+      return { locked: 'This provider has no terminal picker yet — use the App.' }
+  }
+}
+
+function offerFromRow(row: CodexModelOption, currentKey: string): TaskWraithControlModelOffer {
+  return {
+    id: row.id,
+    ...(row.label ? { label: row.label } : {}),
+    ...(row.isDefault ? { isDefault: true } : {}),
+    ...(currentKey && normalizeProviderModelKey(row.id) === currentKey ? { current: true } : {}),
+    ...(row.disabled ? { disabled: true } : {}),
+    ...(row.disabledReason ? { disabledReason: row.disabledReason } : {}),
+    ...(row.retiresAt ? { retiresAt: row.retiresAt } : {}),
+    reasoningEfforts: (row.supportedReasoningEfforts ?? [])
+      .slice(0, TUI_REASONING_OFFER_LIMIT)
+      .map((effort) => ({
+        id: effort.reasoningEffort,
+        ...(row.defaultReasoningEffort === effort.reasoningEffort ? { isDefault: true } : {}),
+        ...(effort.disabled ? { disabled: true } : {}),
+        ...(effort.disabledReason ? { disabledReason: effort.disabledReason } : {})
+      })),
+    ...(row.defaultReasoningEffort ? { defaultReasoningEffort: row.defaultReasoningEffort } : {})
+  }
+}
+
 export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOptions) {
   const now = options.now ?? (() => Date.now())
   let sequence = 0
@@ -521,7 +600,56 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
     }
   }
 
-  const sendPrompt = async (threadId: string, text: string) => {
+  const threadOffers = (threadId: string): TaskWraithControlThreadOffers => {
+    const chat = AppStore.getChat(threadId)
+    if (!chat) throw new Error('Thread not found.')
+    const presentation = threadProvider(chat)
+    const currentModel = modelForChat(chat)
+    const currentReasoning = reasoningForProvider(
+      presentation.runtimeProvider,
+      chat,
+      participantForActiveRound(chat)
+    )
+    const base: TaskWraithControlThreadOffers = {
+      threadId,
+      provider: presentation,
+      ...(currentModel ? { currentModel } : {}),
+      ...(currentReasoning ? { currentReasoningEffort: currentReasoning } : {}),
+      models: [],
+      source: 'curated'
+    }
+    if (chat.chatKind === 'ensemble' || chat.ensemble?.enabled) {
+      return {
+        ...base,
+        locked: 'Ensemble seats carry their own models — edit the roster in the App.'
+      }
+    }
+    if (chat.archived) {
+      return { ...base, locked: 'Archived threads cannot switch models.' }
+    }
+    const rows = curatedRowsForProvider(presentation.runtimeProvider)
+    if (!Array.isArray(rows)) return { ...base, locked: rows.locked }
+    const currentKey = normalizeProviderModelKey(currentModel)
+    const models = rows.slice(0, TUI_MODEL_OFFER_LIMIT).map((row) => offerFromRow(row, currentKey))
+    if (currentModel && !models.some((model) => model.current)) {
+      // The thread runs a model outside the curated rows (live-catalogue pick
+      // made in the App). Keep it selectable so "stay on the current model"
+      // is always expressible, with only its known current effort attached.
+      models.unshift({
+        id: currentModel,
+        ...(presentation.modelLabel ? { label: presentation.modelLabel } : {}),
+        current: true,
+        reasoningEfforts: currentReasoning ? [{ id: currentReasoning, isDefault: true }] : []
+      })
+    }
+    return { ...base, models }
+  }
+
+  const sendPrompt = async (
+    threadId: string,
+    text: string,
+    selection?: { model?: string; reasoningEffort?: string }
+  ) => {
     const chat = AppStore.getChat(threadId)
     if (!chat) throw new Error('Thread not found.')
     if (chat.archived) throw new Error('Archived threads cannot start a new turn.')
@@ -530,6 +658,9 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
     const issuedAt = now()
     const workspaceId = chat.scope === 'global' ? 'global' : chat.workspaceId || ''
     if (chat.chatKind === 'ensemble' || chat.ensemble?.enabled) {
+      if (selection?.model || selection?.reasoningEffort) {
+        throw new Error('Model switching from the terminal is solo-thread only.')
+      }
       const action: BridgeEnsembleSteerAction = {
         kind: 'ensembleSteer',
         actionId: `tui-ensemble:${threadId}:${randomUUID()}`,
@@ -547,7 +678,32 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
       return { dispatched: result.executed, message: result.message }
     }
     const provider = providerForChat(chat)
+    // A selection may only name ids the facade itself would offer for this
+    // thread right now — the client picks among offers, it never nominates.
+    let overrideModel: string | undefined
+    let overrideEffort: string | undefined
+    if (selection?.model || selection?.reasoningEffort) {
+      const offers = threadOffers(threadId)
+      if (offers.locked) throw new Error(offers.locked)
+      const wantedModel = selection.model ?? offers.currentModel
+      const offer = offers.models.find(
+        (candidate) => candidate.id === wantedModel && !candidate.disabled
+      )
+      if (!offer) throw new Error('That model is not offered for this thread.')
+      overrideModel = offer.id
+      if (selection.reasoningEffort) {
+        const effort = offer.reasoningEfforts.find(
+          (candidate) => candidate.id === selection.reasoningEffort && !candidate.disabled
+        )
+        if (!effort) {
+          throw new Error('That reasoning effort is not offered for the selected model.')
+        }
+        overrideEffort = effort.id
+      }
+    }
     const metadata = record(chat.providerMetadata)
+    const defaultModel = modelForChat(chat)
+    const defaultEffort = reasoningForProvider(provider, chat, participantForActiveRound(chat))
     const action: BridgeComposerPromptAction = {
       kind: 'composerPrompt',
       actionId: `tui:${threadId}:${randomUUID()}`,
@@ -557,19 +713,69 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
       threadId,
       text: prompt,
       provider,
-      ...(modelForChat(chat) ? { model: modelForChat(chat) } : {}),
+      ...(overrideModel ? { model: overrideModel } : defaultModel ? { model: defaultModel } : {}),
       ...(chat.workflowMode ? { workflowMode: chat.workflowMode } : {}),
       ...(nonEmptyString(metadata.approvalMode, chat.settingsSnapshot?.approvalMode)
         ? {
             approvalMode: nonEmptyString(metadata.approvalMode, chat.settingsSnapshot?.approvalMode)
           }
         : {}),
-      ...(reasoningForProvider(provider, chat, participantForActiveRound(chat))
-        ? { reasoningEffort: reasoningForProvider(provider, chat, participantForActiveRound(chat)) }
-        : {})
+      // iOS wire parity: Claude rides its dedicated effort field, every other
+      // provider the shared one. The no-selection fallback keeps the existing
+      // derived-effort behaviour untouched.
+      ...(overrideEffort
+        ? provider === 'claude'
+          ? { claudeReasoningEffort: overrideEffort }
+          : { reasoningEffort: overrideEffort }
+        : defaultEffort
+          ? { reasoningEffort: defaultEffort }
+          : {})
     }
     const result = await options.executeComposerPrompt(action)
     return { dispatched: result.executed, message: result.message }
+  }
+
+  const toggleEnsembleSeat = async (threadId: string, participantId: string, enabled: boolean) => {
+    const chat = AppStore.getChat(threadId)
+    if (!chat) throw new Error('Thread not found.')
+    const participants = chat.ensemble?.participants
+    if (!(chat.chatKind === 'ensemble' || chat.ensemble?.enabled) || !participants?.length) {
+      throw new Error('Thread is not an Ensemble chat.')
+    }
+    const target = participants.find((participant) => participant.id === participantId)
+    if (!target) throw new Error('That seat no longer exists.')
+    if (target.enabled === enabled) {
+      return {
+        updated: false,
+        message: enabled ? 'Seat is already enabled.' : 'Seat is already disabled.'
+      }
+    }
+    if (!enabled && participants.filter((participant) => participant.enabled).length <= 1) {
+      // Mirror of the host executor's floor so the seat lens gets an honest
+      // refusal without a round trip; the executor remains the authority.
+      throw new Error('At least one participant must stay enabled.')
+    }
+    const issuedAt = now()
+    const action: BridgeEnsembleRosterUpdateAction = {
+      kind: 'ensembleRosterUpdate',
+      actionId: `tui-seat:${threadId}:${randomUUID()}`,
+      issuedAt,
+      expiresAt: issuedAt + 60_000,
+      workspaceId: chat.scope === 'global' ? 'global' : chat.workspaceId || '',
+      threadId,
+      // Replay the FULL canonical roster in `order` sequence with only the one
+      // flag flipped: known ids update in place, array order is the speaking
+      // order, and an omitted entry would REMOVE that seat.
+      participants: [...participants]
+        .sort((left, right) => left.order - right.order)
+        .map((participant) => ({
+          id: participant.id,
+          provider: participant.provider,
+          enabled: participant.id === participantId ? enabled : participant.enabled
+        }))
+    }
+    const result = await options.executeEnsembleRosterUpdate(action)
+    return { updated: result.executed, message: result.message }
   }
 
   const cancelRun = async (threadId: string) => {
@@ -611,7 +817,7 @@ export function createTaskWraithControlFacade(options: TaskWraithControlFacadeOp
     return { cancelled: result.executed, message: result.message }
   }
 
-  return { snapshot, selectThread, sendPrompt, cancelRun }
+  return { snapshot, selectThread, sendPrompt, cancelRun, threadOffers, toggleEnsembleSeat }
 }
 
 export async function startTaskWraithLocalControl(
