@@ -11,6 +11,8 @@
  * twin (ios/.../OllamaDisplayBrand.swift).
  */
 
+import { resolvePiUpstreamBrand } from './piBrandTable'
+
 export type OllamaDisplayBrandDefinition = {
   id: string
   providerLabel: string
@@ -117,7 +119,8 @@ export function matchOllamaBrand(
 }
 
 /** Frozen presentation for a participant-health chip at stamp time. Health
- * cards are per-round audit records — never re-resolve from the live roster. */
+ * cards are per-round audit records — never re-resolve from the live roster.
+ * Both model-backed runtime seats resolve through their upstream brand. */
 export function resolveHealthEntryPresentation(
   provider: string,
   modelId: string | undefined | null,
@@ -130,6 +133,15 @@ export function resolveHealthEntryPresentation(
       return {
         displayProviderLabel: brand.providerLabel,
         displayHueClass: brand.providerClass
+      }
+    }
+  }
+  if (id === 'pi') {
+    const brand = resolvePiUpstreamBrand(modelId)
+    if (brand) {
+      return {
+        displayProviderLabel: brand.label,
+        displayHueClass: brand.hueClass
       }
     }
   }
