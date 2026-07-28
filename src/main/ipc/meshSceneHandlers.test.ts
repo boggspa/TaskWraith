@@ -38,7 +38,9 @@ describe('registerMeshSceneHandlers', () => {
       assetUrls: {},
       modelUrls: {}
     })
-    expect(await handlers.get('mesh-scene:close-presentation')?.(event, 'chat-a', 'scene-a')).toEqual({
+    expect(
+      await handlers.get('mesh-scene:close-presentation')?.(event, 'chat-a', 'scene-a')
+    ).toEqual({
       id: 'scene-a'
     })
     expect(await handlers.get('mesh-scene:delete')?.(event, 'chat-a', 'scene-a')).toBe('scene-a')
@@ -76,12 +78,12 @@ describe('registerMeshSceneHandlers', () => {
       showOpenDialog: vi.fn(async () => ({ canceled: true, filePaths: [] }))
     })
 
-    expect(() => handlers.get('mesh-scene:list-chat')?.({} as IpcMainInvokeEvent, ' chat-a ')).toThrow(
-      /canonical chat/
-    )
-    expect(() => handlers.get('mesh-scene:view')?.({} as IpcMainInvokeEvent, 'chat-a', ' ')).toThrow(
-      /scene id/
-    )
+    expect(() =>
+      handlers.get('mesh-scene:list-chat')?.({} as IpcMainInvokeEvent, ' chat-a ')
+    ).toThrow(/canonical chat/)
+    expect(() =>
+      handlers.get('mesh-scene:view')?.({} as IpcMainInvokeEvent, 'chat-a', ' ')
+    ).toThrow(/scene id/)
     expect(controller.listForChat).not.toHaveBeenCalled()
     expect(controller.viewForChat).not.toHaveBeenCalled()
   })

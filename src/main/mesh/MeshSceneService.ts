@@ -132,9 +132,7 @@ function nonEmpty(value: unknown, limit = 200): string | null {
 
 function safeHexColor(value: unknown): string | null {
   const color = nonEmpty(value, 16)
-  return color && (/^#[0-9a-f]{6}$/i.test(color) || /^#[0-9a-f]{3}$/i.test(color))
-    ? color
-    : null
+  return color && (/^#[0-9a-f]{6}$/i.test(color) || /^#[0-9a-f]{3}$/i.test(color)) ? color : null
 }
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -165,7 +163,10 @@ function mergeTransform(current: MeshTransform, next?: MeshTransformInput): Mesh
   }
 }
 
-function mergeMaterial(current: MeshPbrMaterial | undefined, next?: MeshPbrMaterial): MeshPbrMaterial {
+function mergeMaterial(
+  current: MeshPbrMaterial | undefined,
+  next?: MeshPbrMaterial
+): MeshPbrMaterial {
   const base = current ?? {}
   if (!next) return { ...base }
   return {
@@ -246,8 +247,8 @@ export class MeshSceneService {
   private blocked(ctx: MeshSceneCallContext): boolean {
     return Boolean(
       this.historyClearHolds > 0 ||
-        (ctx.chatId && (this.chatHolds.get(ctx.chatId) ?? 0) > 0) ||
-        (ctx.workspacePath && (this.workspaceHolds.get(ctx.workspacePath) ?? 0) > 0)
+      (ctx.chatId && (this.chatHolds.get(ctx.chatId) ?? 0) > 0) ||
+      (ctx.workspacePath && (this.workspaceHolds.get(ctx.workspacePath) ?? 0) > 0)
     )
   }
 
@@ -258,9 +259,11 @@ export class MeshSceneService {
   }
 
   private assertSceneAuthority(scene: MeshSceneRecord, ctx: MeshSceneCallContext): void {
-    if (this.blocked(ctx)) throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
+    if (this.blocked(ctx))
+      throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
     const chatId = this.requireChat(ctx)
-    if (scene.chatId !== chatId) throw new Error('The Mesh Canvas scene does not belong to this chat.')
+    if (scene.chatId !== chatId)
+      throw new Error('The Mesh Canvas scene does not belong to this chat.')
   }
 
   private getOwned(sceneId: string, ctx: MeshSceneCallContext): MeshSceneRecord {
@@ -277,7 +280,12 @@ export class MeshSceneService {
     const workspace = fs.realpathSync(ctx.workspacePath!)
     const source = fs.realpathSync(sourcePath)
     const relative = path.relative(workspace, source)
-    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    if (
+      !relative ||
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    ) {
       throw new Error('Mesh imports must stay inside the active workspace.')
     }
     return source
@@ -287,7 +295,8 @@ export class MeshSceneService {
     input: { title?: string; backgroundColor?: string },
     ctx: MeshSceneCallContext
   ): MeshSceneRecord {
-    if (this.blocked(ctx)) throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
+    if (this.blocked(ctx))
+      throw new Error('Mesh Canvas history is being cleared; try again afterwards.')
     const chatId = this.requireChat(ctx)
     const now = this.deps.now()
     const scene: MeshSceneRecord = {
@@ -478,7 +487,8 @@ export class MeshSceneService {
   apply(sceneId: string, mutation: MeshSceneMutation, ctx: MeshSceneCallContext): MeshSceneRecord {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
     if (mutation.operation === 'add_primitive') {
-      if (!isMeshPrimitiveKind(mutation.primitive)) throw new Error('Unsupported Mesh Canvas primitive.')
+      if (!isMeshPrimitiveKind(mutation.primitive))
+        throw new Error('Unsupported Mesh Canvas primitive.')
       if (scene.nodes.length >= MESH_MAX_SCENE_NODES) {
         throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_NODES} objects.`)
       }
@@ -510,7 +520,9 @@ export class MeshSceneService {
           ...current,
           name,
           transform: mergeTransform(current.transform, mutation.transform),
-          ...(mutation.material ? { material: mergeMaterial(current.material, mutation.material) } : {}),
+          ...(mutation.material
+            ? { material: mergeMaterial(current.material, mutation.material) }
+            : {}),
           ...(typeof mutation.visible === 'boolean' ? { visible: mutation.visible } : {})
         }
       }
@@ -529,7 +541,8 @@ export class MeshSceneService {
       if (mutation.lighting) {
         scene.lighting = {
           environment:
-            mutation.lighting.environment === 'sunset' || mutation.lighting.environment === 'neutral'
+            mutation.lighting.environment === 'sunset' ||
+            mutation.lighting.environment === 'neutral'
               ? mutation.lighting.environment
               : scene.lighting.environment,
           intensity: boundedNumber(mutation.lighting.intensity, scene.lighting.intensity, 0, 8)
@@ -538,9 +551,24 @@ export class MeshSceneService {
       if (mutation.camera) {
         scene.camera = {
           position: {
-            x: boundedNumber(mutation.camera.position?.x, scene.camera.position.x, -100_000, 100_000),
-            y: boundedNumber(mutation.camera.position?.y, scene.camera.position.y, -100_000, 100_000),
-            z: boundedNumber(mutation.camera.position?.z, scene.camera.position.z, -100_000, 100_000)
+            x: boundedNumber(
+              mutation.camera.position?.x,
+              scene.camera.position.x,
+              -100_000,
+              100_000
+            ),
+            y: boundedNumber(
+              mutation.camera.position?.y,
+              scene.camera.position.y,
+              -100_000,
+              100_000
+            ),
+            z: boundedNumber(
+              mutation.camera.position?.z,
+              scene.camera.position.z,
+              -100_000,
+              100_000
+            )
           },
           target: {
             x: boundedNumber(mutation.camera.target?.x, scene.camera.target.x, -100_000, 100_000),
@@ -595,11 +623,7 @@ export class MeshSceneService {
     }
   }
 
-  present(
-    sceneId: string,
-    input: { title?: string },
-    ctx: MeshSceneCallContext
-  ): MeshSceneRecord {
+  present(sceneId: string, input: { title?: string }, ctx: MeshSceneCallContext): MeshSceneRecord {
     const scene = cloneScene(this.getOwned(sceneId, ctx))
     scene.presentation = {
       presentedAt: this.deps.now(),

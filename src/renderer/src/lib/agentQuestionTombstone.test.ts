@@ -28,7 +28,10 @@ function marker(over: Partial<ChatMessage> = {}): ChatMessage {
   } as ChatMessage
 }
 
-function reply(over: Partial<ChatMessage> = {}, metadata: Record<string, unknown> = {}): ChatMessage {
+function reply(
+  over: Partial<ChatMessage> = {},
+  metadata: Record<string, unknown> = {}
+): ChatMessage {
   return {
     id: `agent-question-reply-${QUESTION_ID}`,
     role: 'user',
@@ -49,9 +52,7 @@ describe('agent question tombstone', () => {
   it('recognises only question markers', () => {
     expect(isAgentQuestionMarker(marker())).toBe(true)
     expect(isAgentQuestionMarker(reply())).toBe(false)
-    expect(
-      isAgentQuestionMarker({ ...marker(), role: 'assistant' } as ChatMessage)
-    ).toBe(false)
+    expect(isAgentQuestionMarker({ ...marker(), role: 'assistant' } as ChatMessage)).toBe(false)
   })
 
   it('bakes the chosen option in, marking it against the option list', () => {
@@ -73,7 +74,9 @@ describe('agent question tombstone', () => {
     // would silently mark nothing. The writer's flag is authoritative.
     const t = buildAgentQuestionTombstone(
       marker(),
-      indexAgentQuestionReplies([reply({ content: 'Something else entirely' }, { isCustomAnswer: true })])
+      indexAgentQuestionReplies([
+        reply({ content: 'Something else entirely' }, { isCustomAnswer: true })
+      ])
     )
     expect(t?.isCustomAnswer).toBe(true)
     expect(t?.answer).toBe('Something else entirely')

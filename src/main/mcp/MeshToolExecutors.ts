@@ -153,7 +153,10 @@ function numericTransform(value: unknown): { scale?: number; offset?: number } |
   const raw = asRecord(value)
   const scale = numberValue(raw.scale)
   const offset = numberValue(raw.offset)
-  if ((raw.scale !== undefined && scale === undefined) || (raw.offset !== undefined && offset === undefined)) {
+  if (
+    (raw.scale !== undefined && scale === undefined) ||
+    (raw.offset !== undefined && offset === undefined)
+  ) {
     throw new Error('numericTransform scale and offset must be finite numbers.')
   }
   const result = {
@@ -181,9 +184,16 @@ function resolveWorkspaceSource(rawPath: unknown, context: MeshSceneCallContext)
   if (!supplied) throw new Error('A workspace-relative sourcePath is required.')
   if (!context.workspacePath) throw new Error('Mesh imports require a workspace-scoped chat.')
   const workspace = path.resolve(context.workspacePath)
-  const candidate = path.isAbsolute(supplied) ? path.resolve(supplied) : path.resolve(workspace, supplied)
+  const candidate = path.isAbsolute(supplied)
+    ? path.resolve(supplied)
+    : path.resolve(workspace, supplied)
   const relative = path.relative(workspace, candidate)
-  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if (
+    !relative ||
+    relative === '..' ||
+    relative.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relative)
+  ) {
     throw new Error('Mesh imports must stay inside the active workspace.')
   }
   return candidate
@@ -214,7 +224,8 @@ function parseMutation(args: Record<string, unknown>): MeshSceneMutation {
   const operation = stringValue(args.operation, 64)
   if (operation === 'add_primitive') {
     const primitive = stringValue(args.primitive, 32)
-    if (!isMeshPrimitiveKind(primitive)) throw new Error('add_primitive requires a supported primitive.')
+    if (!isMeshPrimitiveKind(primitive))
+      throw new Error('add_primitive requires a supported primitive.')
     return {
       operation,
       primitive: primitive as MeshPrimitiveKind,
@@ -310,12 +321,16 @@ export function createMeshToolExecutors(controller: MeshSceneService): MeshToolE
       try {
         if (toolName === 'mesh_scene_create') {
           const scene = controller.create(
-            { title: stringValue(args.title, 200), backgroundColor: stringValue(args.backgroundColor, 16) },
+            {
+              title: stringValue(args.title, 200),
+              backgroundColor: stringValue(args.backgroundColor, 16)
+            },
             context
           )
           return result({ ok: true, scene: sceneForMcp(scene) })
         }
-        if (toolName === 'mesh_scene_list') return result({ ok: true, scenes: controller.list(context) })
+        if (toolName === 'mesh_scene_list')
+          return result({ ok: true, scenes: controller.list(context) })
         const id = sceneId(args)
         if (!id) return fail(toolName, 'sceneId is required.')
         if (toolName === 'mesh_scene_inspect') {
@@ -334,32 +349,40 @@ export function createMeshToolExecutors(controller: MeshSceneService): MeshToolE
           return result({ ok: true, scene: sceneForMcp(scene) })
         }
         if (toolName === 'mesh_scene_apply') {
-          return result({ ok: true, scene: sceneForMcp(controller.apply(id, parseMutation(args), context)) })
+          return result({
+            ok: true,
+            scene: sceneForMcp(controller.apply(id, parseMutation(args), context))
+          })
         }
         if (toolName === 'mesh_scene_set_material') {
           const nodeId = stringValue(args.nodeId, 128)
           const texturePath = stringValue(args.texturePath, 4_096)
           const nextMaterial = material(args.material) ?? (texturePath ? {} : undefined)
-          if (!nodeId || !nextMaterial) return fail(toolName, 'nodeId and a material update are required.')
+          if (!nodeId || !nextMaterial)
+            return fail(toolName, 'nodeId and a material update are required.')
           return result({
             ok: true,
-            scene: sceneForMcp(controller.setMaterial(
-              id,
-              {
-                nodeId,
-                material: nextMaterial,
-                ...(texturePath
-                  ? { textureSourcePath: resolveWorkspaceSource(texturePath, context) }
-                  : {})
-              },
-              context
-            ))
+            scene: sceneForMcp(
+              controller.setMaterial(
+                id,
+                {
+                  nodeId,
+                  material: nextMaterial,
+                  ...(texturePath
+                    ? { textureSourcePath: resolveWorkspaceSource(texturePath, context) }
+                    : {})
+                },
+                context
+              )
+            )
           })
         }
         if (toolName === 'mesh_scene_present') {
           return result({
             ok: true,
-            scene: sceneForMcp(controller.present(id, { title: stringValue(args.title, 200) }, context)),
+            scene: sceneForMcp(
+              controller.present(id, { title: stringValue(args.title, 200) }, context)
+            ),
             presentation: 'Mesh Canvas has been presented in the chat canvas dock.'
           })
         }

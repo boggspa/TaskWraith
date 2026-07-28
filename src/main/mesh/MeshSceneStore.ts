@@ -73,17 +73,13 @@ function asMaterial(value: unknown): MeshPbrMaterial {
   const textureAssetId = asString(raw.textureAssetId, 128)
   return {
     ...(asColor(raw.baseColor) ? { baseColor: asColor(raw.baseColor) } : {}),
-    ...(typeof raw.metallic !== 'undefined'
-      ? { metallic: asFinite(raw.metallic, 0, 0, 1) }
-      : {}),
+    ...(typeof raw.metallic !== 'undefined' ? { metallic: asFinite(raw.metallic, 0, 0, 1) } : {}),
     ...(typeof raw.roughness !== 'undefined'
       ? { roughness: asFinite(raw.roughness, 0.7, 0, 1) }
       : {}),
     ...(typeof raw.opacity !== 'undefined' ? { opacity: asFinite(raw.opacity, 1, 0, 1) } : {}),
     ...(asColor(raw.emissive) ? { emissive: asColor(raw.emissive) } : {}),
-    ...(textureAssetId && /^[a-zA-Z0-9_-]{16,128}$/.test(textureAssetId)
-      ? { textureAssetId }
-      : {}),
+    ...(textureAssetId && /^[a-zA-Z0-9_-]{16,128}$/.test(textureAssetId) ? { textureAssetId } : {}),
     ...(typeof raw.doubleSided === 'boolean' ? { doubleSided: raw.doubleSided } : {})
   }
 }
@@ -154,23 +150,26 @@ function normalizeScene(value: unknown): MeshSceneRecord | null {
   const rawLighting = isRecord(value.lighting) ? value.lighting : {}
   const rawCamera = isRecord(value.camera) ? value.camera : {}
   const defaults = cloneDefaultCamera()
-  const presentation = isRecord(value.presentation) && asString(value.presentation.presentedAt, 128)
-    ? {
-        presentedAt: asString(value.presentation.presentedAt, 128)!,
-        ...(asString(value.presentation.presenter, 100)
-          ? { presenter: asString(value.presentation.presenter, 100)! }
-          : {}),
-        ...(asString(value.presentation.title, 200)
-          ? { title: asString(value.presentation.title, 200)! }
-          : {})
-      }
-    : undefined
+  const presentation =
+    isRecord(value.presentation) && asString(value.presentation.presentedAt, 128)
+      ? {
+          presentedAt: asString(value.presentation.presentedAt, 128)!,
+          ...(asString(value.presentation.presenter, 100)
+            ? { presenter: asString(value.presentation.presenter, 100)! }
+            : {}),
+          ...(asString(value.presentation.title, 200)
+            ? { title: asString(value.presentation.title, 200)! }
+            : {})
+        }
+      : undefined
   const scene: MeshSceneRecord = {
     schemaVersion: MESH_SCENE_SCHEMA_VERSION,
     id,
     ...(asString(value.chatId, 256) ? { chatId: asString(value.chatId, 256)! } : {}),
     ...(asString(value.runId, 256) ? { runId: asString(value.runId, 256)! } : {}),
-    ...(asString(value.workspacePath, 4_096) ? { workspacePath: asString(value.workspacePath, 4_096)! } : {}),
+    ...(asString(value.workspacePath, 4_096)
+      ? { workspacePath: asString(value.workspacePath, 4_096)! }
+      : {}),
     title,
     backgroundColor: asColor(value.backgroundColor) ?? '#171a21',
     lighting: {
@@ -266,7 +265,11 @@ export class MeshSceneStore {
     this.ensureRoot()
     const tempPath = path.join(this.baseDir, `.${SCENES_FILE}.${process.pid}.${Date.now()}.tmp`)
     try {
-      fs.writeFileSync(tempPath, JSON.stringify(scenes), { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+      fs.writeFileSync(tempPath, JSON.stringify(scenes), {
+        encoding: 'utf8',
+        mode: 0o600,
+        flag: 'wx'
+      })
       fs.renameSync(tempPath, this.scenesPath)
     } finally {
       try {
@@ -309,7 +312,10 @@ export class MeshSceneStore {
     return { removed, orphanedAssetIds: orphanedAssets([removed], retained) }
   }
 
-  purgeAuthorities(input: { chatIds?: Iterable<string>; workspacePaths?: Iterable<string> }): string[] {
+  purgeAuthorities(input: {
+    chatIds?: Iterable<string>
+    workspacePaths?: Iterable<string>
+  }): string[] {
     const chatIds = new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean))
     const workspacePaths = new Set(
       [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)

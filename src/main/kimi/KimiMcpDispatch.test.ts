@@ -84,15 +84,17 @@ describe('createKimiMcpDispatch', () => {
     })
 
     const response = await dispatch({ jsonrpc: '2.0', id: 88, method: 'tools/list' })
-    const names = ((response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []).map(
-      (tool) => tool.name
-    )
+    const names = (
+      (response?.result as { tools?: Array<{ name?: string }> } | undefined)?.tools || []
+    ).map((tool) => tool.name)
     expect(names).toContain('ensemble_control')
     expect(names).not.toContain('ensemble_bossman_control')
   })
 
   it('makes Sketch direct for v8 Kimi seats without drifting a v7 receipt', async () => {
-    const listFor = async (taskWraithMcpProfileId: 'taskwraith-gateway-v7' | 'taskwraith-gateway-v8') => {
+    const listFor = async (
+      taskWraithMcpProfileId: 'taskwraith-gateway-v7' | 'taskwraith-gateway-v8'
+    ) => {
       const dispatch = createKimiMcpDispatch({
         route: { appRunId: 'kimi-run-sketch', appChatId: 'chat-sketch' },
         taskWraithMcpProfileId,

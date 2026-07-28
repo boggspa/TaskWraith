@@ -2568,8 +2568,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           action: {
             type: 'string',
-            description:
-              'Boss/Captain action, such as set_round_plan or summon_participant.'
+            description: 'Boss/Captain action, such as set_round_plan or summon_participant.'
           },
           params: {
             type: 'object',
@@ -4146,14 +4145,27 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           sceneId: { type: 'string' },
-          sourcePath: { type: 'string', description: 'Workspace-relative model path (.glb, .gltf, or .obj).' },
+          sourcePath: {
+            type: 'string',
+            description: 'Workspace-relative model path (.glb, .gltf, or .obj).'
+          },
           name: { type: 'string' },
           transform: {
             type: 'object',
             properties: {
-              position: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
-              rotation: { type: 'object', description: 'Euler degrees.', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } },
-              scale: { type: 'object', properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } } }
+              position: {
+                type: 'object',
+                properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }
+              },
+              rotation: {
+                type: 'object',
+                description: 'Euler degrees.',
+                properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }
+              },
+              scale: {
+                type: 'object',
+                properties: { x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }
+              }
             }
           }
         },
@@ -4202,7 +4214,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           },
           values: {
             type: 'object',
-            description: 'Bounded map of string, finite-number, or boolean object facts to merge into sourceId.'
+            description:
+              'Bounded map of string, finite-number, or boolean object facts to merge into sourceId.'
           },
           property: {
             type: 'string',
@@ -4254,7 +4267,10 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           sceneId: { type: 'string' },
           nodeId: { type: 'string' },
           material: { type: 'object' },
-          texturePath: { type: 'string', description: 'Optional workspace-relative image texture path.' }
+          texturePath: {
+            type: 'string',
+            description: 'Optional workspace-relative image texture path.'
+          }
         },
         required: ['sceneId', 'nodeId', 'material']
       }

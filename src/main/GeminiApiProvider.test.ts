@@ -773,12 +773,12 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
 
   it('advertises only the compact Ensemble control shape to fresh API sessions', () => {
     const tools = [makeMcpTool('ensemble_bossman_control'), makeMcpTool('ensemble_control')]
-    expect(filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v6').map((tool) => tool.name)).toEqual([
-      'ensemble_control'
-    ])
-    expect(filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v5').map((tool) => tool.name)).toEqual([
-      'ensemble_bossman_control'
-    ])
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v6').map((tool) => tool.name)
+    ).toEqual(['ensemble_control'])
+    expect(
+      filterGeminiApiMcpToolsForProfile(tools, 'taskwraith-gateway-v5').map((tool) => tool.name)
+    ).toEqual(['ensemble_bossman_control'])
   })
 
   it('passes function declarations on every generateContentStream call', async () => {

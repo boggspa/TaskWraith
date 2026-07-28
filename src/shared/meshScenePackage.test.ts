@@ -14,10 +14,7 @@ describe('parseMeshScenePackageManifest', () => {
         schemaVersion: 1,
         kind: MESH_SCENE_PACKAGE_KIND,
         title: '  Gallery export  ',
-        roots: [
-          { path: 'scene/gallery.gltf', name: 'Gallery' },
-          { path: 'props/sign.obj' }
-        ],
+        roots: [{ path: 'scene/gallery.gltf', name: 'Gallery' }, { path: 'props/sign.obj' }],
         files: [
           'scene/gallery.gltf',
           'scene/gallery.bin',
@@ -97,7 +94,9 @@ describe('parseMeshScenePackageManifest', () => {
 describe('isMeshScenePackageManifestFileName', () => {
   it('matches only the exact package root manifest name', () => {
     expect(isMeshScenePackageManifestFileName(MESH_SCENE_PACKAGE_MANIFEST_FILE)).toBe(true)
-    expect(isMeshScenePackageManifestFileName(`/exports/${MESH_SCENE_PACKAGE_MANIFEST_FILE}`)).toBe(true)
+    expect(isMeshScenePackageManifestFileName(`/exports/${MESH_SCENE_PACKAGE_MANIFEST_FILE}`)).toBe(
+      true
+    )
     expect(isMeshScenePackageManifestFileName('random.json')).toBe(false)
   })
 })

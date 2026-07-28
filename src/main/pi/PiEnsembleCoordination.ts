@@ -21,8 +21,7 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'blackboard_delete'
 ] as const)
 
-export type PiEnsembleCoordinationToolName =
-  (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
+export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
 
 /**
  * The broker enforces this independently of Pi's extension registration.

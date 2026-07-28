@@ -59,7 +59,9 @@ function isObjectDataValue(value: unknown): value is MeshSceneObjectDataValue {
   )
 }
 
-function normalizeObjectDataValues(value: unknown): Record<string, MeshSceneObjectDataValue> | null {
+function normalizeObjectDataValues(
+  value: unknown
+): Record<string, MeshSceneObjectDataValue> | null {
   if (!isRecord(value)) return null
   const entries = Object.entries(value)
   if (!entries.length || entries.length > MAX_OBJECT_DATA_VALUES) return null
@@ -96,10 +98,12 @@ export function cloneMeshSceneDependencyGraph(
 }
 
 function isNumericProperty(property: MeshSceneDependencyProperty): boolean {
-  return Boolean(TRANSFORM_ADDRESS[property]) ||
+  return (
+    Boolean(TRANSFORM_ADDRESS[property]) ||
     property === 'material.metallic' ||
     property === 'material.roughness' ||
     property === 'material.opacity'
+  )
 }
 
 function propertyKey(nodeId: string, property: MeshSceneDependencyProperty): string {
@@ -113,7 +117,9 @@ function sourceValue(
   resolveBinding: (key: string) => void
 ): MeshSceneObjectDataValue | undefined {
   if (source.kind === 'object_data') {
-    return scene.dependencies.sources.find((item) => item.id === source.sourceId)?.values[source.key]
+    return scene.dependencies.sources.find((item) => item.id === source.sourceId)?.values[
+      source.key
+    ]
   }
   const key = propertyKey(source.nodeId, source.property)
   if (bindingsByTarget.has(key)) resolveBinding(key)
@@ -155,7 +161,8 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function safeHexColor(value: unknown): string | null {
-  return typeof value === 'string' && (/^#[0-9a-f]{6}$/i.test(value) || /^#[0-9a-f]{3}$/i.test(value))
+  return typeof value === 'string' &&
+    (/^#[0-9a-f]{6}$/i.test(value) || /^#[0-9a-f]{3}$/i.test(value))
     ? value
     : null
 }
@@ -172,13 +179,16 @@ function resolvedPropertyValue(
     const mapped = binding.numericTransform
       ? value * binding.numericTransform.scale + binding.numericTransform.offset
       : value
-    if (!Number.isFinite(mapped)) throw new Error('Mesh Canvas dependency produced a non-finite number.')
+    if (!Number.isFinite(mapped))
+      throw new Error('Mesh Canvas dependency produced a non-finite number.')
     if (property.startsWith('transform.scale.')) return clamp(mapped, 0.001, 10_000)
     if (property.startsWith('transform.')) return clamp(mapped, -100_000, 100_000)
     return clamp(mapped, 0, 1)
   }
   if (binding.numericTransform) {
-    throw new Error(`Mesh Canvas dependency mapping is only valid for numeric property ${property}.`)
+    throw new Error(
+      `Mesh Canvas dependency mapping is only valid for numeric property ${property}.`
+    )
   }
   if (property === 'visible' || property === 'material.doubleSided') {
     if (typeof value !== 'boolean') {
@@ -187,7 +197,10 @@ function resolvedPropertyValue(
     return value
   }
   const color = safeHexColor(value)
-  if (!color) throw new Error(`Mesh Canvas dependency for ${property} requires a #RGB or #RRGGBB source value.`)
+  if (!color)
+    throw new Error(
+      `Mesh Canvas dependency for ${property} requires a #RGB or #RRGGBB source value.`
+    )
   return color
 }
 
@@ -253,7 +266,11 @@ function normalizeSource(
     return { kind: 'object_data', sourceId: value.sourceId, key: value.key }
   }
   if (value.kind === 'node_property') {
-    if (!safeId(value.nodeId) || !nodeIds.has(value.nodeId) || !isMeshSceneDependencyProperty(value.property)) {
+    if (
+      !safeId(value.nodeId) ||
+      !nodeIds.has(value.nodeId) ||
+      !isMeshSceneDependencyProperty(value.property)
+    ) {
       return null
     }
     return { kind: 'node_property', nodeId: value.nodeId, property: value.property }
@@ -270,8 +287,12 @@ function normalizeNumericTransform(
   const hasScale = value.scale !== undefined
   const hasOffset = value.offset !== undefined
   if (!hasScale && !hasOffset) return undefined
-  const scale = hasScale && typeof value.scale === 'number' && Number.isFinite(value.scale) ? value.scale : 1
-  const offset = hasOffset && typeof value.offset === 'number' && Number.isFinite(value.offset) ? value.offset : 0
+  const scale =
+    hasScale && typeof value.scale === 'number' && Number.isFinite(value.scale) ? value.scale : 1
+  const offset =
+    hasOffset && typeof value.offset === 'number' && Number.isFinite(value.offset)
+      ? value.offset
+      : 0
   if ((hasScale && scale !== value.scale) || (hasOffset && offset !== value.offset)) return null
   if (Math.abs(scale) > 100_000 || Math.abs(offset) > 100_000) return null
   return { scale, offset }
@@ -287,7 +308,8 @@ export function normalizeMeshSceneDependencyGraph(
   nodes: readonly MeshSceneNode[]
 ): MeshSceneDependencyGraph | null {
   if (value === undefined) return createEmptyMeshSceneDependencyGraph()
-  if (!isRecord(value) || !Array.isArray(value.sources) || !Array.isArray(value.bindings)) return null
+  if (!isRecord(value) || !Array.isArray(value.sources) || !Array.isArray(value.bindings))
+    return null
   if (
     value.sources.length > MESH_MAX_SCENE_OBJECT_DATA_SOURCES ||
     value.bindings.length > MESH_MAX_SCENE_DEPENDENCY_BINDINGS
@@ -308,7 +330,8 @@ export function normalizeMeshSceneDependencyGraph(
   const bindingIds = new Set<string>()
   const targetKeys = new Set<string>()
   for (const rawBinding of value.bindings) {
-    if (!isRecord(rawBinding) || !safeId(rawBinding.id) || bindingIds.has(rawBinding.id)) return null
+    if (!isRecord(rawBinding) || !safeId(rawBinding.id) || bindingIds.has(rawBinding.id))
+      return null
     if (
       !safeId(rawBinding.targetNodeId) ||
       !nodeIds.has(rawBinding.targetNodeId) ||
@@ -320,7 +343,10 @@ export function normalizeMeshSceneDependencyGraph(
     const targetKey = propertyKey(rawBinding.targetNodeId, rawBinding.targetProperty)
     if (targetKeys.has(targetKey)) return null
     const source = normalizeSource(rawBinding.source, sourceIds, nodeIds)
-    const numericTransform = normalizeNumericTransform(rawBinding.numericTransform, rawBinding.targetProperty)
+    const numericTransform = normalizeNumericTransform(
+      rawBinding.numericTransform,
+      rawBinding.targetProperty
+    )
     if (!source || numericTransform === null) return null
     if (source.kind === 'object_data') {
       const sourceData = sources.find((candidate) => candidate.id === source.sourceId)
@@ -347,7 +373,8 @@ export function resolveMeshSceneDependencyGraph(scene: MeshSceneRecord): void {
   const bindingsByTarget = new Map<string, MeshSceneDependencyBinding>()
   for (const binding of scene.dependencies.bindings) {
     const key = propertyKey(binding.targetNodeId, binding.targetProperty)
-    if (bindingsByTarget.has(key)) throw new Error('Mesh Canvas dependency graph has duplicate targets.')
+    if (bindingsByTarget.has(key))
+      throw new Error('Mesh Canvas dependency graph has duplicate targets.')
     bindingsByTarget.set(key, binding)
   }
   const resolved = new Set<string>()
@@ -374,11 +401,16 @@ export function upsertMeshSceneObjectData(
 ): void {
   if (!safeId(input.sourceId)) throw new Error('Mesh Canvas object data source id is invalid.')
   const values = normalizeObjectDataValues(input.values)
-  if (!values) throw new Error('Mesh Canvas object data values must be a bounded map of strings, numbers, or booleans.')
+  if (!values)
+    throw new Error(
+      'Mesh Canvas object data values must be a bounded map of strings, numbers, or booleans.'
+    )
   const index = scene.dependencies.sources.findIndex((source) => source.id === input.sourceId)
   if (index < 0) {
     if (scene.dependencies.sources.length >= MESH_MAX_SCENE_OBJECT_DATA_SOURCES) {
-      throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_OBJECT_DATA_SOURCES} object data sources.`)
+      throw new Error(
+        `Mesh Canvas scenes support up to ${MESH_MAX_SCENE_OBJECT_DATA_SOURCES} object data sources.`
+      )
     }
     scene.dependencies.sources.push({ id: input.sourceId, values, updatedAt: now })
     return
@@ -405,12 +437,14 @@ export function bindMeshSceneNodeProperty(
   if (!safeId(input.nodeId) || !scene.nodes.some((node) => node.id === input.nodeId)) {
     throw new Error('Mesh Canvas dependency target node was not found.')
   }
-  if (!isMeshSceneDependencyProperty(input.property)) throw new Error('Mesh Canvas dependency property is invalid.')
+  if (!isMeshSceneDependencyProperty(input.property))
+    throw new Error('Mesh Canvas dependency property is invalid.')
   const sourceIds = new Set(scene.dependencies.sources.map((source) => source.id))
   const nodeIds = new Set(scene.nodes.map((node) => node.id))
   const source = normalizeSource(input.source, sourceIds, nodeIds)
   const numericTransform = normalizeNumericTransform(input.numericTransform, input.property)
-  if (!source || numericTransform === null) throw new Error('Mesh Canvas dependency source or numeric mapping is invalid.')
+  if (!source || numericTransform === null)
+    throw new Error('Mesh Canvas dependency source or numeric mapping is invalid.')
   if (source.kind === 'object_data') {
     const data = scene.dependencies.sources.find((item) => item.id === source.sourceId)
     if (!data || !(source.key in data.values)) {
@@ -431,7 +465,9 @@ export function bindMeshSceneNodeProperty(
   if (index >= 0) scene.dependencies.bindings[index] = binding
   else {
     if (scene.dependencies.bindings.length >= MESH_MAX_SCENE_DEPENDENCY_BINDINGS) {
-      throw new Error(`Mesh Canvas scenes support up to ${MESH_MAX_SCENE_DEPENDENCY_BINDINGS} dependency bindings.`)
+      throw new Error(
+        `Mesh Canvas scenes support up to ${MESH_MAX_SCENE_DEPENDENCY_BINDINGS} dependency bindings.`
+      )
     }
     scene.dependencies.bindings.push(binding)
   }

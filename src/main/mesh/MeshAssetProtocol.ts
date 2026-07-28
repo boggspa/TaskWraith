@@ -58,7 +58,9 @@ function notFound(): Response {
 }
 
 function sameOpenedFile(before: fs.Stats, opened: fs.Stats): boolean {
-  return before.isFile() && opened.isFile() && before.dev === opened.dev && before.ino === opened.ino
+  return (
+    before.isFile() && opened.isFile() && before.dev === opened.dev && before.ino === opened.ino
+  )
 }
 
 /** Register after Electron is ready; scheme privilege must be registered pre-ready. */

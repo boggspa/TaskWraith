@@ -46,7 +46,10 @@ describe('MeshSceneService', () => {
   })
 
   it('creates chat-owned declarative scenes and applies primitives', () => {
-    const scene = service.create({ title: 'Materials study', backgroundColor: '#102030' }, context())
+    const scene = service.create(
+      { title: 'Materials study', backgroundColor: '#102030' },
+      context()
+    )
     const updated = service.apply(
       scene.id,
       {
@@ -270,7 +273,9 @@ describe('MeshSceneService', () => {
       },
       context()
     )
-    expect(directToolUpdate.nodes.find((node) => node.id === follower.id)?.transform.position.x).toBe(12)
+    expect(
+      directToolUpdate.nodes.find((node) => node.id === follower.id)?.transform.position.x
+    ).toBe(12)
     expect(updated.dependencies).toMatchObject({
       sources: [{ id: 'telemetry', values: { span: 4 } }],
       bindings: [{ targetNodeId: leader.id }, { targetNodeId: follower.id }]
@@ -282,9 +287,17 @@ describe('MeshSceneService', () => {
 
   it('rejects cyclic property edges atomically', () => {
     const scene = service.create({}, context())
-    const withFirst = service.apply(scene.id, { operation: 'add_primitive', primitive: 'box' }, context())
+    const withFirst = service.apply(
+      scene.id,
+      { operation: 'add_primitive', primitive: 'box' },
+      context()
+    )
     const first = withFirst.nodes[0]
-    const withSecond = service.apply(scene.id, { operation: 'add_primitive', primitive: 'sphere' }, context())
+    const withSecond = service.apply(
+      scene.id,
+      { operation: 'add_primitive', primitive: 'sphere' },
+      context()
+    )
     const second = withSecond.nodes[1]
     if (!first || !second) throw new Error('expected two primitive nodes')
 

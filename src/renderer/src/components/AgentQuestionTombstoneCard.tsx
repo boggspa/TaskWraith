@@ -47,13 +47,9 @@ export function AgentQuestionTombstoneCard({
       className={`plan-choice-card agent-question-card agent-question-card--settled${providerClass}`}
       data-outcome={tombstone.outcome}
     >
-      <div className="agent-question-card-settled-kicker">
-        {providerLabel || 'Agent'} asked
-      </div>
+      <div className="agent-question-card-settled-kicker">{providerLabel || 'Agent'} asked</div>
       <div className="plan-choice-question agent-question-card-question">{tombstone.question}</div>
-      {tombstone.context && (
-        <div className="agent-question-card-context">{tombstone.context}</div>
-      )}
+      {tombstone.context && <div className="agent-question-card-context">{tombstone.context}</div>}
 
       {tombstone.options.length > 0 && (
         // A <ul>, not buttons. The options are being reported, not offered —
@@ -65,9 +61,7 @@ export function AgentQuestionTombstoneCard({
             return (
               <li
                 key={option}
-                className={`agent-question-card-settled-option${
-                  isChosen ? ' is-chosen' : ''
-                }`}
+                className={`agent-question-card-settled-option${isChosen ? ' is-chosen' : ''}`}
                 aria-current={isChosen ? 'true' : undefined}
               >
                 <span className="agent-question-card-settled-option-text">{option}</span>

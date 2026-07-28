@@ -124,7 +124,9 @@ describe('provider dispatch integration', () => {
 
     expect(pi).toContain('mcpBridgeRuntime.issuePiEnsembleCoordinationCredential(route)')
     expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piCoordinationBrokerToken!')
-    expect(pi).toContain('mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)')
+    expect(pi).toContain(
+      'mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)'
+    )
     expect(pi.indexOf('issuePiEnsembleCoordinationCredential(route)')).toBeLessThan(
       pi.indexOf('await runCliProviderProcess(')
     )

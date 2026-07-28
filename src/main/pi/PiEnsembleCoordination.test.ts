@@ -60,7 +60,9 @@ describe('Pi managed Ensemble coordination extension', () => {
     const home = createCanonicalHome()
     preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })
 
-    expect(() => preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })).toThrow(/EEXIST/)
+    expect(() => preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })).toThrow(
+      /EEXIST/
+    )
   })
 
   it('makes the ready and fallback prompt receipts mutually exclusive and actionable', () => {
@@ -68,7 +70,9 @@ describe('Pi managed Ensemble coordination extension', () => {
     const prepared = preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })
 
     const ready = piEnsembleCoordinationReadyPromptAppendix(prepared)
-    const unavailable = piEnsembleCoordinationUnavailablePromptAppendix('extension readiness timed out')
+    const unavailable = piEnsembleCoordinationUnavailablePromptAppendix(
+      'extension readiness timed out'
+    )
 
     expect(ready).toContain('verified for this run')
     for (const tool of PI_ENSEMBLE_COORDINATION_TOOL_NAMES) expect(ready).toContain(`\`${tool}\``)

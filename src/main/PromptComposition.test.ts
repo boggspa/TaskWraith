@@ -63,7 +63,8 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
         agenticServices: { shellCommands: 'allow', mcpTools: 'allow' }
       } as never
     })
-    const literalLaterInUserText = '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
+    const literalLaterInUserText =
+      '<taskwraith-shell-routing-v1>quoted evidence</taskwraith-shell-routing-v1>'
     const prompt = `${shellEnvelope}User work.\n\n${literalLaterInUserText}`
 
     expect(

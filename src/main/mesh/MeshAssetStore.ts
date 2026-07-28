@@ -75,7 +75,12 @@ function strictSourceFile(sourcePath: string): { realPath: string; stat: fs.Stat
 
 function pathInside(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate)
-  return Boolean(relative) && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)
+  return (
+    Boolean(relative) &&
+    !relative.startsWith(`..${path.sep}`) &&
+    relative !== '..' &&
+    !path.isAbsolute(relative)
+  )
 }
 
 function meshMimeForPath(relativePath: string): string {
@@ -272,7 +277,8 @@ export class MeshAssetStore {
     const sourceDir = path.dirname(source.realPath)
     const sourceDirReal = fs.realpathSync(sourceDir)
     const entryPath = path.basename(source.realPath)
-    if (!isSafeMeshAssetRelativePath(entryPath)) throw new Error('Mesh import file name is not safe.')
+    if (!isSafeMeshAssetRelativePath(entryPath))
+      throw new Error('Mesh import file name is not safe.')
 
     const assetId = this.uuid().replace(/[^a-zA-Z0-9_-]/g, '')
     if (!safeId(assetId)) throw new Error('Mesh asset id generator returned an invalid id.')

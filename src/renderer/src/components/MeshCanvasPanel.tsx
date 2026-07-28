@@ -505,9 +505,7 @@ export function MeshCanvasPanel({ chatId }: MeshCanvasPanelProps) {
       await api.closePresentation(chatId, activeSceneId)
       await refresh()
     } catch (error) {
-      setIssue(
-        meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.')
-      )
+      setIssue(meshCanvasIssueMessage(error, 'Could not close the Mesh Canvas presentation.'))
     }
   }
 

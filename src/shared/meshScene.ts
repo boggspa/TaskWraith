@@ -237,7 +237,9 @@ export function isMeshPrimitiveKind(value: unknown): value is MeshPrimitiveKind 
   return typeof value === 'string' && (MESH_PRIMITIVE_KINDS as readonly string[]).includes(value)
 }
 
-export function isMeshSceneDependencyProperty(value: unknown): value is MeshSceneDependencyProperty {
+export function isMeshSceneDependencyProperty(
+  value: unknown
+): value is MeshSceneDependencyProperty {
   return (
     typeof value === 'string' &&
     (MESH_SCENE_DEPENDENCY_PROPERTIES as readonly string[]).includes(value)

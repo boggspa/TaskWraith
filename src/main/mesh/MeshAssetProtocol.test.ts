@@ -14,7 +14,9 @@ vi.mock('electron', () => ({
 type ProtocolHandler = (request: Request) => Promise<Response>
 
 function handler(): ProtocolHandler {
-  const registered = vi.mocked(protocol.handle).mock.calls.at(-1)?.[1] as ProtocolHandler | undefined
+  const registered = vi.mocked(protocol.handle).mock.calls.at(-1)?.[1] as
+    | ProtocolHandler
+    | undefined
   expect(registered).toBeTypeOf('function')
   if (!registered) throw new Error('twmesh protocol handler was not registered')
   return registered
@@ -65,7 +67,9 @@ describe('registerMeshAssetProtocol', () => {
       new Request(`twmesh://asset/${asset.id}/${asset.accessToken}/../manifest.json`)
     )
     const write = await registered(
-      new Request(`twmesh://asset/${asset.id}/${asset.accessToken}/${asset.entryPath}`, { method: 'POST' })
+      new Request(`twmesh://asset/${asset.id}/${asset.accessToken}/${asset.entryPath}`, {
+        method: 'POST'
+      })
     )
     expect([invalidToken.status, traversal.status, write.status]).toEqual([404, 404, 404])
   })

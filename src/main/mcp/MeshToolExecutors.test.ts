@@ -85,18 +85,26 @@ describe('MeshToolExecutors', () => {
     ])
 
     const closed = await execute('mesh_scene_close', { sceneId })
-    expect((closed.structuredContent as { scene: { presentation?: unknown } }).scene.presentation).toBeUndefined()
+    expect(
+      (closed.structuredContent as { scene: { presentation?: unknown } }).scene.presentation
+    ).toBeUndefined()
 
     const deleted = await execute('mesh_scene_delete', { sceneId })
     expect(deleted.structuredContent).toEqual({ ok: true, deletedSceneId: sceneId })
-    expect((await execute('mesh_scene_list', {})).structuredContent).toEqual({ ok: true, scenes: [] })
+    expect((await execute('mesh_scene_list', {})).structuredContent).toEqual({
+      ok: true,
+      scenes: []
+    })
   })
 
   it('imports workspace-local Wavefront bundles and keeps source paths out of results', async () => {
     const modelDirectory = path.join(workspace, 'models')
     fs.mkdirSync(modelDirectory)
     fs.writeFileSync(path.join(modelDirectory, 'texture.png'), Buffer.from([137, 80, 78, 71]))
-    fs.writeFileSync(path.join(modelDirectory, 'material.mtl'), 'newmtl Paint\nmap_Kd texture.png\n')
+    fs.writeFileSync(
+      path.join(modelDirectory, 'material.mtl'),
+      'newmtl Paint\nmap_Kd texture.png\n'
+    )
     fs.writeFileSync(
       path.join(modelDirectory, 'fixture.obj'),
       'mtllib material.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n'
@@ -126,9 +134,8 @@ describe('MeshToolExecutors', () => {
       operation: 'add_primitive',
       primitive: 'box'
     })
-    const nodeId = (
-      applied.structuredContent as { scene: { nodes: Array<{ id: string }> } }
-    ).scene.nodes[0].id
+    const nodeId = (applied.structuredContent as { scene: { nodes: Array<{ id: string }> } }).scene
+      .nodes[0].id
 
     const textured = await execute('mesh_scene_set_material', {
       sceneId,
@@ -158,7 +165,8 @@ describe('MeshToolExecutors', () => {
       operation: 'add_primitive',
       primitive: 'sphere'
     })
-    const nodeId = (node.structuredContent as { scene: { nodes: Array<{ id: string }> } }).scene.nodes[0].id
+    const nodeId = (node.structuredContent as { scene: { nodes: Array<{ id: string }> } }).scene
+      .nodes[0].id
 
     const data = await execute('mesh_scene_apply', {
       sceneId,
