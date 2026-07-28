@@ -6,7 +6,7 @@ export const UPDATE_RESTART_RETRY_MS = 1_000
 export interface UpdateRestartService {
   snapshot(): Pick<UpdateStateSnapshot, 'status'>
   setRestartPending(pending: boolean): void
-  quitAndInstall(): void
+  quitAndInstall(): boolean
 }
 
 export interface UpdateRestartCoordinatorOptions {
@@ -39,9 +39,9 @@ export class UpdateRestartCoordinator {
    * when the restart was initiated immediately; otherwise it stays pending.
    */
   requestRestartWhenIdle(): boolean {
-    if (this.updateService.snapshot().status !== 'downloaded') return false
+    const status = this.updateService.snapshot().status
+    if (status !== 'downloading' && status !== 'downloaded') return false
     this.restartRequested = true
-    this.updateService.setRestartPending(true)
     return this.tryRestart()
   }
 
@@ -49,23 +49,29 @@ export class UpdateRestartCoordinator {
   tryRestart(): boolean {
     if (!this.restartRequested) return false
 
-    if (this.updateService.snapshot().status !== 'downloaded') {
+    const status = this.updateService.snapshot().status
+    if (status === 'downloading') {
+      this.startRetrying()
+      return false
+    }
+    if (status !== 'downloaded') {
       this.restartRequested = false
       this.stopRetrying()
       this.updateService.setRestartPending(false)
       return false
     }
 
+    this.updateService.setRestartPending(true)
     if (this.hasActiveWork()) {
       this.startRetrying()
       return false
     }
 
+    const restartStarted = this.updateService.quitAndInstall()
     this.restartRequested = false
     this.stopRetrying()
     this.updateService.setRestartPending(false)
-    this.updateService.quitAndInstall()
-    return true
+    return restartStarted
   }
 
   dispose(): void {

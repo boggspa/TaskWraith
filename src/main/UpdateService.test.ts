@@ -9,6 +9,7 @@ const mockAutoUpdater = vi.hoisted(() => ({
   channel: 'latest' as string,
   autoDownload: true,
   autoInstallOnAppQuit: true,
+  autoRunAppAfterInstall: false,
   logger: null as unknown,
   checkForUpdates: vi.fn(async () => null),
   downloadUpdate: vi.fn(async () => ['/tmp/update.dmg']),
@@ -39,6 +40,7 @@ describe('UpdateService', () => {
     mockAutoUpdater.channel = 'latest'
     mockAutoUpdater.autoDownload = true
     mockAutoUpdater.autoInstallOnAppQuit = true
+    mockAutoUpdater.autoRunAppAfterInstall = false
     mockAutoUpdater.logger = null
     mockAutoUpdater.checkForUpdates.mockClear()
     mockAutoUpdater.downloadUpdate.mockClear()
@@ -154,8 +156,63 @@ describe('UpdateService', () => {
   it('quitAndInstall is rejected when status is not "downloaded"', () => {
     const svc = new UpdateService()
     svc.configure({ channel: 'stable', enabled: true })
-    svc.quitAndInstall()
+    expect(svc.quitAndInstall()).toBe(false)
     expect(mockAutoUpdater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('forces relaunch when handing a downloaded update to the installer', () => {
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+    emitUpdaterEvent('update-downloaded', {
+      version: '1.0.74',
+      files: [],
+      path: 'TaskWraith-1.0.74.dmg',
+      sha512: 'abc'
+    })
+
+    expect(svc.quitAndInstall()).toBe(true)
+    expect(mockAutoUpdater.autoRunAppAfterInstall).toBe(true)
+    expect(mockAutoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
+  it('surfaces a synchronous installer handoff failure', () => {
+    mockAutoUpdater.quitAndInstall.mockImplementationOnce(() => {
+      throw new Error('native updater unavailable')
+    })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+    emitUpdaterEvent('update-downloaded', {
+      version: '1.0.74',
+      files: [],
+      path: 'TaskWraith-1.0.74.dmg',
+      sha512: 'abc'
+    })
+
+    expect(svc.quitAndInstall()).toBe(false)
+    expect(svc.snapshot()).toMatchObject({
+      status: 'error',
+      errorMessage: 'native updater unavailable'
+    })
+  })
+
+  it('rejects installer handoff when electron-updater reports an immediate error', () => {
+    mockAutoUpdater.quitAndInstall.mockImplementationOnce(() => {
+      emitUpdaterEvent('error', new Error('installer rejected update'))
+    })
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+    emitUpdaterEvent('update-downloaded', {
+      version: '1.0.74',
+      files: [],
+      path: 'TaskWraith-1.0.74.dmg',
+      sha512: 'abc'
+    })
+
+    expect(svc.quitAndInstall()).toBe(false)
+    expect(svc.snapshot()).toMatchObject({
+      status: 'error',
+      errorMessage: 'installer rejected update'
+    })
   })
 
   it('subscribers receive snapshots on configure', () => {
@@ -361,6 +418,34 @@ describe('UpdateService', () => {
       vi.useRealTimers()
     }
   })
+
+  it.each([
+    ['available', 'update-available'],
+    ['downloaded', 'update-downloaded']
+  ] as const)(
+    'does not replace an %s update with a periodic check before user action',
+    async (status, eventName) => {
+      vi.useFakeTimers()
+      try {
+        const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+        svc.configure({ channel: 'stable', enabled: true })
+        emitUpdaterEvent(eventName, {
+          version: '1.0.74',
+          files: [],
+          path: 'TaskWraith-1.0.74.dmg',
+          sha512: 'abc'
+        })
+        mockAutoUpdater.checkForUpdates.mockClear()
+
+        await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS)
+
+        expect(mockAutoUpdater.checkForUpdates).not.toHaveBeenCalled()
+        expect(svc.snapshot().status).toBe(status)
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
 
   it('stops periodic polling when auto-update is disabled', async () => {
     vi.useFakeTimers()

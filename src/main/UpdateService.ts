@@ -227,9 +227,16 @@ export class UpdateService {
 
   /** Immediate install + restart. The renderer should confirm with the
    * user before invoking this. */
-  quitAndInstall(): void {
-    if (this.status !== 'downloaded') return
-    autoUpdater.quitAndInstall()
+  quitAndInstall(): boolean {
+    if (this.status !== 'downloaded') return false
+    autoUpdater.autoRunAppAfterInstall = true
+    try {
+      autoUpdater.quitAndInstall(false, true)
+      return this.status === 'downloaded'
+    } catch (err) {
+      this.handleError(err instanceof Error ? err.message : String(err))
+      return false
+    }
   }
 
   /** Reflect that a user-requested update will restart once live work ends. */
@@ -349,7 +356,15 @@ export class UpdateService {
   private startPeriodicChecks(): void {
     this.stopPeriodicChecks()
     this.periodicCheckTimer = setInterval(() => {
-      if (this.status === 'disabled' || this.status === 'checking' || this.status === 'downloading') {
+      // Preserve an actionable update. Rechecking clears its metadata and can
+      // also make a deferred restart coordinator discard the user's request.
+      if (
+        this.status === 'disabled' ||
+        this.status === 'checking' ||
+        this.status === 'available' ||
+        this.status === 'downloading' ||
+        this.status === 'downloaded'
+      ) {
         return
       }
       void this.checkForUpdates()

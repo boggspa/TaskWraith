@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UpdateRestartCoordinator } from './UpdateRestartCoordinator'
 
-function createUpdateService(status: 'available' | 'downloaded' = 'downloaded') {
+function createUpdateService(status: 'available' | 'downloading' | 'downloaded' = 'downloaded') {
   return {
     snapshot: vi.fn(() => ({ status })),
     setRestartPending: vi.fn(),
-    quitAndInstall: vi.fn()
+    quitAndInstall: vi.fn(() => true)
   }
 }
 
@@ -58,5 +58,40 @@ describe('UpdateRestartCoordinator', () => {
     expect(coordinator.requestRestartWhenIdle()).toBe(false)
     expect(updateService.setRestartPending).not.toHaveBeenCalled()
     expect(updateService.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('keeps the restart request armed while download completion is being published', () => {
+    vi.useFakeTimers()
+    let status: 'downloading' | 'downloaded' = 'downloading'
+    const updateService = {
+      snapshot: vi.fn(() => ({ status })),
+      setRestartPending: vi.fn(),
+      quitAndInstall: vi.fn(() => true)
+    }
+    const coordinator = new UpdateRestartCoordinator({
+      updateService,
+      hasActiveWork: () => false,
+      retryIntervalMs: 10
+    })
+
+    expect(coordinator.requestRestartWhenIdle()).toBe(false)
+    expect(updateService.quitAndInstall).not.toHaveBeenCalled()
+
+    status = 'downloaded'
+    vi.advanceTimersByTime(10)
+
+    expect(updateService.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not report a restart when installer handoff is rejected', () => {
+    const updateService = createUpdateService()
+    updateService.quitAndInstall.mockReturnValue(false)
+    const coordinator = new UpdateRestartCoordinator({
+      updateService,
+      hasActiveWork: () => false
+    })
+
+    expect(coordinator.requestRestartWhenIdle()).toBe(false)
+    expect(updateService.setRestartPending).toHaveBeenLastCalledWith(false)
   })
 })
