@@ -4501,13 +4501,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   trustResult?.status !== 'inherited'
                                 ) {
                                   setSessionTrust(true)
-                                  if (isCurrentComposerLocked) {
-                                    markPersistentSessionRestartNeeded(
-                                      'Gemini workspace trust changed. Restart the persistent session to apply the trust setting.'
-                                    )
-                                  } else {
-                                    void handleBridgeCommand('/permissions trust')
-                                  }
+                                  void handleBridgeCommand('/permissions trust')
                                 } else if (nextValue === 'untrusted') {
                                   setSessionTrust(false)
                                   markPersistentSessionRestartNeeded(
@@ -4515,16 +4509,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   )
                                 }
                               }}
-                              disabled={Boolean(workspaceTrustMutationDisabledReason)}
-                              title={
-                                workspaceTrustMutationDisabledReason ||
-                                (isCurrentComposerLocked
-                                  ? 'Workspace trust for the next turn'
-                                  : 'Workspace trust')
+                              disabled={
+                                isCurrentComposerLocked ||
+                                Boolean(workspaceTrustMutationDisabledReason)
                               }
-                              data-pending-next-turn={
-                                isCurrentComposerLocked ? 'true' : 'false'
-                              }
+                              title={workspaceTrustMutationDisabledReason || 'Workspace trust'}
                             >
                               <option value="trusted">Trusted</option>
                               <option value="untrusted">Untrusted</option>
@@ -4733,13 +4722,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               onClick={() => void handleTrustWorkspaceClick()}
                               disabled={
                                 geminiTrustWriteBusy ||
+                                isCurrentComposerLocked ||
                                 Boolean(workspaceTrustMutationDisabledReason)
                               }
                               title={
                                 workspaceTrustMutationDisabledReason ||
-                                (isCurrentComposerLocked
-                                  ? `Trust ${currentWorkspace.path} for Gemini — applies to the next process`
-                                  : `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`)
+                                `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`
                               }
                               style={{
                                 display: 'inline-flex',

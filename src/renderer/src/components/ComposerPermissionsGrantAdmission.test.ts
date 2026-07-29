@@ -81,7 +81,7 @@ describe('Composer permission / tool-grant admission while running', () => {
     )
   })
 
-  it('accepts custom-model and Gemini trust selections at the next safe boundary', () => {
+  it('accepts custom-model selections at the next safe boundary', () => {
     const customModelRegion = sourceRegion(
       composerSource,
       'className="composer-inline-custom-model"',
@@ -89,14 +89,6 @@ describe('Composer permission / tool-grant admission while running', () => {
     )
     expect(customModelRegion).not.toContain('disabled={isCurrentComposerLocked}')
     expect(customModelRegion).toContain('data-pending-next-turn=')
-
-    const trustRegion = sourceRegion(
-      composerSource,
-      'aria-label="Workspace trust"',
-      '</select>'
-    )
-    expect(trustRegion).toContain('disabled={Boolean(workspaceTrustMutationDisabledReason)}')
-    expect(trustRegion).toContain('data-pending-next-turn=')
 
     const groundingRegion = sourceRegion(
       appSource,
