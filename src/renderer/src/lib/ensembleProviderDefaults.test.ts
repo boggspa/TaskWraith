@@ -600,7 +600,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'composer-2.5',
       'grok-4.5'
     ])
-    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe('Grok 4.5')
+    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe(
+      'Cursor Grok 4.5'
+    )
     expect(cursor.reasoningOptions).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])

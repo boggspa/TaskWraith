@@ -174,9 +174,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
   })
 
-  it('uses an unprefixed Grok 4.5 label in Cursor model metadata', () => {
+  it('prefixes the resold Grok 4.5 label in Cursor model metadata', () => {
+    // Keep in lockstep with CURSOR_DEFAULT_MODELS in the renderer: the resale
+    // row reads "Cursor Grok 4.5" so it cannot be confused with the Grok
+    // provider's own grok-4.5 ("Grok 4.5 Fast") in a flat picker scan.
     expect(getStaticProviderModels('cursor').find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Grok 4.5'
+      label: 'Cursor Grok 4.5'
     })
   })
 

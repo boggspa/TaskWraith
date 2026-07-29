@@ -66,9 +66,15 @@ describe('Codex provider model defaults', () => {
 })
 
 describe('Cursor provider model defaults', () => {
-  it('uses an unprefixed Grok 4.5 label because the picker renders Cursor separately', () => {
+  it('prefixes the resold Grok 4.5 row so it cannot be confused with Grok-provider rows', () => {
+    // 2026-07-29 QA: two identically-labeled "Grok 4.5" rows (Cursor's resale
+    // vs the Grok provider family) proved mis-selectable in a flat scan of the
+    // combined picker, so the resale row carries the host prefix again
+    // (reverses the 98c63e047 simplification). Chips stay short — the
+    // composer chip formatter resolves cursor grok ids to "Grok 4.5" by id,
+    // not by this label.
     expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toMatchObject({
-      label: 'Grok 4.5'
+      label: 'Cursor Grok 4.5'
     })
   })
 })
