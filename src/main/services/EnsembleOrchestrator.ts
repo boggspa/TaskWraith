@@ -1178,6 +1178,7 @@ export interface EnsembleParticipantSeatChangeResult {
   ok: boolean
   status?: 'applied' | 'queued'
   chat?: ChatRecord
+  pendingParticipant?: EnsembleParticipant
   message: string
   participantId?: string
   roundId?: string
@@ -6388,6 +6389,7 @@ export class EnsembleOrchestrator {
         return {
           ok: true,
           chat: this.deps.getChat(chat.appChatId) || chat,
+          ...(pendingChange ? { pendingParticipant: pendingTarget } : {}),
           message: `Participant seat unchanged for ${participantLabel(before)} — nothing queued.`,
           participantId: before.id,
           roundId: runtime.roundId
@@ -6418,6 +6420,7 @@ export class EnsembleOrchestrator {
         ok: true,
         status: 'queued',
         chat: this.deps.getChat(chat.appChatId) || chat,
+        pendingParticipant: resolvedAfter,
         message,
         participantId: before.id,
         roundId: runtime.roundId

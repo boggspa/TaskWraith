@@ -151,6 +151,53 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
     ])
   })
 
+  it('projects a pending active-seat selection without mutating the stored roster', () => {
+    const participants = makeParticipants([
+      ['active-seat', 'codex', 0, true],
+      ['idle-seat', 'claude', 1, true]
+    ])
+    const chat = makeEnsembleChat({
+      id: 'pending-chat',
+      participants,
+      selectedParticipantId: 'active-seat',
+      orchestrationMode: 'continuous',
+      fanoutPolicy: 'off',
+      activeGoalStatus: 'active',
+      activeRound: makeLiveRound({
+        id: 'pending-round',
+        participants,
+        activeParticipantId: 'active-seat',
+        orchestrationMode: 'continuous',
+        fanoutPolicy: 'off',
+        continuationHops: 1,
+        maxContinuationHops: 6
+      })
+    })
+    const pendingParticipant: EnsembleParticipant = {
+      ...participants[0],
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      reasoningEffort: 'high',
+      permissionPresetId: 'workspace_write'
+    }
+
+    const projection = buildMultiviewEnsembleComposerProjection(chat, [], 'active-seat', {
+      'active-seat': pendingParticipant
+    })
+
+    expect(projection.selectedParticipant).toEqual(pendingParticipant)
+    expect(projection.participants[0]).toEqual(pendingParticipant)
+    expect(chat.ensemble?.participants[0]).toEqual({
+      id: 'active-seat',
+      provider: 'codex',
+      role: 'active-seat',
+      instructions: '',
+      order: 0,
+      enabled: true,
+      permissionPresetId: 'read_only'
+    })
+  })
+
   it('ignores a terminal round when deriving live composer state', () => {
     const participants = makeParticipants([
       ['shared-boss', 'codex', 0, true],

@@ -8558,7 +8558,14 @@ Next action:
     expect(result).toMatchObject({
       ok: true,
       status: 'queued',
-      participantId: 'claude'
+      participantId: 'claude',
+      pendingParticipant: {
+        provider: 'codex',
+        model: 'gpt-5.5',
+        runtimeProfileId: 'runtime-active-seat',
+        serviceTier: 'fast',
+        linkedProviderSessionId: null
+      }
     })
     const postureResult = await harness.orchestrator.requestParticipantSeatChange({
       chatId: 'ensemble-chat',
@@ -8573,7 +8580,16 @@ Next action:
     expect(postureResult).toMatchObject({
       ok: true,
       status: 'queued',
-      participantId: 'claude'
+      participantId: 'claude',
+      pendingParticipant: {
+        provider: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+        permissionPresetId: 'workspace_write',
+        runtimeProfileId: 'runtime-active-seat',
+        serviceTier: 'fast',
+        linkedProviderSessionId: null
+      }
     })
     expect(
       harness.chat.ensemble!.participants.find((participant) => participant.id === 'claude')
@@ -11158,11 +11174,20 @@ Next action:
       reason: 'Swap the reviewer.'
     }
     const first = await harness.orchestrator.requestParticipantSeatChange(change)
-    expect(first).toMatchObject({ ok: true, status: 'queued', participantId: 'claude' })
+    expect(first).toMatchObject({
+      ok: true,
+      status: 'queued',
+      participantId: 'claude',
+      pendingParticipant: { provider: 'kimi', model: 'kimi-k2.7-code' }
+    })
 
     const repeat = await harness.orchestrator.requestParticipantSeatChange(change)
     expect(repeat.ok).toBe(true)
     expect(repeat.status).toBeUndefined()
+    expect(repeat.pendingParticipant).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code'
+    })
 
     expect(
       harness.chat.messages.filter((message) =>

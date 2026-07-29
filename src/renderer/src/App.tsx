@@ -815,6 +815,15 @@ import {
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
+import {
+  clearPendingEnsembleSeatSelection,
+  ensembleParticipantSelectionsEqual,
+  overlayPendingEnsembleSeatSelections,
+  queuePendingEnsembleSeatSelection,
+  reconcilePendingEnsembleSeatSelections,
+  setPendingEnsembleSeatSelection,
+  type PendingEnsembleSeatSelections
+} from './lib/pendingEnsembleSeatSelection'
 import { resolveSoleEnsembleSoloCandidate } from './lib/ensembleRosterFloor'
 import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
 import {
@@ -19877,6 +19886,35 @@ function App(): React.JSX.Element {
   const [selectedParticipantIdByChatId, setSelectedParticipantIdByChatId] = useState<
     Record<string, string>
   >({})
+  const [pendingEnsembleSeatSelections, setPendingEnsembleSeatSelections] =
+    useState<PendingEnsembleSeatSelections>({})
+  const pendingEnsembleSeatSelectionsRef = useRef<PendingEnsembleSeatSelections>({})
+  const replacePendingEnsembleSeatSelections = useCallback(
+    (next: PendingEnsembleSeatSelections): void => {
+      if (next === pendingEnsembleSeatSelectionsRef.current) return
+      pendingEnsembleSeatSelectionsRef.current = next
+      setPendingEnsembleSeatSelections(next)
+    },
+    []
+  )
+  useEffect(() => {
+    if (!currentChat?.ensemble) return
+    replacePendingEnsembleSeatSelections(
+      reconcilePendingEnsembleSeatSelections(
+        pendingEnsembleSeatSelectionsRef.current,
+        {
+          chatId: currentChat.appChatId,
+          participants: currentChat.ensemble.participants,
+          roundLive: isEnsembleActiveRoundDispatchLive(currentChat.ensemble.activeRound)
+        }
+      )
+    )
+  }, [
+    currentChat?.appChatId,
+    currentChat?.ensemble?.activeRound,
+    currentChat?.ensemble?.participants,
+    replacePendingEnsembleSeatSelections
+  ])
   const [userOverrodeSelectionRoundKeys, setUserOverrodeSelectionRoundKeys] = useState<Set<string>>(
     () => new Set()
   )
@@ -19926,8 +19964,18 @@ function App(): React.JSX.Element {
     []
   )
   const ensembleParticipantsForCurrent = useMemo(
-    () => [...(currentChat?.ensemble?.participants || [])].sort((a, b) => a.order - b.order),
-    [currentChat?.ensemble?.participants]
+    () =>
+      overlayPendingEnsembleSeatSelections(
+        [...(currentChat?.ensemble?.participants || [])].sort((a, b) => a.order - b.order),
+        currentChat?.appChatId
+          ? pendingEnsembleSeatSelections[currentChat.appChatId]
+          : undefined
+      ),
+    [
+      currentChat?.appChatId,
+      currentChat?.ensemble?.participants,
+      pendingEnsembleSeatSelections
+    ]
   )
   const ensembleEnabledParticipantsForCurrent = useMemo(
     () =>
@@ -20115,6 +20163,39 @@ function App(): React.JSX.Element {
       const participant = buildRuntimeSeatPatch(patch)
       if (!participant) return false
       const queueKey = sourceChat.appChatId
+      const sourceParticipant = sourceChat.ensemble?.participants.find(
+        (candidate) => candidate.id === participantId
+      )
+      if (!sourceParticipant) return false
+      const previousPending =
+        pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
+      const optimistic = queuePendingEnsembleSeatSelection(
+        pendingEnsembleSeatSelectionsRef.current,
+        queueKey,
+        sourceParticipant,
+        patch
+      )
+      replacePendingEnsembleSeatSelections(optimistic.selections)
+      const replaceIfLatest = (
+        replacement: EnsembleParticipant | null | undefined
+      ): void => {
+        const current =
+          pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
+        if (!ensembleParticipantSelectionsEqual(current, optimistic.participant)) return
+        replacePendingEnsembleSeatSelections(
+          replacement
+            ? setPendingEnsembleSeatSelection(
+                pendingEnsembleSeatSelectionsRef.current,
+                queueKey,
+                replacement
+              )
+            : clearPendingEnsembleSeatSelection(
+                pendingEnsembleSeatSelectionsRef.current,
+                queueKey,
+                participantId
+              )
+        )
+      }
       const previous = authoritativeParticipantSeatChangeQueueRef.current.get(queueKey)
       const request = (previous || Promise.resolve())
         .catch(() => undefined)
@@ -20126,11 +20207,15 @@ function App(): React.JSX.Element {
             reason: 'Renderer participant seat change'
           })
           if (result?.chat) applyChatSnapshot(result.chat)
-          if (!result?.ok && result?.error) {
-            window.alert(result.error)
+          if (!result?.ok) {
+            replaceIfLatest(previousPending)
+            if (result?.error) window.alert(result.error)
+            return
           }
+          replaceIfLatest(result.pendingParticipant)
         })
         .catch((error) => {
+          replaceIfLatest(previousPending)
           window.alert(error instanceof Error ? error.message : 'Seat change failed.')
         })
       authoritativeParticipantSeatChangeQueueRef.current.set(queueKey, request)
@@ -20141,7 +20226,11 @@ function App(): React.JSX.Element {
       })
       return true
     },
-    [applyChatSnapshot, buildRuntimeSeatPatch]
+    [
+      applyChatSnapshot,
+      buildRuntimeSeatPatch,
+      replacePendingEnsembleSeatSelections
+    ]
   )
   const patchParticipantImmediate = useCallback(
     (
@@ -22169,8 +22258,8 @@ function App(): React.JSX.Element {
   const composerTokenTally = chatTokenTally
   const dualComposerTelemetry = Boolean(isCurrentEnsembleChat)
   const currentComposerMentionParticipants = useMemo<EnsembleParticipant[]>(() => {
-    return isCurrentEnsembleChat ? currentChat?.ensemble?.participants || [] : []
-  }, [currentChat?.ensemble?.participants, isCurrentEnsembleChat])
+    return isCurrentEnsembleChat ? ensembleParticipantsForCurrent : []
+  }, [ensembleParticipantsForCurrent, isCurrentEnsembleChat])
   const sideChatTypePickerParentChat =
     sidePanelParentChat || (currentChat && !currentChatIsLinkedChild ? currentChat : null)
   const sideChatTypePickerOptions = useMemo<SideChatTypePickerOption[]>(() => {
@@ -27224,7 +27313,8 @@ function App(): React.JSX.Element {
       Array.isArray(agentStatusByProvider.ollama?.models)
         ? agentStatusByProvider.ollama.models
         : [],
-      viewerSelectedParticipantId
+      viewerSelectedParticipantId,
+      pendingEnsembleSeatSelections[viewerChatId]
     )
     const viewerOwnsFocusedTrust =
       viewerPaneIndex === multiview.focusedPaneIndex &&
@@ -28772,7 +28862,8 @@ function App(): React.JSX.Element {
         Array.isArray(agentStatusByProvider.ollama?.models)
           ? agentStatusByProvider.ollama.models
           : [],
-        viewerSelectedParticipantId
+        viewerSelectedParticipantId,
+        pendingEnsembleSeatSelections[viewerChatId]
       )
       const viewerWorkspace = paneCtxHelpers.getWorkspaceForChat(viewerChat)
       const viewerBaseWorkspacePath = viewerWorkspace?.path || viewerChat.workspacePath || ''
@@ -29504,6 +29595,7 @@ function App(): React.JSX.Element {
       resumeAppWatchSnapshot,
       runQueueJobs,
       runningChatIds,
+      pendingEnsembleSeatSelections,
       selectedParticipantIdByChatId,
       setChatPromptDraft,
       setDiffActionMenuOpenForChat,

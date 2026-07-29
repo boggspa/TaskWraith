@@ -18,6 +18,7 @@ import {
   normalizeEnsembleFanoutPolicy
 } from './ensembleFanoutPolicy'
 import { resolveProviderHueClass } from './ollamaDisplayBrand'
+import { overlayPendingEnsembleSeatSelections } from './pendingEnsembleSeatSelection'
 import { resolveSlashParticipantForChat } from './resolveSlashParticipant'
 
 export interface MultiviewEnsembleComposerProjection {
@@ -223,17 +224,22 @@ export function pruneMultiviewEnsembleSelectionOwnership(
 export function buildMultiviewEnsembleComposerProjection(
   chat: ChatRecord,
   installedOllamaModels: Array<{ id?: string; contextLength?: number }> = [],
-  selectedParticipantId?: string | null
+  selectedParticipantId?: string | null,
+  pendingParticipantSelections?: Record<string, EnsembleParticipant>
 ): MultiviewEnsembleComposerProjection {
-  const participants = [...(chat.ensemble?.participants || [])].sort(
-    (left, right) => left.order - right.order
+  const participants = overlayPendingEnsembleSeatSelections(
+    [...(chat.ensemble?.participants || [])].sort(
+      (left, right) => left.order - right.order
+    ),
+    pendingParticipantSelections
   )
   const enabledParticipants = participants.filter((participant) => participant.enabled)
   const liveRound = activeEnsembleRoundForComposer(chat.ensemble?.activeRound)
+  const fallbackParticipantId = resolveSlashParticipantForChat(chat)?.id
   const selectedParticipant =
-    (selectedParticipantId
-      ? participants.find((participant) => participant.id === selectedParticipantId)
-      : null) || resolveSlashParticipantForChat(chat)
+    participants.find(
+      (participant) => participant.id === (selectedParticipantId || fallbackParticipantId)
+    ) || null
   const currentOrchestrationMode: EnsembleOrchestrationMode =
     chat.ensemble?.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound'
   const activeOrchestrationMode = liveRound?.orchestrationMode ?? currentOrchestrationMode

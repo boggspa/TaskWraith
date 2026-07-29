@@ -1784,6 +1784,7 @@ declare global {
         ok: boolean
         status?: 'applied' | 'queued'
         chat?: ChatRecord
+        pendingParticipant?: EnsembleParticipant
         message: string
         participantId?: string
         roundId?: string
