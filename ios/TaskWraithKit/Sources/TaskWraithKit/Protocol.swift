@@ -245,6 +245,22 @@ public enum RelayCandidates {
         isLocalCandidate(url) ? 5_000 : 12_000
     }
 
+    /// Worst-case wall time for a full candidate walk, so a supervisor can't
+    /// time out a dial that is still legitimately working.
+    ///
+    /// Each candidate spends its budget TWICE (resolve+scan, then
+    /// connect+wait-established), and the walk tries every door in order — so
+    /// a routine LAN+relay pairing is 5+5+12+12 = 34s, not the 15s a
+    /// single-dial intuition suggests. Keeping this derived from
+    /// `dialTimeoutMs` means the supervisor can never drift out of lockstep
+    /// with the budgets it supervises.
+    public static func walkBudgetMs(for candidates: [String]) -> Int {
+        let dialling = candidates.reduce(0) { $0 + dialTimeoutMs(for: $1) * 2 }
+        // Grace covers the per-candidate client construction + the establish
+        // handshake's own turnaround after the socket opens.
+        return dialling + 3_000
+    }
+
     public static func isLocalCandidate(_ url: String) -> Bool {
         guard let host = URL(string: url)?.host else { return false }
         return isLocalNetworkHost(host)

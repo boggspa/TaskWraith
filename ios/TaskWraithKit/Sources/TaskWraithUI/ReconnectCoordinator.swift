@@ -114,9 +114,21 @@ public struct ReconnectCoordinator: Sendable, Equatable {
     }
 
     /// Caller invokes after acting on `.start` / `.supersede`.
-    public mutating func markAttemptStarted(at now: Date = Date()) {
+    ///
+    /// `budgetSeconds` is the attempt's REAL worst-case duration (a trusted
+    /// reconnect walks every relay door, so it is far longer than a single
+    /// dial). Passing it is what keeps `shouldTreatAsTimedOut` from killing a
+    /// walk that is still working: with the default 15s against a 34s walk,
+    /// every wake arriving after 15s superseded a healthy dial and restarted
+    /// it from the first door — a reconnect that could never finish while the
+    /// app was awake and issuing actions. nil keeps the current timeout.
+    public mutating func markAttemptStarted(
+        at now: Date = Date(),
+        budgetSeconds: TimeInterval? = nil
+    ) {
         inFlight = true
         attemptStartedAt = now
+        if let budgetSeconds, budgetSeconds > 0 { connectTimeout = budgetSeconds }
     }
 
     /// Caller invokes when the attempt reaches `.connected` or a terminal `.error`.

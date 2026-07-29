@@ -1131,10 +1131,20 @@ public final class RemoteSessionModel: ObservableObject {
     private var trustedReconnectAttempt: Int?
     /// Single-flight policy for APNs / foreground / path / health wakes.
     private var reconnectCoordinator = ReconnectCoordinator()
+    /// True while a trusted dial is walking the relay doors — the wake banner
+    /// announces once per dial, not once per queued action.
+    private var reconnectDialInFlight: Bool { reconnectCoordinator.inFlight }
     #if DEBUG
         /// How many times `reconnectTrusted()` actually began a dial — the
         /// number the reconnect-storm regression test pins.
         private(set) var trustedReconnectDialsForTesting = 0
+
+        /// Backoff-ladder rung. The storm's second half was this being zeroed
+        /// on every dial, pinning the retry timer at its 1.5s first rung.
+        var autoReconnectAttemptForTesting: Int {
+            get { autoReconnectAttempt }
+            set { autoReconnectAttempt = newValue }
+        }
     #endif
 
     private func startPathMonitor() {
@@ -1563,7 +1573,15 @@ public final class RemoteSessionModel: ObservableObject {
         connectAttempt += 1
         let attempt = connectAttempt
         trustedReconnectAttempt = attempt
-        reconnectCoordinator.markAttemptStarted()
+        // Supervise this attempt against the walk it ACTUALLY performs, not a
+        // single dial: the coordinator's default 15s was shorter than the
+        // candidate walk below (5+5+12+12 = 34s for a LAN+relay pairing), so
+        // any wake past 15s — and a foregrounded app issues plenty — read a
+        // healthy in-flight walk as timed out and superseded it, tearing the
+        // client down mid-establish and restarting from the first door.
+        // Forever, until the user force-quit.
+        reconnectCoordinator.markAttemptStarted(
+            budgetSeconds: Double(RelayCandidates.walkBudgetMs(for: candidates)) / 1000)
         Task {
             var lastFailure: String? = nil
             var sawAtsSkip = false
@@ -1675,7 +1693,13 @@ public final class RemoteSessionModel: ObservableObject {
         case .probeHealth:
             verifyConnectedSocket()
         case .start, .supersede:
-            autoReconnectAttempt = 0
+            // Only an explicit user request earns a fresh fast retry ladder.
+            // Resetting on EVERY dial pinned the documented 1.5s→30s backoff
+            // at its first rung forever: each auto-retry went through here,
+            // zeroed the counter, failed, and rescheduled at 1.5s — a
+            // permanent flap rather than a curve that backs off. Success
+            // resets it via cancelAutoReconnect(resetAttempts: true).
+            if reason == .user { autoReconnectAttempt = 0 }
             reconnectTrusted()
         }
     }
@@ -6736,7 +6760,14 @@ public final class RemoteSessionModel: ObservableObject {
         }
 
         guard hasStoredPairing else { throw TransportError.hostUnavailable }
-        if announceWake { lastActionMessage = "Trying to wake your Mac…" }
+        // Only the action that actually STARTS a wake dial announces one. A
+        // burst arriving while a dial is already in flight coalesces in the
+        // coordinator (below) and just waits — re-announcing per action made
+        // "Trying to wake your Mac…" strobe once per queued action and read
+        // as a storm even when exactly one dial was running.
+        if announceWake, !reconnectDialInFlight {
+            lastActionMessage = "Trying to wake your Mac…"
+        }
         recoverFromUnavailableHostForAction()
         guard await waitForRemoteWakeConnection(timeoutMs: 12_000), let retryClient = client
         else { throw TransportError.hostUnavailable }
