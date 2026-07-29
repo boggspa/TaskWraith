@@ -13,7 +13,7 @@ import {
   buildTranscriptParticipantFilterItems,
   type TranscriptParticipantFilterItem
 } from '../lib/transcriptParticipantFilter'
-import { useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
+import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
@@ -256,13 +256,20 @@ export function TranscriptParticipantFilterRail({
       participantRows * FILTER_ROW_HEIGHT_PX + Math.max(0, participantRows - 1) * FILTER_ROW_GAP_PX
     const naturalHeight =
       participantHeight + (systemItem ? FILTER_SYSTEM_GAP_PX + FILTER_SYSTEM_SIZE_PX : 0)
+    // Never run below the open workspace terminal. Tracking the composer
+    // surface already lifts the rail most of the way (the terminal pushes the
+    // composer up), but the surface CENTRE only clears the terminal when the
+    // composer is tall enough — a compact solo composer leaves the bottom of
+    // the stack inside the terminal. Clamping against the terminal's top edge
+    // closes that, and is a no-op with the terminal closed.
+    const clearBottom = railClearBottomPx(scroller, scrollerRect.bottom)
     const centerY = composerSurfaceRect
       ? composerSurfaceRect.top + composerSurfaceRect.height / 2
-      : scrollerRect.bottom - scrollerRect.height * 0.28
+      : clearBottom - scrollerRect.height * 0.28
     const top = clamp(
       centerY - naturalHeight / 2,
       scrollerRect.top + 72,
-      Math.max(scrollerRect.top + 72, scrollerRect.bottom - naturalHeight - 44)
+      Math.max(scrollerRect.top + 72, clearBottom - naturalHeight - 44)
     )
     setFrame((current) => {
       if (

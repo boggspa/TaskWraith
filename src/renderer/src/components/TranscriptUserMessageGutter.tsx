@@ -5,10 +5,11 @@ import {
   GUTTER_BULGE_MAX_SCALE,
   gutterBulgeRadiusPx,
   layoutGutterLens,
+  layoutGutterVerticalFrame,
   layoutTranscriptUserGutterMarkers,
   type TranscriptUserGutterMarker
 } from '../lib/TranscriptUserMessageGutter'
-import { useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
+import { railClearBottomPx, useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { collectMessageMediaRefs } from './ChatMediaPanel'
 import { FileTypeIcon } from './FileTypeIcon'
 
@@ -28,7 +29,6 @@ interface ActiveMarkerState {
 
 const EDGE_CONTROL_SLOT_PX = 24
 const EDGE_CONTROL_GAP_PX = 22
-const GUTTER_VERTICAL_OFFSET_PX = 35
 const GUTTER_RAIL_WIDTH_PX = 34
 const GUTTER_COMPOSER_CLEARANCE_PX = 6
 const MAX_RENDERED_GUTTER_MARKERS = 420
@@ -326,12 +326,17 @@ export function TranscriptUserMessageGutter({
       setFrame(null)
       return
     }
-    const topInset = clamp(scrollerRect.height * 0.12, 64, 104)
-    const bottomInset = clamp(scrollerRect.height * 0.08, 56, 96)
-    const top = scrollerRect.top + topInset + GUTTER_VERTICAL_OFFSET_PX
+    // Y band: the scroller's inset extent, but never running below the open
+    // workspace terminal — the terminal only grows the scroller's padding, so
+    // the rect alone would keep the rail painting over it (see
+    // `railClearBottomPx`). Budges the rail up, mirroring how the sibling
+    // filter rail lifts with the composer surface.
+    const { top, bottom, height } = layoutGutterVerticalFrame(
+      scrollerRect.top,
+      scrollerRect.height,
+      railClearBottomPx(scroller, scrollerRect.bottom)
+    )
     const right = Math.min(scrollerRect.right - 8, contentRect.left + 420)
-    const bottom = scrollerRect.bottom - bottomInset + GUTTER_VERTICAL_OFFSET_PX
-    const height = Math.max(120, scrollerRect.height - topInset - bottomInset)
     setFrame((current) => {
       if (
         current &&
