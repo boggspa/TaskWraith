@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatKind, ChatMessage } from '../../../main/store/types'
 
 export type MidRunQueuedMessageSource = 'scheduledRun' | 'soloSteer'
 
@@ -58,8 +58,9 @@ export function shouldAppendDueScheduledRun(input: {
   scheduledRunAt: string | null | undefined
   nowMs: number
   chatBusy: boolean
+  chatKind: ChatKind
 }): boolean {
-  if (!input.chatBusy || !input.scheduledRunAt) return false
+  if (input.chatKind !== 'single' || !input.chatBusy || !input.scheduledRunAt) return false
   const runAtMs = Date.parse(input.scheduledRunAt)
   return Number.isFinite(runAtMs) && runAtMs <= input.nowMs
 }

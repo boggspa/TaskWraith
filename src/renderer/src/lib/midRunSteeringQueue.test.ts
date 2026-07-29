@@ -84,21 +84,24 @@ describe('shouldAppendDueScheduledRun', () => {
       shouldAppendDueScheduledRun({
         scheduledRunAt: dueAt,
         nowMs: Date.parse(dueAt),
-        chatBusy: true
+        chatBusy: true,
+        chatKind: 'single'
       })
     ).toBe(true)
     expect(
       shouldAppendDueScheduledRun({
         scheduledRunAt: dueAt,
         nowMs: Date.parse(dueAt) - 1,
-        chatBusy: true
+        chatBusy: true,
+        chatKind: 'single'
       })
     ).toBe(false)
     expect(
       shouldAppendDueScheduledRun({
         scheduledRunAt: dueAt,
         nowMs: Date.parse(dueAt),
-        chatBusy: false
+        chatBusy: false,
+        chatKind: 'single'
       })
     ).toBe(false)
   })
@@ -108,14 +111,27 @@ describe('shouldAppendDueScheduledRun', () => {
       shouldAppendDueScheduledRun({
         scheduledRunAt: undefined,
         nowMs: Date.parse(NOW),
-        chatBusy: true
+        chatBusy: true,
+        chatKind: 'single'
       })
     ).toBe(false)
     expect(
       shouldAppendDueScheduledRun({
         scheduledRunAt: 'not-a-date',
         nowMs: Date.parse(NOW),
-        chatBusy: true
+        chatBusy: true,
+        chatKind: 'single'
+      })
+    ).toBe(false)
+  })
+
+  it('leaves scheduled Ensemble occurrences on their main-owned round path', () => {
+    expect(
+      shouldAppendDueScheduledRun({
+        scheduledRunAt: NOW,
+        nowMs: Date.parse(NOW),
+        chatBusy: true,
+        chatKind: 'ensemble'
       })
     ).toBe(false)
   })

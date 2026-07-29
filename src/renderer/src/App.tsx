@@ -19180,6 +19180,9 @@ function App(): React.JSX.Element {
     for (const job of getQueuedDesktopRunJobs(runQueueJobs)) {
       const request = resolveQueuedDesktopRunRequest(job)
       const chatId = request?.chatRecord?.appChatId || job.chatId
+      const liveChat = chatId
+        ? chatByIdRef.current.get(chatId) || request?.chatRecord
+        : request?.chatRecord
       if (
         !request?.appRunId ||
         !request.scheduledRunAt ||
@@ -19187,12 +19190,13 @@ function App(): React.JSX.Element {
         !shouldAppendDueScheduledRun({
           scheduledRunAt: request.scheduledRunAt,
           nowMs,
-          chatBusy: isChatBusy(chatId, { ignoreQueueRunId: request.appRunId })
+          chatBusy: isChatBusy(chatId, { ignoreQueueRunId: request.appRunId }),
+          chatKind:
+            liveChat?.chatKind === 'ensemble' || liveChat?.ensemble ? 'ensemble' : 'single'
         })
       ) {
         continue
       }
-      const liveChat = chatByIdRef.current.get(chatId) || request.chatRecord
       if (findMidRunQueuedMessage(liveChat?.messages || [], request.appRunId)) continue
       void appendMidRunQueuedRequestToTranscript(
         { ...request, chatRecord: liveChat || request.chatRecord },
