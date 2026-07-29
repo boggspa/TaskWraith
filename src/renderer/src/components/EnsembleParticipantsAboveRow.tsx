@@ -39,6 +39,7 @@ import type {
   EnsembleParticipant,
   ProviderId
 } from '../../../main/store/types'
+import type { EnsembleUserRosterMutation } from '../../../main/EnsembleUserRosterMutation'
 import {
   getDefaultEnsembleParticipantConfig,
   getDefaultEnsembleRoleName,
@@ -823,9 +824,15 @@ function ParticipantLeadingRoleIcon({
 
 interface EnsembleParticipantsAboveRowProps {
   chat: ChatRecord
+  /** Visible roster projection, including accepted changes waiting on an active seat boundary. */
+  participantProjection?: EnsembleParticipant[]
   selectedParticipantId: string | null
   onSelectParticipant: (id: string) => void
   onChatChange: (next: ChatRecord) => void
+  /** Route seat-field edits through the live seat boundary when a round owns the roster. */
+  onPatchParticipant?: (participantId: string, patch: Partial<EnsembleParticipant>) => void
+  /** Apply structural/authority roster edits immediately or at the active seat boundary. */
+  onLiveRosterMutation?: (mutation: EnsembleUserRosterMutation) => void
   /**
    * Switch Ensemble off for this thread because the roster can no longer
    * sustain a panel, handing it to the seat passed in as the solo provider.
@@ -972,9 +979,12 @@ export function resolveParticipantSelectionAfterRemoval(
 
 export function EnsembleParticipantsAboveRow({
   chat,
+  participantProjection,
   selectedParticipantId,
   onSelectParticipant,
   onChatChange,
+  onPatchParticipant,
+  onLiveRosterMutation,
   onCollapseToSolo,
   onSkipActive,
   onSkipReadFanout,
@@ -996,7 +1006,9 @@ export function EnsembleParticipantsAboveRow({
 
   const participants =
     chat.chatKind === 'ensemble' && chat.ensemble
-      ? [...(chat.ensemble.participants || [])].sort((a, b) => a.order - b.order)
+      ? [...(participantProjection || chat.ensemble.participants || [])].sort(
+          (a, b) => a.order - b.order
+        )
       : []
   const participantIdsKey = participants.map((participant) => participant.id).join('\u001f')
 
@@ -1029,7 +1041,10 @@ export function EnsembleParticipantsAboveRow({
   // action. When it is wired, render only that action so read fan-out does not
   // surface two adjacent Skip buttons for the same orchestration moment.
   const hasContextualSkipAction = canSkipReadFanout && onSkipReadFanout !== undefined
-  const canAddParticipant = !isRoundRunning && participants.length < MAX_ENSEMBLE_PARTICIPANTS
+  const canEditLiveParticipants = !isRoundRunning || onPatchParticipant !== undefined
+  const canMutateLiveRoster = !isRoundRunning || onLiveRosterMutation !== undefined
+  const canAddParticipant =
+    canMutateLiveRoster && participants.length < MAX_ENSEMBLE_PARTICIPANTS
   // Index-aligned `grid-column` spans for the wrapped balanced-rows
   // layout; null in single-row flex mode (≤5 chips) where chips size
   // to their content instead.
@@ -1039,6 +1054,10 @@ export function EnsembleParticipantsAboveRow({
       : null
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
+    if (onPatchParticipant) {
+      onPatchParticipant(id, patch)
+      return
+    }
     if (isRoundRunning) return
     const next = participants.map((p) => (p.id === id ? { ...p, ...patch } : p))
     persist(next)
@@ -1065,12 +1084,15 @@ export function EnsembleParticipantsAboveRow({
     authority: EnsembleParticipantAuthority
   ): void => {
     if (
-      isRoundRunning ||
       !participants.some(
         (participant) =>
           participant.id === participantId && participant.stageRole !== 'background'
       )
     ) {
+      return
+    }
+    if (isRoundRunning) {
+      onLiveRosterMutation?.({ action: 'set_authority', participantId, authority })
       return
     }
     patchEnsemble(
@@ -1087,7 +1109,7 @@ export function EnsembleParticipantsAboveRow({
   }
 
   const setBossmanAutoApprovals = (enabled: boolean): void => {
-    if (isRoundRunning || !hasLeadership) {
+    if (!hasLeadership) {
       return
     }
     if (enabled) {
@@ -1095,6 +1117,10 @@ export function EnsembleParticipantsAboveRow({
         'Allow Boss/Captain Auto Approvals for this Ensemble? Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests.'
       )
       if (!confirmed) return
+    }
+    if (isRoundRunning) {
+      onLiveRosterMutation?.({ action: 'set_auto_approvals', enabled })
+      return
     }
     patchEnsemble({
       bossmanAutoApprovals: enabled
@@ -1244,12 +1270,35 @@ export function EnsembleParticipantsAboveRow({
       configuration.authority,
       desiredAutoApprovals
     )
+    if (isRoundRunning) {
+      onLiveRosterMutation?.({
+        action: 'add',
+        participant: newParticipant,
+        authority: configuration.authority,
+        autoApprovalsEnabled: configuration.autoApprovalsEnabled
+      })
+      onSelectParticipant(newParticipant.id)
+      return
+    }
     persist(next, authorityPatch)
     onSelectParticipant(newParticipant.id)
   }
 
   const removeParticipant = (id: string): void => {
-    if (isRoundRunning) return
+    const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
+      participants,
+      id,
+      selectedParticipantId
+    )
+    if (isRoundRunning) {
+      onLiveRosterMutation?.({ action: 'remove', participantId: id })
+      if (selectedParticipantId === id && nextSelectedParticipantId) {
+        pendingFocusParticipantIdRef.current = nextSelectedParticipantId
+        onSelectParticipant(nextSelectedParticipantId)
+      }
+      if (overflowOpenId === id) setOverflowOpenId(null)
+      return
+    }
     // At (or below) the floor the roster cannot shrink any further and stay an
     // Ensemble, so the removal becomes a mode change instead: hand the thread
     // to the seat that survives and switch Ensemble off. Same transcript, same
@@ -1265,11 +1314,6 @@ export function EnsembleParticipantsAboveRow({
       onCollapseToSolo?.(collapseTarget, remaining.length > 0 ? buildPersistedChat(remaining) : null)
       return
     }
-    const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
-      participants,
-      id,
-      selectedParticipantId
-    )
     const next = participants.filter((participant) => participant.id !== id)
     persist(next)
     if (selectedParticipantId === id && nextSelectedParticipantId) {
@@ -1285,7 +1329,6 @@ export function EnsembleParticipantsAboveRow({
     setDragId(null)
     setDragOverId(null)
     setDragGhost(null)
-    if (isRoundRunning) return
     if (!targetId || sourceId === targetId) return
     const fromIdx = participants.findIndex((p) => p.id === sourceId)
     const toIdx = participants.findIndex((p) => p.id === targetId)
@@ -1293,6 +1336,13 @@ export function EnsembleParticipantsAboveRow({
     const next = [...participants]
     const [moved] = next.splice(fromIdx, 1)
     next.splice(toIdx, 0, moved)
+    if (isRoundRunning) {
+      onLiveRosterMutation?.({
+        action: 'reorder',
+        participantIds: next.map((participant) => participant.id)
+      })
+      return
+    }
     persist(next)
   }
 
@@ -1408,7 +1458,12 @@ export function EnsembleParticipantsAboveRow({
               autoApprovalsEnabled={chat.ensemble?.bossmanAutoApprovals?.enabled === true}
               onSetAuthority={setParticipantAuthority}
               onToggleBossmanAutoApprovals={setBossmanAutoApprovals}
-              locked={isRoundRunning}
+              locked={!canEditLiveParticipants}
+              seatBoundaryMessage={
+                active
+                  ? 'This participant is executing. Changes are accepted now and apply when its current execution finishes.'
+                  : undefined
+              }
               onDragStart={(info) => {
                 setDragId(participant.id)
                 setDragGhost({
@@ -1515,10 +1570,10 @@ export function EnsembleParticipantsAboveRow({
           <EnsembleAddParticipantButton
             disabled={!canAddParticipant}
             title={
-              isRoundRunning
-                ? 'Participant changes are locked while a round is running.'
-                : participants.length >= MAX_ENSEMBLE_PARTICIPANTS
-                  ? `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
+              participants.length >= MAX_ENSEMBLE_PARTICIPANTS
+                ? `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
+                : isRoundRunning
+                  ? 'Add this participant to the remaining live roster.'
                   : 'Add another participant'
             }
             composerStyle={composerStyle}
@@ -1543,15 +1598,18 @@ export function EnsembleParticipantsAboveRow({
               if (selectedParticipantId) removeParticipant(selectedParticipantId)
             }}
             disabled={
-              isRoundRunning ||
               !selectedParticipantId ||
-              (participants.length <= MIN_ENSEMBLE_PARTICIPANTS && !onCollapseToSolo)
+              (isRoundRunning
+                ? onLiveRosterMutation === undefined || participants.length <= 1
+                : participants.length <= MIN_ENSEMBLE_PARTICIPANTS && !onCollapseToSolo)
             }
             title={
-              isRoundRunning
-                ? 'Participant changes are locked while a round is running.'
-                : !selectedParticipantId
-                  ? 'Select a participant chip first.'
+              !selectedParticipantId
+                ? 'Select a participant chip first.'
+                : isRoundRunning
+                  ? participants.length <= 1
+                    ? 'An Ensemble must retain one participant.'
+                    : 'Remove this participant from the live roster. An executing seat is removed when its current execution finishes.'
                   : participants.length <= MIN_ENSEMBLE_PARTICIPANTS
                     ? 'Removing this leaves no panel — the thread switches Ensemble off and continues with the remaining agent.'
                     : 'Remove the selected participant'
@@ -1747,9 +1805,19 @@ function EnsembleAddParticipantButton({
     })
   }, [availableProviderGroups])
 
-  const patchDetails = useCallback((patch: Partial<EnsembleParticipantAddDetails>) => {
-    setDetailsDraft((current) => ({ ...current, ...patch }))
-  }, [])
+  const patchDetails = useCallback(
+    (patch: Partial<EnsembleParticipantAddDetails>) => {
+      setDetailsDraft((current) => {
+        const next = { ...current, ...patch }
+        if (patch.stageRole === 'background' && next.authority !== 'agent') {
+          next.authority = 'agent'
+          if (!hasLeadership) next.autoApprovalsEnabled = false
+        }
+        return next
+      })
+    },
+    [hasLeadership]
+  )
 
   const handleAutoApprovalsChange = useCallback(
     (enabled: boolean) => {
@@ -1872,6 +1940,7 @@ export function EnsembleAddParticipantFields({
           participantLabel={participantLabel}
           enabled={details.enabled}
           authority={details.authority}
+          backgroundRestricted={details.stageRole === 'background'}
           hasLeadership={hasLeadership}
           autoApprovalsEnabled={details.autoApprovalsEnabled}
           locked={disabled}
@@ -1984,6 +2053,7 @@ interface ParticipantChipProps {
   ) => void
   onToggleBossmanAutoApprovals: (enabled: boolean) => void
   locked: boolean
+  seatBoundaryMessage?: string
   /**
    * Pointer-based drag callbacks (replaces HTML5 native drag).
    *
@@ -2047,6 +2117,7 @@ function ParticipantChip({
   onSetAuthority,
   onToggleBossmanAutoApprovals,
   locked,
+  seatBoundaryMessage,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -2344,6 +2415,7 @@ function ParticipantChip({
           onSetAuthority={onSetAuthority}
           onToggleBossmanAutoApprovals={onToggleBossmanAutoApprovals}
           locked={locked}
+          seatBoundaryMessage={seatBoundaryMessage}
           onClose={onCloseOverflow}
           onRetry={onRetry}
           onWakeNow={onWakeNow}
@@ -2409,6 +2481,7 @@ interface OverflowPopoverProps {
   /* 1.0.5-EW22 — `onRemove` / `canRemove` removed. Remove gesture
    * moved to the row's "-" sibling button. */
   locked: boolean
+  seatBoundaryMessage?: string
   onClose: () => void
   /** 1.0.4-AT7 — re-dispatch the participant when their last turn
    * failed. Optional; when omitted, the Retry row is hidden. */
@@ -2578,6 +2651,7 @@ export function EnsembleParticipantOverflowPopover({
   onSetAuthority,
   onToggleBossmanAutoApprovals,
   locked,
+  seatBoundaryMessage,
   onClose,
   onRetry,
   onWakeNow,
@@ -2848,9 +2922,10 @@ export function EnsembleParticipantOverflowPopover({
         users mentally bind "participant roster controls".
       */}
       <p className="ensemble-above-overflow-hint">
-        {locked
-          ? 'Participant membership is locked while a round is running.'
-          : 'Model, provider, reasoning, fast mode, and permissions live in the composer pickers below — they apply to the chip selected here.'}
+        {seatBoundaryMessage ||
+          (locked
+            ? 'Participant membership is locked while a round is running.'
+            : 'Model, provider, reasoning, fast mode, and permissions live in the composer pickers below — they apply to the chip selected here.')}
       </p>
     </div>
   )

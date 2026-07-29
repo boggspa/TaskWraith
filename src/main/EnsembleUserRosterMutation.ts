@@ -11,6 +11,8 @@ export type EnsembleUserRosterMutationInput =
       chatId: string
       action: 'add'
       participant: EnsembleParticipant
+      authority?: EnsembleParticipantAuthority
+      autoApprovalsEnabled?: boolean
     }
   | {
       chatId: string
@@ -98,13 +100,32 @@ export function parseEnsembleUserRosterMutationInput(
   const chatId = requireString(raw.chatId, 'Ensemble chat id')
   const action = requireString(raw.action, 'Ensemble roster mutation action')
   if (action === 'add') {
+    const authority =
+      raw.authority === undefined
+        ? undefined
+        : requireString(raw.authority, 'Participant authority')
+    if (
+      authority !== undefined &&
+      authority !== 'boss' &&
+      authority !== 'captain' &&
+      authority !== 'agent'
+    ) {
+      throw new Error('Participant authority is invalid.')
+    }
+    if (raw.autoApprovalsEnabled !== undefined && typeof raw.autoApprovalsEnabled !== 'boolean') {
+      throw new Error('Auto Approvals enabled state must be a boolean.')
+    }
     return {
       chatId,
       action,
       participant: requireRecord(
         raw.participant,
         'Ensemble roster participant'
-      ) as unknown as EnsembleParticipant
+      ) as unknown as EnsembleParticipant,
+      ...(authority ? { authority } : {}),
+      ...(typeof raw.autoApprovalsEnabled === 'boolean'
+        ? { autoApprovalsEnabled: raw.autoApprovalsEnabled }
+        : {})
     }
   }
   if (action === 'remove') {
@@ -255,6 +276,16 @@ export function resolveEnsembleUserRosterMutation(
     if (participants.some((participant) => participant.id === validated.id)) {
       return fail('invalid_request', 'Participant add rejected: participant id already exists.')
     }
+    if (
+      input.authority !== undefined &&
+      input.authority !== 'agent' &&
+      validated.stageRole === 'background'
+    ) {
+      return fail(
+        'invalid_request',
+        'Participant add rejected: BG seats cannot own Boss or Captain authority.'
+      )
+    }
     const requestedIndex = Number.isFinite(validated.order)
       ? Math.floor(validated.order) - 1
       : participants.length
@@ -262,17 +293,49 @@ export function resolveEnsembleUserRosterMutation(
     const next = [...participants]
     next.splice(insertIndex, 0, validated)
     const normalized = normalizeOrder(next)
+    let bossmanParticipantId = baseAuthority.bossmanParticipantId
+    let secondInCommandParticipantId = baseAuthority.secondInCommandParticipantId
+    if (input.authority === 'boss') {
+      bossmanParticipantId = validated.id
+      if (secondInCommandParticipantId === validated.id) {
+        secondInCommandParticipantId = undefined
+      }
+    } else if (input.authority === 'captain') {
+      secondInCommandParticipantId = validated.id
+      if (bossmanParticipantId === validated.id) bossmanParticipantId = undefined
+    }
+    const authority = normalizeAuthority(
+      normalized,
+      bossmanParticipantId,
+      secondInCommandParticipantId,
+      baseAuthority.bossmanAutoApprovals
+    )
+    if (
+      input.autoApprovalsEnabled === true &&
+      !authority.bossmanParticipantId &&
+      !authority.secondInCommandParticipantId
+    ) {
+      return fail(
+        'invalid_request',
+        'Participant add rejected: assign a Boss or Captain before enabling Auto Approvals.'
+      )
+    }
     return {
       ok: true,
       value: {
         action: input.action,
         participants: normalized,
-        ...normalizeAuthority(
-          normalized,
-          baseAuthority.bossmanParticipantId,
-          baseAuthority.secondInCommandParticipantId,
-          baseAuthority.bossmanAutoApprovals
-        ),
+        ...authority,
+        bossmanAutoApprovals:
+          input.autoApprovalsEnabled === undefined
+            ? authority.bossmanAutoApprovals
+            : input.autoApprovalsEnabled
+              ? (authority.bossmanAutoApprovals ?? {
+                  enabled: true,
+                  mode: 'permission_preset_once',
+                  confirmedAt: options.nowIso
+                })
+              : undefined,
         maxParticipants: normalizedMaxParticipants(config, normalized.length),
         affectedParticipantId: validated.id
       }

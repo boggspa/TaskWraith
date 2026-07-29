@@ -1789,6 +1789,9 @@ declare global {
         roundId?: string
         error?: 'not_ensemble' | 'stale_target' | 'invalid_patch' | string
       }>
+      requestEnsembleUserRosterMutation: (
+        payload: EnsembleUserRosterMutationInput
+      ) => Promise<EnsembleUserRosterMutationResult>
       skipEnsembleParticipant: (chatId: string) => Promise<boolean>
       skipEnsembleReadFanout: (chatId: string) => Promise<boolean>
       getLatestSessionCheckpoint: (chatId: string) => Promise<SessionCheckpointRecord | null>

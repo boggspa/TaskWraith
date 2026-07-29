@@ -42,6 +42,28 @@ describe('Composer permission / tool-grant admission while running', () => {
     )
   })
 
+  it('wires the participant editor through live seat and roster boundaries', () => {
+    const participantEditorRegion = sourceRegion(
+      composerSource,
+      '<EnsembleParticipantsAboveRow',
+      'onCollapseToSolo={handleCollapseEnsembleToSolo}'
+    )
+    expect(participantEditorRegion).toContain(
+      'onPatchParticipant={(participantId, patch) =>'
+    )
+    expect(participantEditorRegion).toContain(
+      'participantProjection={currentComposerMentionParticipants}'
+    )
+    expect(participantEditorRegion).toContain(
+      'patchEnsembleParticipantById(participantId, patch)'
+    )
+    expect(participantEditorRegion).toContain('onLiveRosterMutation={(mutation) =>')
+    expect(participantEditorRegion).toContain(
+      '.requestEnsembleUserRosterMutation({'
+    )
+    expect(participantEditorRegion).toContain('chatId: currentChat.appChatId')
+  })
+
   it('keeps revocations available during a solo run', () => {
     const externalGrantRegion = sourceRegion(
       composerSource,

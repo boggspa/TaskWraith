@@ -60,6 +60,19 @@ describe('resolveEnsembleUserRosterMutation', () => {
       participantId: 'one',
       authority: 'captain'
     })
+    expect(
+      parseEnsembleUserRosterMutationInput({
+        chatId: 'chat-1',
+        action: 'add',
+        participant: participant('new-boss', 3),
+        authority: 'boss',
+        autoApprovalsEnabled: true
+      })
+    ).toMatchObject({
+      action: 'add',
+      authority: 'boss',
+      autoApprovalsEnabled: true
+    })
     expect(() =>
       parseEnsembleUserRosterMutationInput({
         chatId: 'chat-1',
@@ -92,6 +105,50 @@ describe('resolveEnsembleUserRosterMutation', () => {
       { id: 'new-seat', order: 2 },
       { id: 'two', order: 3 }
     ])
+  })
+
+  it('atomically applies authority and explicit Auto Approvals from the add dialog', () => {
+    const result = resolve(ensemble(), {
+      chatId: 'chat-1',
+      action: 'add',
+      participant: participant('new-boss', 3, {
+        provider: 'claude',
+        role: 'Lead'
+      }),
+      authority: 'boss',
+      autoApprovalsEnabled: true
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        bossmanParticipantId: 'new-boss',
+        secondInCommandParticipantId: undefined,
+        bossmanAutoApprovals: {
+          enabled: true,
+          mode: 'permission_preset_once',
+          confirmedAt: '2026-07-29T01:00:00.000Z'
+        }
+      }
+    })
+  })
+
+  it('rejects assigning live authority to a background addition', () => {
+    expect(
+      resolve(ensemble({ bossmanParticipantId: 'one' }), {
+        chatId: 'chat-1',
+        action: 'add',
+        participant: participant('new-background', 3, {
+          stageRole: 'background'
+        }),
+        authority: 'captain',
+        autoApprovalsEnabled: true
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'invalid_request',
+      message: 'Participant add rejected: BG seats cannot own Boss or Captain authority.'
+    })
   })
 
   it('rejects retired providers for additions without blocking an existing legacy seat', () => {

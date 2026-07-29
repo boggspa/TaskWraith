@@ -406,6 +406,32 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).not.toContain('Model, provider, reasoning, fast mode')
     })
 
+    it('prevents Boss or Captain authority on a background addition', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleAddParticipantFields
+          provider="codex"
+          participants={[]}
+          details={{
+            enabled: true,
+            authority: 'agent',
+            autoApprovalsEnabled: false,
+            stageRole: 'background',
+            role: 'Background worker',
+            instructions: ''
+          }}
+          rolePresetId="custom"
+          hasLeadership={false}
+          disabled={false}
+          onDetailsChange={() => undefined}
+          onRolePresetIdChange={() => undefined}
+          onAutoApprovalsChange={() => undefined}
+        />
+      )
+
+      expect(html).toMatch(/data-segmented-control-value="boss"[^>]*disabled=""/)
+      expect(html).toMatch(/data-segmented-control-value="captain"[^>]*disabled=""/)
+    })
+
     it('scopes the three-part layout to the Ensemble Add picker', () => {
       const css = readFileSync(
         new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
@@ -1118,7 +1144,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('Ensembles support up to 30 participants.')
   })
 
-  it('keeps the unified add trigger disabled while an Ensemble round is live', () => {
+  it('keeps live roster controls available while an Ensemble round is running', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
@@ -1139,16 +1165,29 @@ describe('EnsembleParticipantsAboveRow', () => {
       ]
     }
     const html = renderToStaticMarkup(
-      <EnsembleParticipantsAboveRow
-        chat={chat}
-        selectedParticipantId="ensemble-claude"
+        <EnsembleParticipantsAboveRow
+          chat={chat}
+          participantProjection={chat.ensemble!.participants.map((participant) =>
+            participant.id === 'ensemble-claude'
+              ? { ...participant, role: 'Pending role' }
+              : participant
+          )}
+          selectedParticipantId="ensemble-claude"
         onSelectParticipant={() => undefined}
         onChatChange={() => undefined}
+        onPatchParticipant={() => undefined}
+        onLiveRosterMutation={() => undefined}
+        providerGroups={buildEnsembleAddProviderGroups(false, false, {
+          snapshot: { ready: true, providerIds: ['codex'] }
+        })}
       />
     )
 
-    expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
-    expect(html).toContain('Participant changes are locked while a round is running.')
+    expect(html).toMatch(/class="ensemble-above-add-participant"(?![^>]*disabled)/)
+    expect(html).toMatch(/class="ensemble-above-remove-participant"(?![^>]*disabled)/)
+    expect(html).toContain('Pending role')
+    expect(html).toContain('Add this participant to the remaining live roster.')
+    expect(html).not.toContain('Participant changes are locked while a round is running.')
   })
 
   // Boss — a gold crown renders before the assigned participant's role,

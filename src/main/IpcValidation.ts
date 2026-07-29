@@ -129,6 +129,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'blackboard-queued-ensemble-prompt': ['object'],
   'request-ensemble-participant-seat-change': ['object'],
   'request-ensemble-user-roster-mutation': ['object'],
+  'ensemble:update-live-round-config': ['object'],
+  'ensemble:apply-roster-preset': ['object'],
   'cancel-ensemble-round': ['chatId'],
   'skip-ensemble-participant': ['chatId'],
   'skip-ensemble-read-fanout': ['chatId'],

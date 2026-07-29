@@ -20066,6 +20066,7 @@ function App(): React.JSX.Element {
     () =>
       [
         'provider',
+        'enabled',
         'model',
         'role',
         'instructions',
