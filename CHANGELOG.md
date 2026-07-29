@@ -6,15 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## Unreleased
-
-### Added
-
-- **Narrow managed-window QA lane (macOS).** A packaged TaskWraith build can now self-launch an exact isolated QA instance after human approval; global Gemini/Cursor MCP registrations stay instance-neutral while each managed child receives its exact route. For a current run-owned macOS 15.2+ window, the user separately chooses Screen Watch observation and View & Control. The native Canvas path is AX-only and lease-bound, refuses secrets, and asks the user to confirm every exact click; it is neither general desktop control nor a sandbox for the process under test.
-- **One-shot tool-permission retry.** Fresh gateway sessions can ask the user to retry one exact failed tool invocation after a permission-like boundary without minting a session or workspace grant. Immutable older profiles stay unchanged; route, workspace, network, external-path, provider-specific, liveness, and dedicated-approval guards are rechecked, and exact review remains desktop-only when a paired device cannot display the full request.
-- **Atomic context meters.** Context meters now prefer one coherent latest-invocation snapshot over cumulative billing totals, keeping cache, reasoning, tool-use, and visible-output tokens from different calls from being mixed. Expand a meter row for its token and transcript/tool breakdown; Ensemble and Multiview follow the focused seat and retain post-compaction state.
-
-## 1.9.1 - 2026-07-28
+## 1.9.1 - 2026-07-29
 
 1.9.0 connected the workshop's rooms; 1.9.1 lets the workshop answer from the
 terminal. Its headline is `tw`: a terminal-native companion that watches and
@@ -98,6 +90,13 @@ authority so parallel seats stop racing the token file. And MCP tool schemas
 that legitimately name a property `description` now survive schema compaction
 unchanged.
 
+Context meters read one coherent snapshot of the latest invocation rather than
+cumulative billing totals, so cache, reasoning, tool-use, and visible-output
+tokens from different calls are no longer mixed into a single misleading
+figure. Expand a meter row for the token and transcript/tool breakdown behind
+it; Ensemble and Multiview follow the focused seat and keep their state across
+a compaction.
+
 ### Small tells around the workshop
 
 The sidebar shows git status icons on the active row's branch identity, and
@@ -116,6 +115,22 @@ If something points TaskWraith at its own executable as a provider, the
 launch now refuses cleanly with a legible error instead of crash-looping. And
 a pre-commit backstop now enforces the concurrent-work claims that previously
 bound only the agents polite enough to read them.
+
+Where that self-launch is actually wanted, there is now a narrow lane for it:
+a packaged build can start one isolated QA instance of itself after a human
+approves, with global Gemini and Cursor MCP registrations staying
+instance-neutral so each managed child gets only its own route. Watching and
+driving that window are separate consents, the native path is
+accessibility-only and lease-bound, it refuses secrets, and every click is
+confirmed. It is a QA lane for TaskWraith's own window — not general desktop
+control, and not a sandbox for whatever is being tested.
+
+A failed tool call that looks like a permission boundary can now ask to retry
+that one exact invocation, rather than requiring a session or workspace grant
+to be minted for it. Route, workspace, network, external-path,
+provider-specific, liveness, and dedicated-approval checks are all re-run on
+the retry, older immutable profiles are untouched, and review stays on the
+desktop when a paired phone cannot show the whole request.
 
 ## 1.9.0 - 2026-07-27
 

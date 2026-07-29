@@ -325,7 +325,7 @@ describe('ChangelogSheet', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.9.1' }, null)
     expect(entry).toMatchObject({
       version: '1.9.1',
-      releaseDate: '2026-07-28'
+      releaseDate: '2026-07-29'
     })
     // 1.9.1 continues the story: the workshop gains a terminal hatch and a
     // modelling bench. Pin the user-facing beats, not taxonomy headers.
@@ -348,6 +348,14 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('git status icons')
     expect(entry.releaseNotes).toContain('refuses cleanly')
     expect(entry.releaseNotes).toContain('crash-looping')
+    // Folded in from an `Unreleased` block that would otherwise have shipped
+    // undescribed. Pinned so the same three cannot silently drop out again.
+    expect(entry.releaseNotes).toContain('isolated QA instance')
+    // Short enough to survive the changelog's line wrapping — the full phrase
+    // "not general desktop control" straddles a newline in the source.
+    expect(entry.releaseNotes).toContain('not a sandbox for whatever')
+    expect(entry.releaseNotes).toContain('that one exact invocation')
+    expect(entry.releaseNotes).toContain('coherent snapshot')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
