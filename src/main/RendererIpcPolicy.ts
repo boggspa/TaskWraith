@@ -487,6 +487,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
 
   // Global app/roster state and user-authorized desktop capture/attachment gates.
   'ensemble-roster-presets:sync',
+  'ensemble:apply-roster-preset',
+  'ensemble:update-live-round-config',
   'attach-window:pick',
   'attach-window:detach',
   'attach-window:status',
