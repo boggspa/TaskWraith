@@ -64,7 +64,11 @@ Thirty participants is a capacity ceiling, not a recommended starting panel.
 
 ## Release boundary
 
-The latest tagged public baseline is **v1.8.8**. This checkout is source-ahead;
+The latest tagged public baseline is whatever
+[Releases](https://github.com/boggspa/TaskWraith/releases/latest) currently
+shows — deliberately not restated here, because a pinned number silently
+becomes a false claim the moment the next tag lands, which is how this line came
+to read v1.8.8 two releases later. This checkout is source-ahead;
 its compact default panels and any other Unreleased entries are implementation
 evidence, not shipped capability, until a new tag and matching artifacts are
 published. Public claims should name the release or commit they were verified
