@@ -46,14 +46,17 @@ describe('execution graph main integration', () => {
       'runManager.onChange((event) => {',
       'function recoverSubThreadWorkerQueues'
     )
+    const graphReconciliationStart = listener.indexOf('const graphJobCandidate =')
+    expect(graphReconciliationStart).toBeGreaterThanOrEqual(0)
+    const graphReconciliation = listener.slice(graphReconciliationStart)
 
-    expect(listener).toContain('sealExecutionGraphRunTranscript(')
-    expect(listener).toContain('onRunSessionChange(')
-    expect(listener.indexOf('sealExecutionGraphRunTranscript(')).toBeLessThan(
-      listener.indexOf('onRunSessionChange(')
+    expect(graphReconciliation).toContain('sealExecutionGraphRunTranscript(')
+    expect(graphReconciliation).toContain('onRunSessionChange(')
+    expect(graphReconciliation.indexOf('sealExecutionGraphRunTranscript(')).toBeLessThan(
+      graphReconciliation.indexOf('onRunSessionChange(')
     )
-    expect(listener.indexOf('onRunSessionChange(')).toBeLessThan(
-      listener.indexOf('persistRunSessionQueueState(event.session)')
+    expect(graphReconciliation.indexOf('onRunSessionChange(')).toBeLessThan(
+      graphReconciliation.indexOf('persistRunSessionQueueState(event.session)')
     )
   })
 
@@ -62,11 +65,16 @@ describe('execution graph main integration', () => {
       'runManager.onChange((event) => {',
       'function recoverSubThreadWorkerQueues'
     )
-    const attemptRejection = listener.indexOf(
+    const graphReconciliationStart = listener.indexOf('const graphJobCandidate =')
+    expect(graphReconciliationStart).toBeGreaterThanOrEqual(0)
+    const graphReconciliation = listener.slice(graphReconciliationStart)
+    const attemptRejection = graphReconciliation.indexOf(
       "if (graphOwnedRun && graphDisposition !== 'accepted')"
     )
-    const anchorWarning = listener.indexOf("if (graphDisposition === 'rejected')")
-    const ordinaryPersistence = listener.indexOf('persistRunSessionQueueState(event.session)')
+    const anchorWarning = graphReconciliation.indexOf("if (graphDisposition === 'rejected')")
+    const ordinaryPersistence = graphReconciliation.indexOf(
+      'persistRunSessionQueueState(event.session)'
+    )
 
     expect(attemptRejection).toBeGreaterThanOrEqual(0)
     expect(anchorWarning).toBeGreaterThan(attemptRejection)

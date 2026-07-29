@@ -251,7 +251,8 @@ describe('SettingsService', () => {
     }
     service.updateSettings({ agenticWorkspaceGrants: [grant] })
 
-    expect(storeUpdate).toHaveBeenCalledWith({ agenticWorkspaceGrants: [grant] })
-    expect(settings.agenticWorkspaceGrants).toEqual([grant])
+    const sanitizedGrant = { ...grant, provider: 'agents' as const }
+    expect(storeUpdate).toHaveBeenCalledWith({ agenticWorkspaceGrants: [sanitizedGrant] })
+    expect(settings.agenticWorkspaceGrants).toEqual([sanitizedGrant])
   })
 })

@@ -54,8 +54,10 @@ describe('provider dispatch integration', () => {
     )
 
     expect(cancelProvider).toContain('if (queuedJob.provider !== provider) return false')
+    expect(cancelProvider).toContain('if (runId && !session) {')
+    expect(cancelProvider).toContain('orphan.provider === provider')
     expect(cancelProvider).toContain(
-      'if (runId && (!session || session.provider !== provider)) return false'
+      'if (runId && session && session.provider !== provider) return false'
     )
     expect(cancelProvider).toContain(
       'if (!runId && wasScheduledOccurrenceRunIdObserved(session.runId)) return false'

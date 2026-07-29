@@ -142,9 +142,9 @@ describe('scheduled headless dispatch integration', () => {
     expect(ensembleDispatch.indexOf('recordScheduledOccurrenceChildBinding({')).toBeLessThan(
       ensembleDispatch.indexOf('scheduledOccurrenceOwners.bindEnsembleChildRun(')
     )
-    expect(ensembleDispatch.indexOf('scheduledOccurrenceOwners.bindEnsembleChildRun(')).toBeLessThan(
-      ensembleDispatch.indexOf('return dispatchMainOwnedScheduledOccurrence(payload, event)')
-    )
+    expect(
+      ensembleDispatch.indexOf('scheduledOccurrenceOwners.bindEnsembleChildRun(')
+    ).toBeLessThan(ensembleDispatch.indexOf('dispatchMainOwnedScheduledOccurrence(payload, event)'))
   })
 
   it('keeps only active root or child transports live during stall reconciliation', () => {
