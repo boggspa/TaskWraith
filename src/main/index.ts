@@ -1534,6 +1534,8 @@ import {
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import {
+  AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
+  agyQuotaUnavailableSnapshot,
   agyUsageProbeDecision,
   fetchAuthenticatedAgyQuotaSnapshot,
   type AgyPtyLike
@@ -47548,9 +47550,18 @@ if (isGeminiMcpBridgeProcess) {
           return antigravityUsageProbeCache.snapshot
         }
         if (probeDecision !== 'probe') {
-          // Unavailable-until-manual-refresh: same shape the unauthenticated
-          // lane reports, so every surface degrades identically.
-          return fetchAuthenticatedAgyQuotaSnapshot(settings, false, {})
+          // Reaching here means the connection IS authenticated (the handler
+          // only calls this path when it is) but no probe ran. Report WHICH of
+          // the two doctrine rules withheld it. This previously returned the
+          // unauthenticated lane's snapshot — configured false, no reason —
+          // which the renderer cannot surface at all, so "the heartbeat is
+          // cache-only by design" and "your ↻ was rate-limited" and "there is
+          // no agy lane" were one indistinguishable blank meter.
+          return agyQuotaUnavailableSnapshot(
+            force === true
+              ? `a manual refresh ran less than ${Math.round(AGY_USAGE_MANUAL_MIN_INTERVAL_MS / 60_000)} minutes ago. Every /usage probe is a real authenticated agy session, so refreshes are deliberately rate-limited — try again shortly.`
+              : 'the agy /usage probe only ever runs on an explicit manual refresh, because each one opens a real authenticated agy session. Press refresh to read your quota.'
+          )
         }
         antigravityUsageProbeLastAttemptAt = Date.now()
 

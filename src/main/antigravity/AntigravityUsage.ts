@@ -113,6 +113,26 @@ function quotaUnavailableError(reason: string): string {
   return `Quota unavailable: ${reason}`
 }
 
+/**
+ * A quota-unavailable snapshot for a lane that IS set up but has no data to
+ * show yet, carrying the reason.
+ *
+ * `configured: true` is what makes it visible: the renderer admits a quota
+ * entry only when it has windows OR (`quotaConfigured === true` and a
+ * `quotaError`), and `ModelUsageCard` then renders the reason in place of the
+ * window rows. A `configured: false` snapshot with no error — which is what
+ * both the gate-refused and awaiting-manual-refresh paths used to return — is
+ * therefore indistinguishable from "this lane does not exist", and was why a
+ * manual ↻ that never probed, a clamped retry, and a genuinely absent
+ * connection all rendered as the same nothing.
+ */
+export function agyQuotaUnavailableSnapshot(
+  reason: string,
+  now: () => string = () => new Date().toISOString()
+): NormalizedProviderUsageSnapshot {
+  return unavailableSnapshot(true, now(), quotaUnavailableError(reason))
+}
+
 /** Strip terminal styling without retaining any terminal/session state. */
 export function stripAgyUsageTerminalControls(raw: string): string {
   return String(raw || '')
@@ -366,8 +386,24 @@ export async function fetchAuthenticatedAgyQuotaSnapshot(
   deps: AgyUsageProbeDependencies
 ): Promise<NormalizedProviderUsageSnapshot> {
   const fetchedAt = (deps.now ?? (() => new Date().toISOString()))()
-  if (!isAntigravityOptInEnabled(settings) || !authenticatedConnection) {
+  // No recorded opt-in means the ban-risk lane is not set up at all, so it stays
+  // invisible: configured false, no reason to report.
+  if (!isAntigravityOptInEnabled(settings)) {
     return unavailableSnapshot(false, fetchedAt)
+  }
+  // Opted in but no authenticated agy connection was detected. That IS a
+  // reportable state — previously it collapsed into the same silent
+  // configured-false snapshot as "not opted in", so a user who had consented
+  // and installed the CLI could not tell an unauthenticated CLI apart from a
+  // lane that simply wasn't there.
+  if (!authenticatedConnection) {
+    return unavailableSnapshot(
+      true,
+      fetchedAt,
+      quotaUnavailableError(
+        'no authenticated agy connection was detected. Sign in with the official CLI, then refresh.'
+      )
+    )
   }
 
   let binary: ResolvedAgyCliBinary
