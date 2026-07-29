@@ -1024,6 +1024,12 @@ public final class RemoteSessionModel: ObservableObject {
         /// `CompletionNotificationPolicy.shouldNotify` only passes cards whose status
         /// is "success", so the status is pinned rather than derived.
         private func postCompletionBanner(for card: RemoteTaskCard) {
+            // Present-once: replaying this transition (stale→fresh status flap
+            // across reconnect/rehydrate churn) re-adds the same identifier,
+            // which the notification center re-SOUNDS even though it only
+            // visually replaces the banner. See CompletionBannerPresentationLedger.
+            guard completionBannerLedger.claimPresentation(threadId: card.id, runId: card.runId)
+            else { return }
             let diff = diffSummaries[card.id]
             let rendered = CompletionBannerRenderer.render(
                 CompletionBannerInput(
@@ -1040,10 +1046,14 @@ public final class RemoteSessionModel: ObservableObject {
             content.sound = .default
             content.userInfo = ["tw_rich_local": true, "threadId": card.id]
             let request = UNNotificationRequest(
-                identifier: "tw-complete-\(card.id)-\(card.runId ?? "")",
+                identifier: CompletionBannerPresentationLedger.bannerId(
+                    threadId: card.id, runId: card.runId),
                 content: content, trigger: nil)
             UNUserNotificationCenter.current().add(request)
         }
+
+        /// See CompletionBannerPresentationLedger — one ding per completed run.
+        private var completionBannerLedger = CompletionBannerPresentationLedger()
     #endif
 
     /// Side-chat child that should open inside the inspector instead of

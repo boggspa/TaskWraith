@@ -74,3 +74,49 @@ struct CompletionNotificationPolicyTests {
         return try JSONDecoder().decode(RemoteTaskCard.self, from: data)
     }
 }
+
+@Suite("Completion banner presentation ledger")
+struct CompletionBannerPresentationLedgerTests {
+    @Test func presentsEachBannerIdentityExactlyOnce() {
+        var ledger = CompletionBannerPresentationLedger()
+        let first = ledger.claimPresentation(threadId: "chat-1", runId: "run-1")
+        // The reconnect-churn replay: same thread+run must never sound again.
+        let replay = ledger.claimPresentation(threadId: "chat-1", runId: "run-1")
+        let replayAgain = ledger.claimPresentation(threadId: "chat-1", runId: "run-1")
+        #expect(first)
+        #expect(!replay)
+        #expect(!replayAgain)
+    }
+
+    @Test func aRerunOfTheSameThreadBannersNormally() {
+        var ledger = CompletionBannerPresentationLedger()
+        let firstRun = ledger.claimPresentation(threadId: "chat-1", runId: "run-1")
+        let rerun = ledger.claimPresentation(threadId: "chat-1", runId: "run-2")
+        let otherThread = ledger.claimPresentation(threadId: "chat-2", runId: "run-1")
+        #expect(firstRun)
+        #expect(rerun)
+        #expect(otherThread)
+    }
+
+    @Test func nilRunIdIsItsOwnIdentity() {
+        var ledger = CompletionBannerPresentationLedger()
+        let runless = ledger.claimPresentation(threadId: "chat-1", runId: nil)
+        let runlessReplay = ledger.claimPresentation(threadId: "chat-1", runId: nil)
+        let realRun = ledger.claimPresentation(threadId: "chat-1", runId: "run-1")
+        #expect(runless)
+        #expect(!runlessReplay)
+        #expect(realRun)
+    }
+
+    @Test func bannerIdKeepsTheHistoricalRequestIdentifierShape() {
+        // The dedupe key IS the UNNotificationRequest identifier — same string
+        // the pre-ledger code built inline, so delivered-banner replacement
+        // behavior is unchanged.
+        #expect(
+            CompletionBannerPresentationLedger.bannerId(threadId: "t", runId: "r")
+                == "tw-complete-t-r")
+        #expect(
+            CompletionBannerPresentationLedger.bannerId(threadId: "t", runId: nil)
+                == "tw-complete-t-")
+    }
+}

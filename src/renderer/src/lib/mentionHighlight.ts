@@ -39,13 +39,6 @@ export type MentionTokenSegment =
        * Ollama-backed display brands resolve to their spoofed upstream
        * brand class (e.g. `alibaba`) so the chip wears the brand hue. */
       providerClass: string
-      /** 1.0.5 — how many SOURCE characters this segment consumed.
-       * Differs from `text.length` for structured mentions, whose
-       * `[@Label](ensemble-dm://id)` transport syntax renders as the
-       * shortened `@Label`. Consumers that need to map segments back
-       * to draft offsets (`composerMarkdownHighlight.ts`) must use
-       * this, never `text.length`. */
-      sourceLength?: number
     }
   | {
       /** 1.0.4 — user-mention (`@user` / `@human` / `@you`).
@@ -54,8 +47,6 @@ export type MentionTokenSegment =
        * provider. No `participant` field. */
       kind: 'user-mention'
       text: string
-      /** See the participant-mention variant — source chars consumed. */
-      sourceLength?: number
     }
 
 interface StructuredParticipantMention {
@@ -156,8 +147,7 @@ export function tokeniseMentions(
         providerClass: resolveProviderHueClass(
           resolved.participant.provider,
           resolved.participant.model
-        ),
-        sourceLength: resolved.sourceEnd - resolved.sourceStart
+        )
       })
       lastIndex = resolved.sourceEnd
       continue
@@ -169,8 +159,7 @@ export function tokeniseMentions(
     if (match.kind === 'user') {
       segments.push({
         kind: 'user-mention',
-        text: `@${match.text}`,
-        sourceLength: match.consumedLength
+        text: `@${match.text}`
       })
     } else {
       segments.push({
@@ -178,8 +167,10 @@ export function tokeniseMentions(
         text: `@${match.text}`,
         participant: match.participant,
         provider: match.participant.provider,
-        providerClass: resolveProviderHueClass(match.participant.provider, match.participant.model),
-        sourceLength: match.consumedLength
+        providerClass: resolveProviderHueClass(
+          match.participant.provider,
+          match.participant.model
+        )
       })
     }
     lastIndex = match.atIndex + match.consumedLength
