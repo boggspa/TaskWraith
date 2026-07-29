@@ -24,7 +24,8 @@ public struct ModelContextLengthRow: Hashable, Sendable {
 }
 
 public struct ModelContextLengthGroup: Hashable, Sendable, Identifiable {
-    /// Provider identifier: 'gemini'|'codex'|'claude'|'kimi'|'grok'|'cursor'|'ollama'
+    /// Provider identifier: 'gemini'|'codex'|'claude'|'kimi'|'grok'|'cursor'|
+    /// 'antigravity'|'pi'|'mistral'|'ollama'
     public let provider: String
     public let models: [ModelContextLengthRow]
     public var id: String { provider }
@@ -37,7 +38,7 @@ public enum ModelContextLengths {
     // Mirrors desktop MODEL_USAGE_PROVIDER_ORDER. Ollama is appended separately
     // only when includeOllama is true (ollama-last convention).
     private static let providerOrder: [String] = [
-        "gemini", "codex", "claude", "kimi", "grok", "cursor", "pi"
+        "gemini", "codex", "claude", "kimi", "grok", "cursor", "antigravity", "pi", "mistral"
     ]
 
     // Gemini router alias — NOT a concrete model with a single official window.
@@ -110,6 +111,28 @@ public enum ModelContextLengths {
                 (id: "composer-2.5",       label: "Composer 2.5"),
                 (id: "composer-2.5-fast",  label: "Composer 2.5 Fast"),
                 (id: "grok-4.5",           label: "Cursor Grok 4.5"),
+            ]
+        case "antigravity":
+            // Gemini-api lane. The `gemini-api:` prefix is load-bearing
+            // (dispatch + discovery both key on it); the live discovery
+            // snapshot may extend this list, but these four wire models are
+            // the deterministic floor. Mirrors ANTIGRAVITY_MODELS and the
+            // contextWindows registrations.
+            return [
+                (id: "gemini-api:gemini-2.5-pro",         label: "Gemini 2.5 Pro (API)"),
+                (id: "gemini-api:gemini-2.5-flash",       label: "Gemini 2.5 Flash (API)"),
+                (id: "gemini-api:gemini-2.5-flash-lite",  label: "Gemini 2.5 Flash Lite (API)"),
+                (id: "gemini-api:gemini-2.0-flash",       label: "Gemini 2.0 Flash (API)"),
+            ]
+        case "mistral":
+            // Mistral Vibe seat. BARE ids only — a `mistral/<model>` id
+            // belongs to Pi's BYOK upstream, a different provider that shares
+            // the brand word. devstral-small leads because it is the seat
+            // default. Mirrors MISTRAL_MODELS and the contextWindows
+            // registrations.
+            return [
+                (id: "devstral-small",      label: "Devstral Small"),
+                (id: "mistral-medium-3.5",  label: "Mistral Medium 3.5"),
             ]
         case "ollama":
             return [

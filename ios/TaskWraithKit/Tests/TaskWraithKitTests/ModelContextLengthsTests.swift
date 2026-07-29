@@ -217,13 +217,62 @@ struct ModelContextLengthsTests {
         #expect(!hasAuto)
     }
 
+    // MARK: - AntiGravity group
+
+    @Test("antigravity gemini-api:gemini-2.5-pro: 1_048_576 / 1.0M")
+    func antigravityGemini25Pro() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "antigravity" }?
+            .models.first { $0.modelId == "gemini-api:gemini-2.5-pro" }
+        #expect(row != nil)
+        #expect(row?.label == "Gemini 2.5 Pro (API)")
+        #expect(row?.contextWindow == 1_048_576)
+        #expect(row?.formatted == "1.0M")
+    }
+
+    @Test("antigravity group mirrors the four-model gemini-api floor in order")
+    func antigravityGroupMirrorsPickerRows() {
+        let groups = ModelContextLengths.buildGroups()
+        let models = groups.first { $0.provider == "antigravity" }?.models ?? []
+        #expect(models.map(\.modelId) == [
+            "gemini-api:gemini-2.5-pro",
+            "gemini-api:gemini-2.5-flash",
+            "gemini-api:gemini-2.5-flash-lite",
+            "gemini-api:gemini-2.0-flash",
+        ])
+    }
+
+    // MARK: - Mistral group
+
+    @Test("mistral devstral-small leads (seat default): 262_144 / 262k")
+    func mistralDevstralSmall() {
+        let groups = ModelContextLengths.buildGroups()
+        let row = groups.first { $0.provider == "mistral" }?
+            .models.first { $0.modelId == "devstral-small" }
+        #expect(row != nil)
+        #expect(row?.label == "Devstral Small")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
+    }
+
+    @Test("mistral group is the two BARE Vibe seat ids, never Pi's mistral/<model> wire ids")
+    func mistralGroupMirrorsPickerRows() {
+        let groups = ModelContextLengths.buildGroups()
+        let models = groups.first { $0.provider == "mistral" }?.models ?? []
+        #expect(models.map(\.modelId) == ["devstral-small", "mistral-medium-3.5"])
+        #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
+    }
+
     // MARK: - Provider order
 
-    @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/pi, no ollama")
+    @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/antigravity/pi/mistral, no ollama")
     func defaultProviderOrder() {
         let groups = ModelContextLengths.buildGroups()
         let providers = groups.map(\.provider)
-        #expect(providers == ["gemini", "codex", "claude", "kimi", "grok", "cursor", "pi"])
+        #expect(providers == [
+            "gemini", "codex", "claude", "kimi", "grok", "cursor",
+            "antigravity", "pi", "mistral",
+        ])
     }
 
     // MARK: - Ollama inclusion
