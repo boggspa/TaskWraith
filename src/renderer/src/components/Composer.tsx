@@ -142,6 +142,7 @@ import {
 import type { ComposerVoiceCaptureState } from './ComposerVoiceInput'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
+import { hasComposerMarkdown } from '../lib/composerMarkdownHighlight'
 import { planEmoticonAutoReplace } from '../lib/emoticonAutoReplace'
 import { formatApprovalCountdown, resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -2707,6 +2708,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     prompt,
                     currentComposerMentionParticipants
                   )
+                  // 1.0.5 — Tier-A markdown highlighting joins mentions
+                  // as an overlay activator. Markdown works in EVERY
+                  // chat (solo included) — participants are only needed
+                  // to mask mention labels out of the markdown scan.
+                  // The gate stays "resolved construct present": a draft
+                  // with neither mentions nor markdown keeps the plain
+                  // opaque textarea and no overlay, exactly as before.
+                  const composerRichActive =
+                    composerHasMention ||
+                    hasComposerMarkdown(prompt, currentComposerMentionParticipants)
                   // 1.0.4 — sync epoch for the overlay's auto-metric
                   // mirror. Any change in the inputs below can shift
                   // the textarea's computed font / padding / border,
@@ -2725,17 +2736,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           `has-mention-overlay` class in that case: a ghost is
                           only offered into an empty composer, so there is no
                           textarea text for the overlay to double-paint. */}
-                      {(composerHasMention || Boolean(composerGhostText)) && (
+                      {(composerRichActive || Boolean(composerGhostText)) && (
                         <ComposerHighlightOverlay
                           value={prompt}
                           participants={currentComposerMentionParticipants}
                           textareaRef={composerTextareaRef}
                           syncEpoch={composerOverlaySyncEpoch}
                           ghostText={composerGhostText}
+                          richText
                         />
                       )}
                       <textarea
-                        className={`composer-textarea${composerHasMention ? ' has-mention-overlay' : ''}`}
+                        className={`composer-textarea${composerRichActive ? ' has-mention-overlay' : ''}`}
                         ref={bindComposerTextareaRef}
                         value={prompt}
                         onContextMenu={composerContextMenu.handleContextMenu}

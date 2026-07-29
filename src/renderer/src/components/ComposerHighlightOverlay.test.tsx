@@ -154,4 +154,91 @@ describe('ComposerHighlightOverlay', () => {
   it('emits identical-shape transforms for every offset (no fallthrough on large pixels)', () => {
     expect(composerHighlightScrollTransform(1024, 4096)).toBe('translate3d(-1024px, -4096px, 0)')
   })
+
+  /*
+   * 1.0.5 — Tier-A markdown highlighting (richText mode). The main
+   * composer opts in; the ensemble brief editor does not — so the
+   * default path must stay byte-identical to the mention-only
+   * rendering above.
+   */
+  it('renders markdown flag spans alongside mention tokens in richText mode', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value={'Ask @Reviewer to **review** `parse()` now'}
+        participants={[participant()]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+        richText
+      />
+    )
+
+    expect(html).toContain('composer-mention-token')
+    expect(html).toContain('@Reviewer')
+    expect(html).toContain('composer-md-bold')
+    expect(html).toContain('composer-md-marker')
+    expect(html).toContain('composer-md-code')
+    expect(html).toContain('review')
+    expect(html).toContain('parse()')
+  })
+
+  it('does not emit markdown spans when richText is off (brief-editor path)', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value={'plain **bold** and `code` with @Reviewer'}
+        participants={[participant()]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+      />
+    )
+
+    expect(html).toContain('composer-mention-token')
+    expect(html).not.toContain('composer-md-')
+  })
+
+  it('keeps structured routing syntax hidden in richText mode', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value={'Ask [@Reviewer](ensemble-dm://ensemble-reviewer) for **more**'}
+        participants={[participant()]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+        richText
+      />
+    )
+
+    expect(html).toContain('@Reviewer')
+    expect(html).not.toContain('ensemble-dm://')
+    expect(html).toContain('composer-md-bold')
+  })
+
+  it('applies a bold flag to a mention wrapped in **…** without splitting the token', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value={'**ping @Reviewer**'}
+        participants={[participant()]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+        richText
+      />
+    )
+
+    expect(html).toContain('composer-mention-token composer-md-bold')
+    expect(html).toContain('@Reviewer')
+  })
+
+  it('still renders the ghost suggestion span in richText mode', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value=""
+        participants={[]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+        richText
+        ghostText="suggested continuation"
+      />
+    )
+
+    expect(html).toContain('composer-ghost-suggestion')
+    expect(html).toContain('suggested continuation')
+  })
 })
