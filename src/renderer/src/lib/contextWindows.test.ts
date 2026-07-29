@@ -53,6 +53,9 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'granite4.1:3b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'granite4.1:30b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron3:33b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'qwen3.5:4b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(131_072)
   })
 
   it('prefers live Ollama context_length from /api/tags over static table', () => {

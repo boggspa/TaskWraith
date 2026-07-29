@@ -242,7 +242,8 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
       }
     }
   } else if (provider === 'ollama') {
-    // qwen3.5:9b, qwen3:4b-instruct, gemma4:12b, ornith:35b, gpt-oss, lfm2.5:8b
+    // qwen3.5:9b, qwen3:4b-instruct, gemma4:12b, ornith:35b, gpt-oss, lfm2.5:8b,
+    // devstral-small-2:24b, ministral-3:14b
     const parts = id.replace(/[:/]+/g, '-').split('-').filter(Boolean)
     if (parts.length > 0) {
       push(parts.join(' '))
@@ -261,6 +262,20 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
         push('lfm')
         push('lfm 2.5')
         push('liquid')
+      }
+      // Ollama-hosted Mistral tags. Deliberately NO bare 'mistral' brand alias
+      // (unlike lfm2.5 → 'liquid'): 'mistral' is a ProviderId, so the
+      // first-class Vibe seat already claims it via `push(p.provider)`, and
+      // adding a second claimant would turn an unambiguous @mistral into an
+      // ambiguous mention for every roster that pairs the two.
+      if (parts[0] === 'devstral') {
+        push('devstral')
+        push('devstral small')
+        push('devstral small 2')
+      }
+      if (parts[0] === 'ministral') {
+        push('ministral')
+        push('ministral 3')
       }
     }
   }

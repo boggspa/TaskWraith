@@ -113,6 +113,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Ollama local defaults. qwen3:4b advertises a large context in Ollama
   // metadata, but use a conservative UI fallback when no live limit is known.
   'qwen3:4b-instruct': 262_144,
+  'qwen3.5:4b': 262_144,
   'qwen3.5:9b': 262_144,
   'qwen3.6:35b': 262_144,
   'qwen3.6:35b-a3b': 262_144,
@@ -136,7 +137,9 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'minicpm-v4.5:8b': 40_960,
   'granite4.1:3b': 131_072,
   'granite4.1:30b': 131_072,
-  'nemotron3:33b': 131_072
+  'nemotron3:33b': 131_072,
+  'devstral-small-2:24b': 131_072,
+  'ministral-3:14b': 131_072
 }
 
 const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {

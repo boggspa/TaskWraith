@@ -127,6 +127,7 @@ function ollamaModelLabel(model: string): string | undefined {
   const known: Array<[RegExp, string]> = [
     [/^qwen3\.6:35b(?:-|$)/, 'Qwen 3.6 (35B-A3B)'],
     [/^qwen3\.5:9b(?:-|$)/, 'Qwen 3.5 (9B Param)'],
+    [/^qwen3\.5:4b(?:-|$)/, 'Qwen 3.5 (4B Param)'],
     [/^qwen3(?::4b)?(?:-|$)/, 'Qwen 3 (4B Param)'],
     [/^gemma4:12b(?:-|$)/, 'Gemma 4 (12B Param)'],
     [/^ornith(?::(?:latest|9b))?(?:-|$)/, 'Ornith 1.0 (9B Param)'],
@@ -137,7 +138,9 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^granite4\.1:3b(?:-|$)/, 'Granite 4.1 (3B Param)'],
     [/^granite4\.1:30b(?:-|$)/, 'Granite 4.1 (30B Param)'],
     [/^nemotron3:33b(?:-|$)/, 'Nemotron 3 Nano Omni (33B Param)'],
-    [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)']
+    [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)'],
+    [/^devstral-small-2:24b(?:-|$)/, 'Devstral Small 2 (24B Param)'],
+    [/^ministral-3:14b(?:-|$)/, 'Ministral 3 (14B Param)']
   ]
   return known.find(([pattern]) => pattern.test(key))?.[1]
 }

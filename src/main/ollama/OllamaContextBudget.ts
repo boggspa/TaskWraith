@@ -92,16 +92,19 @@ export function resolveOllamaContextBudget(modelId?: string | null): ContextBudg
   const family = resolveOllamaModelFamily(trimmedModelId)
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_4b':
       return qwen4Budget(trimmedModelId)
     case 'qwen3_5_9b':
     case 'ornith_9b':
     case 'lfm2_5_8b':
+    case 'ministral_3_14b':
       return midCodingBudget(trimmedModelId)
     case 'qwen3_6_35b':
     case 'ornith_35b':
     case 'laguna_xs_2_1':
     case 'granite4_1_30b':
     case 'nemotron3_33b':
+    case 'devstral_small_2_24b':
       return largeCodingBudget(trimmedModelId)
     case 'minicpm_v45_8b':
     case 'granite4_1_3b':

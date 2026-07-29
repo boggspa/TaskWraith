@@ -135,6 +135,7 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
 
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
+  'qwen3.5:4b': 'Qwen 3.5 (4B Param)',
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
   'qwen3.6:35b': 'Qwen 3.6 (35B-A3B)',
   'gemma4:12b': 'Gemma 4 (12B Param)',
@@ -160,7 +161,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'minicpm-v4.5:8b': 'MiniCPM-V 4.5 (8B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
-  'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)'
+  'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
+  // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
+  // `devstral-small` row above — same brand, different runtime.
+  'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
+  'ministral-3:14b': 'Ministral 3 (14B Param)'
 }
 
 const STALE_GEMINI_PLACEHOLDER_MODEL_IDS = new Set([
@@ -298,6 +303,9 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('qwen3.5:9b-')) {
     return 'Qwen 3.5 (9B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('qwen3.5:4b-')) {
+    return 'Qwen 3.5 (4B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('qwen3.6:35b-')) {
     return 'Qwen 3.6 (35B-A3B)'
   }
@@ -324,6 +332,12 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('devstral-small-2:24b-')) {
+    return 'Devstral Small 2 (24B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('ministral-3:14b-')) {
+    return 'Ministral 3 (14B Param)'
   }
   // Both Grok CLI models run permanently in Fast mode. The canonicaliser has
   // collapsed every Grok reasoning id to 'grok-4.5' by here, so label the Grok

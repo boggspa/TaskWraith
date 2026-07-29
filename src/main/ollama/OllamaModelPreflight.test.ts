@@ -30,7 +30,39 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
     expect(resolveOllamaModelFamily('gpt-oss:latest')).toBe('gpt_oss_20b')
+    expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
+    expect(resolveOllamaModelFamily('ministral-3:14b')).toBe('ministral_3_14b')
     expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('unknown')
+  })
+
+  it('keeps the two 3.5 sizes on separate families', () => {
+    // `qwen3.5:4b` matches NEITHER the `qwen3:4b` nor the `qwen3.5:9b` prefix
+    // (dot vs colon), so without its own arm it fell through to the metadata
+    // heuristics and resolved 'unknown' whenever /api/tags was unavailable —
+    // which drops the tag out of ensemble context sharing entirely.
+    expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('qwen3.5:4b-instruct-q4_K_M')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('qwen3.5:9b')).toBe('qwen3_5_9b')
+  })
+
+  it('detects the local Mistral tags from Ollama metadata', () => {
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'devstral',
+        parameterSize: '24B'
+      })
+    ).toBe('devstral_small_2_24b')
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'ministral',
+        parameterSize: '14B'
+      })
+    ).toBe('ministral_3_14b')
   })
 
   it('uses exact tags before architecture metadata that could be ambiguous', () => {

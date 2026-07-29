@@ -54,4 +54,24 @@ describe('matchOllamaBrand', () => {
       providerClass: 'poolside'
     })
   })
+
+  it('matches both local Mistral tags onto the existing Mistral hue', () => {
+    // 'mistral' is NOT a substring of 'ministral', so Ministral carries its own
+    // needle — without it the tag would fall through to the generic Ollama look.
+    expect(matchOllamaBrand('devstral-small-2:24b')).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral'
+    })
+    expect(matchOllamaBrand('ministral-3:14b')).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral'
+    })
+  })
+
+  it('freezes the Mistral spoof on an Ollama health chip', () => {
+    expect(resolveHealthEntryPresentation('ollama', 'devstral-small-2:24b', 'Ollama')).toEqual({
+      displayProviderLabel: 'Mistral',
+      displayHueClass: 'mistral'
+    })
+  })
 })

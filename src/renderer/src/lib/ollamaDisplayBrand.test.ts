@@ -46,6 +46,23 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Poolside',
       providerClass: 'poolside'
     })
+    expect(
+      resolveOllamaDisplayBrand('devstral-small-2:24b', 'Devstral Small 2 (24B Param)')
+    ).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral'
+    })
+    expect(resolveOllamaDisplayBrand('ministral-3:14b', 'Ministral 3 (14B Param)')).toMatchObject({
+      providerLabel: 'Mistral',
+      providerClass: 'mistral'
+    })
+  })
+
+  it('matches the local Mistral tags from the bare id, with no label to help', () => {
+    // `ministral` needs its own needle — 'mistral' is NOT a substring of it, so
+    // a single 'mistral' needle would leave Ministral unbranded.
+    expect(resolveOllamaDisplayBrand('ministral-3:14b')?.providerClass).toBe('mistral')
+    expect(resolveOllamaDisplayBrand('devstral-small-2:24b')?.providerClass).toBe('mistral')
   })
 
   it('keeps the provider picker order explicit', () => {
@@ -55,6 +72,7 @@ describe('resolveOllamaDisplayBrand', () => {
       'google',
       'ibm',
       'liquid',
+      'mistral',
       'nvidia',
       'openai',
       'openbmb',
@@ -69,6 +87,9 @@ describe('resolveProviderHueClass', () => {
     expect(resolveProviderHueClass('ollama', 'gemma4:12b')).toBe('google')
     expect(resolveProviderHueClass('ollama', 'gpt-oss:20b')).toBe('openai')
     expect(resolveProviderHueClass('ollama', 'laguna-xs-2.1:q8_0')).toBe('poolside')
+    // Reuses the first-class Mistral seat's hue — one brand, one colour.
+    expect(resolveProviderHueClass('ollama', 'devstral-small-2:24b')).toBe('mistral')
+    expect(resolveProviderHueClass('ollama', 'ministral-3:14b')).toBe('mistral')
   })
 
   it('returns the runtime provider for non-brand models', () => {
@@ -113,6 +134,8 @@ describe('resolveProviderBrandLabel', () => {
     expect(resolveProviderBrandLabel('ollama', 'qwen3.5:9b')).toBe('Alibaba')
     expect(resolveProviderBrandLabel('ollama', 'nemotron3:33b')).toBe('NVIDIA')
     expect(resolveProviderBrandLabel('ollama', 'laguna-xs-2.1:q8_0')).toBe('Poolside')
+    expect(resolveProviderBrandLabel('ollama', 'devstral-small-2:24b')).toBe('Mistral')
+    expect(resolveProviderBrandLabel('ollama', 'ministral-3:14b')).toBe('Mistral')
   })
 
   it('returns the BYOK upstream brand for a Pi row', () => {

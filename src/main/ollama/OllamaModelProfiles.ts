@@ -51,6 +51,26 @@ export function ollamaModelFamilyPromptLines(
           ? 'Avoid wide refactors; prefer a short plan the user can run with an edit-capable tier or a wider local profile.'
           : 'You have edit tools in this tier — make small, localized, verified edits directly rather than only planning. For broad multi-file refactors, summarize progress and suggest delegation instead of guessing.'
       ]
+    case 'qwen3_5_4b':
+      return [
+        'Model profile (Qwen 3.5 4B): stay lightweight — search first, read one file at a time, answer concisely.',
+        normalizedTier === 'read_only'
+          ? 'Avoid wide refactors; hand off a short plan when the task grows past a couple of files.'
+          : 'You have edit tools in this tier — make small, localized, verified edits. Summarize progress instead of guessing on broad multi-file refactors.'
+      ]
+    case 'devstral_small_2_24b':
+      return [
+        'Model profile (Devstral Small 2 24B): agentic coding model; search for the target, read it, then make a focused edit with explicit verification notes.',
+        'Keep tool payloads compact and take one concrete step per turn rather than chaining speculative calls.',
+        'For broad refactors, claim a clear slice and state what is left instead of attempting the whole pass at once.'
+      ]
+    case 'ministral_3_14b':
+      return [
+        'Model profile (Ministral 3 14B): compact tool-capable model; search with a concrete query, read targeted files, then act.',
+        normalizedTier === 'read_only'
+          ? 'Report findings and a short plan rather than attempting broad changes.'
+          : 'Make small localized edits directly and note what you verified; slice anything multi-file.'
+      ]
     case 'minicpm_v45_8b':
       return [
         'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read with a concrete intent and use native tools when available.',
@@ -128,7 +148,7 @@ export function ollamaModelFamilyPromptLines(
 export function ollamaModelFamilyTemperature(modelId: string): number | undefined {
   const family = resolveOllamaModelFamily(modelId)
   if (family === 'gpt_oss_20b') return 0.15
-  if (family === 'qwen3_4b') return 0.25
+  if (family === 'qwen3_4b' || family === 'qwen3_5_4b') return 0.25
   return undefined
 }
 
@@ -396,7 +416,10 @@ export function ollamaTierAwareWorkflowHint(
     family === 'lfm2_5_8b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
-    family === 'nemotron3_33b'
+    family === 'nemotron3_33b' ||
+    family === 'qwen3_5_4b' ||
+    family === 'devstral_small_2_24b' ||
+    family === 'ministral_3_14b'
   if (intent === 'recon') {
     return [
       'TaskWraith local-recon workflow:',

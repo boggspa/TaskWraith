@@ -239,6 +239,7 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
 
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)' },
+  { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
   { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)' },
@@ -250,7 +251,9 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)' },
-  { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)' }
+  { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)' },
+  { id: 'devstral-small-2:24b', label: 'Devstral Small 2 (24B Param)' },
+  { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)' }
 ]
 
 const CODEX_FAST_CAPABLE = new Set<string>([

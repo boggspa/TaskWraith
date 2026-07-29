@@ -83,5 +83,17 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
+    // The three tags added 2026-07-30 stay OFF the thinking list: Ollama rejects
+    // a `think` request outright on a tag that does not advertise the
+    // capability, so a family only joins after the tag is confirmed to support it.
+    expect(
+      resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBeUndefined()
+    expect(
+      resolveOllamaThinkingLevel('devstral-small-2:24b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBeUndefined()
+    expect(
+      resolveOllamaThinkingLevel('ministral-3:14b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+    ).toBeUndefined()
   })
 })

@@ -186,6 +186,7 @@ describe('Ollama provider model defaults', () => {
     expect(OLLAMA_DEFAULT_MODELS[0].id).toBe('qwen3:4b-instruct')
     expect(OLLAMA_DEFAULT_MODELS.map((model) => model.id)).toEqual([
       'qwen3:4b-instruct',
+      'qwen3.5:4b',
       'qwen3.5:9b',
       'qwen3.6:35b',
       'gemma4:12b',
@@ -198,6 +199,8 @@ describe('Ollama provider model defaults', () => {
       'granite4.1:3b',
       'granite4.1:30b',
       'nemotron3:33b',
+      'devstral-small-2:24b',
+      'ministral-3:14b',
       'custom'
     ])
   })

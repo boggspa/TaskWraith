@@ -154,6 +154,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
 
   if (provider === 'ollama') {
     if (id === 'qwen3:4b-instruct') return 'Qwen 3 (4B Param)'
+    if (id === 'qwen3.5:4b' || id.startsWith('qwen3.5:4b-')) {
+      return 'Qwen 3.5 (4B Param)'
+    }
     if (id === 'qwen3.5:9b' || id.startsWith('qwen3.5:9b-')) {
       return 'Qwen 3.5 (9B Param)'
     }
@@ -204,6 +207,12 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     }
     if (id === 'nemotron3:33b' || id.startsWith('nemotron3:33b-')) {
       return 'Nemotron 3 Nano Omni (33B Param)'
+    }
+    if (id === 'devstral-small-2:24b' || id.startsWith('devstral-small-2:24b-')) {
+      return 'Devstral Small 2 (24B Param)'
+    }
+    if (id === 'ministral-3:14b' || id.startsWith('ministral-3:14b-')) {
+      return 'Ministral 3 (14B Param)'
     }
   }
 

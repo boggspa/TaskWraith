@@ -106,6 +106,7 @@ public enum ContextWindows {
         // Ollama local defaults — conservative UI fallbacks when no live limit
         // is known.
         "qwen3:4b-instruct": 262_144,
+        "qwen3.5:4b": 262_144,
         "qwen3.5:9b": 262_144,
         "qwen3.6:35b": 262_144,
         "qwen3.6:35b-a3b": 262_144,
@@ -130,6 +131,8 @@ public enum ContextWindows {
         "granite4.1:3b": 131_072,
         "granite4.1:30b": 131_072,
         "nemotron3:33b": 131_072,
+        "devstral-small-2:24b": 131_072,
+        "ministral-3:14b": 131_072,
     ]
 
     /// Provider id (lowercased) → fallback window. Mirrors
