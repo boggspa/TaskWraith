@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
+import path from 'path'
 import { AppStore } from './store'
 import type {
   AuditFinding,
@@ -128,11 +129,21 @@ describe('AppStore audit runs', () => {
   })
 
   it('caps stored runs at the history limit', () => {
-    for (let i = 0; i < 110; i++) {
-      AppStore.createAuditRun(baseInput())
-    }
+    const template = AppStore.createAuditRun(baseInput({ id: 'seed-template' }))
+    const seededRuns = Array.from({ length: 100 }, (_, index) => ({
+      ...template,
+      id: `seed-${index}`,
+      createdAt: new Date(Date.UTC(2025, 0, 1, 0, 0, 100 - index)).toISOString(),
+      updatedAt: new Date(Date.UTC(2025, 0, 1, 0, 0, 100 - index)).toISOString()
+    }))
+    fs.writeFileSync(path.join(userDataPath, 'audit-runs.json'), JSON.stringify(seededRuns))
+
+    const newest = AppStore.createAuditRun(baseInput({ id: 'newest' }))
     const all = AppStore.getAuditRuns()
+
     expect(all.length).toBe(100)
+    expect(all[0].id).toBe(newest.id)
+    expect(all.some((run) => run.id === 'seed-99')).toBe(false)
   })
 
   it('deletes a run', () => {
