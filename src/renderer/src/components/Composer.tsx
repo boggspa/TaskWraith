@@ -5667,6 +5667,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 <TerminalPanel
                   workspacePath={currentWorkspace.path}
                   className="workspace-terminal-split"
+                  variant="pane"
                 />,
                 transcriptRoot
               )}

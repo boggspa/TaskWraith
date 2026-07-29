@@ -1,19 +1,64 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useMemo } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+
+export type TerminalPanelVariant = 'inspector' | 'pane'
 
 interface TerminalPanelProps {
   workspacePath: string
   onClose?: () => void
   className?: string
+  variant?: TerminalPanelVariant
 }
 
-export function TerminalPanel({ workspacePath, onClose, className }: TerminalPanelProps) {
+const TUI_TERMINAL_THEME = {
+  background: '#05080d',
+  foreground: '#d8e6ff',
+  cursor: '#d8e6ff',
+  cursorAccent: '#05080d',
+  selectionBackground: 'rgba(90, 140, 255, 0.25)',
+  selectionForeground: '#ffffff',
+  black: '#141414',
+  red: '#D45B62',
+  green: '#55B985',
+  yellow: '#D49A47',
+  blue: '#5a8cff',
+  magenta: '#986781',
+  cyan: '#41c7e5',
+  white: '#d8e6ff',
+  brightBlack: '#3a3a3a',
+  brightRed: '#e54d4d',
+  brightGreen: '#4cc38a',
+  brightYellow: '#f5a623',
+  brightBlue: '#7aaaff',
+  brightMagenta: '#b07a9a',
+  brightCyan: '#6fd6f0',
+  brightWhite: '#ffffff'
+}
+
+const INSPECTOR_TERMINAL_THEME = {
+  background: '#080808'
+}
+
+function workspaceBasename(path: string): string {
+  // Normalize both POSIX and Windows separators.
+  return path.replace(/\\/g, '/').split('/').filter(Boolean).pop() ?? path
+}
+
+export function TerminalPanel({
+  workspacePath,
+  onClose,
+  className,
+  variant = 'inspector'
+}: TerminalPanelProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
   const sessionId = useId().replace(/:/g, '')
+  const isPane = variant === 'pane'
+
+  const theme = useMemo(() => (isPane ? TUI_TERMINAL_THEME : INSPECTOR_TERMINAL_THEME), [isPane])
 
   useEffect(() => {
     if (!terminalRef.current) return
@@ -24,9 +69,7 @@ export function TerminalPanel({ workspacePath, onClose, className }: TerminalPan
       cursorBlink: true,
       fontFamily: 'var(--font-mono)',
       fontSize: 14,
-      theme: {
-        background: '#080808'
-      }
+      theme
     })
 
     fitAddon.current = new FitAddon()
@@ -69,7 +112,7 @@ export function TerminalPanel({ workspacePath, onClose, className }: TerminalPan
       term.current?.dispose()
       window.removeEventListener('resize', handleResize)
     }
-  }, [sessionId, workspacePath])
+  }, [sessionId, workspacePath, theme])
 
   useEffect(() => {
     if (!onClose) return
@@ -80,10 +123,18 @@ export function TerminalPanel({ workspacePath, onClose, className }: TerminalPan
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  const rootClass = [className ?? 'terminal-panel', isPane ? 'terminal-panel--pane' : '']
+    .filter(Boolean)
+    .join(' ')
+
   return (
-    <div className={className ?? 'terminal-panel'}>
+    <div className={rootClass}>
       <div className="terminal-panel-header">
-        <span>Terminal: {workspacePath}</span>
+        {isPane ? (
+          <span>Terminal · {workspaceBasename(workspacePath)}</span>
+        ) : (
+          <span>Terminal: {workspacePath}</span>
+        )}
         {onClose && (
           <button
             className="terminal-panel-close"
@@ -91,7 +142,7 @@ export function TerminalPanel({ workspacePath, onClose, className }: TerminalPan
             onClick={onClose}
             aria-label="Close terminal"
           >
-            Close
+            {isPane ? '×' : 'Close'}
           </button>
         )}
       </div>
