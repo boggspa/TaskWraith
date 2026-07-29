@@ -29,6 +29,7 @@ import {
   type UnattendedElevationAck
 } from '../UnattendedPostureGate'
 import { resolveProviderDispatch, type ProviderDispatchResolution } from '../ProviderRunPause'
+import { filterMessagesExcludingIds } from '../run/MidRunSteering'
 import { resolveActiveGoalForProvider } from '../GoalState'
 import {
   coalesceExternalPathGrants,
@@ -135,6 +136,13 @@ export interface ComposerInput {
   /** Send the prompt to the provider verbatim (no context/preamble blocks) —
    * provider-native slash dispatches only (see ComposeRunPromptInput). */
   verbatimPrompt?: boolean
+  /** Transcript message ids to omit from injected conversation history.
+   * Mid-run steering appends the prompt's message to the transcript BEFORE
+   * dispatch (timestamped at arrival); without this exclusion a
+   * transcript-injecting provider reads the same content twice — once as
+   * history, once as the request. The composition tail-dedupe only covers a
+   * message that is still the LAST entry, which a mid-run append is not. */
+  excludeMessageIds?: string[]
 }
 
 export interface ComposerRunMetadata {
@@ -522,7 +530,7 @@ export class ComposerService {
       verbatimPrompt: input.verbatimPrompt === true,
       contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,
-      messages: chat.messages || [],
+      messages: filterMessagesExcludingIds(chat.messages || [], input.excludeMessageIds),
       chatContextTurns: graphContextIsolated ? 0 : settings.chatContextTurns,
       resumeSessionId: resumeDecision.sessionId || undefined,
       lastCompletedCodexModel,

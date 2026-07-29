@@ -1,0 +1,307 @@
+import { describe, expect, it } from 'vitest'
+import {
+  MidRunSteeringRegistry,
+  buildMidRunSteeringUserMessage,
+  ensembleSteerAbsorbResult,
+  filterMessagesExcludingIds,
+  midRunSteeringAbsorbEligible,
+  midRunSteeringBackstopPrompt,
+  planSteeringContext,
+  scheduledSteeringMessageId,
+  shouldAppendScheduledSteeringOnBusy
+} from './MidRunSteering'
+
+const NOW = '2026-07-29T02:00:00.000Z'
+
+function register(
+  registry: MidRunSteeringRegistry,
+  overrides: Partial<Parameters<MidRunSteeringRegistry['register']>[0]> = {}
+) {
+  return registry.register({
+    chatId: 'chat-1',
+    messageId: 'msg-1',
+    text: 'steer text',
+    source: 'ensembleSteer',
+    createdAtIso: NOW,
+    ...overrides
+  })
+}
+
+describe('MidRunSteeringRegistry', () => {
+  it('registers entries and reports them pending', () => {
+    const registry = new MidRunSteeringRegistry()
+    const entry = register(registry)
+    expect(registry.pendingForChat('chat-1')).toHaveLength(1)
+    expect(registry.pendingForChat('chat-1')[0].id).toBe(entry.id)
+    expect(registry.pendingForChat('other-chat')).toHaveLength(0)
+  })
+
+  it('marks entries delivered per participant exactly once', () => {
+    const registry = new MidRunSteeringRegistry()
+    register(registry)
+    const first = registry.markDeliveredToParticipant('chat-1', 'seat-a')
+    expect(first).toHaveLength(1)
+    const repeat = registry.markDeliveredToParticipant('chat-1', 'seat-a')
+    expect(repeat).toHaveLength(0)
+    const other = registry.markDeliveredToParticipant('chat-1', 'seat-b')
+    expect(other).toHaveLength(1)
+  })
+
+  it('undeliveredToAnyParticipant reflects only untouched entries', () => {
+    const registry = new MidRunSteeringRegistry()
+    const a = register(registry, { messageId: 'msg-a' })
+    const b = register(registry, { messageId: 'msg-b' })
+    expect(registry.undeliveredToAnyParticipant('chat-1').map((entry) => entry.id)).toEqual([
+      a.id,
+      b.id
+    ])
+    registry.markDeliveredToParticipant('chat-1', 'seat-a')
+    expect(registry.undeliveredToAnyParticipant('chat-1')).toHaveLength(0)
+  })
+
+  it('a participant-marked entry is not re-marked for later entries only', () => {
+    const registry = new MidRunSteeringRegistry()
+    register(registry, { messageId: 'msg-a' })
+    registry.markDeliveredToParticipant('chat-1', 'seat-a')
+    const late = register(registry, { messageId: 'msg-b' })
+    // seat-a dispatched BEFORE msg-b arrived; only msg-b is newly marked on
+    // its next dispatch.
+    const marked = registry.markDeliveredToParticipant('chat-1', 'seat-a')
+    expect(marked.map((entry) => entry.id)).toEqual([late.id])
+  })
+
+  it('markDelivered prunes settled entries and clears empty chats', () => {
+    const registry = new MidRunSteeringRegistry()
+    const entry = register(registry, { source: 'scheduledTask', scheduledTaskId: 'task-1' })
+    registry.markDelivered('chat-1', [entry.id], NOW)
+    expect(registry.pendingForChat('chat-1')).toHaveLength(0)
+    expect(registry.entryForScheduledTask('chat-1', 'task-1')).toBeNull()
+  })
+
+  it('entryForScheduledTask finds only live entries for the task', () => {
+    const registry = new MidRunSteeringRegistry()
+    register(registry, { source: 'scheduledTask', scheduledTaskId: 'task-1', messageId: 'msg-a' })
+    expect(registry.entryForScheduledTask('chat-1', 'task-1')?.messageId).toBe('msg-a')
+    expect(registry.entryForScheduledTask('chat-1', 'task-2')).toBeNull()
+  })
+
+  it('caps entries per chat at 20, dropping oldest', () => {
+    const registry = new MidRunSteeringRegistry()
+    for (let index = 0; index < 25; index += 1) {
+      register(registry, { messageId: `msg-${index}` })
+    }
+    const pending = registry.pendingForChat('chat-1')
+    expect(pending).toHaveLength(20)
+    expect(pending[0].messageId).toBe('msg-5')
+    expect(pending[19].messageId).toBe('msg-24')
+  })
+
+  it('clearForChat drops everything for that chat only', () => {
+    const registry = new MidRunSteeringRegistry()
+    register(registry)
+    register(registry, { chatId: 'chat-2', messageId: 'msg-2' })
+    registry.clearForChat('chat-1')
+    expect(registry.pendingForChat('chat-1')).toHaveLength(0)
+    expect(registry.pendingForChat('chat-2')).toHaveLength(1)
+  })
+})
+
+describe('scheduledSteeringMessageId', () => {
+  it('is deterministic per task + fire time', () => {
+    const first = scheduledSteeringMessageId('task-1', '2026-07-29T02:00:00.000Z')
+    const second = scheduledSteeringMessageId('task-1', '2026-07-29T02:00:00.000Z')
+    expect(first).toBe(second)
+    expect(first).toContain('task-1')
+  })
+
+  it('differs across occurrences (fire times) of the same task', () => {
+    const first = scheduledSteeringMessageId('task-1', '2026-07-29T02:00:00.000Z')
+    const second = scheduledSteeringMessageId('task-1', '2026-07-29T03:00:00.000Z')
+    expect(first).not.toBe(second)
+  })
+
+  it('never collides with the legacy uuid seed shape', () => {
+    // Legacy: `scheduled-user-<uuid>`; fire-time: `scheduled-user-fired-…`.
+    expect(scheduledSteeringMessageId('t', NOW).startsWith('scheduled-user-fired-')).toBe(true)
+  })
+
+  it('tolerates an unparsable fire time', () => {
+    expect(scheduledSteeringMessageId('task-1', 'nonsense')).toBe('scheduled-user-fired-task-1-0')
+  })
+})
+
+describe('buildMidRunSteeringUserMessage', () => {
+  it('builds a plain user row with the midRunSteering kind', () => {
+    const message = buildMidRunSteeringUserMessage({
+      id: 'msg-1',
+      content: 'hello',
+      timestampIso: NOW
+    })
+    expect(message).toEqual({
+      id: 'msg-1',
+      role: 'user',
+      content: 'hello',
+      timestamp: NOW,
+      metadata: { kind: 'midRunSteering' }
+    })
+  })
+})
+
+describe('midRunSteeringAbsorbEligible', () => {
+  const base = {
+    mode: 'steer' as const,
+    roundLive: true,
+    text: 'do the thing',
+    hasImageAttachments: false,
+    hasDmTarget: false,
+    hasDiscordContext: false,
+    hasExternalPathGrants: false
+  }
+
+  it('accepts a plain text steer into a live round', () => {
+    expect(midRunSteeringAbsorbEligible(base)).toBe(true)
+  })
+
+  it('requires steer mode and a live round and non-empty text', () => {
+    expect(midRunSteeringAbsorbEligible({ ...base, mode: 'normal' })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, mode: undefined })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, roundLive: false })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, text: '   ' })).toBe(false)
+  })
+
+  it('keeps legacy interrupt semantics for shape-changing steers', () => {
+    expect(midRunSteeringAbsorbEligible({ ...base, hasImageAttachments: true })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasDmTarget: true })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasDiscordContext: true })).toBe(false)
+    expect(midRunSteeringAbsorbEligible({ ...base, hasExternalPathGrants: true })).toBe(false)
+  })
+})
+
+describe('ensembleSteerAbsorbResult', () => {
+  it('reuses the wire-compatible steered status with the LIVE round id', () => {
+    expect(ensembleSteerAbsorbResult('round-9')).toEqual({
+      status: 'steered',
+      roundId: 'round-9'
+    })
+  })
+})
+
+describe('midRunSteeringBackstopPrompt', () => {
+  it('references the transcript instead of repeating steering text', () => {
+    const single = midRunSteeringBackstopPrompt(1)
+    const plural = midRunSteeringBackstopPrompt(3)
+    expect(single).toContain('interjected')
+    expect(single).toContain('above')
+    expect(plural).toContain('3 messages')
+    // The prompt must never carry the steering content itself — the delta
+    // transcript already delivers it; repetition would double the content.
+    expect(single).not.toContain('steer text')
+  })
+})
+
+describe('planSteeringContext', () => {
+  it('ensemble hops ride the delta transcript for every provider', () => {
+    for (const provider of ['claude', 'codex', 'pi', 'kimi', 'grok', 'ollama'] as const) {
+      expect(
+        planSteeringContext({ lane: 'ensemble-hop', provider, resumeProviderSessionId: 'x' })
+      ).toEqual({ kind: 'transcript-delta' })
+    }
+  })
+
+  it('pi is always prompt-verbatim (chat-deterministic session, never injected)', () => {
+    expect(
+      planSteeringContext({ lane: 'solo-boundary', provider: 'pi', resumeProviderSessionId: null })
+    ).toEqual({ kind: 'prompt-verbatim' })
+  })
+
+  it('claude/codex resumes are prompt-verbatim; sessionless dispatches exclude history', () => {
+    expect(
+      planSteeringContext({
+        lane: 'solo-boundary',
+        provider: 'claude',
+        resumeProviderSessionId: 'sess-1'
+      })
+    ).toEqual({ kind: 'prompt-verbatim' })
+    expect(
+      planSteeringContext({
+        lane: 'solo-boundary',
+        provider: 'codex',
+        resumeProviderSessionId: null
+      })
+    ).toEqual({ kind: 'prompt-with-history-exclusion' })
+  })
+
+  it('transcript-injecting providers exclude the pre-appended message', () => {
+    for (const provider of ['kimi', 'grok', 'cursor', 'mistral', 'ollama'] as const) {
+      expect(
+        planSteeringContext({
+          lane: 'solo-boundary',
+          provider,
+          resumeProviderSessionId: 'sess-1'
+        })
+      ).toEqual({ kind: 'prompt-with-history-exclusion' })
+    }
+  })
+})
+
+describe('filterMessagesExcludingIds', () => {
+  const messages = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+
+  it('is the identity for empty/absent exclusions', () => {
+    expect(filterMessagesExcludingIds(messages, undefined)).toBe(messages)
+    expect(filterMessagesExcludingIds(messages, [])).toBe(messages)
+  })
+
+  it('drops exactly the excluded ids', () => {
+    expect(filterMessagesExcludingIds(messages, ['b']).map((message) => message.id)).toEqual([
+      'a',
+      'c'
+    ])
+    expect(
+      filterMessagesExcludingIds(messages, ['a', 'c', 'missing']).map((message) => message.id)
+    ).toEqual(['b'])
+  })
+})
+
+describe('shouldAppendScheduledSteeringOnBusy', () => {
+  it('appends for a plain solo task on a busy solo chat', () => {
+    expect(
+      shouldAppendScheduledSteeringOnBusy({
+        taskKind: 'single',
+        hasWorkflowLoop: false,
+        chatIsEnsemble: false
+      })
+    ).toBe(true)
+    expect(
+      shouldAppendScheduledSteeringOnBusy({
+        taskKind: undefined,
+        hasWorkflowLoop: false,
+        chatIsEnsemble: false
+      })
+    ).toBe(true)
+  })
+
+  it('keeps the pure skip for ensemble tasks, workflow loops, and ensemble chats', () => {
+    expect(
+      shouldAppendScheduledSteeringOnBusy({
+        taskKind: 'ensemble',
+        hasWorkflowLoop: false,
+        chatIsEnsemble: false
+      })
+    ).toBe(false)
+    expect(
+      shouldAppendScheduledSteeringOnBusy({
+        taskKind: 'single',
+        hasWorkflowLoop: true,
+        chatIsEnsemble: false
+      })
+    ).toBe(false)
+    expect(
+      shouldAppendScheduledSteeringOnBusy({
+        taskKind: 'single',
+        hasWorkflowLoop: false,
+        chatIsEnsemble: true
+      })
+    ).toBe(false)
+  })
+})

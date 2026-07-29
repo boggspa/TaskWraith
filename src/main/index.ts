@@ -582,6 +582,16 @@ import {
   type HostCommandOperationScope
 } from './run/HostCommandOperationRegistry'
 import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
+import {
+  MidRunSteeringRegistry,
+  buildMidRunSteeringUserMessage,
+  ensembleSteerAbsorbResult,
+  midRunSteeringAbsorbEligible,
+  midRunSteeringBackstopPrompt,
+  planSteeringContext,
+  scheduledSteeringMessageId,
+  shouldAppendScheduledSteeringOnBusy
+} from './run/MidRunSteering'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
 import {
@@ -14522,6 +14532,188 @@ async function dispatchDueScheduledLoopHeadless(
   }
 }
 
+// ── Mid-run steering (append-now / deliver-at-boundary) ─────────────────────
+// Bookkeeping core in src/main/run/MidRunSteering.ts. The registry is
+// in-memory only; the transcript message is the durable record and every
+// consumer degrades gracefully when the registry is empty (restart).
+const midRunSteeringRegistry = new MidRunSteeringRegistry()
+
+/** Append a steering user message to the chat and make it visible on every
+ * surface immediately (renderer via chat-updated, paired devices via the
+ * bridge thread snapshot — the same pair `seedScheduledSoloTranscript`
+ * uses). Returns the saved chat. */
+function appendMidRunSteeringMessage(chat: ChatRecord, message: ChatMessage): ChatRecord {
+  const updated = saveAndBroadcastChat({
+    ...chat,
+    messages: [...(chat.messages || []), message],
+    updatedAt: Date.now()
+  })
+  bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
+  pushRemoteThreadSnapshotForChat?.(updated)
+  return updated
+}
+
+/**
+ * Runtime-evidence gate for steer absorption. `isEnsembleRoundDispatchLive`
+ * reads only the PERSISTED round record, which can still say "running" after
+ * a crash — absorbing into such a round would strand the interjection (no
+ * hop is coming, and the completion backstop never fires for a dead
+ * runtime). Require corroboration that the round genuinely resumes or is
+ * executing: a live in-memory RunManager session for the chat (absent after
+ * restart by construction), or persisted pending/sleeping wakeups (which
+ * boot recovery re-arms, so their round WILL produce further hops). A brief
+ * between-hop gap can false-negative — that degrades to the legacy
+ * interrupt-steer, never to a stranded message.
+ */
+function ensembleRoundLiveForSteerAbsorb(
+  chatId: string,
+  round: Parameters<typeof isEnsembleRoundDispatchLive>[0]
+): boolean {
+  if (!isEnsembleRoundDispatchLive(round)) return false
+  if ((round?.pendingWakeupIds?.length || 0) > 0) return true
+  if ((round?.sleepingParticipantIds?.length || 0) > 0) return true
+  return RUN_MANAGER_PROVIDERS.some((provider) =>
+    runManager.getActiveByProvider(provider).some((session) => session.appChatId === chatId)
+  )
+}
+
+/**
+ * Absorb a text-only ensemble steer into the LIVE round instead of the
+ * historical cancel-round-and-restart. The message is appended (and
+ * broadcast) immediately; every subsequent hop's prompt is rebuilt from the
+ * live chat record and its "new since your previous turn" delta transcript
+ * carries the interjection natively — full and slim turns alike — so no
+ * round, hop, or provider session is disturbed. Callers gate on
+ * `midRunSteeringAbsorbEligible`.
+ */
+function absorbEnsembleSteerIntoLiveRound(
+  chatId: string,
+  text: string,
+  roundId: string
+): { status: 'steered'; roundId: string } {
+  const chat = AppStore.getChat(chatId)
+  if (!chat) {
+    throw new Error('Ensemble steer target chat disappeared before absorption.')
+  }
+  const nowIso = new Date().toISOString()
+  const messageId = `midrun-steer-${randomUUID()}`
+  appendMidRunSteeringMessage(
+    chat,
+    buildMidRunSteeringUserMessage({ id: messageId, content: text, timestampIso: nowIso })
+  )
+  midRunSteeringRegistry.register({
+    chatId,
+    messageId,
+    text,
+    source: 'ensembleSteer',
+    createdAtIso: nowIso
+  })
+  return ensembleSteerAbsorbResult(roundId)
+}
+
+/**
+ * Scheduler-tick companion for a due task whose chat is busy: the tick keeps
+ * skipping dispatch (never collide with a live run), but a plain solo task's
+ * message now lands in the transcript AT FIRE TIME, timestamped with
+ * `firedAt`. The later idle-time dispatch recognizes the append (via the
+ * registry, or the deterministic message id after a restart) and suppresses
+ * its own seed. Idempotent across the tick's ~1s due-retry cadence.
+ */
+function maybeAppendScheduledSteeringForBusyTask(
+  task: ScheduledTask,
+  hasWorkflowLoop: boolean
+): void {
+  try {
+    const chat = AppStore.getChat(task.chatId)
+    if (!chat) return
+    if (
+      !shouldAppendScheduledSteeringOnBusy({
+        taskKind: task.kind,
+        hasWorkflowLoop,
+        chatIsEnsemble: Boolean(chat.ensemble) || chat.chatKind === 'ensemble'
+      })
+    ) {
+      return
+    }
+    if (midRunSteeringRegistry.entryForScheduledTask(task.chatId, task.id)) return
+    const firedAtIso = task.firedAt || new Date().toISOString()
+    const messageId = scheduledSteeringMessageId(task.id, firedAtIso)
+    const content = task.displayPrompt || task.prompt
+    const alreadyAppended = (chat.messages || []).some((message) => message.id === messageId)
+    if (!alreadyAppended) {
+      appendMidRunSteeringMessage(
+        chat,
+        buildMidRunSteeringUserMessage({ id: messageId, content, timestampIso: firedAtIso })
+      )
+    }
+    // Register either way: after a restart the durable append survives while
+    // the registry does not, and the seed suppression keys off the registry.
+    midRunSteeringRegistry.register({
+      chatId: task.chatId,
+      messageId,
+      text: content,
+      source: 'scheduledTask',
+      createdAtIso: firedAtIso,
+      scheduledTaskId: task.id
+    })
+  } catch (error) {
+    console.warn('[midrun-steering] scheduled fire-time append failed:', error)
+  }
+}
+
+/**
+ * Round-completion backstop: an interjection absorbed during the FINAL hop
+ * has no later hop to ride, so a round that completes with entries no
+ * participant was dispatched against chains one continuation round. The
+ * prompt references the transcript (the delta windows deliver the actual
+ * text) — it must never repeat the steering content. Deferred a tick so a
+ * queued-prompt drain chain can claim the chat first; `requireFreshRound`
+ * makes any race land as a harmless 'busy'.
+ */
+function maybeStartMidRunSteeringBackstopRound(
+  chatId: string,
+  roundId: string,
+  status: 'completed' | 'cancelled' | 'failed'
+): void {
+  if (status !== 'completed') return
+  if (scheduledOccurrenceOwners.lookupEnsembleRound(roundId)) return
+  if (midRunSteeringRegistry.undeliveredToAnyParticipant(chatId).length === 0) return
+  setTimeout(() => {
+    try {
+      const undelivered = midRunSteeringRegistry.undeliveredToAnyParticipant(chatId)
+      if (undelivered.length === 0) return
+      const chat = AppStore.getChat(chatId)
+      if (!chat?.ensemble) return
+      // A drain-chained (or user-started) round already owns the chat: its
+      // participant dispatches deliver the entries via their delta windows.
+      if (isEnsembleRoundDispatchLive(chat.ensemble.activeRound)) return
+      if (scheduledEnsembleInteractiveBlock(chatId)) return
+      // No globalEnsembleWriteBlock re-check: that gate is phone-INTAKE
+      // policy and both absorb lanes run after it, so every registered
+      // interjection already passed the gate that applies to its origin.
+      const liveSender = mainWindow?.webContents
+      const sender =
+        liveSender && !liveSender.isDestroyed() ? liveSender : createHeadlessRunSender()
+      const result = ensembleOrchestratorRef?.startRound({
+        chatId,
+        prompt: midRunSteeringBackstopPrompt(undelivered.length),
+        event: { sender },
+        mode: 'normal',
+        requireFreshRound: true
+      })
+      if (result?.status === 'started') {
+        midRunSteeringRegistry.markDelivered(
+          chatId,
+          undelivered.map((entry) => entry.id),
+          new Date().toISOString()
+        )
+      }
+    } catch (error) {
+      console.warn('[midrun-steering] backstop continuation round failed:', error)
+    }
+  }, 250).unref?.()
+}
+
 function seedScheduledSoloTranscript(
   task: ScheduledTask,
   owner: ScheduledOccurrenceOwner,
@@ -14536,13 +14728,30 @@ function seedScheduledSoloTranscript(
     throw new Error('Scheduled solo transcript already contains this occurrence run.')
   }
   const timestamp = new Date().toISOString()
-  const promptMessageId = `scheduled-user-${randomUUID()}`
-  const userMessage: ChatMessage = {
-    id: promptMessageId,
-    role: 'user',
-    content: task.displayPrompt || task.prompt,
-    timestamp
-  }
+  // Fire-time steering append: when this task fired on a busy chat, its
+  // message already sits in the transcript timestamped at fire time. Reuse
+  // it as this run's prompt message instead of appending a duplicate. If the
+  // fire-time append was lost (whole-record renderer save race), re-append
+  // it with the ORIGINAL fire timestamp — self-healing in both directions.
+  const steeringEntry = midRunSteeringRegistry.entryForScheduledTask(owner.chatId, task.id)
+  const existingSteeringMessage = steeringEntry
+    ? (chat.messages || []).find((message) => message.id === steeringEntry.messageId)
+    : undefined
+  const promptMessageId = steeringEntry?.messageId || `scheduled-user-${randomUUID()}`
+  const userMessage: ChatMessage | null = existingSteeringMessage
+    ? null
+    : steeringEntry
+      ? buildMidRunSteeringUserMessage({
+          id: steeringEntry.messageId,
+          content: task.displayPrompt || task.prompt,
+          timestampIso: steeringEntry.createdAtIso
+        })
+      : {
+          id: promptMessageId,
+          role: 'user',
+          content: task.displayPrompt || task.prompt,
+          timestamp
+        }
   const run: ChatRun = {
     runId: owner.ownerRunId,
     provider: owner.provider,
@@ -14571,10 +14780,13 @@ function seedScheduledSoloTranscript(
   })
   const updated = saveAndBroadcastChat({
     ...chat,
-    messages: [...(chat.messages || []), userMessage],
+    messages: userMessage ? [...(chat.messages || []), userMessage] : [...(chat.messages || [])],
     runs: [...(chat.runs || []), run],
     updatedAt: Date.now()
   })
+  if (steeringEntry) {
+    midRunSteeringRegistry.markDelivered(owner.chatId, [steeringEntry.id], timestamp)
+  }
   void captureWorkspaceSnapshot(executionWorkspacePath)
     .then((snapshot) => {
       const transcript = bridgeRunTranscripts.get(owner.ownerRunId)
@@ -14637,6 +14849,22 @@ async function dispatchDueScheduledTaskHeadless(
       return
     }
     const executionWorkspacePath = assertScheduledOccurrenceWorkspace(owner)
+    // Fire-time steering: the task's message may already be in the transcript
+    // (appended when the countdown ended on a busy chat). Providers whose
+    // composition injects host transcript would read the content twice — once
+    // as history, once as the request — so exclude the pre-appended message.
+    // Session-native lanes inject no history and take no exclusion.
+    const dispatchSteeringEntry = midRunSteeringRegistry.entryForScheduledTask(
+      task.chatId,
+      task.id
+    )
+    const dispatchSteeringPlan = dispatchSteeringEntry
+      ? planSteeringContext({
+          lane: 'solo-boundary',
+          provider: task.provider,
+          resumeProviderSessionId: null
+        })
+      : null
     const composed = composer.composeRun({
       chatId: task.chatId,
       appRunId: owner.ownerRunId,
@@ -14662,7 +14890,10 @@ async function dispatchDueScheduledTaskHeadless(
       runtimeProfileId: task.runtimeProfileId,
       geminiAuthProfileId: task.geminiAuthProfileId,
       handoffSourceRunId: task.handoffSourceRunId,
-      scheduledTaskId: task.id
+      scheduledTaskId: task.id,
+      ...(dispatchSteeringEntry && dispatchSteeringPlan?.kind === 'prompt-with-history-exclusion'
+        ? { excludeMessageIds: [dispatchSteeringEntry.messageId] }
+        : {})
     })
     const sealService = scheduledOccurrenceSealServiceRef
     if (sealService) {
@@ -14804,7 +15035,14 @@ function emitDueScheduledTasks() {
         // owns dispatch; MAIN does, so opening or closing a window cannot change who
         // claims an occurrence.
         if (!ready || (!rendererAvailable && !headlessEnabled)) continue
-        if (isScheduledOccurrenceChatBusy(dueTask)) continue
+        if (isScheduledOccurrenceChatBusy(dueTask)) {
+          // Mid-run steering: the dispatch skip stands (never collide with a
+          // live run), but a plain solo task's message lands in the
+          // transcript at fire time and delivers on the next due-retry tick
+          // once the chat idles.
+          maybeAppendScheduledSteeringForBusyTask(dueTask, Boolean(configuredLoop))
+          continue
+        }
 
         const owner = scheduledOccurrenceTransaction.claim(dueTask)
         if (!owner) continue
@@ -39596,6 +39834,34 @@ if (isGeminiMcpBridgeProcess) {
             dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
           const lateScheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
           if (lateScheduledBlock) return { ok: false, error: lateScheduledBlock }
+          // Mid-run steering (parity with run-ensemble-round): a plain text
+          // phone steer into a LIVE round is absorbed — appended immediately,
+          // delivered at the next hop boundary — instead of interrupting the
+          // active speaker. Attachment-bearing or DM-targeted steers keep the
+          // legacy interrupt semantics; the gate reads the REQUESTED
+          // attachments so a failed materialization can't silently absorb.
+          const absorbRound = AppStore.getChat(action.threadId)?.ensemble?.activeRound
+          if (
+            absorbRound &&
+            midRunSteeringAbsorbEligible({
+              mode: 'steer',
+              roundLive: ensembleRoundLiveForSteerAbsorb(action.threadId, absorbRound),
+              text,
+              hasImageAttachments: Boolean(action.imageAttachments?.length),
+              hasDmTarget: Boolean(dmTargetParticipantId),
+              hasDiscordContext: false,
+              hasExternalPathGrants: false
+            })
+          ) {
+            const absorbed = absorbEnsembleSteerIntoLiveRound(
+              action.threadId,
+              text,
+              absorbRound.roundId
+            )
+            broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
+            pushRemoteTaskCardDelta(action.threadId)
+            return { ok: true, ...absorbed }
+          }
           const result = ensembleOrchestratorRef?.startRound({
             chatId: action.threadId,
             prompt: text,
@@ -48777,6 +49043,16 @@ if (isGeminiMcpBridgeProcess) {
           attachments
         ),
       dispatch: (payload, event) => {
+        // Mid-run steering delivery bookkeeping: a participant dispatched
+        // after an interjection arrived carries it inside its hop prompt's
+        // delta transcript — dispatch IS delivery for that seat. Prompt
+        // content is deliberately untouched here.
+        if (payload.appChatId && payload.ensembleRun?.participantId) {
+          midRunSteeringRegistry.markDeliveredToParticipant(
+            payload.appChatId,
+            payload.ensembleRun.participantId
+          )
+        }
         const scheduledRoundId = payload.ensembleRun?.roundId
         const scheduledRoundOwner = scheduledRoundId
           ? scheduledOccurrenceOwners.lookupEnsembleRound(scheduledRoundId)
@@ -48862,6 +49138,7 @@ if (isGeminiMcpBridgeProcess) {
             }
           }
         }
+        maybeStartMidRunSteeringBackstopRound(chatId, roundId, status)
       },
       transitionRunQueueJob: (runIdOrId, status, partial) =>
         runQueueServiceRef
@@ -49300,6 +49577,28 @@ if (isGeminiMcpBridgeProcess) {
         if (dmTargetError) throw new Error(dmTargetError)
         const dmTargetParticipantId =
           dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
+        // Mid-run steering: a plain text steer into a LIVE round is absorbed —
+        // appended to the transcript immediately and delivered to every
+        // subsequent seat via its hop prompt's delta transcript — instead of
+        // cancelling the active speaker and restarting the round. Shape-
+        // changing steers (attachments, DM target, discord context, grants)
+        // keep the legacy interrupt semantics, as does a steer with no live
+        // dispatch (the orchestrator then simply starts a fresh round).
+        const steerAbsorbRound = AppStore.getChat(chatId)?.ensemble?.activeRound
+        if (
+          steerAbsorbRound &&
+          midRunSteeringAbsorbEligible({
+            mode: payload?.mode,
+            roundLive: ensembleRoundLiveForSteerAbsorb(chatId, steerAbsorbRound),
+            text: prompt,
+            hasImageAttachments: dispatchImageAttachments.length > 0,
+            hasDmTarget: Boolean(dmTargetParticipantId),
+            hasDiscordContext: discordContextSnapshots.length > 0,
+            hasExternalPathGrants: externalPathGrants.length > 0
+          })
+        ) {
+          return absorbEnsembleSteerIntoLiveRound(chatId, prompt, steerAbsorbRound.roundId)
+        }
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
