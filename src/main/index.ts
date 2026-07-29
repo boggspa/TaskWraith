@@ -1665,6 +1665,9 @@ import {
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
+import { registerHostToolTerminalHandlers } from './ipc/hostToolTerminalHandlers'
+import { publishCliPathDirectories } from './CliPathDirectoriesPublisher'
+import { __resetHostToolResolverCache, findExecutableOnHost } from './HostToolResolver'
 import {
   authorizeAgentReview,
   registerCodexThreadHandlers,
@@ -44784,6 +44787,11 @@ if (isGeminiMcpBridgeProcess) {
       AppStore.updateSettings(startupManagedPatch)
     }
     const initialSettings = managedPolicyService.effectiveSettings(AppStore.getSettings())
+    // Publish the user's extra CLI directories before anything resolves a
+    // binary. AppStore.updateSettings republishes on every later write; this is
+    // the boot-time seed, without which the setting would only take effect
+    // after the user edited it again in the running session.
+    publishCliPathDirectories(initialSettings.cliPathDirectories)
     const resolveAutoUpdateEnabled = (settings: AppSettings): boolean => {
       return resolveAutoUpdateServiceEnabled({
         autoUpdateEnabled: settings.autoUpdateEnabled,
@@ -47974,6 +47982,20 @@ if (isGeminiMcpBridgeProcess) {
       chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
       getPlatform: () => process.platform,
       realpathSync: (path) => fsSync.realpathSync(path)
+    })
+
+    registerHostToolTerminalHandlers({
+      // Same augmented search-dir probe every other CLI uses, so the popover's
+      // "is gh installed?" answer matches what GitService will actually resolve.
+      resolveHostToolPath: (binaryName) => findExecutableOnHost(binaryName),
+      getUserDataPath: () => app.getPath('userData'),
+      openPath: (path) => shell.openPath(path),
+      mkdirSync: (path, options) => fsSync.mkdirSync(path, options),
+      writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
+      chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
+      getPlatform: () => process.platform,
+      realpathSync: (path) => fsSync.realpathSync(path),
+      invalidateHostToolCache: () => __resetHostToolResolverCache()
     })
 
     const resolveSenderAgentThreadScope = (event: IpcMainInvokeEvent): AgentThreadSenderScope => {

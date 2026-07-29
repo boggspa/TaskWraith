@@ -141,6 +141,8 @@ import {
   useAntigravityGeminiApiSecretRefreshIdentity
 } from '../hooks/useConfiguredProviderSnapshot'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
+import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
+import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import {
@@ -318,6 +320,12 @@ interface SettingsPanelProps {
   userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
+  /**
+   * Extra directories searched first when resolving EVERY external CLI —
+   * provider binaries, `gh`, `git`, and the optional host tools. Distinct from
+   * the per-provider `*BinaryPath` overrides above, which pin one binary each.
+   */
+  cliPathDirectories?: string[]
   ollamaBaseUrl: string
   ollamaDefaultModel: string
   auditOrchestration?: AppSettings['auditOrchestration']
@@ -446,6 +454,7 @@ interface SettingsPanelProps {
     userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
+    cliPathDirectories?: string[]
     ollamaBaseUrl?: string
     ollamaDefaultModel?: string
     auditOrchestration?: AppSettings['auditOrchestration']
@@ -3816,6 +3825,7 @@ export function SettingsPanel({
   userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
+  cliPathDirectories,
   ollamaBaseUrl,
   ollamaDefaultModel,
   auditOrchestration,
@@ -3894,6 +3904,10 @@ export function SettingsPanel({
   const [appIconOfferNowMs] = useState(() => Date.now())
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
+  // Optional host CLI presence for the Providers tab's tools card. Probed
+  // through MAIN so the answer matches what GitService will actually resolve,
+  // not what a renderer guess would infer from an error string.
+  const ghToolStatus = useHostCliToolStatus('gh')
   // Uncontrolled fallback state. Used only when the caller doesn't
   // pass `activeTab`/`onTabChange` — i.e. when SettingsPanel is mounted
   // without the surrounding sidebar takeover (legacy / future tests).
@@ -7070,6 +7084,50 @@ export function SettingsPanel({
                     curl installers are self-contained.)
                   </p>
                   <ProviderInstallCommands providerSetup={activatedProviderSetup} />
+                </details>
+                {/*
+                  CLI locations affects EVERY external binary, not one provider,
+                  so it sits above the per-provider grid rather than inside any
+                  single card. A wrong PATH presents as "CLI not found" on every
+                  card at once, which is exactly the state this fixes.
+                */}
+                <details className="settings-provider-install">
+                  <summary>CLI locations — where TaskWraith looks for binaries</summary>
+                  <p className="settings-hint">
+                    Only needed if a CLI you know is installed shows as <em>not found</em>.
+                    TaskWraith is launched by macOS rather than your shell, so it doesn&apos;t
+                    inherit your shell&apos;s PATH. It already checks Homebrew,{' '}
+                    <code>/usr/local/bin</code>, <code>/usr/bin</code>, <code>~/.local/bin</code>,
+                    and the npm / bun / cargo global bins. Add a directory here if yours lives
+                    somewhere else — a version-manager shim (asdf, mise, volta), a custom npm
+                    prefix, or a non-standard Homebrew prefix.
+                  </p>
+                  <p className="settings-hint">
+                    Directories are searched <strong>first</strong>, in the order shown, and apply
+                    to every CLI at once — provider CLIs, <code>git</code>, <code>gh</code>, and the
+                    optional tools below. Run <code>which codex</code> in your terminal and paste
+                    the directory part; pasting a whole PATH splits it into rows. Changes apply to
+                    the next command TaskWraith runs — no relaunch.
+                  </p>
+                  <CliPathDirectoriesEditor
+                    value={cliPathDirectories ?? []}
+                    onChange={(next) => onChange({ cliPathDirectories: next })}
+                  />
+                </details>
+                <details className="settings-provider-install">
+                  <summary>Optional tools — not providers</summary>
+                  <p className="settings-hint">
+                    Separate command-line tools that unlock extra TaskWraith features. They have no
+                    seat, model, or run posture, and nothing else depends on them.
+                  </p>
+                  <div className="host-cli-tool-grid">
+                    <HostCliToolCard
+                      toolId="gh"
+                      presence={ghToolStatus.presence}
+                      resolvedPath={ghToolStatus.path}
+                      onOpened={ghToolStatus.refresh}
+                    />
+                  </div>
                 </details>
                 <div className="settings-provider-auth-grid">
                   <SettingsProviderAuthCard

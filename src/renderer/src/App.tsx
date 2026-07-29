@@ -7071,6 +7071,11 @@ function App(): React.JSX.Element {
     if (next.userName !== undefined) {
       settingsPatch.userName = next.userName
     }
+    if (next.cliPathDirectories !== undefined) {
+      // Persist only. MAIN re-publishes the list into CLI resolution on write,
+      // so there is deliberately no renderer-side mirror to drift from it.
+      settingsPatch.cliPathDirectories = next.cliPathDirectories
+    }
     if (next.currency !== undefined) {
       settingsPatch.currency = next.currency
     }
@@ -30315,6 +30320,10 @@ function App(): React.JSX.Element {
         userBubbleColor={appearance.userBubbleColor || 'system'}
         userName={settings?.userName ?? ''}
         onAppearancePreviewChange={handleSettingsChange}
+        cliPathDirectories={settings?.cliPathDirectories ?? []}
+        onCliPathDirectoriesChange={(cliPathDirectories) =>
+          handleSettingsChange({ cliPathDirectories })
+        }
       />
       {/* BugReportSheet — inline issue capture for testers. z-index
           (9120) sits above the FirstLaunchSheet (9100) so the bug-report
