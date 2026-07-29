@@ -306,6 +306,20 @@ function isClaudeExtraWindow(text: string): boolean {
   return text.includes('fable') || text.includes('sonnet') || text.includes('design')
 }
 
+/**
+ * The reason a lane has no quota data, when it HAS one and no windows.
+ *
+ * Mirrors the expanded card's admission rule (`quotaConfigured === true` plus a
+ * `quotaError` renders the reason in place of window rows), so the compact strip
+ * and the expanded block agree about when a provider is present-but-empty. Used
+ * for tooltips only: a reason never becomes a cell value, because an empty cell
+ * must not be mistakable for a reading.
+ */
+function quotaReasonOnlyText(entry: ModelUsageAggregate | undefined): string | null {
+  if (!entry || (entry.windows?.length || 0) > 0) return null
+  return entry.quotaConfigured === true && entry.quotaError ? entry.quotaError : null
+}
+
 function compactCellsForEntry(
   provider: ProviderId,
   entry: ModelUsageAggregate | undefined
@@ -478,17 +492,22 @@ export function CompactModelUsageGrid({
 }) {
   const mistralCell = compactMistralCell(mistralQuota, currency, locale)
   const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
-  // The AGY column appears only once a manual quota refresh has produced a
-  // snapshot (the agy /usage probe is manual-only by doctrine — the
-  // heartbeat serves cache), so non-opted-in users never see the column.
+  // The AGY column appears once a manual quota refresh has produced a snapshot
+  // (the agy /usage probe is manual-only by doctrine — the heartbeat serves
+  // cache), OR once the lane has a REASON to report. The reason case matters:
+  // the agy meter is blank far more often than it is populated, and with the
+  // column omitted entirely a user cannot tell "press refresh" from
+  // "rate-limited" from "not signed in" from "this lane does not exist". A
+  // non-opted-in lane still contributes no entry at all, so it stays absent.
   const antigravityCells = compactCellsForEntry(
     'antigravity',
     entriesByProvider.get('antigravity')
   )
   const hasAntigravityCells = Object.keys(antigravityCells).length > 0
+  const antigravityReason = quotaReasonOnlyText(entriesByProvider.get('antigravity'))
   const providers = [
     ...COMPACT_USAGE_BASE_PROVIDERS,
-    ...(hasAntigravityCells ? (['antigravity'] as const) : []),
+    ...(hasAntigravityCells || antigravityReason ? (['antigravity'] as const) : []),
     ...(mistralCell ? (['mistral'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
@@ -539,7 +558,12 @@ export function CompactModelUsageGrid({
                   }`}
                   title={
                     cell?.title ||
-                    `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`
+                    // An explained empty cell says WHY, rather than the generic
+                    // "unavailable" that reads as a fault. Same reason string
+                    // the expanded card shows, so the two never disagree.
+                    (provider === 'antigravity' && antigravityReason
+                      ? `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: ${antigravityReason}`
+                      : `${COMPACT_USAGE_PROVIDER_LABELS[provider]} ${row.label}: unavailable`)
                   }
                 >
                   {cell?.value || '--'}

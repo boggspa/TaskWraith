@@ -511,6 +511,45 @@ describe('ModelUsageCard', () => {
     expect(withoutAgy).not.toContain('>AGY</th>')
   })
 
+  it('shows the AGY column with the reason when the lane is configured but has no windows', () => {
+    // The agy meter is blank far more often than populated (manual-only probe
+    // + 5-minute clamp). With the column omitted entirely, "press refresh",
+    // "rate-limited" and "not signed in" were one indistinguishable absence.
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [],
+            quotaConfigured: true,
+            quotaError:
+              'Quota unavailable: the agy /usage probe only ever runs on an explicit manual refresh.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('>AGY</th>')
+    // The reason rides the cell tooltip, NOT the cell value: an empty cell must
+    // never be mistakable for a reading.
+    expect(html).toContain('explicit manual refresh')
+    expect(html).not.toContain('AGY 5H: unavailable')
+  })
+
+  it('omits the AGY column for a lane with neither windows nor a reason', () => {
+    // configured:false with no error is the not-opted-in shape. The ban-risk
+    // lane does not exist then, so it must contribute no column at all.
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({ provider: 'antigravity', windows: [], quotaConfigured: false })
+        ]}
+      />
+    )
+
+    expect(html).not.toContain('>AGY</th>')
+  })
+
   it('drops the compact Mistral estimate hedge for Mistral-sourced figures', () => {
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
