@@ -406,6 +406,107 @@ describe('SettingsPanel provider cards', () => {
     expect(mistral).toContain('first-class Mistral Vibe ACP provider')
   })
 
+  it('hides the AntiGravity connected-surface card until an admission lane is live', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
+    )
+
+    // AntiGravity is offered CONDITIONALLY, so with neither the agy risk opt-in
+    // nor a configured Gemini API key it must not appear as an offer surface —
+    // and must not inflate the "providers reporting MCP/bridge status" total.
+    expect(html).not.toContain('settings-mcp-server-card provider-antigravity')
+    expect(html).toContain('settings-mcp-server-card provider-claude')
+  })
+
+  it('reports an opted-in AntiGravity as runtime availability, not a delegated or gated seat', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          antigravityEnabled: true,
+          antigravityOptInAcceptedAt: 1_700_000_000_000,
+          providerStatusByProvider: {
+            antigravity: { available: true, authState: 'oauth' }
+          }
+        })}
+      />
+    )
+
+    const marker = 'settings-mcp-server-card provider-antigravity'
+    const start = html.indexOf(marker)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const end = html.indexOf('settings-mcp-server-card provider-', start + marker.length)
+    const card = html.slice(start, end === -1 ? undefined : end)
+
+    // The capability contract hard-codes an `unsupported` MCP block for this
+    // provider; the card must not inherit it as a permanent provider-managed
+    // "unavailable" that ignores whether the lane actually works.
+    expect(card).toContain('<span class="settings-mcp-state-pill">available</span>')
+    expect(card).not.toContain('>delegated</span>')
+    expect(card).not.toContain('>gated</span>')
+    expect(card).not.toContain('Provider-managed MCP')
+    expect(card).toContain('agy CLI')
+    expect(card).toContain('official agy CLI in print mode')
+    // The agy transport genuinely gets no host tool surface.
+    expect(card).toContain('<span>No tools</span>')
+  })
+
+  it('reports an unavailable AntiGravity as unavailable rather than gated', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          antigravityEnabled: true,
+          antigravityOptInAcceptedAt: 1_700_000_000_000,
+          providerStatusByProvider: {
+            antigravity: { available: false, authState: 'unknown' }
+          }
+        })}
+      />
+    )
+
+    const marker = 'settings-mcp-server-card provider-antigravity'
+    const start = html.indexOf(marker)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const end = html.indexOf('settings-mcp-server-card provider-', start + marker.length)
+    const card = html.slice(start, end === -1 ? undefined : end)
+
+    expect(card).toContain('<span class="settings-mcp-state-pill">unavailable</span>')
+    expect(card).not.toContain('>gated</span>')
+    expect(card).toContain('not available')
+    expect(card).toContain('admitted but not ready')
+  })
+
+  it('reports the AntiGravity Gemini API lane as a bridge-backed tool surface', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          activeTab: 'mcp',
+          antigravityEnabled: true,
+          antigravityOptInAcceptedAt: 1_700_000_000_000,
+          providerStatusByProvider: {
+            antigravity: { available: true, authState: 'api-key', binarySource: 'gemini-api' }
+          }
+        })}
+      />
+    )
+
+    const marker = 'settings-mcp-server-card provider-antigravity'
+    const start = html.indexOf(marker)
+    expect(start).toBeGreaterThanOrEqual(0)
+    const end = html.indexOf('settings-mcp-server-card provider-', start + marker.length)
+    const card = html.slice(start, end === -1 ? undefined : end)
+
+    expect(card).toContain('<span class="settings-mcp-state-pill">available</span>')
+    expect(card).toContain('Gemini API')
+    expect(card).toContain('<span>bridge</span>')
+    // The SDK lane really does receive the TaskWraith catalog as function
+    // declarations and TaskWraith executes the calls, so it reports the catalog
+    // size like every other bridge-backed seat.
+    expect(card).toContain(`<span>${TASKWRAITH_MCP_TOOLS.length} tools</span>`)
+    expect(card).not.toContain('Provider-managed MCP')
+  })
+
   it('offers direct MCP server management actions from Provider Tools', () => {
     const html = renderToStaticMarkup(
       <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />

@@ -50,7 +50,7 @@ import {
   summariseProviderApiKeyStatus,
   type ProviderAuthSummary
 } from '../lib/providerAuthSummary'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../../../shared/retiredProviders'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
 import appIconRegularThumb from '../assets/app-icons/regular.png'
 import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
@@ -136,6 +136,10 @@ import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPoli
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { AntigravityOptInCard } from './AntigravityOptInCard'
+import {
+  antigravityGeminiApiSecretIdentityIsConfigured,
+  useAntigravityGeminiApiSecretRefreshIdentity
+} from '../hooks/useConfiguredProviderSnapshot'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
@@ -4856,12 +4860,46 @@ export function SettingsPanel({
       onChange={onChange}
     />
   )
-  // Retired providers are excluded from SETTINGS_PROVIDER_ORDER above; this
+  // AntiGravity is deliberately outside the static live set, so it has no fixed
+  // slot in SETTINGS_PROVIDER_ORDER — it earns a connected-surface card only
+  // once one of its two consented admission lanes is live. This is the same
+  // union every other AntiGravity chokepoint uses (dispatch, preflight,
+  // ComposerService): the ban-risk agy CLI opt-in, OR a configured Gemini API
+  // key. Reading the key half off the already-shared refresh identity keeps the
+  // predicate identical to App's and fails closed on the pre-first-poll and
+  // error values, so a card can never appear without recorded consent.
+  const antigravityGeminiApiSecretIdentity = useAntigravityGeminiApiSecretRefreshIdentity()
+  const antigravitySurfaceAdmitted =
+    (antigravityEnabled === true && Boolean(antigravityOptInAcceptedAt)) ||
+    antigravityGeminiApiSecretIdentityIsConfigured(antigravityGeminiApiSecretIdentity)
+  //
+  // Retired providers are excluded from SETTINGS_PROVIDER_ORDER itself; the
   // filter is a defensive backstop so a future retirement never surfaces an
   // offer card or counts toward the "providers reporting MCP/bridge status" stat.
-  const providerMcpSummaries = SETTINGS_PROVIDER_ORDER.filter(
-    (provider) => !isRetiredProvider(provider)
-  ).map((provider) => {
+  // It applies to the AntiGravity entry too, so a retirement there would take
+  // the card with it rather than leaving a conditionally-offered orphan.
+  const providerSurfaceOrder: ProviderId[] = (
+    antigravitySurfaceAdmitted
+      ? [...SETTINGS_PROVIDER_ORDER, ANTIGRAVITY_PROVIDER_ID]
+      : SETTINGS_PROVIDER_ORDER
+  ).filter((provider) => !isRetiredProvider(provider))
+  // App only warms provider metadata for the static live seats at launch, and
+  // AntiGravity is deliberately not one of them, so an admitted card would sit
+  // on "checking runtime" until the user found a Refresh button. Warm it once
+  // when admission turns on instead.
+  //
+  // Keyed on admission ALONE on purpose. The refresh callback is an inline
+  // arrow recreated by the parent every render, and this panel re-renders twice
+  // a second off the secret-status poll above — so listing that callback (or the
+  // status map) in the deps would re-fire the warm on every render until the
+  // status landed, and forever on a build where the status channel is absent.
+  useEffect(() => {
+    if (!antigravitySurfaceAdmitted) return
+    if (providerStatusByProvider?.antigravity !== undefined) return
+    onRefreshProviderMcpStatus?.('antigravity')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [antigravitySurfaceAdmitted])
+  const providerMcpSummaries = providerSurfaceOrder.map((provider) => {
     const contract =
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
@@ -4877,6 +4915,18 @@ export function SettingsPanel({
     // can be conditional per run, but that must not turn their static runtime
     // status into a misleading "delegated" or policy "gated" label.
     const firstClassRuntimeProvider = provider === 'pi' || provider === 'mistral'
+    // AntiGravity's capability contract hard-codes an `unsupported` MCP block —
+    // honest for the agy print-mode transport, which really does get no bridge —
+    // but running the card off that block would pin an admitted provider to a
+    // permanent provider-managed "unavailable" that never reflects whether
+    // either lane actually works. Take availability from the runtime status
+    // instead: it is the same two-lane union (configured Gemini API key OR the
+    // consented agy CLI) that dispatch and preflight already gate runs on.
+    const runtimeAvailabilityProvider = firstClassRuntimeProvider || provider === 'antigravity'
+    // Which AntiGravity lane answered. `api-key` is reported only when the SDK
+    // lane is admitted, so it doubles as the "TaskWraith executes this run's
+    // tool calls" signal — the agy lane never gets a host tool surface.
+    const antigravityKeyLane = provider === 'antigravity' && runtimeRecord?.authState === 'api-key'
     // Grok and Cursor can attach the brokered TaskWraith MCP surface at run
     // launch. Cursor also retains its sandbox-bounded native tools. These blocks
     // only seed the card BEFORE the contract has loaded; the static card cannot
@@ -4912,32 +4962,36 @@ export function SettingsPanel({
     // registration is enabled; Cursor's static provider status remains
     // provider-managed because it cannot probe a particular run attachment.
     const providerManaged =
-      !firstClassRuntimeProvider &&
+      !runtimeAvailabilityProvider &&
       (mcp?.source === 'provider-managed' ||
         mcp?.source === 'taskwraith web bridge' ||
         mcp?.source === 'unsupported' ||
         Boolean(provisionalFallback?.providerManaged))
-    const available = firstClassRuntimeProvider
+    const available = runtimeAvailabilityProvider
       ? runtimeAvailable ?? Boolean(contract?.availability?.available)
       : Boolean(mcp?.available ?? status?.available)
     const enabled = Boolean(mcp?.enabled ?? available)
     // HARD RULE: never fabricate "installed" from mere availability for a
     // provider-managed fallback surface. Bridge-backed providers report installed
     // from their capability contract.
-    const installed = firstClassRuntimeProvider
+    const installed = runtimeAvailabilityProvider
       ? available
       : providerManaged
         ? Boolean(mcp?.installed)
         : Boolean(mcp?.installed ?? available)
-    const state = firstClassRuntimeProvider
+    const state = runtimeAvailabilityProvider
       ? available
         ? 'available'
         : 'unavailable'
       : mcp?.state ?? provisionalFallback?.state ?? (available ? 'available' : 'gated')
     const rawToolCount = countMcpStatusTools(status)
     const rawServerCount = countMcpStatusServers(status)
+    // The Gemini API lane advertises the TaskWraith tool catalog as function
+    // declarations and executes the calls in-process, so it reports the catalog
+    // size like every other bridge-backed seat; per-run MCP profile filtering
+    // narrows it at launch. The agy lane advertises nothing.
     const taskwraithBridgeToolCount =
-      provider === 'codex' && enabled ? TASKWRAITH_MCP_TOOLS.length : 0
+      (provider === 'codex' && enabled) || antigravityKeyLane ? TASKWRAITH_MCP_TOOLS.length : 0
     const toolCount = Math.max(
       taskwraithBridgeToolCount,
       provider === 'codex' ? 0 : rawToolCount,
@@ -4946,32 +5000,47 @@ export function SettingsPanel({
     )
     const source = firstClassRuntimeProvider
       ? 'first-class runtime'
-      : provider === 'codex' && enabled
-        ? 'bridge'
-        : mcp?.source ||
-          provisionalFallback?.source ||
-          (provider === 'codex' ? 'provider' : 'taskwraith')
+      : provider === 'antigravity'
+        ? antigravityKeyLane
+          ? 'bridge'
+          : available
+            ? 'provider'
+            : 'taskwraith'
+        : provider === 'codex' && enabled
+          ? 'bridge'
+          : mcp?.source ||
+            provisionalFallback?.source ||
+            (provider === 'codex' ? 'provider' : 'taskwraith')
     const codexInventoryNote =
       provider === 'codex' && rawToolCount > toolCount
         ? ` Codex app-server also reports ${rawServerCount} MCP server${rawServerCount === 1 ? '' : 's'} with ${pluralizeCount(rawToolCount, 'total tool')}.`
         : ''
-    const messageBase = firstClassRuntimeProvider
-      ? provider === 'pi'
-        ? available
-          ? 'Pi is a first-class TaskWraith provider. Its fixed Ensemble coordination extension is attached only after the per-run readiness receipt; this card reports the Pi runtime, not generic MCP injection.'
-          : 'Pi is a first-class TaskWraith provider, but its local runtime is unavailable. Install Pi and configure at least one upstream API key in Settings.'
-        : available
-          ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
-          : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
-      : provider === 'codex' && enabled
-        ? 'TaskWraith registers the MCP bridge for Codex runs.'
-        : mcp?.message ||
-          provisionalFallback?.message ||
-          status?.message ||
-          status?.error ||
-          (available
-            ? 'MCP surface is available for this provider.'
-            : 'MCP status is not available yet.')
+    const messageBase =
+      provider === 'antigravity'
+        ? antigravityKeyLane
+          ? 'AntiGravity runs on your own Gemini API key through the official SDK. TaskWraith advertises its MCP tool catalog to that run and executes the calls itself after approval and workspace/path checks; no MCP server is attached to the provider.'
+          : available
+            ? 'AntiGravity is running the official agy CLI in print mode. TaskWraith attaches no MCP bridge, plugin, or hook to that transport, so its tools stay provider-managed.'
+            : runtimeAvailable === null && !contract
+              ? 'Checking the AntiGravity runtime.'
+              : 'AntiGravity is admitted but not ready. Add a Gemini API key on the Providers tab, or install the official agy CLI if you accepted its risk opt-in.'
+        : firstClassRuntimeProvider
+          ? provider === 'pi'
+            ? available
+              ? 'Pi is a first-class TaskWraith provider. Its fixed Ensemble coordination extension is attached only after the per-run readiness receipt; this card reports the Pi runtime, not generic MCP injection.'
+              : 'Pi is a first-class TaskWraith provider, but its local runtime is unavailable. Install Pi and configure at least one upstream API key in Settings.'
+            : available
+              ? 'Mistral is a first-class Mistral Vibe ACP provider. TaskWraith’s broker is attached per run; this card reports the Vibe runtime rather than treating Mistral as a delegated provider.'
+              : 'Mistral is a first-class Mistral Vibe ACP provider, but `vibe-acp` is unavailable. Install Mistral Vibe, then run `vibe --setup` in Terminal.'
+          : provider === 'codex' && enabled
+            ? 'TaskWraith registers the MCP bridge for Codex runs.'
+            : mcp?.message ||
+              provisionalFallback?.message ||
+              status?.message ||
+              status?.error ||
+              (available
+                ? 'MCP surface is available for this provider.'
+                : 'MCP status is not available yet.')
     return {
       provider,
       label: SETTINGS_PROVIDER_LABELS[provider],
@@ -4981,17 +5050,26 @@ export function SettingsPanel({
       providerManaged,
       state,
       source,
-      serverName: firstClassRuntimeProvider
-        ? available
-          ? provider === 'pi'
-            ? 'Pi runtime'
-            : 'Mistral Vibe ACP'
-          : runtimeAvailable === null
-            ? 'checking runtime'
-            : 'not available'
-        : mcp?.serverName ||
-          provisionalFallback?.serverName ||
-          (available ? 'TaskWraith' : 'not connected'),
+      serverName:
+        provider === 'antigravity'
+          ? antigravityKeyLane
+            ? 'Gemini API'
+            : available
+              ? 'agy CLI'
+              : runtimeAvailable === null && !contract
+                ? 'checking runtime'
+                : 'not available'
+          : firstClassRuntimeProvider
+            ? available
+              ? provider === 'pi'
+                ? 'Pi runtime'
+                : 'Mistral Vibe ACP'
+              : runtimeAvailable === null
+                ? 'checking runtime'
+                : 'not available'
+            : mcp?.serverName ||
+              provisionalFallback?.serverName ||
+              (available ? 'TaskWraith' : 'not connected'),
       toolCount,
       message: messageBase + codexInventoryNote
     }
@@ -8165,7 +8243,7 @@ export function SettingsPanel({
                     size="compact"
                     variant="primary"
                     onClick={() => {
-                      SETTINGS_PROVIDER_ORDER.forEach((provider) =>
+                      providerSurfaceOrder.forEach((provider) =>
                         onRefreshProviderMcpStatus?.(provider)
                       )
                       onRefreshGeminiMcpBridgeStatus()
