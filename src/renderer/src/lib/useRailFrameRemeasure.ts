@@ -5,6 +5,40 @@ const RAIL_SETTLE_TIMEOUT_MS = 160
 /** Only geometry-affecting transitions should re-measure (skip colour/opacity). */
 const RAIL_TRANSITION_PROPERTY_RE = /^(width|left|right|transform|flex-basis|margin-left)$/
 
+/** Air kept between a flank rail's bottom edge and the workspace terminal. */
+export const RAIL_TERMINAL_CLEARANCE_PX = 10
+
+/**
+ * Lowest viewport y a flank rail may paint to, for the pane that owns
+ * `scroller`. Normally the scroller's own bottom — but when the workspace
+ * terminal is open it is the terminal's top edge, less a clearance.
+ *
+ * Why the rails can't read this off the scroller: the terminal
+ * (`.workspace-terminal-split`) is `position:absolute` inside `.app-transcript`
+ * and opening it only grows the scroller's `padding-bottom` (plus lifts the
+ * absolutely-positioned composer via `bottom`), so `scroller`'s own rect never
+ * changes. Both rails are body-portaled `position:fixed` elements painting
+ * ABOVE the terminal's z-index, and both sit in the pane's flank gutters —
+ * which the terminal spans, since it stretches nearly the full pane width
+ * rather than being capped to the composer column. So any rail geometry taken
+ * from the scroller rect alone runs down over the open terminal.
+ *
+ * Measures the live element rather than reading `--workspace-terminal-height`:
+ * that var is overridden per-surface (welcome mode, narrow-pane media query),
+ * and the rect is the only source that can't drift from what actually painted.
+ * The lookup is scoped to the scroller's own `.app-transcript`, so the right
+ * dock's terminal (same class, outside the pane) is never picked up.
+ */
+export function railClearBottomPx(scroller: HTMLElement, scrollerBottomPx: number): number {
+  const terminal = scroller.closest('.app-transcript')?.querySelector('.workspace-terminal-split')
+  if (!(terminal instanceof HTMLElement)) return scrollerBottomPx
+  const rect = terminal.getBoundingClientRect()
+  // A just-portaled terminal can measure 0×0 for a frame; treat it as closed
+  // until it has a real box (the next re-measure pass picks it up).
+  if (rect.width <= 0 || rect.height <= 0) return scrollerBottomPx
+  return Math.min(scrollerBottomPx, rect.top - RAIL_TERMINAL_CLEARANCE_PX)
+}
+
 export interface RailFrameRemeasureRefs {
   /** The transcript scroll container (`.transcript-scroll`). */
   scrollRef: RefObject<HTMLDivElement | null>
@@ -75,6 +109,13 @@ export function useRailFrameRemeasure(
     const content = contentRef.current
     if (typeof ResizeObserver !== 'undefined') {
       observer = new ResizeObserver(() => updateFrame())
+      // Observed at the DEFAULT content-box — load-bearing for
+      // `railClearBottomPx`. Opening the workspace terminal leaves the
+      // scroller's border-box untouched and only grows its `padding-bottom`
+      // (`--composer-terminal-scroll-under-padding`), so a content-box
+      // observation is the signal that the terminal appeared/vanished; a
+      // border-box switch here would silently strand both rails over the open
+      // terminal until an incidental scroll.
       if (scroller) observer.observe(scroller)
       if (content) observer.observe(content)
       // `.composer-area` height tracks composer/roster growth (its width is

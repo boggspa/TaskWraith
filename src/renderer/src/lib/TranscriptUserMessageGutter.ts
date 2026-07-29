@@ -276,6 +276,57 @@ export function layoutGutterLens(
   return { topPx, heightPx }
 }
 
+/**
+ * Downward nudge applied to the WHOLE rail band, so the marker stack sits
+ * against the transcript's reading line rather than the scroller's raw top.
+ */
+export const GUTTER_VERTICAL_OFFSET_PX = 35
+
+/** Floor for the rail band — below this the stack has no usable travel. */
+export const GUTTER_MIN_HEIGHT_PX = 120
+
+export interface GutterVerticalFrame {
+  top: number
+  bottom: number
+  height: number
+}
+
+/**
+ * Vertical band of the go-to-message rail, in viewport px.
+ *
+ * The band's resting extent is the scroller inset top and bottom (proportional
+ * insets, clamped), nudged down by {@link GUTTER_VERTICAL_OFFSET_PX}. The
+ * `clearBottomPx` argument is the lowest y the rail may paint to — normally the
+ * scroller's own bottom, but the TOP of the workspace terminal once that is
+ * open. The terminal is `position:absolute` inside `.app-transcript` and only
+ * grows the scroller's `padding-bottom`, so the scroller's RECT is unchanged
+ * when it opens: a band derived from the rect alone keeps running to the pane
+ * floor and the rail (body-portaled, `position:fixed`, z-index 10030) paints
+ * straight over the terminal. Clamping the bottom here budges the rail up out
+ * of the terminal's way — the mirror of how the sibling participant-filter rail
+ * lifts because it tracks the composer surface, which the terminal pushes up.
+ *
+ * The rail SHRINKS rather than translating: its top is the transcript's reading
+ * line either way, and `layoutTranscriptUserGutterMarkers` anchors the compact
+ * marker cluster to the band's BOTTOM, so the cluster and both edge controls
+ * ride up together. On a pane too short to host the floor height the floor
+ * wins over terminal clearance (matching the pre-existing 120px floor — the
+ * rail has no usable travel below it either way).
+ */
+export function layoutGutterVerticalFrame(
+  scrollerTop: number,
+  scrollerHeight: number,
+  clearBottomPx: number
+): GutterVerticalFrame {
+  const topInset = Math.max(64, Math.min(104, scrollerHeight * 0.12))
+  const bottomInset = Math.max(56, Math.min(96, scrollerHeight * 0.08))
+  const top = scrollerTop + topInset + GUTTER_VERTICAL_OFFSET_PX
+  const restingBottom = scrollerTop + scrollerHeight - bottomInset + GUTTER_VERTICAL_OFFSET_PX
+  const clearBottom = Number.isFinite(clearBottomPx) ? clearBottomPx : restingBottom
+  const bottom = Math.max(top + GUTTER_MIN_HEIGHT_PX, Math.min(restingBottom, clearBottom))
+  return { top, bottom, height: Math.max(GUTTER_MIN_HEIGHT_PX, bottom - top) }
+}
+
 export function layoutTranscriptUserGutterMarkers(
   markers: readonly TranscriptUserGutterMarker[],
   frameHeight: number
