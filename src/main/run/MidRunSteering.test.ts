@@ -4,8 +4,10 @@ import {
   buildMidRunSteeringUserMessage,
   ensembleSteerAbsorbResult,
   filterMessagesExcludingIds,
+  liveSteerDeliverySupported,
   midRunSteeringAbsorbEligible,
   midRunSteeringBackstopPrompt,
+  planLiveSteerDelivery,
   planSteeringContext,
   scheduledSteeringMessageId,
   shouldAppendScheduledSteeringOnBusy
@@ -303,5 +305,64 @@ describe('shouldAppendScheduledSteeringOnBusy', () => {
         chatIsEnsemble: true
       })
     ).toBe(false)
+  })
+})
+
+describe('markEntriesDeliveredToParticipant', () => {
+  it('marks only the named entries, leaving later arrivals unseen', () => {
+    const registry = new MidRunSteeringRegistry()
+    const first = register(registry, { messageId: 'msg-a' })
+    const later = register(registry, { messageId: 'msg-b' })
+    const marked = registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [first.id])
+    expect(marked.map((entry) => entry.id)).toEqual([first.id])
+    // The later interjection is still unseen by every seat, so the backstop
+    // still owns it.
+    expect(registry.undeliveredToAnyParticipant('chat-1').map((entry) => entry.id)).toEqual([
+      later.id
+    ])
+  })
+
+  it('is idempotent and ignores unknown or already-settled entries', () => {
+    const registry = new MidRunSteeringRegistry()
+    const entry = register(registry)
+    registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [entry.id])
+    expect(registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [entry.id])).toEqual([])
+    expect(registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', ['nope'])).toEqual([])
+    expect(registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [])).toEqual([])
+  })
+})
+
+describe('planLiveSteerDelivery', () => {
+  const base = {
+    enabled: true,
+    provider: 'pi' as const,
+    text: 'address this now',
+    hasLiveTransport: true,
+    runSettled: false
+  }
+
+  it('only pi supports live mid-turn delivery', () => {
+    expect(liveSteerDeliverySupported('pi')).toBe(true)
+    for (const provider of ['claude', 'codex', 'cursor', 'grok', 'kimi', 'mistral'] as const) {
+      expect(liveSteerDeliverySupported(provider)).toBe(false)
+      expect(planLiveSteerDelivery({ ...base, provider })).toBe(false)
+    }
+  })
+
+  it('delivers live for a running pi seat when enabled', () => {
+    expect(planLiveSteerDelivery(base)).toBe(true)
+  })
+
+  it('is off unless explicitly enabled', () => {
+    expect(planLiveSteerDelivery({ ...base, enabled: false })).toBe(false)
+  })
+
+  it('refuses a settled run — pi acks a post-settle steer but never delivers it', () => {
+    expect(planLiveSteerDelivery({ ...base, runSettled: true })).toBe(false)
+  })
+
+  it('refuses when the transport is gone or the text is empty', () => {
+    expect(planLiveSteerDelivery({ ...base, hasLiveTransport: false })).toBe(false)
+    expect(planLiveSteerDelivery({ ...base, text: '   ' })).toBe(false)
   })
 })

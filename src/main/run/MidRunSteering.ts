@@ -121,6 +121,31 @@ export class MidRunSteeringRegistry {
   }
 
   /**
+   * Live-delivery variant of `markDeliveredToParticipant`: marks ONLY the
+   * named entries as seen by this participant. The blanket form is right for a
+   * dispatch, whose hop prompt carries everything that existed at compose
+   * time; a live mid-turn steer delivers exactly the entries the provider
+   * confirmed, so anything that arrived afterwards must stay unseen.
+   */
+  markEntriesDeliveredToParticipant(
+    chatId: string,
+    participantId: string,
+    entryIds: string[]
+  ): MidRunSteeringEntry[] {
+    if (entryIds.length === 0) return []
+    const ids = new Set(entryIds)
+    const marked: MidRunSteeringEntry[] = []
+    for (const entry of this.entriesByChatId.get(chatId) || []) {
+      if (!ids.has(entry.id)) continue
+      if (entry.deliveredAtIso) continue
+      if (entry.deliveredToParticipantIds.includes(participantId)) continue
+      entry.deliveredToParticipantIds.push(participantId)
+      marked.push(entry)
+    }
+    return marked
+  }
+
+  /**
    * Entries no ensemble participant has been dispatched against since they
    * arrived. These are the "interjection landed during the final hop" cases
    * the round-completion backstop exists for.
@@ -299,6 +324,57 @@ export function planSteeringContext(input: {
     return { kind: 'prompt-verbatim' }
   }
   return { kind: 'prompt-with-history-exclusion' }
+}
+
+/**
+ * LIVE delivery — the one lane that does not wait for a boundary.
+ *
+ * Every provider in the fleet composes its turn once at dispatch, so an
+ * interjection can only reach it at the NEXT dispatch. Pi is the exception:
+ * `pi --mode rpc` holds stdin open for the whole turn, and a `{type:'steer'}`
+ * frame written mid-turn is delivered by pi itself at its next internal turn
+ * boundary — including an extra turn when the interjection lands during what
+ * would have been the final assistant message (live-probed on pi 0.82.1,
+ * 2026-07-29; see src/main/pi/PiSteerDelivery.ts for the full findings).
+ *
+ * The win is concrete: the seat that is RUNNING when the interjection arrives
+ * is exactly the seat the boundary model cannot reach, and it is why the
+ * ensemble round-completion backstop has to exist. A confirmed live delivery
+ * marks that seat delivered, so no continuation round is chained for an
+ * interjection the panel has already seen.
+ *
+ * Deliberately conservative:
+ *  - `enabled` is an explicit opt-in (default OFF) until this is exercised
+ *    end-to-end in the real app. Off, behavior is exactly the pre-existing
+ *    boundary delivery.
+ *  - A settled run is refused. Pi acks a post-settle steer `success:true` and
+ *    then never delivers it, so attempting one would look like a success and
+ *    strand the message.
+ *  - Attempting a live steer is never load-bearing: if the write fails, or pi
+ *    never confirms the drain, the entry simply stays undelivered and the
+ *    ordinary boundary path carries it as before.
+ */
+export function liveSteerDeliverySupported(provider: ProviderId): boolean {
+  return provider === 'pi'
+}
+
+export function planLiveSteerDelivery(input: {
+  enabled: boolean
+  provider: ProviderId
+  text: string
+  /** A stdin writer is still registered for this run's transport. */
+  hasLiveTransport: boolean
+  /** The run's terminal result has already been projected. */
+  runSettled: boolean
+}): boolean {
+  if (!input.enabled) return false
+  if (!liveSteerDeliverySupported(input.provider)) return false
+  if (!input.text.trim()) return false
+  if (!input.hasLiveTransport) return false
+  // Probe finding 3: after `agent_settled` pi still acks the frame but runs no
+  // further turn. Never write into a settled run.
+  if (input.runSettled) return false
+  return true
 }
 
 /** Shared filter for ComposerService's `excludeMessageIds` input. */

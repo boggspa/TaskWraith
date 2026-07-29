@@ -588,6 +588,7 @@ import {
   ensembleSteerAbsorbResult,
   midRunSteeringAbsorbEligible,
   midRunSteeringBackstopPrompt,
+  planLiveSteerDelivery,
   planSteeringContext,
   scheduledSteeringMessageId,
   shouldAppendScheduledSteeringOnBusy
@@ -1423,9 +1424,15 @@ import { cursorDebugEnabled } from './cursorGate'
 import {
   PiRpcTurnReducer,
   piPromptCommand,
+  piSteerCommand,
   type NormalizedPiRunEvent,
   type PiUsage
 } from './pi/PiRpc'
+import {
+  PiLiveSteerTracker,
+  parsePiQueueUpdate,
+  piLiveSteerEnabled
+} from './pi/PiSteerDelivery'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
@@ -14601,13 +14608,19 @@ function absorbEnsembleSteerIntoLiveRound(
     chat,
     buildMidRunSteeringUserMessage({ id: messageId, content: text, timestampIso: nowIso })
   )
-  midRunSteeringRegistry.register({
+  const entry = midRunSteeringRegistry.register({
     chatId,
     messageId,
     text,
     source: 'ensembleSteer',
     createdAtIso: nowIso
   })
+  // The seat that is RUNNING right now is the one seat no later hop prompt can
+  // reach — it is precisely why the round-completion backstop exists. A pi
+  // seat can take the interjection mid-turn; every other provider composes its
+  // turn once at dispatch and must wait for the boundary. Opt-in, best-effort,
+  // and confirmed only by pi's own queue drain.
+  attemptPiLiveSteerDelivery(chatId, entry.id, text)
   return ensembleSteerAbsorbResult(roundId)
 }
 
@@ -17259,6 +17272,119 @@ function maybeLogCursorRawEvent(event: unknown): void {
   }
 }
 
+// ── Pi live mid-turn steering ───────────────────────────────────────────────
+// Pi is the only seat whose transport accepts an interjection while its turn
+// is already running (`pi --mode rpc` holds stdin open for the whole turn), so
+// a steer frame can be written INTO the live turn instead of waiting for the
+// next dispatch. Protocol findings and the delivery-evidence rules live in
+// src/main/pi/PiSteerDelivery.ts — the short version is that pi acks a steer
+// `success:true` even when it will never deliver it, so only the drain of pi's
+// own `queue_update` counts as delivery. Both maps are keyed by appRunId and
+// are torn down with the process.
+const piRunSteerWriters = new Map<string, (line: string) => boolean>()
+const piRunSteerBindings = new Map<
+  string,
+  { chatId: string; participantId?: string; tracker: PiLiveSteerTracker }
+>()
+
+/**
+ * Fold pi's `queue_update` lines for a run with steer frames in flight. This
+ * rides the RAW stream rather than the normalized reducer: `queue_update`
+ * carries no run content, so the reducer has no vocabulary for it (and the
+ * reducer belongs to a concurrently-owned file). A drained entry is the ONLY
+ * proof pi actually delivered the interjection to the model.
+ */
+function observePiLiveSteerQueueUpdate(appRunId: string | undefined, event: unknown): void {
+  if (!appRunId) return
+  const binding = piRunSteerBindings.get(appRunId)
+  if (!binding?.tracker.hasPending) return
+  const snapshot = parsePiQueueUpdate(event)
+  if (!snapshot) return
+  const delivered = binding.tracker.observeQueueUpdate(snapshot)
+  if (delivered.length === 0) return
+  if (binding.participantId) {
+    // Ensemble: this seat has now genuinely seen the interjection, so the
+    // round-completion backstop must not chain a continuation round for it.
+    midRunSteeringRegistry.markEntriesDeliveredToParticipant(
+      binding.chatId,
+      binding.participantId,
+      delivered
+    )
+  } else {
+    midRunSteeringRegistry.markDelivered(binding.chatId, delivered, new Date().toISOString())
+  }
+  console.info(
+    `[pi-live-steer] ${appRunId} delivered ${delivered.length} steering entr${
+      delivered.length === 1 ? 'y' : 'ies'
+    } mid-turn`
+  )
+}
+
+/**
+ * Process teardown. Anything still pending never earned delivery evidence, so
+ * it is deliberately LEFT undelivered in the registry: the ordinary boundary
+ * path (next hop, or the completion backstop) still carries it, exactly as it
+ * did before live steering existed. Losing the attempt is always safe; the
+ * transcript message is durable either way.
+ */
+function releasePiLiveSteerBinding(appRunId: string | undefined): void {
+  if (!appRunId) return
+  piRunSteerWriters.delete(appRunId)
+  const binding = piRunSteerBindings.get(appRunId)
+  if (!binding) return
+  piRunSteerBindings.delete(appRunId)
+  const stranded = binding.tracker.takeUndelivered()
+  if (stranded.length > 0) {
+    console.warn(
+      `[pi-live-steer] ${appRunId} ended with ${stranded.length} steering entr${
+        stranded.length === 1 ? 'y' : 'ies'
+      } unconfirmed; leaving them for boundary delivery`
+    )
+  }
+}
+
+/**
+ * Try to deliver a just-absorbed interjection into any pi seat RUNNING in this
+ * chat. Best-effort by construction: a refused plan, a failed write, or a pi
+ * that never drains the queue all leave the entry untouched for the existing
+ * boundary path. Never throws into the caller's absorb path.
+ */
+function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: string): void {
+  if (!piLiveSteerEnabled()) return
+  try {
+    for (const session of runManager.getActiveByProvider('pi')) {
+      if (session.appChatId !== chatId) continue
+      const appRunId = session.runId
+      const writer = piRunSteerWriters.get(appRunId)
+      const state = session.state as CliProviderStreamState | undefined
+      if (
+        !planLiveSteerDelivery({
+          enabled: true,
+          provider: 'pi',
+          text,
+          hasLiveTransport: Boolean(writer),
+          // A settled run still ACKS a steer and never runs another turn.
+          runSettled: Boolean(state?.completed)
+        })
+      ) {
+        continue
+      }
+      if (!writer?.(piSteerCommand(text))) continue
+      const binding = piRunSteerBindings.get(appRunId) || {
+        chatId,
+        ...(state?.ensembleRun?.participantId
+          ? { participantId: state.ensembleRun.participantId }
+          : {}),
+        tracker: new PiLiveSteerTracker()
+      }
+      binding.tracker.registerPending(entryId, text)
+      piRunSteerBindings.set(appRunId, binding)
+    }
+  } catch (error) {
+    console.warn('[pi-live-steer] live delivery attempt failed:', error)
+  }
+}
+
 // Pi RPC stdin closers keyed by appRunId: the terminal `agent_settled` event
 // closes stdin (pi's documented shutdown — it ignores nothing, but EOF is the
 // clean path, verified ~0.6s on 0.82.1) with a SIGKILL backstop so no pi child
@@ -17403,6 +17529,7 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
 
 function handlePiStreamEvent(state: CliProviderStreamState, event: unknown) {
   const reducer = (state.piReducer ??= new PiRpcTurnReducer())
+  observePiLiveSteerQueueUpdate(state.appRunId, event)
   for (const evt of reducer.ingest({ json: event as Record<string, unknown> })) {
     applyPiRunEvent(state, evt)
   }
@@ -18223,6 +18350,7 @@ function runCliProviderProcess(
     settleStdinReadiness('process_exit')
     if (route.appRunId) {
       piRunStdinClosers.delete(route.appRunId)
+      releasePiLiveSteerBinding(route.appRunId)
       providerProcessTerminationBackstop.clear(route.appRunId)
     }
     const effectiveExitCode =
@@ -18368,6 +18496,20 @@ function runCliProviderProcess(
             /* the kill backstop below still runs */
           }
           providerProcessTerminationBackstop.arm(appRunId, child)
+        })
+        // Live mid-turn steering writes additional JSONL frames onto the SAME
+        // held-open stdin the prompt went in on. Reports whether the frame
+        // actually reached the pipe: a closed/ended stdin means the turn is
+        // past the point where pi would deliver it.
+        piRunSteerWriters.set(appRunId, (line) => {
+          const stdin = child.stdin
+          if (!stdin || stdin.destroyed || stdin.writableEnded) return false
+          try {
+            stdin.write(`${line}\n`)
+            return true
+          } catch {
+            return false
+          }
         })
       }
       if (stdinReadiness && !stdinReadinessSettled) {
