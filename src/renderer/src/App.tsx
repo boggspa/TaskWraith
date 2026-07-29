@@ -20010,6 +20010,7 @@ function App(): React.JSX.Element {
         'model',
         'role',
         'instructions',
+        'stageRole',
         'reasoningEffort',
         'fastModeEnabled',
         'thinkingEnabled',
@@ -24910,12 +24911,20 @@ function App(): React.JSX.Element {
   )
   const runtimeProfileControl =
     currentProviderRuntimeProfiles.length > 0 ? (
-      <label className="composer-runtime-profile" title="Runtime profile for this thread">
+      <label
+        className="composer-runtime-profile"
+        title={
+          isCurrentComposerLocked
+            ? 'Runtime profile for the next turn'
+            : 'Runtime profile for this thread'
+        }
+        data-pending-next-turn={isCurrentComposerLocked ? 'true' : 'false'}
+      >
         <span>Runtime</span>
         <select
           value={selectedRuntimeProfileId}
           onChange={(event) => handleRuntimeProfileChange(event.target.value)}
-          disabled={!currentChat || isCurrentComposerLocked}
+          disabled={!currentChat}
           aria-label="Runtime profile"
         >
           {currentProviderRuntimeProfiles.map((profile) => (
@@ -29986,6 +29995,7 @@ function App(): React.JSX.Element {
     pendingApprovalQueueByChatId,
     pendingPlanChoice,
     pendingProposedPlan,
+    applyEnsemblePermissionsToAllParticipantsForChat,
     patchSideParticipantWithSeatGate: patchParticipantWithSeatGate,
     popOutLinkedChat,
     popoutMenuOpen,

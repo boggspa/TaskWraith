@@ -130,6 +130,10 @@ describe('Multiview pane Composer context parity', () => {
 
   it('targets pane chat ids for seat gates, queues, and directed sends', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+    const layoutSource = readFileSync(
+      join(process.cwd(), 'src/renderer/src/app/views/MainAppLayout.tsx'),
+      'utf8'
+    )
     const builderStart = source.indexOf('const buildPaneComposerCtx =')
     const builderEnd = source.indexOf('const paneComposerCtxByKey =', builderStart)
     const builder = source.slice(builderStart, builderEnd)
@@ -284,6 +288,22 @@ describe('Multiview pane Composer context parity', () => {
       'requestLiveEnsembleRoundConfigUpdate(chatId, { maxContinuationHops: safeMax })'
     )
     expect(liveRoundConfig).toContain('isEnsembleActiveRoundDispatchLive(activeRound)')
+    expect(source).toContain("'stageRole',")
+    const runtimeProfileControl = source.slice(
+      source.indexOf('const runtimeProfileControl ='),
+      source.indexOf('// Launch-seal maturity')
+    )
+    expect(runtimeProfileControl).toContain(
+      "data-pending-next-turn={isCurrentComposerLocked ? 'true' : 'false'}"
+    )
+    expect(runtimeProfileControl).toContain('disabled={!currentChat}')
+    expect(runtimeProfileControl).not.toContain('disabled={!currentChat || isCurrentComposerLocked}')
+    expect(layoutSource).toContain(
+      'applyEnsemblePermissionsToAllParticipantsForChat(\n      sideChat.appChatId,'
+    )
+    expect(layoutSource).not.toContain(
+      'participants: sideChat.ensemble.participants.map((participant: any) =>'
+    )
     expect(source).not.toContain('setSelectedParticipantId(')
     expect(source).toContain('setSelectedParticipantForChat(updatedChat.appChatId, null)')
   })

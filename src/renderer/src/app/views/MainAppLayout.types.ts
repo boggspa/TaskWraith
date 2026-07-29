@@ -470,6 +470,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   pendingApprovalQueueByChatId: MainAppLayoutSidebarProps['pendingApprovalQueueByChatId']
   pendingPlanChoice: any
   pendingProposedPlan: any
+  applyEnsemblePermissionsToAllParticipantsForChat: any
   patchSideParticipantWithSeatGate: any
   popOutLinkedChat: any
   popoutMenuOpen: any

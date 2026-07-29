@@ -398,6 +398,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   pendingApprovalQueueByChatId,
   pendingPlanChoice,
   pendingProposedPlan,
+  applyEnsemblePermissionsToAllParticipantsForChat,
   patchSideParticipantWithSeatGate,
   popOutLinkedChat,
   popoutMenuOpen,
@@ -865,25 +866,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   }
   const applySidePermissionsToAllParticipants = (): void => {
     if (!sideChat?.ensemble || !sideSelectedParticipant) return
-    const sourceOverrides = sideSelectedParticipant.permissionOverrides
-    const clonedOverrides = sourceOverrides
-      ? {
-          ...sourceOverrides,
-          ...(sourceOverrides.agenticServices
-            ? { agenticServices: { ...sourceOverrides.agenticServices } }
-            : {}),
-          ...(sourceOverrides.externalPathGrants
-            ? { externalPathGrants: [...sourceOverrides.externalPathGrants] }
-            : {})
-        }
-      : undefined
-    patchSideEnsemble({
-      participants: sideChat.ensemble.participants.map((participant: any) => ({
-        ...participant,
-        permissionPresetId: sideSelectedParticipant.permissionPresetId,
-        permissionOverrides: clonedOverrides
-      }))
-    })
+    applyEnsemblePermissionsToAllParticipantsForChat(
+      sideChat.appChatId,
+      sideSelectedParticipant.id
+    )
   }
   const rebindSideChatWorkspace = (workspace: any): void => {
     if (!sideChat || !workspace) return
