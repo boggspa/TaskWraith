@@ -55,10 +55,9 @@ launcher uses TaskWraith's bundled runtime, so trying the preview requires no
 global Node installation.
 
 This is **the same task in two native surfaces, with one authority** — not a
-second TaskWraith. The App remains the required host; thread, provider, model,
+second TaskWraith. The App remains the required authority; thread, provider, model,
 permission, and roster configuration stay there. When a run needs an approval
-or an answer, the terminal makes that boundary explicit with **Open TaskWraith
-to answer** instead of imitating an authority surface. The preview concentrates
+or an answer, the terminal makes that boundary explicit with **Open TaskWraith to answer** instead of imitating an authority surface. The preview concentrates
 on the daily terminal loop — observe, prompt, steer, cancel, and reconnect —
 while richer configuration and governed decisions remain in the App.
 
