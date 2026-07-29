@@ -1,8 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import * as nodeFs from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
-
-import type { CanonicalWorkspaceLockClaim } from './WorkspaceLockTypes'
+import { join, resolve } from 'node:path'
 
 export const WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY = 'workspace-mutation-commit-fence'
 export const WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME = 'fence.json'

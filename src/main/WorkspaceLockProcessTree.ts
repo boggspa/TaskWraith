@@ -69,7 +69,7 @@ function processGroupIsDefinitelyGone(
     return false
   } catch (error) {
     return (
-      Boolean(error) &&
+      error !== null &&
       typeof error === 'object' &&
       'code' in error &&
       (error as { code?: unknown }).code === 'ESRCH'
