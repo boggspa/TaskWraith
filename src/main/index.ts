@@ -445,6 +445,11 @@ import {
   isRemoteProviderDispatchable
 } from './remote/RemoteProviderAdmission'
 import {
+  buildRemoteProviderModelsMessage,
+  createRemoteProviderModelsPublisher,
+  createReplayableTrigger
+} from './remote/RemoteProviderModels'
+import {
   isRemoteWorkflowRunnableChat,
   RemoteWorkflowActions,
   remoteWorkflowApprovalMode,
@@ -2150,10 +2155,13 @@ function renewRemotePowerAssertion(reason: string): void {
   remotePowerBlockerId = powerSaveBlocker.start('prevent-app-suspension')
   console.log(`[remote-bridge] power assertion renewed (${reason})`)
 }
-// Deferred hook: the provider-model catalog builder is defined inside the
-// app-ready scope (it reuses the get-agent-models extraction); the
-// establish-time callback fires through this indirection.
-let remoteProviderModelsTrigger: (() => void) | null = null
+// The provider-model catalog builder is late-bound inside app-ready. Requests
+// that arrive first (discovery or a fast device establish) coalesce and replay
+// once registration finishes instead of leaving the phone empty indefinitely.
+const remoteProviderModelsTrigger = createReplayableTrigger()
+const requestRemoteProviderModelsRefresh = (): void => {
+  remoteProviderModelsTrigger.request()
+}
 let remoteUsageRollupTrigger: (() => void) | null = null
 const registerRemoteUsageRollupTrigger = (trigger: () => void): void => {
   remoteUsageRollupTrigger = trigger
@@ -2167,7 +2175,7 @@ const registerRemoteFirstLaunchStateTrigger = (trigger: () => void): void => {
   remoteFirstLaunchStateTrigger = trigger
 }
 const registerRemoteProviderModelsTrigger = (fn: () => void): void => {
-  remoteProviderModelsTrigger = fn
+  remoteProviderModelsTrigger.register(fn)
 }
 /** Ship the user's iOS banner template to every paired device.
  *
@@ -15407,7 +15415,7 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
       return 'unavailable'
     }
   },
-  onDiscoveryComplete: () => remoteProviderModelsTrigger?.()
+  onDiscoveryComplete: requestRemoteProviderModelsRefresh
 })
 const detectManagedRunConfiguredProviders = (settings: AppSettings): Promise<Set<ProviderId>> =>
   managedRunConfiguredProviderDiscovery.snapshot(settings)
@@ -36961,7 +36969,7 @@ if (isGeminiMcpBridgeProcess) {
         // Configured-ness and the model list both key off stored upstreams;
         // re-detect so pickers reflect the mutation without a relaunch.
         managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
-        remoteProviderModelsTrigger?.()
+        requestRemoteProviderModelsRefresh()
       }
     })
     // Microsoft Graph credentials use the same safeStorage-only discipline:
@@ -36995,7 +37003,7 @@ if (isGeminiMcpBridgeProcess) {
           antigravityGeminiApiDiscoveryOutcomeStore.clear()
           managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
         },
-        broadcastPendingCatalog: () => remoteProviderModelsTrigger?.()
+        broadcastPendingCatalog: requestRemoteProviderModelsRefresh
       })
     })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
@@ -42849,7 +42857,7 @@ if (isGeminiMcpBridgeProcess) {
         // empty pickers otherwise.
         onDeviceEstablished: () => {
           remoteBridgeRunEventFilter.resetOnDeviceEstablished()
-          remoteProviderModelsTrigger?.()
+          requestRemoteProviderModelsRefresh()
           remoteUsageRollupTrigger?.()
           remoteModelUsageTrigger?.()
           remoteFirstLaunchStateTrigger?.()
@@ -45910,7 +45918,7 @@ if (isGeminiMcpBridgeProcess) {
           managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
           // A consent withdrawal invalidates the paired-device catalog before
           // the replacement discovery generation completes.
-          remoteProviderModelsTrigger?.()
+          requestRemoteProviderModelsRefresh()
         }
       },
       getPromptCacheCapabilities: () =>
@@ -48526,81 +48534,36 @@ if (isGeminiMcpBridgeProcess) {
     // Gemini remains retired and static iOS offers remain unchanged. The sole
     // dynamic addition is S4's already-admitted AntiGravity catalog; it is
     // absent whenever the snapshot is pending, disconnected, or withdrawn.
-    const broadcastProviderModelsToRemote = (): void => {
-      void (async () => {
-        const broadcaster = bridgeBroadcasterRef
-        if (!broadcaster) return
-        // Remote catalog = the live-selectable set, full stop. Antigravity's
-        // desktop conditional offer deliberately does NOT project here: the
-        // allowlist is seeded from PROVIDER_OPTIONS, so no workspace can ever
-        // grant it to a paired device — broadcasting its models made the
-        // phone offer a provider the Mac would refuse on every send (F6).
+    const remoteProviderModelsPublisher = createRemoteProviderModelsPublisher({
+      build: async () => {
+        // Capture one coherent conditional-provider snapshot per generation:
+        // admission and rows must describe the same completed discovery.
+        const configuredSnapshot = getConfiguredProviderSnapshot()
+        const includeAntigravity = configuredSnapshot.providerIds.includes(ANTIGRAVITY_PROVIDER_ID)
+        const antigravityModels =
+          includeAntigravity && configuredSnapshot.modelsByProvider?.antigravity
+            ? [...configuredSnapshot.modelsByProvider.antigravity]
+            : []
         const remoteProviders: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
-        const providers = await Promise.all(
-          remoteProviders.map(async (provider) => {
-            const models = (await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
-              id?: unknown
-              label?: unknown
-              isDefault?: unknown
-              disabled?: unknown
-              disabledReason?: unknown
-              supportedReasoningEfforts?: unknown
-              defaultReasoningEffort?: unknown
-            }>
-            return {
-              provider,
-              models: models
-                .filter((model) => typeof model?.id === 'string')
-                .slice(0, 40)
-                .map((model) => ({
-                  id: model.id as string,
-                  label: typeof model.label === 'string' ? model.label : (model.id as string),
-                  isDefault: Boolean(model.isDefault),
-                  ...(model.disabled === true ? { disabled: true } : {}),
-                  ...(typeof model.disabledReason === 'string'
-                    ? { disabledReason: model.disabledReason }
-                    : {}),
-                  supportedReasoningEfforts: Array.isArray(model.supportedReasoningEfforts)
-                    ? model.supportedReasoningEfforts
-                        .filter(
-                          (
-                            option
-                          ): option is {
-                            reasoningEffort: string
-                            description?: string
-                            disabled?: boolean
-                            disabledReason?: string
-                          } =>
-                            Boolean(option) &&
-                            typeof option === 'object' &&
-                            typeof (option as { reasoningEffort?: unknown }).reasoningEffort ===
-                              'string'
-                        )
-                        .map((option) => ({
-                          reasoningEffort: option.reasoningEffort,
-                          ...(typeof option.description === 'string'
-                            ? { description: option.description }
-                            : {}),
-                          ...(option.disabled === true ? { disabled: true } : {}),
-                          ...(typeof option.disabledReason === 'string'
-                            ? { disabledReason: option.disabledReason }
-                            : {})
-                        }))
-                    : [],
-                  defaultReasoningEffort:
-                    typeof model.defaultReasoningEffort === 'string'
-                      ? model.defaultReasoningEffort
-                      : null
-                }))
-            }
-          })
+        if (includeAntigravity) remoteProviders.push(ANTIGRAVITY_PROVIDER_ID)
+        return buildRemoteProviderModelsMessage(remoteProviders, (provider) =>
+          provider === ANTIGRAVITY_PROVIDER_ID
+            ? antigravityModels
+            : listAgentModelsForProvider(provider)
         )
-        bridgeBroadcasterRef?.broadcastProviderModels({
-          providers: providers.filter((entry) => entry.models.length > 0)
-        })
-      })()
-    }
-    registerRemoteProviderModelsTrigger(broadcastProviderModelsToRemote)
+      },
+      publish: (message) => bridgeBroadcasterRef?.broadcastProviderModels(message),
+      onError: (error) => {
+        console.warn(
+          `[remote-bridge] provider model catalog build failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+    })
+    registerRemoteProviderModelsTrigger(() => {
+      void remoteProviderModelsPublisher.refresh()
+    })
 
     // Dispatch an agent run with explicit sender + event. Extracted Phase
     // C-late from the `run-agent` IPC handler body so bridge-initiated

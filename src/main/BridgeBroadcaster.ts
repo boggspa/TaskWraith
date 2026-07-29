@@ -412,11 +412,14 @@ export class BridgeBroadcaster {
     this.sendNotify(BRIDGE_BROADCAST_METHODS.bannerTemplate, message)
   }
 
-  /** Ship the per-provider model catalogs (see ProviderModelsMessage). */
+  /** Ship the per-provider model catalogs (see ProviderModelsMessage).
+   *
+   * Deliberately unthrottled: credential/discovery transitions can emit an
+   * empty pending catalog followed immediately by the completed one. The
+   * generic throttle drops rather than coalesces, which would strand iOS on
+   * the empty generation with no guaranteed retry. */
   broadcastProviderModels(message: ProviderModelsMessage): void {
-    const method = BRIDGE_BROADCAST_METHODS.providerModels
-    if (!this.shouldEmit(method)) return
-    this.sendNotify(method, message)
+    this.sendNotify(BRIDGE_BROADCAST_METHODS.providerModels, message)
   }
 
   /** Build a current snapshot from AppStore + emit

@@ -427,14 +427,17 @@ describe('BridgeBroadcaster', () => {
     )
   })
 
-  it('broadcastProviderModels ships the caller-assembled catalog (throttled)', () => {
+  it('broadcastProviderModels ships consecutive catalog generations without dropping the latest', () => {
     const notify = vi.fn()
     const broadcaster = new BridgeBroadcaster({
       daemon: { notify },
       appStore: makeFakeStore([], []),
       now: () => 1000
     })
-    const message = {
+    const pending = {
+      providers: []
+    }
+    const completed = {
       providers: [
         {
           provider: 'claude',
@@ -442,12 +445,12 @@ describe('BridgeBroadcaster', () => {
         }
       ]
     }
-    broadcaster.broadcastProviderModels(message)
-    broadcaster.broadcastProviderModels(message) // throttled — same tick
-    expect(notify).toHaveBeenCalledTimes(1)
-    const [method, params] = notify.mock.calls[0]
+    broadcaster.broadcastProviderModels(pending)
+    broadcaster.broadcastProviderModels(completed)
+    expect(notify).toHaveBeenCalledTimes(2)
+    const [method, params] = notify.mock.calls[1]
     expect(method).toBe(BRIDGE_BROADCAST_METHODS.providerModels)
-    expect(params).toEqual(message)
+    expect(params).toEqual(completed)
   })
 
   it('broadcastFirstLaunchState ships the caller-assembled redacted state', () => {
