@@ -125,6 +125,10 @@ import {
 import { gateBlocksActiveGoal } from '../ReviewGateScope'
 import { findTerminalSynthesizerRoundSummary } from '../EnsembleRoundSummary'
 import { mergeTranscriptMediaRefs } from './TranscriptMediaService'
+import {
+  planEnsembleMidRunSteeringBoundary,
+  type EnsembleMidRunSteeringBoundaryState
+} from './EnsembleMidRunSteering'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
@@ -520,6 +524,18 @@ export interface EnsembleOrchestratorDeps {
     roundId: string,
     status: Extract<EnsembleRoundState['status'], 'completed' | 'cancelled' | 'failed'>
   ) => void
+  /**
+   * Main-owned transcript append + delivery-registry seam for a text-only
+   * interjection absorbed into this still-live round.
+   */
+  appendMidRunSteering?: (input: { chatId: string; roundId: string; text: string }) => void
+  /**
+   * Registry ids that no participant prompt has carried yet. The orchestrator
+   * uses the set only at the serial drain boundary; provider-specific live
+   * delivery (currently Pi) can clear it before an extra boundary turn is
+   * needed.
+   */
+  getPendingMidRunSteeringEntryIds?: (chatId: string) => string[]
   transitionRunQueueJob?: (
     runIdOrId: string,
     status: RunQueueJobStatus,
@@ -3011,6 +3027,9 @@ interface ActiveRoundRuntime {
   quarantinedLegacyQueuedPrompts?: string[]
   startAfterCancellation?: Promise<unknown>
   remainingParticipants?: EnsembleParticipant[]
+  /** Most recent foreground seat admitted by the serial loop. */
+  lastForegroundParticipantId?: string
+  midRunSteeringBoundaryState?: EnsembleMidRunSteeringBoundaryState
   bossmanParticipantId?: string
   secondInCommandParticipantId?: string
   bossmanBaselineParticipantIds?: string[]
@@ -3752,6 +3771,44 @@ export class EnsembleOrchestrator {
     }
   }
 
+  canAbsorbMidRunSteering(chatId: string, roundId?: string): boolean {
+    const runtime = this.roundsByChatId.get(chatId)
+    if (!runtime || runtime.cancelled) return false
+    if (roundId && runtime.roundId !== roundId) return false
+    const activeRound = this.deps.getChat(chatId)?.ensemble?.activeRound
+    return Boolean(
+      activeRound &&
+        activeRound.roundId === runtime.roundId &&
+        activeRound.status === 'running' &&
+        this.deps.appendMidRunSteering
+    )
+  }
+
+  /**
+   * Append a text interjection without cancelling the active provider, round,
+   * or hop sequence. Subsequent participant prompts pick it up from the live
+   * transcript delta; the serial drain has a same-round boundary fallback for
+   * an interjection that arrived during the final participant.
+   */
+  absorbMidRunSteering(input: {
+    chatId: string
+    roundId: string
+    text: string
+  }): EnsembleQueuedSteerResult {
+    const text = input.text.trim()
+    if (!text || !this.canAbsorbMidRunSteering(input.chatId, input.roundId)) {
+      return { status: 'ignored', error: 'No active Ensemble round' }
+    }
+    const runtime = this.roundsByChatId.get(input.chatId)!
+    this.cancelWakeupsOnUserInput(runtime)
+    this.deps.appendMidRunSteering!({
+      chatId: input.chatId,
+      roundId: input.roundId,
+      text
+    })
+    return { status: 'steered', roundId: input.roundId }
+  }
+
   startRound(input: {
     chatId: string
     prompt: string
@@ -4168,7 +4225,32 @@ export class EnsembleOrchestrator {
       return { status: 'ignored', error: targetError }
     }
 
-    const remainingQueue = runtime.queuedPrompts.filter((_, queuedIndex) => queuedIndex !== selectedIndex)
+    const remainingQueue = runtime.queuedPrompts.filter(
+      (_, queuedIndex) => queuedIndex !== selectedIndex
+    )
+    const boundaryAbsorbEligible =
+      !selected.dmTargetParticipantId &&
+      selected.imageAttachments.length === 0 &&
+      (selected.imageThumbnails?.length || 0) === 0 &&
+      (selected.externalPathGrants?.length || 0) === 0 &&
+      (selected.discordContextSnapshots?.length || 0) === 0
+    if (boundaryAbsorbEligible) {
+      const absorbed = this.absorbMidRunSteering({
+        chatId: input.chatId,
+        roundId: runtime.roundId,
+        text: selected.prompt
+      })
+      if (absorbed.status === 'steered') {
+        runtime.queuedPrompts = remainingQueue
+        this.updateChatRound(input.chatId, (round) =>
+          round?.roundId === runtime.roundId
+            ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+            : round
+        )
+        return absorbed
+      }
+    }
+
     const startAfterCancellation = this.cancelRound(input.chatId, 'steered')
     const roundId = this.beginRound(
       input.chatId,
@@ -13435,6 +13517,7 @@ export class EnsembleOrchestrator {
         this.finalizeRun(run, 'failed', note)
       } else {
         dispatchAttempts += 1
+        runtime.lastForegroundParticipantId = participant.id
         this.startCursorCompletionWatchdog(run)
         // Review F2c — record the shell stamp only once the provider
         // actually RECEIVED this prompt. Stamping before dispatch let a
@@ -13822,6 +13905,15 @@ export class EnsembleOrchestrator {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, formatAllUnreachableNote())
     }
 
+    const steeringBoundaryParticipant = this.takeMidRunSteeringBoundaryParticipant(runtime)
+    if (steeringBoundaryParticipant && !runtime.cancelled) {
+      await this.trackRoundActivity(
+        runtime,
+        this.runRound(runtime, [steeringBoundaryParticipant], { skipPreamble: true })
+      )
+      return
+    }
+
     if (
       remaining.length === 0 &&
       !runtime.cancelled &&
@@ -14011,7 +14103,77 @@ export class EnsembleOrchestrator {
     }
     if (roundHasActiveLanes(round) || runtime.fanoutReservedParticipantIds?.size) return
     this.deferredLaneDrainByChatId.delete(chatId)
+    const steeringBoundaryParticipant = this.takeMidRunSteeringBoundaryParticipant(runtime)
+    if (steeringBoundaryParticipant && !runtime.cancelled) {
+      void this.trackRoundActivity(
+        runtime,
+        this.runRound(runtime, [steeringBoundaryParticipant], { skipPreamble: true })
+      )
+      return
+    }
     this.finalizeDrainedRound(runtime)
+  }
+
+  /**
+   * Claim one same-round participant turn when an interjection arrived after
+   * the final ordinary prompt was composed. This is user-input delivery, not
+   * an autonomous continuation: it neither starts a new round nor consumes the
+   * Continuous-mode hop budget.
+   */
+  private takeMidRunSteeringBoundaryParticipant(
+    runtime: ActiveRoundRuntime
+  ): EnsembleParticipant | null {
+    if (runtime.cancelled) return null
+    const getPending = this.deps.getPendingMidRunSteeringEntryIds
+    if (!getPending) return null
+    const chat = this.deps.getChat(runtime.chatId)
+    const round = chat?.ensemble?.activeRound
+    if (
+      !chat?.ensemble ||
+      !round ||
+      round.roundId !== runtime.roundId ||
+      round.status !== 'running' ||
+      roundHasActiveLanes(round) ||
+      runtime.fanoutReservedParticipantIds?.size
+    ) {
+      return null
+    }
+    const pendingIds = getPending(runtime.chatId).filter(Boolean)
+    if (pendingIds.length === 0) return null
+    const roundStatusByParticipantId = new Map(
+      round.participants.map((participant) => [participant.participantId, participant.status])
+    )
+    const unavailableParticipantIds = new Set(runtime.unreachableParticipantIds || [])
+    for (const participant of chat.ensemble.participants) {
+      if (this.participantFanoutDispatchState(runtime, participant.id)) {
+        unavailableParticipantIds.add(participant.id)
+      }
+    }
+    const plan = planEnsembleMidRunSteeringBoundary({
+      pendingEntryIds: pendingIds,
+      participants: chat.ensemble.participants,
+      participantStatusById: roundStatusByParticipantId,
+      preferredParticipantIds: [
+        runtime.dmTargetParticipantId,
+        runtime.lastForegroundParticipantId,
+        runtime.bossmanParticipantId,
+        runtime.secondInCommandParticipantId,
+        resolveForegroundSynthesizerParticipantId(chat.ensemble)
+      ],
+      dmTargetParticipantId: runtime.dmTargetParticipantId,
+      unavailableParticipantIds,
+      previousState: runtime.midRunSteeringBoundaryState
+    })
+    runtime.midRunSteeringBoundaryState = plan.state
+    if (plan.exhausted) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        'The user interjected at the round boundary, but no eligible foreground participant remained to receive it.'
+      )
+      return null
+    }
+    return plan.participant
   }
 
   /**

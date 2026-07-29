@@ -307,6 +307,12 @@ import {
   type RunRouteEventPayload,
   type ActiveRunContext
 } from './lib/runRequestTypes'
+import {
+  appendMidRunQueuedMessage,
+  findMidRunQueuedMessage,
+  pendingMidRunQueuedMessageIds,
+  shouldAppendDueScheduledRun
+} from './lib/midRunSteeringQueue'
 import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
 import { buildCodexNativeReviewInvocationParams } from './lib/codexNativeReview'
 import {
@@ -584,17 +590,10 @@ import {
   visibleRunningChatIds
 } from './lib/runningChatVisibility'
 import {
-  DEFAULT_STEER_CANCEL_TIMEOUT_MS,
   DEFAULT_STEER_POLL_INTERVAL_MS,
   IDLE_STEER_STATE,
-  beginSteer,
-  decideSteerWait,
   getSteerIndicatorMessage,
   isSteerInFlight,
-  markSteerFailed,
-  resolveSteerCancelTargetRunId,
-  resetSteer,
-  transitionToDispatching,
   type SteerState
 } from './lib/steerState'
 import {
@@ -1926,6 +1925,7 @@ function App(): React.JSX.Element {
   }, [])
   const [isRunning, setIsRunning] = useState(false)
   const [queuedRuns, setQueuedRuns] = useState<QueuedRunRequest[]>([])
+  const midRunTranscriptAppendInFlightRef = useRef<Set<string>>(new Set())
   // Mirror of `queuedRuns` for handlers that need synchronous
   // access without re-reading React state (esp. edit/delete/steer
   // on the queued-messages above-row).
@@ -1933,38 +1933,24 @@ function App(): React.JSX.Element {
   useEffect(() => {
     queuedRunsRef.current = queuedRuns
   }, [queuedRuns])
-  // Phase J3 (steer): the composer's "Steer" action — interrupt the
-  // active turn in this chat and dispatch a new prompt immediately.
-  // Sibling of Queue (which waits passively). At most one steer flight
-  // is live at a time per chat; the state machine lives in
-  // `lib/steerState.ts` for unit-testability.
-  const [steerState, setSteerState] = useState<SteerState>(IDLE_STEER_STATE)
-  const steerStateRef = useRef<SteerState>(IDLE_STEER_STATE)
-  // Chats whose in-flight assistant_message_delta + _complete events
-  // should be dropped because the user clicked Steer and we're cancelling
-  // the active run. Without this, providers like Codex emit a brief
-  // "farewell summary" agentMessage while exiting that pollutes the
-  // transcript with a mid-flow run summary the user explicitly moved
-  // on from. Cleared when the cancel lands OR the steer times out (in
-  // the timeout case the prior run survives so deltas are legitimate).
+  // The legacy cancellation-state vocabulary remains part of the Composer
+  // contract, but append-now steering never enters it: the current turn stays
+  // live and chat/run keyed refs provide the brief single-flight guards.
+  const steerState: SteerState = IDLE_STEER_STATE
+  // Legacy suppression bookkeeping remains for historical cancelled-run
+  // events and explicit Stop; append-now steering never adds to these sets.
   const steerSuppressionChatIdsRef = useRef<Set<string>>(new Set())
-  // Runs the user intentionally stopped (steer or the Stop button). Consumed in
+  // Runs the user intentionally stopped. Consumed in
   // handleProviderExit so an interrupted turn reads as a muted "Cancelled" —
   // never a red "Failed" (Grok ACP) or a misleading green "success" (signal-
   // killed Grok-headless / Cursor whose exit code coerces to 0).
   const intentionalCancelRunIdsRef = useRef<Set<string>>(new Set())
-  // Suppress the transient run-complete flash/chip when a steer handoff
-  // intentionally interrupts a run. This is separate from intentional
-  // cancellation because Stop should still surface its stopped feedback.
+  // Retained for cancellation events created by older persisted handoffs.
   const steerSuppressedSummaryRunIdsRef = useRef<Set<string>>(new Set())
   const queuedSteerInFlightRunIdsRef = useRef<Set<string>>(new Set())
-  // Single-flight guard for the ENSEMBLE composer Steer path. The solo steer
-  // path uses `steerState`/`isSteerInFlight`, but the ensemble branch of
-  // `handleSteer` returns before that machine and never disables the button —
-  // so a second Steer click before the first `runEnsembleRound` IPC resolves
-  // would fire a second, independent steer that cancels + restarts the round
-  // the first click just began. Keyed by chatId; added before dispatch and
-  // cleared in a `finally`.
+  const soloSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
+  // Single-flight guard for the ENSEMBLE composer Steer IPC. Keyed by chatId;
+  // added before dispatch and cleared in a `finally`.
   const ensembleSteerInFlightChatIdsRef = useRef<Set<string>>(new Set())
   const runStreamMetricsByRunIdRef = useRef<Map<string, RunStreamMetrics>>(new Map())
   const pendingStreamFlushCharsByRunIdRef = useRef<Map<string, number>>(new Map())
@@ -5153,15 +5139,6 @@ function App(): React.JSX.Element {
       reduceMotion: appearance.reduceMotion
     }
   }, [appearance.funFxEnabled, appearance.funFxMode, appearance.reduceMotion])
-
-  // Keep `steerStateRef` in lockstep with the `steerState` React state.
-  // The async steer wait-loop pulls from the ref to avoid the stale-
-  // closure problem (the loop captures the state from the render it
-  // was scheduled in; subsequent setSteerState calls wouldn't otherwise
-  // be visible to it).
-  useEffect(() => {
-    steerStateRef.current = steerState
-  }, [steerState])
 
   const clearFxBurst = () => {
     if (fxBurstTimeoutRef.current) {
@@ -13236,6 +13213,86 @@ function App(): React.JSX.Element {
   const queueRunRequestRef = useRef(queueRunRequest)
   queueRunRequestRef.current = queueRunRequest
 
+  const appendMidRunQueuedRequestToTranscript = async (
+    request: QueuedRunRequest,
+    source: 'scheduledRun' | 'soloSteer',
+    timestampIso: string
+  ): Promise<ChatMessage | null> => {
+    const runId = request.appRunId
+    const chatId = request.chatRecord?.appChatId
+    if (!runId || !chatId) return null
+    const liveChat = chatByIdRef.current.get(chatId) || request.chatRecord
+    if (!liveChat) return null
+    const existing = findMidRunQueuedMessage(liveChat.messages || [], runId)
+    if (existing) return existing
+    if (midRunTranscriptAppendInFlightRef.current.has(runId)) return null
+    midRunTranscriptAppendInFlightRef.current.add(runId)
+    try {
+      const imageAttachmentMetadata = request.imageAttachments
+        .map((attachment) => ({
+          id: attachment.id,
+          path: attachment.path,
+          name: attachment.name || getImageName(attachment.path)
+        }))
+        .filter((attachment) => Boolean(attachment.path))
+      const metadata: ChatMessage['metadata'] = {}
+      if (imageAttachmentMetadata.length > 0) {
+        metadata.imageAttachments = imageAttachmentMetadata
+      }
+      const content = runRequestPromptPreview(request)
+      const linkPreviews = extractHttpUrls(content, 8)
+      if (linkPreviews.length > 0) metadata.linkPreviews = linkPreviews
+
+      let appendedMessage: ChatMessage | null = null
+      updateChatById(chatId, (chat) => {
+        const result = appendMidRunQueuedMessage(chat.messages || [], {
+          runId,
+          content,
+          timestampIso,
+          source,
+          metadata
+        })
+        appendedMessage = result.message
+        if (!result.appended) return chat
+        return {
+          ...chat,
+          title:
+            chat.messages.length === 0
+              ? normalizeThreadTitle(content, 'New Chat')
+              : chat.title,
+          messages: result.messages,
+          updatedAt: Date.now()
+        }
+      })
+      if (appendedMessage && request.imageAttachments.length > 0) {
+        void buildSubmittedImageThumbnailMetadata(request.imageAttachments)
+          .then((imageThumbnailMetadata) => {
+            if (imageThumbnailMetadata.imagePaths.length === 0) return
+            updateChatById(chatId, (chat) => ({
+              ...chat,
+              messages: chat.messages.map((message) =>
+                message.id === appendedMessage?.id
+                  ? {
+                      ...message,
+                      metadata: {
+                        ...(message.metadata || {}),
+                        imagePaths: imageThumbnailMetadata.imagePaths,
+                        imageThumbnails: imageThumbnailMetadata.imageThumbnails
+                      }
+                    }
+                  : message
+              ),
+              updatedAt: Date.now()
+            }))
+          })
+          .catch(() => {})
+      }
+      return appendedMessage
+    } finally {
+      midRunTranscriptAppendInFlightRef.current.delete(runId)
+    }
+  }
+
   const handlePermissionRetry = async () => {
     if (permissionRequestPaths.length === 0 || !currentWorkspace || !currentChat) {
       clearImagePermissions()
@@ -13364,6 +13421,18 @@ function App(): React.JSX.Element {
         if (hydrated) {
           runChat = hydrated
           request = { ...request, chatRecord: hydrated, scope: getChatScope(hydrated) }
+        }
+      }
+      let preAppendedPromptMessage: ChatMessage | null = null
+      if (runChat && request.appRunId) {
+        const liveRunChat = chatByIdRef.current.get(runChat.appChatId) || runChat
+        preAppendedPromptMessage = findMidRunQueuedMessage(
+          liveRunChat.messages || [],
+          request.appRunId
+        )
+        if (preAppendedPromptMessage) {
+          runChat = liveRunChat
+          request = { ...request, chatRecord: liveRunChat, scope: getChatScope(liveRunChat) }
         }
       }
       const isGlobalRun = request.scope === 'global' || isGlobalChat(runChat)
@@ -13573,6 +13642,12 @@ function App(): React.JSX.Element {
 
       const requestedRunWorktree =
         !isGlobalRun && runProvider === 'gemini' ? request.geminiWorktree : undefined
+      const pendingMidRunMessageIds = pendingMidRunQueuedMessageIds([
+        ...(preAppendedPromptMessage ? [currentRunId] : []),
+        ...getQueuedDesktopRunJobs()
+          .filter((job) => job.chatId === runChat.appChatId)
+          .map((job) => job.runId)
+      ])
       let composedPayload: Awaited<ReturnType<typeof window.api.composeRun>>
       try {
         composedPayload = await window.api.composeRun({
@@ -13612,6 +13687,9 @@ function App(): React.JSX.Element {
           handoffSourceRunId: request.handoffSourceRunId,
           discordContextSnapshots: request.discordContextSnapshots,
           ...(request.verbatimPrompt ? { verbatimPrompt: true } : {}),
+          ...(pendingMidRunMessageIds.length > 0
+            ? ({ excludeMessageIds: pendingMidRunMessageIds } as Record<string, string[]>)
+            : {}),
           chatSnapshot: runChat
         })
       } catch (error) {
@@ -13718,7 +13796,10 @@ function App(): React.JSX.Element {
       const contextApplicationLog = composerMetadata.applicationLog
 
       activeScheduledTaskIdRef.current = request.scheduledTaskId || null
-      const chatToUpdate = { ...runChat, provider: effectiveRunProvider }
+      const dispatchChatBase = preAppendedPromptMessage
+        ? chatByIdRef.current.get(runChat.appChatId) || runChat
+        : runChat
+      const chatToUpdate = { ...dispatchChatBase, provider: effectiveRunProvider }
       if (composerMetadata.clearLinkedGeminiSession) {
         chatToUpdate.linkedGeminiSessionId = undefined
       }
@@ -13739,7 +13820,7 @@ function App(): React.JSX.Element {
 
       let runStartedAt = new Date().toISOString()
       let promptMessageId: string | undefined
-      if (!request.existingPrompt) {
+      if (!request.existingPrompt && !preAppendedPromptMessage) {
         const imageAttachmentMetadata = request.imageAttachments
           .map((attachment) => ({
             id: attachment.id,
@@ -13776,6 +13857,27 @@ function App(): React.JSX.Element {
         }
         promptMessageId = userMessage.id
         chatToUpdate.messages = [...chatToUpdate.messages, userMessage]
+        if (discordContextReads.length > 0) {
+          chatToUpdate.messages = [
+            ...chatToUpdate.messages,
+            createDiscordContextToolMessage(discordContextReads, runStartedAt, effectiveRunProvider)
+          ]
+        }
+      } else if (preAppendedPromptMessage) {
+        promptMessageId = preAppendedPromptMessage.id
+        if (projectReferenceContextMetadata) {
+          chatToUpdate.messages = chatToUpdate.messages.map((message) =>
+            message.id === preAppendedPromptMessage?.id
+              ? {
+                  ...message,
+                  metadata: {
+                    ...(message.metadata || {}),
+                    projectReferenceContext: projectReferenceContextMetadata
+                  }
+                }
+              : message
+          )
+        }
         if (discordContextReads.length > 0) {
           chatToUpdate.messages = [
             ...chatToUpdate.messages,
@@ -14333,7 +14435,11 @@ function App(): React.JSX.Element {
               // compaction card) landing after the last delta must not hide
               // the streamed bubbles from the dedupe — without this the full
               // turn re-appends below the card.
-              spanTrailingSystemCards: true
+              spanTrailingSystemCards: true,
+              // A mid-run steering row is a transcript boundary, not a
+              // provider-turn boundary. Reconcile the final envelope across
+              // it without duplicating pre-interjection prose below it.
+              spanMidRunSteeringMessages: true
             })
             // The complete event restates the FULL turn. A `merge`/`replaceText`
             // targets an existing bubble; `skip` means the streamed deltas
@@ -16165,17 +16271,10 @@ function App(): React.JSX.Element {
   }
 
   /**
-   * Phase J3 (steer): Codex-CLI-style "interrupt + dispatch this prompt".
-   *
-   * Sibling of `handleRun` (which queues when the chat is busy) and the
-   * `handleCancel` stop-button (which only cancels). Steer combines the
-   * two: cancel the active turn for this chat, wait up to ~5s for the
-   * active-run context to clear, then dispatch the new prompt via the
-   * normal `executeRun` path. On timeout we fall back to the queue
-   * (better than dropping the user's prompt) and surface a system note.
-   *
-   * State transitions are pure (see `lib/steerState.ts`); this function
-   * is the side-effecting harness around them.
+   * Steer is append-now / deliver-at-boundary. Ensemble text steering is
+   * absorbed by main into the live round; solo steering appends the user row
+   * immediately and leaves the active provider turn untouched, then the
+   * durable queue resumes the same provider session at its natural boundary.
    */
   const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
     const request = buildRunRequest(overrideModel, existingPrompt)
@@ -16235,14 +16334,10 @@ function App(): React.JSX.Element {
         await window.api.runEnsembleRound({
           chatId: targetChatId,
           prompt: request.prompt,
-          // The Steer gesture unconditionally means "interrupt the current
-          // round and run this prompt now." Never downgrade to 'normal' off a
-          // possibly-stale `activeRound` snapshot: that made the orchestrator
-          // take its queue branch (mode !== 'steer' ⇒ queue) instead of
-          // steering, which is exactly what forced the user to click Steer a
-          // second time. The main orchestrator is authoritative about whether
-          // there's a live participant to cancel — if nothing is live it simply
-          // starts a fresh round with this prompt.
+          // Keep the explicit steer intent on the wire. Main absorbs a plain
+          // text interjection into a genuinely-live round without cancellation;
+          // shape-changing requests (attachments/directed routing) retain their
+          // separate round boundary, and an idle chat starts normally.
           mode: 'steer',
           concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
           fanoutPolicy,
@@ -16282,202 +16377,36 @@ function App(): React.JSX.Element {
       return
     }
 
-    // Single-flight guard: a second steer click while one is in flight
-    // is a no-op. The button is also visually disabled while
-    // `isSteerInFlight` reports true; defence-in-depth.
-    const liveState = steerStateRef.current
-    if (isSteerInFlight({ state: liveState, chatId: targetChatId })) {
+    if (soloSteerInFlightChatIdsRef.current.has(targetChatId)) {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
-
-    // Find the active run context (used for the cancel-target runId
-    // and the post-cancel poll predicate).
-    const activeContext = resolveActiveRunContextForChat(targetChatId)
-    const targetChatRecord = targetChat?.appChatId
-      ? chatByIdRef.current.get(targetChat.appChatId) || targetChat
-      : null
-
-    const cancelTargetRunId = resolveSteerCancelTargetRunId({
-      chatId: targetChatId,
-      activeContext,
-      activeRunId: activeRunIdRef.current,
-      activeRunChatId: activeRunChatIdRef.current,
-      runQueueJobs: runQueueJobsRef.current,
-      targetChat: targetChatRecord
-    })
-
-    const providerLabel = getProviderLabel(request.provider)
-
-    // Enter `cancelling` phase + clear composer state up-front so the
-    // user can't double-submit. The transcript gets a dispatch
-    // marker only AFTER the cancel lands (so the run-history reads
-    // correctly even if the cancel times out and we fall back to
-    // queue).
-    const cancellingState = beginSteer({ chatId: targetChatId, cancelTargetRunId })
-    setSteerState(cancellingState)
-    steerStateRef.current = cancellingState
-    // Mark this chat for delta+complete suppression so the provider's
-    // wrap-up text emitted between SIGTERM and exit doesn't land as a
-    // mid-transcript "final summary." Cleared in the cancel-landed or
-    // timeout paths below.
-    steerSuppressionChatIdsRef.current.add(targetChatId)
-    clearComposerAttachmentsForSubmittedRequest(request)
-    if (!request.existingPrompt) {
-      setChatPromptDraft(targetChatId, '')
-    }
-
-    // Kick off the cancel via the existing IPC path (same one the
-    // Stop button uses). We DON'T await here — the cancel-then-watch
-    // loop below polls for the side effect (active run cleared) rather
-    // than relying on the cancel call's return value, because the
-    // provider-specific main-side code may resolve before/after the
-    // renderer sees `agent-exit`.
-    // Flag the interrupted run as a user-intentional cancel BEFORE the kill so
-    // handleProviderExit (which fires on the resulting `agent-exit`) marks it
-    // "Cancelled" instead of deriving "failed"/"success" from the exit code.
-    if (cancelTargetRunId) {
-      steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
-      intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
-    }
-    void window.api.cancelAgentRun(request.provider, cancelTargetRunId).catch((error) => {
-      console.warn('[steer] cancelAgentRun rejected:', error)
-    })
-
-    appendThreadRawLog(targetChatId, {
-      type: 'info',
-      content: `Steer: interrupting current ${providerLabel} turn to dispatch a new prompt.`
-    })
-
-    // Watch loop. Poll `activeRunsRef` until either the cancel lands
-    // (active run cleared) or the deadline elapses. The pure
-    // `decideSteerWait` helper drives each tick so the branching is
-    // unit-testable.
-    const startedAt = Date.now()
-    let outcome: 'cancel-landed' | 'timeout' = 'timeout'
-    // Tight upper bound to avoid runaway polling: deadline + 5 ticks of slack.
-    const maxIterations =
-      Math.ceil(DEFAULT_STEER_CANCEL_TIMEOUT_MS / DEFAULT_STEER_POLL_INTERVAL_MS) + 5
-    for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-      const decision = decideSteerWait({
-        chatId: targetChatId,
-        startedAt,
-        now: Date.now(),
-        hasRunForChat: (chatId) => {
-          for (const ctx of activeRunsRef.current.values()) {
-            if (ctx.chatId === chatId) return true
-          }
-          return false
-        }
+    soloSteerInFlightChatIdsRef.current.add(targetChatId)
+    try {
+      if (!request.existingPrompt) {
+        await appendMidRunQueuedRequestToTranscript(
+          request,
+          'soloSteer',
+          new Date().toISOString()
+        )
+      }
+      queueRunRequest(
+        request,
+        `Steer is waiting for the active ${getProviderLabel(request.provider)} turn to reach its natural boundary.`
+      )
+      appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: `Steer appended to the transcript; the active ${getProviderLabel(
+          request.provider
+        )} turn continues uninterrupted.`
       })
-      if (decision.kind === 'cancel-landed') {
-        outcome = 'cancel-landed'
-        break
+      clearComposerAttachmentsForSubmittedRequest(request)
+      if (!request.existingPrompt) {
+        setChatPromptDraft(targetChatId, '')
       }
-      if (decision.kind === 'timeout') {
-        outcome = 'timeout'
-        break
-      }
-      await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, DEFAULT_STEER_POLL_INTERVAL_MS)
-      })
+    } finally {
+      soloSteerInFlightChatIdsRef.current.delete(targetChatId)
     }
-
-    // The user may have navigated away from this chat or kicked off
-    // another steer while we slept. Bail (no further state changes)
-    // if either happened. Also clear the suppression entry — even
-    // though another steer/navigation owns the state machine now, the
-    // suppression set is keyed by chatId and we must not leak it.
-    const stillCurrent = steerStateRef.current
-    if (stillCurrent.phase !== 'cancelling' || stillCurrent.chatId !== targetChatId) {
-      steerSuppressionChatIdsRef.current.delete(targetChatId)
-      if (cancelTargetRunId) {
-        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
-      }
-      settleProjectReferenceContextForRequest(request, 'rejected')
-      return
-    }
-
-    if (outcome === 'cancel-landed') {
-      // Cancel landed — release the delta suppression so the NEW
-      // (steered-into) run's tokens stream into the transcript as
-      // normal. Any farewell tokens from the cancelled run that were
-      // already buffered get dropped on the floor (intentional).
-      steerSuppressionChatIdsRef.current.delete(targetChatId)
-      const dispatchingState = transitionToDispatching({
-        prev: steerStateRef.current,
-        chatId: targetChatId
-      })
-      setSteerState(dispatchingState)
-      steerStateRef.current = dispatchingState
-
-      // Re-base the dispatch on the LIVE chat record. `request.chatRecord` is a
-      // snapshot captured at steer-click time — before the interrupted run's
-      // terminal status landed — so passing it would make executeRun's immediate
-      // saveChat clobber it. The live ref has it.
-      const liveChatForSteer = chatByIdRef.current.get(targetChatId)
-      const steerDispatchRequest =
-        liveChatForSteer && !isChatSummaryRecord(liveChatForSteer)
-          ? { ...request, chatRecord: liveChatForSteer }
-          : request
-
-      void executeRun(steerDispatchRequest)
-      // Reset to idle on the next tick; `executeRun` schedules the
-      // dispatch synchronously enough that the indicator visibly
-      // flips from "interrupting" to "dispatching" and then off.
-      window.setTimeout(() => {
-        const latest = steerStateRef.current
-        if (latest.phase === 'dispatching' && latest.chatId === targetChatId) {
-          setSteerState(resetSteer())
-          steerStateRef.current = resetSteer()
-        }
-      }, 350)
-      return
-    }
-
-    // Timeout path: cancel didn't land cleanly. Release the
-    // suppression — the prior run is going to continue (and complete
-    // naturally), so its remaining tokens are legitimate transcript
-    // content the user should still see.
-    steerSuppressionChatIdsRef.current.delete(targetChatId)
-    // The prior run survives and will complete on its own, so it must NOT be
-    // marked a user-cancel (else its natural exit would read "Cancelled").
-    if (cancelTargetRunId) {
-      steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-      intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
-    }
-    // The user's prompt is too valuable to drop, so queue it (the
-    // existing fallback) and surface a visible error note. The active
-    // run keeps running; when it finishes the queue scheduler
-    // dispatches the steered prompt automatically.
-    const failedMessage = `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; the ${providerLabel} run is still running. Your prompt was queued instead.`
-    const failedState = markSteerFailed({
-      chatId: targetChatId,
-      reason: 'timeout',
-      message: failedMessage
-    })
-    setSteerState(failedState)
-    steerStateRef.current = failedState
-    appendThreadRawLog(targetChatId, { type: 'stderr', content: failedMessage })
-    queueRunRequest(
-      request,
-      `Steer fell back to queue: cancel of the active ${providerLabel} turn did not land in ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s.`
-    )
-    // Clear the indicator after a short visible window so the user
-    // sees the failure state for ~3s before the composer returns to
-    // normal.
-    window.setTimeout(() => {
-      const latest = steerStateRef.current
-      if (
-        latest.phase === 'failed' &&
-        latest.chatId === targetChatId &&
-        latest.reason === 'timeout'
-      ) {
-        setSteerState(resetSteer())
-        steerStateRef.current = resetSteer()
-      }
-    }, 3_000)
   }
 
   const handleScheduleRun = async () => {
@@ -19245,6 +19174,40 @@ function App(): React.JSX.Element {
     }, delayMs)
     return () => window.clearTimeout(timeout)
   }, [queuedRuns, runQueueJobs, workspaces, currentWorkspace, currentChat, scheduledQueueWakeTick])
+
+  useEffect(() => {
+    const nowMs = Date.now()
+    for (const job of getQueuedDesktopRunJobs(runQueueJobs)) {
+      const request = resolveQueuedDesktopRunRequest(job)
+      const chatId = request?.chatRecord?.appChatId || job.chatId
+      if (
+        !request?.appRunId ||
+        !request.scheduledRunAt ||
+        !chatId ||
+        !shouldAppendDueScheduledRun({
+          scheduledRunAt: request.scheduledRunAt,
+          nowMs,
+          chatBusy: isChatBusy(chatId, { ignoreQueueRunId: request.appRunId })
+        })
+      ) {
+        continue
+      }
+      const liveChat = chatByIdRef.current.get(chatId) || request.chatRecord
+      if (findMidRunQueuedMessage(liveChat?.messages || [], request.appRunId)) continue
+      void appendMidRunQueuedRequestToTranscript(
+        { ...request, chatRecord: liveChat || request.chatRecord },
+        'scheduledRun',
+        request.scheduledRunAt
+      )
+    }
+  }, [
+    queuedRuns,
+    runQueueJobs,
+    workspaces,
+    currentWorkspace,
+    currentChat,
+    scheduledQueueWakeTick
+  ])
 
   useEffect(() => {
     const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)
@@ -22989,11 +22952,10 @@ function App(): React.JSX.Element {
     },
     [currentChat, updateEnsembleQueuedPromptsForRound]
   )
-  // Steer to a queued item: cancel the chat's active run, then
-  // dispatch this queued request immediately. Same gentle handoff
-  // as the composer's Steer button — no restart of unrelated state.
+  // Steer to a queued item: append it now, then dispatch at this chat's next
+  // natural boundary without cancelling the active provider.
   const handleSteerToQueuedMessage = useCallback(
-      async (entryId: string, targetChat?: ChatRecord | null) => {
+    async (entryId: string, targetChat?: ChatRecord | null) => {
       const appendFailure = (message: string, context?: string): void => {
         const targetChatId = targetChat?.appChatId || currentChat?.appChatId
         const content = context ? `${message}: ${context}` : message
@@ -23005,11 +22967,8 @@ function App(): React.JSX.Element {
         setRawLogs((previous) => [...previous, { type: 'stderr', content, timestamp: new Date().toISOString() }])
       }
 
-      // Ensemble-queued: cancel the current round and dispatch the
-      // targeted queued prompt as a fresh round (mode='steer').
-      // The main orchestrator selects the entry from its structured
-      // runtime FIFO queue and carries every remaining prompt into
-      // the replacement round, so multi-item queues are preserved.
+      // Ensemble-queued: main absorbs a plain queued prompt into the current
+      // round; shape-changing rows retain their explicit round boundary.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
         const queuedRoundId = ensembleMatch[1]
@@ -23018,12 +22977,8 @@ function App(): React.JSX.Element {
         const round = chat?.ensemble?.activeRound
         if (!chat || !round || round.roundId !== queuedRoundId) return
         const ensembleChatId = chat.appChatId
-        // Single-flight parity with the composer Steer (see `handleSteer`). A
-        // steered round dispatches asynchronously main-side — the interrupted
-        // turn is cancelled first — and the queued-row Steer button is not
-        // disabled while that IPC round-trip is in flight, so a fast second
-        // click would fire a competing steer that supersedes the first. Ignore
-        // re-entrant clicks for this chat until the in-flight steer settles.
+        // The queued-row Steer button is not disabled during the IPC round
+        // trip, so ignore re-entrant clicks for this chat until it settles.
         if (ensembleSteerInFlightChatIdsRef.current.has(ensembleChatId)) return
         const currentQueue =
           Array.isArray(round.queuedPrompts) && round.queuedPrompts.length > 0
@@ -23052,10 +23007,8 @@ function App(): React.JSX.Element {
               result?.error || 'the queued item could not be promoted safely'
             )
           } else {
-            // Optimistic feedback parity with the composer Steer: reflect the
-            // interruption immediately instead of waiting for the main→renderer
-            // broadcast, so the first click visibly does something. Without this
-            // the user perceives a no-op and clicks Steer again.
+            // Optimistic feedback parity with the composer Steer: refresh
+            // immediately rather than waiting for the main→renderer broadcast.
             //
             // `isThinking` is a single GLOBAL flag read by the main transcript's
             // badge; only flip it when this steer targets the visible main chat.
@@ -23090,11 +23043,7 @@ function App(): React.JSX.Element {
         match.chatRecord ||
         null
 
-      const activeContext = targetChatId ? resolveActiveRunContextForChat(targetChatId) : null
       const targetChatBusy = Boolean(targetChatId && isChatBusy(targetChatId))
-      const cancelTargetRunId = targetChatBusy
-        ? activeContext?.runId || targetRecord?.runs?.[targetRecord.runs.length - 1]?.runId
-        : undefined
 
       const runId = job?.runId || match.appRunId
       if (!runId) {
@@ -23107,32 +23056,17 @@ function App(): React.JSX.Element {
       const clearQueuedSteerInFlight = (): void => {
         queuedSteerInFlightRunIdsRef.current.delete(runId)
       }
-      const cancelProvider = activeContext?.provider || match.provider
-      const clearQueuedSteerSuppression = (): void => {
-        if (!targetChatId || !cancelTargetRunId) return
-        steerSuppressionChatIdsRef.current.delete(targetChatId)
-        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
-      }
-      if (targetChatId && cancelTargetRunId) {
-        steerSuppressionChatIdsRef.current.add(targetChatId)
-        steerSuppressedSummaryRunIdsRef.current.add(cancelTargetRunId)
-        intentionalCancelRunIdsRef.current.add(cancelTargetRunId)
-      }
 
       const promotion = await invokePromoteQueuedRunForSteer({
         runId,
         provider: match.provider,
         chatId: targetChatId,
-        statusReason: 'Promoted from queued-row steer. Cancelling active run first.',
+        statusReason: 'Promoted from queued-row steer for the next natural boundary.',
         queueMessageId: entryId,
-        transitionVersion: job?.transitionVersion,
-        cancelRunId: cancelTargetRunId,
-        cancelProvider
+        transitionVersion: job?.transitionVersion
       })
 
       if (!promotion) {
-        clearQueuedSteerSuppression()
         clearQueuedSteerInFlight()
         appendFailure(
           'Steer promotion API is unavailable in this TaskWraith build',
@@ -23144,7 +23078,6 @@ function App(): React.JSX.Element {
         promotion.ok === true || promotion.kind === 'dispatch-permission'
 
       if (!promotionPermitted) {
-        clearQueuedSteerSuppression()
         clearQueuedSteerInFlight()
         appendFailure(
           'Queued run steer promotion failed',
@@ -23164,6 +23097,16 @@ function App(): React.JSX.Element {
       )
 
       const providerLabel = getProviderLabel(dispatchRequest.provider)
+      if (targetChatBusy && targetChatId) {
+        await appendMidRunQueuedRequestToTranscript(
+          {
+            ...dispatchRequest,
+            chatRecord: targetRecord || dispatchRequest.chatRecord
+          },
+          'soloSteer',
+          new Date().toISOString()
+        )
+      }
 
       const leasePromotedForDispatch = async (): Promise<boolean> => {
         if (!promotion.ownerToken) return true
@@ -23192,13 +23135,13 @@ function App(): React.JSX.Element {
         return false
       }
 
-      // Remove from queue once steering is authorized, so we don't
-      // double-dispatch this row while cancellation is in flight.
+      // Remove from the local mirror once steering is authorized so the row
+      // cannot double-dispatch while it waits for the natural boundary.
       setQueuedRuns((prev) =>
         prev.filter((request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId)
       )
 
-      if (!targetChatId || !cancelTargetRunId) {
+      if (!targetChatId || !targetChatBusy) {
         const leased = await leasePromotedForDispatch()
         if (!leased) {
           clearQueuedSteerInFlight()
@@ -23209,145 +23152,32 @@ function App(): React.JSX.Element {
         return
       }
 
-      const cancellingState = beginSteer({
-        chatId: targetChatId,
-        cancelTargetRunId
-      })
-      setSteerState(cancellingState)
-      steerStateRef.current = cancellingState
       appendThreadRawLog(targetChatId, {
         type: 'info',
-        content: `Steer to queued prompt: interrupting current ${providerLabel} turn to dispatch a replacement.`
+        content: `Queued steer appended to the transcript; the active ${providerLabel} turn continues uninterrupted.`
       })
 
-      appendThreadRawLog(targetChatId, {
-        type: 'info',
-        content: 'Steer requested from queued message; waiting for active run to terminate before dispatch.'
-      })
-
-      if (promotion.cancelRequested !== true) {
-        void window.api.cancelAgentRun(cancelProvider, cancelTargetRunId)
-      }
-
-      const startedAt = Date.now()
-      let outcome: 'cancel-landed' | 'timeout' = 'timeout'
-      const maxIterations =
-        Math.ceil(DEFAULT_STEER_CANCEL_TIMEOUT_MS / DEFAULT_STEER_POLL_INTERVAL_MS) + 5
-      for (let iteration = 0; iteration < maxIterations; iteration += 1) {
-        const decision = decideSteerWait({
-          chatId: targetChatId,
-          startedAt,
-          now: Date.now(),
-          hasRunForChat: (chatId) => {
-            for (const ctx of activeRunsRef.current.values()) {
-              if (ctx.chatId === chatId) return true
-            }
-            return false
-          }
-        })
-        if (decision.kind === 'cancel-landed') {
-          outcome = 'cancel-landed'
-          break
-        }
-        if (decision.kind === 'timeout') {
-          outcome = 'timeout'
-          break
-        }
+      while (isChatBusy(targetChatId, { ignoreQueueRunId: runId })) {
         await new Promise<void>((resolve) => {
           window.setTimeout(resolve, DEFAULT_STEER_POLL_INTERVAL_MS)
         })
       }
 
-      const stillCurrent = steerStateRef.current
-      if (stillCurrent.phase !== 'cancelling' || stillCurrent.chatId !== targetChatId) {
-        steerSuppressionChatIdsRef.current.delete(targetChatId)
-        steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-        intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
+      const leased = await leasePromotedForDispatch()
+      if (!leased) {
         clearQueuedSteerInFlight()
         return
       }
 
-      if (outcome === 'cancel-landed') {
-        steerSuppressionChatIdsRef.current.delete(targetChatId)
-        const leased = await leasePromotedForDispatch()
-        if (!leased) {
-          steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-          intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
-          setSteerState(resetSteer())
-          steerStateRef.current = resetSteer()
-          clearQueuedSteerInFlight()
-          return
-        }
-        const dispatchingState = transitionToDispatching({
-          prev: steerStateRef.current,
-          chatId: targetChatId
-        })
-        setSteerState(dispatchingState)
-        steerStateRef.current = dispatchingState
-
-        // Live target chat may have changed since the initial row scan,
-        // so resolve from refs before the run dispatch.
-        const currentTarget =
-          (targetChatId && chatByIdRef.current.get(targetChatId)) || targetRecord || null
-        const liveRequest = currentTarget ? { ...dispatchRequest, chatRecord: currentTarget } : dispatchRequest
-        void executeRunRef.current(liveRequest)
-        clearQueuedSteerInFlight()
-        window.setTimeout(() => {
-          const latest = steerStateRef.current
-          if (latest.phase === 'dispatching' && latest.chatId === targetChatId) {
-            setSteerState(resetSteer())
-            steerStateRef.current = resetSteer()
-          }
-        }, 350)
-        return
-      }
-
-      steerSuppressionChatIdsRef.current.delete(targetChatId)
-      steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
-      intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
-      restoreQueuedRunForSteer(dispatchRequest)
-      if (promotion.ownerToken) {
-        const fallback = await invokeFallbackPromotedSteerJob({
-          runId,
-          ownerToken: promotion.ownerToken,
-          reason: `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s.`,
-          fallbackStatus: 'queued'
-        }).catch(() => null)
-        if (fallback?.ok !== true) {
-          queueRunRequest(
-            dispatchRequest,
-            `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; queued fallback for this row.`
-          )
-        }
-      } else {
-        queueRunRequest(
-          dispatchRequest,
-          `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; queued fallback for this row.`
-        )
-      }
-      const failedMessage = `Steer timed out after ${(DEFAULT_STEER_CANCEL_TIMEOUT_MS / 1000).toFixed(0)}s; the ${providerLabel} run is still running. Your queued prompt was re-queued.`
-      const failedState = markSteerFailed({
-        chatId: targetChatId,
-        reason: 'timeout',
-        message: failedMessage
-      })
-      setSteerState(failedState)
-      steerStateRef.current = failedState
-      appendThreadRawLog(targetChatId, {
-        type: 'stderr',
-        content: failedMessage
-      })
-      window.setTimeout(() => {
-        const latest = steerStateRef.current
-        if (latest.phase === 'failed' && latest.chatId === targetChatId && latest.reason === 'timeout') {
-          setSteerState(resetSteer())
-          steerStateRef.current = resetSteer()
-        }
-      }, 3_000)
+      // Live target chat may have changed while the active turn finished.
+      const currentTarget = chatByIdRef.current.get(targetChatId) || targetRecord || null
+      const liveRequest = currentTarget
+        ? { ...dispatchRequest, chatRecord: currentTarget }
+        : dispatchRequest
+      void executeRunRef.current(liveRequest)
       clearQueuedSteerInFlight()
     },
-    // `handleCancel` intentionally remains live from the current render; queued steering only
-    // needs this callback to refresh when the target chat changes.
+    // Queued steering only needs this callback to refresh when the target chat changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [currentChat, workspaces]
   )

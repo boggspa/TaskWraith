@@ -14,7 +14,9 @@ function tool(id: string): ChatMessage {
     role: 'tool',
     content: '',
     timestamp: NOW,
-    toolActivities: [{ id: `${id}-a`, toolName: 'read_file', displayName: 'Read file', status: 'success' } as any]
+    toolActivities: [
+      { id: `${id}-a`, toolName: 'read_file', displayName: 'Read file', status: 'success' } as any
+    ]
   }
 }
 
@@ -100,10 +102,7 @@ describe('resolveAssistantDeltaTarget', () => {
   })
 
   it('appends a divergent Cursor segment snapshot after a tool burst', () => {
-    const messages = [
-      assistant('a1', 'Creating three smoke-test files.'),
-      tool('t1')
-    ]
+    const messages = [assistant('a1', 'Creating three smoke-test files.'), tool('t1')]
     expect(
       resolveAssistantDeltaTarget(messages, {
         incoming: 'Created three sample smoke-test files. All nine tests passed.',
@@ -167,9 +166,9 @@ describe('resolveAssistantDeltaTarget', () => {
 
   it('SKIPS a cumulative restatement that only re-covers the pre-tool text', () => {
     const messages = [assistant('a1', 'Hello'), tool('t1')]
-    expect(
-      resolveAssistantDeltaTarget(messages, { incoming: 'Hello', cumulative: true })
-    ).toEqual({ action: 'skip' })
+    expect(resolveAssistantDeltaTarget(messages, { incoming: 'Hello', cumulative: true })).toEqual({
+      action: 'skip'
+    })
   })
 
   it('continues a genuine post-tool increment in the trailing bubble (not a restatement)', () => {
@@ -300,7 +299,12 @@ describe('spanTrailingSystemCards (complete-event dedupe across a tail system ca
   })
 
   it('handles a tool boundary + trailing card: restatement covered by pre/post-tool bubbles skips', () => {
-    const messages = [asst('a-1', 'before tools. '), tool('t-1'), asst('a-2', 'after tools.'), sys('s-1')]
+    const messages = [
+      asst('a-1', 'before tools. '),
+      tool('t-1'),
+      asst('a-2', 'after tools.'),
+      sys('s-1')
+    ]
     const target = resolveAssistantDeltaTarget(messages, {
       incoming: 'before tools. after tools.',
       cumulative: true,
@@ -331,5 +335,107 @@ describe('spanTrailingSystemCards (complete-event dedupe across a tail system ca
       cumulative: true
     })
     expect(withOption).toEqual(without)
+  })
+})
+
+describe('spanMidRunSteeringMessages (complete-event dedupe across an interjection)', () => {
+  const steer = (id: string, content = 'Please also check the boundary.'): ChatMessage => ({
+    id,
+    role: 'user',
+    content,
+    timestamp: NOW,
+    metadata: { kind: 'midRunSteering' }
+  })
+
+  it('skips a full envelope already rendered on both sides of the interjection', () => {
+    const messages = [
+      assistant('a-pre', 'Before the steer. '),
+      steer('u-steer'),
+      assistant('a-post', 'After the steer.')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Before the steer. After the steer.',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'skip' })
+  })
+
+  it('replaces only the incomplete post-interjection bubble with the completed tail', () => {
+    const messages = [assistant('a-pre', 'Before. '), steer('u-steer'), assistant('a-post', 'Part')]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Before. Partial tail.',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'replaceText', index: 2, text: 'Partial tail.' })
+  })
+
+  it('does not duplicate an answer when the interjection lands after its last delta', () => {
+    const messages = [assistant('a-pre', 'Complete answer.'), steer('u-steer')]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Complete answer.',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'skip' })
+  })
+
+  it('preserves a post-interjection tool boundary and appends only the new tail', () => {
+    const messages = [
+      assistant('a-pre', 'Before. '),
+      steer('u-steer'),
+      assistant('a-post', 'Checking. '),
+      tool('t-post')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Before. Checking. Finished.',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'appendText', text: 'Finished.' })
+  })
+
+  it('uses the latest interjection boundary when more than one arrives', () => {
+    const messages = [
+      assistant('a-1', 'One. '),
+      steer('u-1', 'First steer'),
+      assistant('a-2', 'Two. '),
+      steer('u-2', 'Second steer'),
+      assistant('a-3', 'Three.')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'One. Two. Three.',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'skip' })
+  })
+
+  it('keeps an ordinary user message as a hard provider-turn boundary', () => {
+    const messages: ChatMessage[] = [
+      assistant('a-old', 'Old answer.'),
+      { id: 'u-ordinary', role: 'user', content: 'New turn', timestamp: NOW },
+      assistant('a-new', 'New answer')
+    ]
+    expect(
+      resolveAssistantDeltaTarget(messages, {
+        incoming: 'Old answer.New answer',
+        cumulative: true,
+        spanMidRunSteeringMessages: true
+      })
+    ).toEqual({ action: 'merge', index: 2 })
+  })
+
+  it('leaves streamed-delta routing chronological when the option is absent', () => {
+    const messages = [assistant('a-pre', 'Before.'), steer('u-steer')]
+    expect(resolveAssistantDeltaTarget(messages, { incoming: 'After.' })).toEqual({
+      action: 'append'
+    })
   })
 })

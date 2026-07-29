@@ -74,6 +74,15 @@ interface ResolveAssistantDeltaTargetInput {
    *  the whole answer rendered twice. Streamed DELTAS keep the system
    *  boundary (text after a card correctly opens a new bubble). */
   spanTrailingSystemCards?: boolean
+  /**
+   * Complete-restatement path only: a user interjection appended while the
+   * current run is still streaming is a chronological transcript boundary,
+   * but not a provider-turn boundary. Reconcile the provider's final
+   * cumulative envelope across that row without copying the pre-interjection
+   * prose below it. Streamed deltas leave this false so new output still opens
+   * after the user row.
+   */
+  spanMidRunSteeringMessages?: boolean
 }
 
 /** The current turn's trailing maximal run of assistant|tool messages (stops
@@ -96,6 +105,10 @@ function trailingSystemCount(messages: ChatMessage[]): number {
     else break
   }
   return count
+}
+
+function isMidRunSteeringMessage(message: ChatMessage): boolean {
+  return message.role === 'user' && message.metadata?.kind === 'midRunSteering'
 }
 
 export function resolveAssistantDeltaTarget(
@@ -140,6 +153,70 @@ export function resolveAssistantDeltaTarget(
         return { action: 'skip' }
       }
       return target
+    }
+  }
+
+  if (input.spanMidRunSteeringMessages === true) {
+    let spanStart = messages.length
+    let lastSteeringIndex = -1
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (
+        message.role !== 'assistant' &&
+        message.role !== 'tool' &&
+        !isMidRunSteeringMessage(message)
+      ) {
+        break
+      }
+      spanStart = index
+      if (lastSteeringIndex < 0 && isMidRunSteeringMessage(message)) {
+        lastSteeringIndex = index
+      }
+    }
+
+    if (lastSteeringIndex >= spanStart) {
+      const prefix = messages
+        .slice(spanStart, lastSteeringIndex)
+        .filter((message) => message.role === 'assistant')
+        .map((message) => message.content)
+        .join('')
+      if (prefix && !input.incoming.startsWith(prefix)) {
+        // A normalized/divergent final envelope cannot be split safely. The
+        // incremental bubbles are already authoritative, so lossless skip is
+        // preferable to duplicating the whole answer below the interjection.
+        return { action: 'skip' }
+      }
+
+      const tail = prefix ? input.incoming.slice(prefix.length) : input.incoming
+      if (!tail) return { action: 'skip' }
+      const postSteeringMessages = messages.slice(lastSteeringIndex + 1)
+      const postTarget = resolveAssistantDeltaTarget(postSteeringMessages, {
+        ...input,
+        incoming: tail,
+        spanMidRunSteeringMessages: false,
+        spanTrailingSystemCards: false
+      })
+      const offset = lastSteeringIndex + 1
+      if (postTarget.action === 'skip') return postTarget
+      if (postTarget.action === 'append') {
+        return { action: 'appendText', text: tail }
+      }
+      if (postTarget.action === 'appendText') return postTarget
+      if (postTarget.action === 'replaceText') {
+        return {
+          ...postTarget,
+          index: postTarget.index + offset
+        }
+      }
+
+      const target = postSteeringMessages[postTarget.index]
+      if (!target || target.role !== 'assistant') return { action: 'skip' }
+      if (target.content === tail || target.content.startsWith(tail)) {
+        return { action: 'skip' }
+      }
+      return tail.startsWith(target.content)
+        ? { action: 'replaceText', index: postTarget.index + offset, text: tail }
+        : { action: 'skip' }
     }
   }
 

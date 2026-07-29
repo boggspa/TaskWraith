@@ -16,9 +16,10 @@
  *  - Ensemble: every hop's prompt is rebuilt from the live chat record
  *    (`buildEnsembleParticipantPrompt` delta transcript, full AND slim
  *    turns), so an appended user message reaches every subsequent seat
- *    natively. The registry only tracks WHO has been dispatched since the
- *    entry arrived, so a round that ends with nobody having seen the
- *    interjection can chain one continuation round (the backstop).
+ *    natively. The registry only tracks WHO has accepted a dispatch since the
+ *    entry arrived. If an interjection lands during the final hop, the
+ *    orchestrator grants an eligible foreground seat one same-round boundary
+ *    turn — no cancellation, replacement round, or continuation-hop charge.
  *  - Solo scheduled: the message is appended at fire time; the ordinary
  *    sealed scheduled dispatch later delivers it at the run boundary, with
  *    the duplicate transcript seed suppressed and the already-appended
@@ -148,7 +149,7 @@ export class MidRunSteeringRegistry {
   /**
    * Entries no ensemble participant has been dispatched against since they
    * arrived. These are the "interjection landed during the final hop" cases
-   * the round-completion backstop exists for.
+   * the same-round boundary fallback exists for.
    */
   undeliveredToAnyParticipant(chatId: string): MidRunSteeringEntry[] {
     return (this.entriesByChatId.get(chatId) || []).filter(
@@ -156,7 +157,7 @@ export class MidRunSteeringRegistry {
     )
   }
 
-  /** Solo/terminal consumption (scheduled seed dispatch, backstop round). */
+  /** Solo/terminal consumption (for example, a scheduled seed dispatch). */
   markDelivered(chatId: string, entryIds: string[], nowIso: string): void {
     if (entryIds.length === 0) return
     const ids = new Set(entryIds)
@@ -195,6 +196,21 @@ export class MidRunSteeringRegistry {
 export function scheduledSteeringMessageId(taskId: string, firedAtIso: string): string {
   const firedMs = Date.parse(firedAtIso)
   return `scheduled-user-fired-${taskId}-${Number.isFinite(firedMs) ? firedMs : 0}`
+}
+
+/**
+ * Restart recovery for the fire-time scheduled append. The in-memory registry
+ * disappears on restart; the deterministic transcript id is the durable
+ * occurrence receipt.
+ */
+export function findScheduledSteeringMessage(
+  messages: readonly ChatMessage[],
+  taskId: string,
+  firedAtIso: string | null | undefined
+): ChatMessage | null {
+  if (!firedAtIso) return null
+  const messageId = scheduledSteeringMessageId(taskId, firedAtIso)
+  return messages.find((message) => message.id === messageId && message.role === 'user') || null
 }
 
 export function buildMidRunSteeringUserMessage(input: {
@@ -243,31 +259,6 @@ export function midRunSteeringAbsorbEligible(input: {
   if (input.hasDiscordContext) return false
   if (input.hasExternalPathGrants) return false
   return true
-}
-
-/**
- * Wire-compatible result for an absorbed steer. Both the renderer composer
- * steer (fire-and-forget) and the bridge lane (`ok = started || steered`)
- * already accept `'steered'`; reusing it means zero renderer/iOS changes.
- */
-export function ensembleSteerAbsorbResult(roundId: string): {
-  status: 'steered'
-  roundId: string
-} {
-  return { status: 'steered', roundId }
-}
-
-/**
- * Backstop continuation prompt: the round completed with the interjection
- * unseen by every seat (it arrived during the final hop). The steering TEXT
- * is already in the transcript and rides each seat's delta window — the
- * continuation prompt must therefore reference it, never repeat it, or the
- * panel would see the content twice.
- */
-export function midRunSteeringBackstopPrompt(entryCount: number): string {
-  return entryCount === 1
-    ? 'The user interjected while the previous round was finishing — see their message above and address it.'
-    : `The user sent ${entryCount} messages while the previous round was finishing — see them above and address them.`
 }
 
 /**
@@ -338,10 +329,9 @@ export function planSteeringContext(input: {
  * 2026-07-29; see src/main/pi/PiSteerDelivery.ts for the full findings).
  *
  * The win is concrete: the seat that is RUNNING when the interjection arrives
- * is exactly the seat the boundary model cannot reach, and it is why the
- * ensemble round-completion backstop has to exist. A confirmed live delivery
- * marks that seat delivered, so no continuation round is chained for an
- * interjection the panel has already seen.
+ * is exactly the seat the boundary model cannot reach. A confirmed live
+ * delivery marks that seat delivered, so the same-round boundary fallback is
+ * unnecessary for an interjection the panel has already seen.
  *
  * Deliberately conservative:
  *  - `enabled` is an explicit opt-in (default OFF) until this is exercised

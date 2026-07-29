@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   MidRunSteeringRegistry,
   buildMidRunSteeringUserMessage,
-  ensembleSteerAbsorbResult,
   filterMessagesExcludingIds,
+  findScheduledSteeringMessage,
   liveSteerDeliverySupported,
   midRunSteeringAbsorbEligible,
-  midRunSteeringBackstopPrompt,
   planLiveSteerDelivery,
   planSteeringContext,
   scheduledSteeringMessageId,
@@ -132,6 +131,43 @@ describe('scheduledSteeringMessageId', () => {
   })
 })
 
+describe('findScheduledSteeringMessage', () => {
+  it('recovers the deterministic fire-time row without an in-memory registry', () => {
+    const message = buildMidRunSteeringUserMessage({
+      id: scheduledSteeringMessageId('task-1', NOW),
+      content: 'scheduled prompt',
+      timestampIso: NOW
+    })
+    expect(findScheduledSteeringMessage([message], 'task-1', NOW)).toBe(message)
+  })
+
+  it('does not match another occurrence or a non-user row', () => {
+    const message = {
+      ...buildMidRunSteeringUserMessage({
+        id: scheduledSteeringMessageId('task-1', NOW),
+        content: 'scheduled prompt',
+        timestampIso: NOW
+      }),
+      role: 'system' as const
+    }
+    expect(findScheduledSteeringMessage([message], 'task-1', NOW)).toBeNull()
+    expect(
+      findScheduledSteeringMessage(
+        [
+          buildMidRunSteeringUserMessage({
+            id: scheduledSteeringMessageId('task-1', NOW),
+            content: 'scheduled prompt',
+            timestampIso: NOW
+          })
+        ],
+        'task-1',
+        '2026-07-29T03:00:00.000Z'
+      )
+    ).toBeNull()
+    expect(findScheduledSteeringMessage([], 'task-1', undefined)).toBeNull()
+  })
+})
+
 describe('buildMidRunSteeringUserMessage', () => {
   it('builds a plain user row with the midRunSteering kind', () => {
     const message = buildMidRunSteeringUserMessage({
@@ -176,28 +212,6 @@ describe('midRunSteeringAbsorbEligible', () => {
     expect(midRunSteeringAbsorbEligible({ ...base, hasDmTarget: true })).toBe(false)
     expect(midRunSteeringAbsorbEligible({ ...base, hasDiscordContext: true })).toBe(false)
     expect(midRunSteeringAbsorbEligible({ ...base, hasExternalPathGrants: true })).toBe(false)
-  })
-})
-
-describe('ensembleSteerAbsorbResult', () => {
-  it('reuses the wire-compatible steered status with the LIVE round id', () => {
-    expect(ensembleSteerAbsorbResult('round-9')).toEqual({
-      status: 'steered',
-      roundId: 'round-9'
-    })
-  })
-})
-
-describe('midRunSteeringBackstopPrompt', () => {
-  it('references the transcript instead of repeating steering text', () => {
-    const single = midRunSteeringBackstopPrompt(1)
-    const plural = midRunSteeringBackstopPrompt(3)
-    expect(single).toContain('interjected')
-    expect(single).toContain('above')
-    expect(plural).toContain('3 messages')
-    // The prompt must never carry the steering content itself — the delta
-    // transcript already delivers it; repetition would double the content.
-    expect(single).not.toContain('steer text')
   })
 })
 
@@ -315,8 +329,8 @@ describe('markEntriesDeliveredToParticipant', () => {
     const later = register(registry, { messageId: 'msg-b' })
     const marked = registry.markEntriesDeliveredToParticipant('chat-1', 'seat-a', [first.id])
     expect(marked.map((entry) => entry.id)).toEqual([first.id])
-    // The later interjection is still unseen by every seat, so the backstop
-    // still owns it.
+    // The later interjection is still unseen by every seat, so the same-round
+    // boundary fallback still owns it.
     expect(registry.undeliveredToAnyParticipant('chat-1').map((entry) => entry.id)).toEqual([
       later.id
     ])
