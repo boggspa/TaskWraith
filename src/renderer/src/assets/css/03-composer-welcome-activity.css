@@ -4355,6 +4355,81 @@
 }
 
 /*
+ * 1.0.5 — Tier-A markdown highlighting spans (composer overlay).
+ *
+ * THE RULE (same one the mention tokens live by, spelled out at
+ * `.composer-mention-token` above): these spans paint over glyphs the
+ * textarea has already laid out, so ONLY metric-safe properties are
+ * allowed — color, opacity, text-shadow, text-decoration, background,
+ * border-radius, filter. `font-*`, `letter-spacing`, `padding`,
+ * `margin`, `display`, `transform`, or any layout property shifts the
+ * overlay's advance widths / wrap points away from the textarea's and
+ * resurrects the caret-drift bug 1.0.4 closed. This is machine-checked:
+ * `components/composerOverlayMetricSafety.test.ts` lint-scans every
+ * `.composer-md-*` / `.composer-mention-token` / `.composer-ghost-
+ * suggestion` rule in this file and fails on banned properties.
+ * Notably: code spans DO NOT switch to a monospace family — a code
+ * TINT is the whole affordance until the contenteditable migration.
+ *
+ * Class names map 1:1 to `ComposerMarkdownFlag` values in
+ * `lib/composerMarkdownHighlight.ts` (`md-bold` → `.composer-md-bold`).
+ */
+.composer-textarea-highlight .composer-md-marker {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.8;
+}
+
+.composer-textarea-highlight .composer-md-bold {
+  /* Faux-bold via double text-shadow — identical trick (and reason)
+   * as `.composer-mention-token`: real font-weight widens advances. */
+  text-shadow:
+    0 0 0.6px currentColor,
+    0 0 0.6px currentColor;
+}
+
+.composer-textarea-highlight .composer-md-italic {
+  /* No metric-safe slant exists (transforms don't apply to inline
+   * boxes; oblique faces change advances). A soft dim + the dimmed
+   * `*` markers carry the cue. */
+  opacity: 0.88;
+}
+
+.composer-textarea-highlight .composer-md-underline {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.composer-textarea-highlight .composer-md-strike {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  opacity: 0.85;
+}
+
+.composer-textarea-highlight .composer-md-code,
+.composer-textarea-highlight .composer-md-code-block {
+  /* currentColor mix keeps the tint legible on every theme without
+   * per-theme overrides; backgrounds paint behind glyphs and never
+   * affect layout. Same font as prose — see THE RULE above. */
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border-radius: 3px;
+}
+
+.composer-textarea-highlight .composer-md-quote {
+  color: var(--text-secondary, inherit);
+}
+
+.composer-textarea-highlight .composer-md-quote-marker {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.9;
+}
+
+.composer-textarea-highlight .composer-md-bullet-marker {
+  color: var(--accent, currentColor);
+  text-shadow: 0 0 0.5px currentColor;
+}
+
+/*
  * 1.0.4 — per-shell composer-overlay CSS rules retired.
  *
  * This section previously had 9 per-shell rules + a welcome-mode

@@ -1,6 +1,7 @@
 import { Fragment, useLayoutEffect, useRef, type RefObject } from 'react'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import { tokeniseMentions } from '../lib/mentionHighlight'
+import { segmentComposerRichText, type ComposerRichRun } from '../lib/composerMarkdownHighlight'
 import { syncComposerHighlightMetrics, syncComposerHighlightScroll } from './composerHighlightSync'
 
 interface ComposerHighlightOverlayProps {
@@ -44,6 +45,19 @@ interface ComposerHighlightOverlayProps {
    * chat open — see `useComposerSuggestion`.
    */
   ghostText?: string | null
+  /**
+   * 1.0.5 — Tier-A markdown highlighting. When true, the overlay
+   * renders via `segmentComposerRichText` (mentions + metric-safe
+   * markdown flags) instead of mention-only tokenisation. Opt-in per
+   * surface: the main composer passes true; the ensemble brief
+   * editor keeps the mention-only path (its activation gate is
+   * mention-driven, and un-gated markdown spans painted UNDER an
+   * opaque textarea would fringe — the faux-bold text-shadow spreads
+   * past the glyph edge). Only enable together with a gate that
+   * turns the textarea text transparent whenever markdown is
+   * present (`hasComposerMarkdown` in Composer.tsx).
+   */
+  richText?: boolean
 }
 
 /**
@@ -81,9 +95,16 @@ export function ComposerHighlightOverlay({
   participants,
   textareaRef,
   syncEpoch,
-  ghostText
+  ghostText,
+  richText
 }: ComposerHighlightOverlayProps): React.JSX.Element {
-  const segments = tokeniseMentions(value, participants || [])
+  // Exactly one tokenisation pass runs per render: the rich path
+  // subsumes mention tokenisation, so the mention-only path is
+  // skipped entirely when `richText` is on.
+  const richRuns: ComposerRichRun[] | null = richText
+    ? segmentComposerRichText(value, participants || [])
+    : null
+  const segments = richText ? [] : tokeniseMentions(value, participants || [])
   const overlayRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
@@ -253,6 +274,43 @@ export function ComposerHighlightOverlay({
   return (
     <div ref={overlayRef} className="composer-textarea-highlight" aria-hidden="true">
       <div ref={contentRef} className="composer-textarea-highlight-content">
+        {richRuns?.map((run, idx) => {
+          // Every class these flags map to must be metric-safe —
+          // enforced by `composerOverlayMetricSafety.test.ts`.
+          const flagClasses = run.flags.map((flag) => `composer-${flag}`).join(' ')
+          if (run.mention?.kind === 'user-mention') {
+            return (
+              <span
+                key={idx}
+                className={`composer-mention-token composer-mention-token--user${flagClasses ? ` ${flagClasses}` : ''}`}
+                style={{ color: `var(--user-bubble-base, var(--accent))` }}
+              >
+                {run.text}
+              </span>
+            )
+          }
+          if (run.mention) {
+            return (
+              <span
+                key={idx}
+                className={`composer-mention-token${flagClasses ? ` ${flagClasses}` : ''}`}
+                style={{
+                  color: `var(--provider-${run.mention.providerClass}-color, var(--accent))`
+                }}
+              >
+                {run.text}
+              </span>
+            )
+          }
+          if (run.flags.length > 0) {
+            return (
+              <span key={idx} className={flagClasses}>
+                {run.text}
+              </span>
+            )
+          }
+          return <Fragment key={idx}>{run.text}</Fragment>
+        })}
         {segments.map((segment, idx) => {
           if (segment.kind === 'text') {
             return <Fragment key={idx}>{segment.text}</Fragment>
