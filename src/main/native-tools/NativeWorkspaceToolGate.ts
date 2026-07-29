@@ -2,10 +2,16 @@ import { existsSync, realpathSync } from 'node:fs'
 import { dirname, relative, resolve } from 'node:path'
 import {
   catalogToolAgenticService,
-  resolveCatalogToolName
+  resolveStrictProviderNativeToolAction
 } from '../../shared/canonicalToolCoalesce'
+import {
+  PROVIDER_ACTION_ADAPTERS,
+  resolveToolDispatchContractStrict,
+  type ProviderActionResolutionErrorCode
+} from '../../shared/providerActionTaxonomy'
+import type { TaskWraithMcpToolName } from '../../shared/taskWraithMcpCatalog'
 import { resolveWorkspaceDirectory, resolveWorkspaceTarget } from '../PathScope'
-import type { AgenticServiceId } from '../store/types'
+import type { AgenticServiceId, ProviderId } from '../store/types'
 
 export type NativeWorkspaceToolAccess = 'read' | 'write' | 'shell'
 
@@ -13,7 +19,7 @@ export type NativeWorkspaceToolPreflight =
   | {
       kind: 'not_applicable'
       canonicalTool: string | null
-      source: 'taskwraith' | 'unknown'
+      source: 'taskwraith' | 'native' | 'unknown'
     }
   | {
       kind: 'allow'
@@ -30,11 +36,13 @@ export type NativeWorkspaceToolPreflight =
       canonicalTool: string | null
       source: 'native'
       reason: string
+      errorCode?: ProviderActionResolutionErrorCode
       checkedPaths: string[]
       requiresRuntimeSandbox: boolean
     }
 
 export interface NativeWorkspaceToolPreflightInput {
+  provider?: ProviderId | null
   toolName?: string | null
   toolKind?: string | null
   rawToolCall?: unknown
@@ -126,6 +134,11 @@ const BROKER_PREFIXES = [
   'taskwraith-grok__',
   'taskwraith-broker__'
 ] as const
+const HUMAN_TITLE_ONLY_NATIVE_PROVIDERS: ReadonlySet<ProviderId> = new Set(
+  (Object.keys(PROVIDER_ACTION_ADAPTERS) as ProviderId[]).filter(
+    (provider) => Object.keys(PROVIDER_ACTION_ADAPTERS[provider].structuredKindMappings).length > 0
+  )
+)
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -148,70 +161,89 @@ function argumentRoots(rawToolCall: unknown): Record<string, unknown>[] {
   return roots
 }
 
-function brokerQualifiedToolName(input: NativeWorkspaceToolPreflightInput): boolean {
-  const roots = argumentRoots(input.rawToolCall)
-  const candidates: unknown[] = [input.toolName]
+function embeddedToolNameCandidates(rawToolCall: unknown): string[] {
+  const roots = argumentRoots(rawToolCall)
+  const candidates: unknown[] = []
   for (const root of roots) candidates.push(root.tool_name, root.toolName, root.name)
-  return candidates.some((candidate) => {
-    const normalized = nonEmptyString(candidate)?.toLowerCase()
-    return Boolean(
-      normalized && BROKER_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-    )
+  return candidates
+    .map(nonEmptyString)
+    .filter((candidate): candidate is string => Boolean(candidate))
+}
+
+function toolNameCandidates(input: NativeWorkspaceToolPreflightInput): string[] {
+  return [input.toolName, ...embeddedToolNameCandidates(input.rawToolCall)]
+    .map(nonEmptyString)
+    .filter((candidate): candidate is string => Boolean(candidate))
+}
+
+function brokerQualifiedCandidates(input: NativeWorkspaceToolPreflightInput): string[] {
+  const candidates =
+    input.provider && HUMAN_TITLE_ONLY_NATIVE_PROVIDERS.has(input.provider)
+      ? embeddedToolNameCandidates(input.rawToolCall)
+      : toolNameCandidates(input)
+  return candidates.filter((candidate) => {
+    const normalized = candidate.toLowerCase()
+    return BROKER_PREFIXES.some((prefix) => normalized.startsWith(prefix))
   })
 }
 
-function canonicalFromHumanTitle(title: string): string | null {
-  const normalized = title.trim().toLowerCase()
-  const prefixes: Array<[RegExp, string]> = [
-    [/^(?:read|open)(?:\s+file)?\b/, 'read_file'],
-    [/^(?:write|create)(?:\s+file)?\b/, 'write_file'],
-    [/^(?:edit|replace|modify)(?:\s+file)?\b/, 'replace'],
-    [/^(?:delete|remove)(?:\s+(?:file|path))?\b/, 'delete_path'],
-    [/^move(?:\s+(?:file|path))?\b/, 'move_path'],
-    [/^rename(?:\s+(?:file|path))?\b/, 'rename_path'],
-    [/^(?:list|ls)(?:\s+(?:directory|files?))?\b/, 'list_directory'],
-    [/^(?:glob|find)(?:\s+files?)?\b/, 'find_files'],
-    [/^(?:grep|search)(?:\s+(?:files?|workspace))?\b/, 'workspace_search'],
-    [/^(?:apply\s+patch|patch)\b/, 'apply_patch'],
-    [/^(?:bash|shell|run\s+(?:terminal\s+)?command|terminal)\b/, 'run_shell_command']
-  ]
-  return prefixes.find(([pattern]) => pattern.test(normalized))?.[1] || null
+type NativeCanonicalResolution =
+  | {
+      readonly ok: true
+      readonly canonicalTool: TaskWraithMcpToolName
+    }
+  | {
+      readonly ok: false
+      readonly canonicalTool: null
+      readonly errorCode: ProviderActionResolutionErrorCode
+      readonly reason: string
+    }
+
+function strictNativeCandidate(
+  input: NativeWorkspaceToolPreflightInput,
+  candidate: string
+): NativeCanonicalResolution {
+  if (!input.provider) {
+    return {
+      ok: false,
+      canonicalTool: null,
+      errorCode: 'provider_identity_required',
+      reason: `Native action "${candidate}" requires an explicit provider adapter identity.`
+    }
+  }
+
+  const resolution = resolveStrictProviderNativeToolAction(input.provider, candidate, {
+    toolKind: input.toolKind,
+    rawToolCall: input.rawToolCall
+  })
+  return resolution.ok
+    ? { ok: true, canonicalTool: resolution.catalogTool }
+    : {
+        ok: false,
+        canonicalTool: null,
+        errorCode: resolution.code,
+        reason: resolution.reason
+      }
 }
 
-function canonicalFromKind(toolKind: string | null | undefined): string | null {
-  switch (String(toolKind || '').trim().toLowerCase()) {
-    case 'read':
-      return 'read_file'
-    case 'edit':
-    case 'write':
-    case 'create':
-      return 'replace'
-    case 'delete':
-      return 'delete_path'
-    case 'move':
-      return 'move_path'
-    case 'search':
-      return 'workspace_search'
-    case 'execute':
-      return 'run_shell_command'
-    default:
-      return null
+function resolveNativeCanonicalTool(
+  input: NativeWorkspaceToolPreflightInput
+): NativeCanonicalResolution {
+  let providerError: NativeCanonicalResolution | null = null
+  for (const candidate of toolNameCandidates(input)) {
+    const resolution = strictNativeCandidate(input, candidate)
+    if (resolution.ok) return resolution
+    providerError = resolution
   }
-}
 
-function resolveNativeCanonicalTool(input: NativeWorkspaceToolPreflightInput): string | null {
-  const roots = argumentRoots(input.rawToolCall)
-  const candidates: unknown[] = []
-  for (const root of roots) candidates.push(root.tool_name, root.toolName, root.name)
-  candidates.push(input.toolName)
-  for (const candidate of candidates) {
-    const value = nonEmptyString(candidate)
-    if (!value) continue
-    const catalog = resolveCatalogToolName(value)
-    if (catalog) return catalog
-  }
-  const title = nonEmptyString(input.toolName)
-  return (title && canonicalFromHumanTitle(title)) || canonicalFromKind(input.toolKind)
+  return (
+    providerError || {
+      ok: false,
+      canonicalTool: null,
+      errorCode: 'native_action_not_declared',
+      reason: `Native action "${input.toolName || input.toolKind || 'unknown'}" is not declared by a closed provider adapter.`
+    }
+  )
 }
 
 function collectPathArguments(rawToolCall: unknown): string[] {
@@ -304,13 +336,15 @@ function deny(
   canonicalTool: string | null,
   reason: string,
   checkedPaths: string[] = [],
-  requiresRuntimeSandbox = false
+  requiresRuntimeSandbox = false,
+  errorCode?: ProviderActionResolutionErrorCode
 ): NativeWorkspaceToolPreflight {
   return {
     kind: 'deny',
     canonicalTool,
     source: 'native',
     reason,
+    ...(errorCode ? { errorCode } : {}),
     checkedPaths,
     requiresRuntimeSandbox
   }
@@ -328,19 +362,49 @@ function deny(
 export function preflightNativeWorkspaceTool(
   input: NativeWorkspaceToolPreflightInput
 ): NativeWorkspaceToolPreflight {
-  const canonicalTool = resolveNativeCanonicalTool(input)
-  if (brokerQualifiedToolName(input)) {
-    return { kind: 'not_applicable', canonicalTool, source: 'taskwraith' }
+  const brokerCandidates = brokerQualifiedCandidates(input)
+  if (brokerCandidates.length > 0) {
+    let brokerError: {
+      reason: string
+      code: ProviderActionResolutionErrorCode
+    } | null = null
+    for (const candidate of brokerCandidates) {
+      const contract = resolveToolDispatchContractStrict(candidate, input.rawToolCall)
+      if (contract.ok) {
+        return {
+          kind: 'not_applicable',
+          canonicalTool: contract.toolName,
+          source: 'taskwraith'
+        }
+      }
+      brokerError = { reason: contract.reason, code: contract.code }
+    }
+    return deny(
+      null,
+      brokerError?.reason ||
+        `TaskWraith-qualified action "${brokerCandidates[0]}" is not declared by the canonical catalog.`,
+      [],
+      false,
+      brokerError?.code || 'unmapped_catalog_action'
+    )
   }
-  if (!canonicalTool) {
-    return { kind: 'not_applicable', canonicalTool: null, source: 'unknown' }
+  const nativeResolution = resolveNativeCanonicalTool(input)
+  if (!nativeResolution.ok || !nativeResolution.canonicalTool) {
+    return deny(
+      null,
+      nativeResolution.reason || 'Native action is not declared by a closed provider adapter.',
+      [],
+      false,
+      nativeResolution.errorCode || 'native_action_not_declared'
+    )
   }
+  const canonicalTool = nativeResolution.canonicalTool
   if (
     !READ_TOOLS.has(canonicalTool) &&
     !WRITE_TOOLS.has(canonicalTool) &&
     canonicalTool !== 'run_shell_command'
   ) {
-    return { kind: 'not_applicable', canonicalTool, source: 'unknown' }
+    return { kind: 'not_applicable', canonicalTool, source: 'native' }
   }
 
   const workspacePath = nonEmptyString(input.workspacePath)
@@ -353,12 +417,7 @@ export function preflightNativeWorkspaceTool(
     try {
       normalizedCwd = resolveWorkspaceDirectory(workspacePath, requestedCwd(input.rawToolCall))
     } catch {
-      return deny(
-        canonicalTool,
-        'Native shell cwd is outside the active workspace.',
-        [],
-        true
-      )
+      return deny(canonicalTool, 'Native shell cwd is outside the active workspace.', [], true)
     }
     if (input.runtimeSandboxed !== true) {
       return deny(
@@ -384,10 +443,16 @@ export function preflightNativeWorkspaceTool(
   if (canonicalTool === 'apply_patch') rawPaths.push(...patchPaths(input.rawToolCall))
   const uniqueRawPaths = [...new Set(rawPaths)]
   if (uniqueRawPaths.length === 0 && !OPTIONAL_PATH_TOOLS.has(canonicalTool)) {
-    return deny(canonicalTool, `Native ${canonicalTool} did not expose a verifiable workspace path.`)
+    return deny(
+      canonicalTool,
+      `Native ${canonicalTool} did not expose a verifiable workspace path.`
+    )
   }
   if (MULTI_PATH_TOOLS.has(canonicalTool) && uniqueRawPaths.length < 2) {
-    return deny(canonicalTool, `Native ${canonicalTool} did not expose both source and destination paths.`)
+    return deny(
+      canonicalTool,
+      `Native ${canonicalTool} did not expose both source and destination paths.`
+    )
   }
 
   const checkedPaths: string[] = []

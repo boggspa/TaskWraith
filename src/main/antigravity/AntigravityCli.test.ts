@@ -72,6 +72,29 @@ describe('createAgyCliEnv', () => {
     expect(isAgyCredentialEnvironmentKey('google_oauth_access_token')).toBe(true)
     expect(isAgyCredentialEnvironmentKey('KEEP_ME')).toBe(false)
   })
+
+  it('accepts only an immediate-caller workspace-lock owner', () => {
+    const withoutOwner = createAgyCliEnv({
+      PATH: '/usr/bin',
+      taskwraith_lock_owner_id: 'ambient-owner'
+    })
+    const withOwner = createAgyCliEnv(
+      {
+        PATH: '/usr/bin',
+        TaskWraith_Lock_Owner_Id: 'ambient-owner'
+      },
+      {
+        taskwraith_lock_owner_id: 'forged-case-alias',
+        TASKWRAITH_LOCK_OWNER_ID: 'exact-admitted-owner'
+      }
+    )
+
+    expect(withoutOwner.TASKWRAITH_LOCK_OWNER_ID).toBeUndefined()
+    expect(withoutOwner.taskwraith_lock_owner_id).toBeUndefined()
+    expect(withOwner.TASKWRAITH_LOCK_OWNER_ID).toBe('exact-admitted-owner')
+    expect(withOwner.taskwraith_lock_owner_id).toBeUndefined()
+    expect(withOwner.TaskWraith_Lock_Owner_Id).toBeUndefined()
+  })
 })
 
 describe('Antigravity argv builders', () => {

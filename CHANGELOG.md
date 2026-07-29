@@ -6,6 +6,78 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.9.2 - 2026-07-29
+
+1.9.1 opened a terminal hatch into the workshop; 1.9.2 gives every entrance the
+same rulebook and puts live ownership on the workbench. Provider tools now meet
+at one declared action map, edits carry durable file or hunk claims, and the
+composer can explain who is working where instead of trusting a hand-written
+sign that may have gone stale.
+
+### One action language, without flattening the agents
+
+TaskWraith now maps every advertised MCP tool and every supported native
+provider action onto one canonical permission, audit, mutation, and lock
+contract. Unknown or contradictory actions fail explicitly at that boundary
+instead of falling through to an empty success or being guessed from a
+human-facing title. Capability search and invocation, provider status,
+workspace tools, and audit-only tools travel through the same dispatcher
+contract too.
+
+That common language does not pretend every provider works alike. MCP-backed,
+native, sandboxed, and provider-contained seats keep their distinct execution
+postures; the shared taxonomy makes those differences declared and testable
+rather than scattered through string checks.
+
+### The workbench shows who owns an edit
+
+Write-capable operations now acquire durable workspace claims before execution.
+Precise brokered edits can claim a file or a non-overlapping hunk; opaque and
+native routes take a conservative checkout claim when they cannot prove a
+narrower one. Canonical path and filesystem identity checks close symlink,
+hard-link, case, and path-swap aliases, while a final commit fence rechecks the
+exact target and content baseline immediately before the mutation.
+
+The lock authority is shared across TaskWraith profiles for the current OS user,
+survives restart through an fsynced log, and distinguishes a live process from a
+reused PID by its birth identity. Work markers are now a derived projection of
+held locks, renewed by the runtime and removed with the matching acquisition
+rather than maintained as a second source of truth. The branch/worktree picker
+shows active, orphaned, recovery-blocked, and recently recovered edits with
+their owner, target, and age; secondary windows receive only their authorized,
+redacted checkout view.
+
+### A release floor that checks the bytes it ships
+
+The packaged `tw` runtime is pinned to a checksummed Node distribution with its
+license and provenance carried beside every target. Release gates now exercise
+the real macOS, Windows x64 and Arm64, Linux AppImage and Debian payloads,
+validate platform update feeds, scan unpacked resources for secrets, and emit
+CycloneDX evidence for both the App and bundled runtime. One coordinated
+publisher verifies the exact run-attempt artifacts, keeps the release in draft
+until every platform passes, and writes the versioned checksum set only after
+the complete asset roster is known.
+
+The 1.9.1 follow-ups land here as well: the packaged-host TUI smoke waits for a
+real window lifecycle and launches the inner macOS executable directly;
+Windows prepares both bundled runtime architectures; repeated host-path fixture
+mistakes have a mechanical CI guard; and the loaded-runner Kimi recovery cases
+receive realistic time budgets. Managed Kimi OAuth configuration and Cursor's
+provider-scoped runtime contract are parsed without turning either into an
+unreviewed qualification.
+
+### Remote and phone paths keep their footing
+
+The iOS reconnect supervisor no longer tears down a healthy dial. Remote
+provider model catalogues arrive reliably, configured AntiGravity seats are
+admitted through their existing consent and credential wall, and workspace
+provider grants can be edited without recreating the workspace.
+
+This release deliberately does not open Channels or agent participation.
+Channels P1 remains behind the two-real-Mac People transport proof; 1.9.2 records
+the bounded main-owned, human-only contract and three-member test plan without
+shipping a hidden Chat surface around that gate.
+
 ## 1.9.1 - 2026-07-29
 
 1.9.0 connected the workshop's rooms; 1.9.1 lets the workshop answer from the

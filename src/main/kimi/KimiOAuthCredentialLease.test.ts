@@ -400,7 +400,8 @@ describe('KimiOAuthCredentialAuthority', () => {
       await expect(fs.access(join(f.homeA, 'credentials'))).rejects.toThrow()
       await next.lease.seedIntoIsolatedHome()
       await expect(next.lease.commitAndRelease()).resolves.toBe('unchanged')
-    }
+    },
+    20_000
   )
 
   it('finishes forward when the isolated candidate is lost after the source commit', async () => {
@@ -450,7 +451,7 @@ describe('KimiOAuthCredentialAuthority', () => {
     expect(await fs.readFile(join(f.sourceHome, 'credentials', 'kimi-code.json'), 'utf8')).toBe(
       rotated
     )
-  })
+  }, 20_000)
 
   // 20s budget: this real-fs crash-recovery flow (fixture home trees + many
   // small file ops, no timers to fake) blew the 5s default on a Windows CI

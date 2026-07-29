@@ -140,7 +140,8 @@ export interface RequestAgenticServiceApprovalDeps {
   }) => void
   networkAccessBlockedToolName: (
     toolName: string | null | undefined,
-    effectivePermissions?: EffectiveRunPermissions
+    effectivePermissions?: EffectiveRunPermissions,
+    toolArgs?: unknown
   ) => string | null
   networkAccessBlockedMessage: (toolName: string) => string
   canAutoApproveTrustedSessionExternalWrite: (input: {
@@ -355,6 +356,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
         ? request.preview.toolName
         : undefined
+    const previewParams = isRecord(request.preview)
+      ? request.preview.params ?? request.preview.arguments
+      : undefined
     // The exact surface this request targets, read out of the preview the human
     // is shown — so the grant can only ever mean the window they actually saw.
     // Same shape as the canvas_eval exact-script read further down; the preview
@@ -367,7 +371,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     })()
     const networkBlockedTool = deps.networkAccessBlockedToolName(
       previewToolName,
-      effectivePermissions
+      effectivePermissions,
+      previewParams
     )
     if (networkBlockedTool) {
       deps.auditService.recordAutomaticApprovalDecision(

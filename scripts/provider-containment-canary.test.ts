@@ -14,8 +14,10 @@ const {
   cursorUnauthenticatedProbeSourceEnv,
   extractCommands,
   extractLongFlags,
+  kimiAuthenticationForContract,
   liveExecutionAllowed,
   parseArgs,
+  parseKimiConfigContract,
   parseVersion,
   processControlFailure,
   providerInventoryCommands,
@@ -59,6 +61,15 @@ const {
   cursorUnauthenticatedProbeSourceEnv: (env?: Record<string, string>) => Record<string, string>
   extractCommands: (raw: string) => string[]
   extractLongFlags: (raw: string) => string[]
+  kimiAuthenticationForContract: (
+    contract: {
+      providerType: string
+      backendBaseUrl: string
+      modelAlias: string
+      model: string
+    } | null,
+    availability?: { configApiKeyPresent?: boolean; oauthCredentialPresent?: boolean }
+  ) => string | null
   liveExecutionAllowed: (provider: string) => boolean
   parseArgs: (args: string[]) => {
     live: boolean
@@ -66,6 +77,12 @@ const {
     required: string[]
     requireKnownFingerprints: boolean
   }
+  parseKimiConfigContract: (raw: string) => {
+    providerType: string
+    backendBaseUrl: string
+    modelAlias: string
+    model: string
+  } | null
   parseVersion: (raw: string) => string | null
   processControlFailure: (error: unknown, action: string) => string | null
   providerInventoryCommands: (provider: string) => string[][]
@@ -119,6 +136,8 @@ const {
     valid: boolean
     errors: string[]
     counts: { total: number; passed: number; failed: number; skipped: number }
+    failedAssertions: string[]
+    notPassedAssertions: string[]
   }
 } = require('./provider-containment-canary.cjs')
 
@@ -275,6 +294,91 @@ Commands:
     }
 
     expect(qualificationFor(manifest, 'cursor', probe)).toBeNull()
+  })
+
+  it('parses the managed Kimi OAuth topology independently of API-key presence', () => {
+    const contract = parseKimiConfigContract(`
+default_model = "kimi-code/kimi-for-coding"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = ""
+base_url = "https://api.kimi.com/coding/v1"
+
+[providers."managed:kimi-code".oauth]
+storage = "file"
+key = "credentials/kimi-code.json"
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+`)
+
+    expect(contract).toEqual({
+      providerType: 'kimi',
+      backendBaseUrl: 'https://api.kimi.com/coding/v1',
+      modelAlias: 'kimi-code/kimi-for-coding',
+      model: 'kimi-for-coding'
+    })
+    expect(contract).not.toHaveProperty('authentication')
+    expect(
+      kimiAuthenticationForContract(contract, {
+        oauthCredentialPresent: true
+      })
+    ).toBe('kimi-code-managed-oauth')
+    expect(
+      kimiAuthenticationForContract(contract, {
+        configApiKeyPresent: true,
+        oauthCredentialPresent: true
+      })
+    ).toBe('kimi-code-provider-api-key')
+    expect(kimiAuthenticationForContract(contract)).toBeNull()
+  })
+
+  it('qualifies Cursor without applying Kimi-only runtime-contract metadata', () => {
+    const tuple = {
+      scope: 'cursor-native-sandbox-readonly-v1',
+      postureVersion: 'cursor-native-sandbox-readonly-v1',
+      attestationSource: 'credentialed-live-containment-canary',
+      version: '2026.07.16-test',
+      capabilityFingerprint: `sha256:${'c'.repeat(64)}`,
+      binarySha256: `sha256:${'d'.repeat(64)}`,
+      distribution: 'disabled-cursor-inventory',
+      harnessNodeVersion: process.version,
+      authentication: 'user-cursor-login',
+      backendBaseUrl: 'cursor-agent-managed',
+      modelAlias: 'cursor-account-default',
+      model: 'cursor-account-default',
+      platform: process.platform,
+      arch: process.arch
+    }
+    const probe = {
+      qualificationScope: tuple.scope,
+      binary: {
+        version: tuple.version,
+        sha256: tuple.binarySha256,
+        distribution: tuple.distribution
+      },
+      capabilities: { fingerprint: tuple.capabilityFingerprint }
+    }
+    const manifest = { providers: { cursor: [tuple] } }
+
+    expect(qualificationFor(manifest, 'cursor', probe)).toEqual(tuple)
+    for (const drift of [
+      { binarySha256: `sha256:${'e'.repeat(64)}` },
+      { distribution: 'another-distribution' },
+      { harnessNodeVersion: 'v0.0.0' },
+      { authentication: 'arbitrary-login' },
+      { backendBaseUrl: 'arbitrary-backend' },
+      { modelAlias: 'arbitrary-alias' },
+      { model: 'arbitrary-model' },
+      { platform: `${process.platform}-other` },
+      { arch: `${process.arch}-other` }
+    ]) {
+      expect(
+        qualificationFor({ providers: { cursor: [{ ...tuple, ...drift }] } }, 'cursor', probe)
+      ).toBeNull()
+    }
   })
 
   it('matches every exact native Kimi distribution/backend tuple field', () => {
@@ -534,9 +638,39 @@ Commands:
     const expectedTitles = ['blocks escape', 'availability']
     expect(validateVitestReport(report, expectedTitles)).toMatchObject({
       valid: false,
-      counts: { total: 2, passed: 1, failed: 0, skipped: 1 }
+      counts: { total: 2, passed: 1, failed: 0, skipped: 1 },
+      failedAssertions: [],
+      notPassedAssertions: ['blocks escape']
     })
     expect(validateVitestReport(report, expectedTitles).errors.join(' ')).toContain('skipped')
+  })
+
+  it('retains only reviewed failed titles in the sanitized diagnostic', () => {
+    const validation = validateVitestReport(
+      {
+        success: false,
+        testResults: [
+          {
+            assertionResults: [
+              {
+                title: 'blocks native write',
+                status: 'failed',
+                failureMessages: ['secret provider output must not survive']
+              },
+              { title: 'allows gateway read', status: 'passed' }
+            ]
+          }
+        ]
+      },
+      ['blocks native write', 'allows gateway read']
+    )
+
+    expect(validation).toMatchObject({
+      valid: false,
+      failedAssertions: ['blocks native write'],
+      notPassedAssertions: ['blocks native write']
+    })
+    expect(JSON.stringify(validation)).not.toContain('secret provider output')
   })
 
   it('accepts only a report with an executed non-availability assertion', () => {

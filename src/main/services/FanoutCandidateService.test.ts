@@ -5,6 +5,10 @@ import {
   type FanoutCandidateStore
 } from './FanoutCandidateService'
 import type { FanoutWorktreeCandidate } from '../store/types'
+import type {
+  FanoutCandidatePromotionLock,
+  VerifiedFanoutCandidatePromotion
+} from './FanoutCandidatePromotionLock'
 
 function makeStore(): FanoutCandidateStore & { rows: Map<string, FanoutWorktreeCandidate> } {
   const rows = new Map<string, FanoutWorktreeCandidate>()
@@ -51,8 +55,26 @@ function makeGit(overrides: Partial<FanoutCandidateGit> = {}): FanoutCandidateGi
         clean: false
       }
     })),
+    inspectPatchApplication: vi.fn(async () => ({
+      ok: true as const,
+      data: { state: 'applicable' as const }
+    })),
     applyPatchToRepository: vi.fn(async () => ({ ok: true as const, data: {} as never })),
     deleteBranch: vi.fn(async () => ({ ok: true as const, data: { branch: 'b' } })),
+    ...overrides
+  }
+}
+
+function makePromotionLock(
+  overrides: Partial<FanoutCandidatePromotionLock> = {}
+): FanoutCandidatePromotionLock {
+  return {
+    withPromotionLock: vi.fn(async (input, operation) => ({
+      value: await operation({
+        baseWorkspacePath: input.baseWorkspacePath,
+        targetPaths: [`${input.baseWorkspacePath}/x`]
+      })
+    })),
     ...overrides
   }
 }
@@ -90,7 +112,12 @@ describe('FanoutCandidateService', () => {
         data: { repoRoot: '/repo', worktrees: [] }
       }))
     })
-    const service = new FanoutCandidateService({ git, store, nowIso: () => 'T1' })
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock: makePromotionLock(),
+      nowIso: () => 'T1'
+    })
 
     const allocation = await service.allocateForLane({
       chatId: 'chat-1',
@@ -119,7 +146,12 @@ describe('FanoutCandidateService', () => {
   it('settles an active candidate with a diff stat and tolerates capture failures', async () => {
     const store = makeStore()
     seededCandidate(store, { status: 'active', runStatus: undefined })
-    const service = new FanoutCandidateService({ git: makeGit(), store, nowIso: () => 'T2' })
+    const service = new FanoutCandidateService({
+      git: makeGit(),
+      store,
+      promotionLock: makePromotionLock(),
+      nowIso: () => 'T2'
+    })
 
     await service.settleLane({ chatId: 'chat-1', laneId: 'lane-1', runStatus: 'completed' })
     expect(store.rows.get('lane-1')).toMatchObject({
@@ -136,6 +168,7 @@ describe('FanoutCandidateService', () => {
         captureWorktreePatch: vi.fn(async () => ({ ok: false as const, error: 'boom' }))
       }),
       store: failingStore,
+      promotionLock: makePromotionLock(),
       nowIso: () => 'T2'
     })
     await failingService.settleLane({ chatId: 'chat-1', laneId: 'lane-1', runStatus: 'failed' })
@@ -149,7 +182,7 @@ describe('FanoutCandidateService', () => {
   it('is a no-op for lanes that never ran isolated', async () => {
     const store = makeStore()
     const git = makeGit()
-    const service = new FanoutCandidateService({ git, store })
+    const service = new FanoutCandidateService({ git, store, promotionLock: makePromotionLock() })
     await service.settleLane({ chatId: 'chat-1', laneId: 'lane-unknown', runStatus: 'completed' })
     expect(store.patchCandidate).not.toHaveBeenCalled()
     expect(git.captureWorktreePatch).not.toHaveBeenCalled()
@@ -159,15 +192,32 @@ describe('FanoutCandidateService', () => {
     const store = makeStore()
     seededCandidate(store)
     const git = makeGit()
-    const service = new FanoutCandidateService({ git, store, nowIso: () => 'T3' })
+    const promotionLock = makePromotionLock()
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock,
+      nowIso: () => 'T3'
+    })
 
     const result = await service.promote('chat-1', 'lane-1')
 
     expect(result).toEqual({ ok: true, applied: true })
     expect(git.applyPatchToRepository).toHaveBeenCalledWith({
       repoPath: '/repo',
-      patch: 'diff --git a/x b/x\n'
+      patch: 'diff --git a/x b/x\n',
+      verifiedTargetPaths: ['/repo/x']
     })
+    expect(promotionLock.withPromotionLock).toHaveBeenCalledWith(
+      {
+        chatId: 'chat-1',
+        candidateId: 'lane-1',
+        baseWorkspacePath: '/repo',
+        patch: 'diff --git a/x b/x\n'
+      },
+      expect.any(Function)
+    )
+    expect(git.listWorktrees).toHaveBeenCalledTimes(2)
     expect(git.removeWorktree).toHaveBeenCalledWith({
       repoPath: '/repo',
       path: '/worktrees/cand-1',
@@ -196,7 +246,7 @@ describe('FanoutCandidateService', () => {
         }
       }))
     })
-    const service = new FanoutCandidateService({ git, store })
+    const service = new FanoutCandidateService({ git, store, promotionLock: makePromotionLock() })
 
     const result = await service.promote('chat-1', 'lane-1')
     expect(result).toEqual({ ok: true, applied: false })
@@ -207,7 +257,11 @@ describe('FanoutCandidateService', () => {
   it('refuses to promote an active or already-resolved candidate', async () => {
     const store = makeStore()
     seededCandidate(store, { status: 'active' })
-    const service = new FanoutCandidateService({ git: makeGit(), store })
+    const service = new FanoutCandidateService({
+      git: makeGit(),
+      store,
+      promotionLock: makePromotionLock()
+    })
     await expect(service.promote('chat-1', 'lane-1')).resolves.toMatchObject({
       ok: false,
       error: expect.stringContaining('still running')
@@ -229,7 +283,7 @@ describe('FanoutCandidateService', () => {
         error: 'The candidate patch no longer applies cleanly — drifted.'
       }))
     })
-    const service = new FanoutCandidateService({ git, store })
+    const service = new FanoutCandidateService({ git, store, promotionLock: makePromotionLock() })
 
     const result = await service.promote('chat-1', 'lane-1')
     expect(result.ok).toBe(false)
@@ -244,7 +298,7 @@ describe('FanoutCandidateService', () => {
     const store = makeStore()
     seededCandidate(store, { worktreePath: '/worktrees/ghost' })
     const git = makeGit()
-    const service = new FanoutCandidateService({ git, store })
+    const service = new FanoutCandidateService({ git, store, promotionLock: makePromotionLock() })
 
     const result = await service.discard('chat-1', 'lane-1')
     expect(result).toMatchObject({
@@ -258,7 +312,12 @@ describe('FanoutCandidateService', () => {
     const store = makeStore()
     seededCandidate(store)
     const git = makeGit()
-    const service = new FanoutCandidateService({ git, store, nowIso: () => 'T4' })
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock: makePromotionLock(),
+      nowIso: () => 'T4'
+    })
 
     const [first, second] = await Promise.all([
       service.discard('chat-1', 'lane-1'),
@@ -286,11 +345,191 @@ describe('FanoutCandidateService', () => {
         }
       }))
     })
-    const service = new FanoutCandidateService({ git, store })
+    const service = new FanoutCandidateService({ git, store, promotionLock: makePromotionLock() })
 
     const preview = await service.candidatePatch('chat-1', 'lane-1')
     expect(preview.truncated).toBe(true)
     expect(preview.patch.length).toBe(2_000_000)
     expect(preview.totals.insertions).toBe(9)
+  })
+
+  it('applies only inside the lock callback and uses its freshly verified base path', async () => {
+    const store = makeStore()
+    seededCandidate(store)
+    const git = makeGit()
+    let releaseOperation: (() => void) | undefined
+    const operationEntered = new Promise<void>((resolve) => {
+      releaseOperation = resolve
+    })
+    let operation: ((verified: VerifiedFanoutCandidatePromotion) => Promise<unknown>) | undefined
+    const promotionLock = makePromotionLock({
+      withPromotionLock: vi.fn(async (_input, callback) => {
+        operation = callback
+        await operationEntered
+        return {
+          value: await callback({
+            baseWorkspacePath: '/canonical/repo',
+            targetPaths: ['/canonical/repo/x']
+          })
+        }
+      })
+    })
+    const service = new FanoutCandidateService({ git, store, promotionLock })
+
+    const promoting = service.promote('chat-1', 'lane-1')
+    await vi.waitFor(() => expect(operation).toBeTypeOf('function'))
+    expect(git.applyPatchToRepository).not.toHaveBeenCalled()
+    releaseOperation?.()
+    await expect(promoting).resolves.toEqual({ ok: true, applied: true })
+    expect(git.applyPatchToRepository).toHaveBeenCalledWith({
+      repoPath: '/canonical/repo',
+      patch: 'diff --git a/x b/x\n',
+      verifiedTargetPaths: ['/canonical/repo/x']
+    })
+  })
+
+  it('keeps the candidate settled when durable promotion locking is unavailable', async () => {
+    const store = makeStore()
+    seededCandidate(store)
+    const git = makeGit()
+    const promotionLock = makePromotionLock({
+      withPromotionLock: vi.fn(async () => {
+        throw new Error('base workspace is held by another candidate')
+      })
+    })
+    const service = new FanoutCandidateService({ git, store, promotionLock })
+
+    const result = await service.promote('chat-1', 'lane-1')
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'base workspace is held by another candidate'
+    })
+    expect(git.applyPatchToRepository).not.toHaveBeenCalled()
+    expect(store.rows.get('lane-1')).toMatchObject({
+      status: 'settled',
+      reason: 'base workspace is held by another candidate'
+    })
+  })
+
+  it('commits promotion exactly once when authority cleanup degrades after apply', async () => {
+    const store = makeStore()
+    seededCandidate(store)
+    const git = makeGit()
+    const promotionLock = makePromotionLock({
+      withPromotionLock: vi.fn(async (input, callback) => ({
+        value: await callback({
+          baseWorkspacePath: input.baseWorkspacePath,
+          targetPaths: [`${input.baseWorkspacePath}/x`]
+        }),
+        cleanupError: 'durable lease cleanup is retrying'
+      }))
+    })
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock,
+      nowIso: () => 'T5'
+    })
+
+    await expect(service.promote('chat-1', 'lane-1')).resolves.toEqual({
+      ok: true,
+      applied: true
+    })
+    expect(store.rows.get('lane-1')).toMatchObject({
+      status: 'promoted',
+      resolvedAt: 'T5',
+      reason: expect.stringContaining('lease cleanup is retrying')
+    })
+
+    await expect(service.promote('chat-1', 'lane-1')).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('already resolved')
+    })
+    expect(git.applyPatchToRepository).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers a durable intent after status persistence fails without applying twice', async () => {
+    const store = makeStore()
+    seededCandidate(store)
+    let baseContainsPatch = false
+    const git = makeGit({
+      inspectPatchApplication: vi.fn(async () => ({
+        ok: true as const,
+        data: {
+          state: baseContainsPatch ? ('already-applied' as const) : ('applicable' as const)
+        }
+      })),
+      applyPatchToRepository: vi.fn(async () => {
+        baseContainsPatch = true
+        return { ok: true as const, data: {} as never }
+      })
+    })
+    let failPromotedStatusOnce = true
+    vi.mocked(store.patchCandidate).mockImplementation(
+      async (_chatId, candidateId, patch) => {
+        const existing = store.rows.get(candidateId)
+        if (!existing) return null
+        if (patch.status === 'promoted' && failPromotedStatusOnce) {
+          failPromotedStatusOnce = false
+          throw new Error('simulated crash before promoted status persisted')
+        }
+        const merged = { ...existing, ...patch } as FanoutWorktreeCandidate
+        store.rows.set(candidateId, merged)
+        return merged
+      }
+    )
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock: makePromotionLock(),
+      nowIso: () => 'T6'
+    })
+
+    await expect(service.promote('chat-1', 'lane-1')).resolves.toEqual({
+      ok: false,
+      error: 'simulated crash before promoted status persisted'
+    })
+    expect(store.rows.get('lane-1')).toMatchObject({
+      status: 'settled',
+      promotionIntent: {
+        patchSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        startedAt: 'T6'
+      }
+    })
+
+    await expect(service.promote('chat-1', 'lane-1')).resolves.toEqual({
+      ok: true,
+      applied: true
+    })
+    expect(git.applyPatchToRepository).toHaveBeenCalledTimes(1)
+    expect(git.inspectPatchApplication).toHaveBeenCalledTimes(2)
+    expect(store.rows.get('lane-1')).toMatchObject({
+      status: 'promoted',
+      promotionIntent: undefined,
+      resolvedAt: 'T6'
+    })
+  })
+
+  it('refuses discard while a promotion recovery intent is unresolved', async () => {
+    const store = makeStore()
+    seededCandidate(store, {
+      promotionIntent: {
+        patchSha256: 'a'.repeat(64),
+        startedAt: 'T0'
+      }
+    })
+    const git = makeGit()
+    const service = new FanoutCandidateService({
+      git,
+      store,
+      promotionLock: makePromotionLock()
+    })
+
+    await expect(service.discard('chat-1', 'lane-1')).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('unfinished promotion intent')
+    })
+    expect(git.removeWorktree).not.toHaveBeenCalled()
   })
 })

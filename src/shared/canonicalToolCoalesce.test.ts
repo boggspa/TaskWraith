@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   catalogToolAgenticService,
+  catalogToolAgenticServiceForDisplay,
   catalogToolAgenticServiceForRawName,
   catalogToolOperationCategory,
   compactToolIdentifier,
   isCatalogFileEditTool,
   resolveCanonicalToolName,
   resolveCatalogToolName,
+  resolveProviderNativeToolForDisplay,
+  resolveStrictProviderNativeToolAction,
+  resolveStrictProviderToolAction,
   stripToolNamespace
 } from './canonicalToolCoalesce'
 
@@ -63,6 +67,34 @@ describe('canonicalToolCoalesce', () => {
   it('compactToolIdentifier normalizes separators', () => {
     expect(compactToolIdentifier('run_terminal_command')).toBe('runterminalcommand')
     expect(compactToolIdentifier('WebSearch')).toBe('websearch')
+  })
+
+  it('keeps permissive display normalization separate from strict provider resolution', () => {
+    expect(resolveCanonicalToolName('FutureProviderThing')).toBe('futureproviderthing')
+    expect(resolveProviderNativeToolForDisplay('pi', 'edit')).toBe('replace')
+    expect(resolveStrictProviderNativeToolAction('pi', 'edit')).toMatchObject({
+      ok: false,
+      denied: true,
+      code: 'native_surface_unobservable'
+    })
+    expect(resolveStrictProviderNativeToolAction('codex', 'fileChange')).toMatchObject({
+      ok: true,
+      catalogTool: 'apply_patch',
+      action: 'workspace.mutate'
+    })
+    expect(resolveStrictProviderNativeToolAction('claude', 'MultiEdit')).toMatchObject({
+      ok: false,
+      code: 'native_surface_closed'
+    })
+  })
+
+  it('strictly denies an undeclared provider action instead of assigning generic policy', () => {
+    expect(resolveStrictProviderToolAction('claude', 'TeleportRepository')).toMatchObject({
+      ok: false,
+      denied: true,
+      code: 'native_surface_closed',
+      provider: 'claude'
+    })
   })
 })
 
@@ -146,9 +178,10 @@ describe('catalogToolAgenticService — security-gate parity', () => {
     expect(catalogToolAgenticService('creative_midi_dispatch')).toBe('mcpTools')
   })
 
-  it('defaults unknown / orchestration tools to mcpTools', () => {
+  it('keeps unknown fallback display-only while typed orchestration stays explicit', () => {
     expect(catalogToolAgenticService('ensemble_yield')).toBe('mcpTools')
     expect(catalogToolAgenticService('list_active_runs')).toBe('mcpTools')
-    expect(catalogToolAgenticService('some_other_tool')).toBe('mcpTools')
+    expect(catalogToolAgenticServiceForDisplay('some_other_tool')).toBe('mcpTools')
+    expect(catalogToolAgenticServiceForRawName('some_other_tool')).toBeNull()
   })
 })

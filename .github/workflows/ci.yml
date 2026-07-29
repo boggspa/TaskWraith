@@ -38,7 +38,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: "22.23.2"
           cache: npm
       - run: npm ci
       - run: npm run ci
@@ -66,11 +66,11 @@ jobs:
     name: iOS (Kit tests)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Available Xcodes (pre-pin diagnostic)
         run: ls -d /Applications/Xcode*.app
       - name: Select Xcode 26.0 (Swift 6.2 — matches ship toolchain)
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
           xcode-version: "26.0"
       - name: Toolchain versions
@@ -87,20 +87,24 @@ jobs:
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
-    needs: [test, ios]
+    needs: [test, ios, linux-release-candidate]
+    outputs:
+      artifact-name: ${{ steps.release-artifact-name.outputs.name }}
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true'
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: "22.23.2"
           cache: npm
       - run: npm ci
+      - name: Verify tag and release metadata
+        run: npm run verify:release-tag
       - run: npm run security:deps
       - name: Prepare macOS artifacts without signing credentials
         run: |
@@ -109,6 +113,7 @@ jobs:
           TASKWRAITH_BRIDGE_ARCH=universal npm run prebuild:bridge-daemon
           node scripts/smoke-bridge-daemon-roundtrip.cjs
           npm run prepare:mac-universal-deps
+          npm run prepare:tui-runtime:mac
           npm run build
       - name: Sign, package, and notarize macOS artifacts
         env:
@@ -122,9 +127,22 @@ jobs:
         run: >-
           node scripts/run-electron-builder.cjs --mac --universal --publish never
           -c.npmRebuild=false -c.mac.notarize=true
+      - name: Finalize exact macOS release artifacts
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run finalize:mac-release-artifacts
       - name: Run post-package macOS checks without signing credentials
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: "1"
+          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: "1"
         run: |
           node scripts/smoke-packaged-electron.cjs dist
+          npm run smoke:mac-artifacts
+          node scripts/guard-no-bundled-secrets.cjs --require-packaged
           npm run validate:mac-update-feed
           npm run security:sbom
       - name: Verify notarized macOS artifacts
@@ -138,63 +156,43 @@ jobs:
             test -f "$artifact"
             xcrun stapler validate "$artifact"
           done
-      - name: Upload verified macOS release artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          assets=(dist/*.dmg dist/*.zip dist/*.blockmap dist/latest-mac.yml dist/sbom.cdx.json)
-          if [ "${#assets[@]}" -lt 3 ]; then
-            echo "Expected notarized macOS release artifacts in dist/, found ${#assets[@]}."
-            exit 1
-          fi
-          release_tag="$GITHUB_REF_NAME"
-          candidate_sha="$(git rev-parse HEAD)"
-          verify_remote_release_tag() {
-            local tag_ref="refs/tags/$release_tag"
-            local tag_type
-            local remote_tag_sha
-            git fetch --force --no-tags origin "+$tag_ref:$tag_ref"
-            tag_type="$(git cat-file -t "$tag_ref")"
-            if [ "$tag_type" = "tag" ]; then
-              remote_tag_sha="$(git rev-parse "$tag_ref^{}")"
-            elif [ "$tag_type" = "commit" ]; then
-              remote_tag_sha="$(git rev-parse "$tag_ref")"
-            else
-              echo "Release tag $tag_ref has unsupported object type $tag_type."
-              return 1
-            fi
-            if [ "$remote_tag_sha" != "$candidate_sha" ]; then
-              echo "Remote release tag resolves to $remote_tag_sha; expected $candidate_sha."
-              return 1
-            fi
-          }
-          verify_remote_release_tag
-          gh release view "$release_tag" >/dev/null 2>&1 || \
-            gh release create "$release_tag" --verify-tag --title "$release_tag" --notes "Verified TaskWraith release artifacts for $release_tag." || \
-            gh release view "$release_tag" >/dev/null
-          # Re-resolve after release creation and immediately before mutation.
-          verify_remote_release_tag
-          gh release upload "$release_tag" "${assets[@]}" --clobber
+      - name: Record macOS candidate artifact name
+        id: release-artifact-name
+        run: echo "name=release-macos-${GITHUB_REF_NAME}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Stage verified macOS release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release-artifact-name.outputs.name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*-universal-mac.zip.blockmap
+            dist/*-mac.yml
+            dist/sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 7
 
   signed-windows-release:
     name: Signed Windows Release
     runs-on: windows-latest
-    needs: [test, ios]
+    needs: [test, ios, linux-release-candidate]
+    outputs:
+      artifact-name: ${{ steps.release-artifact-name.outputs.name }}
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
     permissions:
       actions: read
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: "22.23.2"
           cache: npm
       - run: npm ci
+      - name: Verify tag and release metadata
+        run: npm run verify:release-tag
       - run: npm run security:deps
       - name: Compile Windows artifacts without signing credentials
         run: npm run build:win:compile
@@ -210,6 +208,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run post-package Windows checks without signing credentials
         run: npm run build:win:checks
+      - name: Run strict native Windows package and TUI smoke
+        shell: pwsh
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: "1"
+        run: |
+          node scripts/smoke-packaged-electron.cjs dist/win-unpacked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Scan final Windows package payloads for bundled secrets
+        run: node scripts/guard-no-bundled-secrets.cjs --require-packaged
+      - name: Generate Windows SBOM with embedded runtime components
+        env:
+          TASKWRAITH_SBOM_PATH: dist/sbom-windows.cdx.json
+        run: npm run security:sbom
       - name: Verify signed Windows artifacts
         shell: pwsh
         run: |
@@ -232,64 +245,412 @@ jobs:
               throw "Missing $feed"
             }
           }
-      - name: Upload verified Windows release artifacts
+      - name: Smoke signed Windows installer lifecycle
         shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem -Path dist -Filter "TaskWraith-*-win-x64-setup.exe" |
+            Select-Object -First 1
+          if (!$installer) {
+            throw "Missing signed x64 installer for lifecycle smoke."
+          }
+          & .\scripts\smoke-win-installer.ps1 -InstallerPath $installer.FullName
+      - name: Record Windows candidate artifact name
+        id: release-artifact-name
+        shell: pwsh
+        run: |
+          $name = "release-windows-$env:GITHUB_REF_NAME-$env:GITHUB_RUN_ATTEMPT"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "name=$name"
+      - name: Stage verified Windows release artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release-artifact-name.outputs.name }}
+          path: |
+            dist/TaskWraith-*-win-*-setup.exe
+            dist/TaskWraith-*-win-*-setup.exe.blockmap
+            dist/*-win-*.yml
+            dist/sbom-windows.cdx.json
+            dist/win-arm64-unpacked/**
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-arm64-release-candidate:
+    name: Windows ARM64 Release Candidate Gate
+    runs-on: windows-11-arm
+    needs: [signed-windows-release]
+    if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - run: npm ci
+      - name: Download signed Windows candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.signed-windows-release.outputs.artifact-name }}
+          path: candidate
+      - name: Verify native ARM64 signatures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem candidate -Filter "TaskWraith-*-win-arm64-setup.exe" |
+            Select-Object -First 1
+          if (!$installer) {
+            throw "Missing signed ARM64 installer."
+          }
+          foreach ($path in @(
+            $installer.FullName,
+            (Join-Path $PWD "candidate/win-arm64-unpacked/TaskWraith.exe")
+          )) {
+            $signature = Get-AuthenticodeSignature -FilePath $path
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature for ${path}: $($signature.Status)"
+            }
+          }
+      - name: Run strict native ARM64 package and TUI smoke
+        shell: pwsh
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: "1"
+        run: |
+          node scripts/smoke-packaged-electron.cjs candidate/win-arm64-unpacked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Smoke signed ARM64 installer lifecycle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Get-ChildItem candidate -Filter "TaskWraith-*-win-arm64-setup.exe" |
+            Select-Object -First 1
+          if (!$installer) {
+            throw "Missing signed ARM64 installer."
+          }
+          & .\scripts\smoke-win-installer.ps1 `
+            -InstallerPath $installer.FullName `
+            -InstallDir (Join-Path $env:TEMP "TaskWraithArm64SmokeInstall")
+
+  linux-release-candidate:
+    name: Linux Release Candidate Gate
+    runs-on: ubuntu-latest
+    needs: [test, ios]
+    outputs:
+      artifact-name: ${{ steps.release-artifact-name.outputs.name }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - run: npm ci
+      - name: Verify tag and release metadata
+        run: npm run verify:release-tag
+      - run: npm run security:deps
+      - name: Build and strictly smoke Linux package candidate
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: "1"
+          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: "1"
+        run: xvfb-run -a npm run build:linux:nopublish
+      - name: Generate Linux SBOM with embedded runtime components
+        env:
+          TASKWRAITH_SBOM_PATH: dist/sbom-linux.cdx.json
+        run: npm run security:sbom
+      - name: Record Linux candidate artifact name
+        id: release-artifact-name
+        run: >-
+          echo "name=linux-release-candidate-${GITHUB_REF_NAME}-${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
+          >> "$GITHUB_OUTPUT"
+      - name: Upload verified Linux release-candidate evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.release-artifact-name.outputs.name }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*-linux*.yml
+            dist/sbom-linux.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-coordinated-release:
+    name: Publish Coordinated Release
+    runs-on: ubuntu-latest
+    needs:
+      - notarized-macos-release
+      - signed-windows-release
+      - windows-arm64-release-candidate
+      - linux-release-candidate
+    if: >-
+      success() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true' &&
+      vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
+    concurrency:
+      group: release-publish-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.23.2"
+          cache: npm
+      - run: npm ci
+      - name: Download verified macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.notarized-macos-release.outputs.artifact-name }}
+          path: release-assets/mac
+      - name: Download verified Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.signed-windows-release.outputs.artifact-name }}
+          path: release-assets/windows
+      - name: Download verified Linux artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.linux-release-candidate.outputs.artifact-name }}
+          path: release-assets/linux
+      - name: Atomically publish all verified platform artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $ErrorActionPreference = "Stop"
-          $assets = @(
-            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe"
-            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe.blockmap"
-            Get-ChildItem -Path dist -Filter "*-win-*.yml"
-          ) | ForEach-Object { $_.FullName }
-          if ($assets.Count -lt 4) {
-            throw "Expected signed Windows installers, blockmaps, and update feeds in dist/, found $($assets.Count)."
+          set -euo pipefail
+          npm run verify:release-tag
+
+          version="$(node -p "require('./package.json').version")"
+          release_title="TaskWraith v${version}"
+          notes_path="release-assets/RELEASE_NOTES-${version}.md"
+          node scripts/prepare-release-notes.cjs "$version" "$notes_path"
+          channel="latest"
+          prerelease="false"
+          create_flags=(--draft)
+          if [[ "$version" == *-* ]]; then
+            channel="beta"
+            prerelease="true"
+            create_flags+=(--prerelease)
+          fi
+
+          shopt -s nullglob
+          mac_dmg=(release-assets/mac/TaskWraith-"$version"-universal-mac.dmg)
+          mac_zip=(release-assets/mac/TaskWraith-"$version"-universal-mac.zip)
+          mac_blockmaps=(release-assets/mac/TaskWraith-"$version"-universal-mac.zip.blockmap)
+          mac_feed=(release-assets/mac/"$channel"-mac.yml)
+          mac_sbom=(release-assets/mac/sbom.cdx.json)
+          win_installers=(
+            release-assets/windows/TaskWraith-"$version"-win-x64-setup.exe
+            release-assets/windows/TaskWraith-"$version"-win-arm64-setup.exe
+          )
+          win_blockmaps=(
+            release-assets/windows/TaskWraith-"$version"-win-x64-setup.exe.blockmap
+            release-assets/windows/TaskWraith-"$version"-win-arm64-setup.exe.blockmap
+          )
+          win_feeds=(
+            release-assets/windows/"$channel"-win-x64.yml
+            release-assets/windows/"$channel"-win-arm64.yml
+          )
+          win_sbom=(release-assets/windows/sbom-windows.cdx.json)
+          linux_appimage=(release-assets/linux/TaskWraith-"$version".AppImage)
+          linux_deb=(release-assets/linux/taskwraith_"$version"_amd64.deb)
+          linux_feed=(release-assets/linux/"$channel"-linux.yml)
+          linux_sbom=(release-assets/linux/sbom-linux.cdx.json)
+
+          for required in \
+            "${mac_dmg[@]}" \
+            "${mac_zip[@]}" \
+            "${mac_blockmaps[@]}" \
+            "${mac_feed[@]}" \
+            "${mac_sbom[@]}" \
+            "${win_installers[@]}" \
+            "${win_blockmaps[@]}" \
+            "${win_feeds[@]}" \
+            "${win_sbom[@]}" \
+            "${linux_appimage[@]}" \
+            "${linux_deb[@]}" \
+            "${linux_feed[@]}" \
+            "${linux_sbom[@]}"; do
+            test -f "$required"
+          done
+          assets=(
+            "${mac_dmg[@]}"
+            "${mac_zip[@]}"
+            "${mac_blockmaps[@]}"
+            "${mac_feed[@]}"
+            "${mac_sbom[@]}"
+            "${win_installers[@]}"
+            "${win_blockmaps[@]}"
+            "${win_feeds[@]}"
+            "${win_sbom[@]}"
+            "${linux_appimage[@]}"
+            "${linux_deb[@]}"
+            "${linux_feed[@]}"
+            "${linux_sbom[@]}"
+          )
+          node scripts/validate-linux-update-feed.cjs release-assets/linux
+          checksums_path="release-assets/SHA256SUMS-${version}.txt"
+          node scripts/write-release-checksums.cjs "$checksums_path" "${assets[@]}"
+          assets+=("$checksums_path")
+          declare -A asset_paths=()
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            if [[ -n "${asset_paths[$name]:-}" ]]; then
+              echo "Duplicate release asset name: $name"
+              exit 1
+            fi
+            asset_paths[$name]="$asset"
+          done
+          mapfile -t expected_assets < <(
+            for asset in "${assets[@]}"; do basename "$asset"; done | sort
+          )
+
+          release_tag="$GITHUB_REF_NAME"
+          candidate_sha="$(git rev-parse HEAD)"
+          verify_remote_release_tag() {
+            local tag_ref="refs/tags/$release_tag"
+            local tag_type
+            local remote_tag_sha
+            git fetch --force --no-tags origin "+$tag_ref:$tag_ref"
+            tag_type="$(git cat-file -t "$tag_ref")"
+            if [ "$tag_type" = "tag" ]; then
+              remote_tag_sha="$(git rev-parse "$tag_ref^{}")"
+            elif [ "$tag_type" = "commit" ]; then
+              remote_tag_sha="$(git rev-parse "$tag_ref")"
+            else
+              echo "Release tag $tag_ref has unsupported object type $tag_type."
+              return 1
+            fi
+            if [ "$remote_tag_sha" != "$candidate_sha" ]; then
+              echo "Remote release tag resolves to $remote_tag_sha; expected $candidate_sha."
+              return 1
+            fi
           }
-          $releaseTag = $env:GITHUB_REF_NAME
-          $candidateSha = (git rev-parse HEAD).Trim()
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not resolve the checked-out release commit."
+
+          verify_release_copy() {
+            local actual_title
+            local body_json
+            local body_file
+            actual_title="$(gh release view "$release_tag" --json name --jq .name)"
+            if [ "$actual_title" != "$release_title" ]; then
+              echo "Release title is $actual_title; expected $release_title."
+              return 1
+            fi
+            body_json="$(mktemp)"
+            body_file="$(mktemp)"
+            gh release view "$release_tag" --json body > "$body_json"
+            node -e \
+              'const fs=require("node:fs");const data=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));fs.writeFileSync(process.argv[2],data.body||"")' \
+              "$body_json" "$body_file"
+            if ! cmp --silent "$notes_path" "$body_file"; then
+              echo "Release body differs from the prepared CHANGELOG release notes."
+              return 1
+            fi
+            rm -f "$body_json" "$body_file"
           }
-          function Assert-RemoteReleaseTag {
-            $tagRef = "refs/tags/$releaseTag"
-            $refspec = "+{0}:{0}" -f $tagRef
-            git fetch --force --no-tags origin $refspec
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not fetch exact remote release tag $tagRef."
-            }
-            $tagType = (git cat-file -t $tagRef).Trim()
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not inspect remote release tag $tagRef."
-            }
-            if ($tagType -eq "tag") {
-              $remoteTagSha = (git rev-parse "$tagRef^{}").Trim()
-            } elseif ($tagType -eq "commit") {
-              $remoteTagSha = (git rev-parse $tagRef).Trim()
-            } else {
-              throw "Release tag $tagRef has unsupported object type $tagType."
-            }
-            if ($LASTEXITCODE -ne 0) {
-              throw "Could not resolve remote release tag $tagRef."
-            }
-            if ($remoteTagSha -ne $candidateSha) {
-              throw "Remote release tag resolves to $remoteTagSha; expected $candidateSha."
-            }
-          }
-          Assert-RemoteReleaseTag
-          gh release view "$releaseTag" *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create "$releaseTag" --verify-tag --title "$releaseTag" --notes "Verified TaskWraith release artifacts for $releaseTag."
-            if ($LASTEXITCODE -ne 0) {
-              gh release view "$releaseTag" *> $null
-              if ($LASTEXITCODE -ne 0) {
-                throw "Could not create or verify GitHub release $releaseTag."
-              }
-            }
-          }
-          # Re-resolve after release creation and immediately before mutation.
-          Assert-RemoteReleaseTag
-          gh release upload "$releaseTag" @assets --clobber
+
+          verify_remote_release_tag
+          existing_assets=()
+          if gh release view "$release_tag" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$release_tag" --json isDraft --jq .isDraft)"
+            is_prerelease="$(gh release view "$release_tag" --json isPrerelease --jq .isPrerelease)"
+            if [ "$is_prerelease" != "$prerelease" ]; then
+              echo "Existing release prerelease state does not match the verified candidate."
+              exit 1
+            fi
+            if [ "$is_draft" != "true" ] && [ "$is_draft" != "false" ]; then
+              echo "Existing release returned an invalid draft state: $is_draft."
+              exit 1
+            fi
+            verify_release_copy
+            mapfile -t existing_assets < <(
+              gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
+            )
+            if [ "${#existing_assets[@]}" -gt 0 ]; then
+              existing_asset_dir="$(mktemp -d)"
+              trap 'rm -rf "$existing_asset_dir"' EXIT
+              gh release download "$release_tag" --dir "$existing_asset_dir"
+              for name in "${existing_assets[@]}"; do
+                expected_path="${asset_paths[$name]:-}"
+                if [ -z "$expected_path" ]; then
+                  echo "Existing draft contains unexpected asset $name; refusing mutation."
+                  exit 1
+                fi
+                if ! cmp --silent "$expected_path" "$existing_asset_dir/$name"; then
+                  echo "Existing draft asset $name differs from the verified candidate."
+                  exit 1
+                fi
+              done
+            fi
+            if [ "$is_draft" = "false" ]; then
+              verify_remote_release_tag
+              verify_release_copy
+              mapfile -t fresh_public_assets < <(
+                gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
+              )
+              if [ "${fresh_public_assets[*]}" != "${expected_assets[*]}" ]; then
+                echo "Existing public release asset set does not match the verified local set."
+                printf 'Expected: %s\n' "${expected_assets[@]}"
+                printf 'Remote: %s\n' "${fresh_public_assets[@]}"
+                exit 1
+              fi
+              echo "Existing public release exactly matches the verified candidate; no mutation needed."
+              exit 0
+            fi
+          else
+            gh release create "$release_tag" \
+              --verify-tag \
+              --title "$release_title" \
+              --notes-file "$notes_path" \
+              "${create_flags[@]}"
+            verify_release_copy
+          fi
+
+          verify_remote_release_tag
+          declare -A existing_names=()
+          for name in "${existing_assets[@]}"; do
+            existing_names[$name]=1
+          done
+          missing_assets=()
+          for asset in "${assets[@]}"; do
+            name="$(basename "$asset")"
+            if [[ -z "${existing_names[$name]:-}" ]]; then
+              missing_assets+=("$asset")
+            fi
+          done
+          if [ "${#missing_assets[@]}" -gt 0 ]; then
+            gh release upload "$release_tag" "${missing_assets[@]}"
+          fi
+
+          mapfile -t remote_assets < <(
+            gh release view "$release_tag" --json assets --jq '.assets[].name' | sort
+          )
+          if [ "${remote_assets[*]}" != "${expected_assets[*]}" ]; then
+            echo "Remote release asset set does not match the verified local set."
+            printf 'Expected: %s\n' "${expected_assets[@]}"
+            printf 'Remote: %s\n' "${remote_assets[@]}"
+            exit 1
+          fi
+
+          verify_remote_release_tag
+          verify_release_copy
+          gh release edit "$release_tag" --draft=false
 
   unsigned-windows-build:
     name: Unsigned Windows Build (testing)
@@ -299,10 +660,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: "22.23.2"
           cache: npm
       - run: npm ci
       - run: npm run security:deps
@@ -330,17 +691,23 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22
+          node-version: "22.23.2"
           cache: npm
       - run: npm ci
       - run: npm run security:deps
       # AppImage + deb only — snap needs snapcraft (absent on the default
       # runner). `--publish never` keeps this manual testing lane outside the
       # GitHub Release publication surface.
-      - run: npm run build:linux:nopublish
+      - name: Build and strictly smoke unsigned Linux artifacts
+        env:
+          TASKWRAITH_FORCE_LAUNCH_SMOKE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGE: "1"
+          TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST: "1"
+          TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN: "1"
+        run: xvfb-run -a npm run build:linux:nopublish
       - name: Upload SHA/run-labelled unsigned Linux test artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

@@ -204,6 +204,18 @@ describe('MCP bridge stream writes', () => {
           arguments: { name: ${JSON.stringify(sentinels.gatewayTarget)} }
         }
       }) + '\\n');
+      input.write(JSON.stringify({
+        jsonrpc: '2.0',
+        id: 'known-tool-id',
+        method: 'tools/call',
+        params: {
+          name: 'read_file',
+          arguments: {
+            prompt: ${JSON.stringify(sentinels.argument)},
+            path: ${JSON.stringify(sentinels.argumentPath)}
+          }
+        }
+      }) + '\\n');
       input.emit('error', new Error(${JSON.stringify(sentinels.streamError)}));
       output.emit('error', new Error(${JSON.stringify(sentinels.streamError)}));
       process.emit('uncaughtException', new Error(${JSON.stringify(sentinels.stackError)}));
@@ -230,7 +242,10 @@ describe('MCP bridge stream writes', () => {
       expect(persisted).toContain('--token')
       expect(persisted).toContain('<redacted>')
       expect(persisted).toContain('<redacted-path>')
-      expect(persisted).toContain('tools/call started tool=unknown')
+      expect(persisted).toContain(
+        'tools/call rejected scope=undeclared tool=unknown reason=invalid-identity'
+      )
+      expect(persisted).toContain('tools/call started tool=read_file')
       expect(persisted).toContain('args.kind=object args.fields=2')
       expect(persisted).toContain('tools/call broker-rejected failure.kind=error')
       expect(persisted).toContain(
@@ -292,7 +307,10 @@ describe('MCP bridge stream writes', () => {
         stderr += chunk
       })
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error(`bridge child readiness timeout: ${stderr}`)), 5_000)
+        const timeout = setTimeout(
+          () => reject(new Error(`bridge child readiness timeout: ${stderr}`)),
+          5_000
+        )
         const poll = () => {
           if (output.includes('ready')) {
             clearTimeout(timeout)
@@ -689,6 +707,46 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('rejects foreign and nested namespaces before tools/call reaches the broker', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
+    const chunks: string[] = []
+    const stream = {
+      write: vi.fn((chunk: string) => {
+        chunks.push(chunk)
+        return true
+      })
+    }
+
+    for (const [id, name] of [
+      [701, 'mcp__evil__write_file'],
+      [702, 'taskwraith-broker__mcp__evil__write_file'],
+      [703, 'mcp__taskwraith__mcp__evil__write_file']
+    ] as const) {
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [],
+          brokerRequest,
+          stdout: stream as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id,
+          method: 'tools/call',
+          params: { name, arguments: { path: '../outside.txt', content: 'owned' } }
+        },
+        'line'
+      )
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).not.toHaveBeenCalled()
+    expect(chunks.join('')).toContain('Unknown TaskWraith MCP tool')
+  })
+
   it('does not reflect unexpected broker rejection details to the provider', async () => {
     const sentinel = '/Users/operator/private/workspace/.secrets/token=host-secret'
     const chunks: string[] = []
@@ -846,6 +904,34 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('rejects foreign and nested namespaces at the authenticated broker ingress', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'unexpected' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
+      executeGeminiMcpTool
+    } as never)
+
+    for (const tool of [
+      'mcp__evil__write_file',
+      'taskwraith-broker__mcp__evil__write_file',
+      'mcp__taskwraith__mcp__evil__write_file'
+    ]) {
+      await expect(
+        runtime.handleGeminiMcpBrokerRequest({
+          token: 'token-1',
+          instanceEpoch: TEST_INSTANCE_EPOCH,
+          tool,
+          arguments: { path: '../outside.txt', content: 'owned' }
+        })
+      ).resolves.toMatchObject({
+        ok: false,
+        error: expect.stringContaining('Unknown TaskWraith MCP tool')
+      })
+    }
+    expect(executeGeminiMcpTool).not.toHaveBeenCalled()
+  })
+
   it('confines a Pi broker credential to the fixed ensemble coordination surface', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({
@@ -965,47 +1051,47 @@ describe('MCP bridge stream writes', () => {
   it.skipIf(process.platform === 'win32')(
     'redacts a real broker executor rejection and client socket path end to end',
     async () => {
-    const directory = privateBridgeTestDirectory('tw-br-')
-    const socketPath = join(directory, 'broker.sock')
-    const rejectionSentinel =
-      '/Users/operator/private/workspace/.secrets/token=__BROKER_EXECUTOR_SENTINEL__'
-    const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => socketPath,
-      getGeminiMcpBrokerToken: () => 'token-1',
-      getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
-      executeGeminiMcpTool: vi.fn(async () => {
-        throw new Error(rejectionSentinel)
-      })
-    } as never)
+      const directory = privateBridgeTestDirectory('tw-br-')
+      const socketPath = join(directory, 'broker.sock')
+      const rejectionSentinel =
+        '/Users/operator/private/workspace/.secrets/token=__BROKER_EXECUTOR_SENTINEL__'
+      const runtime = new McpBridgeRuntime({
+        getGeminiMcpSocketPath: () => socketPath,
+        getGeminiMcpBrokerToken: () => 'token-1',
+        getInstanceEpoch: () => TEST_INSTANCE_EPOCH,
+        executeGeminiMcpTool: vi.fn(async () => {
+          throw new Error(rejectionSentinel)
+        })
+      } as never)
 
-    try {
-      await runtime.startGeminiMcpBroker()
-      const executorResponse = await brokerRequest(socketPath, {
-        id: 72,
-        token: 'token-1',
-        instanceEpoch: TEST_INSTANCE_EPOCH,
-        tool: 'read_file',
-        arguments: { path: 'README.md' },
-        parentProvider: 'kimi'
-      })
-      expect(executorResponse).toMatchObject({
-        id: 72,
+      try {
+        await runtime.startGeminiMcpBroker()
+        const executorResponse = await brokerRequest(socketPath, {
+          id: 72,
+          token: 'token-1',
+          instanceEpoch: TEST_INSTANCE_EPOCH,
+          tool: 'read_file',
+          arguments: { path: 'README.md' },
+          parentProvider: 'kimi'
+        })
+        expect(executorResponse).toMatchObject({
+          id: 72,
+          ok: false,
+          error: 'TaskWraith MCP bridge encountered an unexpected internal error.'
+        })
+        expect(JSON.stringify(executorResponse)).not.toContain(rejectionSentinel)
+      } finally {
+        runtime.closeGeminiMcpBroker()
+      }
+
+      const missingSocket = join(directory, '__MISSING_PRIVATE_SOCKET_SENTINEL__.sock')
+      const socketResponse = await brokerRequest(missingSocket, { id: 73 })
+      expect(socketResponse).toEqual({
         ok: false,
         error: 'TaskWraith MCP bridge encountered an unexpected internal error.'
       })
-      expect(JSON.stringify(executorResponse)).not.toContain(rejectionSentinel)
-    } finally {
-      runtime.closeGeminiMcpBroker()
-    }
-
-    const missingSocket = join(directory, '__MISSING_PRIVATE_SOCKET_SENTINEL__.sock')
-    const socketResponse = await brokerRequest(missingSocket, { id: 73 })
-    expect(socketResponse).toEqual({
-      ok: false,
-      error: 'TaskWraith MCP bridge encountered an unexpected internal error.'
-    })
-    expect(JSON.stringify(socketResponse)).not.toContain(missingSocket)
-    fs.rmSync(directory, { recursive: true, force: true })
+      expect(JSON.stringify(socketResponse)).not.toContain(missingSocket)
+      fs.rmSync(directory, { recursive: true, force: true })
     }
   )
 
@@ -1103,10 +1189,7 @@ describe('MCP bridge stream writes', () => {
       {
         getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
-        getMcpToolDefinitions: () => [
-          { name: 'read_file' },
-          { name: 'request_tool_permission' }
-        ],
+        getMcpToolDefinitions: () => [{ name: 'read_file' }, { name: 'request_tool_permission' }],
         stdout: {
           write: vi.fn((chunk: string) => {
             chunks.push(chunk)
@@ -1170,7 +1253,11 @@ describe('MCP bridge stream writes', () => {
   })
 
   it('adds Mesh Canvas only for the participant-run mesh-direct gateway variant', () => {
-    const tools = [{ name: 'read_file' }, { name: 'mesh_scene_present' }, { name: 'video_encode_clip' }]
+    const tools = [
+      { name: 'read_file' },
+      { name: 'mesh_scene_present' },
+      { name: 'video_encode_clip' }
+    ]
     const list = (env: Record<string, string>) => {
       const chunks: string[] = []
       handleMcpJsonRpcMessage(
@@ -1186,14 +1273,14 @@ describe('MCP bridge stream writes', () => {
         { jsonrpc: '2.0', id: 24, method: 'tools/list' },
         'line'
       )
-      return (JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }).result.tools.map(
-        (tool) => tool.name
-      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
     }
     expect(list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1' })).not.toContain('mesh_scene_present')
-    expect(
-      list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1', TASKWRAITH_MCP_MESH_DIRECT: '1' })
-    ).toContain('mesh_scene_present')
+    expect(list({ TASKWRAITH_MCP_GATEWAY_SUBSET: '1', TASKWRAITH_MCP_MESH_DIRECT: '1' })).toContain(
+      'mesh_scene_present'
+    )
   })
 
   it('adds all Sketch Canvas verbs only for a v8 sketch-direct gateway receipt', () => {
@@ -1415,9 +1502,27 @@ describe('MCP bridge stream writes', () => {
     expect(response.error.code).toBe(-32601)
   })
 
-  it.each(['missing_capability', 'capability_invoke', 'capability_search'])(
-    'rejects invalid capability_invoke target %s before broker dispatch',
-    async (target) => {
+  it.each([
+    ['missing capability', { name: 'missing_capability', arguments: {} }],
+    ['gateway self target', { name: 'capability_invoke', arguments: {} }],
+    ['gateway search target', { name: 'capability_search', arguments: {} }],
+    ['foreign target', { name: 'mcp__evil__write_file', arguments: {} }],
+    [
+      'nested namespace target',
+      { name: 'taskwraith-broker__mcp__evil__write_file', arguments: {} }
+    ],
+    ['nested-only target', { input: { name: 'write_file' }, arguments: {} }],
+    [
+      'trusted root with foreign nested target',
+      { name: 'write_file', input: { name: 'mcp__evil__write_file' }, arguments: {} }
+    ],
+    [
+      'foreign root with trusted nested target',
+      { name: 'mcp__evil__write_file', input: { name: 'write_file' }, arguments: {} }
+    ]
+  ] as const)(
+    'rejects invalid capability_invoke %s before broker dispatch',
+    async (_label, invocationArguments) => {
       const brokerRequest = vi.fn(async () => ({ ok: true, text: 'unexpected' }))
       const chunks: string[] = []
       const stream = {
@@ -1444,7 +1549,7 @@ describe('MCP bridge stream writes', () => {
           method: 'tools/call',
           params: {
             name: 'capability_invoke',
-            arguments: { name: target, arguments: {} }
+            arguments: invocationArguments
           }
         },
         'line'
@@ -1589,7 +1694,9 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).not.toHaveBeenCalled()
-    const response = JSON.parse(chunks.join('').trim()) as { error: { code: number; message: string } }
+    const response = JSON.parse(chunks.join('').trim()) as {
+      error: { code: number; message: string }
+    }
     expect(response.error.code).toBe(-32601)
     expect(response.error.message).toContain('core MCP profile')
   })
@@ -1629,7 +1736,9 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).not.toHaveBeenCalled()
-    const response = JSON.parse(chunks.join('').trim()) as { error: { code: number; message: string } }
+    const response = JSON.parse(chunks.join('').trim()) as {
+      error: { code: number; message: string }
+    }
     expect(response.error.code).toBe(-32601)
     expect(response.error.message).toContain('gateway MCP profile')
     expect(response.error.message).toContain('capability_search and capability_invoke')
@@ -1743,13 +1852,7 @@ describe('MCP bridge stream writes', () => {
       isDev: () => false
     } as never)
 
-    const args = runtime.taskwraithMcpBridgeArgs(
-      SOCKET_PATH,
-      false,
-      false,
-      false,
-      true
-    )
+    const args = runtime.taskwraithMcpBridgeArgs(SOCKET_PATH, false, false, false, true)
 
     expect(args).toContain(GEMINI_MCP_GATEWAY_SUBSET_ARG)
     expect(args[args.length - 1]).toBe(GEMINI_MCP_GATEWAY_SUBSET_ARG)
@@ -1816,10 +1919,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_AUDIT: '0'
     }
     const gatewayEnv: Record<string, string | undefined> = {}
-    applyMcpBridgeProfileArgvToEnv(
-      ['taskwraith', GEMINI_MCP_GATEWAY_SUBSET_ARG],
-      gatewayEnv
-    )
+    applyMcpBridgeProfileArgvToEnv(['taskwraith', GEMINI_MCP_GATEWAY_SUBSET_ARG], gatewayEnv)
     expect(gatewayEnv).toEqual({
       ...explicitFullProfile,
       TASKWRAITH_MCP_GATEWAY_SUBSET: '1'
@@ -1831,14 +1931,12 @@ describe('MCP bridge stream writes', () => {
   })
 
   it('rejects retired Kimi global MCP registration without invoking the provider CLI', async () => {
-    const captureProcessOutput = vi.fn(
-      async (_command: string, _args: string[]) => ({
-        stdout: '',
-        stderr: '',
-        code: 0,
-        timedOut: false
-      })
-    )
+    const captureProcessOutput = vi.fn(async (_command: string, _args: string[]) => ({
+      stdout: '',
+      stderr: '',
+      code: 0,
+      timedOut: false
+    }))
     const runtime = new McpBridgeRuntime({
       getGeminiMcpBrokerToken: () => 'token-1',
       isDev: () => false,

@@ -44,6 +44,7 @@ import type {
   ExternalPublishReceiptInput,
   ExternalPublishReceiptWriter
 } from '../ExternalPublishReceiptLedger'
+import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 
 export interface HostCommandResult {
   stdout: string
@@ -90,6 +91,10 @@ export interface WorkspaceToolContext {
   cwd: string
   workspacePath?: string
   appChatId?: string
+  /** Re-check exact run + lock/path authority at the final mutation boundary. */
+  assertMutationAuthorized?: () => void | Promise<void>
+  /** Cheap post-verification cancellation/history check between mutation phases. */
+  assertMutationStillLive?: () => void
 }
 
 export interface WorkspaceToolHostDependencies {
@@ -565,6 +570,15 @@ export async function executeWorkspaceMcpTool(
   context: WorkspaceToolContext,
   cwd: string
 ): Promise<WorkspaceMcpToolExecution> {
+  const dispatchContract = resolveToolDispatchContractStrict(toolName, args)
+  if (
+    dispatchContract.ok &&
+    (dispatchContract.lock === 'workspace-paths' ||
+      dispatchContract.lock === 'workspace-repository' ||
+      dispatchContract.lock === 'workspace-runtime')
+  ) {
+    await context.assertMutationAuthorized?.()
+  }
   if (toolName === 'find_files') {
     const result = await executeFindFiles(deps, args, context, cwd)
     return { result, isError: result.ok === false || Boolean(result.timedOut || result.error) }
@@ -622,18 +636,18 @@ export async function executeWorkspaceMcpTool(
     }
   }
   if (toolName === 'git_commit') {
-    const result = await executeGitCommit(deps, args, cwd)
+    const result = await executeGitCommit(deps, args, cwd, context)
     return { result, isError: result.exitCode !== 0 || result.timedOut === true }
   }
   if (toolName === 'git_push') {
-    const result = await executeGitPush(deps, args, cwd)
+    const result = await executeGitPush(deps, args, cwd, context)
     return {
       result,
       isError: result.ok === false || result.exitCode !== 0 || result.timedOut === true
     }
   }
   if (toolName === 'git_create_pr') {
-    const result = await executeGitCreatePr(deps, args, cwd)
+    const result = await executeGitCreatePr(deps, args, cwd, context)
     return {
       result,
       isError: result.ok === false || result.exitCode !== 0 || result.timedOut === true
@@ -644,7 +658,7 @@ export async function executeWorkspaceMcpTool(
     return { result, isError: result.ok === false }
   }
   if (toolName === 'run_task') {
-    const result = await executeRunTask(deps, args, cwd)
+    const result = await executeRunTask(deps, args, cwd, undefined, context)
     return {
       result,
       isError: (result.exitCode !== null && result.exitCode !== 0) || result.timedOut === true
@@ -955,6 +969,7 @@ export async function executeApplyPatch(
         check
       }
     }
+    await context.assertMutationAuthorized?.()
     const applied = await runCommandArgs(deps, ['git', 'apply', patchPath], cwd, 30_000)
     return {
       ok: applied.exitCode === 0,
@@ -984,6 +999,7 @@ export async function executeCreateDirectory(
     if (lstat.isSymbolicLink()) throw new Error('Symbolic links cannot be managed by create_directory.')
     if (!lstat.isDirectory()) throw new Error('Target path exists and is not a directory.')
   } else {
+    await context.assertMutationAuthorized?.()
     await fs.mkdir(targetPath, { recursive })
   }
   return {
@@ -1003,6 +1019,7 @@ export async function executeDeletePath(args: Record<string, any>, context: Work
   const lstat = await fs.lstat(targetPath)
   if (lstat.isSymbolicLink()) throw new Error('Symbolic links cannot be deleted by delete_path.')
   if (lstat.isDirectory()) {
+    await context.assertMutationAuthorized?.()
     await fs.rmdir(targetPath)
     return {
       ok: true,
@@ -1013,6 +1030,7 @@ export async function executeDeletePath(args: Record<string, any>, context: Work
     }
   }
   if (!lstat.isFile()) throw new Error('Selected path is not a file or directory.')
+  await context.assertMutationAuthorized?.()
   await fs.unlink(targetPath)
   return {
     ok: true,
@@ -1260,6 +1278,7 @@ export async function executeGitStage(
           message: 'Patch does not stage cleanly.'
         }
       }
+      await context.assertMutationAuthorized?.()
       const result = await runCommandArgs(
         deps,
         ['git', 'apply', '--cached', patchPath],
@@ -1283,6 +1302,7 @@ export async function executeGitStage(
   if (paths.length) {
     gitArgs.push('--', ...paths.map((pathArg) => resolveMcpScopedPath(context, pathArg)))
   }
+  await context.assertMutationAuthorized?.()
   const result = await runCommandArgs(deps, gitArgs, cwd, 30_000)
   const status = await executeGitStatus(deps, cwd)
   return { command: gitArgs, result, status }
@@ -1291,10 +1311,12 @@ export async function executeGitStage(
 export async function executeGitCommit(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
-  cwd: string
+  cwd: string,
+  context?: WorkspaceToolContext
 ) {
   const message = requireNonEmptyString(args.message, 'Commit message')
   const gitArgs = ['git', 'commit', '-m', message]
+  await context?.assertMutationAuthorized?.()
   const result = await runCommandArgs(deps, gitArgs, cwd, 60_000)
   return {
     command: ['git', 'commit', '-m', '[message]'],
@@ -1308,7 +1330,8 @@ export async function executeGitCommit(
 export async function executeGitPush(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
-  cwd: string
+  cwd: string,
+  context?: WorkspaceToolContext
 ) {
   const branchResult = await runCommandArgs(deps, ['git', 'branch', '--show-current'], cwd, 30_000)
   const branch = branchResult.stdout.trim()
@@ -1363,6 +1386,7 @@ export async function executeGitPush(
       error: receiptResult.error
     }
   }
+  await context?.assertMutationAuthorized?.()
   const result = await runCommandArgs(deps, command, cwd, 120_000, {
     allowReleaseCommand: true,
     approvalSource: 'externalPublishReceipt'
@@ -1393,7 +1417,8 @@ export async function executeGitPush(
 export async function executeGitCreatePr(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
-  cwd: string
+  cwd: string,
+  context?: WorkspaceToolContext
 ) {
   const title = optionalString(args.title)
   const body = optionalString(args.body || args.description)
@@ -1433,6 +1458,7 @@ export async function executeGitCreatePr(
       error: receiptResult.error
     }
   }
+  await context?.assertMutationAuthorized?.()
   const result = await runCommandArgs(deps, command, cwd, 120_000, {
     allowReleaseCommand: true,
     approvalSource: 'externalPublishReceipt'
@@ -1493,7 +1519,8 @@ export async function executeRunTask(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
   cwd: string,
-  releaseApproval?: ReleaseCommandCheckOptions
+  releaseApproval?: ReleaseCommandCheckOptions,
+  context?: WorkspaceToolContext
 ) {
   const task = requireNonEmptyString(args.task || args.script || args.name, 'Task')
   const taskArgs = toStringArray(args.args)
@@ -1539,6 +1566,7 @@ export async function executeRunTask(
   }
   command.push(...taskArgs)
   const timeoutMs = clampInteger(args.timeoutMs, 600_000, 1_000, 30 * 60_000)
+  await context?.assertMutationAuthorized?.()
   const result = await runCommandArgs(deps, command, cwd, timeoutMs, releaseApproval)
   return {
     task,
@@ -1569,6 +1597,7 @@ export async function executeStartBackgroundProcess(
     : cwd
   const initialWaitMs = clampInteger(args.initialWaitMs, 500, 0, 3000)
   const maxInitialChars = clampInteger(args.maxInitialChars ?? args.maxChars, 20_000, 1000, 100_000)
+  await context.assertMutationAuthorized?.()
   return startBackgroundProcess(command, processCwd, {
     name: optionalString(args.name),
     appChatId,
@@ -2471,6 +2500,15 @@ async function moveWorkspacePath(input: {
   tool: 'move_path' | 'rename_path'
 }) {
   const { context, sourcePath, destinationPath, overwrite, createParents, tool } = input
+  let mutationAuthorized = false
+  const authorizeMutationPhase = async (): Promise<void> => {
+    if (!mutationAuthorized) {
+      await context.assertMutationAuthorized?.()
+      mutationAuthorized = true
+      return
+    }
+    context.assertMutationStillLive?.()
+  }
   if (resolve(sourcePath) === resolve(destinationPath)) {
     throw new Error(`${tool} source and destination must be different.`)
   }
@@ -2482,26 +2520,48 @@ async function moveWorkspacePath(input: {
   const destinationParent = dirname(destinationPath)
   if (createParents) {
     await assertNearestExistingParentInsideWorkspace(context, destinationParent)
+    await authorizeMutationPhase()
     await fs.mkdir(destinationParent, { recursive: true })
   } else {
     await assertDirectoryInsideWorkspace(context, destinationParent)
   }
   const destinationExists = await pathExists(destinationPath)
+  let removedEmptyDestinationDirectory = false
   if (destinationExists) {
     if (!overwrite) throw new Error(`${tool} destination already exists.`)
     const destinationStat = await fs.lstat(destinationPath)
     if (destinationStat.isSymbolicLink()) {
       throw new Error(`${tool} will not overwrite a symbolic link.`)
     }
-    if (destinationStat.isDirectory()) {
-      await fs.rmdir(destinationPath)
-    } else if (destinationStat.isFile()) {
-      await fs.unlink(destinationPath)
-    } else {
+    if (!destinationStat.isDirectory() && !destinationStat.isFile()) {
       throw new Error(`${tool} destination is not a file or directory.`)
     }
+    if (destinationStat.isDirectory()) {
+      const entries = await fs.readdir(destinationPath)
+      if (entries.length > 0) {
+        throw new Error(`${tool} destination directory is not empty.`)
+      }
+      await authorizeMutationPhase()
+      await fs.rmdir(destinationPath)
+      removedEmptyDestinationDirectory = true
+    }
   }
-  await fs.rename(sourcePath, destinationPath)
+  try {
+    await authorizeMutationPhase()
+    await fs.rename(sourcePath, destinationPath)
+  } catch (error) {
+    if (removedEmptyDestinationDirectory) {
+      try {
+        await fs.mkdir(destinationPath)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          `${tool} failed and the empty destination directory could not be restored.`
+        )
+      }
+    }
+    throw error
+  }
   return {
     ok: true,
     tool,

@@ -254,6 +254,23 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('get-codex-usage-snapshot', ['force'])).toThrow(/object/)
   })
 
+  it('validates the work-lock projection channel payload shapes', () => {
+    expect(() => validateIpcArgs('work-locks:list', [])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('work-locks:list', [{ workspacePath: '/repo', chatId: 'chat-1' }])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('work-locks:subscribe', [
+        { workspacePath: '/repo', chatId: 'chat-1', subscriptionId: 'sub-1' }
+      ])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('work-locks:unsubscribe', [{ subscriptionId: 'sub-1' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('work-locks:list', ['repo'])).toThrow(/object/)
+    expect(() => validateIpcArgs('work-locks:subscribe', [])).toThrow(/object/)
+  })
+
   it('accepts registered and chat-scoped external diff targets', () => {
     expect(() => validateIpcArgs('get-diff', ['/tmp/workspace'])).not.toThrow()
     expect(() =>

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto'
+
 import {
   FanoutWorktreeAllocator,
   type FanoutWorktreeAllocation
@@ -8,6 +10,7 @@ import type {
   GitCreateWorktreeInput,
   GitDeleteBranchInput,
   GitNumstatEntry,
+  GitPatchApplicationInspection,
   GitRemoveWorktreeInput,
   GitRepositorySnapshot,
   GitResult,
@@ -15,6 +18,7 @@ import type {
   GitWorktreePatchCapture
 } from './GitService'
 import type { FanoutWorktreeCandidate, ProviderId } from '../store/types'
+import type { FanoutCandidatePromotionLock } from './FanoutCandidatePromotionLock'
 
 /**
  * Candidate lifecycle for worktree-isolated fan-out lanes: allocate a
@@ -38,6 +42,9 @@ export interface FanoutCandidateGit {
   captureWorktreePatch(
     input: GitCaptureWorktreePatchInput
   ): Promise<GitResult<GitWorktreePatchCapture>>
+  inspectPatchApplication(
+    input: Pick<GitApplyPatchInput, 'repoPath' | 'patch' | 'verifiedTargetPaths'>
+  ): Promise<GitResult<GitPatchApplicationInspection>>
   applyPatchToRepository(input: GitApplyPatchInput): Promise<GitResult<GitRepositorySnapshot>>
   deleteBranch(input: GitDeleteBranchInput): Promise<GitResult<{ branch: string }>>
 }
@@ -55,6 +62,8 @@ export interface FanoutCandidateStore {
 export interface FanoutCandidateServiceOptions {
   git: FanoutCandidateGit
   store: FanoutCandidateStore
+  /** Required: promotion must never fall back to an unlocked base-tree write. */
+  promotionLock: FanoutCandidatePromotionLock
   nowIso?: () => string
 }
 
@@ -92,12 +101,17 @@ export interface CandidateResolution {
   applied?: boolean
 }
 
+type LockedCandidatePromotion =
+  | { ok: false; error: string }
+  | { ok: true; cleanupError: string | null }
+
 /** Preview payloads stay renderer-friendly; promote re-captures internally. */
 const PATCH_PREVIEW_CHAR_LIMIT = 2_000_000
 
 export class FanoutCandidateService {
   private git: FanoutCandidateGit
   private store: FanoutCandidateStore
+  private promotionLock: FanoutCandidatePromotionLock
   private nowIso: () => string
   private allocator = new FanoutWorktreeAllocator()
   private resolutionTails = new Map<string, Promise<unknown>>()
@@ -105,6 +119,7 @@ export class FanoutCandidateService {
   constructor(options: FanoutCandidateServiceOptions) {
     this.git = options.git
     this.store = options.store
+    this.promotionLock = options.promotionLock
     this.nowIso = options.nowIso || (() => new Date().toISOString())
   }
 
@@ -234,24 +249,128 @@ export class FanoutCandidateService {
       return { ok: false, error: capture.error || 'Could not capture the candidate patch.' }
     }
 
+    const patchSha256 = sha256Text(capture.data.patch)
     if (!capture.data.clean) {
-      const applied = await this.git.applyPatchToRepository({
-        repoPath: candidate.baseWorkspacePath,
-        patch: capture.data.patch
-      })
-      if (!applied.ok) {
-        await this.recordReason(chatId, candidateId, applied.error || 'git apply failed.')
-        return { ok: false, error: applied.error || 'git apply failed.' }
+      if (
+        candidate.promotionIntent &&
+        candidate.promotionIntent.patchSha256.toLowerCase() !== patchSha256
+      ) {
+        const error =
+          'Candidate promotion recovery stopped because the candidate patch changed after its durable intent was saved.'
+        await this.recordReason(chatId, candidateId, error)
+        return { ok: false, error }
       }
     }
 
-    const cleanupError = await this.cleanupWorktree(candidate)
-    await this.store.patchCandidate(chatId, candidateId, {
-      status: 'promoted',
-      resolvedAt: this.nowIso(),
-      diffStat: capture.data.totals,
-      ...(cleanupError ? { reason: cleanupError } : {})
-    })
+    try {
+      const locked = await this.promotionLock.withPromotionLock(
+        {
+          chatId,
+          candidateId,
+          baseWorkspacePath: candidate.baseWorkspacePath,
+          patch: capture.data.patch
+        },
+        async (verified): Promise<LockedCandidatePromotion> => {
+          const relinked = await this.assertWorktreeLinked(candidate)
+          if (relinked) {
+            return { ok: false, error: relinked.error || 'Candidate worktree is no longer linked.' }
+          }
+          if (!capture.data.clean) {
+            let intentPreparedHere = false
+            if (!candidate.promotionIntent) {
+              const prepared = await this.store.patchCandidate(chatId, candidateId, {
+                promotionIntent: {
+                  patchSha256,
+                  startedAt: this.nowIso()
+                }
+              })
+              if (!prepared) {
+                return {
+                  ok: false,
+                  error: 'Candidate promotion could not save its durable write-ahead intent.'
+                }
+              }
+              intentPreparedHere = true
+            }
+            const applyInput = {
+              repoPath: verified.baseWorkspacePath,
+              patch: capture.data.patch,
+              verifiedTargetPaths: verified.targetPaths
+            }
+            const inspection = await this.git.inspectPatchApplication(applyInput)
+            if (!inspection.ok) {
+              if (intentPreparedHere) {
+                await this.store.patchCandidate(chatId, candidateId, {
+                  promotionIntent: undefined
+                })
+              }
+              return {
+                ok: false,
+                error: inspection.error || 'Candidate patch state could not be inspected.'
+              }
+            }
+            if (inspection.data.state === 'applicable') {
+              const applied = await this.git.applyPatchToRepository(applyInput)
+              if (!applied.ok) {
+                return { ok: false, error: applied.error || 'git apply failed.' }
+              }
+            } else if (inspection.data.state !== 'already-applied') {
+              if (intentPreparedHere) {
+                await this.store.patchCandidate(chatId, candidateId, {
+                  promotionIntent: undefined
+                })
+              }
+              return {
+                ok: false,
+                error:
+                  inspection.data.state === 'ambiguous'
+                    ? 'Candidate promotion recovery is ambiguous because the patch applies both forward and in reverse.'
+                    : 'The candidate patch neither applies cleanly nor matches an already-applied promotion.'
+              }
+            }
+          }
+
+          // This is the semantic commit point. Persist it before fallible
+          // worktree/branch and authority cleanup so a retry can never apply
+          // the same patch twice after the base tree already changed.
+          const committed = await this.store.patchCandidate(chatId, candidateId, {
+            status: 'promoted',
+            promotionIntent: undefined,
+            resolvedAt: this.nowIso(),
+            diffStat: capture.data.totals
+          })
+          if (!committed) {
+            throw new Error(
+              'Candidate promotion applied, but its durable status could not be saved.'
+            )
+          }
+          const cleanupError = await this.cleanupWorktree(candidate)
+          if (cleanupError) await this.recordReason(chatId, candidateId, cleanupError)
+          return { ok: true, cleanupError }
+        }
+      )
+      const promotion = locked.value
+      if (!promotion.ok) {
+        const error = [promotion.error || 'git apply failed.', locked.cleanupError]
+          .filter((reason): reason is string => !!reason)
+          .join(' ')
+        await this.recordReason(chatId, candidateId, error)
+        return { ok: false, error }
+      }
+      const cleanupError = [promotion.cleanupError, locked.cleanupError]
+        .filter((reason): reason is string => !!reason)
+        .join(' ')
+      if (cleanupError) await this.recordReason(chatId, candidateId, cleanupError)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.recordReason(chatId, candidateId, message)
+      const latest = await this.requireCandidate(chatId, candidateId).catch(() => null)
+      if (latest?.status === 'promoted') {
+        return { ok: true, applied: !capture.data.clean }
+      }
+      return { ok: false, error: message }
+    }
+
     return { ok: true, applied: !capture.data.clean }
   }
 
@@ -265,6 +384,13 @@ export class FanoutCandidateService {
     }
     if (candidate.status !== 'settled') {
       return { ok: false, error: 'This candidate was already resolved.' }
+    }
+    if (candidate.promotionIntent) {
+      return {
+        ok: false,
+        error:
+          'This candidate has an unfinished promotion intent. Retry promotion to recover it before discarding.'
+      }
     }
     const linked = await this.assertWorktreeLinked(candidate)
     if (linked) return linked
@@ -359,4 +485,8 @@ export class FanoutCandidateService {
 
 function normalizePath(value: string): string {
   return value.trim().replace(/\/+$/, '')
+}
+
+function sha256Text(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex')
 }

@@ -38,6 +38,8 @@ export interface PrepareAntigravityProviderLaunchInput {
    */
   agenticServices?: Pick<AgenticServicesSettings, 'shellCommands' | 'fileChanges'> | null
   inheritedEnv?: Readonly<Record<string, string | undefined>>
+  /** Exact opaque owner issued for this seat by workspace-lock admission. */
+  workspaceLockOwnerId?: string | null
   /**
    * Prior agy conversation to resume, learned from the CLI's own receipt after a
    * previous turn (never synthesized). Non-uuid values are dropped by
@@ -58,7 +60,8 @@ export interface AntigravityProviderLaunchPlan {
 export interface AntigravityProviderRuntimeDependencies {
   resolveBinary?: () => Promise<ResolvedAgyCliBinary>
   createEnv?: (
-    inheritedEnv?: Readonly<Record<string, string | undefined>>
+    inheritedEnv?: Readonly<Record<string, string | undefined>>,
+    extraEnv?: Readonly<Record<string, string | undefined>>
   ) => Record<string, string>
 }
 
@@ -137,7 +140,12 @@ export async function prepareAntigravityProviderLaunch(
         : buildAgyWriteCapablePrintArgs(argsInput),
     // Every launch uses the central S2 sanitizer. No runtime profile, secret,
     // OAuth token, or credential selector is consulted or forwarded here.
-    env: (deps.createEnv ?? createAgyCliEnv)(input.inheritedEnv),
+    env: (deps.createEnv ?? createAgyCliEnv)(
+      input.inheritedEnv,
+      input.workspaceLockOwnerId
+        ? { TASKWRAITH_LOCK_OWNER_ID: input.workspaceLockOwnerId }
+        : undefined
+    ),
     mode
   }
 }

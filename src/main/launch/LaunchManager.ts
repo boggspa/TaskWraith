@@ -16,6 +16,8 @@ import {
 import type { TrackedSpawn } from '../localServers/types'
 import type { LaunchTarget } from '../launchTargets/types'
 import type { AgenticServiceId, ProviderId } from '../store/types'
+import { withExactWorkspaceLockOwnerEnv } from '../WorkspaceLockExecutionIdentity'
+import type { WorkspaceLockGatedProcess } from '../WorkspaceLockGatedProcess'
 import {
   createPackagedIsolatedInstanceId,
   isValidPackagedIsolatedInstanceId,
@@ -66,6 +68,12 @@ export interface LaunchManagerDeps {
   platform?: NodeJS.Platform
   now?: () => Date
   spawnProcess?: (command: string, args: string[], options: SpawnOptions) => ChildProcess
+  spawnGatedProcess?: (
+    command: string,
+    args: string[],
+    options: SpawnOptions,
+    workspaceLockOwnerId: string
+  ) => WorkspaceLockGatedProcess
   requestApproval: (
     sender: WebContents | null,
     provider: ProviderId,
@@ -116,6 +124,32 @@ export interface StartLaunchTargetInput {
   target: LaunchTarget
   chatId?: string
   runId?: string
+  /** Exact opaque owner issued by workspace-lock admission for this process. */
+  workspaceLockOwnerId?: string
+  workspaceLockLifecycle?: LaunchWorkspaceLockLifecycle
+  /** Final exact run/path check after approval and immediately before spawn. */
+  assertMutationAuthorized?: () => void | Promise<void>
+}
+
+export interface LaunchWorkspaceLockLifecycleInput {
+  attemptId: string
+  provider: ProviderId
+  workspacePath: string
+  chatId?: string
+  runId?: string
+  child: ChildProcess
+  pid: number
+  workspaceLockOwnerId: string
+}
+
+/**
+ * Transfers a launch_start acquisition to the exact child and releases it
+ * only after that child emits its real close event.
+ */
+export interface LaunchWorkspaceLockLifecycle {
+  bind(input: LaunchWorkspaceLockLifecycleInput): Promise<void>
+  /** Null means spawn returned no exact PID, so the pre-spawn owner remains. */
+  release(input: LaunchWorkspaceLockLifecycleInput | null): Promise<void>
 }
 
 export class LaunchManager {
@@ -123,6 +157,7 @@ export class LaunchManager {
   private readonly platform: NodeJS.Platform
   private readonly now: () => Date
   private readonly spawnProcess: (command: string, args: string[], options: SpawnOptions) => ChildProcess
+  private readonly spawnGatedProcess: LaunchManagerDeps['spawnGatedProcess']
   private readonly activeChildren = new Map<string, ChildProcess>()
   private readonly requestApproval: LaunchManagerDeps['requestApproval']
   private readonly createEnv: LaunchManagerDeps['createEnv']
@@ -150,6 +185,7 @@ export class LaunchManager {
     this.platform = deps.platform || process.platform
     this.now = deps.now || (() => new Date())
     this.spawnProcess = deps.spawnProcess || spawn
+    this.spawnGatedProcess = deps.spawnGatedProcess
     this.requestApproval = deps.requestApproval
     this.createEnv = deps.createEnv
     this.appRootPath = deps.appRootPath
@@ -398,27 +434,48 @@ export class LaunchManager {
       this.publishSoon()
 
       let child: ChildProcess
+      let gatedProcess: WorkspaceLockGatedProcess | null = null
       try {
+        await input.assertMutationAuthorized?.()
         const spawnArgv = launchCommand.argv || [commandText]
         const [binary, ...args] = isolatedInstanceId
           ? [...spawnArgv, `${PACKAGED_ISOLATED_INSTANCE_ARG}${isolatedInstanceId}`]
           : spawnArgv
-        child = this.spawnProcess(
-          launchCommand.shell ? commandText : binary,
-          launchCommand.shell ? [] : args,
-          {
-            cwd: launchCommand.cwd,
-            shell: Boolean(launchCommand.shell),
-            detached: this.platform !== 'win32',
-            windowsHide: true,
-            env: sanitizeLaunchEnv(
+        const spawnCommand = launchCommand.shell ? commandText : binary
+        const spawnArgs = launchCommand.shell ? [] : args
+        const spawnOptions = {
+          cwd: launchCommand.cwd,
+          shell: Boolean(launchCommand.shell),
+          detached: this.platform !== 'win32',
+          windowsHide: true,
+          env: withExactWorkspaceLockOwnerEnv(
+            sanitizeLaunchEnv(
               this.createEnv(
                 { ...envDeltas, FORCE_COLOR: '0', NO_COLOR: '1' },
                 launchCommand.shell ? undefined : binary
               )
+            ),
+            input.workspaceLockOwnerId
+          )
+        } satisfies SpawnOptions
+        if (input.workspaceLockLifecycle) {
+          if (!input.workspaceLockOwnerId || !this.spawnGatedProcess) {
+            throw new Error(
+              !input.workspaceLockOwnerId
+                ? 'Workspace-lock process gate requires an exact owner id.'
+                : 'Workspace-lock process gate is unavailable.'
             )
           }
-        )
+          gatedProcess = this.spawnGatedProcess(
+            spawnCommand,
+            spawnArgs,
+            spawnOptions,
+            input.workspaceLockOwnerId
+          )
+          child = gatedProcess.child
+        } else {
+          child = this.spawnProcess(spawnCommand, spawnArgs, spawnOptions)
+        }
       } catch (err) {
         const failed = this.store.update(attempt.id, {
           status: 'failed',
@@ -447,9 +504,67 @@ export class LaunchManager {
         pgid,
         updatedAt: this.isoNow()
       })
-      // Subscribe before awaiting the host receipt so an immediately exiting
-      // child cannot escape lifecycle tracking during the async resolution.
-      this.attachChild(attempt.id, child)
+      const workspaceLockLifecycleInput =
+        input.workspaceLockLifecycle && input.workspaceLockOwnerId && pid
+          ? {
+              attemptId: attempt.id,
+              provider,
+              workspacePath: target.workspacePath,
+              ...(chatId ? { chatId } : {}),
+              ...(runId ? { runId } : {}),
+              child,
+              pid,
+              workspaceLockOwnerId: input.workspaceLockOwnerId
+            }
+          : null
+      let bindWorkspaceLock = Promise.resolve()
+      // Subscribe before awaiting lock transfer or the host receipt so an
+      // immediately exiting child cannot escape lifecycle tracking.
+      const childClose = this.attachChild(
+        attempt.id,
+        child,
+        input.workspaceLockLifecycle
+          ? async () => {
+              try {
+                await bindWorkspaceLock
+              } catch {
+                // The start result below owns the bind error projection.
+              }
+              await input.workspaceLockLifecycle!.release(workspaceLockLifecycleInput)
+            }
+          : undefined
+      )
+      if (input.workspaceLockLifecycle) {
+        if (!workspaceLockLifecycleInput) {
+          await this.failWorkspaceLockChildBinding(
+            attempt,
+            childClose,
+            pid,
+            pgid,
+            'Workspace-lock child binding requires an exact owner id and kernel-assigned PID.'
+          )
+          return {
+            ok: false,
+            attempt: this.store.get(attempt.id) || attempt,
+            error: 'Workspace-lock child binding requires an exact owner id and kernel-assigned PID.'
+          }
+        }
+        bindWorkspaceLock = input.workspaceLockLifecycle.bind(workspaceLockLifecycleInput)
+        try {
+          await bindWorkspaceLock
+          gatedProcess?.start()
+        } catch (error) {
+          const message = `Workspace-lock child binding failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+          await this.failWorkspaceLockChildBinding(attempt, childClose, pid, pgid, message)
+          return {
+            ok: false,
+            attempt: this.store.get(attempt.id) || attempt,
+            error: message
+          }
+        }
+      }
       const processStartedAt = await this.resolveCanonicalProcessStartedAt(pid)
       const currentAttempt = this.store.get(attempt.id)
       const childIsStillLive = child.exitCode === null && child.signalCode === null
@@ -596,7 +711,15 @@ export class LaunchManager {
     return { ok: true, attempt: cancelled || stopping || attempt }
   }
 
-  private attachChild(attemptId: string, child: ChildProcess): void {
+  private attachChild(
+    attemptId: string,
+    child: ChildProcess,
+    releaseWorkspaceLock?: () => Promise<void>
+  ): Promise<void> {
+    let resolveClose!: () => void
+    const close = new Promise<void>((resolve) => {
+      resolveClose = resolve
+    })
     // Decode as UTF-8 so multi-byte sequences split across chunk boundaries are
     // buffered by the stream rather than corrupted into replacement characters.
     child.stdout?.setEncoding('utf8')
@@ -627,6 +750,19 @@ export class LaunchManager {
       const attempt = this.store.get(attemptId)
       if (attempt?.pid) this.untrackSpawn(attempt.pid)
       this.activeChildren.delete(attemptId)
+      void (async () => {
+        try {
+          await releaseWorkspaceLock?.()
+        } catch (error) {
+          this.log(
+            `[LaunchManager] ${attemptId} workspace-lock release failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        } finally {
+          resolveClose()
+        }
+      })()
       if (!attempt || isTerminal(attempt.status)) return
       const status =
         attempt.status === 'stopping' || signal
@@ -655,6 +791,37 @@ export class LaunchManager {
       )
       this.publishSoon()
     })
+    return close
+  }
+
+  private async failWorkspaceLockChildBinding(
+    attempt: LaunchAttempt,
+    childClose: Promise<void>,
+    pid: number | undefined,
+    pgid: number | undefined,
+    message: string
+  ): Promise<void> {
+    if (pid) {
+      try {
+        await this.killProcess(pid, pgid)
+      } catch {
+        // The exact close join below remains authoritative.
+      }
+    }
+    await childClose
+    this.store.update(attempt.id, {
+      status: 'failed',
+      endedAt: this.isoNow(),
+      updatedAt: this.isoNow(),
+      lastError: message
+    })
+    this.recordLifecycleEvent(
+      'launch_failed',
+      this.store.get(attempt.id) || attempt,
+      `Launch failed before workspace-lock binding: ${attempt.targetLabel}`,
+      { phase: 'workspace_lock_bind', error: message, pid, pgid }
+    )
+    this.publishSoon()
   }
 
   private appendOutput(attemptId: string, chunk: unknown): void {
@@ -783,7 +950,8 @@ const PRIVATE_LAUNCH_ENV_KEYS = new Set([
   'TASKWRAITH_RUN_ID',
   'TASKWRAITH_CHAT_ID',
   'TASKWRAITH_WORKSPACE_PATH',
-  'TASKWRAITH_RUNTIME_PROFILE_ID'
+  'TASKWRAITH_RUNTIME_PROFILE_ID',
+  'TASKWRAITH_LOCK_OWNER_ID'
 ])
 const PRIVATE_LAUNCH_ENV_PREFIXES = ['TASKWRAITH_MCP_']
 const CANONICAL_PROCESS_STARTED_AT_PATTERN =

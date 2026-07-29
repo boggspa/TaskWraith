@@ -35,6 +35,8 @@ const os = require('node:os')
 const path = require('node:path')
 const { spawn, spawnSync } = require('node:child_process')
 const { createServer } = require('node:net')
+const { createWindowsCmdInvocation } = require('./windows-cmd-invocation.cjs')
+const { assertNodeRuntimeLicense } = require('./node-runtime-license.cjs')
 
 const repoRoot = process.cwd()
 const argv = process.argv.slice(2)
@@ -64,6 +66,14 @@ main().catch((error) => {
 })
 
 async function main() {
+  if (
+    requirePackagedHost &&
+    (process.env.TASKWRAITH_SKIP_TUI_HELP_SMOKE === '1' ||
+      process.env.TASKWRAITH_SKIP_TUI_LIVE_SMOKE === '1' ||
+      skipPackagedHost)
+  ) {
+    fail('TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST=1 cannot be combined with packaged TUI skip flags')
+  }
   validateSourceLayout()
   if (layoutOnly) {
     console.log('packaged TUI layout smoke ok (layout-only)')
@@ -173,6 +183,14 @@ function validateSourceLayout() {
   if (!pkg.scripts?.['prepare:tui-runtime'] || !pkg.scripts?.['prepare:tui-runtime:mac']) {
     fail('package.json must define prepare:tui-runtime and prepare:tui-runtime:mac')
   }
+  if (!pkg.scripts?.['prepare:tui-runtime:win']?.includes('--targets=win32-x64,win32-arm64')) {
+    fail('package.json must prepare both win32-x64 and win32-arm64 TUI runtimes')
+  }
+  for (const scriptName of ['build:win:compile', 'build:win:unpack']) {
+    if (!pkg.scripts?.[scriptName]?.includes('prepare:tui-runtime:win')) {
+      fail(`package.json#scripts.${scriptName} must use prepare:tui-runtime:win`)
+    }
+  }
 
   assertFile(
     path.join(repoRoot, 'scripts/prepare-tui-runtime.cjs'),
@@ -242,26 +260,31 @@ function resolvePackagedNodeRuntime(resourcesDir, packageTarget) {
   assertDir(runtimeRoot, 'packaged tui-runtime directory')
 
   const binaryName = packageTarget.platform === 'win32' ? 'node.exe' : 'node'
-  const archCandidates =
-    packageTarget.arch === 'universal'
-      ? [process.arch === 'arm64' ? 'arm64' : 'x64', 'arm64', 'x64']
-      : [packageTarget.arch, process.arch === 'arm64' ? 'arm64' : 'x64']
-
-  const candidates = []
-  for (const arch of archCandidates) {
-    candidates.push(path.join(runtimeRoot, `${packageTarget.platform}-${arch}`, binaryName))
+  if (packageTarget.arch === 'universal') {
+    const universalRuntimes = ['arm64', 'x64'].map((arch) =>
+      path.join(runtimeRoot, `${packageTarget.platform}-${arch}`, binaryName)
+    )
+    for (const runtime of universalRuntimes) {
+      assertExecutable(
+        runtime,
+        `packaged universal TUI Node runtime ${path.basename(path.dirname(runtime))}`
+      )
+      assertNodeRuntimeLicense(path.dirname(runtime))
+    }
+    return universalRuntimes[process.arch === 'arm64' ? 0 : 1]
   }
-  candidates.push(path.join(runtimeRoot, binaryName))
 
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-
-  fail(
-    `packaged TUI Node runtime missing under ${runtimeRoot} ` +
-      `(expected ${packageTarget.platform}-*/${binaryName}). ` +
-      'Did npm run prepare:tui-runtime run before electron-builder?'
+  const exactRuntime = path.join(
+    runtimeRoot,
+    `${packageTarget.platform}-${packageTarget.arch}`,
+    binaryName
   )
+  assertExecutable(
+    exactRuntime,
+    `packaged TUI Node runtime ${packageTarget.platform}-${packageTarget.arch}`
+  )
+  assertNodeRuntimeLicense(path.dirname(exactRuntime))
+  return exactRuntime
 }
 
 function runBundledTuiHelp(nodeBin, cliJs, packageRoot, packageTarget) {
@@ -274,7 +297,7 @@ function runBundledTuiHelp(nodeBin, cliJs, packageRoot, packageTarget) {
   // that is the user-facing path under Resources/bin/tw.
   const launcher = resolvePackagedLauncher(packageRoot, packageTarget)
   if (launcher && canLikelyExecPackage(packageTarget)) {
-    const launcherResult = spawnSync(launcher, ['--help'], {
+    const launcherResult = spawnPackagedLauncherSync(launcher, ['--help'], packageTarget, {
       encoding: 'utf8',
       timeout: helpTimeoutMs,
       env: {
@@ -288,6 +311,11 @@ function runBundledTuiHelp(nodeBin, cliJs, packageRoot, packageTarget) {
         launcherResult.error.code === 'UNKNOWN' ||
         /bad CPU|Exec format|UNKNOWN/i.test(launcherResult.error.message)
       ) {
+        if (requirePackagedHost) {
+          fail(
+            `packaged TUI launcher help smoke cannot execute the candidate launcher: ${launcherResult.error.message}`
+          )
+        }
         console.log(
           `packaged TUI launcher help smoke skipped: cannot exec ${launcher} on this host (${launcherResult.error.message})`
         )
@@ -340,6 +368,11 @@ function runBundledTuiHelp(nodeBin, cliJs, packageRoot, packageTarget) {
       result.error.code === 'UNKNOWN' ||
       /bad CPU|Exec format|UNKNOWN/i.test(result.error.message)
     ) {
+      if (requirePackagedHost) {
+        fail(
+          `packaged TUI help smoke cannot execute the candidate runtime: ${result.error.message}`
+        )
+      }
       console.log(
         `packaged TUI help smoke skipped: cannot exec ${nodeBin} on this host (${result.error.message})`
       )
@@ -359,6 +392,18 @@ function runBundledTuiHelp(nodeBin, cliJs, packageRoot, packageTarget) {
   }
 
   console.log('packaged TUI help smoke ok (tui-runtime Node + --help)')
+}
+
+function spawnPackagedLauncherSync(launcher, args, packageTarget, options) {
+  if (packageTarget.platform !== 'win32') {
+    return spawnSync(launcher, args, options)
+  }
+  const invocation = createWindowsCmdInvocation(launcher, args)
+  return spawnSync(invocation.command, invocation.arguments, {
+    ...options,
+    windowsHide: true,
+    shell: false
+  })
 }
 
 function resolvePackagedLauncher(packageRoot, packageTarget) {
@@ -385,6 +430,11 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
     return
   }
   if (!canLikelyExecPackage(packageTarget)) {
+    if (requirePackagedHost) {
+      fail(
+        `packaged TUI live control smoke cannot execute ${packageTarget.platform}-${packageTarget.arch} on ${process.platform}-${process.arch}`
+      )
+    }
     console.log(
       `packaged TUI live control smoke skipped: cannot execute ${packageTarget.platform}-${packageTarget.arch} on ${process.platform}-${process.arch}`
     )
@@ -471,7 +521,8 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
     const appArguments = [
       '--taskwraith-package-smoke',
       smokeUserDataArgument,
-      ...(packageTarget.platform === 'darwin' ? ['--use-mock-keychain'] : [])
+      ...(packageTarget.platform === 'darwin' ? ['--use-mock-keychain'] : []),
+      ...(packageTarget.platform === 'linux' ? ['--no-sandbox', '--disable-gpu'] : [])
     ]
     const appLaunch = resolvePackagedAppLaunch(smokePackageRoot, packageTarget, appArguments)
     app = spawn(appLaunch.command, appLaunch.arguments, {
@@ -758,7 +809,8 @@ function prepareDarwinSmokeBundle(packageRoot, userDataPath) {
   // A second running copy with the release bundle identifier can collide in
   // Launch Services before Electron reaches our disposable-profile flags.
   // Clone the package, give only the clone a smoke identity, and ad-hoc sign
-  // it. The release artifact remains byte-for-byte untouched.
+  // it. That unique signed clone is safe to launch through its inner binary;
+  // the verified release artifact remains byte-for-byte untouched.
   const smokePackageRoot = `${userDataPath}.app`
   runChecked('/bin/cp', ['-cR', packageRoot, smokePackageRoot], 'clone packaged App for smoke')
   const infoPlist = path.join(smokePackageRoot, 'Contents', 'Info.plist')
@@ -812,7 +864,7 @@ async function runLiveSnapshotWithRetry(
   const deadline = Date.now() + liveTimeoutMs
   let lastDetail = ''
   while (Date.now() < deadline) {
-    const snapshot = spawnSync(
+    const snapshot = spawnPackagedLauncherSync(
       launcher,
       [
         '--snapshot',
@@ -825,12 +877,12 @@ async function runLiveSnapshotWithRetry(
         '--height',
         '24'
       ],
+      packageTarget,
       {
         cwd: packageRoot,
         encoding: 'utf8',
         timeout: helpTimeoutMs,
         windowsHide: true,
-        shell: packageTarget.platform === 'win32',
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: ''
@@ -866,28 +918,6 @@ async function runLiveSnapshotWithRetry(
 }
 
 function resolvePackagedAppLaunch(packageRoot, packageTarget, appArguments) {
-  if (packageTarget.platform === 'darwin') {
-    // Launch Services can abort when the inner executable of a second copy of
-    // an already-running bundle is started directly. `open -n` is the
-    // supported new-instance path; `-W` keeps the child handle useful for
-    // readiness/error detection while discovery supplies the actual App pid.
-    return {
-      command: '/usr/bin/open',
-      arguments: [
-        '-n',
-        '-W',
-        '-g',
-        '-F',
-        '-o',
-        '/dev/stdout',
-        '--stderr',
-        '/dev/stderr',
-        packageRoot,
-        '--args',
-        ...appArguments
-      ]
-    }
-  }
   return {
     command: resolvePackagedAppExecutable(packageRoot, packageTarget),
     arguments: appArguments
@@ -895,7 +925,20 @@ function resolvePackagedAppLaunch(packageRoot, packageTarget, appArguments) {
 }
 
 function resolvePackagedAppExecutable(packageRoot, packageTarget) {
-  if (packageTarget.platform === 'win32') {
+  if (packageTarget.platform === 'darwin') {
+    const macosDir = path.join(packageRoot, 'Contents', 'MacOS')
+    const candidates = [
+      path.join(macosDir, 'TaskWraith'),
+      ...safeReadDir(macosDir)
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.join(macosDir, entry.name))
+    ]
+    const found = candidates.find((candidate) => fs.existsSync(candidate))
+    if (found) {
+      assertExecutable(found, 'packaged macOS App executable')
+      return found
+    }
+  } else if (packageTarget.platform === 'win32') {
     const preferred = path.join(packageRoot, 'TaskWraith.exe')
     if (fs.existsSync(preferred)) return preferred
     const executable = fs
@@ -1055,6 +1098,14 @@ function findDirectories(root, predicate, maxDepth) {
   }
   walk(root, 0)
   return results
+}
+
+function safeReadDir(dirPath) {
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true })
+  } catch {
+    return []
+  }
 }
 
 function assertFile(filePath, label) {

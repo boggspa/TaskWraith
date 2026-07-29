@@ -78,8 +78,8 @@ export const PROVIDER_RUN_MANAGEMENT_DECLARATIONS = {
   },
   claude: {
     offerState: 'live-selectable',
-    toolMediationMode: 'hybrid-taskwraith-broker-and-provider-native',
-    brokerObservability: 'broker-calls-only',
+    toolMediationMode: 'taskwraith-broker-only',
+    brokerObservability: 'host-authoritative',
     binaryRuntimeProvenance: 'observed-cli-path-and-version'
   },
   kimi: {

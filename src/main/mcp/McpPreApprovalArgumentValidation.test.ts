@@ -71,6 +71,27 @@ describe('pre-approval validation integration contracts', () => {
     expect(preflight).toBeLessThan(source.indexOf('requestAgenticServiceApproval('))
   })
 
+  it('proves Claude raw identity conflicts and undeclared native tools deny before auto-allow', () => {
+    const start = indexSource.indexOf('async function canUseClaudeSdkTool(')
+    const end = indexSource.indexOf('\nasync function tryRunClaudeSdk(', start)
+    const source = indexSource.slice(start, end)
+    const normalize = source.indexOf('normalizeClaudeCanUseToolArgs(')
+    const identity = source.indexOf('resolveClaudeToolApprovalIdentity(')
+    const invalidReservedDeny = source.indexOf(
+      "approvalIdentity.kind === 'invalid-taskwraith-mcp'"
+    )
+    const providerNativeDeny = source.indexOf("approvalIdentity.kind === 'provider-native'")
+    const autoAllow = source.indexOf('isMcpAutoAllowedForRun(')
+
+    expect(normalize).toBeGreaterThanOrEqual(0)
+    expect(identity).toBeGreaterThan(normalize)
+    expect(invalidReservedDeny).toBeGreaterThan(identity)
+    expect(providerNativeDeny).toBeGreaterThan(invalidReservedDeny)
+    expect(providerNativeDeny).toBeLessThan(autoAllow)
+    expect(source).toContain('claudeAgenticServiceForTool(toolName, normalizedInput)')
+    expect(source).not.toContain('canonicalTaskWraithToolName(unprefixedToolName)')
+  })
+
   it('binds Claude canvas_eval approval to the canonical exact script and rechecks lifecycle after review', () => {
     const start = indexSource.indexOf('async function canUseClaudeSdkTool(')
     const end = indexSource.indexOf('\nasync function tryRunClaudeSdk(', start)

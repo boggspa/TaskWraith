@@ -19,6 +19,9 @@ describe('NativeSubAgentPolicy', () => {
     expect(isNativeSubAgentToolName('invoke_agent')).toBe(true)
     expect(isNativeSubAgentToolName('spawn-agent')).toBe(true)
     expect(isNativeSubAgentToolName('mcp__TaskWraith__delegate_to_subthread')).toBe(false)
+    expect(isNativeSubAgentToolName('mcp__evil__task')).toBe(false)
+    expect(isNativeSubAgentToolName('evil__spawn_agent')).toBe(false)
+    expect(isNativeSubAgentToolName('taskwraith-broker__task')).toBe(false)
     expect(isNativeSubAgentToolName('run_shell_command')).toBe(false)
   })
 

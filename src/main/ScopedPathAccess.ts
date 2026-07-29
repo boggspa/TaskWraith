@@ -128,6 +128,7 @@ export async function updateScopedUtf8File(
   options: {
     maxBytes: number
     update: (currentContent: string) => string
+    beforeCommit?: () => Promise<void> | void
   }
 ): Promise<ScopedUtf8FileUpdateResult> {
   let rootPath: string
@@ -177,6 +178,7 @@ export async function updateScopedUtf8File(
     await runTestHook('before_write_commit')
     await assertDirectoryChainStable(directorySnapshot)
     await assertPathMatchesOpenedFile(targetPath, openedStat)
+    await options.beforeCommit?.()
 
     try {
       await fileHandle.truncate(0)
@@ -219,13 +221,19 @@ export async function updateScopedUtf8File(
  */
 export async function writeScopedUtf8FileWithLegacyCreate(
   authority: ScopedPathAuthority,
-  options: { maxBytes: number; content: string }
+  options: {
+    maxBytes: number
+    content: string
+    beforeCommit?: () => Promise<void> | void
+    assertStillLive?: () => void
+  }
 ): Promise<ScopedUtf8FileWriteResult> {
   const contentBuffer = encodeUtf8Text(options.content, options.maxBytes)
   try {
     const updated = await updateScopedUtf8File(authority, {
       maxBytes: options.maxBytes,
-      update: () => options.content
+      update: () => options.content,
+      beforeCommit: options.beforeCommit
     })
     return { content: updated.content, created: false, stat: updated.stat }
   } catch (error) {
@@ -234,10 +242,20 @@ export async function writeScopedUtf8FileWithLegacyCreate(
 
   const { rootPath, targetPath } = await normalizePlannedAuthority(authority)
   const targetDirectory = dirname(targetPath)
-  await ensurePlannedDirectoryChain(rootPath, targetDirectory)
+  const mutationAuthorized = await ensurePlannedDirectoryChain(
+    rootPath,
+    targetDirectory,
+    options.beforeCommit,
+    options.assertStillLive
+  )
   const directorySnapshot = await snapshotDirectoryChain(rootPath, targetDirectory)
   await runTestHook('after_directory_snapshot')
   await assertDirectoryChainStable(directorySnapshot)
+  if (mutationAuthorized) {
+    options.assertStillLive?.()
+  } else {
+    await options.beforeCommit?.()
+  }
 
   const fileHandle = await openNoFollow(
     targetPath,
@@ -355,13 +373,16 @@ async function snapshotDirectoryChain(
 
 async function ensurePlannedDirectoryChain(
   rootPath: string,
-  targetDirectory: string
-): Promise<void> {
+  targetDirectory: string,
+  beforeFirstMutation?: () => Promise<void> | void,
+  assertStillLive?: () => void
+): Promise<boolean> {
   if (!pathWithinRoot(rootPath, targetDirectory)) {
     throw new Error('Path is outside the authorized filesystem root.')
   }
   const relativeDirectory = relative(rootPath, targetDirectory)
   let cursor = rootPath
+  let mutationAuthorized = false
   for (const segment of relativeDirectory.split(sep).filter(Boolean)) {
     cursor = resolve(cursor, segment)
     try {
@@ -373,6 +394,12 @@ async function ensurePlannedDirectoryChain(
     } catch (error) {
       if (!isNodeError(error) || error.code !== 'ENOENT') throw error
     }
+    if (mutationAuthorized) {
+      assertStillLive?.()
+    } else {
+      await beforeFirstMutation?.()
+      mutationAuthorized = true
+    }
     try {
       await mkdir(cursor)
     } catch (error) {
@@ -383,6 +410,7 @@ async function ensurePlannedDirectoryChain(
       throw new Error('Authorized filesystem path contains an unstable directory.')
     }
   }
+  return mutationAuthorized
 }
 
 async function assertDirectoryChainStable(snapshot: DirectorySnapshot): Promise<void> {

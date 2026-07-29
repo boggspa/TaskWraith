@@ -12,6 +12,20 @@ describe('MCP route guards', () => {
     expect(isMutatingTaskWraithMcpTool('write_file')).toBe(true)
     expect(isMutatingTaskWraithMcpTool('ensemble_fanout')).toBe(true)
     expect(isMutatingTaskWraithMcpTool('read_file')).toBe(false)
+    expect(isMutatingTaskWraithMcpTool('capability_search')).toBe(false)
+    expect(
+      isMutatingTaskWraithMcpTool('capability_invoke', {
+        name: 'write_file',
+        arguments: { path: 'x', content: 'body' }
+      })
+    ).toBe(true)
+    expect(
+      isMutatingTaskWraithMcpTool('capability_invoke', {
+        name: 'read_file',
+        arguments: { path: 'x' }
+      })
+    ).toBe(false)
+    expect(isMutatingTaskWraithMcpTool('unknown_future_tool')).toBe(true)
   })
 
   it('blocks unrouted mutating tools but keeps read tools eligible for fallback', () => {
@@ -21,6 +35,12 @@ describe('MCP route guards', () => {
     expect(validateMutatingMcpRoute('ensemble_fanout', { appChatId: 'chat-1' })).toEqual({
       ok: true
     })
+    expect(
+      validateMutatingMcpRoute('capability_invoke', null, {
+        name: 'write_file',
+        arguments: { path: 'x', content: 'body' }
+      })
+    ).toMatchObject({ ok: false })
   })
 
   it('matches caller workspace lineage in either direction', () => {
@@ -44,6 +64,17 @@ describe('MCP route guards', () => {
         contextWorkspacePath: '/repo-a'
       })
     ).toEqual({ ok: true })
+    expect(
+      validateMcpCallerWorkspace({
+        toolName: 'capability_invoke',
+        toolArgs: {
+          name: 'write_file',
+          arguments: { path: 'x', content: 'body' }
+        },
+        caller: { callerWorkspacePath: '/repo-a' },
+        contextWorkspacePath: '/repo-b'
+      })
+    ).toMatchObject({ ok: false })
     expect(
       validateMcpCallerWorkspace({
         toolName: 'read_file',
@@ -79,6 +110,12 @@ describe('mcpToolAlwaysPrompts', () => {
     // agent restyle silently and repeatedly. The user's rule for the capability
     // was "never auto-allow, never elevate"; forcePrompt is what spells it.
     expect(mcpToolAlwaysPrompts('theme_tokens_set')).toBe(true)
+    expect(
+      mcpToolAlwaysPrompts('capability_invoke', undefined, {
+        name: 'theme_tokens_set',
+        arguments: { tokens: {} }
+      })
+    ).toBe(true)
   })
 
   it('leaves reads — including the appearance read — on the normal grant path', () => {

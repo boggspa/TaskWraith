@@ -48,8 +48,8 @@ export type SubThreadWorkerIsolationRequest =
       writeScopes: string[]
       leaseId?: string
       /** True only for runtimes whose writes are routed through TaskWraith's
-       * scope validator + WorkspaceWriteIntentRegistry. Opaque native CLI
-       * writes must leave this false and are rejected. */
+       * scope validator and the durable workspace-lock authority. Opaque
+       * native CLI writes must leave this false and are rejected. */
       lockAwareHostEnforcement?: boolean
     }
 

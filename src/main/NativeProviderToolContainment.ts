@@ -1,20 +1,9 @@
 import type { AgenticServiceId } from './store/types'
 import type { NativeWorkspaceToolPreflight } from './native-tools/NativeWorkspaceToolGate'
-
-const EXPLICIT_TASKWRAITH_TOOL_PREFIXES = [
-  'mcp__taskwraith__',
-  'taskwraith__',
-  'mcp_taskwraith-broker_',
-  'mcp_taskwraith-broker-',
-  'mcp_taskwraith_',
-  'mcp_taskwraith-',
-  'taskwraith-broker__',
-  'taskwraith_broker__',
-  'taskwraith-broker_',
-  'taskwraith_broker_',
-  'taskwraith-broker-',
-  'taskwraith_broker-'
-] as const
+import {
+  claimsTaskWraithMcpNamespace,
+  resolveToolDispatchContractStrict
+} from '../shared/providerActionTaxonomy'
 
 const NATIVE_FILESYSTEM_OR_SHELL_TOOLS = new Set([
   'bash',
@@ -44,9 +33,9 @@ const NATIVE_FILESYSTEM_OR_SHELL_TOOLS = new Set([
   'renamepath'
 ])
 
-export function isExplicitTaskWraithBrokerTool(toolName: string): boolean {
-  const normalized = String(toolName || '').trim().toLowerCase()
-  return EXPLICIT_TASKWRAITH_TOOL_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+export function isExplicitTaskWraithBrokerTool(toolName: string, toolArgs?: unknown): boolean {
+  if (!claimsTaskWraithMcpNamespace(toolName)) return false
+  return resolveToolDispatchContractStrict(toolName, toolArgs).ok
 }
 
 /**
@@ -54,8 +43,9 @@ export function isExplicitTaskWraithBrokerTool(toolName: string): boolean {
  * signed chat/run/workspace grants at every path open. Keep them broker-only;
  * the explicitly namespaced TaskWraith MCP equivalents remain available.
  */
-export function nativeProviderToolRequiresBroker(toolName: string): boolean {
-  if (isExplicitTaskWraithBrokerTool(toolName)) return false
+export function nativeProviderToolRequiresBroker(toolName: string, toolArgs?: unknown): boolean {
+  if (isExplicitTaskWraithBrokerTool(toolName, toolArgs)) return false
+  if (claimsTaskWraithMcpNamespace(toolName)) return true
   const compact = String(toolName || '')
     .trim()
     .toLowerCase()
@@ -73,9 +63,10 @@ export type NativeProviderApprovalPriority = 'deny-native' | 'allow-auto' | 'con
  */
 export function nativeProviderApprovalPriority(
   toolName: string,
-  autoAllowed: boolean
+  autoAllowed: boolean,
+  toolArgs?: unknown
 ): NativeProviderApprovalPriority {
-  if (nativeProviderToolRequiresBroker(toolName)) return 'deny-native'
+  if (nativeProviderToolRequiresBroker(toolName, toolArgs)) return 'deny-native'
   return autoAllowed ? 'allow-auto' : 'continue'
 }
 

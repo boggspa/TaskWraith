@@ -168,6 +168,16 @@ finished session's pid stayed up for four hours past expiry and read as
 "still working" to the next agent. Pid-alive means nothing; pid-dead means
 dead.
 
+Runtime-derived markers (`derived: true`, `agent: taskwraith-runtime`) are the
+one deliberate exception. They project a durable lock rather than a human
+promise, and the runtime owns their removal. Expiry or a dead projected pid
+never makes one adoptable: a launching process may outlive main, and a direct
+child may leave descendants. The git hook therefore fails closed until the
+durable authority removes or reconciles the projection; the exact opaque owner
+id is its only normal bypass. Restart TaskWraith to reconcile a dead runtime
+owner, and use the explicit recovery path rather than deleting the marker.
+Manual markers retain the expiry-authoritative rule above.
+
 Size `expires` accordingly: it is when you would *want* someone to move in if
 you went silent. Take an hour and **renew** (rewrite the marker with a later
 `expires`) when you need more, rather than taking an afternoon up front and
@@ -186,8 +196,10 @@ share the marker's slug.
 
 ### Adopting a decayed claim
 
-A marker whose `expires` has passed or whose pid is dead is not noise to step
-around — its lane is **adoptable**, and adoption has its own small protocol:
+A **manual** marker whose `expires` has passed or whose pid is dead is not noise
+to step around — its lane is **adoptable**, and adoption has its own small
+protocol. Runtime-derived markers are excluded: restart TaskWraith and use its
+exact recovery path instead of adopting or deleting them.
 
 1. **Confirm decay.** Expired, or `kill -0 <pid>` fails. An alive pid past
    expiry is still decayed (see above).
@@ -251,9 +263,11 @@ npm run hooks:install        # git config core.hooksPath .githooks
 ```
 
 [`.githooks/pre-commit`](.githooks/pre-commit) **blocks exactly one thing** —
-staging a path claimed by a marker whose owning pid is alive and whose expiry
-has not passed. Everything else advises: whole-file staging of a >5,000-line
-file, forty-plus staged paths, your own claim still being up, and a decayed
+staging a path claimed by another owner. A manual claim blocks only while its
+pid is alive and its expiry has not passed; a valid runtime-derived claim
+blocks until durable authority removes it, regardless of projected pid or
+expiry. Everything else advises: whole-file staging of a >5,000-line file,
+forty-plus staged paths, your own claim still being up, and a decayed manual
 claim still standing (adopt or delete it). One block and otherwise quiet is
 deliberate; a hook that cries wolf gets disabled, and a disabled hook protects
 nothing.

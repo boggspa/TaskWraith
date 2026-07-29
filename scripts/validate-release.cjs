@@ -37,8 +37,11 @@
 const { spawnSync } = require('child_process')
 const { existsSync } = require('fs')
 const { join } = require('path')
+const { validateCodeSigningIdentityOutput } = require('./macos-codesign-preflight.cjs')
+const { resolvePlatformCommandInvocation } = require('./windows-cmd-invocation.cjs')
 
 const REPO_ROOT = join(__dirname, '..')
+const NPM_COMMAND = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
 const SKIP_BUILD = process.env.TASKWRAITH_VALIDATE_SKIP_BUILD === '1'
 const DO_NOTARIZE = process.env.TASKWRAITH_VALIDATE_NOTARIZE === '1'
@@ -49,98 +52,67 @@ function step(name, opts = {}) {
   steps.push({ name, ...opts })
 }
 
-step('kimi-runtime-qualification-projection', {
-  cmd: 'npm',
-  args: ['run', 'verify:kimi-runtime-qualifications'],
-  required: true
-})
-step('typecheck:node', {
-  cmd: 'npm',
-  args: ['run', 'typecheck:node'],
-  required: true
-})
-step('security:deps', {
-  cmd: 'npm',
-  args: ['run', 'security:deps'],
-  required: true
-})
-step('lint:errors', {
-  cmd: 'npm',
-  args: ['run', 'lint:errors'],
-  required: true
-})
-step('typecheck:web', {
-  cmd: 'npm',
-  args: ['run', 'typecheck:web'],
-  required: true
-})
-step('test', {
-  cmd: 'npm',
-  args: ['run', 'test'],
-  required: true
-})
-step('test:swift:bridge', {
-  cmd: 'npm',
-  args: ['run', 'test:swift:bridge'],
-  required: true,
+function npmStep(name, scriptName = name, opts = {}) {
+  step(name, {
+    cmd: NPM_COMMAND,
+    args: ['run', scriptName],
+    required: true,
+    ...opts
+  })
+}
+
+npmStep('kimi-runtime-qualification-projection', 'verify:kimi-runtime-qualifications')
+npmStep('cursor-runtime-qualification-projection', 'verify:cursor-runtime-qualifications')
+npmStep('tui-runtime-policy', 'verify:tui-runtime-policy')
+npmStep('security:deps')
+npmStep('lint:errors')
+npmStep('guard:platform-path-literals')
+npmStep('typecheck')
+npmStep('guard:architecture')
+npmStep('guard:provider-intent')
+npmStep('guard:doctrine-integrity')
+npmStep('guard:ios-plist')
+npmStep('format:ratchet')
+npmStep('test')
+npmStep('test:precommit-hook')
+npmStep('test:swift:bridge', 'test:swift:bridge', {
   skipOn: process.platform !== 'darwin'
 })
-step('lint', {
-  cmd: 'npm',
-  args: ['run', 'lint'],
+npmStep('test:swift:ios-kit', 'test:swift:ios-kit', {
+  skipOn: process.platform !== 'darwin'
+})
+npmStep('lint', 'lint', {
   // Lint failures are advisory for now — pre-existing warnings
   // outnumber actionable errors and the gate is too noisy.
   required: false
 })
-step('smoke:node-pty', {
-  cmd: 'npm',
-  args: ['run', 'smoke:node-pty'],
-  required: true
-})
+npmStep('smoke:node-pty')
 if (!SKIP_BUILD) {
-  step('clean:dist', {
-    cmd: 'npm',
-    args: ['run', 'clean:dist'],
-    required: true
-  })
-  step('build:unpack', {
-    cmd: 'npm',
-    args: ['run', 'build:unpack'],
-    required: true,
+  npmStep('clean:dist')
+  npmStep('build:unpack', 'build:unpack', {
     skipOn: process.platform !== 'darwin'
   })
-  step('build:win:nopublish', {
-    cmd: 'npm',
-    args: ['run', 'build:win:nopublish'],
-    required: true,
+  npmStep('build:win:nopublish', 'build:win:nopublish', {
     skipOn: process.platform !== 'win32'
   })
-  step('build:linux:nopublish', {
-    cmd: 'npm',
-    args: ['run', 'build:linux:nopublish'],
-    required: true,
+  npmStep('build:linux:nopublish', 'build:linux:nopublish', {
     skipOn: process.platform !== 'linux'
   })
 }
 if (DO_NOTARIZE) {
   step('notarize:preflight', {
-    cmd: 'sh',
-    args: [
-      '-c',
-      'security find-identity -v -p codesigning | head -5 && [ -n "$CSC_NAME" ] && [ -n "$APPLE_KEYCHAIN_PROFILE" ]'
-    ],
+    cmd: '/usr/bin/security',
+    args: ['find-identity', '-v', '-p', 'codesigning'],
     required: true,
+    requiredEnv: ['CSC_NAME', 'APPLE_KEYCHAIN_PROFILE'],
+    validateOutput: (output) => validateCodeSigningIdentityOutput(output, process.env.CSC_NAME),
     skipOn: process.platform !== 'darwin'
   })
 }
 
 // Secret-leak / #1-invariant guard. The import-boundary check always runs; the
 // bundle scan runs against out/main + any packaged app.asar produced above.
-step('guard:no-bundled-secrets', {
-  cmd: 'npm',
-  args: ['run', 'guard:no-bundled-secrets'],
-  required: true
-})
+npmStep('guard:no-bundled-secrets')
 
 const results = []
 
@@ -155,23 +127,60 @@ for (const stepSpec of steps) {
     console.log(`  ⊘ ${stepSpec.name} (skipped — platform)`)
     continue
   }
+  const missingEnv = (stepSpec.requiredEnv || []).filter(
+    (name) => !String(process.env[name] || '').trim()
+  )
+  if (missingEnv.length > 0) {
+    const status = stepSpec.required ? 'missing-requirement' : 'missing-requirement-advisory'
+    const reason = `missing environment: ${missingEnv.join(', ')}`
+    results.push({ name: stepSpec.name, status, reason })
+    console.log(`  ✗ ${stepSpec.name} (${reason})`)
+    continue
+  }
   process.stdout.write(`  ▶ ${stepSpec.name} … `)
   const startedAt = Date.now()
-  const result = spawnSync(stepSpec.cmd, stepSpec.args, {
+  const invocation = resolvePlatformCommandInvocation(
+    stepSpec.cmd,
+    stepSpec.args,
+    process.platform,
+    process.env
+  )
+  const result = spawnSync(invocation.command, invocation.arguments, {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env
+    env: { ...process.env, ...stepSpec.env }
   })
   const durationMs = Date.now() - startedAt
-  const ok = result.status === 0
+  if (result.error?.code === 'ENOENT') {
+    const status = stepSpec.required ? 'missing-requirement' : 'missing-requirement-advisory'
+    const reason = `required tool not found: ${invocation.command}`
+    console.log(`✗ (${formatDuration(durationMs)}; ${reason})`)
+    results.push({ name: stepSpec.name, status, durationMs, reason })
+    continue
+  }
+  const output = `${(result.stdout || Buffer.alloc(0)).toString('utf8')}\n${(
+    result.stderr || Buffer.alloc(0)
+  ).toString('utf8')}`
+  let validationError = null
+  if (result.status === 0 && stepSpec.validateOutput) {
+    try {
+      validationError = stepSpec.validateOutput(output)
+    } catch (error) {
+      validationError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  const ok = result.status === 0 && !validationError
   if (ok) {
     console.log(`✓ (${formatDuration(durationMs)})`)
     results.push({ name: stepSpec.name, status: 'passed', durationMs })
   } else {
     console.log(`✗ (${formatDuration(durationMs)})`)
-    const stdout = (result.stdout || Buffer.alloc(0)).toString('utf-8')
-    const stderr = (result.stderr || Buffer.alloc(0)).toString('utf-8')
-    const tail = (stdout + '\n' + stderr).trim().split('\n').slice(-20).join('\n')
+    const tail = [output.trim(), validationError]
+      .filter(Boolean)
+      .join('\n')
+      .split('\n')
+      .slice(-20)
+      .join('\n')
     console.log(`    ${tail.replace(/\n/g, '\n    ')}`)
     results.push({
       name: stepSpec.name,
@@ -190,7 +199,7 @@ for (const r of results) {
       ? '✓'
       : r.status === 'skipped'
         ? '⊘'
-        : r.status === 'failed-advisory'
+        : r.status === 'failed-advisory' || r.status === 'missing-requirement-advisory'
           ? '~'
           : '✗'
   const duration = r.durationMs ? `(${formatDuration(r.durationMs)})` : ''
@@ -201,11 +210,20 @@ for (const r of results) {
 }
 
 const hardFailures = results.filter((r) => r.status === 'failed')
+const missingRequirements = results.filter((r) => r.status === 'missing-requirement')
+if (missingRequirements.length > 0) {
+  console.error(
+    `\n[validate-release] ${missingRequirements.length} required environment/tooling prerequisite(s) missing.`
+  )
+  process.exit(2)
+}
 if (hardFailures.length > 0) {
   console.error(`\n[validate-release] ${hardFailures.length} required step(s) failed.`)
   process.exit(3)
 }
-const advisoryFailures = results.filter((r) => r.status === 'failed-advisory')
+const advisoryFailures = results.filter(
+  (r) => r.status === 'failed-advisory' || r.status === 'missing-requirement-advisory'
+)
 if (advisoryFailures.length > 0) {
   console.warn(
     `\n[validate-release] All required steps passed. ${advisoryFailures.length} advisory step(s) failed (lint, etc.) — review before release but not blocking.`
@@ -219,7 +237,7 @@ const buildCompleted = !SKIP_BUILD && hardFailures.length === 0
 if (buildCompleted && process.platform === 'darwin' && buildArtifactExists) {
   console.log('[validate-release] build artifacts present in dist/. Next step:')
   console.log(
-    `  CSC_NAME=$CSC_NAME APPLE_KEYCHAIN_PROFILE=$APPLE_KEYCHAIN_PROFILE npm run build:mac:notarized`
+    '  CSC_NAME=$CSC_NAME APPLE_KEYCHAIN_PROFILE=$APPLE_KEYCHAIN_PROFILE npm run build:mac:notarized'
   )
 } else if (buildCompleted && process.platform === 'win32' && buildArtifactExists) {
   console.log('[validate-release] build artifacts present in dist/. Next step:')

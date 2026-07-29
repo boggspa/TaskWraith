@@ -255,11 +255,11 @@ const CURSOR_NON_CATALOG_DISPLAY: Readonly<Record<string, string>> = {
 export function cursorToolName(base: string): string {
   const raw = String(base || '').trim()
   if (!raw) return 'tool'
-  const catalog = resolveCatalogToolName(raw)
-  if (catalog) return catalog
   const compact = raw.toLowerCase().replace(/[^a-z0-9]+/g, '')
   const nonCatalog = CURSOR_NON_CATALOG_DISPLAY[compact]
   if (nonCatalog) return nonCatalog
+  const catalog = resolveCatalogToolName(raw)
+  if (catalog) return catalog
   // Light camelCase → snake for unknown Cursor bases (display only).
   const snake = raw
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')

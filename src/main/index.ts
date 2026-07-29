@@ -39,6 +39,10 @@ import {
   classifyNativeWorkspacePreflightDecision,
   nativeProviderApprovalPriority
 } from './NativeProviderToolContainment'
+import {
+  normalizeClaudeCanUseToolArgs,
+  resolveClaudeToolApprovalIdentity
+} from './ClaudeToolApprovalIdentity'
 import { preflightNativeWorkspaceTool } from './native-tools/NativeWorkspaceToolGate'
 import { FaviconService } from './services/FaviconService'
 import {
@@ -168,8 +172,9 @@ import {
 import {
   canonicalTaskWraithToolName,
   effectiveAgenticSettings,
+  resolveCodexMcpApprovalIdentity,
+  resolveCodexStructuralApproval,
   resolveNativeApprovalPreflightDecision,
-  taskWraithToolAgenticService,
   taskWraithToolServiceIfKnown,
   type NativeApprovalPreflight
 } from './NativeApprovalPolicy'
@@ -248,7 +253,8 @@ import {
   isCodexConfigParseError,
   isCodexTokenRevokedError,
   codexTokenRevokedUserMessage,
-  type CodexAppServerCredentialLease
+  type CodexAppServerCredentialLease,
+  type CodexAppServerSpawnedProcess
 } from './CodexAppServerClient'
 import { acquireCodexOAuthCredentialLease } from './codex/CodexOAuthCredentialLease'
 import {
@@ -763,6 +769,7 @@ import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
 import { FanoutCandidateService } from './services/FanoutCandidateService'
+import { DurableFanoutCandidatePromotionLock } from './services/FanoutCandidatePromotionLock'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
 import { createWatchPrPoller } from './services/WatchPrPoller'
 import {
@@ -1367,7 +1374,10 @@ import {
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
 import {
   grokTaskWraithSafeToolRequested,
-  shouldAdvertiseTaskWraithMcpToGrok
+  shouldAdvertiseTaskWraithMcpToGrok,
+  structuredProviderNetworkAccessAllowed,
+  structuredProviderNetworkReadRequested,
+  structuredTaskWraithSafeToolRequested
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import {
@@ -1762,8 +1772,7 @@ import {
 import {
   MCP_AUTO_ALLOWED_TOOLS,
   PLAN_MCP_ADVERTISE_TOOLS,
-  READ_ONLY_MCP_ADVERTISE_TOOLS,
-  isReadOnlyAdvertisedTool
+  READ_ONLY_MCP_ADVERTISE_TOOLS
 } from './mcp/McpAutoAllowedTools'
 import {
   CAPABILITY_GATEWAY_TOOL_NAMES,
@@ -1899,7 +1908,37 @@ import {
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
-import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
+import {
+  WorkspaceLockRuntime,
+  workspaceLockAuthorityRootForHome
+} from './WorkspaceLockRuntime'
+import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
+import { WorkspaceExternalMutationAuthorityIssuer } from './WorkspaceExternalMutationAuthority'
+import { WorkspaceLockProcessIdentityService } from './WorkspaceLockProcessIdentity'
+import { waitForWorkspaceLockProcessTreeExit } from './WorkspaceLockProcessTree'
+import { withExactWorkspaceLockOwnerEnv } from './WorkspaceLockExecutionIdentity'
+import {
+  WorkspaceLockProviderCoordinator,
+  type WorkspaceLockProviderAdmission,
+  type WorkspaceLockProviderAdmissionKey
+} from './WorkspaceLockProviderCoordinator'
+import {
+  WorkspaceLockMcpAdmissionCoordinator,
+  type WorkspaceLockMcpAdmission
+} from './WorkspaceLockMcpAdmissionCoordinator'
+import { workspaceLockMcpResourcePath } from './WorkspaceLockMcpResourceScope'
+import {
+  prepareVerifiedWorkspaceMutationHandoff,
+  reverifyWorkspaceMutationExecutionCwd,
+  type VerifiedWorkspaceMutationExecutionContext
+} from './mcp/VerifiedWorkspaceMutationHandoff'
+import { registerWorkLockHandlers } from './ipc/workLockHandlers'
+import {
+  resolveToolDispatchContractStrict,
+  type CanonicalDispatchOwner,
+  type ResolvedToolDispatchContract
+} from '../shared/providerActionTaxonomy'
+import type { WorkspaceMutationCommitFenceOwner } from './workLocks/WorkspaceMutationCommitFence'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
@@ -2055,6 +2094,18 @@ const latestSpellcheckContextByWebContentsId = new Map<number, SpellcheckContext
 let geminiProcess: ChildProcess | null = null
 let geminiSessionProcess: pty.IPty | null = null
 let codexClient: CodexAppServerClient | null = null
+interface CodexClientLifecycleLease {
+  readonly token: symbol
+  readonly label: string
+  release(): void
+}
+let codexClientLifecycleTail: Promise<void> = Promise.resolve()
+let activeCodexClientLifecycleLease: CodexClientLifecycleLease | null = null
+const codexRunClientBindings = new Map<
+  string,
+  { client: CodexAppServerClient; lease: CodexClientLifecycleLease }
+>()
+const codexMessageOriginClients = new WeakMap<object, CodexAppServerClient>()
 const taskWraithCodexHome = (): string => taskWraithCodexHomePath(app.getPath('userData'))
 let codexAppServerStartupLeaseCount = 0
 let codexExecProcess: ChildProcess | null = null
@@ -2065,6 +2116,166 @@ let scheduledOccurrenceSealServiceRef: ScheduledOccurrenceSealService | null = n
 let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
 let scheduledOccurrenceRecoveryBlockedReason: string | null = null
 let historyDeletionStartupRecoveryBlockedReason: string | null = null
+let workspaceLockStartupRecoveryBlockedReason: string | null = null
+let workspaceLockRuntimeRef: WorkspaceLockRuntime | null = null
+const workspaceLockProviderCoordinator = new WorkspaceLockProviderCoordinator({
+  getRuntime: () => workspaceLockRuntimeRef
+})
+const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordinator({
+  getRuntime: () => workspaceLockRuntimeRef,
+  getRuntimeUnavailableReason: () => workspaceLockStartupRecoveryBlockedReason,
+  getChat: (chatId) => AppStore.getChat(chatId),
+  getOpaqueOwnerId: (query) =>
+    workspaceLockProviderCoordinator.getOrCreateLogicalOwnerId(query),
+  getProviderScopeAdmission: ({ runId, laneId, participantId }) =>
+    workspaceLockProviderCoordinator.get({ runId, laneId, participantId }),
+  acquireProviderScopeSublease: ({ admission, runtimeInput }) =>
+    workspaceLockProviderCoordinator.acquireNestedMutationSublease(
+      {
+        runId: admission.runId,
+        laneId: admission.owner.laneId,
+        participantId: admission.owner.participantId
+      },
+      admission,
+      runtimeInput
+    ),
+  validateLaneWriteScope: (runId, query) =>
+    ensembleOrchestratorRef?.validateLaneWriteScopeForRun(runId, query),
+  markLaneBlocked: (runId, reason) =>
+    ensembleOrchestratorRef?.markLaneBlockedForRun(runId, reason),
+  encode: mcpJson,
+  providerDisplayName
+})
+
+function poisonWorkspaceLockMutationAdmission(reason: string): void {
+  const message = `Workspace-lock mutation admission is fail-closed: ${reason}`
+  workspaceLockRuntimeRef?.markUnhealthy(message)
+  workspaceLockStartupRecoveryBlockedReason ||= message
+}
+
+const workspaceLockRunLifecycle = new WorkspaceLockRunLifecycleTracker({
+  unresolvedOperationTimeoutMs: 35 * 60_000,
+  releaseRun: async (runId) => {
+    const runtime = workspaceLockRuntimeRef
+    if (!runtime) throw new Error('Workspace-lock runtime disappeared before terminal release.')
+    const released = await runtime.releaseRun(runId)
+    if (!released.ok) throw new Error(released.message)
+  },
+  onReleased: (runId) => workspaceLockProviderCoordinator.forgetRun(runId),
+  onReleaseFailure: ({ runId, error }) => {
+    const reason = error instanceof Error ? error.message : String(error)
+    poisonWorkspaceLockMutationAdmission(reason)
+    console.error(`[workspace-lock] terminal release failed for run ${runId}:`, error)
+  },
+  onFailClosed: (violation) => {
+    const reason =
+      violation.kind === 'operation-after-terminal'
+        ? `Workspace-lock operation started after run ${violation.runId} became terminal.`
+        : `Workspace-lock operation ${violation.operationId} for run ${violation.runId} did not settle before its terminal deadline.`
+    poisonWorkspaceLockMutationAdmission(reason)
+    console.error(`[workspace-lock] ${reason}`)
+  }
+})
+
+const workspaceExternalMutationAuthorityIssuer =
+  new WorkspaceExternalMutationAuthorityIssuer<GeminiToolContext>({
+    canonicalizePath: canonicalExternalGrantPath,
+    resolvePrimaryWorkspacePath: (chatId) =>
+      chatId ? AppStore.getChat(chatId)?.workspacePath : undefined,
+    findValidatedSignedWriteGrant: ({ context, provider, targetPath }) => {
+      const grant = externalPathGrantForTarget(context, provider, targetPath, 'write')
+      return grant?.id && grant.signature
+        ? { id: grant.id, signature: grant.signature }
+        : undefined
+    },
+    isTrustedSessionWriteAuthorized: (query) =>
+      canAutoApproveTrustedSessionExternalWrite({
+        provider: query.provider,
+        chatId: query.chatId,
+        workspacePath: query.workspacePath,
+        runtimeProfileId: query.runtimeProfileId,
+        ensembleRun: query.ensembleRun,
+        effectivePermissions: query.effectivePermissions,
+        externalPathAccess: 'write',
+        isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
+      })
+  })
+
+function providerRunRequiresCoarseWorkspaceLock(payload: AgentRunPayload): boolean {
+  if (payload.scope !== 'workspace' || !payload.workspace) return false
+  // Claude Code auto-loads workspace/user hooks, plugins, and MCP servers even
+  // when TaskWraith requests a read-only posture. Preserve those live surfaces
+  // while serializing every native Claude workspace transport.
+  if (payload.provider === 'claude') return true
+  if (payload.provider === 'kimi' || payload.provider === 'grok') {
+    return payload.approvalMode !== 'plan'
+  }
+  if (payload.provider === 'mistral') {
+    return mistralWriteCapable(payload.approvalMode)
+  }
+  if (payload.provider === 'cursor') return cursorWriteCapable(payload.approvalMode)
+  if (payload.provider === 'pi') {
+    return resolvePiNativeToolPosture({
+      approvalMode: payload.approvalMode,
+      effectivePermissions: payload.effectivePermissions
+    }).writeCapable
+  }
+  if (payload.provider === 'codex') {
+    return (
+      codexSandboxForMode(
+        payload.approvalMode,
+        isFullShellAccessGranted(payload.effectivePermissions)
+      ) === 'workspace-write'
+    )
+  }
+  if (payload.provider === 'antigravity') {
+    // gemini-api:* is an in-process host lane. It has no child to receive a
+    // launching-child acquisition; its MCP mutations use ordinary exact
+    // main-owned per-operation claims instead.
+    if (isAntigravityGeminiApiModelCandidate(payload.model)) return false
+    // The official agy transport auto-loads user hooks/plugins, whose
+    // subprocesses can mutate the workspace even in plan mode. Preserve that
+    // live customization surface but serialize the entire native transport.
+    return true
+  }
+  return false
+}
+
+async function admitOpaqueProviderWorkspaceMutation(payload: AgentRunPayload): Promise<void> {
+  if (!providerRunRequiresCoarseWorkspaceLock(payload)) return
+  const runId = payload.appRunId?.trim()
+  if (!runId || !payload.workspace) {
+    throw new Error('Write-capable provider launch requires an exact workspace run identity.')
+  }
+  const effectiveWorkspacePath = resolve(
+    payload.runtimeWorktree?.effectiveWorkspacePath || payload.workspace
+  )
+  const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+  const baseWorkspacePath = resolve(
+    payload.runtimeWorktree?.baseWorkspacePath ||
+      chat?.workspacePath ||
+      effectiveWorkspacePath
+  )
+  const operation = workspaceLockRunLifecycle.begin(runId)
+  try {
+    await workspaceLockProviderCoordinator.admitCoarseWriteRun({
+      provider: payload.provider,
+      runId,
+      ...(payload.appChatId ? { chatId: payload.appChatId } : {}),
+      ...(payload.ensembleRun?.laneId ? { laneId: payload.ensembleRun.laneId } : {}),
+      ...(payload.ensembleRun?.participantId
+        ? { participantId: payload.ensembleRun.participantId }
+        : {}),
+      displayName:
+        payload.ensembleRun?.role || providerDisplayName(payload.provider),
+      ...(chat?.title ? { chatTitle: chat.title } : {}),
+      workspacePath: baseWorkspacePath,
+      worktreePath: effectiveWorkspacePath
+    })
+  } finally {
+    operation.finish()
+  }
+}
 // ~10-min floor sweep so a 'due'/'pending'/'running' wedge self-heals even when
 // no occurrence is being materialized (the piggyback path is event-driven).
 let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
@@ -4348,9 +4559,11 @@ async function transcribeComposerAudioPayload(
 const ffmpegToolExecutors = createFfmpegToolExecutors({
   jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
-    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    if (!chat || !ctx.workspacePath) {
+      return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    }
     const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
-      workspacePath: chat.workspacePath,
+      workspacePath: ctx.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
       kind: 'audio_video'
@@ -4470,9 +4683,11 @@ const documentToolExecutors = createWiredDocumentToolExecutors({
 const vtToolExecutors = createVtToolExecutors({
   jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
-    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    if (!chat || !ctx.workspacePath) {
+      return { ok: false, reason: 'no workspace to resolve sourcePath' }
+    }
     const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
-      workspacePath: chat.workspacePath,
+      workspacePath: ctx.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
       kind: 'audio_video'
@@ -4487,9 +4702,11 @@ const vtToolExecutors = createVtToolExecutors({
   // 'unsupported' since it only sniffs audio/video).
   jailOverlay: async (overlayPath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
-    if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve overlayPath' }
+    if (!chat || !ctx.workspacePath) {
+      return { ok: false, reason: 'no workspace to resolve overlayPath' }
+    }
     const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
-      workspacePath: chat.workspacePath,
+      workspacePath: ctx.workspacePath,
       candidatePath: overlayPath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
       maxBytes: TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES,
@@ -7246,11 +7463,16 @@ async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Pro
   if (previewModelAccessFlagEnabledForProvider(payload.provider, process.env)) return true
   if (payload.provider !== 'codex') return false
   try {
-    const client = getCodexClient(payload.runtimeProfile)
-    await client.ensureStarted(app.getVersion())
-    const response: any = await client.request('model/list', {}, 15_000)
-    const models = Array.isArray(response?.data) ? response.data : []
-    return models.some((entry: any) => entry && entry.hidden !== true && entry.id === model)
+    return await withUnownedCodexClientLifecycle(
+      `preview-model-probe:${model}`,
+      async (client) => {
+        await client.ensureStarted(app.getVersion())
+        const response: any = await client.request('model/list', {}, 15_000)
+        const models = Array.isArray(response?.data) ? response.data : []
+        return models.some((entry: any) => entry && entry.hidden !== true && entry.id === model)
+      },
+      { runtimeProfile: payload.runtimeProfile }
+    )
   } catch {
     return false
   }
@@ -7483,8 +7705,6 @@ appShellStatsService.onChange((snapshot) => {
   safeSendToWebContents(mainWindow, 'app-shell-stats-changed', snapshot)
 })
 
-const workspaceWriteIntentRegistry = new WorkspaceWriteIntentRegistry()
-
 function getRunRepository(): RunRepository {
   if (!runRepository) {
     runRepository = new RunRepository({
@@ -7705,6 +7925,11 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 }
 
 runManager.onChange((event) => {
+  if (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status)) {
+    // Work-lock cleanup is the first terminal side effect. It must run even
+    // when later persistence-authority checks return early.
+    workspaceLockRunLifecycle.terminal(event.session.runId)
+  }
   if (
     event.session.appChatId &&
     (event.type === 'removed' || isTerminalRunSessionStatus(event.session.status))
@@ -12532,13 +12757,26 @@ function getAgenticServicePolicy(
 
 function networkAccessBlockedToolName(
   toolName: string | null | undefined,
-  effectivePermissions?: EffectiveRunPermissions
+  effectivePermissions?: EffectiveRunPermissions,
+  toolArgs?: unknown
 ): string | null {
   const raw = String(toolName || '').trim()
   if (!raw) return null
-  const canonical = canonicalTaskWraithToolName(raw)
-  return isNetworkAccessBlockedTool(canonical, effectivePermissions, AppStore.getSettings())
-    ? canonical
+  const settings = AppStore.getSettings()
+  const contract = resolveToolDispatchContractStrict(raw, toolArgs)
+  if (!contract.ok) {
+    return effectivePermissions?.networkAccess === 'deny' ||
+      settings.agenticServices.networkAccess === 'deny'
+      ? raw
+      : null
+  }
+  return isNetworkAccessBlockedTool(
+    raw,
+    effectivePermissions,
+    settings,
+    toolArgs
+  )
+    ? contract.effectiveToolName
     : null
 }
 
@@ -12550,7 +12788,9 @@ function isMcpAutoAllowedForRun(
 ): boolean {
   const raw = String(toolName || '').trim()
   if (!raw) return false
-  const canonical = canonicalTaskWraithToolName(raw) || raw
+  const contract = resolveToolDispatchContractStrict(raw, toolArgs)
+  if (!contract.ok) return false
+  const canonical = contract.effectiveToolName
   // C2b-ii — arg-scoped exact reviewer-verdict auto-allow (G-SINGLE: delegates to
   // the one classifier, never re-inlines the shape check). NOT a whole-tool
   // exemption: ensemble_bossman_control stays ABSENT from MCP_AUTO_ALLOWED_TOOLS.
@@ -12562,7 +12802,7 @@ function isMcpAutoAllowedForRun(
   if (isExactReviewerVerdictInvocation(canonical, toolArgs)) return true
   if (
     resolveExplicitUserRequestedRosterImport(
-      canonical,
+      raw,
       toolArgs,
       effectivePermissions,
       requestContext
@@ -12573,7 +12813,7 @@ function isMcpAutoAllowedForRun(
   return (
     isTaskWraithMcpToolName(canonical) &&
     MCP_AUTO_ALLOWED_TOOLS.has(canonical as TaskWraithMcpToolName) &&
-    !networkAccessBlockedToolName(canonical, effectivePermissions)
+    !networkAccessBlockedToolName(raw, effectivePermissions, toolArgs)
   )
 }
 
@@ -12652,6 +12892,7 @@ function resolveNativeApprovalPreflight(args: {
   runId?: string
   externalPathDetection?: PendingExternalPathDetection
   toolName?: string
+  toolArgs?: unknown
   /** Raw shell command (string or argv) for shellCommands requests, when known. */
   shellCommand?: unknown
   /**
@@ -12666,7 +12907,7 @@ function resolveNativeApprovalPreflight(args: {
   const effectivePermissions = session?.state?.effectivePermissions as
     | EffectiveRunPermissions
     | undefined
-  if (networkAccessBlockedToolName(args.toolName, effectivePermissions)) {
+  if (networkAccessBlockedToolName(args.toolName, effectivePermissions, args.toolArgs)) {
     return { kind: 'deny', policy: 'deny', effectivePermissions }
   }
   const effectiveSettings = effectiveAgenticSettings(settings, effectivePermissions)
@@ -12878,7 +13119,10 @@ function planArtifactWriteApprovalMetadata(input: {
 }): Record<string, unknown> | null {
   const preview = isRecord(input.request.preview) ? input.request.preview : null
   const rawToolName = typeof preview?.toolName === 'string' ? preview.toolName : null
-  const toolName = rawToolName ? canonicalTaskWraithToolName(rawToolName) || rawToolName : null
+  const dispatchContract = rawToolName
+    ? resolveToolDispatchContractStrict(rawToolName, preview?.params)
+    : null
+  const toolName = dispatchContract?.ok ? dispatchContract.effectiveToolName : rawToolName
   const rawPath =
     typeof preview?.planArtifactRawPath === 'string' ? preview.planArtifactRawPath : null
   const decision = evaluatePlanArtifactWrite({
@@ -13233,20 +13477,6 @@ function formatScopedPath(context: GeminiToolContext, targetPath: string): strin
     : resolve(targetPath)
 }
 
-const WORKSPACE_WIDE_WRITE_LOCK_TOOLS = new Set<string>([
-  'run_shell_command',
-  'apply_patch',
-  'create_directory',
-  'delete_path',
-  'move_path',
-  'rename_path',
-  'run_task',
-  'git_stage',
-  'git_commit',
-  'git_push',
-  'git_create_pr'
-])
-
 function mcpWriteLockApprovalContext(
   context: GeminiToolContext,
   toolName: TaskWraithMcpToolName,
@@ -13255,13 +13485,22 @@ function mcpWriteLockApprovalContext(
 ): { note: string; laneId: string; lockTarget: string } | null {
   const laneId = context.ensembleRun?.laneId
   if (!laneId || !concurrentWriteLanesEnabled() || context.scope === 'global') return null
+  const contract = resolveToolDispatchContractStrict(toolName)
+  if (
+    !contract.ok ||
+    (contract.lock !== 'workspace-paths' &&
+      contract.lock !== 'workspace-repository' &&
+      contract.lock !== 'workspace-runtime')
+  ) {
+    return null
+  }
   const workspacePath = resolve(context.workspacePath || context.cwd || cwd)
   let lockTarget = workspacePath
   if (toolName === 'write_file' || toolName === 'replace') {
     const rawPath = String(args.path || args.file_path || '')
     lockTarget = rawPath ? previewGeminiMcpPath(context, rawPath) : workspacePath
   }
-  const kind = WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(toolName) ? 'workspace-wide' : 'path'
+  const kind = contract.lock === 'workspace-paths' ? 'path/hunk' : 'workspace-wide'
   return {
     laneId,
     lockTarget,
@@ -13287,81 +13526,6 @@ function applyMcpWriteLockApprovalContext(
     ensembleLaneId: lockContext.laneId,
     writeLockTarget: lockContext.lockTarget
   }
-}
-
-function acquireMcpWorkspaceWriteLocks(input: {
-  context: GeminiToolContext
-  toolName: TaskWraithMcpToolName
-  cwd: string
-  resourcePath?: string
-}): { ok: true; tokens: WriteIntentToken[] } | { ok: false; text: string; reason: string } {
-  const laneId = input.context.ensembleRun?.laneId
-  if (!laneId || !concurrentWriteLanesEnabled() || input.context.scope === 'global') {
-    return { ok: true, tokens: [] }
-  }
-  const workspacePath = resolve(input.context.workspacePath || input.context.cwd || input.cwd)
-  const scopeCheck = ensembleOrchestratorRef?.validateLaneWriteScopeForRun(input.context.appRunId, {
-    toolName: input.toolName,
-    workspacePath,
-    ...(input.resourcePath ? { resourcePath: input.resourcePath } : {})
-  })
-  if (scopeCheck && !scopeCheck.ok) {
-    ensembleOrchestratorRef?.markLaneBlockedForRun(input.context.appRunId, scopeCheck.reason)
-    return {
-      ok: false,
-      text: mcpJson({
-        ok: false,
-        tool: input.toolName,
-        error: scopeCheck.reason,
-        laneId
-      }),
-      reason: scopeCheck.reason
-    }
-  }
-  const workspaceResource = workspacePath
-  const acquired: WriteIntentToken[] = []
-  const nowIso = new Date().toISOString()
-  const requests =
-    input.resourcePath && !WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(input.toolName)
-      ? [
-          { resourcePath: workspaceResource, mode: 'read' as const },
-          { resourcePath: resolve(input.resourcePath), mode: 'write' as const }
-        ]
-      : [{ resourcePath: workspaceResource, mode: 'write' as const }]
-
-  for (const request of requests) {
-    const result = workspaceWriteIntentRegistry.acquire({
-      workspacePath,
-      resourcePath: request.resourcePath,
-      laneId,
-      mode: request.mode,
-      nowIso
-    })
-    if (!result.ok || !result.token) {
-      for (const token of acquired.reverse()) {
-        workspaceWriteIntentRegistry.release(token)
-      }
-      const holders = result.conflict?.holders || []
-      const reason = result.conflict?.reason || `Write lock conflict on ${request.resourcePath}.`
-      const holderSummary = holders.length
-        ? ` Holders: ${holders.map((holder) => `${holder.laneId}:${holder.mode}`).join(', ')}.`
-        : ''
-      const text = mcpJson({
-        ok: false,
-        tool: input.toolName,
-        error: `${reason}${holderSummary}`,
-        laneId,
-        lockTarget: request.resourcePath
-      })
-      ensembleOrchestratorRef?.markLaneBlockedForRun(
-        input.context.appRunId,
-        `${reason}${holderSummary}`
-      )
-      return { ok: false, text, reason: `${reason}${holderSummary}` }
-    }
-    acquired.push(result.token)
-  }
-  return { ok: true, tokens: acquired }
 }
 
 /**
@@ -15209,7 +15373,11 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
-  if (scheduledOccurrenceRecoveryBlockedReason || historyDeletionStartupRecoveryBlockedReason) {
+  if (
+    scheduledOccurrenceRecoveryBlockedReason ||
+    historyDeletionStartupRecoveryBlockedReason ||
+    workspaceLockStartupRecoveryBlockedReason
+  ) {
     return
   }
   const nowMs = Date.now()
@@ -15235,24 +15403,21 @@ async function getCodexStatusSnapshotForCliRuntime(): Promise<any> {
   let codexUsage: any = null
   let startupError: string | null = null
   try {
-    const client = getCodexClient()
-    await client.ensureStarted(app.getVersion())
+    await withUnownedCodexClientLifecycle('status-snapshot', async (client) => {
+      await client.ensureStarted(app.getVersion())
+      try {
+        accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
+      } catch (error) {
+        accountStatus = { error: error instanceof Error ? error.message : String(error) }
+      }
+      try {
+        rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
+      } catch (error) {
+        rateLimitStatus = { error: error instanceof Error ? error.message : String(error) }
+      }
+    })
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error)
-  }
-  if (!startupError) {
-    try {
-      const client = getCodexClient()
-      accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
-    } catch (error) {
-      accountStatus = { error: error instanceof Error ? error.message : String(error) }
-    }
-    try {
-      const client = getCodexClient()
-      rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
-    } catch (error) {
-      rateLimitStatus = { error: error instanceof Error ? error.message : String(error) }
-    }
   }
   try {
     codexUsage = await fetchCodexUsageSnapshot()
@@ -15274,16 +15439,17 @@ async function getCodexStatusSnapshotForCliRuntime(): Promise<any> {
 }
 
 async function getCodexMcpStatusSnapshotForCliRuntime(): Promise<any> {
-  const client = getCodexClient()
-  await client.ensureStarted(app.getVersion())
-  return client.request(
-    'mcpServerStatus/list',
-    {
-      detail: 'toolsAndAuthOnly',
-      limit: 100
-    },
-    20_000
-  )
+  return withUnownedCodexClientLifecycle('mcp-status-snapshot', async (client) => {
+    await client.ensureStarted(app.getVersion())
+    return client.request(
+      'mcpServerStatus/list',
+      {
+        detail: 'toolsAndAuthOnly',
+        limit: 100
+      },
+      20_000
+    )
+  })
 }
 
 async function getKimiAdmittedStatusSnapshot(): Promise<any> {
@@ -15368,9 +15534,13 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
   getCodexConfiguredStatus: async () => {
     const resolved = await resolveCliProviderBinary('codex')
     if (!resolved.binaryPath) return { available: false, authState: 'unknown' }
-    const client = getCodexClient()
-    await client.ensureStarted(app.getVersion())
-    const accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
+    const accountStatus = await withUnownedCodexClientLifecycle(
+      'configured-provider-probe',
+      async (client) => {
+        await client.ensureStarted(app.getVersion())
+        return client.request('account/read', { refreshToken: false }, 15_000)
+      }
+    )
     const snapshot = buildCodexStatusSnapshot({
       version: 'configured-provider-probe',
       clientStarted: true,
@@ -17895,7 +18065,7 @@ function settleVisibleProviderSetupFailure(input: {
   }
 }
 
-function runCliProviderProcess(
+async function runCliProviderProcess(
   event: Electron.IpcMainInvokeEvent,
   provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'antigravity' | 'pi',
   command: string,
@@ -17945,6 +18115,53 @@ function runCliProviderProcess(
   ) = { fallback: true }
 ): Promise<void> {
   const route = routeWithRunId(provider, payload)
+  const workspaceLockAdmissionKey: WorkspaceLockProviderAdmissionKey = {
+    runId: route.appRunId!,
+    ...(payload.ensembleRun?.laneId ? { laneId: payload.ensembleRun.laneId } : {}),
+    ...(payload.ensembleRun?.participantId
+      ? { participantId: payload.ensembleRun.participantId }
+      : {})
+  }
+  const workspaceLockRequired = providerRunRequiresCoarseWorkspaceLock(payload)
+  const workspaceLockAdmission = workspaceLockRequired
+    ? workspaceLockProviderCoordinator.get(workspaceLockAdmissionKey)
+    : null
+  let workspaceLockOperation: ReturnType<typeof workspaceLockRunLifecycle.begin> | null = null
+  let workspaceLockChildMayExist = false
+  let workspaceLockSetupSettlement: Promise<void> | null = null
+  const finishWorkspaceLockOperation = (): void => {
+    workspaceLockOperation?.finish()
+    workspaceLockOperation = null
+  }
+  const releaseWorkspaceLockSetupGuardian = (): Promise<void> => {
+    if (workspaceLockSetupSettlement) return workspaceLockSetupSettlement
+    workspaceLockSetupSettlement = (async () => {
+      try {
+        if (workspaceLockChildMayExist) {
+          throw new Error(
+            'A provider workspace-lock setup guardian cannot be released after a child may exist.'
+          )
+        }
+        if (workspaceLockAdmission) {
+          await workspaceLockProviderCoordinator.releaseSetupFailure(
+            workspaceLockAdmissionKey,
+            workspaceLockAdmission
+          )
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        poisonWorkspaceLockMutationAdmission(reason)
+        try {
+          console.error(`[${provider}] workspace-lock setup release failed:`, error)
+        } catch {
+          // Mutation admission is already fail-closed.
+        }
+      } finally {
+        finishWorkspaceLockOperation()
+      }
+    })()
+    return workspaceLockSetupSettlement
+  }
   let transportCleanupOperation: Promise<void> | null = null
   const completeTransportCleanup = (): Promise<void> => {
     if (!transportCleanupOperation) {
@@ -17967,6 +18184,7 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportClose.operation
   }
   const cwd = payload.workspace!
@@ -18011,6 +18229,7 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportClose.operation
   }
   // Pretrack cleanup before any init/warning projector can throw after the
@@ -18036,7 +18255,54 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportClose.operation
+  }
+  if (workspaceLockRequired) {
+    if (
+      !workspaceLockAdmission ||
+      workspaceLockAdmission.owner.lifecycle !== 'launching-child'
+    ) {
+      const reason = workspaceLockAdmission
+        ? 'Write-capable provider launch reused a workspace lock that is not a pre-spawn guardian.'
+        : 'Write-capable provider launch has no exact workspace-lock admission.'
+      poisonWorkspaceLockMutationAdmission(reason)
+      try {
+        settleVisibleProviderSetupFailure({
+          sender: event.sender,
+          provider,
+          route,
+          message: `${providerDisplayName(provider)} could not start safely: ${reason}`,
+          setupRequired: true,
+          securityUnavailable: true,
+          fallback: options.fallback
+        })
+      } finally {
+        transportClose.markTransportClosed()
+      }
+      await releaseWorkspaceLockSetupGuardian()
+      return transportOperation
+    }
+    try {
+      workspaceLockOperation = workspaceLockRunLifecycle.begin(route.appRunId!)
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      try {
+        settleVisibleProviderSetupFailure({
+          sender: event.sender,
+          provider,
+          route,
+          message: `${providerDisplayName(provider)} workspace-lock lifecycle could not start: ${reason}`,
+          setupRequired: true,
+          securityUnavailable: true,
+          fallback: options.fallback
+        })
+      } finally {
+        transportClose.markTransportClosed()
+      }
+      await releaseWorkspaceLockSetupGuardian()
+      return transportOperation
+    }
   }
   try {
     void emitProviderCapabilityWarnings(
@@ -18089,6 +18355,7 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportOperation
   }
   let child: ChildProcess
@@ -18098,34 +18365,48 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportOperation
   }
   try {
-    const childEnv: Readonly<Record<string, string>> =
+    const childEnv: Readonly<Record<string, string | undefined>> =
       provider === 'antigravity'
         ? (() => {
             if (!options.resolvedEnv) {
               throw new Error('AntiGravity launches require the sanitized official agy environment.')
             }
-            return options.resolvedEnv
+            return withExactWorkspaceLockOwnerEnv(
+              options.resolvedEnv,
+              workspaceLockAdmission?.owner.lockOwnerId
+            )
           })()
-        : options.resolvedEnv ??
-          createCliProviderRunEnv({
-            provider,
-            command,
-            appRunId: route.appRunId,
-            appChatId: route.appChatId,
-            scope: payload.scope,
-            workspace: payload.workspace,
-            runtimeProfileId: payload.runtimeProfileId,
-            auditRun: Boolean(payload.auditRun),
-            extraEnv: options.extraEnv
-          })
+        : options.resolvedEnv
+          ? withExactWorkspaceLockOwnerEnv(
+              options.resolvedEnv,
+              workspaceLockAdmission?.owner.lockOwnerId
+            )
+          : createCliProviderRunEnv({
+              provider,
+              command,
+              appRunId: route.appRunId,
+              appChatId: route.appChatId,
+              scope: payload.scope,
+              workspace: payload.workspace,
+              runtimeProfileId: payload.runtimeProfileId,
+              workspaceLockOwnerId: workspaceLockAdmission?.owner.lockOwnerId,
+              auditRun: Boolean(payload.auditRun),
+              extraEnv: options.extraEnv
+            })
     child = spawn(command, args, {
       cwd,
       shell: false,
+      detached: process.platform !== 'win32',
       env: childEnv
     })
+    // A returned ChildProcess may already be executing even when Node has not
+    // published a PID yet. From this point setup failure is ambiguous and the
+    // durable launching guardian must be retained, never exact-released.
+    workspaceLockChildMayExist = true
   } catch (error) {
     try {
       settleVisibleProviderSetupFailure({
@@ -18141,6 +18422,7 @@ function runCliProviderProcess(
     } finally {
       transportClose.markTransportClosed()
     }
+    await releaseWorkspaceLockSetupGuardian()
     return transportOperation
   }
   // Publish exact child identity before any stdin operation can synchronously
@@ -18189,7 +18471,10 @@ function runCliProviderProcess(
   })
 
   let providerSetupFailed = false
+  let providerSpawnErrored = false
   let setupFailureProjected = false
+  let workspaceLockBinding: Promise<WorkspaceLockProviderAdmission | null> =
+    Promise.resolve(null)
 
   const writeStdinPlan = (lines: readonly string[]): void => {
     if (stdinPlanWritten) return
@@ -18286,6 +18571,7 @@ function runCliProviderProcess(
   })
 
   child.on('error', (error) => {
+    providerSpawnErrored = true
     providerSetupFailed = true
     try {
       settleStdinReadiness('process_exit')
@@ -18311,6 +18597,39 @@ function runCliProviderProcess(
   })
 
   child.on('close', async (code) => {
+    let boundWorkspaceLockAdmission: WorkspaceLockProviderAdmission | null = null
+    try {
+      boundWorkspaceLockAdmission = await workspaceLockBinding
+    } catch {
+      // The binding path projects and poisons its own fail-closed setup error.
+      // Terminal settlement must still wait until that transition has settled.
+    }
+    if (boundWorkspaceLockAdmission && child.pid) {
+      const processTreeStopped = await waitForWorkspaceLockProcessTreeExit({
+        rootPid: child.pid,
+        isolatedProcessGroup: process.platform !== 'win32'
+      })
+      if (processTreeStopped) {
+        try {
+          await workspaceLockProviderCoordinator.releaseChild(
+            workspaceLockAdmissionKey,
+            boundWorkspaceLockAdmission
+          )
+        } catch (error) {
+          poisonWorkspaceLockMutationAdmission(
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      } else {
+        try {
+          console.error(
+            `[${provider}] workspace-lock child ${child.pid} closed without proven process-tree quiescence; retaining acquisition ${boundWorkspaceLockAdmission.transitionId}.`
+          )
+        } catch {
+          // The durable acquisition remains the visible quarantine.
+        }
+      }
+    }
     settleStdinReadiness('process_exit')
     if (route.appRunId) {
       piRunStdinClosers.delete(route.appRunId)
@@ -18445,6 +18764,59 @@ function runCliProviderProcess(
       }
     }
   })
+
+  if (workspaceLockAdmission) {
+    providerSetupFailed = true
+    workspaceLockBinding = (async () => {
+      if (!child.pid) {
+        throw new Error(
+          `${providerDisplayName(provider)} spawned without an exact child process id.`
+        )
+      }
+      const transferred = await workspaceLockProviderCoordinator.transferToChild(
+        workspaceLockAdmissionKey,
+        child.pid
+      )
+      if (
+        transferred.owner.lifecycle !== 'child' ||
+        transferred.owner.pid !== child.pid ||
+        transferred.owner.lockOwnerId !== workspaceLockAdmission.owner.lockOwnerId
+      ) {
+        throw new Error(
+          `${providerDisplayName(provider)} workspace-lock transfer returned a mismatched child identity.`
+        )
+      }
+      return transferred
+    })()
+    try {
+      await workspaceLockBinding
+      providerSetupFailed = providerSpawnErrored
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      providerSetupFailed = true
+      setupFailureProjected = true
+      state.completed = true
+      poisonWorkspaceLockMutationAdmission(reason)
+      projectVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider,
+        route,
+        message: `${providerDisplayName(provider)} workspace-lock child binding failed: ${reason}`,
+        setupRequired: true,
+        securityUnavailable: true,
+        fallback: options.fallback
+      })
+      try {
+        child.kill()
+      } catch {
+        // The exact launching/child guardian remains quarantined below.
+      }
+      providerProcessTerminationBackstop.arm(route.appRunId!, child)
+      return transportOperation
+    } finally {
+      finishWorkspaceLockOperation()
+    }
+  }
 
   // Install close/error/data listeners before the provider can observe stdin.
   // Pi can settle synchronously from its first RPC command; agy/Claude/Cursor
@@ -18583,102 +18955,11 @@ function claudeRunRequiresPinnedTaskWraithMcp(payload: AgentRunPayload): boolean
   })
 }
 
-function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null {
-  const normalized = toolName.trim().toLowerCase()
-  if (!normalized) return null
-  const taskWraithService = taskWraithToolServiceIfKnown(normalized)
-  if (taskWraithService) return taskWraithService
-  if (
-    normalized === 'bash' ||
-    normalized === 'shell' ||
-    normalized === 'run_shell_command' ||
-    normalized.includes('shell_command') ||
-    // Run-Button launch start/stop spawn / terminate processes — shell strictness.
-    normalized === 'launch_start' ||
-    normalized === 'launch_stop'
-  ) {
-    return 'shellCommands'
-  }
-  if (
-    normalized === 'write' ||
-    normalized === 'edit' ||
-    normalized === 'multiedit' ||
-    normalized === 'notebookedit' ||
-    normalized === 'writefile' ||
-    normalized === 'strreplacefile' ||
-    normalized === 'replace' ||
-    normalized === 'write_file' ||
-    normalized.includes('write_file') ||
-    normalized.includes('replace_file') ||
-    normalized.includes('str_replace')
-  ) {
-    return 'fileChanges'
-  }
-  // Canvas click/fill get the dedicated grant bucket on the Claude canUseTool
-  // gate too (it fires before previewForGeminiMcpTool), so a prior mcpTools
-  // grant can't silently auto-allow app-mutating canvas interactions.
-  if (normalized.includes('canvas_click') || normalized.includes('canvas_fill')) {
-    return 'canvasInteraction'
-  }
-  // Structured Sketch edits are deliberately independent of authenticated web
-  // Canvas control: Default Approval may auto-allow the former without silently
-  // granting click/fill authority.
-  if (normalized.includes('canvas_sketch_update')) {
-    return 'sketchCanvas'
-  }
-  // Arbitrary eval (RCE) gets its own signed-elevated bucket on the Claude gate
-  // too — never auto-allowed by a grant/preset/YOLO.
-  if (normalized.includes('canvas_eval')) {
-    return 'canvasEval'
-  }
-  // Cross-thread reads route to crossThreadRead (grantable) on the Claude gate too.
-  if (
-    normalized.includes('tw_recall_find') ||
-    normalized.includes('tw_recall_read') ||
-    normalized.includes('tw_recall_read_events')
-  ) {
-    return 'crossThreadRead'
-  }
-  // Audio/video media tools route to the dedicated mediaEditing service on the
-  // Claude gate too (mirrors taskWraithToolAgenticService). Canonicalize first so
-  // both the bare (`transcode_audio`) and provider-wrapped (`mcp__taskwraith__
-  // transcode_audio`) forms hit the same canonical-name membership check before
-  // the generic mcp__/__ -> mcpTools fallthrough below.
-  if (MEDIA_EDITING_TOOLS.has(canonicalTaskWraithToolName(normalized))) {
-    return 'mediaEditing'
-  }
-  if (normalized.startsWith('mcp__') || normalized.includes('__')) {
-    return 'mcpTools'
-  }
+function claudeAgenticServiceForTool(toolName: string, input?: unknown): AgenticServiceId | null {
+  const identity = resolveClaudeToolApprovalIdentity(toolName, input)
+  if (identity.kind === 'taskwraith-mcp') return identity.contract.service
+  if (identity.kind === 'foreign-mcp') return 'mcpTools'
   return null
-}
-
-function normalizeClaudeCanUseToolArgs(
-  toolNameOrRequest: unknown,
-  input?: unknown
-): { toolName: string; input: unknown } {
-  if (typeof toolNameOrRequest === 'string') {
-    return { toolName: toolNameOrRequest, input }
-  }
-  if (isRecord(toolNameOrRequest)) {
-    const toolName = String(
-      toolNameOrRequest.toolName ||
-        toolNameOrRequest.tool_name ||
-        toolNameOrRequest.name ||
-        toolNameOrRequest.tool ||
-        'tool'
-    )
-    return {
-      toolName,
-      input:
-        input ??
-        toolNameOrRequest.input ??
-        toolNameOrRequest.parameters ??
-        toolNameOrRequest.params ??
-        {}
-    }
-  }
-  return { toolName: 'tool', input }
 }
 
 function previewClaudeToolInput(input: unknown): string {
@@ -18802,10 +19083,11 @@ async function canUseClaudeSdkTool(
   if (!claudeRunAcceptsTools()) {
     return denyInactiveRun()
   }
-  const { toolName, input: normalizedInput } = normalizeClaudeCanUseToolArgs(
-    toolNameOrRequest,
-    input
-  )
+  const normalizedRequest = normalizeClaudeCanUseToolArgs(toolNameOrRequest, input)
+  if (!normalizedRequest.ok) {
+    return { behavior: 'deny', message: normalizedRequest.reason }
+  }
+  const { toolName, input: normalizedInput } = normalizedRequest
   // Coerce the SDK's `input` into a plain record so Zod accepts it.
   // The Claude Agent SDK validates the canUseTool response with Zod:
   // an `allow` response REQUIRES `updatedInput: Record<string, unknown>`
@@ -18822,6 +19104,10 @@ async function canUseClaudeSdkTool(
     !Array.isArray(normalizedInput)
       ? (normalizedInput as Record<string, unknown>)
       : {}
+  const approvalIdentity = resolveClaudeToolApprovalIdentity(toolName, normalizedInput)
+  if (approvalIdentity.kind === 'invalid-taskwraith-mcp') {
+    return { behavior: 'deny', message: approvalIdentity.reason }
+  }
   const nativeSubAgentDecision = await resolveNativeSubAgentToolPreference(
     sender,
     'claude',
@@ -18835,24 +19121,39 @@ async function canUseClaudeSdkTool(
     return denyInactiveRun()
   }
   if (nativeSubAgentDecision) return nativeSubAgentDecision
+  if (approvalIdentity.kind === 'provider-native') {
+    return {
+      behavior: 'deny',
+      message:
+        `Claude native tool ${toolName || 'tool'} is not declared for this catalog-only seat. ` +
+        'Use the exact namespaced TaskWraith MCP tool instead.'
+    }
+  }
   // Auto-allow side-effect-free TaskWraith tools before the agentic-
   // service gate. The MCP dispatcher already skips approval for
   // these (line ~14078), but Claude's `canUseTool` callback fires
   // FIRST — without this, the user gets prompted to approve
-  // harmless signals like `ensemble_yield`. Claude sees MCP tools
-  // with their full prefix (e.g. `mcp__taskwraith__ensemble_yield`),
-  // so strip any namespace before checking the allowlist.
-  const unprefixedToolName = toolName.replace(/^mcp__/, '').replace(/^taskwraith__/, '')
-  const canonicalToolName = canonicalTaskWraithToolName(unprefixedToolName)
-  primeNativeCanvasCompatCorrelation({
-    provider: 'claude',
-    route,
-    toolName: canonicalToolName || unprefixedToolName,
-    source: toolNameOrRequest
-  })
-  if (isTaskWraithMcpToolName(canonicalToolName)) {
+  // harmless signals like `ensemble_yield`. Claude sees MCP tools with their
+  // full prefix; retain that raw identity until the strict resolver proves the
+  // exact TaskWraith server and catalog route.
+  const canonicalToolName =
+    approvalIdentity.kind === 'taskwraith-mcp'
+      ? approvalIdentity.contract.effectiveToolName
+      : ''
+  if (approvalIdentity.kind === 'taskwraith-mcp') {
+    primeNativeCanvasCompatCorrelation({
+      provider: 'claude',
+      route,
+      toolName: canonicalToolName,
+      source: toolNameOrRequest
+    })
+  }
+  if (
+    approvalIdentity.kind === 'taskwraith-mcp' &&
+    isTaskWraithMcpToolName(approvalIdentity.contract.toolName)
+  ) {
     const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
-      canonicalToolName,
+      approvalIdentity.contract.toolName,
       updatedInput,
       mcpToolDefinitions()
     )
@@ -18862,72 +19163,35 @@ async function canUseClaudeSdkTool(
   }
   const approvalPriority = nativeProviderApprovalPriority(
     toolName,
-    isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput, {
+    isMcpAutoAllowedForRun(toolName, payload.effectivePermissions, normalizedInput, {
       appRunId: route.appRunId,
       appChatId: route.appChatId
-    })
+    }),
+    normalizedInput
   )
   if (approvalPriority === 'deny-native') {
-    // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
-    // run the shared canonical workspace preflight. Native FS calls whose paths
-    // resolve INSIDE the active workspace are allowed again (reads directly;
-    // writes routed through the agentic-service ledger below); out-of-workspace
-    // paths are denied. The Claude Agent SDK runs tools with cwd=workspace but
-    // provides no hard filesystem/egress sandbox, so native shell stays fail-
-    // closed here (runtimeSandboxed:false) — the namespaced broker
-    // run_shell_command, which IS workspace-bounded, remains available.
-    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
-      toolName,
-      rawToolCall: updatedInput,
-      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
-      runtimeSandboxed: false
-    })
-    const nativeDecision = classifyNativeWorkspacePreflightDecision(
-      'Claude',
-      toolName,
-      nativeWorkspacePreflight
-    )
-    if (nativeDecision.action === 'deny') {
-      return { behavior: 'deny', message: nativeDecision.message }
+    return {
+      behavior: 'deny',
+      message:
+        `Claude tool ${toolName || 'tool'} did not resolve to an exact TaskWraith broker route.`
     }
-    if (nativeDecision.action === 'allow') {
-      return { behavior: 'allow', updatedInput }
-    }
-    const nativeWorkspaceAllowed = await requestAgenticServiceApproval(
-      sender,
-      'claude',
-      nativeDecision.service,
-      payload.scope === 'global' ? undefined : payload.workspace,
-      {
-        method: 'claude/canUseTool',
-        title:
-          nativeDecision.service === 'shellCommands'
-            ? 'Approve Claude shell command'
-            : 'Approve Claude file change',
-        body: toolName,
-        runId: route.appRunId
-      }
-    )
-    if (!claudeRunAcceptsTools()) {
-      return denyInactiveRun()
-    }
-    return nativeWorkspaceAllowed
-      ? { behavior: 'allow', updatedInput }
-      : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
   }
   if (approvalPriority === 'allow-auto') {
     return { behavior: 'allow', updatedInput }
   }
-  const service = claudeAgenticServiceForTool(toolName)
+  const service = claudeAgenticServiceForTool(toolName, normalizedInput)
   if (!service) {
-    return { behavior: 'allow', updatedInput }
+    return {
+      behavior: 'deny',
+      message: `Claude tool ${toolName || 'tool'} has no declared approval route.`
+    }
   }
   // 1.0.72 — read-only hard-deny for mutating / side-effecting tools (parity with
   // the shared MCP dispatcher). Safe tools were allowed above; a mutating tool
   // under read_only that classifies as the generic mcpTools service must be
   // refused, not prompted — route it to a denied service so the gate denies it.
   const gateService =
-    isReadOnlyBlockedTool(unprefixedToolName, payload.effectivePermissions, normalizedInput) &&
+    isReadOnlyBlockedTool(toolName, payload.effectivePermissions, normalizedInput) &&
     service === 'mcpTools'
       ? 'shellCommands'
       : service
@@ -20708,38 +20972,22 @@ function normalizeGrokStopReason(status: string | null | undefined): 'success' |
   return raw || 'failed'
 }
 
-function grokAcpNetworkReadRequested(request: {
-  toolName?: string
-  toolKind?: string
-  rawToolCall?: unknown
-}): boolean {
-  const raw = request.rawToolCall as
-    | { rawInput?: { tool_name?: unknown; name?: unknown } }
-    | undefined
-  const candidates = [
-    request.toolKind,
-    request.toolName,
-    raw?.rawInput?.tool_name,
-    raw?.rawInput?.name
-  ]
-  return candidates.some((candidate) => {
-    if (typeof candidate !== 'string') return false
-    const normalized = candidate.toLowerCase().replace(/[\s:_-]+/g, '')
-    return (
-      normalized === 'fetch' ||
-      normalized === 'search' ||
-      normalized === 'webfetch' ||
-      normalized === 'websearch'
-    )
-  })
+function grokAcpNetworkReadRequested(
+  provider: 'grok' | 'mistral',
+  request: {
+    toolName?: string
+    toolKind?: string
+    rawToolCall?: unknown
+  }
+): boolean {
+  return structuredProviderNetworkReadRequested(provider, request)
 }
 
 function grokNetworkAccessAllowed(state: CliProviderStreamState): boolean {
-  const policy =
-    state.effectivePermissions?.networkAccess ||
-    AppStore.getSettings().agenticServices?.networkAccess ||
-    'allow'
-  return policy !== 'deny'
+  return structuredProviderNetworkAccessAllowed(
+    state.effectivePermissions?.networkAccess,
+    AppStore.getSettings().agenticServices?.networkAccess
+  )
 }
 
 function grokAcpEmptyToolFailureMessage(state: CliProviderStreamState): string {
@@ -21051,9 +21299,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     // Strip either trusted namespace, then fail closed against the immutable
     // safe set before allowing it on a read-only seat.
     if (grokTaskWraithSafeToolRequested(request)) return 'allow'
-    const networkRead = grokAcpNetworkReadRequested(request)
+    const networkRead = grokAcpNetworkReadRequested('grok', request)
     if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
     const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      provider: 'grok',
       toolName: request.toolName,
       toolKind: request.toolKind,
       rawToolCall: request.rawToolCall,
@@ -21585,28 +21834,15 @@ function maybeLogMistralRawAcp(direction: 'in' | 'out', message: unknown): void 
  */
 function mistralTaskWraithSafeToolRequested(request: {
   toolName?: string
+  toolKind?: string
   rawToolCall?: unknown
 }): boolean {
-  const raw = request.rawToolCall as
-    | { rawInput?: { tool_name?: unknown; name?: unknown } }
-    | undefined
   const namespaces = [
     MISTRAL_SCOPED_MCP_SERVER_NAME,
     MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
     GEMINI_MCP_SERVER_NAME
   ]
-  for (const candidate of [request.toolName, raw?.rawInput?.tool_name, raw?.rawInput?.name]) {
-    if (typeof candidate !== 'string') continue
-    for (const namespace of namespaces) {
-      const prefix = `${namespace}__`
-      if (!candidate.startsWith(prefix)) continue
-      const toolName = candidate.slice(prefix.length)
-      if (toolName && (isReadOnlyAdvertisedTool(toolName) || isCapabilityGatewayToolName(toolName))) {
-        return true
-      }
-    }
-  }
-  return false
+  return structuredTaskWraithSafeToolRequested(request, namespaces)
 }
 
 /**
@@ -22025,9 +22261,10 @@ async function runMistralAcpProvider(
     // the broker's gateway; auto-allowing them here avoids a second card for a
     // call the host is about to execute itself. Fails closed on membership.
     if (mistralTaskWraithSafeToolRequested(request)) return 'allow'
-    const networkRead = grokAcpNetworkReadRequested(request)
+    const networkRead = grokAcpNetworkReadRequested('mistral', request)
     if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
     const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      provider: 'mistral',
       toolName: request.toolName,
       toolKind: request.toolKind,
       rawToolCall: request.rawToolCall,
@@ -23184,10 +23421,240 @@ async function acquireCodexCredentialLeaseIfConsented(
   return null
 }
 
+async function acquireCodexClientLifecycleLease(label: string): Promise<CodexClientLifecycleLease> {
+  const normalizedLabel = label.trim()
+  if (!normalizedLabel) throw new Error('Codex client lifecycle requires an exact owner label.')
+  const predecessor = codexClientLifecycleTail
+  let unlock!: () => void
+  codexClientLifecycleTail = new Promise<void>((resolve) => {
+    unlock = resolve
+  })
+  await predecessor
+  if (activeCodexClientLifecycleLease) {
+    throw new Error('Codex client lifecycle serialization was violated.')
+  }
+  let released = false
+  const lease: CodexClientLifecycleLease = {
+    token: Symbol(normalizedLabel),
+    label: normalizedLabel,
+    release: () => {
+      if (released) return
+      released = true
+      if (activeCodexClientLifecycleLease !== lease) {
+        poisonWorkspaceLockMutationAdmission(
+          `Codex client lifecycle ${normalizedLabel} lost its exact serialization lease.`
+        )
+        return
+      }
+      activeCodexClientLifecycleLease = null
+      unlock()
+    }
+  }
+  activeCodexClientLifecycleLease = lease
+  return lease
+}
+
+async function disposeCodexClientForOwnerTransition(
+  lease: CodexClientLifecycleLease
+): Promise<void> {
+  if (activeCodexClientLifecycleLease !== lease) {
+    throw new Error('Codex owner transition requires its exact serialized client lease.')
+  }
+  const client = codexClient
+  if (!client) return
+  await client.disposeAndWait()
+}
+
+async function finishCodexClientLifecycle(
+  client: CodexAppServerClient,
+  lease: CodexClientLifecycleLease
+): Promise<void> {
+  if (activeCodexClientLifecycleLease !== lease) {
+    poisonWorkspaceLockMutationAdmission(
+      `Codex client lifecycle ${lease.label} reached teardown without its exact lease.`
+    )
+    throw new Error('Codex client lifecycle ownership changed before teardown.')
+  }
+  client.setNotificationHandler(null)
+  client.setRequestHandler(null)
+  client.setStderrHandler(null)
+  try {
+    await client.disposeAndWait()
+  } catch (error) {
+    poisonWorkspaceLockMutationAdmission(
+      `Codex app-server death was not proven before owner teardown: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
+    throw error
+  }
+  client.setWorkspaceLockOwnerId(null)
+}
+
+async function withUnownedCodexClientLifecycle<T>(
+  label: string,
+  operation: (client: CodexAppServerClient) => Promise<T>,
+  options: {
+    runtimeProfile?: RuntimeProfile | null
+    taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
+  } = {}
+): Promise<T> {
+  const lease = await acquireCodexClientLifecycleLease(label)
+  let client: CodexAppServerClient | null = null
+  try {
+    await disposeCodexClientForOwnerTransition(lease)
+    client = getCodexClient(
+      options.runtimeProfile,
+      options.taskWraithMcpProfileId,
+      lease
+    )
+    client.setWorkspaceLockOwnerId(null)
+    return await operation(client)
+  } finally {
+    try {
+      if (client) await finishCodexClientLifecycle(client, lease)
+    } finally {
+      lease.release()
+    }
+  }
+}
+
+function createSerializedCodexThreadClientFacade(): {
+  ensureStarted(appVersion: string): Promise<void>
+  request(method: string, payload: unknown, timeoutMs: number): Promise<unknown>
+} {
+  let lease: CodexClientLifecycleLease | null = null
+  let client: CodexAppServerClient | null = null
+  const release = async (): Promise<void> => {
+    const exactLease = lease
+    const exactClient = client
+    lease = null
+    client = null
+    try {
+      if (exactLease && exactClient) {
+        await finishCodexClientLifecycle(exactClient, exactLease)
+      }
+    } finally {
+      exactLease?.release()
+    }
+  }
+  return {
+    ensureStarted: async (appVersion) => {
+      if (lease || client) throw new Error('Codex thread helper lifecycle was reused.')
+      lease = await acquireCodexClientLifecycleLease('thread-helper')
+      try {
+        await disposeCodexClientForOwnerTransition(lease)
+        client = getCodexClient(undefined, undefined, lease)
+        client.setWorkspaceLockOwnerId(null)
+        await client.ensureStarted(appVersion)
+      } catch (error) {
+        await release()
+        throw error
+      }
+    },
+    request: async (method, payload, timeoutMs) => {
+      if (!lease || !client) {
+        throw new Error('Codex thread helper request has no serialized client lifecycle.')
+      }
+      try {
+        return await client.request(method, payload, timeoutMs)
+      } finally {
+        await release()
+      }
+    }
+  }
+}
+
+function bindCodexRunClient(
+  runId: string,
+  client: CodexAppServerClient,
+  lease: CodexClientLifecycleLease
+): void {
+  const normalizedRunId = runId.trim()
+  if (!normalizedRunId || activeCodexClientLifecycleLease !== lease) {
+    throw new Error('Codex run client binding requires its exact serialized lifecycle.')
+  }
+  const existing = codexRunClientBindings.get(normalizedRunId)
+  if (existing && (existing.client !== client || existing.lease !== lease)) {
+    throw new Error('Codex run identity is already bound to another client lifecycle.')
+  }
+  codexRunClientBindings.set(normalizedRunId, { client, lease })
+}
+
+function unbindCodexRunClient(
+  runId: string,
+  client: CodexAppServerClient,
+  lease: CodexClientLifecycleLease
+): void {
+  const current = codexRunClientBindings.get(runId)
+  if (current?.client === client && current.lease === lease) {
+    codexRunClientBindings.delete(runId)
+  }
+}
+
+function codexClientForRunState(state: CodexRunState | null | undefined): CodexAppServerClient | null {
+  const runId = state?.appRunId?.trim()
+  if (!runId) return null
+  return codexRunClientBindings.get(runId)?.client ?? null
+}
+
+function onlyBoundCodexRunClient(): CodexAppServerClient | null {
+  const clients = new Set(
+    [...codexRunClientBindings.values()]
+      .filter((binding) => activeCodexClientLifecycleLease === binding.lease)
+      .map((binding) => binding.client)
+  )
+  return clients.size === 1 ? clients.values().next().value ?? null : null
+}
+
+function dispatchCodexMessageFromClient(
+  message: any,
+  client: CodexAppServerClient,
+  handler: (message: any) => void
+): void {
+  if (!message || typeof message !== 'object') return
+  const existing = codexMessageOriginClients.get(message)
+  if (existing && existing !== client) {
+    poisonWorkspaceLockMutationAdmission(
+      'Codex message object was reused across different client lifecycles.'
+    )
+    return
+  }
+  codexMessageOriginClients.set(message, client)
+  try {
+    handler(message)
+  } finally {
+    codexMessageOriginClients.delete(message)
+  }
+}
+
+function handleCodexNotificationFromClient(
+  message: any,
+  client: CodexAppServerClient
+): void {
+  dispatchCodexMessageFromClient(message, client, handleCodexNotification)
+}
+
+function handleCodexServerRequestFromClient(
+  message: any,
+  client: CodexAppServerClient
+): void {
+  dispatchCodexMessageFromClient(message, client, handleCodexServerRequest)
+}
+
 function getCodexClient(
   runtimeProfile?: RuntimeProfile | null,
-  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
+  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null,
+  lifecycleLease?: CodexClientLifecycleLease
 ): CodexAppServerClient {
+  if (
+    activeCodexClientLifecycleLease &&
+    activeCodexClientLifecycleLease !== lifecycleLease
+  ) {
+    throw new Error(
+      `Codex app-server is reserved by ${activeCodexClientLifecycleLease.label}; an unowned helper cannot restart or retarget it.`
+    )
+  }
   if (!codexClient) {
     codexClient = new CodexAppServerClient(
       taskWraithCodexHome(),
@@ -23201,7 +23668,7 @@ function getCodexClient(
       { acquireCredentialLease: acquireCodexCredentialLeaseIfConsented }
     )
   }
-  if (arguments.length > 0) {
+  if (runtimeProfile !== undefined) {
     codexClient.setRuntimeProfile(runtimeProfile ?? null)
   }
   // Phase I2: refresh the MCP config on every accessor call so the
@@ -23359,9 +23826,13 @@ async function probeAntigravityParticipant(
 async function probeCodexParticipant(
   runtimeProfile?: RuntimeProfile | null
 ): Promise<ParticipantProbeResult> {
-  const client = getCodexClient(runtimeProfile ?? null)
-  const ensure = client
-    .ensureStarted(app.getVersion())
+  const ensure = withUnownedCodexClientLifecycle(
+    `ensemble-probe:${runtimeProfile?.id || 'default'}`,
+    async (client) => {
+      await client.ensureStarted(app.getVersion())
+    },
+    { runtimeProfile: runtimeProfile ?? null }
+  )
     .then<ParticipantProbeResult>(() => ({ reachable: true }))
     .catch<ParticipantProbeResult>((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err)
@@ -23672,9 +24143,12 @@ const pendingCodexMcpRouteHints = new Map<string, CodexMcpRouteHint>()
 const CODEX_MCP_ROUTE_HINT_MAX_AGE_MS = 15_000
 
 /** Issue a Codex turn/interrupt; best-effort, never throws. */
-async function issueCodexTurnInterrupt(threadId: string, turnId: string): Promise<void> {
-  if (!codexClient) return
-  await codexClient.request('turn/interrupt', { threadId, turnId }, 10_000).catch(() => {})
+async function issueCodexTurnInterrupt(
+  client: CodexAppServerClient,
+  threadId: string,
+  turnId: string
+): Promise<void> {
+  await client.request('turn/interrupt', { threadId, turnId }, 10_000).catch(() => {})
 }
 
 function pruneCodexMcpRouteHints(nowMs: number): void {
@@ -24941,6 +25415,7 @@ function emitCodexContextCompaction(
  * host-side compaction IPC awaits completion.
  */
 interface PendingCodexManualCompaction {
+  client: CodexAppServerClient
   chatId: string
   threadId: string
   model: string
@@ -25001,17 +25476,20 @@ function codexNotificationBelongsToManualCompaction(
 }
 
 function handleCodexManualCompactionNotification(message: any): void {
+  const originatingClient =
+    message && typeof message === 'object' ? codexMessageOriginClients.get(message) : undefined
+  if (!originatingClient) return
   const params = message?.params || {}
   const threadId = params.threadId || params.thread?.id
   if (!threadId) return
   const pending = pendingCodexManualCompactions.get(threadId)
-  if (!pending) return
+  if (!pending || pending.client !== originatingClient) return
   if (!codexNotificationBelongsToManualCompaction(pending, message)) return
   if (message.method === 'error' && params.willRetry === true) return
   if (message.method === 'turn/started') {
     const turnId = pending.turnId
     if (pending.reservation.signal.aborted && turnId) {
-      void issueCodexTurnInterrupt(threadId, turnId)
+      void issueCodexTurnInterrupt(originatingClient, threadId, turnId)
     }
     return
   }
@@ -25197,11 +25675,45 @@ async function compactCodexProviderContext(payload: {
   participantId?: string
   model?: string
   reasoningEffort?: string | null
+  cardMetadata?: Record<string, unknown>
+  reservation: MaintenanceCompactionReservation
+}): Promise<{ ok: boolean; error?: string }> {
+  const lifecycleLease = await acquireCodexClientLifecycleLease(
+    `manual-compaction:${payload.chatId}`
+  )
+  let client: CodexAppServerClient | null = null
+  try {
+    await disposeCodexClientForOwnerTransition(lifecycleLease)
+    client = getCodexClient(undefined, undefined, lifecycleLease)
+    client.setWorkspaceLockOwnerId(null)
+    client.setNotificationHandler((message) =>
+      handleCodexNotificationFromClient(message, client!)
+    )
+    client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client!))
+    return await compactCodexProviderContextWithClient(payload, client)
+  } finally {
+    try {
+      if (client) await finishCodexClientLifecycle(client, lifecycleLease)
+    } finally {
+      lifecycleLease.release()
+    }
+  }
+}
+
+async function compactCodexProviderContextWithClient(
+  payload: {
+  chatId: string
+  providerSessionId?: string
+  participantId?: string
+  model?: string
+  reasoningEffort?: string | null
   /** Frozen ensemble-participant presentation for the card (see
    * resolveEnsembleCompactionTarget); absent on solo chats. */
   cardMetadata?: Record<string, unknown>
   reservation: MaintenanceCompactionReservation
-}): Promise<{ ok: boolean; error?: string }> {
+  },
+  client: CodexAppServerClient
+): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat) return { ok: false, error: 'Chat not found.' }
   const threadId = payload.providerSessionId || chat.linkedProviderSessionId
@@ -25298,6 +25810,7 @@ async function compactCodexProviderContext(payload: {
       180_000
     )
     pendingRecord = {
+      client,
       chatId: payload.chatId,
       threadId,
       model: payload.model || persistedSoloModel || 'cli-default',
@@ -25316,16 +25829,10 @@ async function compactCodexProviderContext(payload: {
   payload.reservation.signal.addEventListener(
     'abort',
     () => {
-      if (pending.turnId) void issueCodexTurnInterrupt(threadId, pending.turnId)
+      if (pending.turnId) void issueCodexTurnInterrupt(client, threadId, pending.turnId)
     },
     { once: true }
   )
-  const client = getCodexClient()
-  // Review fix: the notification handler is normally attached by the RUN path
-  // (runCodexAppServer) — a manual compaction issued before the first codex
-  // run of the app session would otherwise stream its notifications into the
-  // void and phantom-timeout despite succeeding server-side.
-  client.setNotificationHandler(handleCodexNotification)
   try {
     await client.ensureStarted(app.getVersion())
   } catch (error) {
@@ -27022,6 +27529,9 @@ function settleCodexMultiAgentEpisode(
 }
 
 function handleCodexNotification(message: any) {
+  const originatingClient =
+    message && typeof message === 'object' ? codexMessageOriginClients.get(message) : undefined
+  if (!originatingClient) return
   const state = findCodexRunStateForMessage(message)
   const notificationThreadId = String(
     message?.params?.threadId ||
@@ -27075,13 +27585,17 @@ function handleCodexNotification(message: any) {
       // Defense in depth: clearing the native goal before every ensemble turn
       // prevents this scheduler path. If a stale/racing goal still starts a
       // turn after the app run ended, interrupt it before any tool item lands.
-      void issueCodexTurnInterrupt(notificationThreadId, fenceDecision.turnId)
+      void issueCodexTurnInterrupt(
+        originatingClient,
+        notificationThreadId,
+        fenceDecision.turnId
+      )
     } else if (
       fenceDecision.action === 'clear_native_goal' &&
       notificationThreadId &&
-      codexClient
+      originatingClient
     ) {
-      void codexClient
+      void originatingClient
         .request(CODEX_THREAD_GOAL_CLEAR_METHOD, { threadId: notificationThreadId }, 15_000)
         .catch(() => {})
     }
@@ -27093,7 +27607,7 @@ function handleCodexNotification(message: any) {
     // the single-active fallback above resolves nothing. Route them to the
     // episode that registered the child before the compaction fallback.
     const childOwner = findCodexMultiAgentOwnerState(notificationThreadId)
-    if (childOwner) {
+    if (childOwner && codexClientForRunState(childOwner) === originatingClient) {
       handleCodexMultiAgentChildEvent(childOwner, message, notificationThreadId)
       return
     }
@@ -27103,6 +27617,7 @@ function handleCodexNotification(message: any) {
     handleCodexManualCompactionNotification(message)
     return
   }
+  if (codexClientForRunState(state) !== originatingClient) return
 
   const params = message.params || {}
   const messageThreadId = params.threadId || params.thread?.id
@@ -27114,7 +27629,7 @@ function handleCodexNotification(message: any) {
     // fallback above can resolve a different run than the one that spawned
     // this subagent.
     const childOwner = findCodexMultiAgentOwnerState(String(messageThreadId))
-    if (childOwner) {
+    if (childOwner && codexClientForRunState(childOwner) === originatingClient) {
       handleCodexMultiAgentChildEvent(childOwner, message, String(messageThreadId))
     }
     return
@@ -27130,7 +27645,9 @@ function handleCodexNotification(message: any) {
     // identity or history-join authority, so explicitly fence it instead of
     // silently adopting it into the predecessor state.
     const autonomousTurnId = codexProviderOperationId(message)
-    if (autonomousTurnId) void issueCodexTurnInterrupt(state.threadId, autonomousTurnId)
+    if (autonomousTurnId) {
+      void issueCodexTurnInterrupt(originatingClient, state.threadId, autonomousTurnId)
+    }
     return
   }
 
@@ -27138,7 +27655,7 @@ function handleCodexNotification(message: any) {
     return
   }
 
-  if (syncCodexNativeGoalNotification(state, message)) {
+  if (syncCodexNativeGoalNotification(state, message, originatingClient)) {
     return
   }
 
@@ -27162,7 +27679,7 @@ function handleCodexNotification(message: any) {
       state.turnId
     ) {
       pendingCodexInterrupts.delete(state.threadId)
-      void issueCodexTurnInterrupt(state.threadId, state.turnId)
+      void issueCodexTurnInterrupt(originatingClient, state.threadId, state.turnId)
     }
     return
   }
@@ -27683,7 +28200,20 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
   const patchPreview = codexPatchPreviewFromValue(
     params?.diff || params?.patch || params?.preview || cachedPatch?.preview || changes
   )
-  const toolName = params?.toolName || params?.tool_name || params?.name || params?.mcpToolName
+  const toolName =
+    params?.toolName ||
+    params?.tool_name ||
+    params?.name ||
+    params?.mcpToolName ||
+    params?.tool ||
+    params?.item?.tool
+  const mcpServerName =
+    params?.serverName ||
+    params?.server_name ||
+    params?.mcpServerName ||
+    params?.mcp_server_name ||
+    params?.server ||
+    params?.item?.server
   const planArtifactRawPath =
     planArtifactRawPathFromToolInput(params) || planArtifactRawPathFromChanges(changes)
 
@@ -27732,10 +28262,14 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
     // Codex pre-flight too. Without this mapping the elicitation reads
     // out under the generic `mcpTools` policy and re-prompts every call
     // even after the user has clearly authorised cross-provider work.
-    const canonicalToolName = canonicalTaskWraithToolName(String(toolName || ''))
+    const codexMcpIdentity = resolveCodexMcpApprovalIdentity({
+      toolName: String(toolName || ''),
+      serverName: typeof mcpServerName === 'string' ? mcpServerName : undefined,
+      toolArgs: params?.arguments ?? params?.input ?? params?.item?.arguments
+    })
     const resolvedService: AgenticServiceId =
-      canonicalToolName && isTaskWraithMcpToolName(canonicalToolName)
-        ? taskWraithToolAgenticService(canonicalToolName)
+      codexMcpIdentity.recognized
+        ? codexMcpIdentity.service
         : ('mcpTools' as AgenticServiceId)
     return {
       service: resolvedService,
@@ -27746,7 +28280,8 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
       body: codexString(toolName || kind),
       preview: {
         kind: 'tool',
-        toolName,
+        toolName: codexMcpIdentity.recognized ? codexMcpIdentity.toolName : toolName,
+        ...(mcpServerName ? { serverName: mcpServerName } : {}),
         params,
         actions: ['accept', 'acceptForSession', 'decline', 'cancel']
       }
@@ -27766,12 +28301,15 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
 }
 
 function handleCodexServerRequest(message: any) {
+  const respondingClient =
+    message && typeof message === 'object' ? codexMessageOriginClients.get(message) : undefined
+  if (!respondingClient) return
   const state = findCodexRunStateForMessage(message)
-  if (!codexClient) return
   const requestOperationId = codexProviderOperationId(message)
   const liveCodexRun = state?.appRunId ? runManager.get(state.appRunId) : undefined
   if (
     !state ||
+    codexClientForRunState(state) !== respondingClient ||
     !requestOperationId ||
     !state.admissionReservation?.matchesExactOperationId(requestOperationId) ||
     historyClearAdmissionBlocked(state.appRunId, state.workspacePath) ||
@@ -27780,7 +28318,7 @@ function handleCodexServerRequest(message: any) {
     runManager.getClaimedTerminalStatus(state.appRunId)
   ) {
     if (message?.id !== undefined && message?.id !== null) {
-      codexClient.reject(
+      respondingClient.reject(
         message.id,
         'TaskWraith has no matching active Codex turn for this approval; request denied.'
       )
@@ -27790,8 +28328,34 @@ function handleCodexServerRequest(message: any) {
   const method = message.method || 'approval/request'
   const params = message.params || {}
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+  const structuralItemId = params?.itemId || params?.item_id || params?.item?.id
+  const structuralApproval = resolveCodexStructuralApproval({
+    method,
+    params,
+    cachedFileChangeAvailable: Boolean(
+      structuralItemId && state.filePatchByItemId.has(String(structuralItemId))
+    )
+  })
+  if (structuralApproval.kind === 'deny') {
+    respondingClient.reject(message.id, structuralApproval.reason)
+    sendAgentCompatError(state.sender, 'codex', structuralApproval.reason, state)
+    return
+  }
   const formatted = formatCodexApprovalRequest(method, params, state)
-  const service = formatted.service
+  if (
+    structuralApproval.kind === 'not_applicable' &&
+    (formatted.service === 'shellCommands' || formatted.service === 'fileChanges')
+  ) {
+    const reason =
+      'Codex native mutation approval omitted an exact commandExecution/fileChange identity.'
+    respondingClient.reject(message.id, reason)
+    sendAgentCompatError(state.sender, 'codex', reason, state)
+    return
+  }
+  const service =
+    structuralApproval.kind === 'resolved'
+      ? structuralApproval.service
+      : formatted.service
   const isGlobalScope = state.scope === 'global'
   const workspacePathForCodexApproval = isGlobalScope ? undefined : state.workspacePath
 
@@ -27818,12 +28382,31 @@ function handleCodexServerRequest(message: any) {
                   'string'
                 ? ((formatted.preview as Record<string, unknown>).toolName as string)
                 : ''
-  const codexCanonicalToolName = canonicalTaskWraithToolName(probedToolName)
+  const probedServerName =
+    typeof (params as Record<string, unknown>)?.serverName === 'string'
+      ? ((params as Record<string, unknown>).serverName as string)
+      : typeof (params as Record<string, unknown>)?.server_name === 'string'
+        ? ((params as Record<string, unknown>).server_name as string)
+        : typeof (params as Record<string, unknown>)?.mcpServerName === 'string'
+          ? ((params as Record<string, unknown>).mcpServerName as string)
+          : typeof (params as Record<string, unknown>)?.server === 'string'
+            ? ((params as Record<string, unknown>).server as string)
+            : typeof (params as Record<string, any>)?.item?.server === 'string'
+              ? ((params as Record<string, any>).item.server as string)
+              : undefined
   // C2b-ii — best-effort tool-args for the exact reviewer-verdict exception;
   // fail-closed when the ACP approval params carry no plain-object args
   // (classifier sees undefined → no auto-allow / no read-only exemption).
   const codexToolArgs =
     (params as Record<string, unknown>)?.arguments ?? (params as Record<string, unknown>)?.input
+  const codexMcpIdentity = resolveCodexMcpApprovalIdentity({
+    toolName: probedToolName,
+    serverName: probedServerName,
+    toolArgs: codexToolArgs
+  })
+  const codexCanonicalToolName = codexMcpIdentity.recognized
+    ? codexMcpIdentity.effectiveToolName
+    : ''
   primeNativeCanvasCompatCorrelation({
     provider: 'codex',
     route: state,
@@ -27837,11 +28420,11 @@ function handleCodexServerRequest(message: any) {
     })
   ) {
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'tool/requestUserInput') {
-      codexClient.respond(message.id, { answers: {} })
+      respondingClient.respond(message.id, { answers: {} })
     } else {
-      codexClient.respond(message.id, { decision: 'accept' })
+      respondingClient.respond(message.id, { decision: 'accept' })
     }
     return
   }
@@ -27877,7 +28460,7 @@ function handleCodexServerRequest(message: any) {
       ? createCanvasEvalApprovalReceiptFromCanonicalArgs(codexToolArgs, approvalId)
       : undefined
   if (gateService === 'canvasEval' && !codexCanvasEvalApproval) {
-    codexClient.reject(
+    respondingClient.reject(
       message.id,
       'TaskWraith blocked canvas_eval because no canonical script receipt was available.'
     )
@@ -27899,6 +28482,7 @@ function handleCodexServerRequest(message: any) {
     runId: state.appRunId,
     externalPathDetection,
     toolName: codexCanonicalToolName || probedToolName,
+    toolArgs: codexToolArgs,
     // The RAW exec command (argv or string) — same lookup chain the approval
     // formatter uses — so a pure `git status` is allowed under every posture.
     shellCommand:
@@ -27995,16 +28579,16 @@ function handleCodexServerRequest(message: any) {
     )
     stampPlanArtifactPathOnPendingPlan(state.appChatId, codexPlanArtifactWriteMetadata)
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'item/permissions/requestApproval') {
-      codexClient.respond(message.id, {
+      respondingClient.respond(message.id, {
         permissions: params?.permissions || {},
         scope: 'turn'
       })
     } else if (method === 'tool/requestUserInput') {
-      codexClient.respond(message.id, { answers: {} })
+      respondingClient.respond(message.id, { answers: {} })
     } else {
-      codexClient.respond(message.id, { decision: 'accept' })
+      respondingClient.respond(message.id, { decision: 'accept' })
     }
     return
   }
@@ -28029,7 +28613,7 @@ function handleCodexServerRequest(message: any) {
         ...(externalPathDetection ? { externalPathDetected: true } : {})
       }
     )
-    codexClient.reject(message.id, agenticServiceDisabledMessage(gateService))
+    respondingClient.reject(message.id, agenticServiceDisabledMessage(gateService))
     sendAgentCompatError(state.sender, 'codex', agenticServiceBlockedMessage(gateService), state)
     return
   }
@@ -28057,9 +28641,9 @@ function handleCodexServerRequest(message: any) {
       }
     )
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
-      codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
+      respondingClient.respond(message.id, { action: 'accept', content: null, _meta: null })
     } else if (method === 'item/permissions/requestApproval') {
-      codexClient.respond(message.id, {
+      respondingClient.respond(message.id, {
         permissions: params?.permissions || {},
         scope:
           nativePreflight.scope === 'session' || nativePreflight.scope === 'workspace'
@@ -28067,9 +28651,9 @@ function handleCodexServerRequest(message: any) {
             : 'turn'
       })
     } else if (method === 'tool/requestUserInput') {
-      codexClient.respond(message.id, { answers: {} })
+      respondingClient.respond(message.id, { answers: {} })
     } else {
-      codexClient.respond(message.id, { decision: 'accept' })
+      respondingClient.respond(message.id, { decision: 'accept' })
     }
     return
   }
@@ -28087,7 +28671,7 @@ function handleCodexServerRequest(message: any) {
     externalPathDetection
   })
   if (registered !== true) {
-    codexClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
+    respondingClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
     return
   }
   runManager.registerApproval(state.appRunId, approvalId)
@@ -28683,13 +29267,18 @@ async function syncCodexNativeGoalForSavedChat(
   if (!threadId || threadId !== expectedThreadId || !isCodexAppServerThreadId(threadId)) return
   if (chat.providerMetadata?.codexGoalNativeAvailable !== true) return
 
-  // Reuse the current Codex app-server client only. Creating or retargeting a
-  // client here could silently switch a custom runtime profile during a UI edit.
-  const client = codexClient ? getCodexClient() : null
-  if (!client) return
+  const lifecycleLease = await acquireCodexClientLifecycleLease(
+    `native-goal-sync:${appChatId}`
+  )
+  let client: CodexAppServerClient | null = null
   try {
-    client.setNotificationHandler(handleCodexNotification)
-    client.setRequestHandler(handleCodexServerRequest)
+    await disposeCodexClientForOwnerTransition(lifecycleLease)
+    client = getCodexClient(undefined, undefined, lifecycleLease)
+    client.setWorkspaceLockOwnerId(null)
+    client.setNotificationHandler((message) =>
+      handleCodexNotificationFromClient(message, client!)
+    )
+    client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client!))
     await client.ensureStarted(app.getVersion())
     await syncCodexNativeGoalForRun(client, appChatId, threadId)
   } catch (error) {
@@ -28698,10 +29287,20 @@ async function syncCodexNativeGoalForSavedChat(
         error instanceof Error ? error.message : String(error)
       }`
     )
+  } finally {
+    try {
+      if (client) await finishCodexClientLifecycle(client, lifecycleLease)
+    } finally {
+      lifecycleLease.release()
+    }
   }
 }
 
-function syncCodexNativeGoalNotification(state: CodexRunState, message: any): boolean {
+function syncCodexNativeGoalNotification(
+  state: CodexRunState,
+  message: any,
+  originatingClient: CodexAppServerClient
+): boolean {
   if (!state.appChatId) return false
   if (
     executionGraphOwnsAttemptRunId(state.appRunId) &&
@@ -28715,8 +29314,8 @@ function syncCodexNativeGoalNotification(state: CodexRunState, message: any): bo
     taskWraithOwnsGoal &&
     (message.method === 'thread/goal/updated' || message.method === 'thread/goal/cleared')
   ) {
-    if (message.method === 'thread/goal/updated' && state.threadId && codexClient) {
-      void codexClient
+    if (message.method === 'thread/goal/updated' && state.threadId) {
+      void originatingClient
         .request(CODEX_THREAD_GOAL_CLEAR_METHOD, { threadId: state.threadId }, 15_000)
         .catch(() => {})
     }
@@ -28741,6 +29340,114 @@ function syncCodexNativeGoalNotification(state: CodexRunState, message: any): bo
   return false
 }
 
+interface CodexWorkspaceLockStartupBinding {
+  readonly ownerId: string | null
+  readonly bindSpawnedProcess?: (process: CodexAppServerSpawnedProcess) => Promise<void>
+  settleAfterClientClosed(clientDeathProven: boolean): Promise<void>
+}
+
+function codexWorkspaceLockAdmissionKey(payload: AgentRunPayload): WorkspaceLockProviderAdmissionKey {
+  const runId = payload.appRunId?.trim()
+  if (!runId) throw new Error('Codex app-server requires an exact workspace-lock run identity.')
+  return {
+    runId,
+    ...(payload.ensembleRun?.laneId ? { laneId: payload.ensembleRun.laneId } : {}),
+    ...(payload.ensembleRun?.participantId
+      ? { participantId: payload.ensembleRun.participantId }
+      : {})
+  }
+}
+
+function createCodexWorkspaceLockStartupBinding(
+  payload: AgentRunPayload
+): CodexWorkspaceLockStartupBinding {
+  if (!providerRunRequiresCoarseWorkspaceLock(payload)) {
+    return {
+      ownerId: null,
+      settleAfterClientClosed: async () => {}
+    }
+  }
+
+  const key = codexWorkspaceLockAdmissionKey(payload)
+  const admission = workspaceLockProviderCoordinator.get(key)
+  if (
+    !admission ||
+    admission.owner.provider !== 'codex' ||
+    admission.owner.lifecycle !== 'launching-child'
+  ) {
+    throw new Error(
+      'Write-capable Codex startup requires its exact launching-child workspace-lock admission.'
+    )
+  }
+
+  // This hold is deliberately distinct from the bounded setup operation around
+  // the owner transition. The exact app-server PID can exit while an inherited
+  // MCP/shell descendant remains alive. Until whole-tree death is independently
+  // proven, terminal run cleanup must retain the transferred acquisition.
+  const unprovenTreeHold = workspaceLockRunLifecycle.begin(key.runId)
+  let transferAttempted = false
+  let childReceipt: WorkspaceLockProviderAdmission | null = null
+  let retainedReason: string | null = null
+
+  const retainAndPoison = (reason: string): void => {
+    retainedReason ||= reason
+    poisonWorkspaceLockMutationAdmission(reason)
+  }
+
+  return {
+    ownerId: admission.owner.lockOwnerId,
+    bindSpawnedProcess: async (process) => {
+      transferAttempted = true
+      try {
+        childReceipt = await workspaceLockProviderCoordinator.transferToChild(key, process.pid)
+      } catch (error) {
+        retainAndPoison(
+          `Codex workspace-lock transfer to PID ${process.pid} was not proven atomic: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        throw error
+      }
+      void process.closed.then(() => {
+        // `close` proves only that the exact app-server root is gone. Codex may
+        // have spawned MCP or shell descendants carrying the same owner env, so
+        // releasing `childReceipt` here would reopen the workspace underneath
+        // an unobserved writer. Retain/quarantine until a whole-tree observer is
+        // available; never substitute PID-only or elapsed-time evidence.
+        retainAndPoison(
+          `Codex app-server PID ${process.pid} closed without proof that its inherited process tree is dead; retaining workspace-lock acquisition ${childReceipt?.transitionId || admission.transitionId}.`
+        )
+      })
+    },
+    settleAfterClientClosed: async (clientDeathProven) => {
+      if (!clientDeathProven) {
+        retainAndPoison(
+          'Codex app-server teardown did not prove exact child death; retaining its workspace-lock acquisition.'
+        )
+        return
+      }
+      if (transferAttempted) {
+        if (!retainedReason) {
+          retainAndPoison(
+            `Codex child acquisition ${childReceipt?.transitionId || admission.transitionId} lacks whole-tree death proof and remains retained.`
+          )
+        }
+        return
+      }
+      try {
+        await workspaceLockProviderCoordinator.releaseSetupFailure(key, admission)
+        unprovenTreeHold.finish()
+      } catch (error) {
+        retainAndPoison(
+          `Codex pre-spawn workspace-lock release failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+    }
+  }
+}
+
 async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const codexTaskWraithMcpAdvertised = Boolean(
     AppStore.getSettings().geminiMcpBridgeEnabled && taskwraithMcpBridgeCommandStatus().available
@@ -28752,26 +29459,65 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
       coreProfile: false
     })
   }
-  const client = getCodexClient(payload.runtimeProfile ?? null, payload.taskWraithMcpProfileId)
+  const runId = payload.appRunId?.trim()
+  if (!runId) throw new Error('Codex app-server dispatch requires an exact run identity.')
+  const lifecycleLease = await acquireCodexClientLifecycleLease(`provider-run:${runId}`)
   codexAppServerStartupLeaseCount += 1
   try {
-    await runCodexAppServerWithClient(event, payload, client)
+    await workspaceLockRunLifecycle.run(runId, async () => {
+      let lockBinding: CodexWorkspaceLockStartupBinding | null = null
+      let client: CodexAppServerClient | null = null
+      let clientDeathProven = false
+      try {
+        await disposeCodexClientForOwnerTransition(lifecycleLease)
+        lockBinding = createCodexWorkspaceLockStartupBinding(payload)
+        client = getCodexClient(
+          payload.runtimeProfile ?? null,
+          payload.taskWraithMcpProfileId,
+          lifecycleLease
+        )
+        client.setWorkspaceLockOwnerId(lockBinding.ownerId)
+        bindCodexRunClient(runId, client, lifecycleLease)
+        await runCodexAppServerWithClient(
+          event,
+          payload,
+          client,
+          lockBinding.bindSpawnedProcess
+        )
+      } finally {
+        try {
+          if (client) {
+            await finishCodexClientLifecycle(client, lifecycleLease)
+            clientDeathProven = true
+          } else {
+            clientDeathProven = true
+          }
+        } finally {
+          if (client) unbindCodexRunClient(runId, client, lifecycleLease)
+          await lockBinding?.settleAfterClientClosed(clientDeathProven)
+        }
+      }
+    })
   } finally {
     codexAppServerStartupLeaseCount = Math.max(0, codexAppServerStartupLeaseCount - 1)
+    lifecycleLease.release()
   }
 }
 
 async function runCodexAppServerWithClient(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload,
-  client: CodexAppServerClient
+  client: CodexAppServerClient,
+  bindSpawnedProcess?: (process: CodexAppServerSpawnedProcess) => Promise<void>
 ) {
   const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
   const route = routeWithRunId('codex', payload)
-  client.setNotificationHandler(handleCodexNotification)
-  client.setRequestHandler(handleCodexServerRequest)
+  client.setNotificationHandler((message) =>
+    handleCodexNotificationFromClient(message, client)
+  )
+  client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client))
   client.setStderrHandler((chunk) => {
-    const state = getActiveCodexRunState()
+    const state = getCodexStateFromSession(runManager.get(route.appRunId))
     if (state?.sender) {
       sendAgentCompatError(state.sender, 'codex', chunk, state)
     }
@@ -28861,7 +29607,8 @@ async function runCodexAppServerWithClient(
         if (!providerTransportLaunchAuthorized('codex', payload, route)) {
           throw new CodexAppServerStartupAbortedError(boundary)
         }
-      }
+      },
+      ...(bindSpawnedProcess ? { bindSpawnedProcess } : {})
     })
   } catch (error) {
     admissionReservation?.releaseBeforeAdmission()
@@ -29107,7 +29854,7 @@ async function runCodexAppServerWithClient(
       // A turn/started notification proves admission even when the matching
       // JSON-RPC acknowledgement fails. Interrupt and join its real terminal
       // notification instead of launching a second exec-fallback turn.
-      await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId)
+      await issueCodexTurnInterrupt(client, codexState.threadId, codexState.turnId)
       await turnOperation
       return
     }
@@ -29661,7 +30408,7 @@ async function runCodexProvider(
     // config error, but we still attempt it (and re-classify its stderr there).
     const stderr =
       (error as { codexStderr?: string } | null)?.codexStderr ||
-      getCodexClient().getRecentStderr() ||
+      codexClient?.getRecentStderr() ||
       message
     if (isCodexConfigParseError(stderr) || isCodexConfigParseError(message)) {
       const route = routeWithRunId('codex', payload)
@@ -29769,7 +30516,16 @@ async function terminateExactProviderSession(
     if (provider === 'codex') {
       const decision = decideCancelInterrupt(codexState)
       if (decision.interruptNow && codexState?.threadId && codexState.turnId) {
-        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId).catch(() => undefined)
+        const originatingClient = codexClientForRunState(codexState)
+        if (originatingClient) {
+          await issueCodexTurnInterrupt(
+            originatingClient,
+            codexState.threadId,
+            codexState.turnId
+          ).catch(() => undefined)
+        } else {
+          pendingCodexInterrupts.add(codexState.threadId)
+        }
       } else if (decision.deferThreadId) {
         pendingCodexInterrupts.add(decision.deferThreadId)
       }
@@ -30097,17 +30853,23 @@ function geminiApiProviderDeps() {
     decryptApiKey,
     getMcpToolDefinitions: mcpToolDefinitions,
     executeMcpTool: async (toolName: string, args: unknown, route: AgentRunRoute | null) => {
-      const canonicalToolName = canonicalTaskWraithToolName(toolName)
+      const dispatchContract = resolveToolDispatchContractStrict(toolName, args)
       if (
-        !isTaskWraithMcpToolName(canonicalToolName) &&
-        !isCapabilityGatewayToolName(canonicalToolName)
+        !dispatchContract.ok ||
+        (!isTaskWraithMcpToolName(dispatchContract.toolName) &&
+          !isCapabilityGatewayToolName(dispatchContract.toolName))
       ) {
         return {
           text: `Unknown TaskWraith MCP tool: ${toolName}`,
           isError: true
         }
       }
-      const result = await executeGeminiMcpTool(canonicalToolName, args, route, 'gemini')
+      const result = await executeGeminiMcpTool(
+        dispatchContract.toolName,
+        args,
+        route,
+        'gemini'
+      )
       return { text: result.text, isError: result.isError }
     },
     prepareToolContext: (
@@ -30944,14 +31706,19 @@ function antigravityGeminiApiAgentDeps(wireModelId: string) {
       return { ok: false, error: mapAntigravityGeminiApiTurnStatusToMessage('keyUnavailable') }
     },
     executeMcpTool: async (toolName: string, args: unknown, route: AgentRunRoute | null) => {
-      const canonicalToolName = canonicalTaskWraithToolName(toolName)
-      if (!isTaskWraithMcpToolName(canonicalToolName)) {
+      const dispatchContract = resolveToolDispatchContractStrict(toolName, args)
+      if (!dispatchContract.ok || !isTaskWraithMcpToolName(dispatchContract.toolName)) {
         return {
           text: `Unknown TaskWraith MCP tool: ${toolName}`,
           isError: true
         }
       }
-      const result = await executeGeminiMcpTool(canonicalToolName, args, route, 'antigravity')
+      const result = await executeGeminiMcpTool(
+        dispatchContract.toolName,
+        args,
+        route,
+        'antigravity'
+      )
       return { text: result.text, isError: result.isError }
     },
     prepareToolContext: undefined
@@ -32983,7 +33750,7 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
-  const args = normalizeMcpToolArguments(rawArgs)
+  let args = normalizeMcpToolArguments(rawArgs)
   const effectiveRoute =
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
@@ -33005,6 +33772,20 @@ async function executeGeminiMcpTool(
     }
   }
 
+  const dispatchContractResolution = resolveToolDispatchContractStrict(toolName, args)
+  if (!dispatchContractResolution.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        code: dispatchContractResolution.code,
+        error: dispatchContractResolution.reason
+      }),
+      isError: true
+    }
+  }
+  const dispatchContract: ResolvedToolDispatchContract = dispatchContractResolution
+
   if (isCapabilityGatewayToolName(toolName)) {
     const context = getAgentToolContext(parentProvider, effectiveRoute)
     if (!context) {
@@ -33024,6 +33805,9 @@ async function executeGeminiMcpTool(
     const eligibleHiddenToolNames = gatewayEligibleHiddenToolNames(context)
     const definitions = gatewayCatalogDefinitions(context)
     if (toolName === 'capability_search') {
+      if (dispatchContract.dispatchOwner !== 'capability-gateway') {
+        throw new Error('Capability search is not owned by the capability gateway.')
+      }
       const searchResult = searchGatewayCapabilities({
         query: args.query,
         limit: args.limit,
@@ -33089,6 +33873,20 @@ async function executeGeminiMcpTool(
       emitCapabilityGatewayWrapperResult(context, parentProvider, toolName, args, result)
       return result
     }
+    if (
+      dispatchContract.gatewayDispatchOwner !== 'capability-gateway' ||
+      dispatchContract.effectiveToolName !== resolution.name
+    ) {
+      return {
+        ...mcpStructuredJsonResult({
+          ok: false,
+          tool: toolName,
+          error:
+            'Capability invocation target changed after strict dispatch-contract resolution.'
+        }),
+        isError: true
+      }
+    }
 
     if (parentProvider === 'ollama' && context.workspacePath) {
       const ollamaWorkspacePath = resolve(context.workspacePath)
@@ -33128,6 +33926,21 @@ async function executeGeminiMcpTool(
       callerContext,
       executeCanonical: executeGeminiMcpTool
     })
+  }
+
+  let handledDispatchOwner: CanonicalDispatchOwner | null = null
+  const markDispatchHandled = (...expectedOwners: readonly CanonicalDispatchOwner[]): void => {
+    if (!expectedOwners.includes(dispatchContract.dispatchOwner)) {
+      throw new Error(
+        `Dispatcher branch for ${toolName} does not own taxonomy route ${
+          dispatchContract.dispatchOwner
+        }.`
+      )
+    }
+    if (handledDispatchOwner && handledDispatchOwner !== dispatchContract.dispatchOwner) {
+      throw new Error(`Tool ${toolName} was dispatched by more than one canonical owner.`)
+    }
+    handledDispatchOwner = dispatchContract.dispatchOwner
   }
 
   const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
@@ -33205,12 +34018,16 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
-  const cwd = resolveScopedDirectory(
+  let cwd = resolveScopedDirectory(
     context.scope,
     baseCwd,
     workspacePath,
     String(args.cwd || args.working_directory || args.workdir || '')
   )
+  let workspaceExecutionContext: GeminiToolContext & WorkspaceToolContext = context
+  let verifiedDirectMutationAuthority: ScopedPathAuthority | null = null
+  let verifiedMutationExecutionContext: VerifiedWorkspaceMutationExecutionContext | null = null
+  let revalidateExternalMutationAtCommit: (() => Promise<void>) | null = null
   if (isDesktopMcpToolName(toolName)) {
     const unsupportedResult = unsupportedNativeMcpToolResult(toolName)
     if (unsupportedResult) {
@@ -33239,7 +34056,8 @@ async function executeGeminiMcpTool(
   if (exactOneOffPermissionRetry) {
     const retryNetworkBlockedTool = networkAccessBlockedToolName(
       toolName,
-      context.effectivePermissions
+      context.effectivePermissions,
+      args
     )
     const retryGuardError = oneOffToolPermissionRetryGuardError({
       toolName,
@@ -33458,7 +34276,11 @@ async function executeGeminiMcpTool(
     // read-only/plan preset denies them with the generic "File changes denied"
     // — which gives the agent no idea the fix is a write-capable preset (and, for
     // image_generate, an enabled key). Tell it the actual requirement.
-    const networkBlockedTool = networkAccessBlockedToolName(toolName, context.effectivePermissions)
+    const networkBlockedTool = networkAccessBlockedToolName(
+      toolName,
+      context.effectivePermissions,
+      args
+    )
     const mediaToolDenied =
       isImageMcpToolName(toolName) ||
       isImageGenMcpToolName(toolName) ||
@@ -33520,9 +34342,282 @@ async function executeGeminiMcpTool(
     return { ...deniedResult, isError: true }
   }
 
+  const workspaceMutationOperationDone =
+    dispatchContract &&
+    (dispatchContract.lock === 'workspace-paths' ||
+      dispatchContract.lock === 'workspace-repository' ||
+      dispatchContract.lock === 'workspace-runtime') &&
+    context.appRunId
+      ? workspaceLockRunLifecycle.begin(context.appRunId)
+      : null
+  let workspaceMutationAdmission: WorkspaceLockMcpAdmission
+  try {
+    workspaceMutationAdmission = await workspaceLockMcpAdmissionCoordinator.admit({
+      context,
+      provider: parentProvider,
+      toolName,
+      args,
+      resourcePath: workspaceLockMcpResourcePath(
+        toolName,
+        args,
+        resolve(context.workspacePath || context.cwd)
+      ),
+      externalMutationAuthority: workspaceExternalMutationAuthorityIssuer.issue({
+        context,
+        provider: parentProvider,
+        toolName,
+        args
+      })
+    })
+  } catch (error) {
+    workspaceMutationOperationDone?.finish()
+    const text = mcpJson({
+      ok: false,
+      tool: toolName,
+      error: error instanceof Error ? error.message : String(error)
+    })
+    emitMcpToolTranscriptEvent({
+      type: 'tool_result',
+      tool_id: toolId,
+      tool_name: toolName,
+      status: 'error',
+      output: text,
+      provider: parentProvider,
+      server: GEMINI_MCP_SERVER_NAME
+    })
+    return { text, isError: true }
+  }
+  if (!workspaceMutationAdmission.ok) {
+    workspaceMutationOperationDone?.finish()
+    emitMcpToolTranscriptEvent({
+      type: 'tool_result',
+      tool_id: toolId,
+      tool_name: toolName,
+      status: 'error',
+      output: workspaceMutationAdmission.text,
+      provider: parentProvider,
+      server: GEMINI_MCP_SERVER_NAME
+    })
+    return { text: workspaceMutationAdmission.text, isError: true }
+  }
+  if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+    let workspaceLockLifecycleResolved = true
+    try {
+      if (
+        workspaceMutationAdmission.acquiredTransitionId &&
+        workspaceMutationAdmission.owner
+      ) {
+        if (!workspaceLockRuntimeRef) {
+          throw new Error(
+            'Exact acquisition ownership became unresolved because the runtime disappeared.'
+          )
+        }
+        const released = await workspaceLockRuntimeRef.releaseAcquisition(
+          workspaceMutationAdmission.owner.runId,
+          workspaceMutationAdmission.acquiredTransitionId
+        )
+        if (!released.ok) throw new Error(released.message)
+      }
+    } catch (error) {
+      workspaceLockLifecycleResolved = false
+      poisonWorkspaceLockMutationAdmission(
+        error instanceof Error ? error.message : String(error)
+      )
+      console.error('[workspace-lock] stale-operation lease release failed:', error)
+    } finally {
+      if (workspaceLockLifecycleResolved) {
+        workspaceMutationOperationDone?.finish()
+      }
+    }
+    if (!workspaceLockLifecycleResolved) {
+      const text = mcpJson({
+        ok: false,
+        tool: toolName,
+        code: 'workspace_lock_release_failed',
+        error:
+          workspaceLockRuntimeRef?.getUnhealthyReason() ||
+          'Workspace-lock release failed; future mutations are blocked.'
+      })
+      emitMcpToolTranscriptEvent({
+        type: 'tool_result',
+        tool_id: toolId,
+        tool_name: toolName,
+        status: 'error',
+        output: text,
+        provider: parentProvider,
+        server: GEMINI_MCP_SERVER_NAME
+      })
+      return { text, isError: true }
+    }
+    return staleProviderMcpResult(toolName)
+  }
+
   let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
   let hostCommandProjection: HostCommandProjectionScope | null = null
+  let workspaceMutationFence: WorkspaceMutationCommitFenceOwner | null = null
+  let workspaceMutationTransitionId = workspaceMutationAdmission.acquiredTransitionId
+  let workspaceLockLifecycleResolved = true
   try {
+    if (workspaceMutationAdmission.owner) {
+      if (!workspaceLockRuntimeRef) {
+        throw new Error('Workspace-lock authority became unavailable before execution.')
+      }
+      workspaceMutationFence = await workspaceLockRuntimeRef.acquireMutationFence(
+        workspaceMutationAdmission.owner,
+        workspaceMutationAdmission.canonicalClaims
+      )
+      if (workspaceMutationTransitionId && workspaceMutationAdmission.runtimeInput) {
+        const refreshed = await workspaceLockRuntimeRef.replaceAcquisitionForMutation(
+          workspaceMutationAdmission.runtimeInput,
+          workspaceMutationAdmission.owner,
+          workspaceMutationTransitionId
+        )
+        if (!refreshed.ok) {
+          throw new Error(`Workspace mutation refresh failed: ${refreshed.message}`)
+        }
+        workspaceMutationTransitionId = refreshed.authority.transitionId
+        const verified = await workspaceLockRuntimeRef.verifyAcquisitionForMutation(
+          workspaceMutationAdmission.owner,
+          workspaceMutationTransitionId
+        )
+        if (!verified.ok) {
+          throw new Error(`Workspace mutation verification failed: ${verified.message}`)
+        }
+        const externalAuthority =
+          workspaceMutationAdmission.runtimeInput.externalMutationAuthority
+        if (externalAuthority && (toolName === 'write_file' || toolName === 'replace')) {
+          const workspaceCapability = verified.capabilities.find(
+            (capability) => capability.kind === 'workspace'
+          )
+          if (!workspaceCapability || verified.capabilities.length !== 1) {
+            throw new Error(
+              'External mutation verification did not return one workspace capability.'
+            )
+          }
+          const verifiedExternalAuthority =
+            await workspaceLockRuntimeRef.revalidateExternalMutationAuthority(
+              workspaceMutationAdmission.runtimeInput
+            )
+          const exactExternalTarget = verifiedExternalAuthority.targetPath
+          const {
+            path: _path,
+            file_path: _filePath,
+            filePath: _camelFilePath,
+            file: _file,
+            target: _target,
+            targetPath: _targetPath,
+            ...nonPathArgs
+          } = args
+          args = { ...nonPathArgs, path: exactExternalTarget }
+          cwd = workspaceCapability.verifiedPathEvidence.containment.canonicalRootPath
+          verifiedDirectMutationAuthority = {
+            rootPath: verifiedExternalAuthority.rootPath,
+            targetPath: exactExternalTarget
+          }
+          revalidateExternalMutationAtCommit = async () => {
+            if (!workspaceLockRuntimeRef || !workspaceMutationAdmission.runtimeInput) {
+              throw new Error('External mutation authority disappeared before commit.')
+            }
+            const current =
+              await workspaceLockRuntimeRef.revalidateExternalMutationAuthority(
+                workspaceMutationAdmission.runtimeInput
+              )
+            if (
+              current.rootPath !== verifiedExternalAuthority.rootPath ||
+              current.targetPath !== verifiedExternalAuthority.targetPath
+            ) {
+              throw new Error('External mutation authority changed before commit.')
+            }
+          }
+          workspaceExecutionContext = {
+            ...context,
+            cwd,
+            workspacePath: cwd
+          }
+        } else {
+          const handoff = prepareVerifiedWorkspaceMutationHandoff({
+            toolName,
+            args,
+            capabilities: verified.capabilities,
+            requestedCwd: String(args.cwd || args.working_directory || args.workdir || ''),
+            effectiveCwd: cwd
+          })
+          if (!handoff.ok) {
+            throw new Error(
+              `Workspace mutation capability handoff failed (${handoff.reason}): ${handoff.message}`
+            )
+          }
+          args = handoff.args
+          cwd = handoff.executionContext.cwd
+          verifiedMutationExecutionContext = handoff.executionContext
+          if (toolName === 'write_file' || toolName === 'replace') {
+            const [targetPath] = handoff.executionContext.executableTargetPaths
+            if (!targetPath || handoff.executionContext.executableTargetPaths.length !== 1) {
+              throw new Error('Direct workspace mutation requires one verified target path.')
+            }
+            verifiedDirectMutationAuthority = {
+              rootPath: handoff.executionContext.workspacePath,
+              targetPath
+            }
+          }
+          workspaceExecutionContext = {
+            ...context,
+            cwd,
+            workspacePath: handoff.executionContext.workspacePath
+          }
+        }
+        const finalMutationOwner = workspaceMutationAdmission.owner
+        const finalMutationTransitionId = workspaceMutationTransitionId
+        const assertMutationStillLive = (): void => {
+          if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+            throw new Error(
+              'Workspace mutation authority expired at the executor commit boundary.'
+            )
+          }
+          if (
+            historyClearAdmissionBlocked(
+              finalMutationOwner.runId,
+              workspaceExecutionContext.workspacePath,
+              finalMutationOwner.chatId
+            )
+          ) {
+            throw new Error('Workspace mutation was revoked by a concurrent history clear.')
+          }
+        }
+        workspaceExecutionContext = {
+          ...workspaceExecutionContext,
+          assertMutationStillLive,
+          assertMutationAuthorized: async () => {
+            assertMutationStillLive()
+            if (!workspaceLockRuntimeRef) {
+              throw new Error(
+                'Workspace-lock authority disappeared at the executor commit boundary.'
+              )
+            }
+            const finalVerification =
+              await workspaceLockRuntimeRef.verifyAcquisitionForMutation(
+                finalMutationOwner,
+                finalMutationTransitionId
+              )
+            if (!finalVerification.ok) {
+              throw new Error(
+                `Workspace mutation final verification failed: ${finalVerification.message}`
+              )
+            }
+            if (verifiedMutationExecutionContext) {
+              await reverifyWorkspaceMutationExecutionCwd(
+                verifiedMutationExecutionContext
+              )
+            }
+            await revalidateExternalMutationAtCommit?.()
+            assertMutationStillLive()
+          }
+        }
+      }
+      if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+        throw new Error('Workspace mutation authority expired before executor dispatch.')
+      }
+    }
     let text = ''
     let toolIsError = false
     let richResult: McpToolExecutionResult | null = null
@@ -33539,6 +34634,7 @@ async function executeGeminiMcpTool(
     }
 
     if (toolName === TOOL_PERMISSION_RETRY_TOOL_NAME) {
+      markDispatchHandled('user-question')
       const retryExecution = await orchestrateToolPermissionRetry({
         value: args,
         definitions: filterTaskWraithMcpToolDefinitionsForProfile(
@@ -33579,7 +34675,8 @@ async function executeGeminiMcpTool(
               : null
           const targetNetworkBlockedTool = networkAccessBlockedToolName(
             retryRequest.toolName,
-            context.effectivePermissions
+            context.effectivePermissions,
+            retryRequest.arguments
           )
           const targetExternalPathDetection = detectExternalPathForProviderApproval({
             provider: parentProvider,
@@ -33684,27 +34781,16 @@ async function executeGeminiMcpTool(
       permissionRetryTargetToolName = retryExecution.targetToolName || null
       permissionRetryTargetExecuted = retryExecution.targetExecuted === true
     } else if (toolName === 'run_shell_command') {
+      markDispatchHandled('workspace-tools')
       const command = String(args.command || '').trim()
       if (!command) throw new Error('command is required.')
-      const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd })
-      if (!lock.ok) {
-        emitMcpToolTranscriptEvent({
-          type: 'tool_result',
-          tool_id: toolId,
-          tool_name: toolName,
-          status: 'error',
-          output: lock.text,
-          provider: parentProvider,
-          server: GEMINI_MCP_SERVER_NAME
-        })
-        return { text: lock.text, isError: true }
-      }
       hostCommandProjection = createHostCommandProjectionScope({
         source: 'brokered-mcp',
-        appRunId: context.appRunId,
-        appChatId: context.appChatId,
-        workspacePath: context.workspacePath
+        appRunId: workspaceExecutionContext.appRunId,
+        appChatId: workspaceExecutionContext.appChatId,
+        workspacePath: workspaceExecutionContext.workspacePath
       })
+      await workspaceExecutionContext.assertMutationAuthorized?.()
       const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
         runHostCommand(command, cwd)
       )
@@ -33734,6 +34820,7 @@ async function executeGeminiMcpTool(
     // catalog union; check a widened string so the guard narrows cleanly.
     const candidateAuditToolName: string = toolName
     if (isAuditMcpToolName(candidateAuditToolName)) {
+      markDispatchHandled('audit-tools')
       const auditContext = auditRuntime.registry.get(context.appRunId)
       if (!auditContext) {
         toolIsError = true
@@ -33752,10 +34839,12 @@ async function executeGeminiMcpTool(
         text = mcpJson(auditResult.result)
       }
     } else if (isOutlookMcpToolName(toolName)) {
+      markDispatchHandled('outlook-connector')
       const result = await outlookToolExecutors.executeOutlookMcpTool(toolName, args)
       toolIsError = result.isError
       text = mcpJson(result.result)
     } else if (isWorkspaceBoardMcpToolName(toolName)) {
+      markDispatchHandled('workspace-board')
       const result = await workspaceBoardToolExecutors.executeWorkspaceBoardMcpTool(
         toolName,
         args,
@@ -33768,6 +34857,7 @@ async function executeGeminiMcpTool(
         emitWorkspaceBoardsChanged()
       }
     } else if (isProjectReferenceMcpToolName(toolName)) {
+      markDispatchHandled('project-reference')
       const result = await projectReferenceToolExecutors.executeProjectReferenceMcpTool(
         toolName,
         args,
@@ -33777,6 +34867,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.isError
       text = mcpJson(result.result)
     } else if (isEvidenceMcpToolName(toolName)) {
+      markDispatchHandled('evidence-tools')
       const result = await evidenceToolExecutors.executeEvidenceMcpTool(toolName, args, context, {
         provider: parentProvider,
         runId: context.appRunId
@@ -33792,44 +34883,42 @@ async function executeGeminiMcpTool(
         emitEvidencePacksChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {
+      markDispatchHandled(
+        'workspace-tools',
+        'git-tools',
+        'github-tools',
+        'process-tools',
+        'run-control',
+        'attachment-tools',
+        'subthread-control'
+      )
       hostCommandProjection = createHostCommandProjectionScope({
         source: 'brokered-mcp',
-        appRunId: context.appRunId,
-        appChatId: context.appChatId,
-        workspacePath: context.workspacePath
+        appRunId: workspaceExecutionContext.appRunId,
+        appChatId: workspaceExecutionContext.appChatId,
+        workspacePath: workspaceExecutionContext.workspacePath
       })
-      if (WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(toolName)) {
-        const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd })
-        if (!lock.ok) {
-          toolIsError = true
-          text = lock.text
-        } else {
-          const result = await runWithHostCommandProjectionScope(
-            hostCommandProjection,
-            () => workspaceToolExecutors.executeWorkspaceMcpTool(toolName, args, context, cwd)
+      const result = await runWithHostCommandProjectionScope(
+        hostCommandProjection,
+        () =>
+          workspaceToolExecutors.executeWorkspaceMcpTool(
+            toolName,
+            args,
+            workspaceExecutionContext,
+            cwd
           )
-          toolIsError = result.isError
-          if (result.richResult) {
-            applyRichResult(result.richResult)
-          } else {
-            text = mcpJson(result.result)
-          }
-        }
+      )
+      toolIsError = result.isError
+      if (result.richResult) {
+        applyRichResult(result.richResult)
       } else {
-        const result = await runWithHostCommandProjectionScope(
-          hostCommandProjection,
-          () => workspaceToolExecutors.executeWorkspaceMcpTool(toolName, args, context, cwd)
-        )
-        toolIsError = result.isError
-        if (result.richResult) {
-          applyRichResult(result.richResult)
-        } else {
-          text = mcpJson(result.result)
-        }
+        text = mcpJson(result.result)
       }
     } else if (isWebMcpToolName(toolName)) {
+      markDispatchHandled('web-tools')
       applyRichResult(await executeWebMcpTool(toolName, args))
     } else if (toolName === 'test_result_summary') {
+      markDispatchHandled('evidence-tools')
       const runId = optionalString(args.runId)
       const sourceOutput =
         optionalString(args.output) ||
@@ -33846,8 +34935,10 @@ async function executeGeminiMcpTool(
       toolName === 'browser_screenshot' ||
       toolName === 'browser_console'
     ) {
+      markDispatchHandled('browser-tools')
       applyRichResult(await executeBrowserTool(toolName, args, context))
     } else if (isCanvasMcpToolName(toolName)) {
+      markDispatchHandled('canvas')
       const canvasResult = await canvasToolExecutors.executeCanvasTool(
         toolName,
         args,
@@ -33859,6 +34950,7 @@ async function executeGeminiMcpTool(
       }
       applyRichResult(canvasResult)
     } else if (isMeshMcpToolName(toolName)) {
+      markDispatchHandled('mesh-canvas')
       const meshResult = await meshToolExecutors.executeMeshTool(
         toolName,
         args,
@@ -33870,17 +34962,25 @@ async function executeGeminiMcpTool(
       }
       applyRichResult(meshResult)
     } else if (isLaunchMcpToolName(toolName)) {
+      markDispatchHandled('launch-control')
       if (!launchMcpExecutors) {
         throw new Error('Launch tools are not available yet (app still initializing).')
       }
       applyRichResult(
-        await launchMcpExecutors.executeLaunchTool(toolName, args, context, parentProvider)
+        await launchMcpExecutors.executeLaunchTool(
+          toolName,
+          args,
+          workspaceExecutionContext,
+          parentProvider
+        )
       )
     } else if (isRecallMcpToolName(toolName)) {
+      markDispatchHandled('cross-thread-recall')
       applyRichResult(
         await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
       )
     } else if (isThreadMessageMcpToolName(toolName)) {
+      markDispatchHandled('ensemble-control')
       applyRichResult(
         await threadMessageToolExecutors.executeThreadMessageTool(
           toolName,
@@ -33890,10 +34990,12 @@ async function executeGeminiMcpTool(
         )
       )
     } else if (isIntrospectionMcpToolName(toolName)) {
+      markDispatchHandled('introspection')
       applyRichResult(
         await introspectionToolExecutors.executeIntrospectionTool(toolName, args, context)
       )
     } else if (isImageMcpToolName(toolName)) {
+      markDispatchHandled('image-tools')
       const imageRunKey = context.appRunId || context.appChatId || 'global'
       if (!imageToolCallBudget.tryConsume(imageRunKey)) {
         applyRichResult(
@@ -33913,6 +35015,7 @@ async function executeGeminiMcpTool(
         )
       }
     } else if (isImageGenMcpToolName(toolName)) {
+      markDispatchHandled('image-tools')
       const imageRunKey = context.appRunId || context.appChatId || 'global'
       if (!imageToolCallBudget.tryConsume(imageRunKey)) {
         applyRichResult(
@@ -33926,7 +35029,9 @@ async function executeGeminiMcpTool(
         applyRichResult(await imageGenExecutor.executeImageGen(args))
       }
     } else if (isFfmpegMcpToolName(toolName)) {
-      const ffmpegRunKey = context.appRunId || context.appChatId || 'global'
+      markDispatchHandled('ffmpeg-tools')
+      const ffmpegRunKey =
+        workspaceExecutionContext.appRunId || workspaceExecutionContext.appChatId || 'global'
       if (!ffmpegToolCallBudget.tryConsume(ffmpegRunKey)) {
         applyRichResult(
           mcpStructuredJsonResult({
@@ -33938,17 +35043,20 @@ async function executeGeminiMcpTool(
       } else {
         applyRichResult(
           await ffmpegToolExecutors.executeFfmpegTool(toolName, args, {
-            appChatId: context.appChatId,
-            appRunId: context.appRunId,
-            workspacePath: context.workspacePath
+            appChatId: workspaceExecutionContext.appChatId,
+            appRunId: workspaceExecutionContext.appRunId,
+            workspacePath: workspaceExecutionContext.workspacePath,
+            assertMutationAuthorized: workspaceExecutionContext.assertMutationAuthorized
           })
         )
       }
     } else if (isThemeTokenMcpToolName(toolName)) {
+      markDispatchHandled('theme-control')
       // Pure settings write behind the shared allowlist — touches no file, no
       // shell and no network, so there is no flood budget to spend here.
       applyRichResult(await themeTokenToolExecutor.executeThemeTokenTool(toolName, args))
     } else if (isDocumentMcpToolName(toolName)) {
+      markDispatchHandled('document-tools')
       // No per-run flood budget here, unlike the media tools: these write no file
       // and emit no media ref, so a loop costs CPU only — the same reasoning that
       // leaves transcribe_audio unbudgeted. The per-call caps (bytes, pages,
@@ -33961,13 +35069,15 @@ async function executeGeminiMcpTool(
         })
       )
     } else if (isVtMcpToolName(toolName)) {
+      markDispatchHandled('native-media')
       // Native VideoToolbox decode (daemon-backed). Per-run flood budget like the
       // ffmpeg/audio media tools (adversarial review): an agent looping decodes at
       // many timestamps writes distinct content-addressed PNGs AND spins concurrent
       // VTDecompressionSessions on the daemon's concurrent queue. video_thumbnail —
       // the same decode-to-image op via ffmpeg — is budgeted; match it, not the
       // gesture-gated desktop capture tools.
-      const vtRunKey = context.appRunId || context.appChatId || 'global'
+      const vtRunKey =
+        workspaceExecutionContext.appRunId || workspaceExecutionContext.appChatId || 'global'
       if (!vtToolCallBudget.tryConsume(vtRunKey)) {
         applyRichResult(
           mcpStructuredJsonResult({
@@ -33979,14 +35089,17 @@ async function executeGeminiMcpTool(
       } else {
         applyRichResult(
           await vtToolExecutors.executeVtTool(toolName, args, {
-            appChatId: context.appChatId,
-            appRunId: context.appRunId,
-            workspacePath: context.workspacePath
+            appChatId: workspaceExecutionContext.appChatId,
+            appRunId: workspaceExecutionContext.appRunId,
+            workspacePath: workspaceExecutionContext.workspacePath,
+            assertMutationAuthorized: workspaceExecutionContext.assertMutationAuthorized
           })
         )
       }
     } else if (isAudioMcpToolName(toolName)) {
-      const audioRunKey = context.appRunId || context.appChatId || 'global'
+      markDispatchHandled('audio-tools')
+      const audioRunKey =
+        workspaceExecutionContext.appRunId || workspaceExecutionContext.appChatId || 'global'
       if (!audioToolCallBudget.tryConsume(audioRunKey)) {
         applyRichResult(
           mcpStructuredJsonResult({
@@ -33998,19 +35111,31 @@ async function executeGeminiMcpTool(
       } else {
         applyRichResult(
           await audioToolExecutors.executeAudioTool(toolName, args, {
-            appChatId: context.appChatId,
-            appRunId: context.appRunId,
-            workspacePath: context.workspacePath
+            appChatId: workspaceExecutionContext.appChatId,
+            appRunId: workspaceExecutionContext.appRunId,
+            workspacePath: workspaceExecutionContext.workspacePath
           })
         )
       }
     } else if (isDesktopMcpToolName(toolName)) {
+      markDispatchHandled(
+        'window-capture',
+        'appwatch',
+        'creative-app',
+        'ide-tools',
+        'ensemble-control',
+        'provider-status',
+        'run-control',
+        'workspace-tools'
+      )
       applyRichResult(
         await desktopToolExecutors.executeDesktopTool(toolName, args, context, parentProvider)
       )
     } else if (toolName === 'switch_auth_profile') {
+      markDispatchHandled('provider-status')
       text = mcpJson(await executeSwitchAuthProfile(args))
     } else if (toolName === 'ensemble_yield') {
+      markDispatchHandled('ensemble-control')
       // Slice C extension (1.0.3) — `target` is now passed to the
       // orchestrator as its own argument, not collapsed into the
       // reason fallback. The orchestrator records it on the round
@@ -34027,6 +35152,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_send') {
+      markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.sendSideMessageForRun(context.appRunId, {
         to: args.to,
         message: optionalString(args.message),
@@ -34040,6 +35166,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_fanout') {
+      markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.fanoutForRun(context.appRunId, {
         targets: args.targets,
         prompt: optionalString(args.prompt),
@@ -34064,6 +35191,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_fanout_all') {
+      markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.fanoutAllForRun(context.appRunId, {
         targets: args.targets,
         prompt: optionalString(args.prompt),
@@ -34079,6 +35207,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_await') {
+      markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.awaitLanesForRun(context.appRunId, {
         laneIds: args.laneIds ?? args.lane_ids,
         timeoutSeconds: args.timeoutSeconds ?? args.timeout_seconds
@@ -34092,6 +35221,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_lane_result') {
+      markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.laneResultForRun(context.appRunId, {
         laneId: args.laneId ?? args.lane_id,
         maxChars: args.maxChars ?? args.max_chars
@@ -34104,6 +35234,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_bossman_control') {
+      markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
         action:
           args.action === 'skip_participant' ||
@@ -34244,6 +35375,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_poll_response') {
+      markDispatchHandled('ensemble-control')
       const pollId = optionalString(args.pollId || args.poll_id) || ''
       const choice = optionalString(args.choice) || ''
       const rationale = optionalString(args.rationale || args.reason)
@@ -34276,6 +35408,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_propose_goal_complete') {
+      markDispatchHandled('ensemble-control')
       const result = ensembleOrchestratorRef?.proposeGoalCompleteForRun(context.appRunId, {
         rationale: optionalString(args.rationale || args.reason)
       }) || {
@@ -34287,6 +35420,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_roster_edit') {
+      markDispatchHandled('ensemble-control')
       const result =
         args.action === 'import_preset'
           ? await executeAgentRosterPresetImport(args, context, parentProvider)
@@ -34317,6 +35451,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_brief_update') {
+      markDispatchHandled('ensemble-control')
       const result = await (ensembleOrchestratorRef?.briefUpdateForRun(context.appRunId, {
         roundId: optionalString(args.roundId || args.round_id),
         targetParticipantId: optionalString(args.targetParticipantId || args.target_participant_id),
@@ -34338,6 +35473,7 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
+      markDispatchHandled('ensemble-control')
       const callingChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
       const configuredProviders = await detectManagedRunConfiguredProviders(AppStore.getSettings())
       configuredProviders.add(parentProvider)
@@ -34399,6 +35535,7 @@ async function executeGeminiMcpTool(
         tool: 'list_ensemble_participants'
       })
     } else if (toolName === 'schedule_wakeup') {
+      markDispatchHandled('scheduler')
       // 1.0.5-EW37 — Route to ensemble or solo lane based on the
       // calling chat's kind. Both lanes share the same gate and
       // the same underlying timer/recovery substrate; the split
@@ -34457,6 +35594,7 @@ async function executeGeminiMcpTool(
         tool: 'schedule_wakeup'
       })
     } else if (toolName === 'cancel_wakeup') {
+      markDispatchHandled('scheduler')
       // 1.0.5-EW37 — Same routing as schedule_wakeup: try ensemble
       // first (if the chat is ensemble), else solo. We don't have
       // a wakeupId-to-lane map so we use chat.chatKind as the
@@ -34486,6 +35624,7 @@ async function executeGeminiMcpTool(
         tool: 'cancel_wakeup'
       })
     } else if (toolName === 'scout_brief') {
+      markDispatchHandled('ensemble-control')
       // 1.0.4-AK6 — Parallel fan-out brief tool. Validated +
       // recorded via `src/main/ScoutBrief.ts`. No-op outside an
       // active fan-out pass — the handler returns a structured
@@ -34528,6 +35667,7 @@ async function executeGeminiMcpTool(
         ...(briefResult.error ? { error: briefResult.error } : {})
       })
     } else if (toolName === 'blackboard_post') {
+      markDispatchHandled('blackboard')
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
       const activeRound = chat?.ensemble?.activeRound
@@ -34653,6 +35793,7 @@ async function executeGeminiMcpTool(
         }
       }
     } else if (toolName === 'blackboard_read') {
+      markDispatchHandled('blackboard')
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
       const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
@@ -34712,6 +35853,7 @@ async function executeGeminiMcpTool(
         })
       }
     } else if (toolName === 'blackboard_delete') {
+      markDispatchHandled('blackboard')
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
       if (!chat?.ensemble) {
@@ -34761,6 +35903,7 @@ async function executeGeminiMcpTool(
         }
       }
     } else if (toolName === 'goal_read') {
+      markDispatchHandled('goal-control')
       if (executionGraphOwnsAttemptRunId(context.appRunId)) {
         toolIsError = true
         text = mcpJson({
@@ -34783,6 +35926,7 @@ async function executeGeminiMcpTool(
       toolName === 'goal_complete' ||
       toolName === 'goal_blocked'
     ) {
+      markDispatchHandled('goal-control')
       const chatId = String(context.appChatId || '').trim()
       const chat = chatId ? AppStore.getChat(chatId) : null
       const goal = chat?.activeGoal
@@ -34864,6 +36008,7 @@ async function executeGeminiMcpTool(
         }
       }
     } else if (toolName === 'todo_write') {
+      markDispatchHandled('goal-control')
       const validated = validateTodoWriteArgs(args)
       if (executionGraphOwnsAttemptRunId(context.appRunId)) {
         toolIsError = true
@@ -34924,6 +36069,7 @@ async function executeGeminiMcpTool(
         }
       }
     } else if (toolName === 'ask_user_question') {
+      markDispatchHandled('user-question')
       // QMOD (1.0.3) — pause the agent on a modal question and resume
       // it with the user's answer as the tool result. The renderer
       // owns the desktop surface; main bridges via RemoteQuestionRegistry
@@ -35019,6 +36165,7 @@ async function executeGeminiMcpTool(
         })
       }
     } else if (toolName === 'read_file') {
+      markDispatchHandled('workspace-tools')
       const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
@@ -35032,6 +36179,7 @@ async function executeGeminiMcpTool(
       assertTextBuffer(buffer)
       text = windowReadFileText(buffer.toString('utf8'), args)
     } else if (toolName === 'list_directory') {
+      markDispatchHandled('workspace-tools')
       const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
         parentProvider,
@@ -35049,63 +36197,43 @@ async function executeGeminiMcpTool(
         .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
         .join('\n')
     } else if (toolName === 'write_file') {
-      const authority = resolveGeminiMcpGrantAwarePathAuthority(
-        context,
-        parentProvider,
-        String(args.path || args.file_path || ''),
-        'write'
-      )
-      const targetPath = authority.targetPath
-      const lock = acquireMcpWorkspaceWriteLocks({
-        context,
-        toolName,
-        cwd,
-        resourcePath: targetPath
-      })
-      if (!lock.ok) {
-        toolIsError = true
-        text = lock.text
-      } else {
-        const content = String(args.content ?? '')
-        await writeScopedUtf8FileWithLegacyCreate(authority, {
-          maxBytes: MAX_EDITOR_FILE_BYTES,
-          content
-        })
-        text = `Wrote ${formatScopedPath(context, targetPath)} (${content.length} chars).`
+      markDispatchHandled('workspace-tools')
+      const authority = verifiedDirectMutationAuthority
+      if (!authority) {
+        throw new Error('Direct workspace write has no verified descriptor authority.')
       }
+      const targetPath = authority.targetPath
+      const content = String(args.content ?? '')
+      await writeScopedUtf8FileWithLegacyCreate(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        content,
+        beforeCommit: workspaceExecutionContext.assertMutationAuthorized,
+        assertStillLive: workspaceExecutionContext.assertMutationStillLive
+      })
+      text = `Wrote ${formatScopedPath(workspaceExecutionContext, targetPath)} (${content.length} chars).`
     } else if (toolName === 'replace') {
-      const authority = resolveGeminiMcpGrantAwarePathAuthority(
-        context,
-        parentProvider,
-        String(args.path || args.file_path || ''),
-        'write'
-      )
-      const targetPath = authority.targetPath
-      const lock = acquireMcpWorkspaceWriteLocks({
-        context,
-        toolName,
-        cwd,
-        resourcePath: targetPath
-      })
-      if (!lock.ok) {
-        toolIsError = true
-        text = lock.text
-      } else {
-        const oldString = String(args.old_string ?? args.oldString ?? '')
-        const newString = String(args.new_string ?? args.newString ?? '')
-        await updateScopedUtf8File(authority, {
-          maxBytes: MAX_EDITOR_FILE_BYTES,
-          update: (original) =>
-            replaceLiteralText(
-              original,
-              oldString,
-              newString,
-              args.replace_all === true || args.replaceAll === true
-            )
-        })
-        text = `Edited ${formatScopedPath(context, targetPath)}.`
+      markDispatchHandled('workspace-tools')
+      const authority = verifiedDirectMutationAuthority
+      if (!authority) {
+        throw new Error('Direct workspace edit has no verified descriptor authority.')
       }
+      const targetPath = authority.targetPath
+      const oldString = String(args.old_string ?? args.oldString ?? '')
+      const newString = String(args.new_string ?? args.newString ?? '')
+      await updateScopedUtf8File(authority, {
+        maxBytes: MAX_EDITOR_FILE_BYTES,
+        update: (original) =>
+          replaceLiteralText(
+            original,
+            oldString,
+            newString,
+            args.replace_all === true || args.replaceAll === true
+          ),
+        beforeCommit: workspaceExecutionContext.assertMutationAuthorized
+      })
+      text = `Edited ${formatScopedPath(workspaceExecutionContext, targetPath)}.`
     } else if (toolName === 'delegate_to_subthread') {
+      markDispatchHandled('subthread-control')
       // Phase F3: agent-driven sub-thread delegation. Spawns a
       // sub-thread under the active parent (context.appChatId), then
       // fire-and-forget dispatches a run on it with the user-supplied
@@ -35715,6 +36843,20 @@ async function executeGeminiMcpTool(
           `\nReuse this id by passing subThreadId="${subThread.appChatId}" on the next delegate_to_subthread call if you want to continue the conversation with this same sub-agent.`
     }
 
+    if (!handledDispatchOwner) {
+      throw new Error(
+        `Tool ${toolName} reached the end of the canonical dispatcher without an owning branch.`
+      )
+    }
+    if (
+      dispatchContract &&
+      String(handledDispatchOwner) !== dispatchContract.dispatchOwner
+    ) {
+      throw new Error(
+        `Tool ${toolName} was handled by ${handledDispatchOwner}, not declared owner ${dispatchContract.dispatchOwner}.`
+      )
+    }
+
     const finalRichResult = richResult as McpToolExecutionResult | null
     const finalPermissionRetryResult = permissionRetryResult as McpToolExecutionResult | null
     const trustedMediaRefs = finalRichResult?.trustedMediaRefs ?? []
@@ -35963,6 +37105,58 @@ async function executeGeminiMcpTool(
       isError: true
     }
   } finally {
+    if (workspaceMutationFence) {
+      if (!workspaceLockRuntimeRef) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(
+          'Mutation-fence ownership became unresolved because the runtime disappeared.'
+        )
+      } else {
+        try {
+          workspaceLockRuntimeRef.releaseMutationFence(workspaceMutationFence)
+        } catch (error) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(
+            error instanceof Error ? error.message : String(error)
+          )
+          console.error('[workspace-lock] mutation-fence release failed:', error)
+        }
+      }
+    }
+    if (
+      workspaceLockLifecycleResolved &&
+      workspaceMutationAdmission.releaseAfterOperation &&
+      workspaceMutationTransitionId &&
+      workspaceMutationAdmission.owner
+    ) {
+      if (!workspaceLockRuntimeRef) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(
+          'Exact acquisition ownership became unresolved because the runtime disappeared.'
+        )
+      } else {
+        try {
+          const released = await workspaceLockRuntimeRef.releaseAcquisition(
+            workspaceMutationAdmission.owner.runId,
+            workspaceMutationTransitionId
+          )
+          if (!released.ok) throw new Error(released.message)
+        } catch (error) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(
+            error instanceof Error ? error.message : String(error)
+          )
+          console.error('[workspace-lock] operation lease release failed:', error)
+        }
+      }
+    }
+    if (workspaceLockLifecycleResolved) {
+      workspaceMutationOperationDone?.finish()
+    } else {
+      console.error(
+        '[workspace-lock] retaining the visible acquisition and in-flight lifecycle after an unresolved release.'
+      )
+    }
     completeHostCommandTerminalProjection(hostCommandProjection)
   }
 }
@@ -36900,6 +38094,93 @@ if (isGeminiMcpBridgeProcess) {
         error
       )
     }
+    // Durable workspace-lock recovery must complete before any run queue,
+    // execution graph, scheduled occurrence, or wakeup can resume provider
+    // mutation. Failure leaves new reads available while every mutation and
+    // recovery dispatch remains fail-closed for this process.
+    try {
+      const processIdentity = new WorkspaceLockProcessIdentityService()
+      const workspaceLockAuthorityRoot = workspaceLockAuthorityRootForHome(app.getPath('home'))
+      await fs.mkdir(workspaceLockAuthorityRoot, { recursive: true, mode: 0o700 })
+      try {
+        await fs.chmod(workspaceLockAuthorityRoot, 0o700)
+      } catch {
+        // Windows and constrained filesystems may not expose POSIX modes.
+      }
+      workspaceLockRuntimeRef = await WorkspaceLockRuntime.open({
+        userDataRoot: workspaceLockAuthorityRoot,
+        instanceId: instanceResourceIdentity.scopeId,
+        processIdentity
+      })
+    } catch (error) {
+      workspaceLockStartupRecoveryBlockedReason =
+        error instanceof Error ? error.message : String(error)
+      scheduledOccurrenceRecoveryBlockedReason ||=
+        `Workspace-lock recovery is required: ${workspaceLockStartupRecoveryBlockedReason}`
+      console.error(
+        '[workspace-lock] startup recovery failed; run and schedule recovery remain disabled:',
+        error
+      )
+    }
+    registerWorkLockHandlers({
+      resolveAuthorizedQuery: (event, query) => {
+        if (isMainRendererSender(event)) return query
+        const owner = workspacePopoutOwnerForSender(event.sender.id)
+        if (!owner?.workspacePath || owner.workspacePath.trim().length === 0) {
+          throw new Error('Renderer has no workspace-lock projection authority.')
+        }
+        if (query.workspacePath !== undefined && query.workspacePath !== owner.workspacePath) {
+          throw new Error('Renderer cannot inspect locks for another workspace.')
+        }
+        if (query.chatId !== undefined && query.chatId !== owner.chatId) {
+          throw new Error('Renderer cannot inspect lock identities for another chat.')
+        }
+        return {
+          workspacePath: owner.workspacePath,
+          ...(owner.chatId ? { chatId: owner.chatId } : {})
+        }
+      },
+      list: (query) => {
+        if (!workspaceLockRuntimeRef) {
+          throw new Error(
+            workspaceLockStartupRecoveryBlockedReason ||
+              'Workspace-lock projection is unavailable.'
+          )
+        }
+        return workspaceLockRuntimeRef.list(query)
+      },
+      subscribe: (query, onUpdate) => {
+        if (!workspaceLockRuntimeRef) {
+          throw new Error(
+            workspaceLockStartupRecoveryBlockedReason ||
+              'Workspace-lock projection is unavailable.'
+          )
+        }
+        return workspaceLockRuntimeRef.subscribe(query, onUpdate)
+      },
+      projectSnapshot: (event, query, snapshot) => {
+        if (isMainRendererSender(event)) return snapshot
+        const authorizedPath = query.workspacePath || ''
+        return {
+          ...snapshot,
+          locks: snapshot.locks.map((lock) => ({
+            ...lock,
+            owner: {
+              displayName: lock.owner.displayName,
+              ...(lock.owner.provider ? { provider: lock.owner.provider } : {}),
+              ...(lock.owner.chatTitle ? { chatTitle: lock.owner.chatTitle } : {})
+            },
+            workspace: {
+              ...lock.workspace,
+              basePath: authorizedPath,
+              effectivePath: lock.workspace.isWorktree
+                ? lock.workspace.worktreeName || 'isolated worktree'
+                : authorizedPath
+            }
+          }))
+        }
+      }
+    })
     // The authority root must never be touched before Electron has selected its
     // final safeStorage backend. A missing or locked backend disables scheduled
     // dispatch loudly instead of falling back to an in-memory/rootless seal.
@@ -44398,6 +45679,8 @@ if (isGeminiMcpBridgeProcess) {
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()
       stopBridgeDaemon()
+      workspaceLockRuntimeRef?.dispose()
+      workspaceLockRuntimeRef = null
       activityReportingServiceRef?.stop()
       activityReportingServiceRef = null
       releaseRemotePowerAssertion()
@@ -44520,7 +45803,7 @@ if (isGeminiMcpBridgeProcess) {
         error
       )
     }
-    if (!historyDeletionStartupRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
       const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
       recordStartupRecoveryEvents(startupRecoveryRecords)
       try {
@@ -44545,7 +45828,11 @@ if (isGeminiMcpBridgeProcess) {
         console.error('[ExecutionGraph] startup recovery failed:', error)
       }
     }
-    if (!historyDeletionStartupRecoveryBlockedReason && !scheduledOccurrenceRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason &&
+      !scheduledOccurrenceRecoveryBlockedReason
+    ) {
       AppStore.recoverInterruptedScheduledTasksAfterStartup()
       // Widened backstop at boot: the 'running'-only startup recovery above misses a
       // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
@@ -44561,11 +45848,15 @@ if (isGeminiMcpBridgeProcess) {
     // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
     // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
     // forever. Settles each to 'failed' with a restart-interruption note.
-    if (!historyDeletionStartupRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
       AppStore.reconcileStaleAuditRuns()
     }
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
-    if (!historyDeletionStartupRecoveryBlockedReason && !scheduledOccurrenceRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason &&
+      !scheduledOccurrenceRecoveryBlockedReason
+    ) {
       stallReconcilerInterval = setInterval(
         reconcileStalledScheduledTasks,
         Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
@@ -44576,7 +45867,7 @@ if (isGeminiMcpBridgeProcess) {
     // after a crash, missed terminal flush, or bridge drop. Startup already
     // settles with minAgeMs=0 via recoverPendingSubThreadMailboxes; the interval
     // uses a short grace window so mid-dispatch seeds are not false-failed.
-    if (!historyDeletionStartupRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
       chatRunReconcilerInterval = setInterval(() => {
         try {
           reconcileStaleChatRunsProjection({
@@ -45087,7 +46378,14 @@ if (isGeminiMcpBridgeProcess) {
         })
         return snapshot.targets
       },
-      start: ({ provider, target, chatId, runId, sender }) =>
+      start: ({
+        provider,
+        target,
+        chatId,
+        runId,
+        sender,
+        assertMutationAuthorized
+      }) =>
         // The run's own provider (trusted, not agent-supplied); assert it's a live
         // provider id for the approval-route + audit attribution. The sender is the
         // run's approval surface (context.sender) — startTarget's shellCommands+
@@ -45097,7 +46395,8 @@ if (isGeminiMcpBridgeProcess) {
           provider: assertLiveProviderId(provider),
           target,
           chatId,
-          runId
+          runId,
+          ...(assertMutationAuthorized ? { assertMutationAuthorized } : {})
         }),
       stop: (attemptId) => launchManager.stopAttempt(attemptId),
       attempts: () => launchManager.snapshot().attempts
@@ -47501,7 +48800,7 @@ if (isGeminiMcpBridgeProcess) {
               .map((session) => session.state as Partial<CodexRunState> | null | undefined),
             admissionReservationCount: codexThreadAdmissionRegistry.activeLaneReservationCount
           })
-          if (canRecycle) {
+          if (canRecycle && !activeCodexClientLifecycleLease) {
             console.log('[codex-home] restarting idle app-server to refresh private-home auth')
             codexClient.dispose()
             codexClient = null
@@ -47605,9 +48904,10 @@ if (isGeminiMcpBridgeProcess) {
         // and hit Cursor's period-usage RPC (same path as Limit Counter).
         if (provider === 'cursor') return fetchCursorUsageSnapshot({ force })
         if (provider !== 'codex') return null
-        const client = getCodexClient()
-        await client.ensureStarted(app.getVersion())
-        return client.request('account/rateLimits/read', {}, 15_000)
+        return withUnownedCodexClientLifecycle('rate-limit-snapshot', async (client) => {
+          await client.ensureStarted(app.getVersion())
+          return client.request('account/rateLimits/read', {}, 15_000)
+        })
       }
     )
 
@@ -48097,7 +49397,7 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     registerCodexThreadHandlers({
-      getCodexClient: () => getCodexClient(),
+      getCodexClient: createSerializedCodexThreadClientFacade,
       getAppVersion: () => app.getVersion(),
       providerDisplayName,
       resolveSenderAgentThreadScope,
@@ -48174,6 +49474,8 @@ if (isGeminiMcpBridgeProcess) {
         > | null = null
         let reviewAdmissionReservation: CodexThreadAdmissionReservation | null = null
         let reviewAdmissionMayBeLive = false
+        let reviewClientLifecycleLease: CodexClientLifecycleLease | null = null
+        let reviewClient: CodexAppServerClient | null = null
         try {
           promoteProviderRunPersistenceAuthority(
             reviewDispatchPayload,
@@ -48214,22 +49516,41 @@ if (isGeminiMcpBridgeProcess) {
             lifecycleOwnership.settleIfUnclaimed('cancelled')
             throw new Error('Native review authority was revoked while awaiting admission.')
           }
-          const client = getCodexClient()
+          reviewClientLifecycleLease = await acquireCodexClientLifecycleLease(
+            `native-review:${lifecycleOwnership.runId}`
+          )
+          const reviewSetupOperation = workspaceLockRunLifecycle.begin(lifecycleOwnership.runId)
+          let client!: CodexAppServerClient
           try {
-            await client.ensureStarted(app.getVersion(), {
-              signal: lifecycleOwnership.setupAbortSignal,
-              assertCanStart: (boundary) => {
-                if (!runManager.canAdmitTransport(lifecycleOwnership!.runId, true)) {
-                  throw new CodexAppServerStartupAbortedError(boundary)
+            await disposeCodexClientForOwnerTransition(reviewClientLifecycleLease)
+            client = getCodexClient(undefined, undefined, reviewClientLifecycleLease)
+            reviewClient = client
+            client.setWorkspaceLockOwnerId(null)
+            bindCodexRunClient(lifecycleOwnership.runId, client, reviewClientLifecycleLease)
+            client.setNotificationHandler((message) =>
+              handleCodexNotificationFromClient(message, client)
+            )
+            client.setRequestHandler((message) =>
+              handleCodexServerRequestFromClient(message, client)
+            )
+            try {
+              await client.ensureStarted(app.getVersion(), {
+                signal: lifecycleOwnership.setupAbortSignal,
+                assertCanStart: (boundary) => {
+                  if (!runManager.canAdmitTransport(lifecycleOwnership!.runId, true)) {
+                    throw new CodexAppServerStartupAbortedError(boundary)
+                  }
                 }
+              })
+            } catch (error) {
+              reviewAdmissionReservation.releaseBeforeAdmission()
+              if (error instanceof CodexAppServerStartupAbortedError) {
+                lifecycleOwnership.settleIfUnclaimed('cancelled')
               }
-            })
-          } catch (error) {
-            reviewAdmissionReservation.releaseBeforeAdmission()
-            if (error instanceof CodexAppServerStartupAbortedError) {
-              lifecycleOwnership.settleIfUnclaimed('cancelled')
+              throw error
             }
-            throw error
+          } finally {
+            reviewSetupOperation.finish()
           }
           const model = reviewDispatchPayload.model || normalizeCodexModel(params?.model)
           const reviewState = createCodexRunState(
@@ -48374,6 +49695,7 @@ if (isGeminiMcpBridgeProcess) {
             if (result?.reviewThreadId && result.reviewThreadId !== threadId) {
               throw new Error('Codex review detached onto an unexpected thread; refusing it.')
             }
+            await reviewTurnOperation
             return result
           } catch (error) {
             if (isCodexAppServerRequestTimeout(error, 'review/start')) {
@@ -48388,7 +49710,7 @@ if (isGeminiMcpBridgeProcess) {
             }
             if (reviewState.turnId) {
               reviewAdmissionMayBeLive = true
-              await issueCodexTurnInterrupt(reviewState.threadId, reviewState.turnId)
+              await issueCodexTurnInterrupt(client, reviewState.threadId, reviewState.turnId)
               await reviewTurnOperation
               throw error
             }
@@ -48433,13 +49755,33 @@ if (isGeminiMcpBridgeProcess) {
             throw error
           }
         } finally {
-          if (!reviewAdmissionMayBeLive) reviewAdmissionReservation?.releaseBeforeAdmission()
-          lifecycleOwnership?.settleIfUnclaimed()
-          releaseProviderDispatchReservation(reviewDispatchReservation)
-          if (reviewRunId && !runManager.get(reviewRunId)) {
-            releaseProviderRunPersistenceAuthority(reviewRunId)
+          try {
+            if (!reviewAdmissionMayBeLive) reviewAdmissionReservation?.releaseBeforeAdmission()
+            lifecycleOwnership?.settleIfUnclaimed()
+            releaseProviderDispatchReservation(reviewDispatchReservation)
+            if (reviewRunId && !runManager.get(reviewRunId)) {
+              releaseProviderRunPersistenceAuthority(reviewRunId)
+            }
+            resolveReviewInvocation()
+          } finally {
+            try {
+              if (reviewClient && reviewClientLifecycleLease) {
+                try {
+                  await finishCodexClientLifecycle(reviewClient, reviewClientLifecycleLease)
+                } finally {
+                  if (reviewRunId) {
+                    unbindCodexRunClient(
+                      reviewRunId,
+                      reviewClient,
+                      reviewClientLifecycleLease
+                    )
+                  }
+                }
+              }
+            } finally {
+              reviewClientLifecycleLease?.release()
+            }
           }
-          resolveReviewInvocation()
         }
       }
     )
@@ -48486,9 +49828,13 @@ if (isGeminiMcpBridgeProcess) {
         includePreviewModels: previewModelCatalogEnabledForProvider('codex', process.env)
       })
       try {
-        const client = getCodexClient()
-        await client.ensureStarted(app.getVersion())
-        const response: any = await client.request('model/list', {}, 15_000)
+        const response: any = await withUnownedCodexClientLifecycle(
+          'model-catalog',
+          async (client) => {
+            await client.ensureStarted(app.getVersion())
+            return client.request('model/list', {}, 15_000)
+          }
+        )
         const models = Array.isArray(response?.data) ? response.data : []
         const normalized = activeCodexModelRows(
           models
@@ -48686,10 +50032,10 @@ if (isGeminiMcpBridgeProcess) {
       }
       promoteProviderRunPersistenceAuthority(payload, providerReservation!)
     }
-    const authorizeProviderAdapterLaunch = (
+    const authorizeProviderAdapterLaunch = async (
       payload: AgentRunPayload,
       reservation: object | undefined
-    ): void => {
+    ): Promise<void> => {
       validateProviderDispatchReservation(
         payload,
         reservation as ProviderDispatchReservation | undefined
@@ -48718,7 +50064,13 @@ if (isGeminiMcpBridgeProcess) {
       }
       const candidate = AppStore.getRunQueueJob(appRunId)
       const durableClaim = executionGraphDurableClaimForRun(appRunId)
-      if (!candidate?.executionGraph && !durableClaim) return
+      if (!candidate?.executionGraph && !durableClaim) {
+        await admitOpaqueProviderWorkspaceMutation(payload)
+        if (!providerTransportLaunchAuthorized(payload.provider, payload, routeWithRunId(payload.provider, payload))) {
+          throw new Error('Provider dispatch ended while workspace-lock admission was pending.')
+        }
+        return
+      }
       if (!candidate?.executionGraph || !durableClaim) {
         throw new Error('Execution graph adapter authority is missing its exact durable twin.')
       }
@@ -48772,6 +50124,16 @@ if (isGeminiMcpBridgeProcess) {
         payload.providerReroute
       ) {
         throw new Error('Execution graph attempts cannot be rerouted after composition.')
+      }
+      await admitOpaqueProviderWorkspaceMutation(payload)
+      if (
+        !providerTransportLaunchAuthorized(
+          payload.provider,
+          payload,
+          routeWithRunId(payload.provider, payload)
+        )
+      ) {
+        throw new Error('Provider dispatch ended while workspace-lock admission was pending.')
       }
     }
     const runCoordinator = new RunCoordinator({
@@ -49134,8 +50496,14 @@ if (isGeminiMcpBridgeProcess) {
     wakeupTimerServiceRef = new WakeupTimerService({
       onFire: handleEnsembleWakeupTimerFired
     })
+    if (!workspaceLockRuntimeRef) {
+      throw new Error('Candidate promotion requires the durable workspace-lock runtime.')
+    }
     const fanoutCandidateService = new FanoutCandidateService({
       git: new GitService(),
+      promotionLock: new DurableFanoutCandidatePromotionLock({
+        runtime: workspaceLockRuntimeRef
+      }),
       store: {
         getCandidates: (chatId) => AppStore.getFanoutWorktreeCandidates(chatId),
         upsertCandidate: (chatId, candidate) =>
@@ -49302,8 +50670,10 @@ if (isGeminiMcpBridgeProcess) {
         runQueueServiceRef
           ? runQueueServiceRef.transitionJob(runIdOrId, status, partial)
           : getRunRepository().transitionRunQueueJob(runIdOrId, status, partial),
-      releaseWriteIntentsForLane: (laneId) =>
-        workspaceWriteIntentRegistry.releaseAllForLane(laneId),
+      // Durable workspace leases are run-owned and released by the central
+      // RunManager terminal listener. This legacy lane callback remains only
+      // for the orchestrator interface during the 1.9.2 transition.
+      releaseWriteIntentsForLane: (_laneId) => [],
       // A non-Boss participant that tries to drive a Boss-only Ensemble MCP
       // control is an attempted control escalation — record it to the durable
       // approval ledger (as a policy auto-deny), not just the transcript.
@@ -49616,12 +50986,16 @@ if (isGeminiMcpBridgeProcess) {
       createRunId: createFallbackRunId,
       log: (message) => console.log(message)
     })
-    if (!historyDeletionStartupRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
       // A wake that arrived while the app was closed would otherwise wait for the
       // next send to trigger a sweep.
       sweepThreadMessageWakes()
     }
-    if (!historyDeletionStartupRecoveryBlockedReason && ensembleWakeupsEnabled()) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason &&
+      ensembleWakeupsEnabled()
+    ) {
       recoverPersistedEnsembleWakeups()
       // 1.0.5-EW37 — Solo wakeups gated behind the same flag as
       // ensemble for now. Once the feature is considered stable
@@ -49629,7 +51003,7 @@ if (isGeminiMcpBridgeProcess) {
       // together.
       recoverPersistedSoloChatWakeups()
     }
-    if (!historyDeletionStartupRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
       recoverPendingSubThreadMailboxes()
     }
     const dispatchAgentRun = async (
@@ -50405,7 +51779,7 @@ if (isGeminiMcpBridgeProcess) {
       resolveApprovalLedger: auditService.resolveApprovalLedgerResponse.bind(auditService),
       resolveApprovalLedgerStrict:
         auditService.resolveApprovalLedgerResponseStrict.bind(auditService),
-      getCodexClient: () => codexClient,
+      getCodexClient: onlyBoundCodexRunClient,
       sendAgentCompatLine,
       respondToKimiWireRequest,
       runApprovedHostCommand,

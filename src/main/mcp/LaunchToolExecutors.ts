@@ -39,6 +39,7 @@ export interface LaunchToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  assertMutationAuthorized?: () => void | Promise<void>
   /**
    * The run's approval surface (an Electron WebContents). Opaque here to keep this
    * module electron-free; the real controller passes it to LaunchManager.startTarget
@@ -66,6 +67,7 @@ export interface LaunchController {
     runId?: string
     /** Approval surface (Electron WebContents) — required for the human prompt. */
     sender?: unknown
+    assertMutationAuthorized?: () => void | Promise<void>
   }): Promise<LaunchStartOutcome>
   /** Stop a running attempt by id. */
   stop(attemptId: string): Promise<LaunchStartOutcome>
@@ -186,7 +188,10 @@ export function createLaunchToolExecutors(deps: LaunchToolExecutorDeps): LaunchT
             target,
             chatId: context.appChatId,
             runId: context.appRunId,
-            sender: context.sender
+            sender: context.sender,
+            ...(context.assertMutationAuthorized
+              ? { assertMutationAuthorized: context.assertMutationAuthorized }
+              : {})
           })
           if (!outcome.ok || !outcome.attempt) {
             return fail(toolName, outcome.error || 'Launch failed.')

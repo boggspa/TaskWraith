@@ -31,16 +31,7 @@ function findWindowsInstaller(distDir, version, arch) {
   const expectedName = `TaskWraith-${version}-win-${arch}-setup.exe`
   const expectedPath = path.join(distDir, expectedName)
   if (fs.existsSync(expectedPath)) return expectedPath
-  const fallback = findFiles(distDir, (filePath) => {
-    const name = path.basename(filePath)
-    return (
-      /\.exe$/i.test(name) &&
-      /setup/i.test(name) &&
-      new RegExp(`(?:^|[-_.])win[-_.]${arch}(?:[-_.]|$)`, 'i').test(name)
-    )
-  })[0]
-  if (fallback) return fallback
-  throw new Error(`Missing Windows ${arch} setup installer under ${distDir}.`)
+  throw new Error(`Missing expected Windows ${arch} setup installer: ${expectedPath}`)
 }
 
 function writeFeedForArch({ distDir, version, arch, releaseDate }) {
@@ -78,31 +69,6 @@ function writeWindowsUpdateFeeds({ repoRoot = process.cwd(), distDir = path.join
   const version = readPackageVersion(repoRoot)
   const releaseDate = new Date().toISOString()
   return WINDOWS_ARCHES.map((arch) => writeFeedForArch({ distDir, version, arch, releaseDate }))
-}
-
-function findFiles(root, predicate) {
-  const matches = []
-  const stack = [root]
-  while (stack.length > 0) {
-    const current = stack.pop()
-    for (const entry of safeReadDir(current)) {
-      const fullPath = path.join(current, entry.name)
-      if (entry.isDirectory()) {
-        stack.push(fullPath)
-      } else if (entry.isFile() && predicate(fullPath)) {
-        matches.push(fullPath)
-      }
-    }
-  }
-  return matches
-}
-
-function safeReadDir(dirPath) {
-  try {
-    return fs.readdirSync(dirPath, { withFileTypes: true })
-  } catch {
-    return []
-  }
 }
 
 function runCli(argv = process.argv.slice(2)) {

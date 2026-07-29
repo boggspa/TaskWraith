@@ -922,12 +922,28 @@ describe('GitService', () => {
       const paths = capture.data.numstat.map((entry) => entry.path).sort()
       expect(paths).toEqual(['README.md', 'brand-new.txt'])
 
+      const verifiedTargetPaths = [join(repo, 'README.md'), join(repo, 'brand-new.txt')]
+      await expect(
+        service.inspectPatchApplication({
+          repoPath: repo,
+          patch: capture.data.patch,
+          verifiedTargetPaths
+        })
+      ).resolves.toMatchObject({ ok: true, data: { state: 'applicable' } })
       const applied = await service.applyPatchToRepository({
         repoPath: repo,
-        patch: capture.data.patch
+        patch: capture.data.patch,
+        verifiedTargetPaths
       })
       expect(applied.ok).toBe(true)
       if (!applied.ok) return
+      await expect(
+        service.inspectPatchApplication({
+          repoPath: repo,
+          patch: capture.data.patch,
+          verifiedTargetPaths
+        })
+      ).resolves.toMatchObject({ ok: true, data: { state: 'already-applied' } })
       // Winner lands as ordinary uncommitted changes — nothing auto-committed.
       expect(applied.data.counts.changed).toBe(2)
       expect(runGit(repo, ['log', '--oneline']).trim().split('\n')).toHaveLength(1)
@@ -988,6 +1004,39 @@ describe('GitService', () => {
       // Refusal must not have mutated the drifted file.
       expect(runGit(repo, ['status', '--porcelain']).trim()).toBe('M README.md')
       expect(runGit(repo, ['diff', '--', 'README.md'])).not.toContain('from candidate')
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+
+  it(
+    'refuses a candidate patch whose targets differ from its verified lock capabilities',
+    async () => {
+      const service = new GitService()
+      const created = await service.createWorktree({
+        repoPath: repo,
+        name: 'candidate-capability-mismatch',
+        branch: 'taskwraith/fanout-candidate-capability-mismatch'
+      })
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+      worktreeCleanupPaths.push(created.data.repoRoot)
+
+      writeFileSync(join(created.data.repoRoot, 'README.md'), 'initial\ncandidate change\n')
+      const capture = await service.captureWorktreePatch({ worktreePath: created.data.repoRoot })
+      expect(capture.ok).toBe(true)
+      if (!capture.ok) return
+
+      const applied = await service.applyPatchToRepository({
+        repoPath: repo,
+        patch: capture.data.patch,
+        verifiedTargetPaths: [join(repo, 'different.txt')]
+      })
+
+      expect(applied).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('freshly verified lock capabilities')
+      })
+      expect(runGit(repo, ['status', '--porcelain']).trim()).toBe('')
     },
     WORKTREE_LIFECYCLE_TIMEOUT_MS
   )

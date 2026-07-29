@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import type { ReleaseCommandCheckOptions } from '../ReleaseCommandPolicy'
+import type { WorkspaceLockGatedProcess } from '../WorkspaceLockGatedProcess'
 
 export const BACKGROUND_PROCESS_LOG_LIMIT = 500_000
 export const BACKGROUND_PROCESS_ENTRY_LIMIT = 80
@@ -27,10 +28,43 @@ export interface BackgroundProcessStartOptions {
   initialWaitMs: number
   maxInitialChars: number
   releaseApproval?: ReleaseCommandCheckOptions
+  /** Exact opaque owner issued by workspace-lock admission for this process. */
+  workspaceLockOwnerId?: string
+  workspaceLockLifecycle?: BackgroundProcessWorkspaceLockLifecycle
+}
+
+export interface BackgroundProcessWorkspaceLockLifecycleInput {
+  processId: string
+  appChatId: string
+  workspaceId?: string
+  command: string
+  cwd: string
+  child: ChildProcess
+  pid: number
+  workspaceLockOwnerId: string
+}
+
+/**
+ * Transfers a pre-spawn acquisition to the exact child and releases the
+ * transferred acquisition only after that child emits its real close event.
+ */
+export interface BackgroundProcessWorkspaceLockLifecycle {
+  bind(input: BackgroundProcessWorkspaceLockLifecycleInput): Promise<void>
+  /** Null means spawn returned no exact PID, so the pre-spawn owner remains. */
+  release(input: BackgroundProcessWorkspaceLockLifecycleInput | null): Promise<void>
 }
 
 export interface BackgroundProcessRegistryDependencies {
-  spawnProcess: (command: string, cwd: string) => ChildProcess
+  spawnProcess: (
+    command: string,
+    cwd: string,
+    authority?: { workspaceLockOwnerId?: string }
+  ) => ChildProcess
+  spawnGatedProcess?: (
+    command: string,
+    cwd: string,
+    authority: { workspaceLockOwnerId: string }
+  ) => WorkspaceLockGatedProcess
   /** Signal the exact process group when one exists, with an exact-child fallback. */
   signalProcess: (child: ChildProcess, signal: BackgroundProcessSignalName) => void
   commandBlockReason?: (
@@ -174,9 +208,40 @@ export class BackgroundProcessRegistry {
       }
     }
 
+    if (options.workspaceLockLifecycle && !options.workspaceLockOwnerId) {
+      return {
+        ok: false,
+        processId,
+        command,
+        cwd,
+        startedAt,
+        error: 'Workspace-lock process gate requires an exact owner id.'
+      }
+    }
+    if (options.workspaceLockLifecycle && !this.deps.spawnGatedProcess) {
+      return {
+        ok: false,
+        processId,
+        command,
+        cwd,
+        startedAt,
+        error: 'Workspace-lock process gate is unavailable.'
+      }
+    }
+
     let child: ChildProcess
+    let gatedProcess: WorkspaceLockGatedProcess | null = null
     try {
-      child = this.deps.spawnProcess(command, cwd)
+      if (options.workspaceLockLifecycle && options.workspaceLockOwnerId) {
+        gatedProcess = this.deps.spawnGatedProcess!(command, cwd, {
+          workspaceLockOwnerId: options.workspaceLockOwnerId
+        })
+        child = gatedProcess.child
+      } else {
+        child = this.deps.spawnProcess(command, cwd, {
+          workspaceLockOwnerId: options.workspaceLockOwnerId
+        })
+      }
     } catch (error) {
       return {
         ok: false,
@@ -188,9 +253,44 @@ export class BackgroundProcessRegistry {
       }
     }
 
-    let resolveClose!: () => void
-    const close = new Promise<void>((resolve) => {
-      resolveClose = resolve
+    let resolveRawClose!: () => void
+    const rawClose = new Promise<void>((resolve) => {
+      resolveRawClose = resolve
+    })
+    const workspaceLockLifecycleInput =
+      options.workspaceLockLifecycle && options.workspaceLockOwnerId && child.pid
+        ? {
+            processId,
+            appChatId: options.appChatId,
+            ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+            command,
+            cwd,
+            child,
+            pid: child.pid,
+            workspaceLockOwnerId: options.workspaceLockOwnerId
+          }
+        : null
+    let bindWorkspaceLock = Promise.resolve()
+    let workspaceLockReleased = false
+    const releaseWorkspaceLock = async (): Promise<void> => {
+      if (workspaceLockReleased || !options.workspaceLockLifecycle) return
+      workspaceLockReleased = true
+      await options.workspaceLockLifecycle.release(workspaceLockLifecycleInput)
+    }
+    const close = rawClose.then(async () => {
+      try {
+        await bindWorkspaceLock
+      } catch {
+        // The bind failure is projected by start(); the pre-spawn acquisition
+        // still needs its exact close-bound release.
+      }
+      try {
+        await releaseWorkspaceLock()
+      } catch (error) {
+        entry.error = `Workspace-lock release failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
     })
     const entry: BackgroundProcessEntry = {
       processId,
@@ -224,7 +324,7 @@ export class BackgroundProcessRegistry {
       entry.signal = signal
       entry.endedAt = this.now().toISOString()
       if (entry.pid) this.deps.untrackProcess?.(entry.pid)
-      resolveClose()
+      resolveRawClose()
     })
 
     this.entries.set(processId, entry)
@@ -236,6 +336,26 @@ export class BackgroundProcessRegistry {
         startedAt,
         workspacePath: cwd
       })
+    }
+
+    if (options.workspaceLockLifecycle) {
+      if (!workspaceLockLifecycleInput) {
+        entry.error =
+          'Workspace-lock child binding requires an exact owner id and kernel-assigned PID.'
+        await this.terminateAfterWorkspaceLockBindFailure(entry)
+        return this.failedStart(entry)
+      }
+      bindWorkspaceLock = options.workspaceLockLifecycle.bind(workspaceLockLifecycleInput)
+      try {
+        await bindWorkspaceLock
+        gatedProcess?.start()
+      } catch (error) {
+        entry.error = `Workspace-lock child binding failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+        await this.terminateAfterWorkspaceLockBindFailure(entry)
+        return this.failedStart(entry)
+      }
     }
 
     if (options.initialWaitMs > 0) {
@@ -379,6 +499,49 @@ export class BackgroundProcessRegistry {
       this.clearTimer(killTimer)
     })
     return entry.historyTermination
+  }
+
+  private async terminateAfterWorkspaceLockBindFailure(
+    entry: BackgroundProcessEntry
+  ): Promise<void> {
+    if (entry.endedAt) {
+      await entry.close
+      return
+    }
+    try {
+      this.deps.signalProcess(entry.child, 'SIGTERM')
+    } catch (error) {
+      entry.error = `${entry.error || 'Workspace-lock binding failed.'} SIGTERM failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    }
+    const killTimer = this.setTimer(() => {
+      if (entry.endedAt) return
+      try {
+        this.deps.signalProcess(entry.child, 'SIGKILL')
+      } catch (error) {
+        entry.error = `${entry.error || 'Workspace-lock binding failed.'} SIGKILL failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      }
+    }, this.killGraceMs)
+    killTimer.unref?.()
+    try {
+      await entry.close
+    } finally {
+      this.clearTimer(killTimer)
+    }
+  }
+
+  private failedStart(entry: BackgroundProcessEntry): Record<string, unknown> {
+    return {
+      ok: false,
+      processId: entry.processId,
+      command: entry.command,
+      cwd: entry.cwd,
+      startedAt: entry.startedAt,
+      error: entry.error || 'Workspace-lock child binding failed.'
+    }
   }
 
   private append(entry: BackgroundProcessEntry, stream: 'stdout' | 'stderr', chunk: string): void {

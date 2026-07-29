@@ -25,6 +25,7 @@ import type {
   RuntimeProfile
 } from '../store/types'
 import type { RuntimeWorktreeIntent } from '../run/AgentRunTypes'
+import { withExactWorkspaceLockOwnerEnv } from '../WorkspaceLockExecutionIdentity'
 
 export const GEMINI_MCP_SERVER_NAME = 'TaskWraith' as const
 
@@ -235,7 +236,7 @@ export function createResolvedProviderEnv(
       : exactRuntimeProfile === null
         ? null
         : resolveRuntimeProfileEnv(exactRuntimeProfile, deps)
-  return scrubCliEnv({
+  const resolved = scrubCliEnv({
     ...inheritedEnv,
     PATH: getCliSearchDirs(binaryPath, inheritedEnv).join(delimiter),
     TERM: inheritedEnv.TERM || 'xterm-256color',
@@ -243,6 +244,15 @@ export function createResolvedProviderEnv(
     ...(runtimeProfileEnv || {}),
     ...extra
   })
+
+  // Workspace-lock ownership is execution authority, not ambient
+  // configuration. A TaskWraith parent process or runtime profile must never
+  // leak an owner into an unrelated seat. Only the immediate launch caller can
+  // inject the exact opaque owner issued by lock admission.
+  return withExactWorkspaceLockOwnerEnv(
+    resolved,
+    extra.TASKWRAITH_LOCK_OWNER_ID
+  ) as Record<string, string>
 }
 
 export function createCliEnv(
@@ -266,6 +276,8 @@ export function createCliProviderRunEnv(input: {
   scope: ChatScope
   workspace: string | null | undefined
   runtimeProfileId: string | null | undefined
+  /** Exact opaque owner issued for this run/seat by workspace-lock admission. */
+  workspaceLockOwnerId?: string | null
   auditRun?: boolean
   extraEnv?: Record<string, string>
   deps?: CliProviderRuntimeDependencies
@@ -276,11 +288,14 @@ export function createCliProviderRunEnv(input: {
       NO_COLOR: '1',
       TASKWRAITH_RUNTIME_PROFILE_ID: input.runtimeProfileId || '',
       TASKWRAITH_PARENT_PROVIDER: input.provider,
-      TASKWRAITH_RUN_ID: input.appRunId || '',
       TASKWRAITH_CHAT_ID: input.appChatId || '',
       TASKWRAITH_WORKSPACE_PATH: input.scope === 'global' ? '' : input.workspace || '',
       ...(input.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-      ...(input.extraEnv || {})
+      ...(input.extraEnv || {}),
+      TASKWRAITH_RUN_ID: input.appRunId || '',
+      // Stamp after extraEnv so a provider-specific option cannot borrow a
+      // sibling lane's owner. Empty deliberately strips any ambient/profile id.
+      TASKWRAITH_LOCK_OWNER_ID: input.workspaceLockOwnerId || ''
     },
     input.command,
     input.deps

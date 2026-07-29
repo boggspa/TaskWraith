@@ -13,6 +13,8 @@ import {
   sep
 } from 'path'
 import { getCliSearchDirs } from '../providers/CliSearchDirs'
+import { deriveWorkspaceMutationClaims } from '../WorkspaceMutationClaims'
+import { resolveCanonicalWorkspaceLockPath } from '../workLocks/CanonicalWorkspaceLockPath'
 import {
   gitCommandEnvironment,
   hardenedGitCommandArgs,
@@ -303,12 +305,24 @@ export interface GitApplyPatchInput {
   repoPath: string
   patch: string
   /**
+   * Exact, freshly verified capabilities for a lock-mediated patch. When
+   * supplied, GitService re-derives every patch target and refuses unless the
+   * immutable patch bytes address exactly this canonical set.
+   */
+  verifiedTargetPaths?: readonly string[]
+  /**
    * false (default): verify with `git apply --check` first and refuse without
    * touching the tree when the patch no longer applies. true: apply with
    * `--3way`, which can leave conflict markers in the working tree for the
    * user to resolve — callers must surface that clearly.
    */
   allowConflicts?: boolean
+}
+
+export interface GitPatchApplicationInspection {
+  state: 'applicable' | 'already-applied' | 'ambiguous' | 'drifted'
+  forwardError?: string
+  reverseError?: string
 }
 
 export interface GitDeleteBranchInput {
@@ -618,6 +632,60 @@ export class GitService {
    * the patch no longer applies cleanly; `allowConflicts` switches to
    * `--3way`, which may leave conflict markers for manual resolution.
    */
+  async inspectPatchApplication(
+    input: Pick<GitApplyPatchInput, 'repoPath' | 'patch' | 'verifiedTargetPaths'>
+  ): Promise<GitResult<GitPatchApplicationInspection>> {
+    let tempDir: string | null = null
+    try {
+      if (!input.patch.trim()) {
+        return { ok: false, error: 'The candidate patch is empty; nothing to inspect.' }
+      }
+      const repo = await this.resolveRepository(input.repoPath)
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
+      if (input.verifiedTargetPaths) {
+        await assertVerifiedPatchTargets(repo.repoRoot, input.patch, input.verifiedTargetPaths)
+      }
+      tempDir = await fs.mkdtemp(join(tmpdir(), 'taskwraith-candidate-inspect-'))
+      const patchPath = join(tempDir, 'candidate.patch')
+      await fs.writeFile(patchPath, input.patch, { encoding: 'utf8', mode: 0o600 })
+      const [forward, reverse] = await Promise.all([
+        this.run(
+          'git',
+          ['apply', '--check', '--binary', '--whitespace=nowarn', patchPath],
+          { cwd: repo.repoRoot, timeoutMs: this.timeoutMs }
+        ),
+        this.run(
+          'git',
+          ['apply', '--reverse', '--check', '--binary', '--whitespace=nowarn', patchPath],
+          { cwd: repo.repoRoot, timeoutMs: this.timeoutMs }
+        )
+      ])
+      const forwardApplies = forward.code === 0
+      const reverseApplies = reverse.code === 0
+      return {
+        ok: true,
+        data: {
+          state:
+            forwardApplies && !reverseApplies
+              ? 'applicable'
+              : !forwardApplies && reverseApplies
+                ? 'already-applied'
+                : forwardApplies && reverseApplies
+                  ? 'ambiguous'
+                  : 'drifted',
+          ...(forwardApplies ? {} : { forwardError: forward.stderr.trim() }),
+          ...(reverseApplies ? {} : { reverseError: reverse.stderr.trim() })
+        }
+      }
+    } catch (error) {
+      return failure(error)
+    } finally {
+      if (tempDir) {
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      }
+    }
+  }
+
   async applyPatchToRepository(
     input: GitApplyPatchInput
   ): Promise<GitResult<GitRepositorySnapshot>> {
@@ -628,6 +696,9 @@ export class GitService {
       }
       const repo = await this.resolveRepository(input.repoPath)
       await this.assertNoRepositoryLocalFilters(repo.repoRoot)
+      if (input.verifiedTargetPaths) {
+        await assertVerifiedPatchTargets(repo.repoRoot, input.patch, input.verifiedTargetPaths)
+      }
       tempDir = await fs.mkdtemp(join(tmpdir(), 'taskwraith-candidate-'))
       const patchPath = join(tempDir, 'candidate.patch')
       await fs.writeFile(patchPath, input.patch, { encoding: 'utf8', mode: 0o600 })
@@ -1215,6 +1286,42 @@ export class GitService {
       timeoutMs: this.timeoutMs
     })
     return result.code === 0
+  }
+}
+
+async function assertVerifiedPatchTargets(
+  repoRoot: string,
+  patch: string,
+  verifiedTargetPaths: readonly string[]
+): Promise<void> {
+  const derived = await deriveWorkspaceMutationClaims({
+    workspacePath: repoRoot,
+    worktreePath: repoRoot,
+    action: 'apply_patch',
+    args: { patch }
+  })
+  const derivedTargets = [
+    ...new Set(
+      derived
+        .map((claim) => claim.targetPath)
+        .filter((targetPath): targetPath is string => typeof targetPath === 'string')
+        .map(
+          (targetPath) =>
+            resolveCanonicalWorkspaceLockPath({
+              rootPath: repoRoot,
+              targetPath
+            }).canonicalPath
+        )
+    )
+  ].sort()
+  const verifiedTargets = [...new Set(verifiedTargetPaths)].sort()
+  if (
+    derivedTargets.length !== verifiedTargets.length ||
+    derivedTargets.some((targetPath, index) => targetPath !== verifiedTargets[index])
+  ) {
+    throw new Error(
+      'The candidate patch targets do not exactly match its freshly verified lock capabilities.'
+    )
   }
 }
 

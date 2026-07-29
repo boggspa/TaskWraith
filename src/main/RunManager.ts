@@ -7,6 +7,7 @@ export type TerminalRunSessionStatus = Extract<
 >
 
 export interface KillableProcess {
+  pid?: number
   kill(signal?: unknown): unknown
 }
 

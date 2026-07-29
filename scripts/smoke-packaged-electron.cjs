@@ -19,9 +19,11 @@ main().catch((error) => {
 })
 
 async function main() {
-  assertFile(path.join(repoRoot, 'out/main/index.js'), 'main bundle')
-  assertFile(path.join(repoRoot, 'out/preload/index.js'), 'preload bundle')
-  assertFile(path.join(repoRoot, 'out/renderer/index.html'), 'renderer bundle')
+  if (!searchArg) {
+    assertFile(path.join(repoRoot, 'out/main/index.js'), 'main bundle')
+    assertFile(path.join(repoRoot, 'out/preload/index.js'), 'preload bundle')
+    assertFile(path.join(repoRoot, 'out/renderer/index.html'), 'renderer bundle')
+  }
 
   const packageRoot = findPackagedApp(searchRoots)
   if (!packageRoot) {
@@ -68,6 +70,9 @@ async function main() {
     validateWindowsNodePtyBindings(unpackedDir, packageTarget.arch)
     validateWindowsClaudeAgentSdkBinaries(unpackedDir, packageTarget.arch)
   }
+  if (packageTarget.platform === 'linux') {
+    validateLinuxPackageBinaries(packageRoot)
+  }
 
   validateZipArtifacts(searchRoots)
   console.log(
@@ -85,6 +90,11 @@ async function main() {
  */
 function runPackagedTuiSmoke(packageRoot) {
   if (process.env.TASKWRAITH_SKIP_TUI_PACKAGE_SMOKE === '1') {
+    if (process.env.TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST === '1') {
+      fail(
+        'TASKWRAITH_SKIP_TUI_PACKAGE_SMOKE=1 cannot be combined with TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST=1'
+      )
+    }
     console.log('packaged TUI smoke skipped via TASKWRAITH_SKIP_TUI_PACKAGE_SMOKE=1')
     return
   }
@@ -92,10 +102,9 @@ function runPackagedTuiSmoke(packageRoot) {
   if (!fs.existsSync(smokeScript)) {
     fail(`Missing packaged TUI smoke script: ${smokeScript}`)
   }
-  // Point at the package parent so the TUI smoker can re-discover the same root
-  // (or a sibling target) while still running full layout checks.
-  const searchRoot = path.dirname(packageRoot)
-  const result = spawnSync(process.execPath, [smokeScript, searchRoot], {
+  // Pass the exact package root. A shared dist parent can contain x64 and ARM
+  // siblings; rediscovery from the parent may select the wrong architecture.
+  const result = spawnSync(process.execPath, [smokeScript, packageRoot], {
     cwd: repoRoot,
     encoding: 'utf8',
     env: {
@@ -165,12 +174,19 @@ function validateZipArtifacts(roots) {
 
 async function runLaunchSmoke(packageRoot) {
   if (process.env.TASKWRAITH_SKIP_LAUNCH_SMOKE === '1') {
+    if (process.env.TASKWRAITH_FORCE_LAUNCH_SMOKE === '1') {
+      fail('TASKWRAITH_SKIP_LAUNCH_SMOKE=1 cannot be combined with TASKWRAITH_FORCE_LAUNCH_SMOKE=1')
+    }
     console.log('packaged app launch smoke skipped via TASKWRAITH_SKIP_LAUNCH_SMOKE=1')
     return
   }
   if (process.platform !== 'darwin' || !packageRoot.endsWith('.app')) {
     if (process.platform === 'win32' && inferPackageTarget(packageRoot).platform === 'win32') {
       await runWindowsLaunchSmoke(packageRoot)
+      return
+    }
+    if (process.platform === 'linux' && inferPackageTarget(packageRoot).platform === 'linux') {
+      await runLinuxLaunchSmoke(packageRoot)
       return
     }
     console.log(`packaged app launch smoke skipped for ${process.platform}`)
@@ -320,8 +336,55 @@ async function runWindowsLaunchSmoke(packageRoot) {
     const detail = output.trim() ? `\noutput:\n${output.trim()}` : ''
     fail(`Packaged Windows app exited during launch smoke with code ${child.exitCode}.${detail}`)
   }
-  child.kill()
+  await stopSmokeChild(child, 'packaged Windows app')
   console.log(`packaged app launch smoke ok: ${path.basename(executablePath)}`)
+}
+
+async function runLinuxLaunchSmoke(packageRoot) {
+  const executablePath = resolveLinuxExecutablePath(packageRoot)
+  const child = spawn(executablePath, ['--no-sandbox', '--disable-gpu'], {
+    cwd: packageRoot,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      TASKWRAITH_AUTO_UPDATE: 'off'
+    }
+  })
+
+  let output = ''
+  let launchError = null
+  child.stdout?.on('data', (chunk) => {
+    output += chunk.toString()
+  })
+  child.stderr?.on('data', (chunk) => {
+    output += chunk.toString()
+  })
+  child.on('error', (error) => {
+    launchError = error
+  })
+
+  await sleep(Math.min(launchSmokeTimeoutMs, 2500))
+  if (launchError) {
+    fail(`Failed to launch packaged Linux app: ${launchError.message}`)
+  }
+  if (child.exitCode !== null) {
+    const detail = output.trim() ? `\noutput:\n${output.trim()}` : ''
+    fail(`Packaged Linux app exited during launch smoke with code ${child.exitCode}.${detail}`)
+  }
+  await stopSmokeChild(child, 'packaged Linux app')
+  console.log(`packaged app launch smoke ok: ${path.basename(executablePath)}`)
+}
+
+async function stopSmokeChild(child, label) {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  child.kill('SIGTERM')
+  let exitResult = await waitForChildExit(child, 3000)
+  if (exitResult.exited) return
+  child.kill('SIGKILL')
+  exitResult = await waitForChildExit(child, 2000)
+  if (!exitResult.exited) {
+    fail(`${label} did not exit after bounded SIGTERM/SIGKILL cleanup`)
+  }
 }
 
 // Whether the current host CPU can natively execute a Windows binary of the
@@ -774,6 +837,10 @@ function validateWindowsPackageBinaries(packageRoot) {
   assertFile(resolveWindowsExecutablePath(packageRoot), 'Windows app executable')
 }
 
+function validateLinuxPackageBinaries(packageRoot) {
+  assertExecutable(resolveLinuxExecutablePath(packageRoot), 'Linux app executable')
+}
+
 function resolveWindowsExecutablePath(packageRoot) {
   const candidates = [
     path.join(packageRoot, 'TaskWraith.exe'),
@@ -787,6 +854,31 @@ function resolveWindowsExecutablePath(packageRoot) {
   const found = candidates.find((candidate) => fs.existsSync(candidate))
   if (found) return found
   fail(`Packaged Windows executable was not found under ${packageRoot}.`)
+}
+
+function resolveLinuxExecutablePath(packageRoot) {
+  const candidates = [path.join(packageRoot, 'taskwraith'), path.join(packageRoot, 'TaskWraith')]
+  for (const entry of safeReadDir(packageRoot)) {
+    if (!entry.isFile()) continue
+    const candidate = path.join(packageRoot, entry.name)
+    try {
+      if ((fs.statSync(candidate).mode & 0o111) !== 0) candidates.push(candidate)
+    } catch {
+      // Ignore unreadable package entries; preferred candidates still report clearly.
+    }
+  }
+  const ignoredNames = new Set([
+    'chrome-sandbox',
+    'chrome_crashpad_handler',
+    'libEGL.so',
+    'libGLESv2.so',
+    'libffmpeg.so'
+  ])
+  const found = candidates.find(
+    (candidate) => fs.existsSync(candidate) && !ignoredNames.has(path.basename(candidate))
+  )
+  if (found) return found
+  fail(`Packaged Linux executable was not found under ${packageRoot}.`)
 }
 
 function validateWindowsNodePtyBindings(unpackedDir, arch) {

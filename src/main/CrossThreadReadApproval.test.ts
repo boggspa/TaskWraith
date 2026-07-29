@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { effectiveAgenticSettings, taskWraithToolAgenticService } from './NativeApprovalPolicy'
+import {
+  effectiveAgenticSettings,
+  taskWraithToolAgenticService,
+  taskWraithToolServiceIfKnown
+} from './NativeApprovalPolicy'
 import {
   DEFAULT_PERMISSION_PRESETS,
   resolveEffectiveRunPermissions
@@ -59,8 +63,8 @@ describe('crossThreadRead approval service', () => {
     for (const name of RECALL_MCP_TOOL_NAMES) {
       expect(taskWraithToolAgenticService(name)).toBe('crossThreadRead')
     }
-    // A non-recall tool still falls through to mcpTools.
-    expect(taskWraithToolAgenticService('some_other_tool')).toBe('mcpTools')
+    // An unknown execution label fails explicit instead of inheriting mcpTools.
+    expect(taskWraithToolServiceIfKnown('some_other_tool')).toBeNull()
   })
 
   it('is enumerated wherever agentic services are listed', () => {

@@ -36,6 +36,7 @@
 
 const fs = require('fs')
 const path = require('path')
+const { validateNodeRuntimeLicense } = require('./node-runtime-license.cjs')
 
 const REPO_ROOT = path.join(__dirname, '..')
 
@@ -196,7 +197,7 @@ function scanBufferForSecrets(label, text, fingerprints) {
   return findings
 }
 
-function findFiles(root, predicate) {
+function findFiles(root, predicate, options = {}) {
   const matches = []
   const stack = [root]
   while (stack.length > 0) {
@@ -210,7 +211,12 @@ function findFiles(root, predicate) {
     for (const entry of entries) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === '.git') continue
+        if (
+          entry.name === '.git' ||
+          (entry.name === 'node_modules' && options.includeNodeModules !== true)
+        ) {
+          continue
+        }
         stack.push(full)
       } else if (entry.isFile() && predicate(full)) {
         matches.push(full)
@@ -220,18 +226,61 @@ function findFiles(root, predicate) {
   return matches
 }
 
-function bundleScanTargets() {
-  const targets = []
-  const mainBundle = path.join(REPO_ROOT, 'out/main/index.js')
-  if (fs.existsSync(mainBundle)) targets.push(mainBundle)
+function bundleScanTargets(repoRoot = REPO_ROOT) {
+  const targets = new Set()
+  const mainBundle = path.join(repoRoot, 'out/main/index.js')
+  if (fs.existsSync(mainBundle)) targets.add(mainBundle)
   for (const dir of ['dist', 'dist-debug']) {
-    const root = path.join(REPO_ROOT, dir)
+    const root = path.join(repoRoot, dir)
     if (!fs.existsSync(root)) continue
     for (const asar of findFiles(root, (p) => path.basename(p) === 'app.asar')) {
-      targets.push(asar)
+      const resourcesDir = path.dirname(asar)
+      for (const target of findFiles(
+        resourcesDir,
+        (filePath) => {
+          const normalized = filePath.split(path.sep).join('/')
+          const baseName = path.basename(filePath).toLowerCase()
+          return !(
+            normalized.includes('/tui-runtime/') &&
+            (baseName === 'node' || baseName === 'node.exe')
+          )
+        },
+        { includeNodeModules: true }
+      )) {
+        targets.add(target)
+      }
     }
   }
-  return targets
+  return [...targets]
+}
+
+function packagedRuntimeLicenseViolations(repoRoot = REPO_ROOT) {
+  const violations = []
+  for (const dir of ['dist', 'dist-debug']) {
+    const root = path.join(repoRoot, dir)
+    if (!fs.existsSync(root)) continue
+    for (const asar of findFiles(root, (p) => path.basename(p) === 'app.asar')) {
+      const runtimeRoot = path.join(path.dirname(asar), 'tui-runtime')
+      const runtimeDirs = fs.existsSync(runtimeRoot)
+        ? fs
+            .readdirSync(runtimeRoot, { withFileTypes: true })
+            .filter(
+              (entry) =>
+                entry.isDirectory() && /^(?:darwin|linux|win32)-(?:x64|arm64)$/.test(entry.name)
+            )
+        : []
+      if (runtimeDirs.length === 0) {
+        violations.push(`${rel(asar)}: packaged TUI runtime directories are missing`)
+        continue
+      }
+      for (const entry of runtimeDirs) {
+        for (const error of validateNodeRuntimeLicense(path.join(runtimeRoot, entry.name))) {
+          violations.push(`${rel(asar)}: ${error}`)
+        }
+      }
+    }
+  }
+  return violations
 }
 
 function main() {
@@ -248,6 +297,18 @@ function main() {
 
   // 3. Bundle scan (when present).
   const targets = bundleScanTargets()
+  const packagedTargets = targets.filter((target) => path.basename(target) === 'app.asar')
+  const requirePackagedTargets =
+    process.argv.includes('--require-packaged') ||
+    process.env.TASKWRAITH_REQUIRE_PACKAGED_SECRET_SCAN === '1'
+  if (requirePackagedTargets && packagedTargets.length === 0) {
+    problems.push(
+      'release artifact scan was required, but no packaged app.asar exists under dist/ or dist-debug/'
+    )
+  }
+  if (packagedTargets.length > 0) {
+    problems.push(...packagedRuntimeLicenseViolations())
+  }
   if (targets.length === 0) {
     console.log(
       '[guard-no-bundled-secrets] no build output to scan (out/main, app.asar) — ran import checks only'
@@ -282,6 +343,8 @@ module.exports = {
   resolveRelativeImport,
   collectImportViolations,
   collectDirectForbiddenImports,
+  bundleScanTargets,
+  packagedRuntimeLicenseViolations,
   scanBufferForSecrets,
   PEM_PRIVATE_KEY_BODY,
   FORBIDDEN_MODULE_MATCHERS,

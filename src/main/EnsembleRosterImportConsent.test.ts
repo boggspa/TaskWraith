@@ -83,4 +83,24 @@ describe('shouldAutoAllowUserRequestedEnsembleImport', () => {
       })
     ).toBe(false)
   })
+
+  it('rejects foreign and nested namespaces even when their tail looks trusted', () => {
+    for (const toolName of [
+      'mcp__evil__ensemble_roster_edit',
+      'evil__ensemble_roster_edit',
+      'mcp__TaskWraith__mcp__evil__ensemble_roster_edit',
+      'taskwraith-broker__mcp__evil__ensemble_roster_edit'
+    ]) {
+      expect(
+        shouldAutoAllowUserRequestedEnsembleImport({ ...request, toolName }),
+        toolName
+      ).toBe(false)
+    }
+    expect(
+      shouldAutoAllowUserRequestedEnsembleImport({
+        ...request,
+        toolName: 'ensemble_roster_edit'
+      })
+    ).toBe(true)
+  })
 })

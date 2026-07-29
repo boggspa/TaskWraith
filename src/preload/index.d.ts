@@ -201,6 +201,11 @@ import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason
 } from '../main/services/GitSnapshotPublisher'
+import type {
+  WorkLockProjectionQuery,
+  WorkLockProjectionSnapshot,
+  WorkLockProjectionUpdate
+} from '../shared/workLockProjection'
 import type { WatchPollProgress } from '../shared/watchPrPollCycle'
 import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
 import type {
@@ -2019,6 +2024,11 @@ declare global {
         workspacePath: string,
         dayCount?: number
       ) => Promise<WorkspaceActivitySnapshot>
+      listWorkLocks: (query?: WorkLockProjectionQuery) => Promise<WorkLockProjectionSnapshot>
+      subscribeWorkLocks: (
+        query: WorkLockProjectionQuery,
+        callback: (update: WorkLockProjectionUpdate) => void
+      ) => () => void
       getScheduledTasks: (workspaceId?: string) => Promise<ScheduledTask[]>
       syncEnsembleRosterPresets: (presets: unknown[]) => Promise<void>
       saveScheduledTask: (task: ScheduledTaskCreateInput) => Promise<ScheduledTask>

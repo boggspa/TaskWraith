@@ -1,18 +1,15 @@
 import { isExactReviewerVerdictInvocation } from '../ReviewerVerdictInvocation'
+import { TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES } from '../../shared/providerActionTaxonomy'
 
-export const CAPABILITY_SEARCH_TOOL_NAME = 'capability_search' as const
-export const CAPABILITY_INVOKE_TOOL_NAME = 'capability_invoke' as const
+export const CAPABILITY_GATEWAY_TOOL_NAMES = TAXONOMY_CAPABILITY_GATEWAY_TOOL_NAMES
+export const [CAPABILITY_SEARCH_TOOL_NAME, CAPABILITY_INVOKE_TOOL_NAME] =
+  CAPABILITY_GATEWAY_TOOL_NAMES
 
 /**
  * Virtual tools advertised only by the gateway profile. They deliberately do
  * not belong to the canonical TaskWraith tool catalogue, so an old receipted
  * profile cannot change when progressive disclosure is introduced.
  */
-export const CAPABILITY_GATEWAY_TOOL_NAMES = [
-  CAPABILITY_SEARCH_TOOL_NAME,
-  CAPABILITY_INVOKE_TOOL_NAME
-] as const
-
 export type CapabilityGatewayToolName = (typeof CAPABILITY_GATEWAY_TOOL_NAMES)[number]
 
 export const CAPABILITY_SEARCH_DEFAULT_LIMIT = 4
@@ -162,10 +159,7 @@ export interface GatewayCapabilityMatch {
   matchedTerms: string[]
 }
 
-export type GatewayCapabilitySearchErrorCode =
-  | 'invalid_query'
-  | 'query_too_long'
-  | 'invalid_limit'
+export type GatewayCapabilitySearchErrorCode = 'invalid_query' | 'query_too_long' | 'invalid_limit'
 
 export type GatewayCapabilitySearchResult =
   | {
@@ -216,9 +210,7 @@ function uniqueTokens(tokens: readonly string[]): string[] {
   return [...new Set(tokens)]
 }
 
-function stableDefinitions(
-  definitions: readonly GatewayToolDefinition[]
-): GatewayToolDefinition[] {
+function stableDefinitions(definitions: readonly GatewayToolDefinition[]): GatewayToolDefinition[] {
   const sorted = definitions
     .filter((definition) => typeof definition.name === 'string' && definition.name.length > 0)
     .slice()
@@ -227,7 +219,10 @@ function stableDefinitions(
       if (byName !== 0) return byName
       const byDescription = compareText(left.description || '', right.description || '')
       if (byDescription !== 0) return byDescription
-      return compareText(JSON.stringify(left.inputSchema || {}), JSON.stringify(right.inputSchema || {}))
+      return compareText(
+        JSON.stringify(left.inputSchema || {}),
+        JSON.stringify(right.inputSchema || {})
+      )
     })
   const seen = new Set<string>()
   return sorted.filter((definition) => {
@@ -280,13 +275,8 @@ function toSearchCandidate(definition: GatewayToolDefinition): SearchCandidate {
  * Whole-token name boundary: "git" must not treat "github ci status" as a
  * startsWith hit (that was ranking github_ci_status near local git_* tools).
  */
-function nameStartsWithQueryTokens(
-  normalizedName: string,
-  normalizedQuery: string
-): boolean {
-  return (
-    normalizedName === normalizedQuery || normalizedName.startsWith(`${normalizedQuery} `)
-  )
+function nameStartsWithQueryTokens(normalizedName: string, normalizedQuery: string): boolean {
+  return normalizedName === normalizedQuery || normalizedName.startsWith(`${normalizedQuery} `)
 }
 
 /**
@@ -430,7 +420,11 @@ export function searchGatewayCapabilities(
       return match ? { candidate, ...match } : null
     })
     .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    .sort((left, right) => right.score - left.score || compareText(left.candidate.definition.name, right.candidate.definition.name))
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        compareText(left.candidate.definition.name, right.candidate.definition.name)
+    )
 
   const matches = ranked.slice(0, limit).map(({ candidate, score, exactName, matchedTerms }) => ({
     name: candidate.definition.name,
@@ -529,12 +523,7 @@ const JSON_SCHEMA_TYPES = new Set([
   'string'
 ])
 
-function addIssue(
-  state: ValidationState,
-  path: string,
-  keyword: string,
-  message: string
-): void {
+function addIssue(state: ValidationState, path: string, keyword: string, message: string): void {
   if (state.issues.length >= MAX_VALIDATION_ISSUES) return
   state.issues.push({ path, keyword, message })
 }
@@ -573,11 +562,7 @@ function inspectNumericKeyword(
 ): void {
   if (!(keyword in schema)) return
   const value = schema[keyword]
-  if (
-    typeof value !== 'number' ||
-    !Number.isFinite(value) ||
-    (positiveOnly && value <= 0)
-  ) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || (positiveOnly && value <= 0)) {
     addIssue(
       state,
       childPath(path, keyword),
@@ -587,12 +572,7 @@ function inspectNumericKeyword(
   }
 }
 
-function inspectSchema(
-  schema: unknown,
-  path: string,
-  state: ValidationState,
-  depth: number
-): void {
+function inspectSchema(schema: unknown, path: string, state: ValidationState, depth: number): void {
   state.visitedNodes += 1
   if (state.visitedNodes > MAX_VALIDATION_NODES) {
     addIssue(state, path, 'schema', 'Schema exceeds the validation node budget.')
@@ -610,7 +590,12 @@ function inspectSchema(
 
   for (const keyword of Object.keys(schema)) {
     if (!SUPPORTED_SCHEMA_KEYWORDS.has(keyword)) {
-      addIssue(state, childPath(path, keyword), keyword, `Unsupported JSON Schema keyword: ${keyword}.`)
+      addIssue(
+        state,
+        childPath(path, keyword),
+        keyword,
+        `Unsupported JSON Schema keyword: ${keyword}.`
+      )
     }
   }
 
@@ -621,7 +606,12 @@ function inspectSchema(
       types.some((type) => typeof type !== 'string' || !JSON_SCHEMA_TYPES.has(type)) ||
       new Set(types).size !== types.length
     ) {
-      addIssue(state, childPath(path, 'type'), 'type', 'type must name one or more unique JSON types.')
+      addIssue(
+        state,
+        childPath(path, 'type'),
+        'type',
+        'type must name one or more unique JSON types.'
+      )
     }
   }
 
@@ -630,7 +620,12 @@ function inspectSchema(
       addIssue(state, childPath(path, 'properties'), 'properties', 'properties must be an object.')
     } else {
       for (const [name, propertySchema] of Object.entries(schema.properties)) {
-        inspectSchema(propertySchema, childPath(childPath(path, 'properties'), name), state, depth + 1)
+        inspectSchema(
+          propertySchema,
+          childPath(childPath(path, 'properties'), name),
+          state,
+          depth + 1
+        )
       }
     }
   }
@@ -641,7 +636,12 @@ function inspectSchema(
       schema.required.some((name) => typeof name !== 'string') ||
       new Set(schema.required).size !== schema.required.length
     ) {
-      addIssue(state, childPath(path, 'required'), 'required', 'required must be an array of unique strings.')
+      addIssue(
+        state,
+        childPath(path, 'required'),
+        'required',
+        'required must be an array of unique strings.'
+      )
     }
   }
 
@@ -674,8 +674,17 @@ function inspectSchema(
   for (const keyword of ['allOf', 'anyOf', 'oneOf'] as const) {
     if (!(keyword in schema)) continue
     const branches = schema[keyword]
-    if (!Array.isArray(branches) || branches.length === 0 || branches.some((branch) => !isSchema(branch))) {
-      addIssue(state, childPath(path, keyword), keyword, `${keyword} must be a non-empty array of schemas.`)
+    if (
+      !Array.isArray(branches) ||
+      branches.length === 0 ||
+      branches.some((branch) => !isSchema(branch))
+    ) {
+      addIssue(
+        state,
+        childPath(path, keyword),
+        keyword,
+        `${keyword} must be a non-empty array of schemas.`
+      )
     } else {
       branches.forEach((branch, index) =>
         inspectSchema(branch, childPath(childPath(path, keyword), index), state, depth + 1)
@@ -701,7 +710,12 @@ function inspectSchema(
       try {
         new RegExp(schema.pattern, 'u')
       } catch {
-        addIssue(state, childPath(path, 'pattern'), 'pattern', 'pattern must be a valid regular expression.')
+        addIssue(
+          state,
+          childPath(path, 'pattern'),
+          'pattern',
+          'pattern must be a valid regular expression.'
+        )
       }
     }
   }
@@ -728,7 +742,10 @@ function inspectSchema(
 function jsonValueEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true
   if (Array.isArray(left) && Array.isArray(right)) {
-    return left.length === right.length && left.every((value, index) => jsonValueEqual(value, right[index]))
+    return (
+      left.length === right.length &&
+      left.every((value, index) => jsonValueEqual(value, right[index]))
+    )
   }
   if (isRecord(left) && isRecord(right)) {
     const leftKeys = Object.keys(left).sort(compareText)
@@ -801,13 +818,15 @@ function validateValue(
     const matches = (schema.anyOf as JsonSchema[]).filter((branch) =>
       validateBranch(branch, value, path, depth + 1)
     ).length
-    if (matches === 0) addIssue(state, path, 'anyOf', 'Value must match at least one allowed schema.')
+    if (matches === 0)
+      addIssue(state, path, 'anyOf', 'Value must match at least one allowed schema.')
   }
   if (Array.isArray(schema.oneOf)) {
     const matches = (schema.oneOf as JsonSchema[]).filter((branch) =>
       validateBranch(branch, value, path, depth + 1)
     ).length
-    if (matches !== 1) addIssue(state, path, 'oneOf', 'Value must match exactly one allowed schema.')
+    if (matches !== 1)
+      addIssue(state, path, 'oneOf', 'Value must match exactly one allowed schema.')
   }
   if (isSchema(schema.not) && validateBranch(schema.not, value, path, depth + 1)) {
     addIssue(state, path, 'not', 'Value matches a forbidden schema.')
@@ -833,10 +852,20 @@ function validateValue(
   if (typeof value === 'string') {
     const length = [...value].length
     if (typeof schema.minLength === 'number' && length < schema.minLength) {
-      addIssue(state, path, 'minLength', `String must contain at least ${schema.minLength} characters.`)
+      addIssue(
+        state,
+        path,
+        'minLength',
+        `String must contain at least ${schema.minLength} characters.`
+      )
     }
     if (typeof schema.maxLength === 'number' && length > schema.maxLength) {
-      addIssue(state, path, 'maxLength', `String must contain at most ${schema.maxLength} characters.`)
+      addIssue(
+        state,
+        path,
+        'maxLength',
+        `String must contain at most ${schema.maxLength} characters.`
+      )
     }
     if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern, 'u').test(value)) {
       addIssue(state, path, 'pattern', 'String does not match the required pattern.')
@@ -851,10 +880,20 @@ function validateValue(
       addIssue(state, path, 'maximum', `Number must be at most ${schema.maximum}.`)
     }
     if (typeof schema.exclusiveMinimum === 'number' && value <= schema.exclusiveMinimum) {
-      addIssue(state, path, 'exclusiveMinimum', `Number must be greater than ${schema.exclusiveMinimum}.`)
+      addIssue(
+        state,
+        path,
+        'exclusiveMinimum',
+        `Number must be greater than ${schema.exclusiveMinimum}.`
+      )
     }
     if (typeof schema.exclusiveMaximum === 'number' && value >= schema.exclusiveMaximum) {
-      addIssue(state, path, 'exclusiveMaximum', `Number must be less than ${schema.exclusiveMaximum}.`)
+      addIssue(
+        state,
+        path,
+        'exclusiveMaximum',
+        `Number must be less than ${schema.exclusiveMaximum}.`
+      )
     }
     if (
       typeof schema.multipleOf === 'number' &&
@@ -887,24 +926,50 @@ function validateValue(
   if (isRecord(value)) {
     const keys = Object.keys(value)
     if (typeof schema.minProperties === 'number' && keys.length < schema.minProperties) {
-      addIssue(state, path, 'minProperties', `Object must contain at least ${schema.minProperties} properties.`)
+      addIssue(
+        state,
+        path,
+        'minProperties',
+        `Object must contain at least ${schema.minProperties} properties.`
+      )
     }
     if (typeof schema.maxProperties === 'number' && keys.length > schema.maxProperties) {
-      addIssue(state, path, 'maxProperties', `Object must contain at most ${schema.maxProperties} properties.`)
+      addIssue(
+        state,
+        path,
+        'maxProperties',
+        `Object must contain at most ${schema.maxProperties} properties.`
+      )
     }
     if (Array.isArray(schema.required)) {
       for (const requiredName of schema.required as string[]) {
         if (!Object.prototype.hasOwnProperty.call(value, requiredName)) {
-          addIssue(state, childPath(path, requiredName), 'required', `Required argument '${requiredName}' is missing.`)
+          addIssue(
+            state,
+            childPath(path, requiredName),
+            'required',
+            `Required argument '${requiredName}' is missing.`
+          )
         }
       }
     }
     const properties = isRecord(schema.properties) ? schema.properties : {}
     for (const [name, entry] of Object.entries(value)) {
       if (Object.prototype.hasOwnProperty.call(properties, name)) {
-        validateValue(properties[name] as JsonSchema, entry, childPath(path, name), state, depth + 1)
+        validateValue(
+          properties[name] as JsonSchema,
+          entry,
+          childPath(path, name),
+          state,
+          depth + 1
+        )
       } else if (schema.additionalProperties === false) {
-        addIssue(state, childPath(path, name), 'additionalProperties', `Unknown argument '${name}' is not allowed.`)
+        addIssue(
+          state,
+          childPath(path, name),
+          'additionalProperties',
+          `Unknown argument '${name}' is not allowed.`
+        )
       } else if (isRecord(schema.additionalProperties)) {
         validateValue(schema.additionalProperties, entry, childPath(path, name), state, depth + 1)
       }

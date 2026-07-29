@@ -1,6 +1,10 @@
-import { isTaskWraithMcpToolName } from './mcp/McpResultHelpers'
-import { canonicalTaskWraithToolName } from './TaskWraithMcpTools'
 import { catalogToolAgenticService } from '../shared/canonicalToolCoalesce'
+import {
+  resolveProviderNativeActionStrict,
+  resolveToolDispatchContractForServerStrict,
+  resolveToolDispatchContractStrict
+} from '../shared/providerActionTaxonomy'
+import type { TaskWraithMcpToolName } from '../shared/taskWraithMcpCatalog'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
@@ -56,10 +60,7 @@ export function effectiveAgenticSettings(
       ...current,
       shellCommands: preserveCurrentDeny(current.shellCommands, effective.shellCommands),
       fileChanges: preserveCurrentDeny(current.fileChanges, effective.fileChanges),
-      externalPublish: preserveCurrentDeny(
-        current.externalPublish,
-        effective.externalPublish
-      ),
+      externalPublish: preserveCurrentDeny(current.externalPublish, effective.externalPublish),
       mcpTools: preserveCurrentDeny(current.mcpTools, effective.mcpTools),
       subThreadDelegation: preserveCurrentDeny(
         current.subThreadDelegation,
@@ -213,12 +214,183 @@ export function resolveNativeApprovalPreflightDecision(args: {
  * fileChanges/canvasInteraction/sketchCanvas/canvasEval/crossThreadRead) is
  * documented there.
  */
-export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {
+export function taskWraithToolAgenticService(toolName: TaskWraithMcpToolName): AgenticServiceId {
   return catalogToolAgenticService(toolName)
 }
 
-export function taskWraithToolServiceIfKnown(toolName: string): AgenticServiceId | null {
-  const canonicalToolName = canonicalTaskWraithToolName(toolName)
-  if (!isTaskWraithMcpToolName(canonicalToolName)) return null
-  return taskWraithToolAgenticService(canonicalToolName)
+export function taskWraithToolServiceIfKnown(
+  toolName: string,
+  toolArgs?: unknown
+): AgenticServiceId | null {
+  const contract = resolveToolDispatchContractStrict(toolName, toolArgs)
+  return contract.ok ? contract.service : null
+}
+
+export type CodexMcpApprovalIdentity =
+  | {
+      readonly recognized: true
+      readonly toolName: string
+      readonly effectiveToolName: string
+      readonly service: AgenticServiceId
+    }
+  | {
+      readonly recognized: false
+    }
+
+/**
+ * Recognize a TaskWraith MCP approval without laundering a foreign server
+ * namespace. When Codex supplies split server/tool fields, both must match the
+ * exact TaskWraith route; otherwise the call remains generic MCP.
+ */
+export function resolveCodexMcpApprovalIdentity(input: {
+  readonly toolName: string
+  readonly serverName?: string | null
+  readonly toolArgs?: unknown
+}): CodexMcpApprovalIdentity {
+  const contract =
+    typeof input.serverName === 'string' && input.serverName.trim()
+      ? resolveToolDispatchContractForServerStrict(input.serverName, input.toolName, input.toolArgs)
+      : resolveToolDispatchContractStrict(input.toolName, input.toolArgs)
+  return contract.ok
+    ? {
+        recognized: true,
+        toolName: contract.toolName,
+        effectiveToolName: contract.effectiveToolName,
+        service: contract.service
+      }
+    : { recognized: false }
+}
+
+export type CodexStructuralApprovalAction = 'commandExecution' | 'fileChange'
+
+export type CodexStructuralApprovalResolution =
+  | {
+      readonly kind: 'not_applicable'
+    }
+  | {
+      readonly kind: 'resolved'
+      readonly nativeAction: CodexStructuralApprovalAction
+      readonly catalogTool: TaskWraithMcpToolName
+      readonly service: AgenticServiceId
+    }
+  | {
+      readonly kind: 'deny'
+      readonly code: 'codex_structural_identity_conflict' | 'codex_structural_payload_missing'
+      readonly reason: string
+    }
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function codexStructuralAction(value: unknown): CodexStructuralApprovalAction | null {
+  return value === 'commandExecution' || value === 'fileChange' ? value : null
+}
+
+function hasCodexCommandPayload(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) {
+    return value.some((entry) => typeof entry === 'string' && entry.trim().length > 0)
+  }
+  return false
+}
+
+function hasCodexFileChangePayload(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === 'string') return value.trim().length > 0
+  return Boolean(value && typeof value === 'object')
+}
+
+/**
+ * Resolve Codex app-server approval authority from exact structural identity.
+ *
+ * Human labels and whichever payload happens to be populated never choose the
+ * policy bucket. Exact method/type identity selects the closed Codex adapter;
+ * payload is then checked only for required evidence and contradictions.
+ */
+export function resolveCodexStructuralApproval(input: {
+  readonly method: string
+  readonly params: unknown
+  readonly cachedFileChangeAvailable?: boolean
+}): CodexStructuralApprovalResolution {
+  const params = objectRecord(input.params) || {}
+  const item = objectRecord(params.item)
+  const exec = objectRecord(params.exec)
+  const methodAction =
+    input.method === 'item/commandExecution/requestApproval'
+      ? 'commandExecution'
+      : input.method === 'item/fileChange/requestApproval'
+        ? 'fileChange'
+        : null
+  const declaredActions = [
+    codexStructuralAction(params.approvalType),
+    codexStructuralAction(params.type),
+    codexStructuralAction(params.kind),
+    codexStructuralAction(item?.type)
+  ].filter((action): action is CodexStructuralApprovalAction => action !== null)
+  const identities = new Set<CodexStructuralApprovalAction>(declaredActions)
+  if (methodAction) identities.add(methodAction)
+  if (identities.size === 0) return { kind: 'not_applicable' }
+  if (identities.size !== 1) {
+    return {
+      kind: 'deny',
+      code: 'codex_structural_identity_conflict',
+      reason: `Codex approval method/type identities disagree: ${[...identities].join(', ')}.`
+    }
+  }
+
+  const nativeAction = [...identities][0]
+  const hasCommand =
+    hasCodexCommandPayload(params.command) ||
+    hasCodexCommandPayload(params.commandLine) ||
+    hasCodexCommandPayload(exec?.command) ||
+    hasCodexCommandPayload(item?.command)
+  const hasFileChange =
+    hasCodexFileChangePayload(params.changes) ||
+    hasCodexFileChangePayload(params.diff) ||
+    hasCodexFileChangePayload(params.patch) ||
+    hasCodexFileChangePayload(params.preview) ||
+    hasCodexFileChangePayload(item?.changes) ||
+    hasCodexFileChangePayload(item?.diff) ||
+    hasCodexFileChangePayload(item?.patch) ||
+    input.cachedFileChangeAvailable === true
+  const contradictoryPayload =
+    (nativeAction === 'commandExecution' && hasFileChange) ||
+    (nativeAction === 'fileChange' && hasCommand)
+  if (contradictoryPayload) {
+    return {
+      kind: 'deny',
+      code: 'codex_structural_identity_conflict',
+      reason: `Codex ${nativeAction} approval carried contradictory ${
+        nativeAction === 'commandExecution' ? 'file-change' : 'command'
+      } payload.`
+    }
+  }
+  if (
+    (nativeAction === 'commandExecution' && !hasCommand) ||
+    (nativeAction === 'fileChange' && !hasFileChange)
+  ) {
+    return {
+      kind: 'deny',
+      code: 'codex_structural_payload_missing',
+      reason: `Codex ${nativeAction} approval omitted its required structural payload.`
+    }
+  }
+
+  const resolution = resolveProviderNativeActionStrict('codex', nativeAction)
+  if (!resolution.ok) {
+    return {
+      kind: 'deny',
+      code: 'codex_structural_identity_conflict',
+      reason: resolution.reason
+    }
+  }
+  return {
+    kind: 'resolved',
+    nativeAction,
+    catalogTool: resolution.catalogTool,
+    service: resolution.metadata.service
+  }
 }

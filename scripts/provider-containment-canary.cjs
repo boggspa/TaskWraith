@@ -35,11 +35,9 @@ const KIMI_PRODUCTION_POSTURE_VERSION = 'synthetic-cwd-gateway-v1'
 const KIMI_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
 const CURSOR_STARTUP_POSTURE_VERSION = 'cursor-native-sandbox-readonly-v1'
 const CURSOR_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
-// Per-provider posture/attestation used by qualificationFor(). The manifest
-// providers.cursor roster ships EMPTY, so no Cursor tuple can match regardless
-// of these constants — Cursor stays fail-closed until a real live-canary pass
-// mints its exact fingerprint. These simply make the matcher provider-aware so
-// the pipeline is ready to admit the reviewed Cursor build once one exists.
+// Per-provider posture/attestation used by qualificationFor(). Cursor's
+// reviewed roster has its own posture and exact runtime identity; it must not
+// be evaluated through Kimi's backend-contract fields.
 const POSTURE_VERSIONS = Object.freeze({
   kimi: KIMI_PRODUCTION_POSTURE_VERSION,
   cursor: CURSOR_STARTUP_POSTURE_VERSION
@@ -48,13 +46,23 @@ const REVIEWED_ATTESTATION_SOURCES = Object.freeze({
   kimi: KIMI_REVIEWED_ATTESTATION_SOURCE,
   cursor: CURSOR_REVIEWED_ATTESTATION_SOURCE
 })
+// Cursor does not expose a probe-derived backend/model contract. These four
+// fields are nevertheless reviewed release metadata, so match them against the
+// only approved values instead of either inventing a runtimeContract or
+// silently accepting arbitrary manifest drift.
+const CURSOR_REVIEWED_RELEASE_METADATA = Object.freeze({
+  authentication: 'user-cursor-login',
+  backendBaseUrl: 'cursor-agent-managed',
+  modelAlias: 'cursor-account-default',
+  model: 'cursor-account-default'
+})
 const LIVE_TIMEOUT_MS = 25 * 60 * 1000
 // Deliberately reviewed allowlist. Never glob arbitrary *.live.test.ts files on
 // a credentialed worker: adding a file here is part of the release-security
-// review, not ordinary test discovery. Cursor's DRAFT startup-containment suite
-// is allowlisted so the pipeline is ready to qualify, but the manifest roster
-// stays empty (fail-closed): a live pass mints the fingerprint before Cursor is
-// ever admissible. The suite's live turn self-skips without CURSOR_API_KEY.
+// review, not ordinary test discovery. Cursor's startup-containment suite is
+// allowlisted because its reviewed tuple was minted by that live lane; any
+// replacement tuple requires another reviewed live pass. The suite's live turn
+// self-skips without CURSOR_API_KEY.
 const REVIEWED_LIVE_TESTS = Object.freeze({
   kimi: Object.freeze(['src/main/kimi/KimiProductionContainment.live.test.ts']),
   cursor: Object.freeze(['src/main/cursor/CursorStartupContainment.live.test.ts'])
@@ -500,21 +508,30 @@ function parseKimiConfigContract(configBody) {
     !model ||
     !provider ||
     provider.type !== 'kimi' ||
-    !provider.api_key ||
     !provider.base_url ||
     !model.model
   ) {
     return null
   }
   return {
-    authentication: provider.base_url.includes('api.kimi.com')
-      ? 'kimi-code-provider-api-key'
-      : 'kimi-platform-provider-api-key',
     providerType: provider.type,
     backendBaseUrl: provider.base_url,
     modelAlias,
     model: model.model
   }
+}
+
+function kimiAuthenticationForContract(
+  configContract,
+  { configApiKeyPresent = false, oauthCredentialPresent = false } = {}
+) {
+  if (!configContract) return null
+  if (configApiKeyPresent) {
+    return configContract.backendBaseUrl.includes('api.kimi.com')
+      ? 'kimi-code-provider-api-key'
+      : 'kimi-platform-provider-api-key'
+  }
+  return oauthCredentialPresent ? 'kimi-code-managed-oauth' : null
 }
 
 function capture(
@@ -755,10 +772,16 @@ function qualificationFor(manifest, provider, probe) {
     if (candidate.binarySha256 !== probe.binary.sha256) return false
     if (candidate.distribution !== probe.binary.distribution) return false
     if (candidate.harnessNodeVersion !== process.version) return false
-    if (candidate.authentication !== probe.runtimeContract?.authentication) return false
-    if (candidate.backendBaseUrl !== probe.runtimeContract?.backendBaseUrl) return false
-    if (candidate.modelAlias !== probe.runtimeContract?.modelAlias) return false
-    if (candidate.model !== probe.runtimeContract?.model) return false
+    if (provider === 'kimi') {
+      if (candidate.authentication !== probe.runtimeContract?.authentication) return false
+      if (candidate.backendBaseUrl !== probe.runtimeContract?.backendBaseUrl) return false
+      if (candidate.modelAlias !== probe.runtimeContract?.modelAlias) return false
+      if (candidate.model !== probe.runtimeContract?.model) return false
+    } else if (provider === 'cursor') {
+      for (const [field, expected] of Object.entries(CURSOR_REVIEWED_RELEASE_METADATA)) {
+        if (candidate[field] !== expected) return false
+      }
+    }
     if (candidate.platform !== process.platform) return false
     if (candidate.arch !== process.arch) return false
     return true
@@ -933,23 +956,29 @@ async function probeProvider(provider, manifest) {
     const configPath = path.join(sourceHome, 'config.toml')
     const configPresent = isReadableNonEmpty(configPath)
     let configApiKeyPresent = false
+    let configContract = null
     if (configPresent) {
       try {
         const configBody = fs.readFileSync(configPath, 'utf8')
         configApiKeyPresent = hasConfiguredKimiApiKey(configBody)
-        const configContract = parseKimiConfigContract(configBody)
-        if (configContract) {
-          result.runtimeContract = {
-            distribution: result.binary.distribution,
-            harnessNodeVersion: process.version,
-            ...configContract
-          }
-        }
+        configContract = parseKimiConfigContract(configBody)
       } catch {
         configApiKeyPresent = false
       }
     }
     const oauthCredentialPresent = isReadableNonEmpty(credentialPath)
+    const authentication = kimiAuthenticationForContract(configContract, {
+      configApiKeyPresent,
+      oauthCredentialPresent
+    })
+    if (authentication) {
+      result.runtimeContract = {
+        distribution: result.binary.distribution,
+        harnessNodeVersion: process.version,
+        authentication,
+        ...configContract
+      }
+    }
     result.auth = {
       available: oauthCredentialPresent || configApiKeyPresent,
       method: configApiKeyPresent ? 'provider-api-key-config' : 'oauth-credential-file-presence',
@@ -960,8 +989,10 @@ async function probeProvider(provider, manifest) {
       result.unavailableReasons.push('Kimi OAuth credential/API-key profile is missing')
     if (!result.auth.configPresent)
       result.unavailableReasons.push('Kimi config.toml is missing or empty')
-    if (configApiKeyPresent && !result.runtimeContract) {
-      result.unavailableReasons.push('Kimi API-key profile has no complete provider/model contract')
+    if (result.auth.available && !result.runtimeContract) {
+      result.unavailableReasons.push(
+        'Kimi authenticated profile has no complete provider/model contract'
+      )
     }
     if (!result.capabilities.commands.includes('acp')) {
       result.unavailableReasons.push('Kimi help does not advertise the ACP transport')
@@ -1022,6 +1053,25 @@ function validateVitestReport(report, expectedTitles) {
   const expected = Array.isArray(expectedTitles) ? expectedTitles : []
   const expectedSet = new Set(expected)
   const actualSet = new Set(actualTitles)
+  // Assertion titles are a reviewed static allowlist. Retaining only matching
+  // failed/non-passed titles gives a useful diagnostic without preserving raw
+  // provider output, assertion context, account details, or model text.
+  const failedAssertions = assertions
+    .filter(
+      (assertion) =>
+        assertion.status === 'failed' &&
+        typeof assertion.title === 'string' &&
+        expectedSet.has(assertion.title)
+    )
+    .map((assertion) => assertion.title)
+  const notPassedAssertions = assertions
+    .filter(
+      (assertion) =>
+        assertion.status !== 'passed' &&
+        typeof assertion.title === 'string' &&
+        expectedSet.has(assertion.title)
+    )
+    .map((assertion) => assertion.title)
   if (!report || report.success !== true) errors.push('Vitest report did not record success')
   if (invalidTitleCount > 0) errors.push(`${invalidTitleCount} assertion(s) had no stable title`)
   if (expected.length === 0) errors.push('reviewed live assertion roster is empty')
@@ -1040,7 +1090,9 @@ function validateVitestReport(report, expectedTitles) {
   return {
     valid: errors.length === 0,
     errors,
-    counts: { total: assertions.length, passed, failed, skipped }
+    counts: { total: assertions.length, passed, failed, skipped },
+    failedAssertions,
+    notPassedAssertions
   }
 }
 
@@ -1189,6 +1241,8 @@ async function runVitestFile(provider, testPath, outputDirectory, env) {
     status: errors.length === 0 ? 'passed' : 'failed',
     durationMs: Date.now() - startedAt,
     counts: validation.counts,
+    failedAssertions: validation.failedAssertions,
+    notPassedAssertions: validation.notPassedAssertions,
     // Provider stdout/stderr can contain prompts, account details, or model
     // output. The aggregate artifact keeps only structured status/errors.
     errors: [...new Set(errors)]
@@ -1664,8 +1718,10 @@ module.exports = {
   cursorUnauthenticatedProbeSourceEnv,
   extractCommands,
   extractLongFlags,
+  kimiAuthenticationForContract,
   liveExecutionAllowed,
   parseArgs,
+  parseKimiConfigContract,
   parseVersion,
   processControlFailure,
   providerInventoryCommands,

@@ -8,17 +8,23 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   classifyMacArtifact,
+  expectedChannel,
+  resolveFeedFiles,
+  validateMacReleaseDirectory,
   validateMacUpdateFeedFile,
   validateMacUpdateFeedText
 }: {
   classifyMacArtifact: (name: string | undefined) => 'universal' | 'arm64' | 'x64' | 'unknown'
+  expectedChannel: (version: string) => string
+  resolveFeedFiles: (targets: string[], version?: string) => string[]
+  validateMacReleaseDirectory: (distDir: string, version: string) => string[]
   validateMacUpdateFeedFile: (filePath: string) => {
     ok: boolean
     errors: string[]
   }
   validateMacUpdateFeedText: (
     feedText: string,
-    options?: { fileName?: string }
+    options?: { fileName?: string; expectedVersion?: string }
   ) => {
     ok: boolean
     errors: string[]
@@ -101,9 +107,13 @@ path: TaskWraith-1.0.73-universal-mac.zip
   it('verifies sha512 and size against referenced artifact files', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-feed-'))
     const zipName = 'TaskWraith-1.0.73-universal-mac.zip'
+    const dmgName = 'TaskWraith-1.0.73-universal-mac.dmg'
     const zipPath = path.join(tempDir, zipName)
+    const dmgPath = path.join(tempDir, dmgName)
     fs.writeFileSync(zipPath, Buffer.from('updater-zip-bytes'))
-    const sha512 = crypto.createHash('sha512').update(fs.readFileSync(zipPath)).digest('base64')
+    fs.writeFileSync(dmgPath, Buffer.from('installer-dmg-bytes'))
+    const zipSha512 = crypto.createHash('sha512').update(fs.readFileSync(zipPath)).digest('base64')
+    const dmgSha512 = crypto.createHash('sha512').update(fs.readFileSync(dmgPath)).digest('base64')
     const feedPath = path.join(tempDir, 'latest-mac.yml')
     fs.writeFileSync(
       feedPath,
@@ -111,10 +121,13 @@ path: TaskWraith-1.0.73-universal-mac.zip
 version: 1.0.73
 files:
   - url: ${zipName}
-    sha512: ${sha512}
+    sha512: ${zipSha512}
     size: ${fs.statSync(zipPath).size}
+  - url: ${dmgName}
+    sha512: ${dmgSha512}
+    size: ${fs.statSync(dmgPath).size}
 path: ${zipName}
-sha512: ${sha512}
+sha512: ${zipSha512}
 `
     )
 
@@ -130,6 +143,9 @@ sha512: ${sha512}
   it('fails when a referenced artifact is missing from disk', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-feed-'))
     const zipName = 'TaskWraith-1.0.73-universal-mac.zip'
+    const dmgName = 'TaskWraith-1.0.73-universal-mac.dmg'
+    const dmgPath = path.join(tempDir, dmgName)
+    fs.writeFileSync(dmgPath, 'dmg')
     const feedPath = path.join(tempDir, 'latest-mac.yml')
     fs.writeFileSync(
       feedPath,
@@ -139,6 +155,9 @@ files:
   - url: ${zipName}
     sha512: example
     size: 123
+  - url: ${dmgName}
+    sha512: ${crypto.createHash('sha512').update(fs.readFileSync(dmgPath)).digest('base64')}
+    size: ${fs.statSync(dmgPath).size}
 path: ${zipName}
 sha512: example
 `
@@ -146,12 +165,115 @@ sha512: example
 
     const result = validateMacUpdateFeedFile(feedPath)
     expect(result.ok).toBe(false)
-    expect(result.errors.some((error) => error.includes(`missing referenced artifact ${zipName}`))).toBe(
-      true
-    )
+    expect(
+      result.errors.some((error) => error.includes(`missing referenced artifact ${zipName}`))
+    ).toBe(true)
   })
 
   it('classifies conventional shared mac zip names as universal', () => {
     expect(classifyMacArtifact('TaskWraith-1.0.73-mac.zip')).toBe('universal')
+  })
+
+  it('binds the feed version and channel to the package version', () => {
+    const result = validateMacUpdateFeedText(
+      `
+version: 1.9.1
+files:
+  - url: TaskWraith-1.9.1-universal-mac.zip
+    sha512: example
+    size: 123
+  - url: TaskWraith-1.9.1-universal-mac.dmg
+    sha512: example
+    size: 456
+path: TaskWraith-1.9.1-universal-mac.zip
+sha512: example
+`,
+      { fileName: 'latest-mac.yml', expectedVersion: '1.9.2' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.errors).toContain(
+      'latest-mac.yml: feed version 1.9.1 does not match package 1.9.2.'
+    )
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-feed-'))
+    fs.writeFileSync(path.join(tempDir, 'latest-mac.yml'), '')
+    fs.writeFileSync(path.join(tempDir, 'beta-mac.yml'), '')
+    try {
+      expect(resolveFeedFiles([tempDir], '1.9.2').map((file) => path.basename(file))).toEqual([
+        'latest-mac.yml'
+      ])
+      expect(
+        resolveFeedFiles([tempDir], '1.9.2-beta.1').map((file) => path.basename(file))
+      ).toEqual(['beta-mac.yml'])
+      expect(expectedChannel('1.9.2-beta.1')).toBe('beta')
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('requires the exact ZIP blockmap and rejects stale DMG blockmaps', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-mac-feed-'))
+    for (const name of [
+      'TaskWraith-1.9.2-universal-mac.dmg',
+      'TaskWraith-1.9.2-universal-mac.zip',
+      'TaskWraith-1.9.2-universal-mac.zip.blockmap',
+      'latest-mac.yml'
+    ]) {
+      fs.writeFileSync(path.join(tempDir, name), '')
+    }
+    try {
+      expect(validateMacReleaseDirectory(tempDir, '1.9.2')).toEqual([])
+      fs.writeFileSync(path.join(tempDir, 'TaskWraith-1.9.2-universal-mac.dmg.blockmap'), '')
+      expect(validateMacReleaseDirectory(tempDir, '1.9.2')).toEqual([
+        expect.stringContaining('stale pre-staple DMG blockmap must not ship')
+      ])
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  it('requires exactly one ZIP and one DMG files entry with top-level ZIP metadata', () => {
+    const zipOnly = validateMacUpdateFeedText(
+      `
+version: 1.9.2
+files:
+  - url: TaskWraith-1.9.2-universal-mac.zip
+    sha512: zip
+    size: 123
+path: TaskWraith-1.9.2-universal-mac.zip
+sha512: zip
+`,
+      { fileName: 'latest-mac.yml', expectedVersion: '1.9.2' }
+    )
+    expect(zipOnly.ok).toBe(false)
+    expect(zipOnly.errors).toContain(
+      'latest-mac.yml: files list is missing exact artifact TaskWraith-1.9.2-universal-mac.dmg.'
+    )
+
+    const duplicateAndConflicting = validateMacUpdateFeedText(
+      `
+version: 1.9.2
+files:
+  - url: TaskWraith-1.9.2-universal-mac.zip
+    sha512: zip-files
+    size: 123
+  - url: TaskWraith-1.9.2-universal-mac.dmg
+    sha512: dmg-one
+    size: 456
+  - url: TaskWraith-1.9.2-universal-mac.dmg
+    sha512: dmg-two
+    size: 457
+path: TaskWraith-1.9.2-universal-mac.zip
+sha512: zip-top-level
+`,
+      { fileName: 'latest-mac.yml', expectedVersion: '1.9.2' }
+    )
+    expect(duplicateAndConflicting.ok).toBe(false)
+    expect(duplicateAndConflicting.errors).toContain(
+      'latest-mac.yml: files list contains duplicate entries for TaskWraith-1.9.2-universal-mac.dmg; expected exactly one.'
+    )
+    expect(duplicateAndConflicting.errors).toContain(
+      'latest-mac.yml: top-level sha512 must match the exact ZIP files entry.'
+    )
   })
 })

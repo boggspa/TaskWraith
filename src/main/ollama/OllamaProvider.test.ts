@@ -3100,15 +3100,12 @@ describe('parseOllamaToolRequest', () => {
     ).toBeNull()
   })
 
-  it('canonicalizes AskUserQuestion aliases', () => {
+  it('rejects case aliases that were not present in the immutable profile', () => {
     expect(
       parseOllamaToolRequest(
         '{"taskwraith_tool":{"name":"ASkUserQuestion","arguments":{"question":"Continue?"}}}'
       )
-    ).toEqual({
-      toolName: 'ask_user_question',
-      arguments: { question: 'Continue?' }
-    })
+    ).toBeNull()
   })
 
   it('builds a constrained-decoding format schema with the tool-name enum', () => {
@@ -3176,6 +3173,33 @@ describe('parseOllamaToolRequest', () => {
     expect(ollamaLocalToolSystemPrompt()).not.toContain('web_search')
     expect(ollamaLocalToolSystemPrompt()).not.toContain('web_fetch')
     expect(ollamaLocalToolSystemPrompt()).toContain('tool_help')
+  })
+
+  it('requires exact raw identity and the run-pinned available-tool list', () => {
+    for (const name of [
+      'mcp__evil__read_file',
+      'mcp__TaskWraith__read_file',
+      'mcp__evil__ensemble_control'
+    ]) {
+      expect(
+        parseOllamaToolRequest(
+          JSON.stringify({ taskwraith_tool: { name, arguments: { path: 'README.md' } } })
+        ),
+        name
+      ).toBeNull()
+    }
+    expect(
+      parseOllamaToolRequest(
+        '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"gateway"}}}',
+        ['read_file', 'tool_help']
+      )
+    ).toBeNull()
+    expect(
+      parseOllamaToolRequest(
+        '{"taskwraith_tool":{"name":"read_file","arguments":{"path":"README.md"}}}',
+        ['read_file', 'tool_help']
+      )
+    ).toEqual({ toolName: 'read_file', arguments: { path: 'README.md' } })
   })
 
   it('encourages local models to chain multi-step work after a tool result', () => {
@@ -3611,16 +3635,66 @@ describe('normalizeOllamaNativeToolCall', () => {
     ).toBeNull()
   })
 
-  it('canonicalizes AskUserQuestion aliases', () => {
+  it('rejects case aliases that were not advertised', () => {
     expect(
       normalizeOllamaNativeToolCall({
         function: { name: 'AskUserQuestion', arguments: { question: 'Continue?' } }
       })
-    ).toEqual({ toolName: 'ask_user_question', arguments: { question: 'Continue?' } })
+    ).toBeNull()
   })
 
   it('rejects unknown tool names', () => {
     expect(normalizeOllamaNativeToolCall({ function: { name: 'rm_rf', arguments: {} } })).toBeNull()
+  })
+
+  it('rejects foreign namespaces and tools absent from the run-pinned profile', () => {
+    for (const name of [
+      'mcp__evil__read_file',
+      'mcp__TaskWraith__read_file',
+      'mcp__evil__ensemble_control'
+    ]) {
+      expect(
+        normalizeOllamaNativeToolCall({ function: { name, arguments: { path: 'README.md' } } }, [
+          'read_file',
+          'ensemble_control'
+        ]),
+        name
+      ).toBeNull()
+    }
+    expect(
+      normalizeOllamaNativeToolCall(
+        { function: { name: 'workspace_search', arguments: { query: 'gateway' } } },
+        ['read_file', 'tool_help']
+      )
+    ).toBeNull()
+  })
+
+  it('honors an exact legacy-pinned tool without admitting newer profile names', () => {
+    expect(
+      normalizeOllamaNativeToolCall(
+        {
+          function: {
+            name: 'ensemble_bossman_control',
+            arguments: { action: 'request_status' }
+          }
+        },
+        ['ensemble_bossman_control', 'tool_help']
+      )
+    ).toEqual({
+      toolName: 'ensemble_bossman_control',
+      arguments: { action: 'request_status' }
+    })
+    expect(
+      normalizeOllamaNativeToolCall(
+        {
+          function: {
+            name: 'canvas_sketch_open',
+            arguments: { title: 'New sketch' }
+          }
+        },
+        ['ensemble_bossman_control', 'tool_help']
+      )
+    ).toBeNull()
   })
 })
 

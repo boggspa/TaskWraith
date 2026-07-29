@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   grokTaskWraithSafeToolRequested,
-  shouldAdvertiseTaskWraithMcpToGrok
+  shouldAdvertiseTaskWraithMcpToGrok,
+  structuredProviderNetworkAccessAllowed,
+  structuredProviderNetworkReadRequested,
+  structuredTaskWraithSafeToolRequested
 } from './GrokMcpAdvertise'
 
 describe('grokTaskWraithSafeToolRequested', () => {
@@ -30,27 +33,187 @@ describe('grokTaskWraithSafeToolRequested', () => {
   it('retains the configured read-only scoped namespace', () => {
     expect(
       grokTaskWraithSafeToolRequested({
-        toolName: 'taskwraith-grok__read_file'
+        toolName: 'use_tool',
+        rawToolCall: {
+          kind: 'read',
+          rawInput: { tool_name: 'taskwraith-grok__read_file' }
+        }
       })
     ).toBe(true)
+  })
+
+  it('never treats an ACP human title as broker provenance', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'taskwraith-grok__read_file',
+        toolKind: 'edit',
+        rawToolCall: {
+          title: 'taskwraith-grok__read_file',
+          kind: 'edit',
+          rawInput: { path: '../outside.txt', content: 'owned' }
+        }
+      })
+    ).toBe(false)
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'taskwraith-broker__read_file',
+        rawToolCall: {
+          title: 'taskwraith-broker__read_file',
+          kind: 'edit',
+          rawInput: { path: '../outside.txt', content: 'owned' }
+        }
+      })
+    ).toBe(false)
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'TaskWraith__read_file',
+        rawToolCall: {
+          title: 'TaskWraith__read_file',
+          kind: 'edit',
+          rawInput: { path: '../outside.txt', content: 'owned' }
+        }
+      })
+    ).toBe(false)
+  })
+
+  it('rejects a stable safe-tool alias that contradicts a mutating ACP kind', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolKind: 'edit',
+        rawToolCall: {
+          kind: 'edit',
+          rawInput: {
+            tool_name: 'taskwraith-grok__read_file',
+            path: '../outside.txt',
+            content: 'owned'
+          }
+        }
+      })
+    ).toBe(false)
+  })
+
+  it('applies the same stable-identity rule to Mistral namespaces', () => {
+    const request = {
+      toolName: 'display title',
+      toolKind: 'read',
+      rawToolCall: {
+        kind: 'read',
+        rawInput: { tool_name: 'taskwraith-mistral__read_file', path: 'README.md' }
+      }
+    }
+    expect(
+      structuredTaskWraithSafeToolRequested(request, [
+        'taskwraith-mistral',
+        'taskwraith-broker',
+        'TaskWraith'
+      ])
+    ).toBe(true)
+    expect(
+      structuredTaskWraithSafeToolRequested(
+        {
+          ...request,
+          toolKind: 'edit',
+          rawToolCall: {
+            kind: 'edit',
+            rawInput: {
+              tool_name: 'taskwraith-mistral__read_file',
+              path: '../outside.txt',
+              content: 'owned'
+            }
+          }
+        },
+        ['taskwraith-mistral', 'taskwraith-broker', 'TaskWraith']
+      )
+    ).toBe(false)
   })
 
   it('fails closed for mutating tools and unrecognized namespaces', () => {
     expect(
       grokTaskWraithSafeToolRequested({
-        toolName: 'TaskWraith__write_file'
+        rawToolCall: { rawInput: { tool_name: 'TaskWraith__write_file' } }
       })
     ).toBe(false)
     expect(
       grokTaskWraithSafeToolRequested({
-        toolName: 'taskwraith-broker__write_file'
+        rawToolCall: { rawInput: { tool_name: 'taskwraith-broker__write_file' } }
       })
     ).toBe(false)
     expect(
       grokTaskWraithSafeToolRequested({
-        toolName: 'other-broker__ask_user_question'
+        rawToolCall: { rawInput: { tool_name: 'other-broker__ask_user_question' } }
       })
     ).toBe(false)
+  })
+})
+
+describe('structuredProviderNetworkReadRequested', () => {
+  it('ignores network-looking ACP titles on native writes for both providers', () => {
+    for (const provider of ['grok', 'mistral'] as const) {
+      expect(
+        structuredProviderNetworkReadRequested(provider, {
+          toolName: 'Web Search',
+          toolKind: 'edit',
+          rawToolCall: {
+            kind: 'edit',
+            rawInput: { path: 'src/inside.ts', content: 'pwn' }
+          }
+        })
+      ).toBe(false)
+    }
+  })
+
+  it('distinguishes declared web search from workspace search by stable identity', () => {
+    for (const provider of ['grok', 'mistral'] as const) {
+      expect(
+        structuredProviderNetworkReadRequested(provider, {
+          toolName: 'display title',
+          toolKind: 'search',
+          rawToolCall: {
+            kind: 'search',
+            rawInput: { tool_name: 'WebSearch', query: 'release gates' }
+          }
+        })
+      ).toBe(true)
+      expect(
+        structuredProviderNetworkReadRequested(provider, {
+          toolName: 'Web Search',
+          toolKind: 'search',
+          rawToolCall: {
+            kind: 'search',
+            rawInput: { tool_name: 'Grep', path: 'src', query: 'release gates' }
+          }
+        })
+      ).toBe(false)
+    }
+  })
+
+  it('denies ambiguous and unknown stable search identities', () => {
+    expect(
+      structuredProviderNetworkReadRequested('grok', {
+        toolName: 'Web Search',
+        toolKind: 'search',
+        rawToolCall: { kind: 'search', rawInput: { query: 'release gates' } }
+      })
+    ).toBe(false)
+    expect(
+      structuredProviderNetworkReadRequested('mistral', {
+        toolName: 'display title',
+        toolKind: 'search',
+        rawToolCall: {
+          kind: 'search',
+          rawInput: { tool_name: 'FutureSearch', query: 'release gates' }
+        }
+      })
+    ).toBe(false)
+  })
+})
+
+describe('structuredProviderNetworkAccessAllowed', () => {
+  it('treats either run or current global deny as authoritative', () => {
+    expect(structuredProviderNetworkAccessAllowed('allow', 'deny')).toBe(false)
+    expect(structuredProviderNetworkAccessAllowed('deny', 'allow')).toBe(false)
+    expect(structuredProviderNetworkAccessAllowed('allow', 'allow')).toBe(true)
+    expect(structuredProviderNetworkAccessAllowed(undefined, undefined)).toBe(true)
   })
 })
 

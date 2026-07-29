@@ -1,0 +1,162 @@
+.workspace-lock-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.35rem;
+  color: var(--text-secondary);
+}
+
+.workspace-lock-pill > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 20px;
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 11%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.2;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.workspace-lock-pill > summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-lock-pill > summary:hover,
+.workspace-lock-pill > summary:focus-visible,
+.workspace-lock-pill[open] > summary {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-color) 28%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.workspace-lock-pill-dot,
+.workspace-lock-status-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-color) 78%, var(--text-primary));
+}
+
+.workspace-lock-pill.has-recovery-attention .workspace-lock-pill-dot,
+.workspace-lock-row.tone-attention .workspace-lock-status-dot {
+  background: var(--warning, #d6a23a);
+}
+
+.workspace-lock-popover {
+  position: absolute;
+  z-index: 1200;
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: min(24rem, calc(100vw - 1.5rem));
+  max-height: min(25rem, calc(100vh - 2rem));
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  border-radius: 10px;
+  background: var(--panel-bg, var(--background-secondary));
+  box-shadow: 0 14px 34px color-mix(in srgb, #000 24%, transparent);
+  color: var(--text-primary);
+}
+
+.workspace-lock-popover-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 0.65rem 0.75rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+  background: inherit;
+}
+
+.workspace-lock-popover-header strong {
+  font-size: var(--font-size-sm);
+}
+
+.workspace-lock-popover-header span {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-lock-popover ul {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+}
+
+.workspace-lock-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.6rem 0.75rem;
+}
+
+.workspace-lock-row + .workspace-lock-row {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.workspace-lock-row-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-lock-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.workspace-lock-row.tone-recovered .workspace-lock-status-dot {
+  background: var(--success, #41a26b);
+}
+
+.workspace-lock-target {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-lock-owner,
+.workspace-lock-checkout,
+.workspace-lock-base,
+.workspace-lock-path,
+.workspace-lock-recovery-copy,
+.workspace-lock-since {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.workspace-lock-owner {
+  color: var(--text-secondary);
+}
+
+.workspace-lock-path,
+.workspace-lock-base {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.workspace-lock-recovery-copy {
+  margin-top: 0.12rem;
+  line-height: 1.35;
+}
+
+.workspace-lock-since {
+  opacity: 0.8;
+}

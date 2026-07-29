@@ -1,11 +1,20 @@
 import {
   canonicalTaskWraithToolName,
-  MEDIA_EDITING_TOOLS,
-  MESH_SCENE_MCP_TOOL_NAMES,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from './taskWraithMcpCatalog'
-import type { AgenticServiceId } from '../main/store/types'
+import {
+  PROVIDER_ACTION_ADAPTERS,
+  TASKWRAITH_TOOL_ACTIONS,
+  compactProviderActionIdentifier,
+  resolveCatalogActionStrict,
+  resolveProviderActionStrict,
+  resolveProviderNativeActionForDisplay,
+  resolveProviderNativeActionStrict,
+  type ProviderNativeActionContext,
+  type StrictProviderActionResolution
+} from './providerActionTaxonomy'
+import type { AgenticServiceId, ProviderId } from '../main/store/types'
 
 function isCatalogToolName(value: string): value is TaskWraithMcpToolName {
   return (TASKWRAITH_MCP_TOOLS as readonly string[]).includes(value)
@@ -31,10 +40,7 @@ export type ToolOperationCategory =
 
 /** Lowercase alphanumeric compact form — matches NativeProviderToolContainment. */
 export function compactToolIdentifier(toolName: string): string {
-  return String(toolName || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
+  return compactProviderActionIdentifier(toolName)
 }
 
 /** Strip TaskWraith / MCP broker namespace prefixes from a tool name. */
@@ -85,10 +91,11 @@ export function stripToolNamespace(toolName: string): string {
 }
 
 /**
- * Provider-native aliases → Settings catalog tool names.
- * Keys are compact identifiers (see `compactToolIdentifier`).
+ * Historical telemetry/display aliases that predate the per-adapter taxonomy.
+ * This table is deliberately permissive and MUST NOT be used for execution or
+ * preflight. Strict callers use `resolveStrictProviderToolAction` below.
  */
-export const NATIVE_ALIAS_TO_CATALOG_TOOL: Readonly<Record<string, TaskWraithMcpToolName>> = {
+const HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL = {
   // Shell / runtime
   shell: 'run_shell_command',
   bash: 'run_shell_command',
@@ -155,53 +162,50 @@ export const NATIVE_ALIAS_TO_CATALOG_TOOL: Readonly<Record<string, TaskWraithMcp
   // Todos (Cursor createPlan stays non-catalog; todo_write is catalog)
   todo: 'todo_write',
   todowrite: 'todo_write'
+} as const satisfies Readonly<Record<string, TaskWraithMcpToolName>>
+
+/**
+ * Backward-compatible display projection. Provider declarations are the
+ * authority; the historical tail only keeps old transcripts legible. Building
+ * the projection fails fast if two adapters ever give the same compact alias
+ * different catalog meanings.
+ */
+function buildDisplayAliasProjection(): Readonly<Record<string, TaskWraithMcpToolName>> {
+  const aliases: Record<string, TaskWraithMcpToolName> = {
+    ...HISTORICAL_DISPLAY_ALIAS_TO_CATALOG_TOOL
+  }
+  for (const declaration of Object.values(PROVIDER_ACTION_ADAPTERS)) {
+    for (const [actionIds, mappings] of [
+      [declaration.declaredNativeActions, declaration.nativeActionMappings],
+      [declaration.declaredDeniedNativeActions, declaration.deniedNativeActionMappings]
+    ] as const) {
+      for (const actionId of actionIds) {
+        const mapping = mappings[actionId]
+        for (const alias of mapping.aliases) {
+          const compact = compactToolIdentifier(alias)
+          const prior = aliases[compact]
+          if (prior && prior !== mapping.catalogTool) {
+            throw new TypeError(
+              `Provider display alias ${alias} maps to both ${prior} and ${mapping.catalogTool}.`
+            )
+          }
+          aliases[compact] = mapping.catalogTool
+        }
+      }
+    }
+  }
+  return Object.freeze(aliases)
 }
 
+/** @deprecated Display/history compatibility only; never execution authority. */
+export const NATIVE_ALIAS_TO_CATALOG_TOOL = buildDisplayAliasProjection()
+
 /** Catalog tools whose mutations should count as file edits in run summaries. */
-export const CATALOG_FILE_EDIT_TOOL_NAMES: ReadonlySet<TaskWraithMcpToolName> = new Set([
-  'write_file',
-  'replace',
-  'create_directory',
-  'delete_path',
-  'move_path',
-  'rename_path',
-  'apply_patch',
-  'git_stage',
-  'git_commit'
-])
-
-const READ_OPERATION_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
-  'read_file',
-  'list_directory',
-  'list_chat_attachments',
-  'inspect_chat_attachment',
-  'open_workspace_file',
-  'document_extract_text',
-  'document_ocr_image'
-])
-
-const SEARCH_OPERATION_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
-  'find_files',
-  'workspace_search',
-  'workspace_symbols',
-  'web_search',
-  'web_fetch',
-  'tw_recall_find',
-  'scope_radar',
-  'repo_convention_scan'
-])
-
-const SHELL_OPERATION_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
-  'run_shell_command',
-  'run_task',
-  'start_background_process',
-  'list_background_processes',
-  'read_background_process',
-  'kill_background_process',
-  'get_diagnostics',
-  'launch_start',
-  'launch_stop'
-])
+export const CATALOG_FILE_EDIT_TOOL_NAMES: ReadonlySet<TaskWraithMcpToolName> = new Set(
+  TASKWRAITH_MCP_TOOLS.filter(
+    (toolName) => TASKWRAITH_TOOL_ACTIONS[toolName].operation === 'workspace.mutate'
+  )
+)
 
 /**
  * Resolve any provider-native or namespaced tool label to the Settings catalog
@@ -226,81 +230,50 @@ export function resolveCatalogToolName(rawToolName: string): TaskWraithMcpToolNa
 }
 
 /**
- * Agentic-service bucket for a tool name — the SINGLE canonical policy ladder
- * (WS-C). This is the one source of truth consumed by the runtime security gate
- * (`NativeApprovalPolicy.taskWraithToolAgenticService`), the Settings policy chip
- * (`SettingsPanel.inferMcpPolicyKey`), and display/audit normalizers, so the
- * bucket a tool lands in can never drift between where it is *shown* and where it
- * is *enforced*.
- *
- * Accepts any string so both catalog names and already-canonicalized native
- * names resolve identically. The ladder is exact-name based; there is no
- * substring/`startsWith` matching because the only catalog tools containing
- * `import`/`dispatch` are `creative_*` (audited via their own approvals), and a
- * loose substring branch would risk silently reclassifying future tools.
- *
- * Security-load-bearing ordering (mirrors the historical gate):
- *  - shell-class (run/task/background/diagnostics/launch) → `shellCommands`
- *  - git push / PR → `externalPublish` (non-grantable)
- *  - audio/video media → `mediaEditing` (dedicated grant bucket + audit)
- *  - file mutations / staged git → `fileChanges`
- *  - sub-thread delegation → `subThreadDelegation`
- *  - canvas click/fill → `canvasInteraction`
- *  - structured Sketch Canvas edits → `sketchCanvas`
- *  - canvas eval (RCE) → `canvasEval` (signed-elevated, never auto-allowed)
- *  - cross-thread recall reads → `crossThreadRead`
- *  - peer thread messages → `threadMessage`
- *  - everything else → `mcpTools`
+ * Provider-aware strict resolvers for execution and preflight boundaries.
+ * Unlike the display helpers above, these never consult the historical global
+ * alias projection and return a typed deny for an undeclared action.
  */
-export function catalogToolAgenticService(toolName: string): AgenticServiceId {
-  if (
-    toolName === 'run_shell_command' ||
-    toolName === 'run_task' ||
-    toolName === 'start_background_process' ||
-    toolName === 'kill_background_process' ||
-    toolName === 'get_diagnostics' ||
-    toolName === 'launch_start' ||
-    toolName === 'launch_stop'
-  ) {
-    return 'shellCommands'
-  }
-  if (toolName === 'git_push' || toolName === 'git_create_pr') return 'externalPublish'
-  if (MEDIA_EDITING_TOOLS.has(toolName)) return 'mediaEditing'
-  if (
-    toolName === 'write_file' ||
-    toolName === 'replace' ||
-    toolName === 'create_directory' ||
-    toolName === 'delete_path' ||
-    toolName === 'move_path' ||
-    toolName === 'rename_path' ||
-    toolName === 'apply_patch' ||
-    toolName === 'git_stage' ||
-    toolName === 'git_commit'
-  ) {
-    return 'fileChanges'
-  }
-  if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread') {
-    return 'subThreadDelegation'
-  }
-  if (toolName === 'canvas_click' || toolName === 'canvas_fill') {
-    return 'canvasInteraction'
-  }
-  if (toolName === 'canvas_sketch_update') return 'sketchCanvas'
-  if (toolName === 'canvas_eval') return 'canvasEval'
-  if ((MESH_SCENE_MCP_TOOL_NAMES as readonly string[]).includes(toolName)) {
-    return 'meshCanvas'
-  }
-  if (
-    toolName === 'tw_recall_find' ||
-    toolName === 'tw_recall_read' ||
-    toolName === 'tw_recall_read_events'
-  ) {
-    return 'crossThreadRead'
-  }
-  // Its own bucket, never mcpTools: a generic tool grant must not authorise
-  // pushing content into another thread's context.
-  if (toolName === 'thread_message') return 'threadMessage'
-  return 'mcpTools'
+export function resolveStrictCatalogToolAction(
+  rawToolName: string
+): StrictProviderActionResolution {
+  return resolveCatalogActionStrict(rawToolName)
+}
+
+export function resolveStrictProviderToolAction(
+  provider: ProviderId,
+  rawToolName: string
+): StrictProviderActionResolution {
+  return resolveProviderActionStrict(provider, rawToolName)
+}
+
+export function resolveStrictProviderNativeToolAction(
+  provider: ProviderId,
+  rawToolName: string,
+  context?: ProviderNativeActionContext
+): StrictProviderActionResolution {
+  return resolveProviderNativeActionStrict(provider, rawToolName, context)
+}
+
+export function resolveProviderNativeToolForDisplay(
+  provider: ProviderId,
+  rawToolName: string
+): TaskWraithMcpToolName | null {
+  return resolveProviderNativeActionForDisplay(provider, rawToolName)?.catalogTool ?? null
+}
+
+/**
+ * Agentic-service lookup for an already-canonical catalog name. The typed
+ * boundary cannot accept an unknown label; display/history callers have a
+ * separately named permissive helper below.
+ */
+export function catalogToolAgenticService(toolName: TaskWraithMcpToolName): AgenticServiceId {
+  return TASKWRAITH_TOOL_ACTIONS[toolName].service
+}
+
+/** Historical/display-only fallback for labels outside the executable catalog. */
+export function catalogToolAgenticServiceForDisplay(toolName: string): AgenticServiceId {
+  return isCatalogToolName(toolName) ? catalogToolAgenticService(toolName) : 'mcpTools'
 }
 
 export function catalogToolAgenticServiceForRawName(rawToolName: string): AgenticServiceId | null {
@@ -311,27 +284,21 @@ export function catalogToolAgenticServiceForRawName(rawToolName: string): Agenti
 export function catalogToolOperationCategory(rawToolName: string): ToolOperationCategory {
   const catalog = resolveCatalogToolName(rawToolName)
   if (!catalog) return 'unknown'
-  if (READ_OPERATION_TOOLS.has(catalog)) return 'read_file'
-  if (CATALOG_FILE_EDIT_TOOL_NAMES.has(catalog)) return 'edit_file'
-  if (SEARCH_OPERATION_TOOLS.has(catalog)) return 'search'
-  if (SHELL_OPERATION_TOOLS.has(catalog)) return 'shell'
+  const operation = TASKWRAITH_TOOL_ACTIONS[catalog].operation
+  if (operation === 'workspace.read') return 'read_file'
+  if (operation === 'workspace.mutate') return 'edit_file'
+  if (operation === 'workspace.search' || operation === 'network.read') return 'search'
+  if (operation === 'shell.execute') return 'shell'
   // No catalog tool resolves to 'update_topic' (that operation category is
   // produced by non-tool run events, e.g. topic/title changes), so there is no
-  // reachable branch for it here — the union member is retained for consumers.
+  // reachable branch for it here. Other explicitly declared operations are not
+  // legacy run-summary categories and intentionally render as `unknown`.
   return 'unknown'
 }
 
 export function isCatalogFileEditTool(rawToolName: string): boolean {
   const catalog = resolveCatalogToolName(rawToolName)
-  if (!catalog) {
-    const compact = compactToolIdentifier(stripToolNamespace(rawToolName))
-    return (
-      compact === 'editfile' ||
-      compact === 'createfile' ||
-      compact === 'deletefile' ||
-      compact === 'patch'
-    )
-  }
+  if (!catalog) return false
   return CATALOG_FILE_EDIT_TOOL_NAMES.has(catalog)
 }
 

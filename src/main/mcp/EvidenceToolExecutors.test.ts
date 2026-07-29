@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 import { projectCapabilityLedgerFromEvidencePacks } from '../EvidencePackModel'
+import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import type { ChatRecord, EvidencePackRecord, RepoConventionIndexSnapshot } from '../store/types'
 import {
   executeEvidenceMcpTool,
@@ -153,6 +154,11 @@ describe('EvidenceToolExecutors', () => {
       }
     })
     expect(store.getEvidencePacks('ws-1')).toHaveLength(1)
+    expect(TASKWRAITH_TOOL_ACTIONS.scope_radar).toMatchObject({
+      operation: 'control.mutate',
+      mutation: 'host-state',
+      lock: 'host-resource'
+    })
     expect(store.getEvidencePacks('ws-1')[0]?.capabilityCells[0]?.status).toBe('unverified')
   })
 
@@ -273,6 +279,11 @@ describe('EvidenceToolExecutors', () => {
       expect(entries).toContain('style-system-existing-assets')
       expect(entries).toContain('test-convention-nearby')
       expect(entries).toContain('generated-paths-avoid-editing')
+      expect(TASKWRAITH_TOOL_ACTIONS.repo_convention_scan).toMatchObject({
+        operation: 'control.mutate',
+        mutation: 'host-state',
+        lock: 'host-resource'
+      })
     } finally {
       await fs.rm(root, { recursive: true, force: true })
     }

@@ -62,8 +62,20 @@ function managerFixture(
   const tracked: unknown[] = []
   const untracked: number[] = []
   const lifecycleEvents: unknown[] = []
+  const gatedStarts: number[] = []
   const spawnProcess = vi.fn(
     (_command: string, _args: string[], _options: SpawnOptions) => child as unknown as ChildProcess
+  )
+  const spawnGatedProcess = vi.fn(
+    (
+      _command: string,
+      _args: string[],
+      _options: SpawnOptions,
+      _workspaceLockOwnerId: string
+    ) => ({
+      child: child as unknown as ChildProcess,
+      start: () => gatedStarts.push(child.pid)
+    })
   )
   const requestApproval = vi.fn(async (_sender, _provider, _service, _workspace, request) => {
     approvals.push(request)
@@ -75,6 +87,7 @@ function managerFixture(
     platform: 'darwin',
     now: () => new Date('2026-06-21T12:00:00.000Z'),
     spawnProcess,
+    spawnGatedProcess,
     requestApproval,
     createEnv: (extra) => ({ PATH: '/usr/bin', ...extra }),
     resolveProcessStartedAt: options.resolveProcessStartedAt,
@@ -90,7 +103,9 @@ function managerFixture(
     tracked,
     untracked,
     lifecycleEvents,
+    gatedStarts,
     spawnProcess,
+    spawnGatedProcess,
     requestApproval,
     killProcess,
     workspacePath
@@ -815,6 +830,87 @@ describe('LaunchManager', () => {
         }
       })
     ])
+  })
+
+  it('binds launch authority to the exact child and releases only after close', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-lock-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+    const bind = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+
+    const result = await fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath, {
+        command: {
+          raw: 'npm run dev',
+          argv: ['npm', 'run', 'dev'],
+          cwd: workspacePath,
+          env: {
+            TASKWRAITH_LOCK_OWNER_ID: 'forged-repository-owner'
+          },
+          longRunning: true
+        }
+      }),
+      chatId: 'chat-1',
+      runId: 'run-1',
+      workspaceLockOwnerId: 'exact-owner-run-1',
+      workspaceLockLifecycle: { bind, release }
+    })
+
+    expect(result).toMatchObject({ ok: true, attempt: { status: 'running', pid: 4321 } })
+    expect(fixture.spawnGatedProcess.mock.calls[0]?.[2]?.env).toMatchObject({
+      TASKWRAITH_LOCK_OWNER_ID: 'exact-owner-run-1'
+    })
+    expect(bind).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptId: result.attempt?.id,
+        provider: 'codex',
+        workspacePath,
+        chatId: 'chat-1',
+        runId: 'run-1',
+        pid: 4321,
+        workspaceLockOwnerId: 'exact-owner-run-1'
+      })
+    )
+    expect(fixture.gatedStarts).toEqual([4_321])
+    expect(release).not.toHaveBeenCalled()
+
+    fixture.child.emit('close', 0, null)
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+  })
+
+  it('terminates and joins the exact child when workspace-lock binding fails', async () => {
+    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-lock-fail-'))
+    const storagePath = await tempFile()
+    const fixture = managerFixture(storagePath, workspacePath)
+    const release = vi.fn(async () => {})
+    const start = fixture.manager.startTarget({
+      sender: null,
+      provider: 'codex',
+      target: target(workspacePath),
+      runId: 'run-1',
+      workspaceLockOwnerId: 'exact-owner-run-1',
+      workspaceLockLifecycle: {
+        bind: async () => {
+          throw new Error('process birth receipt unavailable')
+        },
+        release
+      }
+    })
+
+    await vi.waitFor(() => expect(fixture.killProcess).toHaveBeenCalledWith(4321, 4321))
+    expect(release).not.toHaveBeenCalled()
+    expect(fixture.gatedStarts).toEqual([])
+    fixture.child.emit('close', null, 'SIGTERM')
+
+    await expect(start).resolves.toMatchObject({
+      ok: false,
+      attempt: { status: 'failed' },
+      error: expect.stringContaining('process birth receipt unavailable')
+    })
+    expect(release).toHaveBeenCalledOnce()
   })
 
   it('records a canonical birth receipt for the exact PID returned by spawn', async () => {

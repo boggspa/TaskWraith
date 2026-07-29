@@ -23,14 +23,9 @@ export function normalizeNativeSubAgentPolicy(
 }
 
 export function normalizeNativeSubAgentToolName(toolName: string): string {
-  return String(toolName || '')
-    .trim()
-    .replace(/^mcp__/i, '')
-    .replace(/^taskwraith__/i, '')
-    .split('__')
-    .pop()!
-    .replace(/[\s.-]+/g, '_')
-    .toLowerCase()
+  const raw = String(toolName || '').trim()
+  if (!raw || raw.includes('__') || /^mcp[_-]/i.test(raw) || /^taskwraith/i.test(raw)) return ''
+  return raw.replace(/[\s.-]+/g, '_').toLowerCase()
 }
 
 export function isNativeSubAgentToolName(toolName: string): boolean {

@@ -172,17 +172,33 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   it('(a) network-block auto-denies before resolvePermission and never registers a prompt', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
-    vi.mocked(deps.networkAccessBlockedToolName).mockReturnValue('web_fetch')
+    vi.mocked(deps.networkAccessBlockedToolName).mockImplementation(
+      (toolName, _permissions, toolArgs) =>
+        toolName === 'browser_open' &&
+        (toolArgs as { url?: string } | undefined)?.url === 'https://example.com'
+          ? 'browser_open'
+          : null
+    )
 
     const result = await createApprovalOrchestration(deps)(
       sender,
       'gemini',
       'mcpTools',
       '/repo',
-      request({ preview: { toolName: 'web_fetch' } })
+      request({
+        preview: {
+          toolName: 'browser_open',
+          params: { url: 'https://example.com', show: true }
+        }
+      })
     )
 
     expect(result).toBe(false)
+    expect(deps.networkAccessBlockedToolName).toHaveBeenCalledWith(
+      'browser_open',
+      undefined,
+      { url: 'https://example.com', show: true }
+    )
     expect(order).toEqual(['audit:autoDeny:policy', 'safeSendToSender:agent-error'])
     // #1: resolve NEVER runs on the network-block path.
     expect(vi.mocked(deps.permissionService.resolvePermission)).not.toHaveBeenCalled()

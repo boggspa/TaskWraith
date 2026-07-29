@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   canonicalTaskWraithToolName,
   effectiveAgenticSettings,
+  resolveCodexMcpApprovalIdentity,
+  resolveCodexStructuralApproval,
   resolveNativeApprovalPreflightDecision,
   taskWraithToolAgenticService,
   taskWraithToolServiceIfKnown
@@ -79,10 +81,8 @@ describe('taskWraithToolServiceIfKnown', () => {
     expect(taskWraithToolServiceIfKnown('mcp_taskwraith-broker-run_shell_command')).toBe(
       'shellCommands'
     )
-    expect(taskWraithToolServiceIfKnown('mcp__taskwraith__get_diagnostics')).toBe(
-      'shellCommands'
-    )
-    expect(taskWraithToolServiceIfKnown('mcp__other_server__write_file')).toBe('fileChanges')
+    expect(taskWraithToolServiceIfKnown('mcp__taskwraith__get_diagnostics')).toBe('shellCommands')
+    expect(taskWraithToolServiceIfKnown('mcp__other_server__write_file')).toBeNull()
     expect(taskWraithToolServiceIfKnown('taskwraith__write_file')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__delete_path')).toBe('fileChanges')
     expect(taskWraithToolServiceIfKnown('taskwraith__move_path')).toBe('fileChanges')
@@ -93,11 +93,195 @@ describe('taskWraithToolServiceIfKnown', () => {
     expect(taskWraithToolServiceIfKnown('list_active_runs')).toBe('mcpTools')
     expect(taskWraithToolServiceIfKnown('cancel_active_run')).toBe('mcpTools')
     expect(taskWraithToolServiceIfKnown('ensemble_yield')).toBe('mcpTools')
+    expect(
+      taskWraithToolServiceIfKnown('capability_invoke', {
+        name: 'write_file',
+        arguments: { path: 'src/example.ts', content: 'example' }
+      })
+    ).toBe('fileChanges')
   })
 
   it('leaves non-TaskWraith tool names unclassified', () => {
     expect(taskWraithToolServiceIfKnown('mcp__other_server__totally_unknown')).toBeNull()
     expect(taskWraithToolServiceIfKnown('totally_unknown')).toBeNull()
+  })
+})
+
+describe('resolveCodexStructuralApproval', () => {
+  it('binds exact app-server methods to the closed Codex adapter', () => {
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'item/commandExecution/requestApproval',
+        params: { command: ['git', 'status'] }
+      })
+    ).toEqual({
+      kind: 'resolved',
+      nativeAction: 'commandExecution',
+      catalogTool: 'run_shell_command',
+      service: 'shellCommands'
+    })
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'item/fileChange/requestApproval',
+        params: { changes: [{ path: 'src/example.ts', kind: 'edit' }] }
+      })
+    ).toEqual({
+      kind: 'resolved',
+      nativeAction: 'fileChange',
+      catalogTool: 'apply_patch',
+      service: 'fileChanges'
+    })
+  })
+
+  it('accepts an exact structural item type on a generic approval method', () => {
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'approval/request',
+        params: {
+          item: {
+            type: 'fileChange',
+            patch: '*** Begin Patch\n*** End Patch'
+          }
+        }
+      })
+    ).toMatchObject({
+      kind: 'resolved',
+      nativeAction: 'fileChange',
+      service: 'fileChanges'
+    })
+  })
+
+  it('denies method/type disagreement and payload cross-class injection', () => {
+    for (const input of [
+      {
+        method: 'item/fileChange/requestApproval',
+        params: {
+          type: 'commandExecution',
+          changes: [{ path: 'src/example.ts' }]
+        }
+      },
+      {
+        method: 'item/fileChange/requestApproval',
+        params: {
+          changes: [{ path: 'src/example.ts' }],
+          command: ['rm', '-rf', '../outside']
+        }
+      },
+      {
+        method: 'item/commandExecution/requestApproval',
+        params: {
+          command: 'git status',
+          patch: '*** Begin Patch\n*** End Patch'
+        }
+      }
+    ]) {
+      expect(resolveCodexStructuralApproval(input)).toMatchObject({
+        kind: 'deny',
+        code: 'codex_structural_identity_conflict'
+      })
+    }
+  })
+
+  it('denies structurally identified approvals without their expected payload', () => {
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'item/fileChange/requestApproval',
+        params: { itemId: 'item-without-cached-patch' }
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      code: 'codex_structural_payload_missing'
+    })
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'item/commandExecution/requestApproval',
+        params: { command: [] }
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      code: 'codex_structural_payload_missing'
+    })
+  })
+
+  it('permits an exact file request backed by the host-cached patch only', () => {
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'item/fileChange/requestApproval',
+        params: { itemId: 'cached-item' },
+        cachedFileChangeAvailable: true
+      })
+    ).toMatchObject({
+      kind: 'resolved',
+      nativeAction: 'fileChange',
+      service: 'fileChanges'
+    })
+  })
+
+  it('leaves unrelated MCP and elicitation approval methods to their own resolver', () => {
+    expect(
+      resolveCodexStructuralApproval({
+        method: 'mcpServer/elicitation/request',
+        params: { toolName: 'write_file', arguments: { path: 'src/example.ts' } }
+      })
+    ).toEqual({ kind: 'not_applicable' })
+  })
+})
+
+describe('resolveCodexMcpApprovalIdentity', () => {
+  it('recognizes exact qualified and split-field TaskWraith identities', () => {
+    expect(
+      resolveCodexMcpApprovalIdentity({
+        toolName: 'mcp__taskwraith__read_file',
+        toolArgs: { path: 'README.md' }
+      })
+    ).toMatchObject({
+      recognized: true,
+      toolName: 'read_file',
+      service: 'mcpTools'
+    })
+    expect(
+      resolveCodexMcpApprovalIdentity({
+        serverName: 'TaskWraith',
+        toolName: 'write_file',
+        toolArgs: { path: 'src/example.ts', content: 'body' }
+      })
+    ).toMatchObject({
+      recognized: true,
+      toolName: 'write_file',
+      service: 'fileChanges'
+    })
+  })
+
+  it('leaves foreign and contradictory server identities generic', () => {
+    for (const input of [
+      { toolName: 'mcp__evil__read_file' },
+      { toolName: 'taskwraith-broker__mcp__evil__read_file' },
+      { serverName: 'evil', toolName: 'read_file' },
+      { serverName: 'evil', toolName: 'mcp__taskwraith__read_file' },
+      { serverName: 'TaskWraith', toolName: 'mcp__evil__read_file' }
+    ]) {
+      expect(resolveCodexMcpApprovalIdentity(input), JSON.stringify(input)).toEqual({
+        recognized: false
+      })
+    }
+  })
+
+  it('inherits capability target service without trusting the wrapper', () => {
+    expect(
+      resolveCodexMcpApprovalIdentity({
+        serverName: 'TaskWraith',
+        toolName: 'capability_invoke',
+        toolArgs: {
+          name: 'write_file',
+          arguments: { path: 'src/example.ts', content: 'body' }
+        }
+      })
+    ).toMatchObject({
+      recognized: true,
+      toolName: 'capability_invoke',
+      effectiveToolName: 'write_file',
+      service: 'fileChanges'
+    })
   })
 })
 
@@ -130,7 +314,7 @@ describe('taskWraithToolAgenticService — canvas interaction bucket', () => {
       'mesh_scene_present',
       'mesh_scene_close',
       'mesh_scene_delete'
-    ]) {
+    ] as const) {
       expect(taskWraithToolAgenticService(tool)).toBe('meshCanvas')
     }
   })

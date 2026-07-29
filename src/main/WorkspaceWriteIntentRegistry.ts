@@ -1,5 +1,12 @@
 /**
- * 1.0.5-C2 — Per-workspace write-intent registry.
+ * 1.0.5-C2 compatibility model for historical tests and stored concepts.
+ *
+ * @deprecated Production mutation admission moved to WorkspaceLockRuntime and
+ * WorkspaceLockAuthority in 1.9.2. Main and EnsembleOrchestrator must not
+ * instantiate this in-memory registry: it is not an enforcement source, is
+ * not projected to the UI, and must never be consulted alongside the durable
+ * authority. It remains only so older imports/tests can describe the former
+ * reader-writer semantics during migration.
  *
  * Catches cross-lane (and cross-chat!) write conflicts before
  * two participants can silently edit the same file. Implements a
@@ -24,11 +31,9 @@
  * miss the most important case (a second ensemble run in the
  * same project touching the same file).
  *
- * Persistence: deliberately in-memory only for 1.0.5. On app
- * restart all lanes are dead anyway (no active runs survive
- * process exit), so the registry can boot empty without losing
- * meaningful state. A future Phase if needed could persist
- * outstanding writes to detect "shutdown mid-edit" scenarios.
+ * Persistence: none. This is exactly why the class is compatibility-only.
+ * The durable authority owns crash recovery, conflict enforcement, projection,
+ * markers, and release in production.
  *
  * All methods are pure-ish — they mutate the internal Map but
  * have no other side effects (no logging, no I/O). Tests can
@@ -80,6 +85,7 @@ export interface AcquireWriteIntentResult {
  * (created once in main and shared); the orchestrator's
  * concurrent dispatch path injects + uses it.
  */
+/** @deprecated Compatibility-only; use WorkspaceLockRuntime. */
 export class WorkspaceWriteIntentRegistry {
   /** workspacePath → resourcePath → holders[] */
   private byWorkspace = new Map<string, Map<string, WriteIntentHolder[]>>()
@@ -309,3 +315,10 @@ export class WorkspaceWriteIntentRegistry {
     return map
   }
 }
+
+// 1.9.2 durable authority. The legacy class above remains source-compatible
+// while integration migrates callers from lane-local exact-path intents to
+// run-owned workspace/tree/file/hunk leases.
+export { WorkspaceLockAuthority } from './workLocks/WorkspaceLockAuthority'
+export { NodeWorkspaceLockPersistence } from './workLocks/NodeWorkspaceLockPersistence'
+export * from './workLocks/WorkspaceLockTypes'

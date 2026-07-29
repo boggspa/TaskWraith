@@ -56,6 +56,26 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.resumedConversationId).toBeNull()
   })
 
+  it('threads only the exact admitted workspace-lock owner into the agy launch', async () => {
+    const launch = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Apply the approved change.',
+        approvalMode: 'default',
+        workspaceLockOwnerId: 'exact-antigravity-seat-owner',
+        inheritedEnv: {
+          PATH: '/usr/bin',
+          TASKWRAITH_LOCK_OWNER_ID: 'ambient-owner'
+        }
+      },
+      {
+        resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'common' })
+      }
+    )
+
+    expect(launch.env.TASKWRAITH_LOCK_OWNER_ID).toBe('exact-antigravity-seat-owner')
+  })
+
   // agy has no per-tool approval bridge, so a denied shell/file service can only
   // be honoured at launch. Before this, "Shell commands: deny" was silently
   // inert for AntiGravity: the setting read as enforced while the run still

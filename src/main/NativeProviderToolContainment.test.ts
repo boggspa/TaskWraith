@@ -39,6 +39,27 @@ describe('NativeProviderToolContainment', () => {
     expect(nativeProviderToolRequiresBroker('AskUserQuestion')).toBe(false)
   })
 
+  it('does not trust a reserved prefix unless the full strict route is declared', () => {
+    for (const toolName of [
+      'mcp__TaskWraith__unknown_tool',
+      'TaskWraith__mcp__evil__read_file',
+      'mcp__evil__read_file'
+    ]) {
+      expect(isExplicitTaskWraithBrokerTool(toolName), toolName).toBe(false)
+    }
+    expect(nativeProviderToolRequiresBroker('mcp__TaskWraith__unknown_tool')).toBe(true)
+  })
+
+  it('resolves target-derived gateway identity before recognizing the broker route', () => {
+    expect(
+      isExplicitTaskWraithBrokerTool('mcp__TaskWraith__capability_invoke', {
+        name: 'read_file',
+        arguments: { path: 'README.md' }
+      })
+    ).toBe(true)
+    expect(isExplicitTaskWraithBrokerTool('mcp__TaskWraith__capability_invoke')).toBe(false)
+  })
+
   it('denies a bare native read before the canonical MCP auto-allow path', () => {
     expect(nativeProviderApprovalPriority('read_file', true)).toBe('deny-native')
     expect(nativeProviderApprovalPriority('list_directory', true)).toBe('deny-native')

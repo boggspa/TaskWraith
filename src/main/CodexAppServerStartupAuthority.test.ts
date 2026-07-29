@@ -33,18 +33,24 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject }
 }
 
-function fakeChildProcess(): ChildProcessWithoutNullStreams {
+function fakeChildProcess(pid = 4242): ChildProcessWithoutNullStreams {
   const proc = new EventEmitter() as EventEmitter & {
     stdin: PassThrough
     stdout: PassThrough
     stderr: PassThrough
     killed: boolean
+    pid: number
+    exitCode: number | null
+    signalCode: NodeJS.Signals | null
     kill: ReturnType<typeof vi.fn>
   }
   proc.stdin = new PassThrough()
   proc.stdout = new PassThrough()
   proc.stderr = new PassThrough()
   proc.killed = false
+  proc.pid = pid
+  proc.exitCode = null
+  proc.signalCode = null
   proc.kill = vi.fn(() => {
     proc.killed = true
     return true
@@ -91,6 +97,148 @@ function harness(overrides: Partial<CodexAppServerStartupDependencies> = {}) {
 }
 
 describe('Codex app-server startup authority', () => {
+  it('injects only a dedicated exact workspace-lock owner into a write-capable daemon', async () => {
+    const setup = harness()
+    vi.spyOn(setup.client, 'request').mockResolvedValue({ capabilities: {} })
+    setup.client.setWorkspaceLockOwnerId('owner-run-1-lane-a')
+    const spawned: Array<{ pid: number; closed: Promise<void> }> = []
+
+    await setup.client.ensureStarted('test', {
+      assertCanStart: () => {},
+      bindSpawnedProcess: async (process) => {
+        spawned.push(process)
+      }
+    })
+    const spawnOptions = vi.mocked(setup.spawnProcess).mock.calls[0]?.[2]
+
+    expect(spawnOptions?.env?.TASKWRAITH_LOCK_OWNER_ID).toBe('owner-run-1-lane-a')
+    expect(setup.client.getWorkspaceLockOwnerId()).toBe('owner-run-1-lane-a')
+    expect(setup.client.getProcessId()).toBe(4242)
+    expect(() => setup.client.setWorkspaceLockOwnerId('owner-run-2-lane-b')).toThrow(
+      /cannot change a live Codex/i
+    )
+    expect(spawned).toHaveLength(1)
+    expect(spawned[0]?.pid).toBe(4242)
+    let closed = false
+    void spawned[0]?.closed.then(() => {
+      closed = true
+    })
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    setup.proc.emit('close', 0, null)
+    await spawned[0]?.closed
+    expect(closed).toBe(true)
+    setup.client.dispose()
+  })
+
+  it('refuses to spawn an owned daemon without an exact child binder', async () => {
+    const setup = harness()
+    setup.client.setWorkspaceLockOwnerId('owner-run-1-lane-a')
+
+    await expect(setup.client.ensureStarted('test')).rejects.toThrow(
+      /requires exact workspace-lock child binding/
+    )
+    expect(setup.spawnProcess).not.toHaveBeenCalled()
+  })
+
+  it('joins the exact child close and sends no request when binding fails', async () => {
+    const setup = harness()
+    const request = vi.spyOn(setup.client, 'request')
+    setup.client.setWorkspaceLockOwnerId('owner-run-1-lane-a')
+    vi.mocked(setup.proc.kill).mockImplementationOnce(() => {
+      queueMicrotask(() => setup.proc.emit('close', null, 'SIGTERM'))
+      return true
+    })
+
+    await expect(
+      setup.client.ensureStarted('test', {
+        assertCanStart: () => {},
+        bindSpawnedProcess: async () => {
+          throw new Error('durable transfer failed')
+        }
+      })
+    ).rejects.toThrow(/durable transfer failed/)
+
+    expect(setup.proc.kill).toHaveBeenCalledOnce()
+    expect(request).not.toHaveBeenCalled()
+    expect(setup.client.isRunning()).toBe(false)
+  })
+
+  it('strips an ambient owner from an unowned shared read-only daemon', async () => {
+    const setup = harness({
+      buildProcessLaunchPlan: vi.fn(async () => ({
+        ...launchPlan,
+        env: Object.freeze({
+          ...launchPlan.env,
+          TASKWRAITH_LOCK_OWNER_ID: 'ambient-owner'
+        })
+      }))
+    })
+    vi.spyOn(setup.client, 'request').mockResolvedValue({ capabilities: {} })
+
+    await setup.client.ensureStarted('test')
+    const spawnOptions = vi.mocked(setup.spawnProcess).mock.calls[0]?.[2]
+
+    expect(spawnOptions?.env?.TASKWRAITH_LOCK_OWNER_ID).toBeUndefined()
+    expect(setup.client.getWorkspaceLockOwnerId()).toBeNull()
+    setup.client.dispose()
+  })
+
+  it('joins the shared daemon before the same private home becomes write-owned', async () => {
+    const first = fakeChildProcess()
+    const second = fakeChildProcess(4343)
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second) as unknown as typeof spawn
+    const credentialRelease = deferred<void>()
+    let credentialReleased = false
+    const acquireCredentialLease = vi
+      .fn()
+      .mockResolvedValueOnce({
+        seedIntoIsolatedHome: async () => {},
+        noteProviderProcess: async () => {},
+        commitAndRelease: async () => {
+          await credentialRelease.promise
+          credentialReleased = true
+        }
+      })
+      .mockResolvedValueOnce(null)
+    const setup = harness({ spawnProcess, acquireCredentialLease })
+    vi.spyOn(setup.client, 'request').mockResolvedValue({ capabilities: {} })
+
+    await setup.client.ensureStarted('test')
+    let stopped = false
+    const stop = setup.client.disposeAndWait().then(() => {
+      stopped = true
+    })
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    expect(() => setup.client.setWorkspaceLockOwnerId('owner-run-1-lane-a')).toThrow(
+      /cannot change a live Codex/i
+    )
+
+    first.emit('close', 0, null)
+    await Promise.resolve()
+    expect(stopped).toBe(false)
+    expect(credentialReleased).toBe(false)
+    credentialRelease.resolve()
+    await stop
+    expect(credentialReleased).toBe(true)
+    setup.client.setWorkspaceLockOwnerId('owner-run-1-lane-a')
+    await setup.client.ensureStarted('test', {
+      assertCanStart: () => {},
+      bindSpawnedProcess: async () => {}
+    })
+
+    expect(spawnProcess).toHaveBeenCalledTimes(2)
+    expect(acquireCredentialLease).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(spawnProcess).mock.calls[1]?.[2]?.env?.TASKWRAITH_LOCK_OWNER_ID).toBe(
+      'owner-run-1-lane-a'
+    )
+    second.emit('close', 0, null)
+  })
+
   it('rejects an already-stopped owner before beginning private-home setup', async () => {
     const stopped = new AbortController()
     const stopReason = new Error('run stopped before startup')

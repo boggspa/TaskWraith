@@ -143,6 +143,16 @@ export function normalizeCandidate(candidate: FanoutWorktreeCandidate): FanoutWo
   if (candidate.runStatus !== undefined && !RUN_STATUSES.has(candidate.runStatus)) {
     throw new Error('Fan-out candidate has an unrecognized run status.')
   }
+  if (
+    candidate.promotionIntent !== undefined &&
+    (!candidate.promotionIntent ||
+      typeof candidate.promotionIntent !== 'object' ||
+      !/^[0-9a-f]{64}$/i.test(candidate.promotionIntent.patchSha256) ||
+      typeof candidate.promotionIntent.startedAt !== 'string' ||
+      !candidate.promotionIntent.startedAt.trim())
+  ) {
+    throw new Error('Fan-out candidate has a malformed promotion intent.')
+  }
   const diffStat = candidate.diffStat
   return {
     schemaVersion: 1,
@@ -163,6 +173,14 @@ export function normalizeCandidate(candidate: FanoutWorktreeCandidate): FanoutWo
     branch: candidate.branch.trim(),
     createdAt: candidate.createdAt,
     status: candidate.status,
+    ...(candidate.promotionIntent
+      ? {
+          promotionIntent: {
+            patchSha256: candidate.promotionIntent.patchSha256.toLowerCase(),
+            startedAt: candidate.promotionIntent.startedAt
+          }
+        }
+      : {}),
     ...(candidate.runStatus ? { runStatus: candidate.runStatus } : {}),
     ...(typeof candidate.settledAt === 'string' ? { settledAt: candidate.settledAt } : {}),
     ...(typeof candidate.resolvedAt === 'string' ? { resolvedAt: candidate.resolvedAt } : {}),

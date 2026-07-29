@@ -321,7 +321,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('same allowlisted shell-opening')
   })
 
-  it('bundles the current 1.9.1 release notes (narrative format)', () => {
+  it('bundles the frozen 1.9.1 release notes (narrative format)', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.9.1' }, null)
     expect(entry).toMatchObject({
       version: '1.9.1',
@@ -356,6 +356,26 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('not a sandbox for whatever')
     expect(entry.releaseNotes).toContain('that one exact invocation')
     expect(entry.releaseNotes).toContain('coherent snapshot')
+  })
+
+  it('bundles the current 1.9.2 release notes (narrative format)', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.9.2' }, null)
+    expect(entry).toMatchObject({
+      version: '1.9.2',
+      releaseDate: '2026-07-29'
+    })
+    expect(entry.releaseNotes).toContain('same rulebook')
+    expect(entry.releaseNotes).toContain('One action language')
+    expect(entry.releaseNotes).toContain('fail explicitly')
+    expect(entry.releaseNotes).toContain('durable workspace claims')
+    expect(entry.releaseNotes).toContain('non-overlapping hunk')
+    expect(entry.releaseNotes).toContain('birth identity')
+    expect(entry.releaseNotes).toContain('derived projection')
+    expect(entry.releaseNotes).toContain('A release floor')
+    expect(entry.releaseNotes).toContain('Windows x64 and Arm64')
+    expect(entry.releaseNotes).toContain('versioned checksum set')
+    expect(entry.releaseNotes).toContain('two-real-Mac People transport proof')
+    expect(entry.releaseNotes).toContain('shipping a hidden Chat surface')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

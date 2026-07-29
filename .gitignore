@@ -46,6 +46,9 @@ tests/fixtures/remote-ios/
 ios/TaskWraithApp/build/
 
 # Local agent / session state
+.WORK-IN-PROGRESS-*.md
+SHIP-HOLD-*.md
+SESSION-IN-PROGRESS-*.md
 .claude/
 .cursor/
 /.fixpass*

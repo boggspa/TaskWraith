@@ -1,3 +1,4 @@
+import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { RunQueueJobSource } from './store/types'
 
 const USER_INITIATED_RUN_SOURCES = new Set<RunQueueJobSource>(['manual', 'remote'])
@@ -11,13 +12,6 @@ const NEGATED_CREATION =
 const INFORMATIONAL_REQUEST =
   /\b(?:tell\s+me\s+how|show\s+me\s+how|how\s+(?:can|could|do|would)\s+i)\b|\b(?:explain|describe|document|discuss|review)\b[^.!?\n]{0,32}\b(?:ensemble|panel|roster)\b/i
 const SELF_CAPABILITY_QUESTION = /^\s*(?:can|could|may|should)\s+i\b/i
-
-function canonicalRosterToolName(value: unknown): string {
-  const raw = typeof value === 'string' ? value.trim().toLowerCase() : ''
-  if (!raw) return ''
-  const parts = raw.split('__').filter(Boolean)
-  return parts[parts.length - 1] || raw
-}
 
 function plainRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -60,7 +54,9 @@ export interface UserRequestedEnsembleImportInput {
 export function shouldAutoAllowUserRequestedEnsembleImport(
   input: UserRequestedEnsembleImportInput
 ): boolean {
-  if (canonicalRosterToolName(input.toolName) !== 'ensemble_roster_edit') return false
+  if (typeof input.toolName !== 'string') return false
+  const contract = resolveToolDispatchContractStrict(input.toolName, input.toolArgs)
+  if (!contract.ok || contract.effectiveToolName !== 'ensemble_roster_edit') return false
   const args = plainRecord(input.toolArgs)
   if (!args || args.action !== 'import_preset') return false
   if (input.readOnly === true) return false

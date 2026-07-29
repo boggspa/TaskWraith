@@ -3565,9 +3565,10 @@ export interface StoredOllamaSessionMemory {
  * `threadWorktreeBinding`.
  *
  * Lifecycle: `active` (lane running) → `settled` (lane terminal; diff stat
- * captured best-effort) → `promoted` (patch applied onto the base workspace's
- * working tree; worktree + branch removed) or `discarded` (worktree + branch
- * removed, changes dropped).
+ * captured best-effort, optionally carrying a crash-recovery promotion
+ * intent) → `promoted` (patch applied onto the base workspace's working tree;
+ * worktree + branch removed) or `discarded` (worktree + branch removed,
+ * changes dropped).
  */
 export interface FanoutWorktreeCandidate {
   schemaVersion: 1
@@ -3586,6 +3587,15 @@ export interface FanoutWorktreeCandidate {
   branch: string
   createdAt: string
   status: 'active' | 'settled' | 'promoted' | 'discarded'
+  /**
+   * Durable write-ahead intent for crash-safe base promotion. Presence means
+   * the exact patch may or may not already be applied; recovery must classify
+   * it under the workspace lock before retrying.
+   */
+  promotionIntent?: {
+    patchSha256: string
+    startedAt: string
+  }
   /** Terminal outcome of the producing run, once known. */
   runStatus?: 'completed' | 'failed' | 'cancelled'
   settledAt?: string

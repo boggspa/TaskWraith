@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
 import {
   createDesktopToolExecutors,
   type DesktopAttachedWindowState,
@@ -201,6 +202,7 @@ function createExecutor(input: {
   attachedWindow?: DesktopAttachedWindowState
   daemon?: DesktopBridgeDaemon | null
   notifyRenderer?: NonNullable<DesktopToolExecutorDeps['notifyRenderer']>
+  shell?: DesktopToolExecutorDeps['shell']
 }) {
   const chats = new Map(input.chats.map((item) => [item.appChatId, item]))
   const getRunEventReplay = vi.fn(
@@ -221,10 +223,12 @@ function createExecutor(input: {
       saveHandoffCard: (handoff) => handoff as HandoffCard
     },
     runRepository: { getRunEventReplay, getRunEvents },
-    shell: {
-      showItemInFolder: () => undefined,
-      openPath: async () => ''
-    },
+    shell:
+      input.shell ??
+      {
+        showItemInFolder: () => undefined,
+        openPath: async () => ''
+      },
     ...(input.providerAuth ? { providerAuth: input.providerAuth } : {}),
     ...(input.notifyRenderer ? { notifyRenderer: input.notifyRenderer } : {})
   }
@@ -241,6 +245,33 @@ const activeContext: DesktopToolContext = {
 
 const otherChatContext: DesktopToolContext = { ...activeContext, appChatId: 'chat-b' }
 const missingChatContext: DesktopToolContext = { ...activeContext, appChatId: undefined }
+
+describe('DesktopToolExecutors host application effects', () => {
+  it('opens a workspace file through the host shell under application-mutation metadata', async () => {
+    const openPath = vi.fn(async () => '')
+    const showItemInFolder = vi.fn()
+    const { executor } = createExecutor({
+      chats: [chat('chat-a', [])],
+      shell: { openPath, showItemInFolder }
+    })
+
+    await expect(
+      executor.executeOpenWorkspaceFile({ path: 'docs/report.html' }, activeContext)
+    ).resolves.toMatchObject({
+      ok: true,
+      path: '/workspace/docs/report.html',
+      action: 'open'
+    })
+    expect(openPath).toHaveBeenCalledWith('/workspace/docs/report.html')
+    expect(showItemInFolder).not.toHaveBeenCalled()
+    expect(TASKWRAITH_TOOL_ACTIONS.open_workspace_file).toMatchObject({
+      toolClass: 'workspace_write',
+      operation: 'application.mutate',
+      mutation: 'attached-application',
+      lock: 'application-resource'
+    })
+  })
+})
 
 function createRunningDaemon(
   respond: (method: string, params: unknown) => unknown | Promise<unknown>

@@ -31,13 +31,26 @@ describe('unqualifyKimiMcpToolName', () => {
 
 describe('isKimiSafeMcpTool', () => {
   it('recognises a namespaced capability gateway tool as safe (the ensemble-soak bug)', () => {
-    expect(isKimiSafeMcpTool({ toolName: 'mcp__taskwraith__capability_search' })).toBe(true)
-    expect(isKimiSafeMcpTool({ toolName: 'mcp__TaskWraith__capability_search' })).toBe(true)
+    expect(
+      isKimiSafeMcpTool({
+        rawToolCall: {
+          rawInput: { tool_name: 'mcp__taskwraith__capability_search' }
+        }
+      })
+    ).toBe(true)
+    expect(
+      isKimiSafeMcpTool({
+        rawToolCall: {
+          rawInput: { tool_name: 'mcp__TaskWraith__capability_search' }
+        }
+      })
+    ).toBe(true)
   })
   it('recognises only the exact sanctioned read_file name, not containing lookalikes', () => {
-    expect(isKimiSafeMcpTool({ toolName: 'mcp__taskwraith__read_file' })).toBe(true)
-    expect(isKimiSafeMcpTool({ toolName: 'mcp__taskwraith__not_read_file' })).toBe(false)
-    expect(isKimiSafeMcpTool({ toolName: 'mcp__taskwraith__read_file_suffix' })).toBe(false)
+    const request = (tool_name: string) => ({ rawToolCall: { rawInput: { tool_name } } })
+    expect(isKimiSafeMcpTool(request('mcp__taskwraith__read_file'))).toBe(true)
+    expect(isKimiSafeMcpTool(request('mcp__taskwraith__not_read_file'))).toBe(false)
+    expect(isKimiSafeMcpTool(request('mcp__taskwraith__read_file_suffix'))).toBe(false)
   })
   it('recognises the tool name from rawToolCall.rawInput too', () => {
     expect(
@@ -49,6 +62,60 @@ describe('isKimiSafeMcpTool', () => {
   it('does not classify a mutating tool as safe', () => {
     expect(isKimiSafeMcpTool({ toolName: 'Write' })).toBe(false)
     expect(isKimiSafeMcpTool({ toolName: 'mcp__taskwraith__ensemble_bossman_control' })).toBe(false)
+  })
+
+  it('never treats a human title or foreign MCP namespace as safe provenance', () => {
+    for (const toolName of [
+      'mcp__taskwraith__read_file',
+      'mcp__TaskWraith__read_file',
+      'mcp__evil__read_file'
+    ]) {
+      const request = {
+        toolName,
+        toolKind: 'edit',
+        rawToolCall: {
+          kind: 'edit',
+          rawInput: { path: 'inside.ts', content: 'pwn' }
+        }
+      }
+      expect(isKimiSafeMcpTool(request), toolName).toBe(false)
+      expect(
+        classifyKimiToolPermission(
+          request,
+          opts({ writeCapable: false, isSafeMcpTool: isKimiSafeMcpTool })
+        ),
+        toolName
+      ).toBe('deny')
+    }
+  })
+
+  it('rejects a stable safe identity that contradicts kind, shape, or another identity', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolKind: 'edit',
+        rawToolCall: {
+          kind: 'edit',
+          rawInput: {
+            tool_name: 'mcp__taskwraith__read_file',
+            path: 'inside.ts',
+            content: 'pwn'
+          }
+        }
+      })
+    ).toBe(false)
+    expect(
+      isKimiSafeMcpTool({
+        toolKind: 'read',
+        rawToolCall: {
+          kind: 'read',
+          rawInput: {
+            tool_name: 'mcp__taskwraith__read_file',
+            name: 'mcp__evil__read_file',
+            path: 'inside.ts'
+          }
+        }
+      })
+    ).toBe(false)
   })
 })
 

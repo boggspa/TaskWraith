@@ -25,6 +25,31 @@ describe('provider dispatch integration', () => {
   // this scan green and the app un-launchable. Its spread list was also a frozen
   // four names, so it never grew with the roster it claimed to cover.
 
+  it('strict-validates raw Gemini API function names before canonical dispatch', () => {
+    const geminiDeps = sourceBetween(
+      'function geminiApiProviderDeps()',
+      'function antigravityGeminiApiAgentDeps('
+    )
+    const geminiExecute = geminiDeps.slice(
+      geminiDeps.indexOf('executeMcpTool: async'),
+      geminiDeps.indexOf('prepareToolContext:')
+    )
+    const antiDeps = sourceBetween(
+      'function antigravityGeminiApiAgentDeps(',
+      'async function runAntigravityGeminiApiSeatSummary('
+    )
+    const antiExecute = antiDeps.slice(
+      antiDeps.indexOf('executeMcpTool: async'),
+      antiDeps.indexOf('prepareToolContext:')
+    )
+
+    for (const source of [geminiExecute, antiExecute]) {
+      expect(source).toContain('resolveToolDispatchContractStrict(toolName, args)')
+      expect(source).toContain('dispatchContract.toolName')
+      expect(source).not.toContain('canonicalTaskWraithToolName(toolName)')
+    }
+  })
+
   it('routes the legacy Gemini IPC surface through the shared dispatch facade', () => {
     const handler = sourceBetween(
       "ipcMain.handle(\n      'run-gemini'",

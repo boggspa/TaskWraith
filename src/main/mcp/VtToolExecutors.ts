@@ -67,6 +67,7 @@ export interface VtToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  assertMutationAuthorized?: () => void | Promise<void>
 }
 
 export type VtJailedInput =
@@ -478,6 +479,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       const mimeType = 'video/mp4'
       let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
+        await ctx.assertMutationAuthorized?.()
         const result = await encodeClip({
           sourcePath: jailed.realPath,
           outputPath,
@@ -602,6 +604,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       const mimeType = 'video/mp4'
       let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
+        await ctx.assertMutationAuthorized?.()
         const result = await concatClips({
           outputPath,
           segments: realSegments,
@@ -733,6 +736,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       const outputPath = stagingPath(ext)
       let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
+        await ctx.assertMutationAuthorized?.()
         const result = await mixdown({
           outputPath,
           format,

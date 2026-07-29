@@ -1,14 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
+  classifyCatalogTool,
+  classifyHistoricalToolForDisplay,
   classifyTool,
   groupToolsByClass,
   isReadOnlyBlockedTool,
   isNetworkAccessBlockedTool,
   READ_ONLY_TOOL_PRESET,
+  resolveToolClassStrict,
   TOOL_CLASS_LABELS,
   TOOL_CLASS_ORDER
 } from './ToolClassTaxonomy'
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
+import { TASKWRAITH_TOOL_ACTIONS } from '../shared/providerActionTaxonomy'
 import {
   MCP_APP_STATE_MUTATION_TOOLS,
   MCP_AUTO_ALLOWED_TOOLS,
@@ -16,6 +20,66 @@ import {
 } from './mcp/McpAutoAllowedTools'
 
 describe('classifyTool', () => {
+  it('projects every exact catalog class from the exhaustive shared metadata', () => {
+    for (const toolName of TASKWRAITH_MCP_TOOLS) {
+      expect(classifyCatalogTool(toolName)).toBe(TASKWRAITH_TOOL_ACTIONS[toolName].toolClass)
+      expect(resolveToolClassStrict(toolName)).toMatchObject({
+        ok: true,
+        toolClass: TASKWRAITH_TOOL_ACTIONS[toolName].toolClass
+      })
+    }
+  })
+
+  it('separates strict unknown denial from conservative historical display', () => {
+    expect(resolveToolClassStrict('something_brand_new')).toMatchObject({
+      ok: false,
+      denied: true,
+      code: 'unmapped_catalog_action'
+    })
+    expect(classifyHistoricalToolForDisplay('something_brand_new')).toBe('workspace_write')
+    expect(classifyHistoricalToolForDisplay('Grep')).toBe('workspace_read')
+    expect(isReadOnlyBlockedTool('something_brand_new', { readOnly: true })).toBe(true)
+    expect(isNetworkAccessBlockedTool('something_brand_new', { networkAccess: 'deny' })).toBe(true)
+  })
+
+  it('inherits gateway class and read-only policy from the concrete target', () => {
+    expect(resolveToolClassStrict('capability_search')).toMatchObject({
+      ok: true,
+      toolName: 'capability_search',
+      toolClass: 'orchestration'
+    })
+    expect(
+      resolveToolClassStrict('capability_invoke', {
+        name: 'write_file',
+        arguments: { path: 'x', content: 'body' }
+      })
+    ).toMatchObject({
+      ok: true,
+      toolName: 'write_file',
+      toolClass: 'workspace_write'
+    })
+    expect(
+      isReadOnlyBlockedTool(
+        'capability_invoke',
+        { readOnly: true },
+        { name: 'write_file', arguments: { path: 'x', content: 'body' } }
+      )
+    ).toBe(true)
+    expect(
+      isReadOnlyBlockedTool(
+        'capability_invoke',
+        { readOnly: true },
+        { name: 'read_file', arguments: { path: 'x' } }
+      )
+    ).toBe(false)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', { networkAccess: 'deny' }, undefined, {
+        name: 'web_search',
+        arguments: { query: 'release' }
+      })
+    ).toBe(true)
+  })
+
   it('classifies each non-write class', () => {
     expect(classifyTool('read_file')).toBe('workspace_read')
     expect(classifyTool('find_files')).toBe('workspace_read')
@@ -90,6 +154,98 @@ describe('isNetworkAccessBlockedTool', () => {
     )
   })
 
+  it('derives external publish blocking from canonical action metadata', () => {
+    const denied = { networkAccess: 'deny' }
+    expect(isNetworkAccessBlockedTool('git_push', denied)).toBe(true)
+    expect(isNetworkAccessBlockedTool('git_create_pr', denied)).toBe(true)
+    expect(isNetworkAccessBlockedTool('git_commit', denied)).toBe(false)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'git_push',
+        arguments: {}
+      })
+    ).toBe(true)
+  })
+
+  it('blocks declared network egress even when the primary operation is media or application mutation', () => {
+    const denied = { networkAccess: 'deny' }
+    expect(isNetworkAccessBlockedTool('image_generate', denied, undefined, { prompt: 'cat' })).toBe(
+      true
+    )
+    expect(
+      isNetworkAccessBlockedTool('browser_open', denied, undefined, {
+        url: 'https://example.com/demo'
+      })
+    ).toBe(true)
+    expect(
+      isNetworkAccessBlockedTool('canvas_open', denied, undefined, {
+        url: 'http://192.168.1.20:4173'
+      })
+    ).toBe(true)
+  })
+
+  it('preserves local browser and canvas use under a network deny', () => {
+    const denied = { networkAccess: 'deny' }
+    for (const args of [
+      { path: 'docs/report.html' },
+      { url: 'file:///tmp/report.html' },
+      { url: 'http://localhost:4173' },
+      { href: '127.0.0.1:3000/status' },
+      { url: 'http://127.42.7.9:8080' },
+      { url: 'http://[::1]:4173' }
+    ]) {
+      expect(
+        isNetworkAccessBlockedTool('browser_open', denied, undefined, args),
+        JSON.stringify(args)
+      ).toBe(false)
+    }
+    expect(
+      isNetworkAccessBlockedTool('canvas_open', denied, undefined, {
+        url: 'http://localhost:3000'
+      })
+    ).toBe(false)
+    expect(
+      isNetworkAccessBlockedTool('canvas_open', denied, undefined, {
+        driver: 'device',
+        bundleId: 'com.example.App'
+      })
+    ).toBe(false)
+  })
+
+  it('derives network egress and URL arguments through capability_invoke', () => {
+    const denied = { networkAccess: 'deny' }
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'image_generate',
+        arguments: { prompt: 'cat' }
+      })
+    ).toBe(true)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'browser_open',
+        arguments: { url: 'https://example.com' }
+      })
+    ).toBe(true)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'canvas_open',
+        arguments: { url: 'https://example.com/canvas' }
+      })
+    ).toBe(true)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'browser_open',
+        arguments: { path: 'docs/report.html' }
+      })
+    ).toBe(false)
+    expect(
+      isNetworkAccessBlockedTool('capability_invoke', denied, undefined, {
+        name: 'canvas_open',
+        arguments: { url: 'http://localhost:4173' }
+      })
+    ).toBe(false)
+  })
+
   it('treats the global network deny setting as stronger than a run-level allow', () => {
     expect(
       isNetworkAccessBlockedTool(
@@ -103,6 +259,11 @@ describe('isNetworkAccessBlockedTool', () => {
   it('does not block web reads when network access is allowed', () => {
     expect(isNetworkAccessBlockedTool('web_search', { networkAccess: 'allow' })).toBe(false)
     expect(isNetworkAccessBlockedTool('web_fetch')).toBe(false)
+    expect(
+      isNetworkAccessBlockedTool('browser_open', { networkAccess: 'allow' }, undefined, {
+        url: 'https://example.com'
+      })
+    ).toBe(false)
   })
 })
 
@@ -285,9 +446,9 @@ describe('isReadOnlyBlockedTool', () => {
     expect(isReadOnlyBlockedTool('ensemble_poll_response', ro)).toBe(false)
     expect(isReadOnlyBlockedTool('ensemble_propose_goal_complete', ro)).toBe(false)
     // …but they REMAIN app-state mutations (route/workspace-lineage guard input preserved)…
-    expect((MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_poll_response')).toBe(
-      true
-    )
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_poll_response')
+    ).toBe(true)
     expect(
       (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_propose_goal_complete')
     ).toBe(true)
@@ -348,18 +509,33 @@ describe('isReadOnlyBlockedTool', () => {
     // a wrong / privileged action carrying the same key-set:
     for (const action of ['quarantine_participant', 'set_review_gate', 'set_goal', 'assign_work']) {
       expect(
-        isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action, gateId: 'g1', verdict: 'passed' })
+        isReadOnlyBlockedTool('ensemble_bossman_control', ro, {
+          action,
+          gateId: 'g1',
+          verdict: 'passed'
+        })
       ).toBe(true)
     }
     // a missing key, a blank gateId, a bad verdict enum:
     expect(
-      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', verdict: 'passed' })
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, {
+        action: 'submit_review_verdict',
+        verdict: 'passed'
+      })
     ).toBe(true)
     expect(
-      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', gateId: '   ', verdict: 'passed' })
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, {
+        action: 'submit_review_verdict',
+        gateId: '   ',
+        verdict: 'passed'
+      })
     ).toBe(true)
     expect(
-      isReadOnlyBlockedTool('ensemble_bossman_control', ro, { action: 'submit_review_verdict', gateId: 'g1', verdict: 'waived' })
+      isReadOnlyBlockedTool('ensemble_bossman_control', ro, {
+        action: 'submit_review_verdict',
+        gateId: 'g1',
+        verdict: 'waived'
+      })
     ).toBe(true)
 
     // Tool-scoped: the identical exact payload on a DIFFERENT tool name is still blocked
@@ -368,8 +544,8 @@ describe('isReadOnlyBlockedTool', () => {
 
     // Route/lineage invariant preserved: the tool REMAINS an app-state mutation — the
     // exception relaxes ONLY the read-only mutation-deny, exactly like the poll tools.
-    expect((MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_bossman_control')).toBe(
-      true
-    )
+    expect(
+      (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has('ensemble_bossman_control')
+    ).toBe(true)
   })
 })

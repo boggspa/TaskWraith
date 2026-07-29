@@ -5,10 +5,15 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 
 const WINDOWS_ARCHES = ['x64', 'arm64']
-const DEFAULT_FEED_NAMES = WINDOWS_ARCHES.flatMap((arch) => [
-  `latest-win-${arch}.yml`,
-  `beta-win-${arch}.yml`
-])
+
+function expectedChannel(version) {
+  return String(version).includes('-') ? 'beta' : 'latest'
+}
+
+function feedNamesForVersion(version) {
+  const channels = version ? [expectedChannel(version)] : ['latest', 'beta']
+  return WINDOWS_ARCHES.flatMap((arch) => channels.map((channel) => `${channel}-win-${arch}.yml`))
+}
 
 function cleanArtifactName(value) {
   if (!value || typeof value !== 'string') return undefined
@@ -88,10 +93,26 @@ function extractArtifactEntries(feedText) {
 function validateWindowsUpdateFeedText(feedText, options = {}) {
   const fileName = options.fileName || 'windows update feed'
   const expectedArch = options.expectedArch || expectedArchFromFeedName(fileName)
+  const expectedVersion = options.expectedVersion
+  const version = parseFeedScalar(feedText.match(/(?:^|\n)version:\s*([^\n]+)/)?.[1])
   const entries = extractArtifactEntries(feedText)
   const errors = []
   const topLevel = entries.find((entry) => entry.source === 'path')
 
+  if (
+    expectedVersion &&
+    path.basename(fileName) !==
+      `${expectedChannel(expectedVersion)}-win-${expectedArch || 'unknown'}.yml`
+  ) {
+    errors.push(
+      `${fileName}: feed filename does not match ${expectedChannel(expectedVersion)} channel and ${expectedArch || 'unknown'} architecture.`
+    )
+  }
+  if (!version) {
+    errors.push(`${fileName}: missing version.`)
+  } else if (expectedVersion && version !== expectedVersion) {
+    errors.push(`${fileName}: feed version ${version} does not match package ${expectedVersion}.`)
+  }
   if (!expectedArch) {
     errors.push(`${fileName}: feed name must include x64 or arm64.`)
   }
@@ -102,6 +123,15 @@ function validateWindowsUpdateFeedText(feedText, options = {}) {
   }
 
   for (const entry of entries) {
+    const expectedArtifact =
+      expectedVersion && expectedArch
+        ? `TaskWraith-${expectedVersion}-win-${expectedArch}-setup.exe`
+        : undefined
+    if (expectedArtifact && entry.name !== expectedArtifact) {
+      errors.push(
+        `${fileName}: unexpected package artifact ${entry.name}; expected ${expectedArtifact}.`
+      )
+    }
     if (entry.arch === 'unknown') {
       errors.push(`${fileName}: ${entry.name} has unknown Windows artifact architecture.`)
     } else if (expectedArch && entry.arch !== expectedArch) {
@@ -120,13 +150,17 @@ function validateWindowsUpdateFeedText(feedText, options = {}) {
   return {
     ok: errors.length === 0,
     errors,
-    artifacts: entries
+    artifacts: entries,
+    version
   }
 }
 
-function validateWindowsUpdateFeedFile(filePath) {
+function validateWindowsUpdateFeedFile(filePath, expectedVersion) {
   const text = fs.readFileSync(filePath, 'utf8')
-  const result = validateWindowsUpdateFeedText(text, { fileName: path.basename(filePath) })
+  const result = validateWindowsUpdateFeedText(text, {
+    fileName: path.basename(filePath),
+    expectedVersion
+  })
   const metadataErrors = validateFeedArtifactMetadata(filePath, result.artifacts)
   return {
     ...result,
@@ -161,16 +195,29 @@ function validateFeedArtifactMetadata(feedPath, artifacts) {
   return errors
 }
 
-function validateWindowsReleaseDirectory(distDir) {
+function validateWindowsReleaseDirectory(distDir, version) {
   const errors = []
   const installerNames = safeReadDir(distDir)
     .filter((entry) => entry.isFile() && /\.exe$/i.test(entry.name) && /setup/i.test(entry.name))
     .map((entry) => entry.name)
 
   for (const arch of WINDOWS_ARCHES) {
-    const installer = installerNames.find((name) => classifyWindowsArtifact(name) === arch)
+    if (version) {
+      const feedName = `${expectedChannel(version)}-win-${arch}.yml`
+      if (!fs.existsSync(path.join(distDir, feedName))) {
+        errors.push(`${path.basename(distDir)}: missing Windows update feed ${feedName}.`)
+      }
+    }
+    const expectedInstaller = version ? `TaskWraith-${version}-win-${arch}-setup.exe` : undefined
+    const installer = expectedInstaller
+      ? installerNames.find((name) => name === expectedInstaller)
+      : installerNames.find((name) => classifyWindowsArtifact(name) === arch)
     if (!installer) {
-      errors.push(`${path.basename(distDir)}: missing Windows ${arch} setup installer.`)
+      errors.push(
+        `${path.basename(distDir)}: missing Windows ${arch} setup installer${
+          expectedInstaller ? ` ${expectedInstaller}` : ''
+        }.`
+      )
       continue
     }
     const blockMapPath = path.join(distDir, `${installer}.blockmap`)
@@ -182,14 +229,14 @@ function validateWindowsReleaseDirectory(distDir) {
   return errors
 }
 
-function resolveFeedFiles(targets) {
+function resolveFeedFiles(targets, version) {
   const resolved = []
   for (const target of targets) {
     const absolute = path.resolve(target)
     if (!fs.existsSync(absolute)) continue
     const stat = fs.statSync(absolute)
     if (stat.isDirectory()) {
-      for (const feedName of DEFAULT_FEED_NAMES) {
+      for (const feedName of feedNamesForVersion(version)) {
         const candidate = path.join(absolute, feedName)
         if (fs.existsSync(candidate)) resolved.push(candidate)
       }
@@ -201,12 +248,16 @@ function resolveFeedFiles(targets) {
 }
 
 function runCli(argv = process.argv.slice(2)) {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
+  )
+  const version = packageJson.version
   const targets = argv.length > 0 ? argv : ['dist']
-  const files = resolveFeedFiles(targets)
+  const files = resolveFeedFiles(targets, version)
   const directoryErrors = targets.flatMap((target) => {
     const absolute = path.resolve(target)
     return fs.existsSync(absolute) && fs.statSync(absolute).isDirectory()
-      ? validateWindowsReleaseDirectory(absolute)
+      ? validateWindowsReleaseDirectory(absolute, version)
       : []
   })
   if (files.length === 0) {
@@ -221,7 +272,7 @@ function runCli(argv = process.argv.slice(2)) {
     console.error(`[validate-win-update-feed] ${error}`)
   }
   for (const file of files) {
-    const result = validateWindowsUpdateFeedFile(file)
+    const result = validateWindowsUpdateFeedFile(file, version)
     if (result.ok) {
       console.log(
         `[validate-win-update-feed] ${path.basename(file)} ok (${result.artifacts
@@ -252,7 +303,9 @@ if (require.main === module) {
 
 module.exports = {
   classifyWindowsArtifact,
+  expectedChannel,
   extractArtifactEntries,
+  resolveFeedFiles,
   runCli,
   validateWindowsReleaseDirectory,
   validateFeedArtifactMetadata,

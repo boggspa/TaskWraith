@@ -9,6 +9,10 @@
 import { promises as fs } from 'fs'
 import { delimiter, join } from 'path'
 import { cliBinaryNameCandidates, getCliSearchDirs } from '../providers/CliSearchDirs'
+import {
+  TASKWRAITH_LOCK_OWNER_ENV_KEY,
+  withExactWorkspaceLockOwnerEnv
+} from '../WorkspaceLockExecutionIdentity'
 
 export const AGY_BINARY_NAME = 'agy'
 export const AGY_MODEL_DISCOVERY_ARGS = ['models'] as const
@@ -163,13 +167,21 @@ export function createAgyCliEnv(
   inheritedEnv: Readonly<Record<string, string | undefined>> = process.env,
   extraEnv: Readonly<Record<string, string | undefined>> = {}
 ): Record<string, string> {
-  const merged = { ...inheritedEnv, ...extraEnv }
   const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(merged)) {
+  for (const [key, value] of Object.entries(inheritedEnv)) {
+    if (key.toUpperCase() === TASKWRAITH_LOCK_OWNER_ENV_KEY) continue
     if (typeof value !== 'string' || isAgyCredentialEnvironmentKey(key)) continue
     env[key] = value
   }
-  return env
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (key.toUpperCase() === TASKWRAITH_LOCK_OWNER_ENV_KEY) continue
+    if (typeof value !== 'string' || isAgyCredentialEnvironmentKey(key)) continue
+    env[key] = value
+  }
+  return withExactWorkspaceLockOwnerEnv(
+    env,
+    extraEnv[TASKWRAITH_LOCK_OWNER_ENV_KEY]
+  ) as Record<string, string>
 }
 
 export function buildAgyModelDiscoveryArgs(): string[] {

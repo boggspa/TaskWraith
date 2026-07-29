@@ -203,4 +203,30 @@ describe('normalizeCandidate', () => {
     expect(normalized.model).toBeUndefined()
     expect(normalized.participantLabel).toBe('Writer')
   })
+
+  it('preserves a valid promotion intent and rejects malformed patch digests', () => {
+    expect(
+      normalizeCandidate(
+        candidate({
+          promotionIntent: {
+            patchSha256: 'A'.repeat(64),
+            startedAt: '2026-07-29T18:00:00.000Z'
+          }
+        })
+      ).promotionIntent
+    ).toEqual({
+      patchSha256: 'a'.repeat(64),
+      startedAt: '2026-07-29T18:00:00.000Z'
+    })
+    expect(() =>
+      normalizeCandidate(
+        candidate({
+          promotionIntent: {
+            patchSha256: 'not-a-digest',
+            startedAt: '2026-07-29T18:00:00.000Z'
+          }
+        })
+      )
+    ).toThrow('malformed promotion intent')
+  })
 })

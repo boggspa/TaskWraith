@@ -91,6 +91,14 @@ import {
   type ChatUpdateAck,
   type ChatUpdateDelivery
 } from '../shared/chatUpdateTransport'
+import {
+  workLockProjectionUpdateIsStale,
+  type WorkLockProjectionChangedEvent,
+  type WorkLockProjectionQuery,
+  type WorkLockProjectionSnapshot,
+  type WorkLockProjectionSubscribeResult,
+  type WorkLockProjectionUpdate
+} from '../shared/workLockProjection'
 import type {
   ChatPopoutRoundExpansionSnapshot,
   ChatPopoutScrollState
@@ -664,6 +672,45 @@ const api = {
       active = false
       ipcRenderer.removeListener('git:snapshot-changed', wrapped)
       void ipcRenderer.invoke('git:unsubscribe-snapshot', { subscriptionId }).catch(() => {})
+    }
+  },
+  listWorkLocks: (query: WorkLockProjectionQuery = {}) =>
+    ipcRenderer.invoke('work-locks:list', query) as Promise<WorkLockProjectionSnapshot>,
+  subscribeWorkLocks: (
+    query: WorkLockProjectionQuery,
+    callback: (update: WorkLockProjectionUpdate) => void
+  ) => {
+    const subscriptionId =
+      globalThis.crypto?.randomUUID?.() ||
+      `work-locks-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    let active = true
+    let latestGeneration = -1
+    const deliver = (update: WorkLockProjectionUpdate): void => {
+      if (
+        !active ||
+        workLockProjectionUpdateIsStale(latestGeneration, update.snapshot.generation)
+      ) {
+        return
+      }
+      latestGeneration = update.snapshot.generation
+      callback(update)
+    }
+    const wrapped = (_event: unknown, update: WorkLockProjectionChangedEvent): void => {
+      if (update?.subscriptionId !== subscriptionId) return
+      deliver({ reason: update.reason, snapshot: update.snapshot })
+    }
+    ipcRenderer.on('work-locks:changed', wrapped)
+    void ipcRenderer
+      .invoke('work-locks:subscribe', { ...query, subscriptionId })
+      .then((result: WorkLockProjectionSubscribeResult) => {
+        if (!active || !result?.ok) return
+        deliver({ reason: 'initial', snapshot: result.data.snapshot })
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+      ipcRenderer.removeListener('work-locks:changed', wrapped)
+      void ipcRenderer.invoke('work-locks:unsubscribe', { subscriptionId }).catch(() => {})
     }
   },
   gitInvalidateSnapshot: (payload: {
@@ -2531,6 +2578,7 @@ const api = {
     ipcRenderer.removeAllListeners('run-queue-changed')
     ipcRenderer.removeAllListeners('run-events-changed')
     ipcRenderer.removeAllListeners('execution-graph-changed')
+    ipcRenderer.removeAllListeners('work-locks:changed')
     ipcRenderer.removeAllListeners('agent-approval-request')
     ipcRenderer.removeAllListeners('agent-approval-timeout')
     ipcRenderer.removeAllListeners('agent-approval-resolved')

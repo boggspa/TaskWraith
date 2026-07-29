@@ -4,6 +4,7 @@ import {
   RETIRED_PROVIDER_IDS,
   isLiveSelectableProvider
 } from '../../shared/retiredProviders'
+import { PROVIDER_ACTION_ADAPTERS } from '../../shared/providerActionTaxonomy'
 import type { ProviderId } from '../store/types'
 import {
   PROVIDER_RUN_MANAGEMENT_DECLARATIONS,
@@ -97,6 +98,17 @@ describe('ProviderRunManagementMatrix', () => {
       toolMediationMode: 'route-dependent-taskwraith-or-provider-native',
       brokerObservability: 'route-dependent',
       binaryRuntimeProvenance: 'route-dependent-api-or-advisory-cli-publisher'
+    })
+  })
+
+  it('keeps Claude run-management truth aligned with its catalog-only launch surface', () => {
+    expect(PROVIDER_ACTION_ADAPTERS.claude).toMatchObject({
+      nativeSurface: 'catalog-only',
+      nativeMediation: 'not-applicable'
+    })
+    expect(PROVIDER_RUN_MANAGEMENT_DECLARATIONS.claude).toMatchObject({
+      toolMediationMode: 'taskwraith-broker-only',
+      brokerObservability: 'host-authoritative'
     })
   })
 

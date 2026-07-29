@@ -7,6 +7,7 @@
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
+import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 
 const KIMI_NATIVE_DENY_NAMES = new Set(KIMI_ACP_DENY_TOOLS.map((name) => name.toLowerCase()))
 
@@ -32,18 +33,64 @@ export function unqualifyKimiMcpToolName(value: unknown): string | null {
  */
 export function isKimiSafeMcpTool(request: {
   toolName?: string
+  toolKind?: string
   rawToolCall?: unknown
 }): boolean {
   const raw = request.rawToolCall as
-    | { rawInput?: { tool_name?: unknown; name?: unknown } }
+    | {
+        kind?: unknown
+        rawInput?: {
+          tool_name?: unknown
+          name?: unknown
+          command?: unknown
+          cmd?: unknown
+          content?: unknown
+          patch?: unknown
+          diff?: unknown
+          changes?: unknown
+          old_string?: unknown
+          new_string?: unknown
+        }
+      }
     | undefined
-  for (const candidate of [request.toolName, raw?.rawInput?.tool_name, raw?.rawInput?.name]) {
-    const tool = unqualifyKimiMcpToolName(candidate)
-    if (tool && (isReadOnlyAdvertisedTool(tool) || isCapabilityGatewayToolName(tool))) {
-      return true
-    }
+  const rawInput = raw?.rawInput
+  const toolKind =
+    (typeof request.toolKind === 'string' && request.toolKind) ||
+    (typeof raw?.kind === 'string' && raw.kind) ||
+    ''
+  if (['edit', 'delete', 'move', 'execute'].includes(toolKind.trim().toLowerCase())) {
+    return false
   }
-  return false
+  if (
+    rawInput &&
+    [
+      rawInput.command,
+      rawInput.cmd,
+      rawInput.content,
+      rawInput.patch,
+      rawInput.diff,
+      rawInput.changes,
+      rawInput.old_string,
+      rawInput.new_string
+    ].some((value) => value !== undefined)
+  ) {
+    return false
+  }
+
+  const candidates = [rawInput?.tool_name, rawInput?.name].filter(
+    (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
+  )
+  if (candidates.length === 0) return false
+  const resolvedTools = candidates.map((candidate) => {
+    if (!/^mcp__taskwraith__/i.test(candidate)) return null
+    const resolution = resolveToolDispatchContractStrict(candidate, rawInput)
+    if (!resolution.ok) return null
+    return resolution.toolName
+  })
+  if (resolvedTools.some((tool) => tool === null)) return false
+  if (new Set(resolvedTools).size !== 1) return false
+  const tool = resolvedTools[0]
+  return Boolean(tool && (isReadOnlyAdvertisedTool(tool) || isCapabilityGatewayToolName(tool)))
 }
 
 export type KimiToolDecision = 'allow' | 'gate' | 'deny'

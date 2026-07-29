@@ -160,7 +160,8 @@ describe('Kimi runtime qualification projection verifier', () => {
     )
     expect(packageJson.scripts.ci).toContain('npm run verify:kimi-runtime-qualifications')
     expect(packageJson.scripts.build).toContain('npm run verify:kimi-runtime-qualifications')
-    expect(releaseValidation).toContain("step('kimi-runtime-qualification-projection'")
-    expect(releaseValidation).toContain("args: ['run', 'verify:kimi-runtime-qualifications']")
+    expect(releaseValidation).toContain(
+      "npmStep('kimi-runtime-qualification-projection', 'verify:kimi-runtime-qualifications')"
+    )
   })
 })

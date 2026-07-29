@@ -8,17 +8,23 @@ import { describe, expect, it } from 'vitest'
 const require = createRequire(import.meta.url)
 const {
   classifyWindowsArtifact,
+  expectedChannel,
+  resolveFeedFiles,
+  validateWindowsReleaseDirectory,
   validateWindowsUpdateFeedFile,
   validateWindowsUpdateFeedText
 }: {
   classifyWindowsArtifact: (name: string | undefined) => 'arm64' | 'x64' | 'unknown'
+  expectedChannel: (version: string) => string
+  resolveFeedFiles: (targets: string[], version?: string) => string[]
+  validateWindowsReleaseDirectory: (distDir: string, version?: string) => string[]
   validateWindowsUpdateFeedFile: (filePath: string) => {
     ok: boolean
     errors: string[]
   }
   validateWindowsUpdateFeedText: (
     feedText: string,
-    options?: { fileName?: string; expectedArch?: string }
+    options?: { fileName?: string; expectedArch?: string; expectedVersion?: string }
   ) => {
     ok: boolean
     errors: string[]
@@ -135,5 +141,52 @@ sha512: ${sha512}
     expect(classifyWindowsArtifact('TaskWraith-1.0.73-win-arm64-setup.exe')).toBe('arm64')
     expect(classifyWindowsArtifact('TaskWraith-1.0.73-win-x64-setup.exe')).toBe('x64')
     expect(classifyWindowsArtifact('TaskWraith-1.0.73-setup.exe')).toBe('unknown')
+  })
+
+  it('binds Windows feeds, installers, and channels to the package version', () => {
+    const result = validateWindowsUpdateFeedText(
+      `
+version: 1.9.1
+files:
+  - url: TaskWraith-1.9.1-win-x64-setup.exe
+    sha512: example
+    size: 123
+path: TaskWraith-1.9.1-win-x64-setup.exe
+sha512: example
+`,
+      {
+        fileName: 'latest-win-x64.yml',
+        expectedVersion: '1.9.2'
+      }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.errors).toContain(
+      'latest-win-x64.yml: feed version 1.9.1 does not match package 1.9.2.'
+    )
+
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-win-feed-'))
+    for (const fileName of [
+      'latest-win-x64.yml',
+      'latest-win-arm64.yml',
+      'beta-win-x64.yml',
+      'beta-win-arm64.yml'
+    ]) {
+      fs.writeFileSync(path.join(tempDir, fileName), '')
+    }
+    try {
+      expect(resolveFeedFiles([tempDir], '1.9.2').map((file) => path.basename(file))).toEqual([
+        'latest-win-x64.yml',
+        'latest-win-arm64.yml'
+      ])
+      expect(expectedChannel('1.9.2-beta.1')).toBe('beta')
+      expect(validateWindowsReleaseDirectory(tempDir, '1.9.2')).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('TaskWraith-1.9.2-win-x64-setup.exe'),
+          expect.stringContaining('TaskWraith-1.9.2-win-arm64-setup.exe')
+        ])
+      )
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })

@@ -49,6 +49,7 @@ export interface FfmpegToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  assertMutationAuthorized?: () => void | Promise<void>
 }
 
 export type JailedMediaInput =
@@ -266,6 +267,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       if (!argv.ok) return fail('video_probe', argv.error)
       let run: FfmpegRunResult
       try {
+        await ctx.assertMutationAuthorized?.()
         run = await runFfprobe(ffprobe, argv.args)
       } catch (error) {
         return fail('video_probe', error instanceof Error ? error.message : String(error))
@@ -305,6 +307,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         }
         const argv = buildFfmpegArgs(intent)
         if (!argv.ok) return fail('video_thumbnail', argv.error)
+        await ctx.assertMutationAuthorized?.()
         await runFfmpeg(ffmpeg, argv.args)
         let buffer: Buffer
         try {
@@ -368,6 +371,7 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       if (!ffmpeg) return fail(toolName, missingMessage('ffmpeg'))
       const argv = buildFfmpegArgs(intent)
       if (!argv.ok) return fail(toolName, argv.error)
+      await ctx.assertMutationAuthorized?.()
       await runFfmpeg(ffmpeg, argv.args)
       const persisted = await persistOutputFile(outputPath, mimeType, ctx)
       if (!persisted.ok) return fail(toolName, `Failed to persist output: ${persisted.reason}`)

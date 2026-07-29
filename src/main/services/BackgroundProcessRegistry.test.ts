@@ -29,21 +29,32 @@ interface Harness {
   registry: BackgroundProcessRegistry
   children: FakeChild[]
   signals: Array<{ pid: number; signal: BackgroundProcessSignalName }>
-  starts: Array<{ command: string; cwd: string }>
+  starts: Array<{ command: string; cwd: string; workspaceLockOwnerId?: string }>
+  gatedStarts: number[]
 }
 
 function createHarness(killGraceMs = 50): Harness {
   const children: FakeChild[] = []
   const signals: Array<{ pid: number; signal: BackgroundProcessSignalName }> = []
-  const starts: Array<{ command: string; cwd: string }> = []
+  const starts: Array<{ command: string; cwd: string; workspaceLockOwnerId?: string }> = []
+  const gatedStarts: number[] = []
   let nextPid = 2_000
   let nextId = 1
   const registry = new BackgroundProcessRegistry({
-    spawnProcess: (command, cwd) => {
-      starts.push({ command, cwd })
+    spawnProcess: (command, cwd, authority) => {
+      starts.push({ command, cwd, workspaceLockOwnerId: authority?.workspaceLockOwnerId })
       const child = new FakeChild(nextPid++)
       children.push(child)
       return child as unknown as ChildProcess
+    },
+    spawnGatedProcess: (command, cwd, authority) => {
+      starts.push({ command, cwd, workspaceLockOwnerId: authority.workspaceLockOwnerId })
+      const child = new FakeChild(nextPid++)
+      children.push(child)
+      return {
+        child: child as unknown as ChildProcess,
+        start: () => gatedStarts.push(child.pid)
+      }
     },
     signalProcess: (child, signal) => {
       signals.push({ pid: child.pid!, signal })
@@ -52,7 +63,7 @@ function createHarness(killGraceMs = 50): Harness {
     now: () => new Date('2026-07-19T00:00:00.000Z'),
     killGraceMs
   })
-  return { registry, children, signals, starts }
+  return { registry, children, signals, starts, gatedStarts }
 }
 
 function startOptions(
@@ -202,5 +213,76 @@ describe('BackgroundProcessRegistry history lifecycle', () => {
       error: expect.stringContaining('revoked by history deletion')
     })
     expect(harness.registry.list({ appChatId: 'chat-a' })).toMatchObject({ count: 0 })
+  })
+})
+
+describe('BackgroundProcessRegistry workspace-lock lifecycle', () => {
+  it('binds the pre-spawn acquisition to the exact child and releases after close', async () => {
+    const harness = createHarness()
+    const events: string[] = []
+    const result = await harness.registry.start(
+      'npm run dev',
+      '/workspace',
+      startOptions('chat-a', 'workspace-a', {
+        workspaceLockOwnerId: 'owner-run-1-lane-a',
+        workspaceLockLifecycle: {
+          bind: async (input) => {
+            events.push(`bind:${input.pid}:${input.workspaceLockOwnerId}`)
+          },
+          release: async (input) => {
+            if (!input) throw new Error('expected an exact child binding')
+            events.push(`release:${input.pid}:${input.workspaceLockOwnerId}`)
+          }
+        }
+      })
+    )
+
+    expect(result).toMatchObject({ ok: true, processId: 'bg-test-1', pid: 2_000 })
+    expect(harness.starts).toEqual([
+      {
+        command: 'npm run dev',
+        cwd: '/workspace',
+        workspaceLockOwnerId: 'owner-run-1-lane-a'
+      }
+    ])
+    expect(events).toEqual(['bind:2000:owner-run-1-lane-a'])
+    expect(harness.gatedStarts).toEqual([2_000])
+
+    harness.children[0].close(0)
+    await vi.waitFor(() => expect(events).toEqual([
+      'bind:2000:owner-run-1-lane-a',
+      'release:2000:owner-run-1-lane-a'
+    ]))
+  })
+
+  it('terminates the child and retains the acquisition through close when binding fails', async () => {
+    const harness = createHarness()
+    const release = vi.fn(async () => {})
+    const start = harness.registry.start(
+      'npm run dev',
+      '/workspace',
+      startOptions('chat-a', 'workspace-a', {
+        workspaceLockOwnerId: 'owner-run-1-lane-a',
+        workspaceLockLifecycle: {
+          bind: async () => {
+            throw new Error('exact process birth unavailable')
+          },
+          release
+        }
+      })
+    )
+
+    await vi.waitFor(() =>
+      expect(harness.signals).toEqual([{ pid: 2_000, signal: 'SIGTERM' }])
+    )
+    expect(release).not.toHaveBeenCalled()
+    expect(harness.gatedStarts).toEqual([])
+    harness.children[0].close(null, 'SIGTERM')
+
+    await expect(start).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('exact process birth unavailable')
+    })
+    expect(release).toHaveBeenCalledOnce()
   })
 })

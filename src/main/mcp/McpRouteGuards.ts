@@ -1,7 +1,9 @@
 import { isAbsolute, relative, resolve } from 'path'
 import type { AgentRunRoute } from '../run/AgentRunTypes'
-import type { TaskWraithMcpToolName } from '../TaskWraithMcpTools'
-import { classifyTool } from '../ToolClassTaxonomy'
+import {
+  isTaskWraithCatalogAction,
+  resolveToolDispatchContractStrict
+} from '../../shared/providerActionTaxonomy'
 import { MCP_APP_STATE_MUTATION_TOOLS } from './McpAutoAllowedTools'
 import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
 
@@ -14,8 +16,14 @@ export interface McpCallerContext {
 
 export type McpGuardResult = { ok: true } | { ok: false; error: string }
 
-export function isMutatingTaskWraithMcpTool(toolName: TaskWraithMcpToolName): boolean {
-  return classifyTool(toolName) === 'workspace_write' || MCP_APP_STATE_MUTATION_TOOLS.has(toolName)
+export function isMutatingTaskWraithMcpTool(toolName: string, toolArgs?: unknown): boolean {
+  const contract = resolveToolDispatchContractStrict(toolName, toolArgs)
+  if (!contract.ok) return true
+  return (
+    contract.toolClass === 'workspace_write' ||
+    (isTaskWraithCatalogAction(contract.effectiveToolName) &&
+      MCP_APP_STATE_MUTATION_TOOLS.has(contract.effectiveToolName))
+  )
 }
 
 /**
@@ -48,13 +56,19 @@ export function isMutatingTaskWraithMcpTool(toolName: TaskWraithMcpToolName): bo
  * Global-scope chats prompt for everything, which is why scope is a parameter
  * rather than a caller-side `||`.
  */
-export function mcpToolAlwaysPrompts(toolName: string, scope?: string): boolean {
+export function mcpToolAlwaysPrompts(
+  toolName: string,
+  scope?: string,
+  toolArgs?: unknown
+): boolean {
   if (scope === 'global') return true
+  const contract = resolveToolDispatchContractStrict(toolName, toolArgs)
+  const effectiveToolName = contract.ok ? contract.effectiveToolName : toolName
   return (
-    toolName === 'image_generate' ||
-    toolName === 'canvas_eval' ||
-    toolName === 'theme_tokens_set' ||
-    OUTLOOK_ALWAYS_PROMPT_TOOLS.has(toolName)
+    effectiveToolName === 'image_generate' ||
+    effectiveToolName === 'canvas_eval' ||
+    effectiveToolName === 'theme_tokens_set' ||
+    OUTLOOK_ALWAYS_PROMPT_TOOLS.has(effectiveToolName)
   )
 }
 
@@ -63,10 +77,13 @@ export function hasExplicitMcpRoute(route?: AgentRunRoute | null): boolean {
 }
 
 export function validateMutatingMcpRoute(
-  toolName: TaskWraithMcpToolName,
-  route?: AgentRunRoute | null
+  toolName: string,
+  route?: AgentRunRoute | null,
+  toolArgs?: unknown
 ): McpGuardResult {
-  if (!isMutatingTaskWraithMcpTool(toolName) || hasExplicitMcpRoute(route)) return { ok: true }
+  if (!isMutatingTaskWraithMcpTool(toolName, toolArgs) || hasExplicitMcpRoute(route)) {
+    return { ok: true }
+  }
   return {
     ok: false,
     error: `TaskWraith blocked unrouted mutating MCP tool call "${toolName}". Bridge calls that can mutate workspace or app state must provide TASKWRAITH_RUN_ID or TASKWRAITH_CHAT_ID; the single-active-run fallback is only allowed for read-only tools.`
@@ -99,11 +116,12 @@ export function pathsShareWorkspaceLineage(
 }
 
 export function validateMcpCallerWorkspace(input: {
-  toolName: TaskWraithMcpToolName
+  toolName: string
+  toolArgs?: unknown
   caller?: McpCallerContext | null
   contextWorkspacePath?: string | null
 }): McpGuardResult {
-  if (!isMutatingTaskWraithMcpTool(input.toolName)) return { ok: true }
+  if (!isMutatingTaskWraithMcpTool(input.toolName, input.toolArgs)) return { ok: true }
   if (!input.caller || !input.contextWorkspacePath) return { ok: true }
   const callerWorkspace = mcpCallerWorkspaceCandidate(input.caller)
   if (!callerWorkspace) {

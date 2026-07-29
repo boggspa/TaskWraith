@@ -19,11 +19,12 @@ afterEach(() => {
 })
 
 describe('preflightNativeWorkspaceTool', () => {
-  it('coalesces a human Grok title and allows an in-workspace native read', () => {
+  it('coalesces an exact declared Grok alias and allows an in-workspace native read', () => {
     const root = workspace()
     expect(
       preflightNativeWorkspaceTool({
-        toolName: 'Read file src/inside.txt',
+        provider: 'grok',
+        toolName: 'Read file',
         toolKind: 'read',
         rawToolCall: { rawInput: { path: 'src/inside.txt' } },
         workspacePath: root
@@ -37,10 +38,108 @@ describe('preflightNativeWorkspaceTool', () => {
     })
   })
 
+  it('uses provider + ACP tool kind while treating the human title as display-only', () => {
+    const root = workspace()
+    for (const provider of ['grok', 'mistral'] as const) {
+      expect(
+        preflightNativeWorkspaceTool({
+          provider,
+          toolName: 'Write file src/generated.ts',
+          toolKind: 'edit',
+          rawToolCall: { rawInput: { path: 'src/generated.ts', content: 'body' } },
+          workspacePath: root
+        })
+      ).toMatchObject({
+        kind: 'allow',
+        canonicalTool: 'write_file',
+        access: 'write'
+      })
+    }
+
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'A completely different human title',
+        toolKind: 'edit',
+        rawToolCall: { rawInput: { path: 'src/generated.ts', content: 'body' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'allow',
+      canonicalTool: 'write_file',
+      access: 'write'
+    })
+
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'Write file src/generated.ts',
+        toolKind: 'search',
+        rawToolCall: { rawInput: { path: 'src/generated.ts', content: 'body' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_action_not_declared'
+    })
+
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'Harmless read title',
+        toolKind: 'read',
+        rawToolCall: {
+          kind: 'read',
+          rawInput: { path: 'src/inside.txt', command: 'rm -rf ../outside' }
+        },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_action_not_declared'
+    })
+
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'Untrusted display title',
+        toolKind: 'read',
+        rawToolCall: {
+          kind: 'read',
+          rawInput: { tool_name: 'TotallyNewExfiltrateTool', path: 'src/inside.txt' }
+        },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_action_not_declared'
+    })
+  })
+
+  it('requires provider identity before resolving any native alias', () => {
+    const root = workspace()
+    expect(
+      preflightNativeWorkspaceTool({
+        toolName: 'Read',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'provider_identity_required'
+    })
+  })
+
   it('normalizes benign traversal but denies parent and sibling-prefix escapes', () => {
     const root = workspace()
     const inside = preflightNativeWorkspaceTool({
+      provider: 'grok',
       toolName: 'Read',
+      toolKind: 'read',
       rawToolCall: { rawInput: { path: 'src/../src/inside.txt' } },
       workspacePath: root
     })
@@ -49,7 +148,9 @@ describe('preflightNativeWorkspaceTool', () => {
     for (const path of ['../outside.txt', `${root}-sibling/secret.txt`]) {
       expect(
         preflightNativeWorkspaceTool({
+          provider: 'grok',
           toolName: 'Read',
+          toolKind: 'read',
           rawToolCall: { rawInput: { path } },
           workspacePath: root
         })
@@ -66,7 +167,9 @@ describe('preflightNativeWorkspaceTool', () => {
 
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'Read',
+        toolKind: 'read',
         rawToolCall: { rawInput: { path: 'escape/secret.txt' } },
         workspacePath: root
       })
@@ -77,6 +180,7 @@ describe('preflightNativeWorkspaceTool', () => {
     const root = workspace()
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'Move file',
         toolKind: 'move',
         rawToolCall: { rawInput: { source: 'src/inside.txt', destination: 'moved.txt' } },
@@ -86,6 +190,7 @@ describe('preflightNativeWorkspaceTool', () => {
 
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'Move file',
         toolKind: 'move',
         rawToolCall: { rawInput: { source: 'src/inside.txt', destination: '../moved.txt' } },
@@ -105,7 +210,9 @@ describe('preflightNativeWorkspaceTool', () => {
     ].join('\n')
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'apply_patch',
+        toolKind: 'edit',
         rawToolCall: { rawInput: { patch } },
         workspacePath: root
       })
@@ -116,6 +223,7 @@ describe('preflightNativeWorkspaceTool', () => {
     const root = workspace()
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'Write file',
         toolKind: 'edit',
         rawToolCall: { rawInput: { content: 'body' } },
@@ -128,6 +236,7 @@ describe('preflightNativeWorkspaceTool', () => {
     const root = workspace()
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'run_terminal_command',
         toolKind: 'execute',
         rawToolCall: { rawInput: { command: 'pwd', cwd: '/tmp' } },
@@ -138,6 +247,7 @@ describe('preflightNativeWorkspaceTool', () => {
 
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'run_terminal_command',
         toolKind: 'execute',
         rawToolCall: { rawInput: { command: 'pwd', cwd: 'src' } },
@@ -152,6 +262,7 @@ describe('preflightNativeWorkspaceTool', () => {
 
     expect(
       preflightNativeWorkspaceTool({
+        provider: 'grok',
         toolName: 'run_terminal_command',
         toolKind: 'execute',
         rawToolCall: { rawInput: { command: 'pwd', cwd: 'src' } },
@@ -184,14 +295,206 @@ describe('preflightNativeWorkspaceTool', () => {
     })
     expect(
       preflightNativeWorkspaceTool({
+        toolName: 'mcp__taskwraith__capability_search',
+        rawToolCall: { rawInput: { query: 'release gates' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'not_applicable',
+      source: 'taskwraith',
+      canonicalTool: 'capability_search'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        toolName: 'mcp__taskwraith__capability_invoke',
+        rawToolCall: {
+          rawInput: {
+            name: 'write_file',
+            arguments: { path: 'src/generated.ts', content: 'body' }
+          }
+        },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'not_applicable',
+      source: 'taskwraith',
+      canonicalTool: 'capability_invoke'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        toolName: 'mcp__taskwraith__audit_record_finding',
+        rawToolCall: { rawInput: { finding: {} } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'not_applicable',
+      source: 'taskwraith',
+      canonicalTool: 'audit_record_finding'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'claude',
         toolName: 'AskUserQuestion',
         toolKind: 'other',
         workspacePath: root
       })
-    ).toEqual({
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      source: 'native',
+      errorCode: 'native_surface_closed'
+    })
+  })
+
+  it('never treats an ACP human title as broker provenance', () => {
+    const root = workspace()
+    for (const [provider, title] of [
+      ['grok', 'taskwraith-broker__write_file'],
+      ['grok', 'taskwraith-grok__write_file'],
+      ['grok', 'mcp__taskwraith__write_file'],
+      ['mistral', 'taskwraith-mistral__write_file']
+    ] as const) {
+      expect(
+        preflightNativeWorkspaceTool({
+          provider,
+          toolName: title,
+          toolKind: 'edit',
+          rawToolCall: {
+            title,
+            kind: 'edit',
+            rawInput: { path: '../outside.txt', content: 'owned' }
+          },
+          workspacePath: root,
+          runtimeSandboxed: false
+        }),
+        `${provider}:${title}`
+      ).toMatchObject({
+        kind: 'deny',
+        source: 'native',
+        canonicalTool: 'write_file'
+      })
+    }
+  })
+
+  it('accepts only the ACP raw machine field as stable broker identity', () => {
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'display title only',
+        toolKind: 'other',
+        rawToolCall: {
+          title: 'display title only',
+          kind: 'other',
+          rawInput: {
+            tool_name: 'taskwraith-grok__read_file',
+            path: 'README.md'
+          }
+        },
+        workspacePath: workspace()
+      })
+    ).toMatchObject({
       kind: 'not_applicable',
-      canonicalTool: 'ask_user_question',
-      source: 'unknown'
+      source: 'taskwraith',
+      canonicalTool: 'read_file'
+    })
+  })
+
+  it('fails explicit for undeclared, catalog-only, and unobservable provider actions', () => {
+    const root = workspace()
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'claude',
+        toolName: 'TeleportRepository',
+        toolKind: 'edit',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_surface_closed'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'kimi',
+        toolName: 'Read',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      errorCode: 'native_surface_closed'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'pi',
+        toolName: 'edit',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      errorCode: 'native_surface_unobservable'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'display title',
+        toolKind: 'other',
+        rawToolCall: {
+          rawInput: { tool_name: 'taskwraith-broker__future_unmapped_action' }
+        },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      errorCode: 'unmapped_catalog_action'
+    })
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'display title',
+        toolKind: 'other',
+        rawToolCall: {
+          rawInput: { tool_name: 'mcp__evil__write_file', path: '../outside.txt' }
+        },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'unmapped_catalog_action'
+    })
+  })
+
+  it('does not infer authority from suggestive titles outside an adapter declaration', () => {
+    const root = workspace()
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'claude',
+        toolName: 'Read file src/inside.txt',
+        toolKind: 'read',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_surface_closed'
+    })
+
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'Inspect file src/inside.txt',
+        toolKind: 'other',
+        rawToolCall: { rawInput: { path: 'src/inside.txt' } },
+        workspacePath: root
+      })
+    ).toMatchObject({
+      kind: 'deny',
+      canonicalTool: null,
+      errorCode: 'native_action_not_declared'
     })
   })
 })

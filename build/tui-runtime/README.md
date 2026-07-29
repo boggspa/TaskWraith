@@ -32,10 +32,15 @@ npm run prepare:tui-runtime
 
 # macOS universal package (both slices)
 npm run prepare:tui-runtime:mac
+
+# Windows x64 + arm64 package
+npm run prepare:tui-runtime:win
 ```
 
 Downloaded archives cache under `build/tui-runtime/.cache/` (gitignored).
-Only the extracted `node` / `node.exe` + metadata are staged for packaging.
+Each staged target contains the extracted `node` / `node.exe`, the Node
+distribution `LICENSE`, and `NODE.json` provenance metadata with the verified
+archive and license hashes.
 
 ## Do not commit binaries
 

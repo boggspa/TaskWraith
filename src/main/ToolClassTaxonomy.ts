@@ -1,38 +1,28 @@
 /**
- * Tool-class taxonomy — the single source of truth that buckets every agent
- * tool into one of four classes for permission-posture display:
+ * Permission-posture projection of the exhaustive provider/action taxonomy.
  *
- *   - workspace_read   non-mutating file / code reads (read_file, grep, …)
- *   - workspace_write  mutating tools (write_file, apply_patch, run_shell, …)
- *   - web_read         read-only network lookups (web_search, web_fetch, github_ci_status)
- *   - orchestration    non-mutating control / status / focus (status reads,
- *                      ensemble yield, scheduling, open-in-IDE focus changes)
- *   - ui_elicitation   asking the user (ask_user_question)
- *
- * Why a dedicated module (1.0.72): the read-only / plan posture UI needs to
- * show *which classes* a posture permits (panel feedback). The non-write class
- * lists are cross-checked against the canonical read-only sets —
- * READ_ONLY_TOOL_PRESET (defined below) and MCP_AUTO_ALLOWED_TOOLS
- * (McpAutoAllowedTools) — by a test that asserts every member of those
- * non-mutating sets classifies as non-write, so this taxonomy can't silently
- * drift from the safety invariant.
- *
- * classifyTool defaults the UNKNOWN tool to workspace_write — the safe default
- * (an unrecognised tool is treated as mutating, never surfaced as "safe").
+ * Canonical TaskWraith tools have no classifier fallback: their class is
+ * declared alongside service, operation, dispatcher, mutation, and lock
+ * semantics in `shared/providerActionTaxonomy`. Arbitrary historical labels
+ * remain renderable through the explicitly display-only helper below.
  */
 
+import {
+  TASKWRAITH_TOOL_ACTIONS,
+  resolveToolDispatchContractStrict,
+  type CanonicalToolClass,
+  type TaskWraithOwnedMcpToolName,
+  type UnmappedProviderAction
+} from '../shared/providerActionTaxonomy'
+import { resolveCatalogToolName } from '../shared/canonicalToolCoalesce'
+import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import {
   MCP_APP_STATE_MUTATION_TOOLS,
   MCP_ENSEMBLE_PARTICIPATION_TOOLS
 } from './mcp/McpAutoAllowedTools'
 import { isExactReviewerVerdictInvocation } from './ReviewerVerdictInvocation'
 
-export type ToolClass =
-  | 'workspace_read'
-  | 'web_read'
-  | 'workspace_write'
-  | 'orchestration'
-  | 'ui_elicitation'
+export type ToolClass = CanonicalToolClass
 
 /** Display order: the allowed-under-read-only classes first, writes last. */
 export const TOOL_CLASS_ORDER: readonly ToolClass[] = [
@@ -52,15 +42,8 @@ export const TOOL_CLASS_LABELS: Record<ToolClass, string> = {
 }
 
 /**
- * The canonical "read-only" tool preset — the non-mutating reads /
- * searches / status checks a posture-restricted run may call. Anything
- * mutating (`write_file`, `apply_patch`, `run_shell`, `git_commit`, …)
- * is excluded by omission.
- *
- * Consumed by the read-only posture breakdown UI (`ToolClassBreakdown`)
- * and cross-checked by `ToolClassTaxonomy.test.ts`, which asserts every
- * member classifies as non-write so this preset can't drift from the
- * taxonomy's safety invariant.
+ * The canonical read-only presentation preset. `grep` and `glob` are retained
+ * as historical display aliases; authorization resolves exact catalog actions.
  */
 export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'read_file',
@@ -92,9 +75,6 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'approval_status',
   'list_ensemble_participants',
   'provider_usage_status',
-  // 1.0.72 — asking the user a clarifying question is non-mutating (no fs /
-  // shell / network), so a read-only run may do it. Mirrors the main-
-  // participant behaviour for Codex / Claude / Kimi.
   'ask_user_question',
   'request_tool_permission',
   'goal_read',
@@ -102,240 +82,58 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'update_goal',
   'goal_complete',
   'goal_blocked',
-  // 1.4.2 — read-only runs may publish goal-step checklists.
   'todo_write',
   'blackboard_post',
   'blackboard_read'
 ])
 
-const WORKSPACE_READ_TOOLS = new Set<string>([
-  // Reading the user's appearance overrides is retrospection, not a write.
-  // `theme_tokens_set` deliberately stays in the default workspace_write bucket
-  // so a read-only seat cannot restyle the app it is being reviewed in.
-  'theme_tokens_get',
-  'read_file',
-  'list_directory',
-  'grep',
-  'glob',
-  'find_files',
-  'list_chat_attachments',
-  'inspect_chat_attachment',
-  'workspace_search',
-  'workspace_symbols',
-  // git state + file surfacing — read-only repo / file reads
-  'git_status',
-  'git_diff',
-  'git_log',
-  'git_show',
-  'git_blame',
-  'open_workspace_file'
-])
+export function classifyCatalogTool(toolName: TaskWraithMcpToolName): ToolClass {
+  return TASKWRAITH_TOOL_ACTIONS[toolName].toolClass
+}
 
-const UI_ELICITATION_TOOLS = new Set<string>(['ask_user_question', 'request_tool_permission'])
-
-const WEB_READ_TOOLS = new Set<string>([
-  'web_search',
-  'web_fetch',
-  'github_ci_status',
-  // Outlook READS are network lookups against Microsoft Graph, so the
-  // run/global network kill switch must be able to stop them. The draft
-  // creation tools are deliberately NOT here — they default to
-  // workspace_write and stay denied under read_only.
-  'outlook_list_messages',
-  'outlook_search_messages',
-  'outlook_get_message',
-  'outlook_list_events'
-])
+export type StrictToolClassResolution =
+  | {
+      readonly ok: true
+      readonly toolName: Exclude<TaskWraithOwnedMcpToolName, 'capability_invoke'>
+      readonly toolClass: ToolClass
+    }
+  | UnmappedProviderAction
 
 /**
- * Tools that reach the network but are NOT `web_read` — they mutate a remote
- * account, so their permission class must stay `workspace_write`.
- *
- * Classification and egress are different questions. `web_read` answers "may a
- * read-only seat run this"; this set answers "does this touch the network".
- * Keying the kill switch on the class alone let an Outlook draft be written to
- * a cloud mailbox during a run whose posture said the network was off.
+ * Execution/route-guard classifier. Unknown action names produce the canonical
+ * typed deny; they never acquire the old generic workspace_write policy.
  */
-const NETWORK_EGRESS_WRITE_TOOLS = new Set<string>(['outlook_create_draft', 'outlook_create_event'])
-
-const ORCHESTRATION_TOOLS = new Set<string>([
-  'approval_status',
-  'provider_auth_status',
-  'provider_usage_status',
-  'list_active_runs',
-  'list_background_processes',
-  'read_background_process',
-  'browser_console',
-  'creative_app_status',
-  'creative_app_capabilities',
-  'attached_window_status',
-  'appwatch_status',
-  'open_in_ide',
-  'open_in_ide_at_position',
-  'reveal_in_finder',
-  'ide_app_status',
-  'ide_app_capabilities',
-  'list_running_ides',
-  'ensemble_yield',
-  'ensemble_send',
-  'ensemble_fanout',
-  'ensemble_fanout_all',
-  'ensemble_await',
-  'ensemble_lane_result',
-  'thread_message',
-  'list_ensemble_participants',
-  'schedule_wakeup',
-  'cancel_wakeup',
-  // diagnostics / run + test reads (non-mutating)
-  'test_result_summary',
-  'run_timeline',
-  'raw_provider_events',
-  // Run-Button reads. These expose discovered target/status metadata only; the
-  // process-spawning/terminating tools (launch_start/launch_stop) stay write.
-  'launch_list_targets',
-  'launch_status',
-  // sub-thread coordination (read + control; no workspace mutation)
-  'list_subthreads',
-  'read_subthread_result',
-  'cancel_subthread',
-  // window-capture control + reads (no workspace mutation)
-  'attached_window_capture',
-  'appwatch_start',
-  'appwatch_stop',
-  'appwatch_latest_frame',
-  'appwatch_frames',
-  // S2 — native VideoToolbox single-frame decode: a daemon-backed capture that
-  // returns an image (like appwatch_latest_frame / canvas_screenshot), no
-  // workspace mutation and no external binary → allowed under read-only.
-  'video_decode_frame',
-  // Multi-frame read-only scrub: loops the same native VideoToolbox decode to
-  // return up to 8 frames at once. No workspace mutation, no external binary →
-  // allowed under read-only, exactly like video_decode_frame.
-  'inspect_video_frames',
-  // Windowed audio clip: cut a [startMs,endMs] slice into a PLAYABLE content-addressed
-  // WAV (+ peaks + best-effort transcript). Content-addresses the INTERNAL asset store
-  // only — NO workspace mutation, no external binary, no network → allowed under
-  // read-only, exactly like inspect_video_frames (which likewise persists image refs).
-  'inspect_audio_segment',
-  // On-device speech-to-text (native Speech framework). No workspace mutation, no
-  // external binary, no file output, no network (on-device ONLY) → allowed under
-  // read-only. The OS permission grant is enforced at runtime by the daemon.
-  'transcribe_audio',
-  // PDF text-layer read. Runs in-process on bundled pdfjs — no workspace mutation,
-  // no external binary, no file output, no network → allowed under read-only,
-  // exactly like transcribe_audio.
-  'document_extract_text',
-  // On-device Vision OCR (native Vision framework). Same posture as
-  // transcribe_audio: no workspace mutation, no external binary, no file output,
-  // no network (on-device ONLY) → allowed under read-only.
-  'document_ocr_image',
-  // creative reads / validation — the *import* / applescript / blender / midi
-  // mutators stay workspace_write (caught by the default below)
-  'creative_project_snapshot',
-  'creative_timeline_validate',
-  'creative_timeline_ir',
-  'creative_timeline_diff',
-  // ensemble coordination artifacts (non-workspace-mutating)
-  'create_handoff_card',
-  'agent_delegation_role',
-  'ensemble_control',
-  'ensemble_bossman_control',
-  'ensemble_roster_edit',
-  'ensemble_brief_update',
-  // 1.0.4-AN — ensemble participation (vote + peer-open goal-complete poll) is
-  // orchestration-class (non-workspace-mutating) so read_only seats can call it;
-  // still route-guarded via MCP_APP_STATE_MUTATION_TOOLS. See isReadOnlyBlockedTool.
-  'ensemble_poll_response',
-  'ensemble_propose_goal_complete',
-  'scout_brief',
-  'blackboard_post',
-  'blackboard_read',
-  'blackboard_delete',
-  'workspace_board_snapshot',
-  'workspace_board_preview_plan',
-  'workspace_board_apply_plan',
-  // Persistent thread goal lifecycle (no workspace mutation).
-  'goal_read',
-  'goal_update',
-  'update_goal',
-  'goal_complete',
-  'goal_blocked',
-  // 1.4.2 — structured goal-step checklist (no workspace mutation).
-  'todo_write',
-  // TaskWraith Canvas — non-mutating preview verbs. list/status are metadata;
-  // snapshot/inspect run fixed inspection scripts; network/console are read
-  // buffers; screenshot is a capture (like appwatch_latest_frame); resize/close
-  // are window control. canvas_open is the navigation/SSRF surface and stays
-  // workspace_write (the default below) — denied under read-only, like
-  // browser_open.
-  'canvas_list',
-  'canvas_status',
-  'canvas_snapshot',
-  'canvas_inspect',
-  // Opens/restores the chat-owned structured sketch document. Unlike
-  // canvas_open it cannot navigate or fetch, and it does not mutate elements.
-  'canvas_sketch_open',
-  'canvas_sketch_get',
-  'canvas_network',
-  'canvas_console',
-  'canvas_screenshot',
-  'canvas_resize',
-  'canvas_close',
-  // Mesh Canvas reads are metadata-only and token-free; creation/import/
-  // mutation/presentation fall through to workspace_write. Their dedicated
-  // meshCanvas service still governs whether a participant may inspect them.
-  'mesh_scene_list',
-  'mesh_scene_inspect',
-  // P1: annotate overlays a Set-of-Mark layer for the human — authoring, not an
-  // app mutation. canvas_click / canvas_fill DO mutate the app and fall through
-  // to workspace_write (read-only-DENY) by the default below.
-  'canvas_annotate',
-  // Cross-thread recall — read-only retrospection over OTHER runs. Non-
-  // workspace-mutating reads; cross-workspace exposure is enforced by the
-  // crossThreadRead approval service (Slice 3), not by the tool class.
-  'tw_recall_find',
-  'tw_recall_read',
-  'tw_recall_read_events',
-  'tw_introspection_list',
-  'tw_introspection_read',
-  'tw_introspection_run',
-  'tw_introspection_review',
-  // Evidence-pack / run-observability tools. These read the prompt/workspace/
-  // diff and persist their output to the INTERNAL evidence-pack store
-  // (userData/evidence-packs.json), never the workspace — the same observe-class
-  // artifact sink as the transcript. They are members of MCP_AUTO_ALLOWED_TOOLS
-  // (read-only agents must still leave auditable evidence), so they MUST classify
-  // as non-write or the auto-allow safety invariant fails. Verified non-mutating
-  // (no fs writes to workspace, no spawn, no network).
-  'prompt_task_normalize',
-  'scope_radar',
-  'repo_convention_scan',
-  'coherence_gate_check',
-  'evidence_pack_write',
-  'project_reference_propose',
-  'completion_claim_check'
-])
-
-/** Bucket a single tool name. Unknown → workspace_write (safe default). */
-export function classifyTool(name: string): ToolClass {
-  if (UI_ELICITATION_TOOLS.has(name)) return 'ui_elicitation'
-  if (WORKSPACE_READ_TOOLS.has(name)) return 'workspace_read'
-  if (WEB_READ_TOOLS.has(name)) return 'web_read'
-  if (ORCHESTRATION_TOOLS.has(name)) return 'orchestration'
-  return 'workspace_write'
+export function resolveToolClassStrict(
+  toolName: string,
+  toolArgs?: unknown
+): StrictToolClassResolution {
+  const resolution = resolveToolDispatchContractStrict(toolName, toolArgs)
+  if (!resolution.ok) return resolution
+  return {
+    ok: true,
+    toolName: resolution.effectiveToolName,
+    toolClass: resolution.toolClass
+  }
 }
 
 /**
- * Is this tool BLOCKED for a read-only / plan participant? True when the run is
- * read-only AND the tool is mutating / side-effecting. Unknown tools default to
- * workspace_write; app-state mutation tools are denied explicitly even though
- * they remain grouped as orchestration for display.
- *
- * The host gate already hard-denies the file/shell-classified mutators under
- * read-only; this is what lets the dispatchers also hard-deny the side-effecting
- * fall-through tools (creative_blender_python, browser_open/click, switch_auth_
- * profile, …) that would otherwise only PROMPT because they classify as the
- * generic mcpTools service.
+ * Permissive telemetry/UI classifier for old provider aliases and unknown
+ * transcript labels. Unknown display rows remain conservatively grouped with
+ * writes, but this result is never execution authority.
+ */
+export function classifyHistoricalToolForDisplay(name: string): ToolClass {
+  const catalog = resolveCatalogToolName(name)
+  return catalog ? classifyCatalogTool(catalog) : 'workspace_write'
+}
+
+/** @deprecated Display compatibility only. Strict guards use resolveToolClassStrict. */
+export function classifyTool(name: string): ToolClass {
+  return classifyHistoricalToolForDisplay(name)
+}
+
+/**
+ * Read-only execution guard. Unmapped actions fail closed; exact audited
+ * participation/reviewer exceptions remain argument-scoped as before.
  */
 export function isReadOnlyBlockedTool(
   toolName: string,
@@ -343,49 +141,111 @@ export function isReadOnlyBlockedTool(
   toolArgs?: unknown
 ): boolean {
   if (!effectivePermissions?.readOnly) return false
-  // 1.0.4-AN — the audited read-only PARTICIPATION exception: the ensemble
-  // participation tools (poll vote/propose per the "all participants vote"
-  // ratification, plus ensemble_send visible notes per the 2026-07 efficiency
-  // audit) are read-only-callable. They remain app-state mutations for
-  // route/workspace-lineage guards, but are exempt from the read-only mutation
-  // deny. Every other app-state / workspace-write / fs / shell tool stays
-  // blocked — the read-only floor is unchanged.
   if ((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(toolName)) return false
-  // C2-v4 — the audited read-only REVIEWER-VERDICT exception (argument-scoped). The
-  // security-critical distinction from the whole-tool participation set above: this
-  // is NOT a whole-tool exemption. ensemble_bossman_control stays blocked wholesale;
-  // ONLY the EXACT nested {action:'submit_review_verdict', gateId, verdict} invocation
-  // is read-only-callable, so a gate's OWN reviewer (which may be a read_only seat)
-  // can reconcile its own gate. Delegated to the ONE shared pure classifier (G-SINGLE
-  // — never re-inline the shape check): any extra key / wrong or privileged action /
-  // bad or ABSENT args fails CLOSED → falls through to the whole-tool block below, so
-  // no other Bossman action (roster/quarantine/goal/gate/fanout) is ever relaxed. The
-  // tool REMAINS in MCP_APP_STATE_MUTATION_TOOLS for route/workspace-lineage guards,
-  // exactly like the participation exception above — only the read-only deny relaxes.
   if (isExactReviewerVerdictInvocation(toolName, toolArgs)) return false
+
+  const resolution = resolveToolClassStrict(toolName, toolArgs)
+  if (!resolution.ok) return true
   return (
-    classifyTool(toolName) === 'workspace_write' ||
-    (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(toolName)
+    resolution.toolClass === 'workspace_write' ||
+    (MCP_APP_STATE_MUTATION_TOOLS as ReadonlySet<string>).has(resolution.toolName)
   )
 }
 
+function recordFromUnknown(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, '$1')
+    .replace(/\.$/, '')
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '::1' ||
+    normalized === '::' ||
+    normalized === '0.0.0.0'
+  ) {
+    return true
+  }
+  const ipv4 = normalized.split('.').map((part) => Number(part))
+  return (
+    ipv4.length === 4 &&
+    ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+    ipv4[0] === 127
+  )
+}
+
+function isRemoteHttpUrl(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const raw = value.trim()
+  if (!raw) return false
+  if (/^(?:localhost|127(?:\.\d{1,3}){3}|\[?::1\]?)(?::|\/|$)/i.test(raw)) return false
+  try {
+    const parsed = new URL(raw)
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      !isLoopbackHostname(parsed.hostname)
+    )
+  } catch {
+    return false
+  }
+}
+
+function networkUrlArgumentIsRemote(
+  effectiveToolName: string,
+  toolArgs: unknown,
+  targetDerived: boolean
+): boolean {
+  const root = recordFromUnknown(toolArgs)
+  const args = targetDerived ? recordFromUnknown(root?.arguments) : root
+  if (!args) return false
+  if (effectiveToolName === 'browser_open') {
+    return isRemoteHttpUrl(args.url ?? args.href ?? args.path)
+  }
+  if (effectiveToolName === 'canvas_open') {
+    if (args.driver === 'device') return false
+    return isRemoteHttpUrl(args.url)
+  }
+  return false
+}
+
+/**
+ * Network execution guard. When the network posture is deny, an unmapped tool
+ * is rejected rather than assumed offline.
+ */
 export function isNetworkAccessBlockedTool(
   toolName: string,
   effectivePermissions?: { networkAccess?: string | null },
-  settings?: { agenticServices?: { networkAccess?: string | null } | null }
+  settings?: { agenticServices?: { networkAccess?: string | null } | null },
+  toolArgs?: unknown
 ): boolean {
   const networkAccess =
     settings?.agenticServices?.networkAccess === 'deny'
       ? 'deny'
       : effectivePermissions?.networkAccess
   if (networkAccess !== 'deny') return false
-  return classifyTool(toolName) === 'web_read' || NETWORK_EGRESS_WRITE_TOOLS.has(toolName)
+
+  const contract = resolveToolDispatchContractStrict(toolName, toolArgs)
+  if (!contract.ok) return true
+  if (contract.networkEgress === 'always') return true
+  if (contract.networkEgress === 'none') return false
+  return networkUrlArgumentIsRemote(
+    contract.effectiveToolName,
+    toolArgs,
+    contract.resolution === 'target-derived'
+  )
 }
 
 /**
- * Group a list of tool names by class. Every class key is present (empty array
- * when none) so callers can render a stable layout; per-class order follows the
- * input order.
+ * Display grouping. Every class key is present and per-class order follows the
+ * input; provider aliases/unknown historical labels intentionally use the
+ * display-only classifier.
  */
 export function groupToolsByClass(names: readonly string[]): Record<ToolClass, string[]> {
   const out: Record<ToolClass, string[]> = {
@@ -395,6 +255,6 @@ export function groupToolsByClass(names: readonly string[]): Record<ToolClass, s
     ui_elicitation: [],
     workspace_write: []
   }
-  for (const name of names) out[classifyTool(name)].push(name)
+  for (const name of names) out[classifyHistoricalToolForDisplay(name)].push(name)
   return out
 }

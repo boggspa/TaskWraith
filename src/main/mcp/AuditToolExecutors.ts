@@ -15,6 +15,7 @@
  */
 
 import type { McpToolDefinition } from './McpBridgeRuntime'
+import { TAXONOMY_AUDIT_MCP_TOOL_NAMES } from '../../shared/providerActionTaxonomy'
 import type {
   AuditEvidenceRef,
   AuditFinding,
@@ -28,11 +29,7 @@ import type {
   ProviderId
 } from '../store/types'
 
-export const AUDIT_MCP_TOOL_NAMES = [
-  'audit_set_profile',
-  'audit_record_finding',
-  'audit_record_verdict'
-] as const
+export const AUDIT_MCP_TOOL_NAMES = TAXONOMY_AUDIT_MCP_TOOL_NAMES
 
 export type AuditMcpToolName = (typeof AUDIT_MCP_TOOL_NAMES)[number]
 
@@ -306,7 +303,10 @@ export interface AuditToolExecutors {
 
 export function createAuditToolExecutors(deps: AuditToolDependencies): AuditToolExecutors {
   const ids = { uuid: deps.uuid, now: deps.now }
-  const fail = (error: string): AuditToolExecution => ({ result: { ok: false, error }, isError: true })
+  const fail = (error: string): AuditToolExecution => ({
+    result: { ok: false, error },
+    isError: true
+  })
 
   return {
     async executeAuditMcpTool(toolName, args, context) {

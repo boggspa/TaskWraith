@@ -322,6 +322,51 @@ describe('runtimeSettings', () => {
 })
 
 describe('createCliEnv', () => {
+  it('strips ambient and runtime-profile workspace-lock owners', () => {
+    const env = createCliEnv(
+      {
+        TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',
+        FORCE_COLOR: '0'
+      },
+      null,
+      {
+        env: {
+          PATH: '/usr/bin',
+          taskwraith_lock_owner_id: 'ambient-owner'
+        },
+        getRuntimeProfiles: () => [
+          makeProfile({
+            id: 'profile-1',
+            env: {
+              TaskWraith_Lock_Owner_Id: 'profile-owner'
+            }
+          })
+        ]
+      }
+    )
+
+    expect(env.TASKWRAITH_LOCK_OWNER_ID).toBeUndefined()
+    expect(env.taskwraith_lock_owner_id).toBeUndefined()
+    expect(env.TaskWraith_Lock_Owner_Id).toBeUndefined()
+  })
+
+  it('preserves an exact workspace-lock owner supplied by the immediate launcher', () => {
+    const env = createCliEnv(
+      {
+        TASKWRAITH_LOCK_OWNER_ID: 'admitted-owner'
+      },
+      null,
+      {
+        env: {
+          PATH: '/usr/bin',
+          TASKWRAITH_LOCK_OWNER_ID: 'ambient-owner'
+        }
+      }
+    )
+
+    expect(env.TASKWRAITH_LOCK_OWNER_ID).toBe('admitted-owner')
+  })
+
   it('scrubs signing and publishing credentials after merging process/profile/extra env', () => {
     const env = createCliEnv(
       {
@@ -420,8 +465,12 @@ describe('createCliEnv', () => {
       scope: 'workspace',
       workspace: '/repo',
       runtimeProfileId: 'profile-1',
+      workspaceLockOwnerId: 'owner-run-1-lane-work',
       auditRun: true,
-      extraEnv: { SCHEDULED_OCCURRENCE: '1' },
+      extraEnv: {
+        SCHEDULED_OCCURRENCE: '1',
+        TASKWRAITH_LOCK_OWNER_ID: 'borrowed-sibling-owner'
+      },
       deps: {
         getRuntimeProfiles: () => [makeProfile({ id: 'profile-1', env: { PROFILE: 'yes' } })]
       }
@@ -432,6 +481,7 @@ describe('createCliEnv', () => {
       NO_COLOR: '1',
       TASKWRAITH_PARENT_PROVIDER: 'cursor',
       TASKWRAITH_RUN_ID: 'run-1',
+      TASKWRAITH_LOCK_OWNER_ID: 'owner-run-1-lane-work',
       TASKWRAITH_CHAT_ID: 'chat-1',
       TASKWRAITH_WORKSPACE_PATH: '/repo',
       TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',

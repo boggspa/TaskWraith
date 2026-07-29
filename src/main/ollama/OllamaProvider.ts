@@ -3,15 +3,17 @@ import { promisify } from 'util'
 import { normalizeProviderUsage } from '../ProviderRunStats'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import {
-  canonicalTaskWraithToolName,
-  isPortableEnsembleControlToolName,
-  normalizePortableEnsembleControlArguments
+  normalizePortableEnsembleControlArguments,
+  type TaskWraithMcpToolName
 } from '../TaskWraithMcpTools'
+import { resolveToolDispatchContractStrict } from '../../shared/providerActionTaxonomy'
 import {
+  CAPABILITY_GATEWAY_TOOL_NAMES,
   gatewayToolDefinitions,
   isCapabilityGatewayToolName,
   type CapabilityGatewayToolName
 } from '../mcp/McpToolGateway'
+import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
@@ -315,22 +317,13 @@ interface OllamaChatRetryCallbackInput {
 // Native-calling models receive the compact direct schemas inline. Legacy
 // tool_help remains a schema lookup, but hidden targets execute through
 // capability_invoke rather than widening the callable name surface.
-type OllamaDirectToolName = (typeof OLLAMA_ADVERTISED_TOOL_NAMES)[number]
 export type OllamaCallableToolName =
-  | OllamaDirectToolName
+  | TaskWraithMcpToolName
   | typeof OLLAMA_TOOL_HELP_NAME
   | CapabilityGatewayToolName
 
 const OLLAMA_CAPABILITY_GATEWAY_PROMPT =
   'For an uncommon capability, call capability_search with {"query":"what you need","limit":4}; then call capability_invoke with {"name":"exact_tool_name","arguments":{...}}. The target keeps its own permissions and approval policy. The legacy tool_help lookup remains available.'
-
-function isOllamaCallableToolName(name: string): name is OllamaCallableToolName {
-  return (
-    (OLLAMA_ADVERTISED_TOOL_NAMES as readonly string[]).includes(name) ||
-    name === OLLAMA_TOOL_HELP_NAME ||
-    isCapabilityGatewayToolName(name)
-  )
-}
 
 export interface OllamaToolExecutionRequest {
   toolName: OllamaCallableToolName
@@ -1156,24 +1149,53 @@ function jsonCandidatesFromText(text: string): string[] {
   return [...new Set(candidates)]
 }
 
-export function parseOllamaToolRequest(text: string): OllamaToolRequest | null {
+function ollamaAvailableToolNameSet(availableToolNames?: readonly string[]): ReadonlySet<string> {
+  return new Set(
+    availableToolNames ?? [
+      ...OLLAMA_ADVERTISED_TOOL_NAMES,
+      ...CAPABILITY_GATEWAY_TOOL_NAMES,
+      OLLAMA_TOOL_HELP_NAME
+    ]
+  )
+}
+
+function resolveOllamaToolRequestIdentity(
+  rawName: string,
+  args: Record<string, unknown>,
+  availableToolNames?: readonly string[]
+): OllamaToolRequest | null {
+  if (!rawName || rawName !== rawName.toLowerCase()) return null
+  if (!ollamaAvailableToolNameSet(availableToolNames).has(rawName)) return null
+  if (rawName === OLLAMA_TOOL_HELP_NAME) {
+    return { toolName: OLLAMA_TOOL_HELP_NAME, arguments: args }
+  }
+  const contract = resolveToolDispatchContractStrict(rawName, args)
+  if (
+    !contract.ok ||
+    (!isTaskWraithMcpToolName(contract.toolName) &&
+      !isCapabilityGatewayToolName(contract.toolName))
+  ) {
+    return null
+  }
+  return {
+    toolName: contract.toolName,
+    arguments: recordFromUnknown(normalizePortableEnsembleControlArguments(rawName, args)) || args
+  }
+}
+
+export function parseOllamaToolRequest(
+  text: string,
+  availableToolNames?: readonly string[]
+): OllamaToolRequest | null {
   for (const candidate of jsonCandidatesFromText(text)) {
     const parsed = recordFromUnknown(parseJsonObjectLoose(candidate))
     if (!parsed) continue
     const wrapper = recordFromUnknown(parsed.taskwraith_tool) || recordFromUnknown(parsed.tool)
     if (!wrapper) continue
     const rawName = typeof wrapper.name === 'string' ? wrapper.name.trim() : ''
-    const name = canonicalTaskWraithToolName(rawName)
-    const portableEnsembleControl = isPortableEnsembleControlToolName(rawName)
-    if (!isOllamaCallableToolName(name) && !portableEnsembleControl) {
-      continue
-    }
     const args = recordFromUnknown(wrapper.arguments) || recordFromUnknown(wrapper.args) || {}
-    return {
-      toolName: name as OllamaCallableToolName,
-      arguments:
-        recordFromUnknown(normalizePortableEnsembleControlArguments(rawName, args)) || args
-    }
+    const request = resolveOllamaToolRequestIdentity(rawName, args, availableToolNames)
+    if (request) return request
   }
   return null
 }
@@ -1678,13 +1700,11 @@ export function ollamaNativeToolDefinitions(
 
 /** Normalize a single native tool call from an Ollama stream chunk into the
  * internal request shape, or null when the name is unknown / unparseable. */
-export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): OllamaToolRequest | null {
+export function normalizeOllamaNativeToolCall(
+  call: OllamaNativeToolCall,
+  availableToolNames?: readonly string[]
+): OllamaToolRequest | null {
   const rawName = typeof call.function?.name === 'string' ? call.function.name.trim() : ''
-  const name = canonicalTaskWraithToolName(rawName)
-  const portableEnsembleControl = isPortableEnsembleControlToolName(rawName)
-  if (!isOllamaCallableToolName(name) && !portableEnsembleControl) {
-    return null
-  }
   const rawArgs = call.function?.arguments
   let args: Record<string, unknown> = {}
   if (rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)) {
@@ -1692,10 +1712,7 @@ export function normalizeOllamaNativeToolCall(call: OllamaNativeToolCall): Ollam
   } else if (typeof rawArgs === 'string' && rawArgs.trim()) {
     args = recordFromUnknown(parseJsonObjectLoose(rawArgs)) || {}
   }
-  return {
-    toolName: name as OllamaCallableToolName,
-    arguments: recordFromUnknown(normalizePortableEnsembleControlArguments(rawName, args)) || args
-  }
+  return resolveOllamaToolRequestIdentity(rawName, args, availableToolNames)
 }
 
 export function ollamaToolResultFollowUpPrompt(input: {
@@ -2482,7 +2499,7 @@ async function runOllamaChatTurn(input: {
       }
     }
     for (const call of chunk.message?.tool_calls || []) {
-      const normalized = normalizeOllamaNativeToolCall(call)
+      const normalized = normalizeOllamaNativeToolCall(call, input.availableToolNames)
       if (normalized) {
         toolCalls.push(normalized)
       } else {
@@ -2863,7 +2880,7 @@ export async function runOllamaProvider(
       const usingNativeToolCalls = nativeCalls.length > 0
       const fallbackRequest =
         !usingNativeToolCalls && toolProtocolEnabled
-          ? parseOllamaToolRequest(visibleText)
+          ? parseOllamaToolRequest(visibleText, availableToolNames)
           : null
       let toolRequests: OllamaToolRequest[] = usingNativeToolCalls
         ? nativeCalls

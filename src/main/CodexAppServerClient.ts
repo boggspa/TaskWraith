@@ -5,6 +5,10 @@ import {
   resolveCliProviderBinary,
   type ResolvedProviderBinary
 } from './providers/CliProviderRuntime'
+import {
+  TASKWRAITH_LOCK_OWNER_ENV_KEY,
+  withExactWorkspaceLockOwnerEnv
+} from './WorkspaceLockExecutionIdentity'
 import type { RuntimeProfile } from './store/types'
 import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
 import { CodexAppServerRequestTimeoutError } from './codex/CodexAppServerRequestError'
@@ -267,13 +271,24 @@ export type CodexAppServerStartupBoundary =
 
 type CodexAppServerStartupAuthorityAssertion = (boundary: CodexAppServerStartupBoundary) => void
 
+export interface CodexAppServerSpawnedProcess {
+  /** Kernel-assigned PID for this exact app-server incarnation. */
+  readonly pid: number
+  /** Resolves only after this exact child emits its real `close` event. */
+  readonly closed: Promise<void>
+}
+
+type CodexAppServerSpawnedProcessBinder = (
+  process: CodexAppServerSpawnedProcess
+) => Promise<void>
+
 /**
  * Per-caller authority for starting the shared Codex daemon. At least one
  * independently-derived authority source is required whenever this argument
  * is supplied. Existing non-run maintenance callers may omit the argument;
  * provider-run dispatch must pass its exact RunManager signal/assertion.
  */
-export type CodexAppServerStartupAuthority =
+export type CodexAppServerStartupAuthority = (
   | {
       readonly signal: AbortSignal
       readonly assertCanStart?: CodexAppServerStartupAuthorityAssertion
@@ -282,6 +297,14 @@ export type CodexAppServerStartupAuthority =
       readonly signal?: AbortSignal
       readonly assertCanStart: CodexAppServerStartupAuthorityAssertion
     }
+) & {
+  /**
+   * A dedicated write-capable daemon must durably transfer its pre-spawn
+   * workspace acquisition to this exact PID before initialize or any turn
+   * request is written. The binder may register `closed` for exact release.
+   */
+  readonly bindSpawnedProcess?: CodexAppServerSpawnedProcessBinder
+}
 
 export class CodexAppServerStartupAbortedError extends Error {
   readonly boundary: CodexAppServerStartupBoundary
@@ -512,6 +535,11 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
 
 export class CodexAppServerClient {
   private proc: ChildProcessWithoutNullStreams | null = null
+  private processLifecycle: {
+    proc: ChildProcessWithoutNullStreams
+    closed: Promise<void>
+  } | null = null
+  private workspaceLockOwnerId: string | null = null
   private stdoutReader: ReadlineInterface | null = null
   private nextId = 1
   private pending = new Map<JsonRpcId, PendingRequest>()
@@ -627,6 +655,34 @@ export class CodexAppServerClient {
     return Boolean(this.proc && !this.proc.killed)
   }
 
+  /**
+   * Bind this client to one exact admitted lock owner before startup.
+   *
+   * A shared read-only daemon leaves this null. Because one private CODEX_HOME
+   * supports only one credential borrower, a write-capable run must first
+   * `disposeAndWait()` this same client and then bind its logical run/lane
+   * owner. Changing owner during a live or closing process is refused.
+   */
+  setWorkspaceLockOwnerId(lockOwnerId: string | null): void {
+    const normalized =
+      withExactWorkspaceLockOwnerEnv({}, lockOwnerId)[TASKWRAITH_LOCK_OWNER_ENV_KEY] || null
+    if (
+      (this.isRunning() || this.processLifecycle) &&
+      normalized !== this.workspaceLockOwnerId
+    ) {
+      throw new Error('Cannot change a live Codex app-server workspace-lock owner.')
+    }
+    this.workspaceLockOwnerId = normalized
+  }
+
+  getWorkspaceLockOwnerId(): string | null {
+    return this.workspaceLockOwnerId
+  }
+
+  getProcessId(): number | null {
+    return this.isRunning() && typeof this.proc?.pid === 'number' ? this.proc.pid : null
+  }
+
   hasStaleMcpConfig(): boolean {
     return this.isRunning() && this.mcpConfigStale
   }
@@ -661,6 +717,14 @@ export class CodexAppServerClient {
     startupAuthority?: CodexAppServerStartupAuthority
   ): Promise<void> {
     assertCodexAppServerStartupAuthority(startupAuthority, 'ensure-started-entry')
+    const closingLifecycle =
+      this.processLifecycle && this.processLifecycle.proc !== this.proc
+        ? this.processLifecycle
+        : null
+    if (closingLifecycle) {
+      await closingLifecycle.closed
+      assertCodexAppServerStartupAuthority(startupAuthority, 'ensure-started-entry')
+    }
     if (this.proc && !this.proc.killed) {
       return
     }
@@ -811,7 +875,6 @@ export class CodexAppServerClient {
   dispose() {
     this.startPromise = null
     this.initializeResult = null
-    void this.releaseCredentialLease()
     // This is only a daemon-lifetime cache. A restart must revalidate disk
     // continuity so a deleted/corrupt rollout takes the full-context recovery
     // path instead of being trusted from stale in-memory evidence.
@@ -821,11 +884,26 @@ export class CodexAppServerClient {
     this.startedCredentialLeaseConsent = null
     this.stdoutReader?.close()
     this.stdoutReader = null
-    if (this.proc && !this.proc.killed) {
-      this.proc.kill()
+    const proc = this.proc
+    if (proc && !proc.killed) {
+      proc.kill()
     }
     this.proc = null
+    if (!this.processLifecycle) void this.releaseCredentialLease()
     this.rejectPending(new Error('Codex app-server stopped.'))
+  }
+
+  /**
+   * Stops the one app-server allowed to use this private CODEX_HOME and waits
+   * for both its real process close and credential writeback. Callers must
+   * complete this boundary before changing lock ownership or starting another
+   * daemon against the same home.
+   */
+  async disposeAndWait(): Promise<void> {
+    const lifecycle = this.processLifecycle
+    this.dispose()
+    if (lifecycle) await lifecycle.closed
+    await this.releaseCredentialLease()
   }
 
   private async start(
@@ -833,6 +911,11 @@ export class CodexAppServerClient {
     options: { forceFastServiceTier?: boolean } = {},
     startupAuthority?: CodexAppServerStartupAuthority
   ): Promise<void> {
+    if (this.workspaceLockOwnerId && !startupAuthority?.bindSpawnedProcess) {
+      throw new Error(
+        'A write-capable Codex app-server requires exact workspace-lock child binding.'
+      )
+    }
     assertCodexAppServerStartupAuthority(startupAuthority, 'ensure-started-entry')
     await this.startupDependencies.ensureHomeForLaunch(this.codexHome)
     assertCodexAppServerStartupAuthority(startupAuthority, 'after-home-ready')
@@ -878,26 +961,29 @@ export class CodexAppServerClient {
       this.credentialLease = lease
     }
 
+    const launchEnv = withExactWorkspaceLockOwnerEnv(
+      launchPlan.env,
+      this.workspaceLockOwnerId
+    )
+
     // This must remain the immediate pre-spawn statement. There is no await or
     // other user-code boundary between the final authority fence and spawn.
     assertCodexAppServerStartupAuthority(startupAuthority, 'before-spawn')
     const proc = this.startupDependencies.spawnProcess(launchPlan.command, [...launchPlan.args], {
       shell: launchPlan.shell,
       stdio: 'pipe',
-      env: launchPlan.env
+      env: launchEnv
     })
     this.proc = proc
-    if (lease && typeof proc.pid === 'number') {
-      // Durably records the child's birth identity so a crashed owner's lease
-      // is not reclaimed while this app-server is still alive. Must land before
-      // the first request. A throw here unwinds through ensureStarted, which
-      // hands the credential back.
-      await lease.noteProviderProcess(proc.pid)
-    }
 
     const stdoutReader = createInterface({ input: proc.stdout })
     this.stdoutReader = stdoutReader
     stdoutReader.on('line', (line) => this.handleLine(line))
+    let resolveProcessClosed!: () => void
+    const processClosed = new Promise<void>((resolve) => {
+      resolveProcessClosed = resolve
+    })
+    this.processLifecycle = { proc, closed: processClosed }
 
     proc.stderr.on('data', (chunk) => {
       const text = chunk.toString('utf8')
@@ -920,8 +1006,11 @@ export class CodexAppServerClient {
       // The borrower is gone, so any rotation it performed must go home now.
       // Guarded on identity: a superseded process must not release the lease a
       // newer app-server is already holding.
-      if (isCurrentProcess) void this.releaseCredentialLease()
+      const ownsLifecycle = this.processLifecycle?.proc === proc
+      if (ownsLifecycle) this.processLifecycle = null
+      if (ownsLifecycle) void this.releaseCredentialLease()
       if (isCurrentProcess) this.rejectPending(new Error('Codex app-server exited.'))
+      resolveProcessClosed()
     })
 
     proc.on('error', (error) => {
@@ -930,6 +1019,40 @@ export class CodexAppServerClient {
       if (isCurrentProcess) void this.releaseCredentialLease()
       if (isCurrentProcess) this.rejectPending(error)
     })
+
+    try {
+      if (this.workspaceLockOwnerId) {
+        if (typeof proc.pid !== 'number') {
+          throw new Error(
+            'Write-capable Codex app-server spawn returned no kernel-assigned PID.'
+          )
+        }
+        await startupAuthority!.bindSpawnedProcess!({
+          pid: proc.pid,
+          closed: processClosed
+        })
+      }
+      if (lease && typeof proc.pid === 'number') {
+        // Durably records the child's birth identity so a crashed owner's lease
+        // is not reclaimed while this app-server is still alive. Must land before
+        // the first request. A throw here unwinds through ensureStarted, which
+        // hands the credential back.
+        await lease.noteProviderProcess(proc.pid)
+      }
+      if (this.proc !== proc || proc.exitCode !== null || proc.signalCode !== null) {
+        throw new Error('Codex app-server exited during exact child binding.')
+      }
+    } catch (error) {
+      if (this.proc === proc && !proc.killed) {
+        try {
+          proc.kill()
+        } catch {
+          // The real close event remains the only release boundary.
+        }
+      }
+      await processClosed
+      throw error
+    }
 
     try {
       this.initializeResult = await this.request(
@@ -952,12 +1075,16 @@ export class CodexAppServerClient {
       // an actionable message rather than the cryptic exec-fallback notice.
       const stderr = this.recentStderr.trim()
       if (stderr) {
-        if (!options.forceFastServiceTier && isCodexConfigParseError(stderr)) {
+        if (
+          !this.workspaceLockOwnerId &&
+          !options.forceFastServiceTier &&
+          isCodexConfigParseError(stderr)
+        ) {
           assertCodexAppServerStartupAuthority(startupAuthority, 'before-compatibility-retry')
           this.stderrHandler?.(
             'Codex rejected config.toml; retrying app-server with service_tier="fast" compatibility override.\n'
           )
-          this.dispose()
+          await this.disposeAndWait()
           await this.start(appVersion, { forceFastServiceTier: true }, startupAuthority)
           assertCodexAppServerStartupAuthority(startupAuthority, 'after-compatibility-retry')
           return

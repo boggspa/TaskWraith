@@ -20,7 +20,7 @@ describe('main capability gateway dispatch contract', () => {
     expect(gatewayDispatchSource).toContain('resolveGatewayInvocation({')
     expect(gatewayDispatchSource).not.toContain('previewForGeminiMcpTool(')
     expect(gatewayDispatchSource).not.toContain('requestAgenticServiceApproval(')
-    expect(gatewayDispatchSource).not.toContain('acquireMcpWorkspaceWriteLocks(')
+    expect(gatewayDispatchSource).not.toContain('acquireMcpWorkspaceMutation({')
   })
 
   it('hands the exact target route and caller context to the executable dispatch seam', () => {
@@ -38,7 +38,7 @@ describe('main capability gateway dispatch contract', () => {
       'applyMcpWriteLockApprovalContext(approvalPreview, context, toolName, args, cwd)',
       'requestAgenticServiceApproval(',
       'networkAccessBlockedToolName(toolName, context.effectivePermissions)',
-      'acquireMcpWorkspaceWriteLocks({ context, toolName, cwd })',
+      'acquireMcpWorkspaceMutation({',
       'imageToolCallBudget.tryConsume(',
       'finalRichResult?.trustedMediaRefs'
     ]) {
@@ -46,6 +46,9 @@ describe('main capability gateway dispatch contract', () => {
     }
     expect(canonicalDispatchSource.indexOf('validateMcpToolArgumentsBeforeApproval(')).toBeLessThan(
       canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')
+    )
+    expect(canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('acquireMcpWorkspaceMutation({')
     )
   })
 

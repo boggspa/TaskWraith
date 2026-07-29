@@ -8,7 +8,6 @@ import os from 'os'
 import { dirname, isAbsolute, join, parse, resolve } from 'path'
 import type { WebContents } from 'electron'
 import {
-  canonicalTaskWraithToolName,
   isPortableEnsembleControlToolName,
   MESH_SCENE_MCP_TOOL_NAMES,
   normalizePortableEnsembleControlArguments,
@@ -37,6 +36,10 @@ import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
 import { isPiEnsembleCoordinationToolName } from '../pi/PiEnsembleCoordination'
+import {
+  resolveCatalogActionStrict,
+  resolveToolDispatchContractStrict
+} from '../../shared/providerActionTaxonomy'
 import {
   buildMcpBridgeRouteEnv,
   buildStaticMcpBridgeRegistrationArgv,
@@ -963,13 +966,11 @@ function resolveBridgeGatewayInvocationTarget(args: unknown): GatewayInvocationT
   if (!isRecord(args) || typeof args.name !== 'string' || !args.name.trim()) {
     return { ok: false, error: 'capability_invoke requires a non-empty tool name.' }
   }
-  const name = canonicalTaskWraithToolName(args.name)
-  if (isCapabilityGatewayToolName(name)) {
-    return { ok: false, error: 'Capability gateway tools cannot invoke themselves.' }
-  }
-  if (!isTaskWraithMcpToolName(name)) {
+  const resolution = resolveCatalogActionStrict(args.name)
+  if (!resolution.ok) {
     return { ok: false, error: `Unknown TaskWraith MCP capability: ${args.name}` }
   }
+  const name = resolution.catalogTool
   return { ok: true, name }
 }
 
@@ -1740,7 +1741,32 @@ export function handleMcpJsonRpcMessage(
     const params = isRecord(request.params) ? request.params : {}
     const rawName = params.name
     const rawArgs = params.arguments || {}
-    const name = canonicalTaskWraithToolName(String(rawName || ''))
+    const rawDispatchContract = resolveToolDispatchContractStrict(
+      String(rawName || ''),
+      rawArgs
+    )
+    if (!rawDispatchContract.ok) {
+      const gatewayTargetError =
+        rawDispatchContract.code === 'gateway_target_required' ||
+        rawDispatchContract.code === 'gateway_target_not_declared' ||
+        rawDispatchContract.code === 'gateway_target_identity_conflict'
+      bridgeLog(
+        gatewayTargetError
+          ? 'tools/call rejected scope=gateway-target tool=capability_invoke reason=invalid-target'
+          : 'tools/call rejected scope=undeclared tool=unknown reason=invalid-identity'
+      )
+      writeMcpError(
+        id,
+        gatewayTargetError ? -32602 : -32601,
+        gatewayTargetError
+          ? rawDispatchContract.reason
+          : `Unknown TaskWraith MCP tool: ${String(rawName || 'unknown')}`,
+        transport,
+        stdout
+      )
+      return
+    }
+    const name = rawDispatchContract.toolName
     const args =
       name === 'capability_invoke' &&
       isRecord(rawArgs) &&
@@ -2424,14 +2450,21 @@ export class McpBridgeRuntime {
       return { ok: false, error: 'TaskWraith MCP broker authentication failed.' }
     }
     const rawToolName = brokerRequestRecord.tool || brokerRequestRecord.name
-    const toolName = canonicalTaskWraithToolName(String(rawToolName || ''))
+    const toolArguments =
+      brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input
+    const dispatchContract = resolveToolDispatchContractStrict(
+      String(rawToolName || ''),
+      toolArguments
+    )
     if (
-      !isTaskWraithMcpToolName(toolName) &&
-      !isCapabilityGatewayToolName(toolName) &&
-      !isBridgeAuditMcpToolName(toolName)
+      !dispatchContract.ok ||
+      (!isTaskWraithMcpToolName(dispatchContract.toolName) &&
+        !isCapabilityGatewayToolName(dispatchContract.toolName) &&
+        !isBridgeAuditMcpToolName(dispatchContract.toolName))
     ) {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
+    const toolName = dispatchContract.toolName
     const requestedRoute = normalizeRunRoute(brokerRequestRecord)
     if (
       piCredentialRoute &&
@@ -2481,7 +2514,7 @@ export class McpBridgeRuntime {
       // Audit tools are a deliberately run-scoped extension to the canonical
       // catalog. The main executor validates the active audit registry/role.
       toolName as TaskWraithMcpToolName | CapabilityGatewayToolName,
-      brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input,
+      toolArguments,
       route,
       parentProvider,
       callerContext
