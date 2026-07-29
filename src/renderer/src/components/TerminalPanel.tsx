@@ -61,7 +61,8 @@ export function TerminalPanel({
   const theme = useMemo(() => (isPane ? TUI_TERMINAL_THEME : INSPECTOR_TERMINAL_THEME), [isPane])
 
   useEffect(() => {
-    if (!terminalRef.current) return
+    const host = terminalRef.current
+    if (!host) return
     let disposed = false
     const ptySessionId = `setup-${sessionId}`
 
@@ -74,7 +75,7 @@ export function TerminalPanel({
 
     fitAddon.current = new FitAddon()
     term.current.loadAddon(fitAddon.current)
-    term.current.open(terminalRef.current)
+    term.current.open(host)
     fitAddon.current.fit()
 
     term.current.onData((data) => {
@@ -104,6 +105,20 @@ export function TerminalPanel({
     }
     window.addEventListener('resize', handleResize)
 
+    // The workspace pane is drag-resizable (`--workspace-terminal-height`),
+    // which fires no window resize — without this the grid keeps the row count
+    // it was opened at, so the shell wraps and scrolls against a stale height.
+    // rAF-coalesced because a drag emits observations at pointer rate.
+    let pendingFrame: number | null = null
+    const hostObserver = new ResizeObserver(() => {
+      if (pendingFrame !== null) return
+      pendingFrame = requestAnimationFrame(() => {
+        pendingFrame = null
+        if (!disposed) handleResize()
+      })
+    })
+    hostObserver.observe(host)
+
     return () => {
       disposed = true
       window.api.stopPty(ptySessionId).catch(() => {})
@@ -111,6 +126,8 @@ export function TerminalPanel({
       unsubscribePtyExit()
       term.current?.dispose()
       window.removeEventListener('resize', handleResize)
+      hostObserver.disconnect()
+      if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
     }
   }, [sessionId, workspacePath, theme])
 

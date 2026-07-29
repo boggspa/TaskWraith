@@ -17,6 +17,17 @@ const DEFAULT_WORKSPACE_SIDEBAR_WIDTH = 340
 const MIN_WORKSPACE_SIDEBAR_WIDTH = 340
 const MAX_WORKSPACE_SIDEBAR_WIDTH = 560
 
+// The workspace terminal docks horizontally, so it's the one pane measured by
+// height. `--workspace-terminal-height` (declared on `.app-transcript`) is read
+// by the pane itself AND by the composer's bottom offset and the transcript's
+// scroll reserve, so a single clamp keeps all three in step. 260 is the shipped
+// CSS default; the floor keeps the header plus a few rows legible. MAX is only
+// the ultrawide stop — a live drag clamps further against the pane's own height
+// minus the composer, since growing the terminal pushes the composer upward.
+const DEFAULT_WORKSPACE_TERMINAL_HEIGHT = 260
+const MIN_WORKSPACE_TERMINAL_HEIGHT = 120
+const MAX_WORKSPACE_TERMINAL_HEIGHT = 1200
+
 const clampPanelWidth = (value: number): number => {
   return Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(MAX_RIGHT_PANEL_WIDTH, Math.round(value)))
 }
@@ -30,6 +41,36 @@ const clampWorkspaceSidebarWidth = (value: number): number => {
     MIN_WORKSPACE_SIDEBAR_WIDTH,
     Math.min(MAX_WORKSPACE_SIDEBAR_WIDTH, Math.round(value))
   )
+}
+
+const clampWorkspaceTerminalHeight = (value: number): number => {
+  return Math.max(
+    MIN_WORKSPACE_TERMINAL_HEIGHT,
+    Math.min(MAX_WORKSPACE_TERMINAL_HEIGHT, Math.round(value))
+  )
+}
+
+const getStoredWorkspaceTerminalHeight = (): number => {
+  try {
+    const stored = window.localStorage.getItem('taskwraith.workspaceTerminalHeight')
+    const parsed = stored ? Number(stored) : DEFAULT_WORKSPACE_TERMINAL_HEIGHT
+    return Number.isFinite(parsed)
+      ? clampWorkspaceTerminalHeight(parsed)
+      : DEFAULT_WORKSPACE_TERMINAL_HEIGHT
+  } catch {
+    return DEFAULT_WORKSPACE_TERMINAL_HEIGHT
+  }
+}
+
+const setStoredWorkspaceTerminalHeight = (height: number): void => {
+  try {
+    window.localStorage.setItem(
+      'taskwraith.workspaceTerminalHeight',
+      String(clampWorkspaceTerminalHeight(height))
+    )
+  } catch {
+    // Local persistence is best-effort only.
+  }
 }
 
 const getStoredFileEditorWidth = (): number => {
@@ -89,11 +130,17 @@ export {
   DEFAULT_WORKSPACE_SIDEBAR_WIDTH,
   MIN_WORKSPACE_SIDEBAR_WIDTH,
   MAX_WORKSPACE_SIDEBAR_WIDTH,
+  DEFAULT_WORKSPACE_TERMINAL_HEIGHT,
+  MIN_WORKSPACE_TERMINAL_HEIGHT,
+  MAX_WORKSPACE_TERMINAL_HEIGHT,
   clampPanelWidth,
   clampSideChatWidth,
   clampWorkspaceSidebarWidth,
+  clampWorkspaceTerminalHeight,
   getStoredFileEditorWidth,
   getStoredSideChatWidth,
   setStoredSideChatWidth,
-  getStoredWorkspaceSidebarWidth
+  getStoredWorkspaceSidebarWidth,
+  getStoredWorkspaceTerminalHeight,
+  setStoredWorkspaceTerminalHeight
 }

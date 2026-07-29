@@ -23955,7 +23955,20 @@ function App(): React.JSX.Element {
         primaryHeight +
         (heatmap ? composerGap + flexHeatmapMargin + heatmapHeight : 0)
 
-      const availableHeight = transcript.clientHeight
+      // The workspace terminal is absolutely positioned over the bottom of the
+      // pane, so the welcome flow's real budget is the pane MINUS whatever the
+      // terminal (plus its gap) covers. Measured off the pane element rather
+      // than `--workspace-terminal-height`, because the gap beside it is a
+      // `var()` token that getPropertyValue hands back unresolved. Without this
+      // the ladder never sheds anything when the terminal opens or is dragged
+      // taller — it just covers the heatmaps it should have collapsed first.
+      const terminalPane = transcript.querySelector<HTMLElement>('.workspace-terminal-split')
+      const terminalPaneRect = terminalPane?.getBoundingClientRect()
+      const terminalReserve =
+        terminalPaneRect && terminalPaneRect.height > 0
+          ? Math.max(0, transcript.getBoundingClientRect().bottom - terminalPaneRect.top)
+          : 0
+      const availableHeight = transcript.clientHeight - terminalReserve
       // The floating notification can overlap its preceding content because it
       // is absolutely positioned, so retain its geometry-based collision
       // projection. It supplements rather than replaces the ordinary flowed
@@ -24041,6 +24054,14 @@ function App(): React.JSX.Element {
           })
         : null
     mutationObserver?.observe(composer, { childList: true })
+    // Opening the workspace terminal toggles `workspace-terminal-open` on the
+    // transcript, and dragging it writes `--workspace-terminal-height` inline
+    // there. Both change the welcome budget without resizing any observed box,
+    // so neither ResizeObserver would fire — watch the attributes instead.
+    mutationObserver?.observe(transcript, {
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    })
     window.addEventListener('resize', scheduleMeasure)
     scheduleMeasure()
 
