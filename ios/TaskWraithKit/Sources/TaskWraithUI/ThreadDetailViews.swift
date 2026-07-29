@@ -882,7 +882,8 @@ struct ThreadDetailView: View {
                     label: summary.label,
                     errored: summary.errorCount > 0,
                     expanded: expanded,
-                    onToggle: { toggleSettledStackExpanded(id) })
+                    onToggle: { toggleSettledStackExpanded(id) },
+                    parts: summary.parts)
                 if expanded {
                     ForEach(members) { member in
                         superConstituentView(member)
@@ -946,7 +947,8 @@ struct ThreadDetailView: View {
                 label: summary.label,
                 errored: summary.errorCount > 0,
                 expanded: expanded,
-                onToggle: { toggleSettledStackExpanded(id) })
+                onToggle: { toggleSettledStackExpanded(id) },
+                parts: summary.parts)
             if expanded {
                 ForEach(items) { nested in
                     stackConstituentView(nested)
@@ -4993,6 +4995,13 @@ struct CollapsedTranscriptSummaryRow: View {
     let errored: Bool
     let expanded: Bool
     let onToggle: () -> Void
+    /// Structured segments with per-family failure attribution (desktop
+    /// b0cebe3fc parity). When present, the row paints ONLY the verb of a
+    /// failed family (and the whole verbless error tally) in the
+    /// diff-deletion red instead of flooding the line amber; `errored` then
+    /// no longer drives the line color. nil = plain label (system notices),
+    /// which keeps the whole-line amber treatment.
+    var parts: [TWCollapsedStackLabelPart]? = nil
 
     var body: some View {
         Button(action: onToggle) {
@@ -5006,9 +5015,8 @@ struct CollapsedTranscriptSummaryRow: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(TWTheme.textTertiary)
                 }
-                Text(label)
+                labelText
                     .font(.caption)
-                    .foregroundStyle(errored ? TWTheme.statusColor("warning") : TWTheme.textSecondary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
@@ -5017,6 +5025,33 @@ struct CollapsedTranscriptSummaryRow: View {
         .buttonStyle(.plain)
         .accessibilityLabel(
             "\(expanded ? "Collapse" : "Expand") \(metaLabel.map { "\($0) " } ?? "")\(label)")
+    }
+
+    /// Concatenated runs so a single Text keeps ellipsizing as one line. The
+    /// visible string stays byte-equal to `label` (the parts-join invariant);
+    /// only colors differ.
+    private var labelText: Text {
+        guard let parts, !parts.isEmpty else {
+            return Text(label)
+                .foregroundColor(errored ? TWTheme.statusColor("warning") : TWTheme.textSecondary)
+        }
+        var out = Text(verbatim: "")
+        for (index, part) in parts.enumerated() {
+            if index > 0 {
+                out = out + Text(verbatim: " · ").foregroundColor(TWTheme.textSecondary)
+            }
+            if part.failed, !part.verb.isEmpty, part.text.hasPrefix(part.verb) {
+                out =
+                    out + Text(verbatim: part.verb).foregroundColor(TWTheme.diffStatDel)
+                    + Text(verbatim: String(part.text.dropFirst(part.verb.count)))
+                        .foregroundColor(TWTheme.textSecondary)
+            } else if part.failed {
+                out = out + Text(verbatim: part.text).foregroundColor(TWTheme.diffStatDel)
+            } else {
+                out = out + Text(verbatim: part.text).foregroundColor(TWTheme.textSecondary)
+            }
+        }
+        return out
     }
 }
 

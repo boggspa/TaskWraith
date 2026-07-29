@@ -153,3 +153,107 @@ extension TranscriptStackCollapseTests {
         #expect(!twRunHasFailureExplanation(rows: [assistant], runId: ""))
     }
 }
+
+@Suite("Collapsed one-liner failure accent (desktop b0cebe3fc parity)")
+struct CollapsedStackFailureAccentTests {
+    private func row(_ json: String) throws -> RemoteThreadSnapshot.Row {
+        try JSONDecoder().decode(RemoteThreadSnapshot.Row.self, from: Data(json.utf8))
+    }
+
+    @Test func failureAttributionNeverBleedsToNeighbourFamilies() throws {
+        let rows = [
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":3,"status":"error","tools":[
+                  {"name":"Read","category":"read","status":"success","file":"a.ts"},
+                  {"name":"Shell","category":"shell","status":"error"},
+                  {"name":"Shell","category":"shell","status":"success"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedStackSummary(rows: rows)
+        let read = summary.parts.first { $0.verb == "Read" }
+        let ran = summary.parts.first { $0.verb == "Ran" }
+        #expect(read?.failed == false)
+        #expect(ran?.failed == true)
+        // The joined label is byte-equal to the parts join — a11y and
+        // cross-surface parity rely on it.
+        #expect(summary.label == summary.parts.map(\.text).joined(separator: " · "))
+    }
+
+    @Test func errorTallyIsAVerblessFailedPart() throws {
+        let rows = [
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":1,"status":"error","tools":[
+                  {"name":"Shell","category":"shell","status":"error"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedStackSummary(rows: rows)
+        let tally = summary.parts.last
+        #expect(tally?.text == "1 error")
+        #expect(tally?.verb == "")
+        #expect(tally?.failed == true)
+    }
+
+    @Test func genericToolFailuresAccentTheUsedVerb() throws {
+        let rows = [
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":2,"status":"error","tools":[
+                  {"name":"Custom","category":"task","status":"error"},
+                  {"name":"Read","category":"read","status":"success","file":"a.ts"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedStackSummary(rows: rows)
+        let used = summary.parts.first { $0.verb == "Used" }
+        let read = summary.parts.first { $0.verb == "Read" }
+        #expect(used?.failed == true)
+        #expect(read?.failed == false)
+    }
+
+    @Test func superGroupNoticeSuffixNeverAccents() throws {
+        let rows = [
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":1,"status":"error","tools":[
+                  {"name":"Shell","category":"shell","status":"error"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedSuperStackSummary(
+            stackRows: rows, systemCount: 2, firstSystemPreview: "round closed")
+        let suffix = summary.parts.last
+        #expect(suffix?.text == "2 system notices")
+        #expect(suffix?.failed == false)
+        #expect(suffix?.verb == "")
+        #expect(summary.label == summary.parts.map(\.text).joined(separator: " · "))
+        // The member failure still accents its own family part.
+        #expect(summary.parts.first { $0.verb == "Ran" }?.failed == true)
+    }
+
+    @Test func allSystemSuperGroupsNeverAccent() {
+        let summary = twCollapsedSuperStackSummary(
+            stackRows: [], systemCount: 3, firstSystemPreview: "@-mention: extra turn appended")
+        #expect(summary.parts.allSatisfy { !$0.failed && $0.verb.isEmpty })
+        #expect(summary.label == summary.parts.map(\.text).joined(separator: " · "))
+    }
+
+    @Test func cleanStacksCarryNoFailedParts() throws {
+        let rows = [
+            try row(
+                #"{"id":"th1","role":"assistant","thinking":{"preview":"pondering"}}"#),
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":1,"status":"success","tools":[
+                  {"name":"Read","category":"read","status":"success","file":"a.ts"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedStackSummary(rows: rows)
+        #expect(summary.parts.allSatisfy { !$0.failed })
+        #expect(summary.errorCount == 0)
+    }
+}
