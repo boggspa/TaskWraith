@@ -2574,7 +2574,25 @@
   background: var(--cursor-shell-fg);
   opacity: 0.85;
 }
-:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.stop-btn:not(:disabled),
+/* 1.9.1-STOPGLYPH — Stop button now matches the send button's
+ * inverse-of-surface bubble (light circle, dark square) instead of the
+ * faint outlined bubble it shared with Steer, mirroring the real ChatGPT
+ * composer's stop affordance. Tokens flip on light-family themes, so the
+ * inverse reads correctly in both families. Steer keeps the old outlined
+ * bubble — only Stop changes. */
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.stop-btn:not(:disabled) {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--cursor-shell-fg);
+  color: var(--cursor-shell-bg);
+  border: 0;
+  box-shadow: none;
+}
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.stop-btn:hover:not(:disabled) {
+  background: var(--cursor-shell-fg);
+  opacity: 0.85;
+}
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.steer-btn:not(:disabled) {
   width: 32px;
   height: 32px;
@@ -2583,6 +2601,42 @@
   color: var(--cursor-shell-fg);
   border: 1px solid var(--cursor-shell-border);
   box-shadow: none;
+}
+
+/* 1.9.1-STOPGLYPH — the shared `StopSymbolIcon` is a STROKED outline
+ * (`.sf-symbol-icon svg { fill: none }` in shard 04), which reads as a
+ * hollow square. The Codex-family shells want the real ChatGPT/Codex
+ * stop mark: a SOLID square. Overriding `fill` on the `rect` itself beats
+ * the inherited `fill: none` from the svg without touching the shared
+ * component (the other ten shells keep the outline). `currentColor` means
+ * the light-family inverse flips — dark bubble + light square — come along
+ * for free from each shell's own colour rules. Loaded after shards 07/08,
+ * so this wins for codex too. */
+:is(
+    [data-composer-style="codex"],
+    [data-composer-style="cursor"],
+    [data-composer-style="chatgpt"]
+  )
+  .composer-action-btn.stop-btn
+  .sf-symbol-icon
+  svg
+  rect {
+  fill: currentColor;
+}
+
+/* …and 1.2x the mark inside the 32px bubble (14px -> 16.8px). Both the
+ * span AND its svg carry the size — the shared `.sf-symbol-icon` base in
+ * shard 04 pins both to 14px, so sizing only one leaves the glyph clipped
+ * or off-centre. Not theme-scoped, so every theme family gets it. */
+:is(
+    [data-composer-style="codex"],
+    [data-composer-style="cursor"],
+    [data-composer-style="chatgpt"]
+  )
+  .composer-action-btn.stop-btn
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  width: 16.8px;
+  height: 16.8px;
 }
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn:disabled {
   width: 32px;
