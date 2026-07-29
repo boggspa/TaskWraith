@@ -4336,6 +4336,22 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
  * therefore paints a sharp teal rectangle behind every row. Merged
  * stacks (native default, Cursor, Codex+ensemble, Grok 2+ rows)
  * keep the stack treatment above.
+ *
+ * 1.9.1-TUCKCORNER — the Codex clause's "is this stack merged?" guard
+ * MUST stay byte-identical to the predicate that builds the merged
+ * tucked-tab frame in shard 08 (`:has(:is(.ensemble-above-row,
+ * .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))`).
+ * It used to check `.ensemble-above-row` ALONE, so a stack holding only
+ * the roster-preset row was merged by shard 08 but still read as a
+ * detached pill here: this block stripped the stack's rounded aura rim
+ * (`box-shadow: none !important`) and re-painted it per-row through
+ * `::after { border-radius: inherit }`, where the row radius is 0 — a
+ * SHARP-cornered rim inside the rounded frame. Widen both predicates
+ * together or the corners diverge again.
+ *
+ * ChatGPT is deliberately absent from the Codex clauses — that absence
+ * is why it always kept the correct rounded rim. Do not "fix" it by
+ * adding chatgpt here.
  * ---------------------------------------------------------------- */
 :is(
     [data-composer-style="claude"],
@@ -4355,7 +4371,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   .composer-above-bar-stack:not(:has(> :nth-child(2))),
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura {
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura {
   box-shadow: none !important;
 }
 :is(
@@ -4376,7 +4400,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   .composer-above-bar-stack:not(:has(> :nth-child(2))).fx-agent-aura::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura::after {
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura::after {
   display: none !important;
   content: none !important;
 }
@@ -4412,7 +4444,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   ),
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
@@ -4454,7 +4494,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   )::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
@@ -4504,7 +4552,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   )::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-running
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura.fx-status-running
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
@@ -4550,7 +4606,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   )::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-approval
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura.fx-status-approval
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
@@ -4595,7 +4659,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   )::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-failed
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura.fx-status-failed
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
@@ -4642,7 +4714,15 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   )::after,
 [data-composer-style="codex"]
   .app-transcript
-  .composer-above-bar-stack:not(:has(.ensemble-above-row)).fx-agent-aura.fx-status-running
+  .composer-above-bar-stack:not(
+    :has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  ).fx-agent-aura.fx-status-running
   > :is(
     .composer-above-bar,
     .ensemble-above-row,
