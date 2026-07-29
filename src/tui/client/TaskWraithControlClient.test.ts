@@ -1,12 +1,13 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CONTROL_MAX_LINE_BYTES,
   TASKWRAITH_CONTROL_PROTOCOL_VERSION
 } from '../../shared/taskWraithControlProtocol'
+import { taskWraithControlSocketPath } from '../../shared/taskWraithControlPaths.node'
 import {
   TaskWraithControlClient,
   TaskWraithControlIncompatibleProtocolError
@@ -34,7 +35,16 @@ async function startFakeHost(overrides?: {
   token?: string
 }): Promise<FakeHost> {
   const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-client-'))
-  const socketPath = join(userDataPath, 'control.sock')
+  // Use the SAME path builder the host uses rather than hand-rolling a
+  // filesystem path. Windows cannot listen on one — `net` requires a named
+  // pipe there — so `join(userDataPath, 'control.sock')` produced EACCES for
+  // every test in this file on the Windows runner while passing on POSIX.
+  // The helper already encodes that difference, and reusing it means the test
+  // exercises the address shape production actually serves.
+  const socketPath = taskWraithControlSocketPath(userDataPath)
+  if (process.platform !== 'win32') {
+    await mkdir(dirname(socketPath), { recursive: true, mode: 0o700 })
+  }
   const discoveryPath = overrides?.discoveryPath ?? join(userDataPath, 'discovery.json')
   const tokenPath = join(userDataPath, 'token.txt')
   const token = overrides?.token ?? 'test-token'
