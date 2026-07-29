@@ -273,3 +273,73 @@ export function reconcileStaleChatRuns(
 
   return { chats: out, settlements }
 }
+
+// ---------------------------------------------------------------------------
+// Orphaned run-queue jobs
+//
+// Every dispatched run also writes a durable run-queue job (id === runId) so
+// busy probes and restart recovery survive the process. The job's status is
+// mirrored from the RunManager session by an onChange subscriber — but a
+// subscriber miss (observed live: the terminal event landing after the run's
+// persistence authority was already released by a fast deferred terminal
+// flush) strands the job in a live status forever, and a stranded 'active'
+// job makes its chat read busy: every later send queues behind a phantom and
+// never flushes, and Stop cannot repair it because cancel targets the dead
+// run, never the job. Same doctrine as the ChatRun backstop above: the chat
+// record's TERMINAL runs are authoritative; a live-status job whose run
+// provably sealed is bookkeeping debt, never evidence of work.
+//
+// 'queued'/'paused' jobs are NEVER candidates — they are future prompts, not
+// mirrors of a dispatched run.
+
+export const ORPHANED_RUN_QUEUE_JOB_STATUSES = ['starting', 'active', 'cancelling'] as const
+
+export const ORPHANED_RUN_QUEUE_JOB_REASON =
+  'Settled by the stale-run reconciler: the job outlived its terminal run.'
+
+export interface OrphanedRunQueueJobLike {
+  runId: string
+  status: string
+  chatId?: string
+}
+
+export interface OrphanedRunQueueJobSettlement {
+  runId: string
+  chatId?: string
+  previousStatus: string
+  nextStatus: 'completed' | 'failed' | 'cancelled'
+  /** The sealed ChatRun status the settlement mirrors. */
+  runStatus: string
+}
+
+/** Queue-job terminal status mirroring a sealed ChatRun's status. A job must
+ * never contradict its run's seal — marking a successful run's job
+ * 'cancelled' (or vice versa) would misreport history to every busy probe
+ * and recovery pass that reads it. */
+export function queueJobStatusForTerminalRunStatus(
+  runStatus: string | undefined
+): 'completed' | 'failed' | 'cancelled' {
+  if (runStatus === 'success' || runStatus === 'completed') return 'completed'
+  if (runStatus === 'cancelled') return 'cancelled'
+  return 'failed'
+}
+
+export function reconcileOrphanedRunQueueJobs(
+  jobs: ReadonlyArray<OrphanedRunQueueJobLike>,
+  terminalRunStatusById: ReadonlyMap<string, string>
+): OrphanedRunQueueJobSettlement[] {
+  const settlements: OrphanedRunQueueJobSettlement[] = []
+  for (const job of jobs) {
+    if (!(ORPHANED_RUN_QUEUE_JOB_STATUSES as readonly string[]).includes(job.status)) continue
+    const runStatus = terminalRunStatusById.get(job.runId)
+    if (!runStatus || runStatus === 'running') continue
+    settlements.push({
+      runId: job.runId,
+      ...(job.chatId ? { chatId: job.chatId } : {}),
+      previousStatus: job.status,
+      nextStatus: queueJobStatusForTerminalRunStatus(runStatus),
+      runStatus
+    })
+  }
+  return settlements
+}

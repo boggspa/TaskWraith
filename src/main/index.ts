@@ -1576,6 +1576,7 @@ import {
 import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
+import { registerEnsembleChatHandlers } from './ipc/ensembleChatHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
 import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
@@ -1792,6 +1793,10 @@ import {
   bridgeTranscriptIsOwnedByFinalizer,
   CHAT_RUN_STALE_REASON,
   isActiveChatRunStatus,
+  ORPHANED_RUN_QUEUE_JOB_REASON,
+  ORPHANED_RUN_QUEUE_JOB_STATUSES,
+  queueJobStatusForTerminalRunStatus,
+  reconcileOrphanedRunQueueJobs,
   reconcileStaleChatRuns,
   sealChatRunTerminalFields,
   settleStaleChatRun,
@@ -5223,6 +5228,11 @@ function bridgeRunRouteMatches(
 }
 let pushBridgeRunSnapshot: ((chat: ChatRecord) => void) | null = null
 let pushBridgeRunTaskCardDelta: ((chatId: string) => void) | null = null
+/** Kicks the remote-composer queue pump (assigned in app.whenReady with the
+ * rest of the queue closure). Module-scoped so the stale-run reconciler and
+ * cancelProviderRun can nudge the pump after settling a job that was the
+ * phantom keeping a chat's queued prompts blocked. */
+let scheduleRemoteComposerQueuePumpRef: (() => void) | null = null
 let pushRemoteThreadSnapshotForChat: ((chat: ChatRecord) => boolean) | null = null
 
 /**
@@ -7704,6 +7714,18 @@ runManager.onChange((event) => {
     )
   ) {
     if (isTerminalRunSessionStatus(event.session.status)) {
+      // The durable run-queue job mirror is main-owned BOOKKEEPING, not
+      // transcript persistence — the authority check above protects chat and
+      // transcript writes from unauthorized lanes, and skipping the job
+      // persist along with them stranded the run's job in 'active' forever
+      // whenever the terminal event landed after the run's persistence
+      // authority was already released (a fast deferred terminal flush —
+      // observed live on the Claude SDK lane). A stranded live-status job
+      // pins remoteComposerChatIsBusy for its chat, so every later send
+      // queues behind a phantom and never flushes. Persist the terminal
+      // mapping BEFORE the early return; the transcript-side skip below
+      // stays exactly as it was.
+      persistRunSessionQueueState(event.session)
       // A main-owned transcript finalizer (bridge/execution-graph entry in
       // bridgeRunTranscripts, or a background sub-thread flusher) may still
       // owe this run its TERMINAL FLUSH, which runs a tick later than the
@@ -8777,6 +8799,64 @@ function isChatRunLive(runId: string | undefined | null): boolean {
  * ensemble participants, side chats, sub-threads). After each settlement, push
  * the remote surfaces iOS reads: task-card, thread-list, and thread snapshot.
  */
+/** Backstop for run-queue jobs stranded in a live status by a settlement miss
+ * (see ChatRunReconciler's orphaned-job section): any starting/active/
+ * cancelling job whose runId matches a TERMINAL ChatRun settles to the
+ * status mirroring that seal. Chats fenced for erasure are skipped whole. */
+function settleOrphanedRunQueueJobsProjection(
+  fencedForErasure: (chat: ChatRecord) => boolean
+): number {
+  const candidates = AppStore.getRunQueueJobs({
+    statuses: [...ORPHANED_RUN_QUEUE_JOB_STATUSES]
+  })
+  if (candidates.length === 0) return 0
+  const terminalRunStatusById = new Map<string, string>()
+  const fencedChatIds = new Set<string>()
+  for (const chat of AppStore.getChats()) {
+    if (fencedForErasure(chat)) {
+      fencedChatIds.add(chat.appChatId)
+      continue
+    }
+    for (const run of chat.runs || []) {
+      if (run.status && run.status !== 'running') {
+        terminalRunStatusById.set(run.runId, run.status)
+      }
+    }
+  }
+  const settlements = reconcileOrphanedRunQueueJobs(
+    candidates.filter((job) => !job.chatId || !fencedChatIds.has(job.chatId)),
+    terminalRunStatusById
+  )
+  for (const settlement of settlements) {
+    getRunRepository().transitionRunQueueJob(settlement.runId, settlement.nextStatus, {
+      statusReason: ORPHANED_RUN_QUEUE_JOB_REASON
+    })
+    console.warn(
+      `[chat-run-reconciler] settled orphaned run-queue job run=${settlement.runId} ${settlement.previousStatus} -> ${settlement.nextStatus}: its ChatRun already sealed ${settlement.runStatus}`
+    )
+    appendDurableRunEvent({
+      runId: settlement.runId,
+      ...(settlement.chatId ? { chatId: settlement.chatId } : {}),
+      kind: 'lifecycle',
+      phase: 'control',
+      source: 'main',
+      summary: 'Settled orphaned run-queue job whose run already sealed',
+      payload: {
+        eventType: 'run_queue_job_reconciled',
+        previousStatus: settlement.previousStatus,
+        settledStatus: settlement.nextStatus,
+        runStatus: settlement.runStatus,
+        reason: ORPHANED_RUN_QUEUE_JOB_REASON
+      }
+    })
+  }
+  // A settled job may have been the phantom keeping this chat's queued
+  // prompts blocked — let the pump re-evaluate now instead of waiting for
+  // the next run exit.
+  if (settlements.length > 0) scheduleRemoteComposerQueuePumpRef?.()
+  return settlements.length
+}
+
 function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): number {
   // A chat inside a prepared (uncommitted) erasure must not be settled or
   // re-projected. Filter fenced chats up front so the sweep continues over the
@@ -8798,6 +8878,12 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
       pendingDeletion.workspaceId === chat.workspaceId
     )
   }
+  // Jobs first, and INDEPENDENT of the chat settlements below: the classic
+  // wedge is a job stuck 'active' under a chat whose runs are all already
+  // terminal — the run sweep then has nothing to settle and returns early,
+  // so job logic placed after it would never fire for exactly the case that
+  // needs it.
+  settleOrphanedRunQueueJobsProjection(fencedForErasure)
   const nowIso = new Date().toISOString()
   const { chats, settlements } = reconcileStaleChatRuns(
     AppStore.getChats().filter((chat) => !fencedForErasure(chat)),
@@ -29559,7 +29645,35 @@ async function cancelProviderRun(
   // A supplied run id is an exact cancellation target. Never fall through to
   // provider-global process/controller state when that run is absent, and do
   // not let a mismatched provider label cancel a different provider's run.
-  if (runId && (!session || session.provider !== provider)) return false
+  if (runId && !session) {
+    // The exact run is DEAD — no live session. Stop must still repair the
+    // bookkeeping: a job stranded in a live status by a settlement miss pins
+    // its chat busy, and the old bare `return false` made Stop a no-op
+    // against exactly the wedge the user tapped it to clear. Mirror the
+    // sealed ChatRun's status when the chat holds one; a dead run with no
+    // seal settles 'cancelled'.
+    const orphan = AppStore.getRunQueueJob(runId)
+    if (
+      orphan &&
+      orphan.provider === provider &&
+      (ORPHANED_RUN_QUEUE_JOB_STATUSES as readonly string[]).includes(orphan.status)
+    ) {
+      const sealedStatus = orphan.chatId
+        ? (AppStore.getChat(orphan.chatId)?.runs || []).find((run) => run.runId === runId)?.status
+        : undefined
+      const nextStatus =
+        sealedStatus && sealedStatus !== 'running'
+          ? queueJobStatusForTerminalRunStatus(sealedStatus)
+          : 'cancelled'
+      getRunRepository().transitionRunQueueJob(runId, nextStatus, {
+        statusReason: 'Stopped from the app; the run process was already gone.'
+      })
+      scheduleRemoteComposerQueuePumpRef?.()
+      return true
+    }
+    return false
+  }
+  if (runId && session && session.provider !== provider) return false
   if (session) {
     if (!runId && wasScheduledOccurrenceRunIdObserved(session.runId)) return false
     // Revoke pending approvals synchronously before the provider transport is
@@ -37584,10 +37698,10 @@ if (isGeminiMcpBridgeProcess) {
       )
     }
 
-    let scheduleRemoteComposerQueuePumpRef: (() => void) | null = null
     /** Settles the remote-queue job that owns an exiting run (see the
-     * agent-exit subscriber). Ref for the same reason as the pump ref: the
-     * queue closure is constructed later than the subscribers that need it. */
+     * agent-exit subscriber). Ref for the same reason as the pump ref (now
+     * module-scoped, near pushBridgeRunTaskCardDelta): the queue closure is
+     * constructed later than the subscribers that need it. */
     let settleRemoteComposerQueueJobForExitRef: ((chatId: string, runId: string | null) => void) | null =
       null
     const remoteGitService = new GitService()
@@ -50327,6 +50441,15 @@ if (isGeminiMcpBridgeProcess) {
     // project presets to iOS. A sync re-broadcasts the projection snapshot.
     registerEnsembleRosterPresetsHandlers({
       onChanged: requestThrottledRemoteProjectionSnapshot
+    })
+
+    registerEnsembleChatHandlers({
+      getEnsembleOrchestrator: () => ensembleOrchestratorRef,
+      getChat: (chatId) => AppStore.getChat(chatId),
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      broadcastChatUpdated,
+      broadcastThreadUpdate,
+      pushRemoteTaskCardDelta
     })
 
     // PTY (Trust Assistant terminal) handlers: start-pty / stop-pty /

@@ -7,6 +7,8 @@ import {
   CHAT_RUN_STALE_REASON,
   CHAT_RUN_STALE_SETTLEMENT_STATUS,
   isActiveChatRunStatus,
+  queueJobStatusForTerminalRunStatus,
+  reconcileOrphanedRunQueueJobs,
   reconcileStaleChatRuns,
   sealChatRunTerminalFields,
   settleStaleChatRun
@@ -408,5 +410,101 @@ describe('sealChatRunTerminalFields', () => {
     expect(sealed?.status).toBe('failed')
     expect(sealed?.endedAt).toBe(NOW)
     expect(sealed?.cancelled).toBeUndefined()
+  })
+})
+
+describe('reconcileOrphanedRunQueueJobs', () => {
+  const terminal = new Map<string, string>([
+    ['run-success', 'success'],
+    ['run-failed', 'failed'],
+    ['run-cancelled', 'cancelled'],
+    ['run-live', 'running']
+  ])
+
+  it('settles a live-status job whose run sealed, mirroring the seal', () => {
+    const settlements = reconcileOrphanedRunQueueJobs(
+      [
+        { runId: 'run-success', status: 'active', chatId: 'chat-1' },
+        { runId: 'run-failed', status: 'starting', chatId: 'chat-1' },
+        { runId: 'run-cancelled', status: 'cancelling', chatId: 'chat-2' }
+      ],
+      terminal
+    )
+    expect(settlements).toEqual([
+      {
+        runId: 'run-success',
+        chatId: 'chat-1',
+        previousStatus: 'active',
+        nextStatus: 'completed',
+        runStatus: 'success'
+      },
+      {
+        runId: 'run-failed',
+        chatId: 'chat-1',
+        previousStatus: 'starting',
+        nextStatus: 'failed',
+        runStatus: 'failed'
+      },
+      {
+        runId: 'run-cancelled',
+        chatId: 'chat-2',
+        previousStatus: 'cancelling',
+        nextStatus: 'cancelled',
+        runStatus: 'cancelled'
+      }
+    ])
+  })
+
+  it('never touches queued or paused jobs — they are future prompts', () => {
+    expect(
+      reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-success', status: 'queued', chatId: 'chat-1' },
+          { runId: 'run-success', status: 'paused', chatId: 'chat-1' }
+        ],
+        terminal
+      )
+    ).toEqual([])
+  })
+
+  it('leaves jobs whose run is live or unknown alone', () => {
+    expect(
+      reconcileOrphanedRunQueueJobs(
+        [
+          { runId: 'run-live', status: 'active', chatId: 'chat-1' },
+          { runId: 'run-unknown', status: 'active', chatId: 'chat-1' }
+        ],
+        terminal
+      )
+    ).toEqual([])
+  })
+
+  it('leaves already-terminal jobs alone', () => {
+    expect(
+      reconcileOrphanedRunQueueJobs(
+        [{ runId: 'run-success', status: 'completed', chatId: 'chat-1' }],
+        terminal
+      )
+    ).toEqual([])
+  })
+
+  it('carries settlements for chatless jobs without inventing a chat id', () => {
+    const settlements = reconcileOrphanedRunQueueJobs(
+      [{ runId: 'run-success', status: 'active' }],
+      terminal
+    )
+    expect(settlements).toHaveLength(1)
+    expect('chatId' in settlements[0]).toBe(false)
+  })
+})
+
+describe('queueJobStatusForTerminalRunStatus', () => {
+  it('mirrors the seal and fails closed on anything unrecognised', () => {
+    expect(queueJobStatusForTerminalRunStatus('success')).toBe('completed')
+    expect(queueJobStatusForTerminalRunStatus('completed')).toBe('completed')
+    expect(queueJobStatusForTerminalRunStatus('cancelled')).toBe('cancelled')
+    expect(queueJobStatusForTerminalRunStatus('failed')).toBe('failed')
+    expect(queueJobStatusForTerminalRunStatus('exploded')).toBe('failed')
+    expect(queueJobStatusForTerminalRunStatus(undefined)).toBe('failed')
   })
 })
