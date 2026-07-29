@@ -1582,7 +1582,9 @@ describe('MainSanitizers settings patches', () => {
     const otherWorkspace = {
       ...codex,
       id: 'grant-elsewhere',
-      workspacePath: '/Users/chris/other'
+      // Resolved: this row is spread straight into the EXPECTED output, and
+      // consolidateAgenticWorkspaceGrants emits resolve(workspacePath).
+      workspacePath: resolve('/Users/chris/other')
     }
 
     const merged = consolidateAgenticWorkspaceGrants([codex, gemini, shell, otherWorkspace])

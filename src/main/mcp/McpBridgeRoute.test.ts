@@ -22,6 +22,10 @@ import {
 // the current drive, so a POSIX literal fails its OWN guard and every route
 // built from it comes back `ok: false` — six cases here plus the dev-bridge
 // seam in devAppName.test.ts, none of them about routing.
+// Deliberately NOT resolved elsewhere in this file: the `../Resources/app.asar`
+// and `relative-app-path` fixtures must stay non-canonical, because rejecting
+// exactly those forms is what the guard is for.
+const DEV_APP_ASAR_PATH = resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar')
 const socketA = resolve('/private/a/taskwraith-gemini-mcp.sock')
 const socketB = resolve('/private/b/taskwraith-gemini-mcp.sock')
 const socketPrimary = resolve('/private/primary/taskwraith-gemini-mcp.sock')
@@ -136,7 +140,9 @@ describe('MCP bridge route-from-env authority', () => {
 
   it('carries a packaged isolated profile id only in live endpoint env and keeps primary explicit', () => {
     const isolatedInstanceId = 'e'.repeat(32)
-    const isolatedSocketPath = `/private/TaskWraith Instances/${isolatedInstanceId}/taskwraith-gemini-mcp.sock`
+    const isolatedSocketPath = resolve(
+      `/private/TaskWraith Instances/${isolatedInstanceId}/taskwraith-gemini-mcp.sock`
+    )
     const isolated = buildMcpBridgeRouteEnv({
       parentProvider: 'cursor',
       route: { appRunId: 'run-isolated', appChatId: 'chat-isolated' },
@@ -256,7 +262,7 @@ describe('MCP bridge route-from-env authority', () => {
     expect(
       isDevStaticMcpBridgeProcessArgv([
         '/Applications/Electron.app/Contents/MacOS/Electron',
-        '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+        DEV_APP_ASAR_PATH,
         '--taskwraith-gemini-mcp-bridge',
         MCP_BRIDGE_ROUTE_FROM_ENV_ARG
       ])
@@ -264,7 +270,9 @@ describe('MCP bridge route-from-env authority', () => {
     expect(
       isDevStaticMcpBridgeProcessArgv([
         '/Applications/Electron.app/Contents/MacOS/Electron',
-        '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+        // Resolved on purpose: this case must fail for the EXTRA ARGUMENT, not
+        // because an unresolvable fixture already failed the canonicality guard.
+        DEV_APP_ASAR_PATH,
         '--taskwraith-gemini-mcp-bridge',
         MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
         '--extra'
