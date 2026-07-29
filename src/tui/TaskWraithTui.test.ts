@@ -124,7 +124,12 @@ class FakeControlHost {
 
   async start(): Promise<void> {
     await mkdir(this.userDataPath, { recursive: true })
-    await mkdir(dirname(this.socketPath), { recursive: true })
+    // POSIX only. `taskWraithControlSocketPath` returns `\\.\pipe\...` on
+    // Windows, whose dirname is `\\.\pipe` — a namespace, not a creatable
+    // directory. A pipe needs no parent made for it.
+    if (process.platform !== 'win32') {
+      await mkdir(dirname(this.socketPath), { recursive: true })
+    }
     await writeFile(this.tokenPath, `${this.token}\n`, 'utf8')
     await writeFile(
       this.discoveryPath,
@@ -148,8 +153,12 @@ class FakeControlHost {
     this.server = null
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
     // Unix domain socket files outlive server.close(); a revived host must be
-    // able to re-listen at the same path without EADDRINUSE.
-    await rm(this.socketPath, { force: true })
+    // able to re-listen at the same path without EADDRINUSE. Windows named
+    // pipes are reclaimed by the OS when the last handle closes, and there is
+    // no filesystem entry to unlink.
+    if (process.platform !== 'win32') {
+      await rm(this.socketPath, { force: true })
+    }
   }
 
   /** Force-drops every connected client, simulating an App restart/crash. */
