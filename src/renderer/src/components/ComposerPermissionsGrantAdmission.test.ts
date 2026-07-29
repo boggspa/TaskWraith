@@ -2,6 +2,15 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const composerSource = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8')
+const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
+
+function sourceRegion(source: string, startMarker: string, endMarker: string): string {
+  const start = source.indexOf(startMarker)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const end = source.indexOf(endMarker, start)
+  expect(end).toBeGreaterThan(start)
+  return source.slice(start, end)
+}
 
 describe('Composer permission / tool-grant admission while running', () => {
   it('does not disable the permission + tool-grant picker solely because the solo composer is locked', () => {
@@ -31,5 +40,70 @@ describe('Composer permission / tool-grant admission while running', () => {
     expect(composerSource).toContain(
       'Changes apply when its current execution finishes.'
     )
+  })
+
+  it('keeps revocations available during a solo run', () => {
+    const externalGrantRegion = sourceRegion(
+      composerSource,
+      'className="composer-image-strip composer-external-grant-strip"',
+      '{externalPathGrantPrompt &&'
+    )
+    expect(externalGrantRegion).not.toContain('isCurrentComposerLocked')
+
+    const peopleRegion = sourceRegion(
+      composerSource,
+      '<HumanCollaborationInviteComposerControl',
+      '{voiceButtonLivesInActionRow &&'
+    )
+    expect(peopleRegion).not.toContain('disabled={isCurrentComposerLocked}')
+  })
+
+  it('keeps next-turn draft controls available during a solo run', () => {
+    const attachmentRegion = sourceRegion(
+      composerSource,
+      'aria-label="Composer attachments and context"',
+      '<div className="composer-inner-module">'
+    )
+    expect(attachmentRegion).not.toContain('disabled={isCurrentComposerLocked}')
+
+    const plusRegion = sourceRegion(
+      composerSource,
+      'const plusSections: ComposerPlusPickerSection[]',
+      'triggerIcon={<PlusSymbolIcon />}'
+    )
+    expect(plusRegion).not.toContain('isCurrentComposerLocked')
+
+    expect(composerSource).not.toMatch(
+      /<ComposerVoiceInputButton[\s\S]{0,180}isCurrentComposerLocked/
+    )
+    expect(composerSource).not.toContain(
+      '<ComposerPlanImportCard\n                        pendingPlanImport={pendingPlanImport}\n                        disabled={isCurrentComposerLocked}'
+    )
+  })
+
+  it('accepts custom-model and Gemini trust selections at the next safe boundary', () => {
+    const customModelRegion = sourceRegion(
+      composerSource,
+      'className="composer-inline-custom-model"',
+      'Codex speed-tier `<select>` removed'
+    )
+    expect(customModelRegion).not.toContain('disabled={isCurrentComposerLocked}')
+    expect(customModelRegion).toContain('data-pending-next-turn=')
+
+    const trustRegion = sourceRegion(
+      composerSource,
+      'aria-label="Workspace trust"',
+      '</select>'
+    )
+    expect(trustRegion).toContain('disabled={Boolean(workspaceTrustMutationDisabledReason)}')
+    expect(trustRegion).toContain('data-pending-next-turn=')
+
+    const groundingRegion = sourceRegion(
+      appSource,
+      'const planImportGroundingDisabledReason =',
+      '// Slice F v2'
+    )
+    expect(groundingRegion).not.toContain("'Composer is busy.'")
+    expect(groundingRegion).not.toContain('isCurrentComposerLocked')
   })
 })

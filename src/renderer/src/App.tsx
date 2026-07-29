@@ -19797,13 +19797,11 @@ function App(): React.JSX.Element {
     ? null
     : pendingPlanImport.contract.fileGroundings.length === 0
       ? null
-      : isCurrentComposerLocked
-        ? 'Composer is busy.'
-        : planImportGroundingBusy
-          ? 'Checking path mentions.'
-          : !planImportGroundingWorkspace?.path
-            ? 'Open a workspace chat to check path mentions.'
-            : null
+      : planImportGroundingBusy
+        ? 'Checking path mentions.'
+        : !planImportGroundingWorkspace?.path
+          ? 'Open a workspace chat to check path mentions.'
+          : null
 
   // Slice F v2 (1.0.3) — which participant chip the composer pickers
   // currently target. Lives in App.tsx (not the chip-strip component)

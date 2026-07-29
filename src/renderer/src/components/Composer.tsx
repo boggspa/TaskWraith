@@ -2585,7 +2585,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         className="composer-image-remove"
                         type="button"
                         onClick={() => handleRemoveImageAttachment(image.id)}
-                        disabled={isCurrentComposerLocked}
                         title="Remove attachment"
                         aria-label={`Remove ${image.name}`}
                       >
@@ -2620,7 +2619,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           className="composer-image-remove"
                           type="button"
                           onClick={() => handleRemoveImageAttachment(file.id)}
-                          disabled={isCurrentComposerLocked}
                           title="Remove attachment"
                           aria-label={`Remove ${file.name}`}
                         >
@@ -2650,7 +2648,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         className="composer-image-remove"
                         type="button"
                         onClick={handleClearDiscordContext}
-                        disabled={isCurrentComposerLocked}
                         title="Remove Discord context"
                         aria-label="Remove Discord context"
                       >
@@ -3169,7 +3166,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 className="composer-image-remove"
                                 type="button"
                                 onClick={() => handleRemoveExternalPathGrantsByPath(group.path)}
-                                disabled={isCurrentComposerLocked}
                                 title="Revoke external path grant"
                               >
                                 <XSymbolIcon />
@@ -3232,7 +3228,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     {pendingPlanImport && (
                       <ComposerPlanImportCard
                         pendingPlanImport={pendingPlanImport}
-                        disabled={isCurrentComposerLocked}
                         displayCurrency={displayCurrency}
                         overestimatePercent={overestimatePercent}
                         planImportExecutionEstimate={planImportExecutionEstimate}
@@ -3266,7 +3261,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   label: 'Attachment',
                                   description: 'Add files or images',
                                   icon: <PlusSymbolIcon />,
-                                  disabled: isCurrentComposerLocked,
                                   onSelect: handlePickImages
                                 },
                                 {
@@ -3281,7 +3275,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       : 'Pick a running app window',
                                   icon: <CommandSymbolIcon />,
                                   disabled:
-                                    isCurrentComposerLocked ||
                                     Boolean(screenWatchUnavailableReason) ||
                                     (!attachedWindow && isAttachingWindow),
                                   onSelect: attachedWindow ? handleDetachWindow : handleAttachWindow
@@ -3296,7 +3289,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   icon: <ChatMediaIcon />,
                                   active: Boolean(currentDiscordContextSelection),
                                   disabled:
-                                    isCurrentComposerLocked ||
                                     !currentChat ||
                                     Boolean(discordContextUnavailableReason) ||
                                     typeof openDiscordContextPicker !== 'function',
@@ -3379,7 +3371,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               provider={currentProvider}
                               composerStyle={appearance.composerStyle}
                               sections={plusSections}
-                              disabled={isCurrentComposerLocked}
                               triggerIcon={<PlusSymbolIcon />}
                             />
                           )
@@ -4083,7 +4074,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                         }
                                       }}
                                       placeholder="Model ID"
-                                      disabled={isCurrentComposerLocked}
+                                      title={
+                                        isCurrentComposerLocked
+                                          ? 'Custom model for the next turn'
+                                          : 'Custom model'
+                                      }
+                                      data-pending-next-turn={
+                                        isCurrentComposerLocked ? 'true' : 'false'
+                                      }
                                     />
                                     <button
                                       className="composer-inline-clear"
@@ -4109,8 +4107,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                           syncPersistentModelSelection(fallbackModel)
                                         }
                                       }}
-                                      disabled={isCurrentComposerLocked}
-                                      title="Cancel custom model"
+                                      title={
+                                        isCurrentComposerLocked
+                                          ? 'Cancel custom model for the next turn'
+                                          : 'Cancel custom model'
+                                      }
                                       aria-label="Cancel custom model"
                                     >
                                       <XSymbolIcon />
@@ -4451,7 +4452,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           <ComposerVoiceInputButton
                             composerStyle={appearance.composerStyle}
                             disabled={
-                              isCurrentComposerLocked ||
                               !currentChat ||
                               (!isCurrentGlobalChat && !currentWorkspace)
                             }
@@ -4501,7 +4501,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   trustResult?.status !== 'inherited'
                                 ) {
                                   setSessionTrust(true)
-                                  void handleBridgeCommand('/permissions trust')
+                                  if (isCurrentComposerLocked) {
+                                    markPersistentSessionRestartNeeded(
+                                      'Gemini workspace trust changed. Restart the persistent session to apply the trust setting.'
+                                    )
+                                  } else {
+                                    void handleBridgeCommand('/permissions trust')
+                                  }
                                 } else if (nextValue === 'untrusted') {
                                   setSessionTrust(false)
                                   markPersistentSessionRestartNeeded(
@@ -4509,11 +4515,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   )
                                 }
                               }}
-                              disabled={
-                                isCurrentComposerLocked ||
-                                Boolean(workspaceTrustMutationDisabledReason)
+                              disabled={Boolean(workspaceTrustMutationDisabledReason)}
+                              title={
+                                workspaceTrustMutationDisabledReason ||
+                                (isCurrentComposerLocked
+                                  ? 'Workspace trust for the next turn'
+                                  : 'Workspace trust')
                               }
-                              title={workspaceTrustMutationDisabledReason || 'Workspace trust'}
+                              data-pending-next-turn={
+                                isCurrentComposerLocked ? 'true' : 'false'
+                              }
                             >
                               <option value="trusted">Trusted</option>
                               <option value="untrusted">Untrusted</option>
@@ -4549,7 +4560,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         )}
                         <HumanCollaborationInviteComposerControl
                           active={Boolean(humanCollaborationInviteActive)}
-                          disabled={isCurrentComposerLocked}
                           share={humanCollaborationShare}
                           health={humanCollaborationInviteHealth}
                           busy={humanCollaborationInviteBusy}
@@ -4564,7 +4574,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           <ComposerVoiceInputButton
                             composerStyle={appearance.composerStyle}
                             disabled={
-                              isCurrentComposerLocked ||
                               !currentChat ||
                               (!isCurrentGlobalChat && !currentWorkspace)
                             }
@@ -4587,7 +4596,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             <ComposerVoiceInputButton
                               composerStyle={appearance.composerStyle}
                               disabled={
-                                isCurrentComposerLocked ||
                                 !currentChat ||
                                 (!isCurrentGlobalChat && !currentWorkspace)
                               }
@@ -4725,12 +4733,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               onClick={() => void handleTrustWorkspaceClick()}
                               disabled={
                                 geminiTrustWriteBusy ||
-                                isCurrentComposerLocked ||
                                 Boolean(workspaceTrustMutationDisabledReason)
                               }
                               title={
                                 workspaceTrustMutationDisabledReason ||
-                                `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`
+                                (isCurrentComposerLocked
+                                  ? `Trust ${currentWorkspace.path} for Gemini — applies to the next process`
+                                  : `Trust ${currentWorkspace.path} for Gemini — writes ~/.gemini/trustedFolders.json`)
                               }
                               style={{
                                 display: 'inline-flex',
