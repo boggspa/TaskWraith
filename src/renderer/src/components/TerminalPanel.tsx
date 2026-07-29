@@ -6,9 +6,10 @@ import '@xterm/xterm/css/xterm.css'
 interface TerminalPanelProps {
   workspacePath: string
   onClose?: () => void
+  className?: string
 }
 
-export function TerminalPanel({ workspacePath, onClose }: TerminalPanelProps) {
+export function TerminalPanel({ workspacePath, onClose, className }: TerminalPanelProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const term = useRef<Terminal | null>(null)
   const fitAddon = useRef<FitAddon | null>(null)
@@ -37,12 +38,12 @@ export function TerminalPanel({ workspacePath, onClose }: TerminalPanelProps) {
       window.api.ptyWrite(data, ptySessionId)
     })
 
-    window.api.onPtyData((data, eventSessionId) => {
+    const unsubscribePtyData = window.api.onPtyData((data, eventSessionId) => {
       if (eventSessionId && eventSessionId !== ptySessionId) return
       term.current?.write(data)
     })
 
-    window.api.onPtyExit((code, eventSessionId) => {
+    const unsubscribePtyExit = window.api.onPtyExit((code, eventSessionId) => {
       if (eventSessionId && eventSessionId !== ptySessionId) return
       term.current?.write(`\r\n\x1b[33mProcess exited with code ${code}\x1b[0m\r\n`)
     })
@@ -63,7 +64,8 @@ export function TerminalPanel({ workspacePath, onClose }: TerminalPanelProps) {
     return () => {
       disposed = true
       window.api.stopPty(ptySessionId).catch(() => {})
-      window.api.removePtyListeners()
+      unsubscribePtyData()
+      unsubscribePtyExit()
       term.current?.dispose()
       window.removeEventListener('resize', handleResize)
     }
@@ -79,7 +81,7 @@ export function TerminalPanel({ workspacePath, onClose }: TerminalPanelProps) {
   }, [onClose])
 
   return (
-    <div className="terminal-panel">
+    <div className={className ?? 'terminal-panel'}>
       <div className="terminal-panel-header">
         <span>Terminal: {workspacePath}</span>
         {onClose && (

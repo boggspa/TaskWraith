@@ -66,7 +66,7 @@ export function registerPtyHandlers(deps: PtyHandlerDeps): void {
         registeredWorkspace,
         {
           method: 'pty/start',
-          title: 'Approve setup terminal',
+          title: 'Approve workspace terminal',
           body: `${registeredWorkspace}\n${process.env.SHELL || (os.platform() === 'win32' ? 'powershell.exe' : 'bash')}`,
           preview: {
             kind: 'terminal',

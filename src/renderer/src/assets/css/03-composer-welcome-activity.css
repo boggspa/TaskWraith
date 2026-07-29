@@ -84,8 +84,8 @@
   margin: 0;
 }
 
-.gemini-terminal-open .composer-area {
-  bottom: calc(var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) + var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
+.workspace-terminal-open .composer-area {
+  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--composer-bottom-gap) + env(safe-area-inset-bottom, 0px));
 }
 
 .welcome-mode .composer-area {
@@ -104,8 +104,8 @@
   background: transparent;
 }
 
-.welcome-mode.gemini-terminal-open .composer-area {
-  top: calc((100% - var(--gemini-terminal-height) - var(--gemini-terminal-bottom-gap)) / 2);
+.welcome-mode.workspace-terminal-open .composer-area {
+  top: calc((100% - var(--workspace-terminal-height) - var(--workspace-terminal-bottom-gap)) / 2);
   bottom: auto;
 }
 

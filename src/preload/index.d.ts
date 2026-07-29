@@ -1305,8 +1305,8 @@ declare global {
       discoverGeminiCommands: (workspace: string) => Promise<any>
       discoverGeminiMemory: (workspace: string) => Promise<any>
       getFileIconDataUrl: (path: string) => Promise<string | null>
-      onPtyData: (callback: (data: string, sessionId?: string) => void) => void
-      onPtyExit: (callback: (code: number | null, sessionId?: string) => void) => void
+      onPtyData: (callback: (data: string, sessionId?: string) => void) => () => void
+      onPtyExit: (callback: (code: number | null, sessionId?: string) => void) => () => void
       removePtyListeners: () => void
       onGeminiSessionData: (callback: (data: string) => void) => void
       onGeminiSessionExit: (callback: (code: number | null) => void) => void

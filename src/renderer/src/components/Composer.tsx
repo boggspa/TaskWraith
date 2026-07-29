@@ -21,7 +21,7 @@ import type {
   HumanCollaborationInviteHealth
 } from '../lib/humanCollaborationInviteHealth'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, GitCommitSymbolIcon, GoalSymbolIcon, ModelSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, ReviewSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -140,6 +140,8 @@ import {
   appendComposerVoiceTranscript
 } from './ComposerVoiceInput'
 import type { ComposerVoiceCaptureState } from './ComposerVoiceInput'
+import { TerminalPanel } from './TerminalPanel'
+import { usePerChatState } from '../hooks/usePerChatState'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
 import { hasComposerMarkdown } from '../lib/composerMarkdownHighlight'
@@ -836,6 +838,37 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
+
+  // Per-chat workspace terminal open state. Each pane's <Composer> owns its
+  // own terminal toggle; the state is keyed by THIS composer's chatId so
+  // multiview panes never share or clobber each other's shell.
+  const [terminalOpenByChatId, setTerminalOpenForChat] = usePerChatState(false)
+  const isTerminalOpen = Boolean(
+    currentChat?.appChatId && terminalOpenByChatId[currentChat.appChatId]
+  )
+  const canShowTerminal = Boolean(currentWorkspace?.path && !isCurrentGlobalChat)
+
+  const [transcriptRoot, setTranscriptRoot] = useState<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    if (transcriptRoot) return
+    const findRoot = () => {
+      const root = composerAreaRef?.current?.closest('.app-transcript')
+      if (root instanceof HTMLElement) setTranscriptRoot(root)
+    }
+    findRoot()
+    const raf = requestAnimationFrame(findRoot)
+    return () => cancelAnimationFrame(raf)
+  }, [composerAreaRef, transcriptRoot])
+
+  useEffect(() => {
+    if (!transcriptRoot) return
+    if (isTerminalOpen) transcriptRoot.classList.add('workspace-terminal-open')
+    else transcriptRoot.classList.remove('workspace-terminal-open')
+    return () => {
+      transcriptRoot.classList.remove('workspace-terminal-open')
+    }
+  }, [isTerminalOpen, transcriptRoot])
+
   const pendingSoloProvider =
     !isCurrentEnsembleChat && currentChat
       ? readPendingProviderChange(currentChat)?.provider

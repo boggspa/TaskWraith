@@ -1,7 +1,7 @@
 /* Transcript */
 .app-transcript {
-  --gemini-terminal-height: 260px;
-  --gemini-terminal-bottom-gap: var(--space-md);
+  --workspace-terminal-height: 260px;
+  --workspace-terminal-bottom-gap: var(--space-md);
   --composer-bottom-gap: 12px;
   --composer-reserved-height: calc(var(--composer-min-height) + (var(--space-lg) * 4));
   /*
@@ -44,8 +44,8 @@
       var(--composer-above-row-clearance) + env(safe-area-inset-bottom, 0px)
   );
   --composer-terminal-scroll-under-padding: calc(
-    var(--composer-scroll-under-padding) + var(--gemini-terminal-height) +
-      var(--gemini-terminal-bottom-gap)
+    var(--composer-scroll-under-padding) + var(--workspace-terminal-height) +
+      var(--workspace-terminal-bottom-gap)
   );
   --composer-content-max-width: 850px;
   --welcome-usage-top: clamp(112px, 17vh, 220px);
@@ -2717,10 +2717,10 @@
 /* Gemini terminal docks below the composer, extending the bottom reserve — push
  * the fade anchor past the terminal so content still fades at the true top edge
  * of the composer+terminal stack. */
-.gemini-terminal-open .transcript-scroll {
+.workspace-terminal-open .transcript-scroll {
   --transcript-composer-fade-anchor: calc(
     var(--composer-reserved-height) + var(--composer-bottom-gap) +
-      var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) +
+      var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) +
       env(safe-area-inset-bottom, 0px)
   );
 }
@@ -4255,7 +4255,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--text-tertiary);
 }
 
-.gemini-terminal-open .transcript-scroll {
+.workspace-terminal-open .transcript-scroll {
   padding-bottom: var(--composer-terminal-scroll-under-padding);
   margin-bottom: 0;
   scroll-padding-bottom: var(--composer-terminal-scroll-under-padding);
@@ -4349,13 +4349,13 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   margin-bottom: 0;
 }
 
-.gemini-terminal-split {
+.workspace-terminal-split {
   position: absolute;
   left: calc(var(--space-lg) * 2);
   right: calc(var(--space-lg) * 2);
-  bottom: var(--gemini-terminal-bottom-gap);
+  bottom: var(--workspace-terminal-bottom-gap);
   max-width: none;
-  height: var(--gemini-terminal-height);
+  height: var(--workspace-terminal-height);
   min-height: 0;
   margin: 0;
   z-index: 3;
@@ -4376,7 +4376,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   -webkit-backdrop-filter: blur(12px);
 }
 
-.gemini-terminal-split::after,
+.workspace-terminal-split::after,
 .activity-output-terminal::after {
   content: "";
   position: absolute;
@@ -4407,11 +4407,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   animation: agentBorderChase 30s linear infinite;
 }
 
-.gemini-terminal-resize-divider {
+.workspace-terminal-resize-divider {
   position: absolute;
   left: calc(var(--space-lg) * 2);
   right: calc(var(--space-lg) * 2);
-  bottom: calc(var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) - 2px);
+  bottom: calc(var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) - 2px);
   height: 12px;
   z-index: 6;
   cursor: row-resize;
@@ -4419,7 +4419,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   -webkit-app-region: no-drag;
 }
 
-.gemini-terminal-resize-divider::before {
+.workspace-terminal-resize-divider::before {
   content: "";
   position: absolute;
   left: 12px;
@@ -4430,9 +4430,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   box-shadow: 0 0 18px color-mix(in srgb, var(--provider-gemini-color) 12%, transparent);
 }
 
-.gemini-terminal-resize-divider:hover::before,
-.gemini-terminal-resize-divider:focus-visible::before,
-.is-resizing-gemini-terminal .gemini-terminal-resize-divider::before {
+.workspace-terminal-resize-divider:hover::before,
+.workspace-terminal-resize-divider:focus-visible::before,
+.is-resizing-workspace-terminal .workspace-terminal-resize-divider::before {
   height: 2px;
   top: 5px;
   background: color-mix(in srgb, var(--provider-gemini-color) 62%, transparent);
@@ -4606,13 +4606,13 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   scroll-padding-bottom: var(--space-lg);
 }
 
-.welcome-mode.gemini-terminal-open .transcript-scroll {
+.welcome-mode.workspace-terminal-open .transcript-scroll {
   padding-bottom: calc(
-    var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) + var(--space-lg) +
+    var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--space-lg) +
       env(safe-area-inset-bottom, 0px)
   );
   scroll-padding-bottom: calc(
-    var(--gemini-terminal-height) + var(--gemini-terminal-bottom-gap) + var(--space-lg) +
+    var(--workspace-terminal-height) + var(--workspace-terminal-bottom-gap) + var(--space-lg) +
       env(safe-area-inset-bottom, 0px)
   );
 }
@@ -4683,7 +4683,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   user-select: none;
 }
 
-.is-resizing-gemini-terminal {
+.is-resizing-workspace-terminal {
   cursor: row-resize;
   user-select: none;
 }
@@ -4728,12 +4728,12 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
     padding-inline: var(--space-lg);
   }
 
-  .gemini-terminal-split {
+  .workspace-terminal-split {
     left: var(--space-lg);
     right: var(--space-lg);
   }
 
-  .gemini-terminal-resize-divider {
+  .workspace-terminal-resize-divider {
     left: var(--space-lg);
     right: var(--space-lg);
   }
@@ -4746,7 +4746,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 [data-reduce-transparency="true"] .app-sidebar,
 [data-reduce-transparency="true"] .app-file-editor,
 [data-reduce-transparency="true"] .app-inspector,
-[data-reduce-transparency="true"] .gemini-terminal-split,
+[data-reduce-transparency="true"] .workspace-terminal-split,
 [data-reduce-transparency="true"] .composer-surface,
 [data-reduce-transparency="true"] .settings-panel-header {
   backdrop-filter: none;
@@ -4772,7 +4772,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   transform: none;
 }
 
-[data-reduce-motion="true"] .gemini-terminal-split::after,
+[data-reduce-motion="true"] .workspace-terminal-split::after,
 [data-reduce-motion="true"] .activity-output-terminal::after,
 [data-reduce-motion="true"] .message-bubble.user::after,
 [data-reduce-motion="true"] .composer-action-btn.run-btn.send-confirming:not(:disabled) .sf-symbol-icon {

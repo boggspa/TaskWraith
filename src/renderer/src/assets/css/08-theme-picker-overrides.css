@@ -5129,7 +5129,7 @@
 [data-appearance="native_glass"][data-reduce-transparency="false"]:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) :is(
   .app-inspector,
   .app-file-editor,
-  .gemini-terminal-split,
+  .workspace-terminal-split,
   .composer-surface
 ) {
   background:

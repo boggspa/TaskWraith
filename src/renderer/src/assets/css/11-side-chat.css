@@ -1731,7 +1731,7 @@
   font-style: normal;
 }
 
-.right-dock-terminal.gemini-terminal-split {
+.right-dock-terminal.workspace-terminal-split {
   height: 100%;
   border-top: 0;
 }

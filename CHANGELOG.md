@@ -24,6 +24,15 @@ knew. Around them, questions settle instead of vanishing, meters read the real
 dials, and the workshop refuses to trip over itself when something tries to
 start it twice.
 
+### The workshop answers the terminal
+
+The composer now **cuts a service hatch** into the workspace itself. A new
+Terminal toggle in the telemetry row opens a bottom-rising terminal panel
+rooted in the selected workspace, using the platform's default shell and
+honouring the same approval gate as the Trust Assistant terminal. General Chats
+do not surface the toggle, and each Multiview pane keeps its own independent
+shell so split-thread layouts never cross the streams.
+
 ### Your TaskWraith thread, live in the terminal
 
 TaskWraith 1.9.1 ships `tw`, a **Developer Preview** terminal sidecar packaged

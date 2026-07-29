@@ -2667,7 +2667,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 )}
 
                 {activeRightDockTab === 'terminal' && isTerminalDockAvailable && (
-                  <div className="gemini-terminal-split right-dock-terminal" role="region" aria-label="Gemini terminal output">
+                  <div className="workspace-terminal-split right-dock-terminal" role="region" aria-label="Gemini terminal output">
                     <div className="gemini-terminal-header">
                       <div className="gemini-terminal-title">
                         <AppleTerminalIcon />

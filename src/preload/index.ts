@@ -1315,10 +1315,16 @@ const api = {
     ipcRenderer.invoke('discover-gemini-memory', workspace),
   getFileIconDataUrl: (path: string) => ipcRenderer.invoke('get-file-icon', path),
   onPtyData: (callback: (data: string, sessionId?: string) => void) => {
-    ipcRenderer.on('pty-data', (_event, data, sessionId) => callback(data, sessionId))
+    const handler = (_event: unknown, data: string, sessionId?: string) =>
+      callback(data, sessionId)
+    ipcRenderer.on('pty-data', handler)
+    return () => ipcRenderer.removeListener('pty-data', handler)
   },
   onPtyExit: (callback: (code: number | null, sessionId?: string) => void) => {
-    ipcRenderer.on('pty-exit', (_event, code, sessionId) => callback(code, sessionId))
+    const handler = (_event: unknown, code: number | null, sessionId?: string) =>
+      callback(code, sessionId)
+    ipcRenderer.on('pty-exit', handler)
+    return () => ipcRenderer.removeListener('pty-exit', handler)
   },
   removePtyListeners: () => {
     ipcRenderer.removeAllListeners('pty-data')
