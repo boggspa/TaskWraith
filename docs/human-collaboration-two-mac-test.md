@@ -39,8 +39,8 @@ transport.
 
 Why it clears the guards:
 - `classifyRelayUrl` treats any non-loopback `wss:` URL as `remote`, so
-  `remoteAvailable` is true and the invite-copy guard at `App.tsx:1643`
-  (which hard-fails on `loopbackOnly`) does not fire.
+  `remoteAvailable` is true and the `loopbackOnly` invite-copy guard in
+  `App.tsx` does not fire.
 - `selectAdvertisableRelayUrls` probes each candidate door before advertising it
   and **drops the dead ones with a readable warning**, so a stale tunnel URL
   won't silently ship inside an invite.
@@ -49,7 +49,7 @@ Why it clears the guards:
 
 ## 2. Host setup (do this before the other person is waiting)
 
-1. **Enable remote access.** Settings → Devices. Creating an invite will
+1. **Enable remote access.** Settings → Devices → **Enable iOS remote bridge**. Creating an invite will
    auto-start the bridge (`prepareHumanCollaborationInviteTransport` calls
    `startIosRemoteBridge`), but starting it by hand first means you see failures
    now rather than mid-test.
@@ -66,7 +66,9 @@ Why it clears the guards:
 cloudflared tunnel --url http://127.0.0.1:8787
 ```
 
-   That prints a `https://<random>.trycloudflare.com` URL.
+   That prints a `https://<random>.trycloudflare.com` URL. For unpackaged/dev
+   hosts, replace 8787 with the **actual relay port** for that instance (the
+   runbook examples still assume the packaged 8787 in that snippet).
 
 4. **Advertise it.** Settings → Devices → (expand the networking details) →
    **"Extra advertised relay door"**. Enter the tunnel host as a wss URL:
@@ -78,10 +80,10 @@ cloudflared tunnel --url http://127.0.0.1:8787
    `relayUrls` (all advertisable doors), `roomId`, `shareId`, the invite token
    and `hostIdentityPubKeyB64`.
 
-   > **Expected:** the copy succeeds and the alert does *not* say remote access
-   > is off. If it says "No collaborator-reachable relay URL is available", the
-   > tunnel door failed its probe — check the tunnel is still up, then create a
-   > **fresh** invite (the doors are baked in at creation time).
+   > **Expected:** the copy succeeds and the alert does *not* say
+   > "No collaborator-reachable relay URL is available". If it appears, the
+   > tunnel door failed its probe — open remote setup, then copy a **fresh** invite
+   > (the doors are baked in at creation time).
 
 6. **Send the invite out of band** (Signal, email, whatever). It is not a
    secret-free blob — it contains a single-use invite token — but the security
@@ -143,7 +145,7 @@ collaborator client only dials outward, and its socket factory is wired
 unconditionally. They need the app, the invite text, and to be on a phone call
 with you for the code compare.
 
-Sidebar → **"Join Shared Chat"** → paste the invite.
+Sidebar → **"Join a People Chat"** → paste the invite.
 
 ---
 
@@ -155,8 +157,8 @@ Run through this before the other person is on the call:
 - [ ] Host: tunnel process alive, its URL loads in a browser
 - [ ] Host: "Extra advertised relay door" saved (blur the field — it saves on blur, not on keypress)
 - [ ] Host: invite copies without the no-relay warning
-- [ ] Host: Settings → Shares shows the share with "Invite issued"
-- [ ] Host: **Activity log** expanded (Settings → Shares, bottom) — this is your live diagnostic
+- [ ] Host: Settings → People shows the share with "Invite issued"
+- [ ] Host: **Activity log** expanded (Settings → People, bottom) — this is your live diagnostic
 - [ ] Both: a voice channel for the 6-digit compare
 - [ ] Collaborator: app open on the Join modal
 
@@ -168,10 +170,10 @@ Run through this before the other person is on the call:
 |---|---|---|---|
 | 1 | Collaborator pastes invite, clicks join | 6-digit code appears on **both** screens — collaborator in the join modal, host in a banner | `admission.began` |
 | 2 | Compare codes aloud | Digits match | — |
-| 3 | **Collaborator** clicks "codes match" | Collaborator lands in the read-only projection | `admission.sas_confirmed`, `invite.consumed` |
+| 3 | **Collaborator** clicks "Codes match — join" (or "Codes don't match" if a digit differs) | Collaborator lands in the read-only projection | `admission.sas_confirmed`, `invite.consumed` |
 | 4 | Host sends a message in the chat | Collaborator sees it appear | — |
 | 5 | Collaborator posts a comment | Host sees it badged **External** | `contribution.received` |
-| 6 | Host switches preset to "Request host action" | Collaborator's composer offers the action-request intent | `share.rules_changed` |
+| 6 | Host switches preset to "Request host action — host-reviewed" | Collaborator's composer offers the action-request intent | `share.rules_changed` |
 | 7 | Collaborator sends an action request | Host sees an "Action request" badge + "Insert as draft" | `contribution.received` |
 | 8 | Host clicks "Insert as draft" | Text lands in the host composer, wrapped with provenance, **not sent** | `draft.inserted` |
 | 9 | Collaborator spams 5 comments fast | Some are dropped | `contribution.rejected` / `rate limit — too many, too fast` |
