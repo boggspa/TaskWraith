@@ -1,4 +1,5 @@
 import type { ProviderId } from '../main/store/types'
+import type { ContextUsageSnapshot } from './contextUsage'
 
 /**
  * Ephemeral, display-only usage telemetry for one active run — an Ensemble seat
@@ -23,6 +24,9 @@ export type ParticipantWorkingTelemetryEvent =
       inputTokens: number
       outputTokens: number
       totalTokens: number
+      /** Latest atomic context-window snapshot. Top-level token fields remain
+       * monotonic turn telemetry for the Working indicator. */
+      contextUsage?: ContextUsageSnapshot
       /** `false` means the provider supplied a normalized usage snapshot;
        * `true` means a chars÷4 stream estimate is riding this lane (Grok /
        * Cursor mid-stream, Kimi-ACP) — display surfaces keep the "≈". */

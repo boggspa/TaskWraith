@@ -398,6 +398,9 @@ describe('streamAntigravityGeminiApiTurn', () => {
             promptTokenCount: MAX_ANTIGRAVITY_GEMINI_API_USAGE_TOKENS + 1,
             candidatesTokenCount: 3,
             totalTokenCount: 4,
+            cachedContentTokenCount: 2,
+            thoughtsTokenCount: 5,
+            toolUsePromptTokenCount: 1,
             apiKey: API_KEY,
             error: `bad ${API_KEY}`
           },
@@ -415,7 +418,13 @@ describe('streamAntigravityGeminiApiTurn', () => {
       model: MODEL,
       chunks: 1,
       textChars: 2,
-      usage: { candidatesTokenCount: 3, totalTokenCount: 4 }
+      usage: {
+        candidatesTokenCount: 3,
+        totalTokenCount: 4,
+        cachedContentTokenCount: 2,
+        thoughtsTokenCount: 5,
+        toolUsePromptTokenCount: 1
+      }
     })
     expect(JSON.stringify(result)).not.toContain(API_KEY)
   })

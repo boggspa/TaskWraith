@@ -1,6 +1,11 @@
 import type { ProviderId } from './store/types'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import { statsAreEstimated } from '../shared/tokenEstimate'
+import {
+  contextUsageFromStats,
+  contextUsageSnapshotsEqual,
+  type ContextUsageSnapshot
+} from '../shared/contextUsage'
 
 /** Match the EnsembleOrchestrator's working-telemetry cadence so solo and
  * ensemble seats tick the renderer at the same rate. */
@@ -12,6 +17,7 @@ type SoloWorkingTokenRecord = {
   outputTokens: number
   totalTokens: number
   estimated: boolean
+  contextUsage?: ContextUsageSnapshot
 }
 
 function nonNegativeInteger(value: unknown): number {
@@ -86,7 +92,8 @@ export class SoloWorkingTokenTelemetry {
       readCount(stats, ['total_tokens', 'totalTokens']),
       inputTokens + outputTokens
     )
-    if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return null
+    const contextUsage = contextUsageFromStats(stats) || undefined
+    if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0 && !contextUsage) return null
 
     // Estimated only while EVERY report so far was an estimate — the first
     // authoritative provider snapshot flips the run to authoritative for good
@@ -98,7 +105,8 @@ export class SoloWorkingTokenTelemetry {
       inputTokens !== previous.inputTokens ||
       outputTokens !== previous.outputTokens ||
       totalTokens !== previous.totalTokens ||
-      estimated !== previous.estimated
+      estimated !== previous.estimated ||
+      !contextUsageSnapshotsEqual(contextUsage, previous.contextUsage)
     if (!changed) return null
     // Throttle WITHOUT recording, so the accumulated maxima survive to the next
     // post-window call (mirrors reportParticipantTokenUsage).
@@ -109,7 +117,8 @@ export class SoloWorkingTokenTelemetry {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated
+      estimated,
+      contextUsage
     })
     return {
       type: 'snapshot',
@@ -125,7 +134,8 @@ export class SoloWorkingTokenTelemetry {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated
+      estimated,
+      ...(contextUsage ? { contextUsage } : {})
     }
   }
 

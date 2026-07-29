@@ -27,6 +27,7 @@ import {
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
 import { buildRemoteDraftChat } from './remote/RemoteDraftChats'
 import type { TaskWraithPluginActivatedMobileProjection } from '../shared/plugins/PluginTypes'
+import { withContextUsageSnapshot } from '../shared/contextUsage'
 
 const NOW = Date.UTC(2026, 4, 30, 12, 0, 0)
 const ISO = new Date(NOW).toISOString()
@@ -1407,6 +1408,131 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
     )
 
     expect(state?.roster?.[0].contextTokens).toBe(99_000)
+  })
+
+  it('projects an atomic provider invocation instead of the larger turn aggregate', () => {
+    const atomic = withContextUsageSnapshot(
+      { input_tokens: 90_000, output_tokens: 1_000, total_tokens: 91_000 },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )
+    const state = buildRemoteEnsembleState(
+      chat({
+        appChatId: 'ensemble-atomic',
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [
+            { id: 'p1', provider: 'claude', enabled: true, role: 'Builder', order: 0 }
+          ]
+        },
+        runs: [
+          run({
+            runId: 'p1-aggregate',
+            ensembleParticipantId: 'p1',
+            stats: {
+              input_tokens: 500_000,
+              output_tokens: 20_000,
+              total_tokens: 520_000,
+              _taskwraith_context_usage: atomic._taskwraith_context_usage
+            }
+          })
+        ]
+      } as unknown as Partial<ChatRecord>)
+    )
+
+    expect(state?.roster?.[0].contextTokens).toBe(91_000)
+  })
+
+  it('projects a newer provider post-compaction count without changing the iOS shape', () => {
+    const source = ensembleChat()
+    source.messages = [
+      ...(source.messages || []),
+      {
+        id: 'p1-compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:08:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          ensembleParticipantId: 'p1',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 19_000 }
+          }
+        }
+      }
+    ]
+
+    const state = buildRemoteEnsembleState(source)
+    expect(state?.roster?.map((entry) => [entry.id, entry.contextTokens])).toEqual([
+      ['p1', 19_000],
+      ['p2', 31_000]
+    ])
+  })
+
+  it('projects an explicit zero post-compaction count instead of omitting it', () => {
+    const source = ensembleChat()
+    source.messages = [
+      ...(source.messages || []),
+      {
+        id: 'p1-compacted-empty',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:08:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          ensembleParticipantId: 'p1',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 0 }
+          }
+        }
+      }
+    ]
+
+    expect(buildRemoteEnsembleState(source)?.roster?.[0]).toMatchObject({
+      id: 'p1',
+      contextTokens: 0
+    })
+  })
+
+  it('projects a provider snapshot received after an in-run compaction', () => {
+    const source = ensembleChat()
+    const observedAt = Date.parse('2026-05-30T12:09:00.000Z')
+    source.runs = [
+      ...(source.runs || []).filter((entry) => entry.ensembleParticipantId !== 'p1'),
+      run({
+        runId: 'p1-after-compaction',
+        ensembleParticipantId: 'p1',
+        startedAt: '2026-05-30T12:00:00.000Z',
+        stats: withContextUsageSnapshot(
+          { input_tokens: 24_000, output_tokens: 1_000 },
+          {
+            source: 'provider-last-invocation',
+            precision: 'exact',
+            observedAt
+          }
+        )
+      })
+    ]
+    source.messages = [
+      ...(source.messages || []),
+      {
+        id: 'p1-compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:08:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          ensembleParticipantId: 'p1',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 19_000 }
+          }
+        }
+      }
+    ]
+
+    expect(buildRemoteEnsembleState(source)?.roster?.[0].contextTokens).toBe(25_000)
   })
 
   it('projects Boss identity at top level and on the roster entry', () => {

@@ -185,6 +185,11 @@ import {
 } from '../../shared/contextWindows'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
+import {
+  contextUsageFromStats,
+  contextUsageSnapshotsEqual,
+  type ContextUsageSnapshot
+} from '../../shared/contextUsage'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { isKimiK3Model } from '../providers/StaticProviderModels'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
@@ -3180,6 +3185,7 @@ export class EnsembleOrchestrator {
       outputTokens: number
       totalTokens: number
       estimated: boolean
+      contextUsage?: ContextUsageSnapshot
     }
   >()
   /**
@@ -12075,7 +12081,8 @@ export class EnsembleOrchestrator {
       numericRunStat(stats, 'total_tokens', 'totalTokens'),
       inputTokens + outputTokens
     )
-    if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return false
+    const contextUsage = contextUsageFromStats(stats) || undefined
+    if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0 && !contextUsage) return false
 
     // Estimated only while EVERY report so far was an estimate — the first
     // authoritative provider snapshot flips the seat to authoritative for good.
@@ -12089,7 +12096,8 @@ export class EnsembleOrchestrator {
       inputTokens !== previous.inputTokens ||
       outputTokens !== previous.outputTokens ||
       totalTokens !== previous.totalTokens ||
-      estimated !== previous.estimated
+      estimated !== previous.estimated ||
+      !contextUsageSnapshotsEqual(contextUsage, previous.contextUsage)
     if (!changed) return true
     if (previous && now - previous.sentAt < PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS) {
       return true
@@ -12100,7 +12108,8 @@ export class EnsembleOrchestrator {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated
+      estimated,
+      contextUsage
     })
     telemetry({
       type: 'snapshot',
@@ -12113,7 +12122,8 @@ export class EnsembleOrchestrator {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated
+      estimated,
+      ...(contextUsage ? { contextUsage } : {})
     })
     return true
   }

@@ -2,6 +2,7 @@ import type {
   ActiveGoal,
   AppSettings,
   AppearanceMode,
+  ChatMessage,
   ChatRecord,
   EnsembleRoundState,
   ChatRun,
@@ -40,6 +41,10 @@ import { isContentlessRemoteDraftChat, remoteDraftVariant } from './remote/Remot
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { computeMergedTodosByLane, TODO_SOLO_LANE, type TodoStatus } from './TodoList'
 import type { CanvasSessionSummary } from './canvas/canvasTypes'
+import {
+  contextUsageFromStats,
+  latestContextCompactionUsageEvidence
+} from '../shared/contextUsage'
 
 const MOBILE_DIFF_SUMMARY_FILE_LIMIT = 40
 
@@ -1498,33 +1503,35 @@ export function buildMobileDiffSummary(
 
 /**
  * Honest current-context proxy for a chat, optionally scoped to one ensemble
- * participant: the LATEST run's input+output tokens (each turn re-sends the whole
- * conversation, so the most recent run ≈ what's actually in the window). NOT the
- * cumulative sum across runs (which over-counts). Mirrors the renderer's
- * lib/contextMeter.ts so desktop + phone agree. Reads the NORMALIZED stats fields
- * (ProviderRunStats already folds cache reads into input_tokens).
+ * participant: the LATEST run's atomic provider invocation when available,
+ * falling back to its normalized turn usage. NOT the cumulative sum across runs.
+ * Mirrors the renderer's lib/contextMeter.ts so desktop + phone agree.
  */
 function latestRunContextTokens(
   runs: ReadonlyArray<ChatRun>,
+  messages: ReadonlyArray<ChatMessage>,
   participantId?: string
-): number {
+): number | undefined {
   let bestTime = Number.NEGATIVE_INFINITY
-  let best = 0
+  let best: number | undefined
   for (const run of runs) {
     if (participantId && run.ensembleParticipantId !== participantId) continue
-    const stats = (run?.stats ?? {}) as Record<string, unknown>
-    const input = Number(stats.input_tokens ?? stats.inputTokens ?? 0) || 0
-    const output = Number(stats.output_tokens ?? stats.outputTokens ?? 0) || 0
-    const total = Number(stats.total_tokens ?? stats.totalTokens ?? 0) || input + output
-    if (total <= 0 && input <= 0) continue
+    const usage = contextUsageFromStats(run?.stats)
+    if (!usage) continue
+    const tokens = usage.contextTokens
     const parsed = Date.parse(run.startedAt || '')
-    const time = Number.isFinite(parsed) ? parsed : 0
+    const time = usage?.observedAt ?? (Number.isFinite(parsed) ? parsed : 0)
     if (time >= bestTime) {
       bestTime = time
-      best = Math.max(total, input + output)
+      best = tokens
     }
   }
-  return best
+  const compaction = latestContextCompactionUsageEvidence(messages, participantId)
+  return compaction &&
+    compaction.observedAt >= bestTime &&
+    compaction.postTokens !== undefined
+    ? compaction.postTokens
+    : best
 }
 
 /** The seats a remote client should render as still working. See the field doc
@@ -1596,7 +1603,11 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     roster: [...ensemble.participants]
       .sort((a, b) => (a.order - b.order !== 0 ? a.order - b.order : a.id.localeCompare(b.id)))
       .map((participant) => {
-        const contextTokens = latestRunContextTokens(chat.runs ?? [], participant.id)
+        const contextTokens = latestRunContextTokens(
+          chat.runs ?? [],
+          chat.messages ?? [],
+          participant.id
+        )
         return {
           id: participant.id,
           provider: participant.provider,
@@ -1608,7 +1619,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
             ? { isSecondInCommand: true }
             : {}),
           ...(participant.model ? { model: participant.model } : {}),
-          ...(contextTokens > 0 ? { contextTokens } : {}),
+          ...(contextTokens !== undefined ? { contextTokens } : {}),
           ...(participant.instructions
             ? { brief: sanitizeText(participant.instructions, 500).preview }
             : {}),

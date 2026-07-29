@@ -36,6 +36,10 @@ import {
   type ContextCompactionProgressEvent
 } from '../../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
+import {
+  TASKWRAITH_CONTEXT_USAGE_KEY,
+  withContextUsageSnapshot
+} from '../../shared/contextUsage'
 import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
@@ -1319,6 +1323,107 @@ describe('EnsembleOrchestrator', () => {
       roundId: expect.any(String),
       participantId: 'claude',
       runId
+    })
+  })
+
+  it('keeps the working odometer monotonic while atomic context can shrink', async () => {
+    let now = 1_000
+    const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []
+    const harness = makeHarness({
+      now: () => now,
+      onParticipantWorkingTelemetry: (event) => telemetryEvents.push(event)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Track atomic context.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    const first = withContextUsageSnapshot(
+      { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )
+    harness.orchestrator.reportParticipantTokenUsage(runId, first, {
+      provider: 'claude',
+      chatId: 'ensemble-chat'
+    })
+
+    now += 500
+    const smallerAtomic = withContextUsageSnapshot(
+      { input_tokens: 80, output_tokens: 5, total_tokens: 85 },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )[TASKWRAITH_CONTEXT_USAGE_KEY]
+    harness.orchestrator.reportParticipantTokenUsage(
+      runId,
+      {
+        input_tokens: 60,
+        output_tokens: 4,
+        total_tokens: 64,
+        [TASKWRAITH_CONTEXT_USAGE_KEY]: smallerAtomic
+      },
+      { provider: 'claude', chatId: 'ensemble-chat' }
+    )
+
+    const snapshots = telemetryEvents.filter(
+      (event): event is Extract<ParticipantWorkingTelemetryEvent, { type: 'snapshot' }> =>
+        event.type === 'snapshot'
+    )
+    expect(snapshots.at(-1)).toMatchObject({
+      totalTokens: 120,
+      contextUsage: {
+        contextTokens: 85,
+        precision: 'exact'
+      }
+    })
+  })
+
+  it('forwards an explicit exact-zero context for an active participant', async () => {
+    const telemetryEvents: ParticipantWorkingTelemetryEvent[] = []
+    const harness = makeHarness({
+      onParticipantWorkingTelemetry: (event) => telemetryEvents.push(event)
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Track zero context.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId!
+
+    expect(
+      harness.orchestrator.reportParticipantTokenUsage(
+        runId,
+        {
+          [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+            observedAt: 1,
+            contextTokens: 0,
+            totalTokens: 0,
+            inputTokens: 0,
+            freshInputTokens: 0,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            outputTokens: 0,
+            visibleOutputTokens: 0,
+            reasoningTokens: 0,
+            toolUsePromptTokens: 0,
+            unclassifiedTokens: 0,
+            source: 'provider-compaction',
+            precision: 'exact'
+          }
+        },
+        { provider: 'claude', chatId: 'ensemble-chat' }
+      )
+    ).toBe(true)
+    expect(telemetryEvents.at(-1)).toMatchObject({
+      type: 'snapshot',
+      totalTokens: 0,
+      contextUsage: {
+        contextTokens: 0,
+        source: 'provider-compaction',
+        precision: 'exact'
+      }
     })
   })
 

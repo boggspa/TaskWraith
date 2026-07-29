@@ -683,6 +683,13 @@ function chunkUsage(chunk: any): Record<string, number> | null {
   return Object.keys(out).length ? out : null
 }
 
+function mergeChunkUsage(
+  current: Record<string, number> | null,
+  next: Record<string, number>
+): Record<string, number> {
+  return current ? { ...current, ...next } : { ...next }
+}
+
 /** Shape of a function-call slot the model emitted during a turn. We
  *  keep `id` optional because the SDK populates it only when the model
  *  emits one (newer models do, 2.0 Flash sometimes omits it).
@@ -1145,6 +1152,14 @@ export async function tryRunGeminiApi(
       let roundThinking = ''
       let roundThinkingEmitted = false
       const roundThinkingId = `gemini-thinking-${normalizedRoute.appRunId || 'run'}-${round}`
+      // Gemini normally puts one complete usageMetadata object on the final
+      // chunk, but the streaming contract permits fields to arrive across
+      // several chunks. Merge only within this model invocation; a later tool
+      // round starts a fresh snapshot and replaces it. Clear the run-level
+      // pointer too: if that later invocation omits metadata, retaining the
+      // prior round would falsely label stale usage as the exact latest call.
+      lastUsage = null
+      let roundUsage: Record<string, number> | null = null
       try {
         const stream = await client.models.generateContentStream({
           model,
@@ -1207,7 +1222,10 @@ export async function tryRunGeminiApi(
             for (const call of calls) pendingFunctionCalls.push(call)
           }
           const usage = chunkUsage(chunk)
-          if (usage) lastUsage = usage
+          if (usage) {
+            roundUsage = mergeChunkUsage(roundUsage, usage)
+            lastUsage = roundUsage
+          }
         }
       } catch (error) {
         if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {

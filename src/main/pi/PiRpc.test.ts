@@ -6,6 +6,7 @@ import {
   piPromptCommand,
   piSteerCommand,
   piToolKind,
+  piUsageToStats,
   type PiStreamLine
 } from './PiRpc'
 
@@ -41,6 +42,63 @@ describe('piToolKind', () => {
     expect(piToolKind('edit')).toBe('edit')
     expect(piToolKind('grep')).toBe('search')
     expect(piToolKind('mystery')).toBeUndefined()
+  })
+})
+
+describe('piUsageToStats', () => {
+  it('preserves aggregate billing counters when no atomic invocation is available', () => {
+    expect(
+      piUsageToStats({
+        inputTokens: 3000,
+        outputTokens: 200,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 2,
+        costUsd: 0.03
+      })
+    ).toEqual({
+      input_tokens: 3000,
+      output_tokens: 200,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 2,
+      total_cost_usd: 0.03
+    })
+  })
+
+  it('keeps aggregate spend separate from the final invocation context', () => {
+    const stats = piUsageToStats(
+      {
+        inputTokens: 3000,
+        outputTokens: 200,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 4,
+        costUsd: 0.03
+      },
+      {
+        inputTokens: 2000,
+        outputTokens: 150,
+        cacheReadTokens: 5,
+        cacheWriteTokens: 2,
+        costUsd: 0.02
+      }
+    )
+
+    expect(stats).toMatchObject({
+      input_tokens: 3000,
+      output_tokens: 200,
+      cache_read_input_tokens: 10,
+      cache_creation_input_tokens: 4,
+      total_cost_usd: 0.03,
+      _taskwraith_context_usage: {
+        contextTokens: 2157,
+        inputTokens: 2007,
+        freshInputTokens: 2000,
+        cacheReadInputTokens: 5,
+        cacheCreationInputTokens: 2,
+        outputTokens: 150,
+        source: 'provider-last-invocation',
+        precision: 'exact'
+      }
+    })
   })
 })
 
@@ -130,6 +188,12 @@ describe('PiRpcTurnReducer', () => {
         inputTokens: 3000,
         outputTokens: 200,
         cacheReadTokens: 10,
+        cacheWriteTokens: 0
+      },
+      lastUsage: {
+        inputTokens: 2000,
+        outputTokens: 150,
+        cacheReadTokens: 5,
         cacheWriteTokens: 0
       }
     })

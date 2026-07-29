@@ -16,6 +16,8 @@
  * live on 0.82.1, ~0.6s) — never rely on signals alone.
  */
 
+import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../shared/contextUsage'
+
 export interface PiUsage {
   inputTokens?: number
   outputTokens?: number
@@ -23,6 +25,36 @@ export interface PiUsage {
   cacheWriteTokens?: number
   /** USD as computed by pi's own rate table (message.usage.cost.total). */
   costUsd?: number
+}
+
+/** Keep Pi's summed turn usage for billing while attaching the final model
+ * invocation as the atomic context-window snapshot. Pi's input counter excludes
+ * cache reads/writes, so the shared projector adds those components exactly
+ * once when it builds the atomic breakdown. */
+export function piUsageToStats(usage: PiUsage, lastUsage?: PiUsage): Record<string, unknown> {
+  const aggregate = {
+    input_tokens: usage.inputTokens ?? 0,
+    output_tokens: usage.outputTokens ?? 0,
+    cache_read_input_tokens: usage.cacheReadTokens ?? 0,
+    cache_creation_input_tokens: usage.cacheWriteTokens ?? 0,
+    total_cost_usd: usage.costUsd ?? 0
+  }
+  if (!lastUsage) return aggregate
+  const atomic = withContextUsageSnapshot(
+    {
+      input_tokens: lastUsage.inputTokens ?? 0,
+      output_tokens: lastUsage.outputTokens ?? 0,
+      cache_read_input_tokens: lastUsage.cacheReadTokens ?? 0,
+      cache_creation_input_tokens: lastUsage.cacheWriteTokens ?? 0
+    },
+    {
+      source: 'provider-last-invocation',
+      precision: 'exact'
+    }
+  )
+  return atomic[TASKWRAITH_CONTEXT_USAGE_KEY]
+    ? { ...aggregate, [TASKWRAITH_CONTEXT_USAGE_KEY]: atomic[TASKWRAITH_CONTEXT_USAGE_KEY] }
+    : aggregate
 }
 
 export interface NormalizedPiRunEvent {
@@ -34,6 +66,9 @@ export interface NormalizedPiRunEvent {
   status?: string
   /** Summed token usage across every turn_end, on the terminal 'result'. */
   usage?: PiUsage
+  /** Usage from the final model invocation only. This is context occupancy,
+   * unlike `usage`, which remains the aggregate used for billing/tallies. */
+  lastUsage?: PiUsage
   toolId?: string
   toolName?: string
   toolKind?: string
@@ -136,6 +171,7 @@ export class PiRpcTurnReducer {
     costUsd: 0
   }
   private sawUsage = false
+  private lastUsage: PiUsage | undefined
   private settled = false
   private errorText = ''
   private aborted = false
@@ -214,6 +250,7 @@ export class PiRpcTurnReducer {
       status: outcome.failed ? (this.aborted ? 'aborted' : 'error') : 'success',
       ...(outcome.text ? { text: outcome.text } : {}),
       ...(this.sawUsage ? { usage: { ...this.usageTotals } } : {}),
+      ...(this.lastUsage ? { lastUsage: { ...this.lastUsage } } : {}),
       ...(this.sessionId ? { sessionId: this.sessionId } : {}),
       ...(this.modelLabel ? { model: this.modelLabel } : {}),
       raw
@@ -372,6 +409,13 @@ export class PiRpcTurnReducer {
       return events
     }
     this.sawUsage = true
+    this.lastUsage = {
+      inputTokens: input ?? 0,
+      outputTokens: output ?? 0,
+      cacheReadTokens: cacheRead ?? 0,
+      cacheWriteTokens: cacheWrite ?? 0,
+      ...(costTotal !== undefined ? { costUsd: costTotal } : {})
+    }
     this.usageTotals.inputTokens += input ?? 0
     this.usageTotals.outputTokens += output ?? 0
     this.usageTotals.cacheReadTokens += cacheRead ?? 0

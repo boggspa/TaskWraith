@@ -36,6 +36,9 @@ export interface AntigravityGeminiApiTurnUsage {
   readonly promptTokenCount?: number
   readonly candidatesTokenCount?: number
   readonly totalTokenCount?: number
+  readonly cachedContentTokenCount?: number
+  readonly thoughtsTokenCount?: number
+  readonly toolUsePromptTokenCount?: number
 }
 
 export type AntigravityGeminiApiTurnResult =
@@ -236,7 +239,17 @@ function projectUsage(
   const promptTokenCount = readProperty(usage, 'promptTokenCount')
   const candidatesTokenCount = readProperty(usage, 'candidatesTokenCount')
   const totalTokenCount = readProperty(usage, 'totalTokenCount')
-  if (!promptTokenCount.ok || !candidatesTokenCount.ok || !totalTokenCount.ok) {
+  const cachedContentTokenCount = readProperty(usage, 'cachedContentTokenCount')
+  const thoughtsTokenCount = readProperty(usage, 'thoughtsTokenCount')
+  const toolUsePromptTokenCount = readProperty(usage, 'toolUsePromptTokenCount')
+  if (
+    !promptTokenCount.ok ||
+    !candidatesTokenCount.ok ||
+    !totalTokenCount.ok ||
+    !cachedContentTokenCount.ok ||
+    !thoughtsTokenCount.ok ||
+    !toolUsePromptTokenCount.ok
+  ) {
     return { status: 'invalid' }
   }
   const projected: AntigravityGeminiApiTurnUsage = {
@@ -248,6 +261,15 @@ function projectUsage(
       : {}),
     ...(boundedTokenCount(totalTokenCount.value) !== undefined
       ? { totalTokenCount: boundedTokenCount(totalTokenCount.value) }
+      : {}),
+    ...(boundedTokenCount(cachedContentTokenCount.value) !== undefined
+      ? { cachedContentTokenCount: boundedTokenCount(cachedContentTokenCount.value) }
+      : {}),
+    ...(boundedTokenCount(thoughtsTokenCount.value) !== undefined
+      ? { thoughtsTokenCount: boundedTokenCount(thoughtsTokenCount.value) }
+      : {}),
+    ...(boundedTokenCount(toolUsePromptTokenCount.value) !== undefined
+      ? { toolUsePromptTokenCount: boundedTokenCount(toolUsePromptTokenCount.value) }
       : {})
   }
   return {
@@ -280,6 +302,19 @@ function mergeUsage(
       : {}),
     ...(next.totalTokenCount !== undefined || current.totalTokenCount !== undefined
       ? { totalTokenCount: next.totalTokenCount ?? current.totalTokenCount }
+      : {}),
+    ...(next.cachedContentTokenCount !== undefined || current.cachedContentTokenCount !== undefined
+      ? {
+          cachedContentTokenCount: next.cachedContentTokenCount ?? current.cachedContentTokenCount
+        }
+      : {}),
+    ...(next.thoughtsTokenCount !== undefined || current.thoughtsTokenCount !== undefined
+      ? { thoughtsTokenCount: next.thoughtsTokenCount ?? current.thoughtsTokenCount }
+      : {}),
+    ...(next.toolUsePromptTokenCount !== undefined || current.toolUsePromptTokenCount !== undefined
+      ? {
+          toolUsePromptTokenCount: next.toolUsePromptTokenCount ?? current.toolUsePromptTokenCount
+        }
       : {})
   }
 }

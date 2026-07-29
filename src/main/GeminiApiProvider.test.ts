@@ -881,6 +881,44 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     expect(texts).toEqual(['Got it.'])
   })
 
+  it('does not reuse an earlier tool-round usage snapshot when the final invocation omits it', async () => {
+    const { loader } = scriptedSdk([
+      [
+        {
+          functionCalls: [{ id: 'call-1', name: 'read_file', args: { path: 'README.md' } }],
+          usageMetadata: {
+            promptTokenCount: 12,
+            candidatesTokenCount: 1,
+            totalTokenCount: 13
+          }
+        }
+      ],
+      [{ text: 'Final answer without usage metadata.' }]
+    ])
+    const { deps, lines, usageRecords } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'file contents here', isError: false })
+    })
+
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    const result = lines.find((line) => line.payload?.type === 'result')?.payload
+    expect(result?.stats).toMatchObject({
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0
+    })
+    expect(result?.stats?._taskwraith_context_usage).toBeUndefined()
+    expect(usageRecords[0]).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0
+    })
+  })
+
   // Live 400 on 2026-07-25 with gemini-3.5-flash:
   //   "Function call is missing a thought_signature in functionCall parts...
   //    function call `default_api:find_files`, position 2"
@@ -2087,10 +2125,26 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
   }
 
   it('attributes every event, terminal transition, and usage row to the tag', async () => {
-    const usage = { promptTokenCount: 3, candidatesTokenCount: 5, totalTokenCount: 8 }
     const usageRecords: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
     const { deps, lines, exits, finishes } = antigravityDeps({
-      loadSdk: fakeSdk([{ text: 'agentic ' }, { text: 'answer', usageMetadata: usage }]),
+      loadSdk: fakeSdk([
+        {
+          text: 'agentic ',
+          usageMetadata: {
+            promptTokenCount: 30,
+            cachedContentTokenCount: 10,
+            toolUsePromptTokenCount: 4
+          }
+        },
+        {
+          text: 'answer',
+          usageMetadata: {
+            candidatesTokenCount: 5,
+            thoughtsTokenCount: 7,
+            totalTokenCount: 42
+          }
+        }
+      ]),
       recordUsage: (entry) => {
         usageRecords.push(entry)
       },
@@ -2119,9 +2173,30 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
     expect(usageRecords[0]).toMatchObject({
       provider: 'antigravity',
       model: 'gemini-api:gemini-2.5-flash',
-      inputTokens: 3,
+      inputTokens: 20,
+      cacheReadInputTokens: 10,
       outputTokens: 5,
-      totalTokens: 8
+      totalTokens: 42
+    })
+    const result = lines.find((line) => line.payload?.type === 'result')?.payload
+    expect(result?.stats).toMatchObject({
+      promptTokenCount: 30,
+      cachedContentTokenCount: 10,
+      toolUsePromptTokenCount: 4,
+      candidatesTokenCount: 5,
+      thoughtsTokenCount: 7,
+      totalTokenCount: 42,
+      _taskwraith_context_usage: {
+        contextTokens: 42,
+        inputTokens: 30,
+        freshInputTokens: 20,
+        cacheReadInputTokens: 10,
+        visibleOutputTokens: 5,
+        reasoningTokens: 7,
+        toolUsePromptTokens: 4,
+        source: 'provider-last-invocation',
+        precision: 'exact'
+      }
     })
   })
 

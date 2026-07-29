@@ -3,6 +3,10 @@ import {
   SoloWorkingTokenTelemetry,
   SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS
 } from './soloWorkingTokenTelemetry'
+import {
+  TASKWRAITH_CONTEXT_USAGE_KEY,
+  withContextUsageSnapshot
+} from '../shared/contextUsage'
 
 const base = {
   runId: 'run-1',
@@ -30,7 +34,104 @@ describe('SoloWorkingTokenTelemetry.report', () => {
       inputTokens: 1200,
       outputTokens: 340,
       totalTokens: 1540,
-      estimated: false
+      estimated: false,
+      contextUsage: {
+        contextTokens: 1540,
+        totalTokens: 1540,
+        inputTokens: 1200,
+        freshInputTokens: 1200,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 340,
+        visibleOutputTokens: 340,
+        reasoningTokens: 0,
+        toolUsePromptTokens: 0,
+        unclassifiedTokens: 0,
+        source: 'provider-turn-aggregate',
+        precision: 'derived'
+      }
+    })
+  })
+
+  it('keeps monotonic working totals but forwards the latest atomic context', () => {
+    const telemetry = new SoloWorkingTokenTelemetry()
+    const firstStats = withContextUsageSnapshot(
+      { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )
+    const first = telemetry.report({
+      ...base,
+      runId: 'run-context',
+      stats: firstStats,
+      nowMs: 1_000
+    })
+    expect(first).toMatchObject({
+      type: 'snapshot',
+      totalTokens: 120,
+      contextUsage: {
+        contextTokens: 120,
+        precision: 'exact'
+      }
+    })
+
+    const smallerAtomic = withContextUsageSnapshot(
+      { input_tokens: 90, output_tokens: 5, total_tokens: 95 },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )[TASKWRAITH_CONTEXT_USAGE_KEY]
+    const second = telemetry.report({
+      ...base,
+      runId: 'run-context',
+      stats: {
+        input_tokens: 80,
+        output_tokens: 4,
+        total_tokens: 84,
+        [TASKWRAITH_CONTEXT_USAGE_KEY]: smallerAtomic
+      },
+      nowMs: 1_000 + SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS
+    })
+
+    expect(second).toMatchObject({
+      totalTokens: 120,
+      contextUsage: {
+        contextTokens: 95
+      }
+    })
+  })
+
+  it('emits an explicit exact-zero context without inventing working tokens', () => {
+    const telemetry = new SoloWorkingTokenTelemetry()
+    const event = telemetry.report({
+      ...base,
+      runId: 'run-zero-context',
+      stats: {
+        [TASKWRAITH_CONTEXT_USAGE_KEY]: {
+          observedAt: 1,
+          contextTokens: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          freshInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          outputTokens: 0,
+          visibleOutputTokens: 0,
+          reasoningTokens: 0,
+          toolUsePromptTokens: 0,
+          unclassifiedTokens: 0,
+          source: 'provider-compaction',
+          precision: 'exact'
+        }
+      },
+      nowMs: 1_000
+    })
+
+    expect(event).toMatchObject({
+      type: 'snapshot',
+      totalTokens: 0,
+      contextUsage: {
+        contextTokens: 0,
+        source: 'provider-compaction',
+        precision: 'exact'
+      }
     })
   })
 
@@ -76,14 +177,18 @@ describe('SoloWorkingTokenTelemetry.report', () => {
   it('is monotonic — a later smaller usage snapshot never lowers the counts', () => {
     const telemetry = new SoloWorkingTokenTelemetry()
     telemetry.report({ ...base, stats: { input_tokens: 900, output_tokens: 500 }, nowMs: 0 })
-    // A provider re-report with a smaller output (e.g. a fresh sub-message) must
-    // not walk the odometer backwards; it stays put and is therefore suppressed.
+    // A fresh sub-message can shrink current occupancy while the Working
+    // odometer stays monotonic, so the context change still emits.
     const lower = telemetry.report({
       ...base,
       stats: { input_tokens: 900, output_tokens: 120 },
       nowMs: 10_000
     })
-    expect(lower).toBeNull()
+    expect(lower).toMatchObject({
+      type: 'snapshot',
+      outputTokens: 500,
+      contextUsage: { contextTokens: 1020 }
+    })
     const higher = telemetry.report({
       ...base,
       stats: { input_tokens: 900, output_tokens: 640 },

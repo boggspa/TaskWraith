@@ -5,9 +5,20 @@ import {
   usageCacheReadInputTokens,
   usageInputIncludesCache
 } from '../shared/usageAccounting'
+import { withContextUsageSnapshot } from '../shared/contextUsage'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+const codexUsageObservedAtByProviderSnapshot = new WeakMap<object, number>()
+
+function codexUsageObservedAt(tokenUsage: unknown, receivedAt: number): number {
+  if (!isRecord(tokenUsage)) return receivedAt
+  const previous = codexUsageObservedAtByProviderSnapshot.get(tokenUsage)
+  if (previous !== undefined) return previous
+  codexUsageObservedAtByProviderSnapshot.set(tokenUsage, receivedAt)
+  return receivedAt
 }
 
 function providerUsageNumber(source: Record<string, unknown>, key: string): number {
@@ -149,7 +160,18 @@ export function extractProviderUsage(
     params.token_usage
   ].find(isRecord)
   if (!usage) return null
-  return normalizeProviderUsage(provider, usage)
+  const normalized = normalizeProviderUsage(provider, usage)
+  // Claude's assistant envelope is one atomic model invocation. A single
+  // agent turn can emit several of these around tool calls, while the terminal
+  // result carries an aggregate. Keep the latest atomic window beside the
+  // aggregate spend counters so the context meter never combines maxima from
+  // different invocations.
+  return provider === 'claude' && event.type === 'assistant' && usage === message.usage
+    ? withContextUsageSnapshot(normalized, {
+        source: 'provider-last-invocation',
+        precision: 'exact'
+      })
+    : normalized
 }
 
 function canonicalUsageCount(stats: Record<string, unknown>, key: string): number {
@@ -193,15 +215,27 @@ export function mergeProviderUsage(
 
 export function codexUsageToStats(
   tokenUsage: any,
-  fallbackDurationMs = 0
+  fallbackDurationMs = 0,
+  receivedAt = Date.now()
 ): Record<string, unknown> {
   const last = tokenUsage?.last || tokenUsage?.total || {}
   const modelContextWindow = tokenUsage?.modelContextWindow
-  return normalizeProviderUsage('codex', {
+  const normalized = normalizeProviderUsage('codex', {
     ...last,
     totalTokenLimit: typeof modelContextWindow === 'number' ? modelContextWindow : undefined,
     duration_ms: fallbackDurationMs
   })
+  return tokenUsage?.last
+    ? withContextUsageSnapshot(normalized, {
+        source: 'provider-last-invocation',
+        precision: 'exact',
+        // App-server terminal projection reuses the same provider snapshot
+        // received by thread/tokenUsage/updated. Keep that receipt time stable
+        // so a later terminal frame cannot make pre-compaction usage appear
+        // newer than durable compaction evidence.
+        observedAt: codexUsageObservedAt(tokenUsage, receivedAt)
+      })
+    : normalized
 }
 
 export function cursorUsageToStats(
@@ -228,7 +262,12 @@ export function geminiUsageMetadataToStats(
   const promptTokenCount = canonicalUsageCount(raw, 'promptTokenCount')
   const candidatesTokenCount = canonicalUsageCount(raw, 'candidatesTokenCount')
   const thoughtsTokenCount = canonicalUsageCount(raw, 'thoughtsTokenCount')
-  return normalizeProviderUsage('gemini', {
+  const explicitTotalTokenCount = Number(raw.totalTokenCount)
+  const hasExplicitTotalTokenCount =
+    raw.totalTokenCount !== undefined &&
+    Number.isFinite(explicitTotalTokenCount) &&
+    explicitTotalTokenCount >= 0
+  const normalized = normalizeProviderUsage('gemini', {
     ...raw,
     input_tokens: promptTokenCount,
     output_tokens: candidatesTokenCount,
@@ -243,6 +282,12 @@ export function geminiUsageMetadataToStats(
       promptTokenCount + candidatesTokenCount + thoughtsTokenCount,
     duration_ms: durationMs,
     ...(options.alreadyRecorded ? { _taskwraith_usage_recorded: true } : {})
+  })
+  return withContextUsageSnapshot(normalized, {
+    source: 'provider-last-invocation',
+    // A provider total is the coverage proof for Gemini: without it, omitted
+    // thoughts/candidates fields are indistinguishable from genuine zeroes.
+    precision: hasExplicitTotalTokenCount ? 'exact' : 'derived'
   })
 }
 

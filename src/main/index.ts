@@ -1424,8 +1424,8 @@ import {
   PiRpcTurnReducer,
   piPromptCommand,
   piSteerCommand,
-  type NormalizedPiRunEvent,
-  type PiUsage
+  piUsageToStats,
+  type NormalizedPiRunEvent
 } from './pi/PiRpc'
 import {
   PiLiveSteerTracker,
@@ -17352,16 +17352,6 @@ function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: strin
 // can ever hang a run.
 const piRunStdinClosers = new Map<string, () => void>()
 
-function piUsageToStats(usage: PiUsage): Record<string, number> {
-  return {
-    input_tokens: usage.inputTokens ?? 0,
-    output_tokens: usage.outputTokens ?? 0,
-    cache_read_input_tokens: usage.cacheReadTokens ?? 0,
-    cache_creation_input_tokens: usage.cacheWriteTokens ?? 0,
-    total_cost_usd: usage.costUsd ?? 0
-  }
-}
-
 let piFallbackToolSeq = 0
 function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEvent) {
   if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
@@ -17415,7 +17405,7 @@ function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEven
     )
   } else if (evt.type === 'result') {
     if (evt.usage) {
-      state.tokenUsage = piUsageToStats(evt.usage)
+      state.tokenUsage = piUsageToStats(evt.usage, evt.lastUsage)
       ensembleOrchestratorRef?.reportParticipantTokenUsage(
         state.appRunId,
         state.tokenUsage as Record<string, unknown> | undefined,
