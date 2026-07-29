@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
   buildInstanceLaunchBootstrapArgs,
@@ -9,6 +9,9 @@ import {
   resolveInstanceLaunchPosture
 } from './InstanceLaunchPosture'
 
+// Production resolves this path, so the expectations must too: on Windows
+// `resolve()` prefixes the current drive (`D:\\Users\\...`) while `join()`
+// does not, and the literal POSIX form matched neither.
 const appDataPath = '/Users/example/Library/Application Support'
 const temporaryDirectory = '/tmp'
 const isolatedInstanceId = 'a'.repeat(32)
@@ -38,7 +41,7 @@ describe('resolveInstanceLaunchPosture', () => {
       isPackaged: false,
       isPrivateProfile: true,
       appName: 'TaskWraith Dev verify',
-      userDataPath: join(appDataPath, 'TaskWraith Dev verify'),
+      userDataPath: resolve(appDataPath, 'TaskWraith Dev verify'),
       devInstanceId: 'verify'
     })
   })
@@ -56,7 +59,7 @@ describe('resolveInstanceLaunchPosture', () => {
       isPackaged: true,
       isPrivateProfile: true,
       appName: `TaskWraith Instance ${isolatedInstanceId}`,
-      userDataPath: join(appDataPath, 'TaskWraith Instances', isolatedInstanceId),
+      userDataPath: resolve(appDataPath, 'TaskWraith Instances', isolatedInstanceId),
       instanceId: isolatedInstanceId
     })
     expect(buildInstanceLaunchBootstrapArgs(posture)).toEqual([

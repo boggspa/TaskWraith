@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   buildMcpBridgeRouteEnv,
@@ -30,7 +31,12 @@ import {
   resolveDevAppNamePosture
 } from './devAppName'
 
-const appDataPath = '/Users/example/Library/Application Support'
+// resolve() so the fixture is CANONICAL on the host. readSocketPath in
+// McpBridgeRoute deliberately rejects any socket path where
+// `resolve(value) !== value` — a guard against non-canonical and traversal
+// forms — and on Windows `resolve('/Users/...')` prefixes the current drive,
+// so the literal POSIX form failed that check and every route built from it.
+const appDataPath = resolve('/Users/example/Library/Application Support')
 const temporaryDirectory = '/tmp'
 const isolatedInstanceIdKey = MCP_BRIDGE_ENDPOINT_ENV_KEYS.isolatedInstanceId
 
@@ -53,14 +59,14 @@ function staticDevBridgeArgv(): string[] {
 
 function staticBridgeEnvironment(instanceId?: string): Record<string, string> {
   const profileRoot = instanceId
-    ? `${appDataPath}/TaskWraith Instances/${instanceId}`
-    : `${appDataPath}/TaskWraith`
+    ? join(appDataPath, 'TaskWraith Instances', instanceId)
+    : join(appDataPath, 'TaskWraith')
   const built = buildMcpBridgeRouteEnv({
     parentProvider: 'cursor',
     route: { appRunId: 'static-run', appChatId: 'static-chat' },
     workspacePath: '/workspace/static-route',
     endpoint: {
-      socketPath: `${profileRoot}/taskwraith-gemini-mcp.sock`,
+      socketPath: join(profileRoot, 'taskwraith-gemini-mcp.sock'),
       brokerToken: 'b'.repeat(64),
       instanceEpoch: 'c'.repeat(32),
       bridgeLogEpoch: 3,
@@ -79,7 +85,7 @@ function staticDevBridgeEnvironment(devInstanceId = ''): Record<string, string> 
     route: { appRunId: 'dev-static-run', appChatId: 'dev-static-chat' },
     workspacePath: '/workspace/dev-static-route',
     endpoint: {
-      socketPath: `${appDataPath}/${appName}/taskwraith-gemini-mcp.sock`,
+      socketPath: join(appDataPath, appName, 'taskwraith-gemini-mcp.sock'),
       brokerToken: 'd'.repeat(64),
       instanceEpoch: 'e'.repeat(32),
       bridgeLogEpoch: 4
@@ -108,7 +114,7 @@ describe('devAppName packaged-private posture seam', () => {
     expect(posture).toMatchObject({
       kind: 'packaged-isolated',
       instanceId,
-      userDataPath: `${appDataPath}/TaskWraith Instances/${instanceId}`
+      userDataPath: join(appDataPath, 'TaskWraith Instances', instanceId)
     })
   })
 
@@ -228,10 +234,10 @@ describe('devAppName packaged-private posture seam', () => {
 
   it('refuses a same-id isolated endpoint from a foreign profile root before userData selection', () => {
     const instanceId = 'e'.repeat(32)
-    const foreignRoot = `/private/foreign/TaskWraith Instances/${instanceId}`
+    const foreignRoot = resolve('/private/foreign/TaskWraith Instances', instanceId)
     const env = {
       ...staticBridgeEnvironment(instanceId),
-      [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: `${foreignRoot}/taskwraith-gemini-mcp.sock`
+      [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: join(foreignRoot, 'taskwraith-gemini-mcp.sock')
     }
 
     expect(
@@ -268,12 +274,12 @@ describe('devAppName packaged-private posture seam', () => {
     expect(isolatedDev).toMatchObject({
       kind: 'development',
       devInstanceId,
-      userDataPath: `${appDataPath}/TaskWraith Dev ${devInstanceId}`
+      userDataPath: join(appDataPath, `TaskWraith Dev ${devInstanceId}`)
     })
     expect(primaryDev).toMatchObject({
       kind: 'development',
       devInstanceId: '',
-      userDataPath: `${appDataPath}/TaskWraith Dev`
+      userDataPath: join(appDataPath, 'TaskWraith Dev')
     })
 
     const invalidArgv = [

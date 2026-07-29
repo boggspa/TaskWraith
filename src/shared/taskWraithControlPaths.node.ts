@@ -1,6 +1,20 @@
 import { createHash } from 'node:crypto'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, posix, win32 } from 'node:path'
+
+/**
+ * Join using the SEMANTICS OF THE REQUESTED PLATFORM, not the host's.
+ *
+ * These helpers take a `platform` argument, which promises a caller can
+ * derive another platform's path. `node:path`'s bare `join` always uses the
+ * host's separator, so asking for a darwin path on Windows returned
+ * `\\Users\\example\\...` and the promise was false. Production always passes
+ * the host platform, so this is behaviour-preserving there; it only makes the
+ * cross-platform case — which the signature already advertised — actually work.
+ */
+function joinFor(platform: NodeJS.Platform, ...parts: string[]): string {
+  return platform === 'win32' ? win32.join(...parts) : posix.join(...parts)
+}
 
 export const TASKWRAITH_CONTROL_DISCOVERY_FILE = 'taskwraith-control-v1.json'
 export const TASKWRAITH_CONTROL_TOKEN_FILE = 'taskwraith-control-v1.token'
@@ -13,13 +27,14 @@ export function defaultTaskWraithUserDataPath(
 ): string {
   const explicit = String(env.TASKWRAITH_USER_DATA || '').trim()
   if (explicit) return explicit
-  if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'taskwraith')
+  if (platform === 'darwin')
+    return joinFor(platform, home, 'Library', 'Application Support', 'taskwraith')
   if (platform === 'win32') {
     const appData = String(env.APPDATA || '').trim()
-    return join(appData || join(home, 'AppData', 'Roaming'), 'taskwraith')
+    return joinFor(platform, appData || joinFor(platform, home, 'AppData', 'Roaming'), 'taskwraith')
   }
   const configHome = String(env.XDG_CONFIG_HOME || '').trim()
-  return join(configHome || join(home, '.config'), 'taskwraith')
+  return joinFor(platform, configHome || joinFor(platform, home, '.config'), 'taskwraith')
 }
 
 export function defaultTaskWraithDevUserDataPath(
@@ -34,13 +49,13 @@ export function defaultTaskWraithDevUserDataPath(
     .replace(/[^A-Za-z0-9_-]/g, '')
     .slice(0, 16)
   const name = instanceId ? `TaskWraith Dev ${instanceId}` : 'TaskWraith Dev'
-  if (platform === 'darwin') return join(home, 'Library', 'Application Support', name)
+  if (platform === 'darwin') return joinFor(platform, home, 'Library', 'Application Support', name)
   if (platform === 'win32') {
     const appData = String(env.APPDATA || '').trim()
-    return join(appData || join(home, 'AppData', 'Roaming'), name)
+    return joinFor(platform, appData || joinFor(platform, home, 'AppData', 'Roaming'), name)
   }
   const configHome = String(env.XDG_CONFIG_HOME || '').trim()
-  return join(configHome || join(home, '.config'), name)
+  return joinFor(platform, configHome || joinFor(platform, home, '.config'), name)
 }
 
 export function taskWraithControlDiscoveryPath(userDataPath: string): string {
