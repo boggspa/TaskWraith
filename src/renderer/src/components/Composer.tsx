@@ -4923,6 +4923,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                    />
 	                  )}
 	                </button>
+	                {canShowTerminal && (
+	                  <button
+	                    type="button"
+	                    className={`composer-terminal-button composer-hint-pill${isTerminalOpen ? ' is-open' : ''}`}
+	                    data-hint-label="Terminal"
+	                    onClick={() => {
+	                      if (!currentChat?.appChatId) return
+	                      setTerminalOpenForChat(currentChat.appChatId, (open) => !open)
+	                    }}
+	                    title={isTerminalOpen ? 'Close workspace terminal' : 'Open workspace terminal'}
+	                    aria-label={isTerminalOpen ? 'Close workspace terminal' : 'Open workspace terminal'}
+	                    aria-pressed={isTerminalOpen}
+	                  >
+	                    <AppleTerminalIcon />
+	                  </button>
+	                )}
 	                <span className="composer-goal-control-wrap">
 	                  <button
 	                    ref={goalButtonRef}
@@ -5644,6 +5660,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 }}
               />
             )}
+            {isTerminalOpen &&
+              transcriptRoot &&
+              currentWorkspace?.path &&
+              createPortal(
+                <TerminalPanel
+                  workspacePath={currentWorkspace.path}
+                  className="workspace-terminal-split"
+                />,
+                transcriptRoot
+              )}
           </div>
   )
 }
