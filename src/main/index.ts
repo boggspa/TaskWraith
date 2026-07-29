@@ -974,6 +974,7 @@ import {
   queuePendingEnsembleRosterPresetApply
 } from './EnsembleRosterPresetApply'
 import { buildEnsembleParticipantProviderCatalog } from './EnsembleParticipantCatalog'
+import { parseEnsembleUserRosterMutationInput } from './EnsembleUserRosterMutation'
 import type {
   EnsembleRosterPreset,
   EnsembleRosterPresetImportAcknowledgement
@@ -49678,6 +49679,9 @@ if (isGeminiMcpBridgeProcess) {
         const participant: RosterEditParticipantInput = {}
         if (typeof rawParticipant.provider === 'string')
           participant.provider = rawParticipant.provider
+        if (typeof rawParticipant.enabled === 'boolean') {
+          participant.enabled = rawParticipant.enabled
+        }
         if (typeof rawParticipant.model === 'string' || rawParticipant.model === null) {
           participant.model = rawParticipant.model
         }
@@ -49729,6 +49733,16 @@ if (isGeminiMcpBridgeProcess) {
         }
         if (typeof rawParticipant.thinkingEnabled === 'boolean') {
           participant.thinkingEnabled = rawParticipant.thinkingEnabled
+        }
+        if (
+          typeof rawParticipant.stageRole === 'string' ||
+          rawParticipant.stageRole === null ||
+          Object.prototype.hasOwnProperty.call(rawParticipant, 'stageRole')
+        ) {
+          participant.stageRole =
+            typeof rawParticipant.stageRole === 'string' || rawParticipant.stageRole === null
+              ? rawParticipant.stageRole
+              : undefined
         }
         if (
           typeof rawParticipant.serviceTier === 'string' ||
@@ -49791,6 +49805,25 @@ if (isGeminiMcpBridgeProcess) {
         return result
       }
     )
+
+    ipcMain.handle('request-ensemble-user-roster-mutation', (event, payload?: unknown) => {
+      if (AppStore.getSettings().ensembleModeEnabled === false) {
+        throw new Error('Ensemble Mode is disabled.')
+      }
+      const input = parseEnsembleUserRosterMutationInput(payload)
+      const { chatId } = input
+      assertRendererChatScope(event, chatId)
+      const result = ensembleOrchestratorRef?.requestUserRosterMutation(input) ?? {
+        ok: false,
+        message: 'Roster change rejected: Ensemble orchestrator is not initialized.',
+        error: 'not_ensemble' as const
+      }
+      const updated = AppStore.getChat(chatId)
+      if (updated) broadcastChatUpdated(updated)
+      broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
+      pushRemoteTaskCardDelta(chatId)
+      return result
+    })
 
     ipcMain.handle('skip-ensemble-participant', async (event, chatId?: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Ensemble chat id')

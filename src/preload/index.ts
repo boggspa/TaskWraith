@@ -23,6 +23,8 @@ import type {
   WorkflowDefinitionRendererUpdate
 } from '../main/store/types'
 import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
+import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
+import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
 import type {
@@ -1693,6 +1695,11 @@ const api = {
     participant: Record<string, unknown>
     reason?: string
   }) => ipcRenderer.invoke('request-ensemble-participant-seat-change', payload),
+  requestEnsembleUserRosterMutation: (payload: EnsembleUserRosterMutationInput) =>
+    ipcRenderer.invoke(
+      'request-ensemble-user-roster-mutation',
+      payload
+    ) as Promise<EnsembleUserRosterMutationResult>,
   skipEnsembleParticipant: (chatId: string) =>
     ipcRenderer.invoke('skip-ensemble-participant', chatId),
   skipEnsembleReadFanout: (chatId: string) =>

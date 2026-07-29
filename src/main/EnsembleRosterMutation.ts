@@ -85,6 +85,7 @@ export type RosterEditError =
 
 export interface RosterEditParticipantInput {
   provider?: ProviderId | string
+  enabled?: boolean
   model?: string | null
   runtimeProfileId?: string | null
   geminiAuthProfileId?: string | null

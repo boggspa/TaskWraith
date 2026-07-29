@@ -196,6 +196,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'remove-queued-ensemble-prompt',
   'remove-workspace',
   'request-ensemble-participant-seat-change',
+  'request-ensemble-user-roster-mutation',
   'request-run-queue-job',
   'resize-gemini-session',
   'respond-agent-approval',

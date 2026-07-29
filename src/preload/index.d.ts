@@ -83,6 +83,8 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
+import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
+import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
 import type { OutlookConnectionStatus } from '../main/outlook/OutlookCredentialStore'
@@ -1761,12 +1763,14 @@ declare global {
         participantId: string
         participant: {
           provider?: string
+          enabled?: boolean
           model?: string | null
           role?: string
           instructions?: string
           reasoningEffort?: string | null
           fastModeEnabled?: boolean
           thinkingEnabled?: boolean
+          stageRole?: 'scout' | 'worker' | 'reviewer' | 'background' | null
           permissionPresetId?: string | null
           permissionOverrides?: PermissionOverrides | null
           serviceTier?: string | null

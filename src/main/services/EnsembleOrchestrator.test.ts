@@ -8709,6 +8709,142 @@ Next action:
     })
   })
 
+  it('applies idle Enabled and Stage edits immediately to the current round', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const disabled = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { enabled: false, stageRole: 'background' },
+      changedBy: 'user',
+      reason: 'User disabled an idle seat.'
+    })
+    expect(disabled).toMatchObject({ ok: true, status: 'applied' })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      status: 'skipped',
+      reason: 'Disabled during the active round.'
+    })
+
+    const reenabled = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { enabled: true, stageRole: 'reviewer' },
+      changedBy: 'user',
+      reason: 'User restored the idle seat.'
+    })
+    expect(reenabled).toMatchObject({ ok: true, status: 'applied' })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({ status: 'idle' })
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun).toMatchObject({
+      participantId: 'codex',
+      stageRole: 'reviewer'
+    })
+    completeDispatchedRun(harness, 1)
+  })
+
+  it('applies live add, reorder, and idle removal before the next admission', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const added = harness.orchestrator.requestUserRosterMutation({
+      chatId: 'ensemble-chat',
+      action: 'add',
+      participant: {
+        id: 'kimi-added',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Added worker',
+        instructions: 'Take the next safe turn.',
+        order: 2,
+        model: 'kimi-k2.7-code',
+        permissionPresetId: 'read_only'
+      }
+    })
+    expect(added).toMatchObject({ ok: true, status: 'applied' })
+
+    const reordered = harness.orchestrator.requestUserRosterMutation({
+      chatId: 'ensemble-chat',
+      action: 'reorder',
+      participantIds: ['claude', 'codex', 'kimi-added']
+    })
+    expect(reordered).toMatchObject({ ok: true, status: 'applied' })
+
+    const removed = harness.orchestrator.requestUserRosterMutation({
+      chatId: 'ensemble-chat',
+      action: 'remove',
+      participantId: 'codex'
+    })
+    expect(removed).toMatchObject({ ok: true, status: 'applied' })
+    expect(harness.chat.ensemble!.participants.map((participant) => participant.id)).toEqual([
+      'claude',
+      'kimi-added'
+    ])
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1]).toMatchObject({
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      ensembleRun: { participantId: 'kimi-added', role: 'Added worker' }
+    })
+    completeDispatchedRun(harness, 1)
+  })
+
+  it('queues active participant removal only until its execution boundary', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = harness.orchestrator.requestUserRosterMutation({
+      chatId: 'ensemble-chat',
+      action: 'remove',
+      participantId: 'claude'
+    })
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'queued',
+      participantId: 'claude'
+    })
+    expect(
+      harness.chat.ensemble!.participants.some((participant) => participant.id === 'claude')
+    ).toBe(true)
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.ensemble!.participants.some((participant) => participant.id === 'claude')
+      ).toBe(false)
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun).toMatchObject({ participantId: 'codex' })
+    completeDispatchedRun(harness, 1)
+  })
+
   it('defers a fanned-out participant change only until its lane finishes', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'

@@ -216,6 +216,12 @@ import {
   type PendingEnsembleRosterPresetApply
 } from '../EnsembleRosterPresetApply'
 import {
+  resolveEnsembleUserRosterMutation,
+  type EnsembleUserRosterMutationError,
+  type EnsembleUserRosterMutationInput,
+  type ResolvedEnsembleUserRosterMutation
+} from '../EnsembleUserRosterMutation'
+import {
   isHostSeatCompactionProvider,
   isProductionKimiAcpSeat,
   persistedSeatRuntimeState,
@@ -1176,6 +1182,16 @@ export interface EnsembleParticipantSeatChangeResult {
   participantId?: string
   roundId?: string
   error?: 'not_ensemble' | 'stale_target' | 'invalid_patch'
+}
+
+export interface EnsembleUserRosterMutationResult {
+  ok: boolean
+  status?: 'applied' | 'queued'
+  chat?: ChatRecord
+  message: string
+  participantId?: string
+  roundId?: string
+  error?: EnsembleUserRosterMutationError
 }
 
 export interface EnsembleSideMessageInput {
@@ -2169,7 +2185,8 @@ function participantSeatValue(participant: EnsembleParticipant): string {
   const model = participant.model ? ` / ${participant.model}` : ''
   const role = participant.role ? ` (${participant.role})` : ''
   const stage = participant.stageRole ? ` [${participant.stageRole}]` : ''
-  return `${provider}${model}${role}${stage}`
+  const enabled = participant.enabled ? '' : ' [disabled]'
+  return `${provider}${model}${role}${stage}${enabled}`
 }
 
 function roundParticipantDisplayFields(
@@ -2258,6 +2275,7 @@ function hasSeatChangePatch(patch: RosterEditParticipantInput | undefined | null
   if (!patch) return false
   return (
     Object.prototype.hasOwnProperty.call(patch, 'provider') ||
+    Object.prototype.hasOwnProperty.call(patch, 'enabled') ||
     Object.prototype.hasOwnProperty.call(patch, 'model') ||
     Object.prototype.hasOwnProperty.call(patch, 'runtimeProfileId') ||
     Object.prototype.hasOwnProperty.call(patch, 'geminiAuthProfileId') ||
@@ -2300,6 +2318,7 @@ function participantSeatSelectionUnchanged(
   }
   return (
     a.provider === b.provider &&
+    a.enabled === b.enabled &&
     text(a.model) === text(b.model) &&
     text(a.role) === text(b.role) &&
     text(a.instructions) === text(b.instructions) &&
@@ -2335,6 +2354,12 @@ function applySeatChangePatch(
     // evidence of what the next session remembers.
     promptReceiptsInvalidated = true
     mcpProfileReceiptInvalidated = true
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'enabled') &&
+    typeof patch.enabled === 'boolean'
+  ) {
+    next.enabled = patch.enabled
   }
   if (Object.prototype.hasOwnProperty.call(patch, 'model')) {
     const nextModel = patch.model || undefined
@@ -2931,6 +2956,8 @@ interface PendingParticipantSeatChange {
   participantId: string
   before: EnsembleParticipant
   after: EnsembleParticipant
+  /** User removal waits only for this seat's current execution to settle. */
+  removeAfterExecution?: boolean
   changedBy: SessionActivityLedgerEntry['changedBy']
   reason: string
   queuedAt: string
@@ -6143,6 +6170,185 @@ export class EnsembleOrchestrator {
     })
   }
 
+  requestUserRosterMutation(
+    input: EnsembleUserRosterMutationInput
+  ): EnsembleUserRosterMutationResult {
+    const chat = this.deps.getChat(input.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        message: 'Roster change rejected: chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const resolution = resolveEnsembleUserRosterMutation(chat.ensemble, input, {
+      nowIso: this.deps.nowIso(),
+      isProviderSelectable: (provider) =>
+        selectableProviderIds(this.deps.getSettings()).includes(provider as ProviderId)
+    })
+    if (!resolution.ok) {
+      return {
+        ok: false,
+        message: resolution.message,
+        error: resolution.error
+      }
+    }
+
+    const runtimeCandidate = this.roundsByChatId.get(chat.appChatId)
+    const runtime =
+      runtimeCandidate &&
+      runtimeCandidate.roundId === chat.ensemble.activeRound?.roundId &&
+      !runtimeCandidate.cancelled
+        ? runtimeCandidate
+        : undefined
+    const participantId = resolution.value.affectedParticipantId
+    if (
+      input.action === 'remove' &&
+      runtime &&
+      participantId &&
+      this.isParticipantActivelyExecuting(runtime, participantId)
+    ) {
+      const before = chat.ensemble.participants.find(
+        (participant) => participant.id === participantId
+      )
+      if (!before) {
+        return {
+          ok: false,
+          message: 'Participant remove rejected: participant is no longer in the roster.',
+          error: 'stale_target'
+        }
+      }
+      const queuedAt = this.deps.nowIso()
+      runtime.pendingParticipantSeatChanges = [
+        ...(runtime.pendingParticipantSeatChanges || []).filter(
+          (change) => change.participantId !== participantId
+        ),
+        {
+          participantId,
+          before,
+          after: before,
+          removeAfterExecution: true,
+          changedBy: 'user',
+          reason: 'User removed the active participant.',
+          queuedAt
+        }
+      ]
+      const message =
+        `Participant removal queued for ${participantLabel(before)}. ` +
+        'It will apply when that participant finishes its current execution.'
+      this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
+      return {
+        ok: true,
+        status: 'queued',
+        chat: this.deps.getChat(chat.appChatId) || chat,
+        message,
+        participantId,
+        roundId: runtime.roundId
+      }
+    }
+
+    const applied = this.applyUserRosterMutationToChat(
+      chat,
+      runtime,
+      resolution.value,
+      false
+    )
+    return {
+      ok: true,
+      status: 'applied',
+      chat: applied,
+      message: this.userRosterMutationMessage(resolution.value, false),
+      participantId,
+      roundId: runtime?.roundId
+    }
+  }
+
+  private userRosterMutationMessage(
+    mutation: ResolvedEnsembleUserRosterMutation,
+    boundary: boolean
+  ): string {
+    const participant = mutation.affectedParticipantId
+      ? mutation.participants.find(
+          (candidate) => candidate.id === mutation.affectedParticipantId
+        )
+      : undefined
+    const label = participantLabel(participant)
+    const suffix = boundary ? ' at the execution boundary.' : '.'
+    switch (mutation.action) {
+      case 'add':
+        return `Participant ${label} added to the live roster${suffix}`
+      case 'remove':
+        return `Participant removed from the live roster${suffix}`
+      case 'reorder':
+        return `Participant order updated for the remaining live roster${suffix}`
+      case 'set_authority':
+        return `Participant authority updated for the next authority boundary${suffix}`
+      case 'set_auto_approvals':
+        return `Thread-wide Auto Approvals updated${suffix}`
+    }
+  }
+
+  private applyUserRosterMutationToChat(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime | undefined,
+    mutation: ResolvedEnsembleUserRosterMutation,
+    boundary: boolean
+  ): ChatRecord {
+    const runtimeAction =
+      mutation.action === 'add'
+        ? 'add_participant'
+        : mutation.action === 'remove'
+          ? 'remove_participant'
+          : mutation.action === 'reorder'
+            ? 'edit_participant'
+            : null
+    if (runtime && runtimeAction) {
+      this.applyRosterEditToRuntime(
+        runtime,
+        runtimeAction,
+        mutation.affectedParticipantId || mutation.participants[0]?.id || '',
+        mutation.participants
+      )
+      if (
+        mutation.action === 'remove' &&
+        mutation.affectedParticipantId === runtime.bossmanParticipantId
+      ) {
+        runtime.bossmanParticipantId = undefined
+      }
+    }
+    const activeRound =
+      runtime && runtimeAction
+        ? this.applyRosterEditToActiveRound(
+            chat.ensemble?.activeRound,
+            runtime.roundId,
+            mutation.participants
+          )
+        : chat.ensemble?.activeRound
+    const updated: ChatRecord = {
+      ...chat,
+      ensemble: {
+        ...chat.ensemble!,
+        participants: mutation.participants,
+        maxParticipants: mutation.maxParticipants,
+        bossmanParticipantId: mutation.bossmanParticipantId,
+        secondInCommandParticipantId: mutation.secondInCommandParticipantId,
+        bossmanAutoApprovals: mutation.bossmanAutoApprovals,
+        activeRound,
+        updatedAt: this.deps.nowIso()
+      },
+      updatedAt: this.deps.now()
+    }
+    this.saveChatWithCheckpoint(updated, runtime ? 'round-updated' : 'participant-updated')
+    if (runtime) {
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        this.userRosterMutationMessage(mutation, boundary)
+      )
+    }
+    return this.deps.getChat(chat.appChatId) || updated
+  }
+
   private queueOrApplyParticipantSeatChange(input: {
     chat: ChatRecord
     runtime?: ActiveRoundRuntime
@@ -6156,6 +6362,16 @@ export class EnsembleOrchestrator {
     const pendingChange = runtime?.pendingParticipantSeatChanges?.find(
       (change) => change.participantId === before.id
     )
+    if (runtime && pendingChange?.removeAfterExecution) {
+      return {
+        ok: true,
+        status: 'queued',
+        chat: this.deps.getChat(chat.appChatId) || chat,
+        message: `Participant removal is already queued for ${participantLabel(before)}.`,
+        participantId: before.id,
+        roundId: runtime.roundId
+      }
+    }
     const pendingTarget = pendingChange?.after || before
     // Rapid picker edits arrive as separate patches (provider/model first,
     // reasoning or permissions next). Compose each new patch onto the already
@@ -6265,6 +6481,23 @@ export class EnsembleOrchestrator {
       (participant) => participant.id === participantId
     )
     if (!chat?.ensemble || !current) return
+    if (change.removeAfterExecution) {
+      const resolution = resolveEnsembleUserRosterMutation(
+        chat.ensemble,
+        {
+          chatId: chat.appChatId,
+          action: 'remove',
+          participantId
+        },
+        {
+          nowIso: this.deps.nowIso(),
+          isProviderSelectable: () => true
+        }
+      )
+      if (!resolution.ok) return
+      this.applyUserRosterMutationToChat(chat, runtime, resolution.value, true)
+      return
+    }
     const after = { ...change.after, order: current.order }
     this.applyParticipantSeatChangeToChat({
       chat,
@@ -6444,7 +6677,11 @@ export class EnsembleOrchestrator {
     const nextById = new Map(nextParticipants.map((participant) => [participant.id, participant]))
     const affected = nextById.get(affectedParticipantId)
     if (action === 'add_participant') {
-      if (affected && !remaining.some((participant) => participant.id === affected.id)) {
+      if (
+        affected &&
+        affected.enabled !== false &&
+        !remaining.some((participant) => participant.id === affected.id)
+      ) {
         remaining.push(affected)
       }
     } else if (action === 'remove_participant') {
@@ -6455,7 +6692,24 @@ export class EnsembleOrchestrator {
         runtime.secondInCommandParticipantId = undefined
       }
     } else {
-      const edited = remaining.map((participant) => nextById.get(participant.id) || participant)
+      const edited = remaining
+        .map((participant) => nextById.get(participant.id) || participant)
+        .filter((participant) => participant.enabled !== false)
+      const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+      const affectedState = activeRound?.participants.find(
+        (participant) => participant.participantId === affectedParticipantId
+      )
+      if (
+        affected &&
+        affected.enabled !== false &&
+        !edited.some((participant) => participant.id === affected.id) &&
+        (!affectedState ||
+          affectedState.status === 'idle' ||
+          (affectedState.status === 'skipped' &&
+            affectedState.reason === 'Disabled during the active round.'))
+      ) {
+        edited.push(affected)
+      }
       remaining.length = 0
       remaining.push(...edited)
     }
@@ -6474,9 +6728,25 @@ export class EnsembleOrchestrator {
       .filter((state) => nextById.has(state.participantId))
       .map((state) => {
         const participant = nextById.get(state.participantId)!
+        const disabledWhileIdle = participant.enabled === false && state.status === 'idle'
+        const reenabledFromDisabled =
+          participant.enabled !== false &&
+          state.status === 'skipped' &&
+          state.reason === 'Disabled during the active round.'
         return {
           ...state,
-          ...roundParticipantDisplayFields(participant)
+          ...roundParticipantDisplayFields(participant),
+          ...(disabledWhileIdle
+            ? {
+                status: 'skipped' as const,
+                reason: 'Disabled during the active round.'
+              }
+            : reenabledFromDisabled
+              ? {
+                  status: 'idle' as const,
+                  reason: undefined
+                }
+              : {})
         }
       })
     const removed = round.participants
@@ -6488,7 +6758,9 @@ export class EnsembleOrchestrator {
       }))
     const existingIds = new Set(existing.map((state) => state.participantId))
     const added = nextParticipants
-      .filter((participant) => !existingIds.has(participant.id))
+      .filter(
+        (participant) => participant.enabled !== false && !existingIds.has(participant.id)
+      )
       .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
     const participantStates = [...existing, ...removed, ...added].sort((a, b) => a.order - b.order)
     return {
@@ -6496,6 +6768,10 @@ export class EnsembleOrchestrator {
       activeParticipantId:
         round.activeParticipantId && nextById.has(round.activeParticipantId)
           ? round.activeParticipantId
+          : undefined,
+      bossmanParticipantId:
+        round.bossmanParticipantId && nextById.has(round.bossmanParticipantId)
+          ? round.bossmanParticipantId
           : undefined,
       secondInCommandParticipantId:
         round.secondInCommandParticipantId && nextById.has(round.secondInCommandParticipantId)
