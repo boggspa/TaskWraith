@@ -1277,6 +1277,20 @@ const api = {
       managedRunReady?: false
       notice?: string
     }>,
+  /** Optional host CLIs (gh) — install when absent, upgrade when present. */
+  openHostToolInstallTerminal: (toolId: string) =>
+    ipcRenderer.invoke('host-tool:open-install-terminal', toolId) as Promise<{
+      ok: boolean
+      error?: string
+      command?: string
+      alreadyInstalled?: boolean
+    }>,
+  hostToolStatus: (toolId: string) =>
+    ipcRenderer.invoke('host-tool:status', toolId) as Promise<{
+      id: string
+      available: boolean
+      path?: string
+    }>,
   startPty: (workspacePath: string, sessionId: string = 'default') =>
     ipcRenderer.invoke('start-pty', workspacePath, sessionId),
   stopPty: (sessionId: string = 'default') => ipcRenderer.invoke('stop-pty', sessionId),

@@ -24,6 +24,22 @@ export function githubWatchDisabledReason(error: unknown): string {
   return "Couldn't read the current pull request — check GitHub CLI and try again."
 }
 
+/**
+ * True when a disabled-watch reason is about `gh` being absent from PATH rather
+ * than unauthenticated, missing a PR, or any other cause.
+ *
+ * This is a HINT, not a verdict. The error text cannot distinguish "gh is not
+ * installed" from "gh is installed somewhere TaskWraith doesn't look", and those
+ * two need opposite fixes. Callers use this only to decide whether it is worth
+ * asking MAIN to probe for the binary; the install affordance is gated on the
+ * probe's answer.
+ */
+export function isGithubCliMissingReason(reason: string | null | undefined): boolean {
+  return /isn't installed or isn't on PATH|not installed or not on PATH|command not found/i.test(
+    String(reason || '')
+  )
+}
+
 export function watchedPrDescriptorsMatch(
   left: WatchedPrDescriptor | null | undefined,
   right: WatchedPrDescriptor | null | undefined

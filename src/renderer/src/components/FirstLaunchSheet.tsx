@@ -28,6 +28,8 @@ import { formatResetShort } from '../lib/UsageFormat'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
+import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
+import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 
 type OnboardingProviderId = ProviderId
 
@@ -120,6 +122,15 @@ export interface FirstLaunchSheetProps {
       Pick<AppSettings, 'themeAppearance' | 'composerStyle' | 'userBubbleColor' | 'userName'>
     >
   ) => void
+  /**
+   * Extra directories searched first when resolving ANY external CLI. Surfaced
+   * during onboarding because a wrong PATH is a first-launch failure: the
+   * provider cards all read "CLI not found" and the user has no way to tell
+   * that the binaries are installed and merely invisible to a Finder-launched
+   * app. Optional so static tests and older hosts can omit the control.
+   */
+  cliPathDirectories?: string[]
+  onCliPathDirectoriesChange?: (next: string[]) => void
 }
 
 type ProviderRowVariant = ProviderAuthVariant
@@ -292,8 +303,13 @@ export function FirstLaunchSheet({
   composerStyle = 'default',
   userBubbleColor = 'system',
   userName = '',
-  onAppearancePreviewChange
+  onAppearancePreviewChange,
+  cliPathDirectories,
+  onCliPathDirectoriesChange
 }: FirstLaunchSheetProps): React.JSX.Element | null {
+  // Probed only while the sheet is open; the card needs a truthful
+  // installed/not-installed answer, not a guess from an error string.
+  const ghStatus = useHostCliToolStatus('gh', open)
   const dismissRef = useRef(onDismiss)
   useEffect(() => {
     dismissRef.current = onDismiss
@@ -669,10 +685,61 @@ export function FirstLaunchSheet({
           </details>
         </section>
 
+        {/*
+          Optional tools sit in their OWN section rather than the provider grid.
+          `gh` is not a provider — no seat, no model, no run posture — and
+          folding it into the provider cards would imply all three.
+        */}
+        <section className="first-launch-sheet-section">
+          <h3 className="first-launch-sheet-section-title">2. Optional tools</h3>
+          <p className="first-launch-sheet-section-helper">
+            Not providers — separate command-line tools that unlock extra TaskWraith features. Skip
+            them if you don&apos;t need what they power; nothing else depends on them.
+          </p>
+          <div className="host-cli-tool-grid">
+            <HostCliToolCard
+              toolId="gh"
+              presence={ghStatus.presence}
+              resolvedPath={ghStatus.path}
+              onOpened={ghStatus.refresh}
+            />
+          </div>
+        </section>
+
+        {/*
+          Always rendered so the section numbering is stable; only the editor
+          itself depends on the host wiring the change handler. A no-op editor
+          would be worse than none — it would look like it saved.
+        */}
+        <section className="first-launch-sheet-section">
+          <h3 className="first-launch-sheet-section-title">3. Where your CLIs live</h3>
+          <p className="first-launch-sheet-section-helper">
+              Only needed if a CLI you know is installed shows as <em>not found</em>. TaskWraith is
+              launched by macOS, not by your shell, so it doesn&apos;t inherit your shell&apos;s
+              PATH. It already checks the usual places (Homebrew, <code>/usr/local/bin</code>,{' '}
+              <code>~/.local/bin</code>, npm and bun global bins). Add a directory here if yours
+              lives somewhere else — a version manager shim (asdf, mise, volta), a custom npm
+              prefix, or a non-standard Homebrew prefix.
+            </p>
+            <p className="first-launch-sheet-section-helper">
+              These are searched <strong>first</strong>, ahead of everything else, and apply to
+              every CLI at once — provider CLIs, <code>git</code>, and <code>gh</code>. Run{' '}
+              <code>which codex</code> (or <code>which gh</code>) in your terminal and paste the
+              directory part. Pasting a whole PATH works too; it gets split into rows.
+            </p>
+          {onCliPathDirectoriesChange && (
+            <CliPathDirectoriesEditor
+              value={cliPathDirectories ?? []}
+              onChange={onCliPathDirectoriesChange}
+              dense
+            />
+          )}
+        </section>
+
         <FirstLaunchProductObservation />
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">2. Add your first workspace</h3>
+          <h3 className="first-launch-sheet-section-title">4. Add your first workspace</h3>
           <p className="first-launch-sheet-prose">
             A <strong>workspace</strong> is a project folder TaskWraith has read / edit permission
             inside. Workspace chats are rooted in that folder, and the agent can only touch files
@@ -686,7 +753,7 @@ export function FirstLaunchSheet({
         </section>
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">3. Choose your starting look</h3>
+          <h3 className="first-launch-sheet-section-title">5. Choose your starting look</h3>
           <p className="first-launch-sheet-section-helper">
             These controls write to Appearance settings immediately. The preview is inert, so it
             will never touch your active chat prompt.
@@ -772,7 +839,7 @@ export function FirstLaunchSheet({
         </section>
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">4. You stay in control</h3>
+          <h3 className="first-launch-sheet-section-title">6. You stay in control</h3>
           <p className="first-launch-sheet-section-helper">
             Agents ask before doing anything risky — those prompts are the safety feature, not
             errors. You decide how much rope each run gets.
@@ -809,7 +876,7 @@ export function FirstLaunchSheet({
         </section>
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">5. Track your usage &amp; spend</h3>
+          <h3 className="first-launch-sheet-section-title">7. Track your usage &amp; spend</h3>
           <p className="first-launch-sheet-section-helper">
             Hit a wall mid-run? It&apos;s almost always a provider quota, not a bug. The{' '}
             <strong>Model Usage</strong> card in the sidebar shows how much of each provider&apos;s
@@ -847,7 +914,7 @@ export function FirstLaunchSheet({
         </section>
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">6. Try Ensemble chats</h3>
+          <h3 className="first-launch-sheet-section-title">8. Try Ensemble chats</h3>
           <p className="first-launch-sheet-section-helper">
             <strong>Get one provider working first</strong> — Ensemble shines with two or more.
             Toggle Ensemble on an idle top-level chat to add multiple provider participants while
@@ -909,7 +976,7 @@ export function FirstLaunchSheet({
         </section>
 
         <section className="first-launch-sheet-section">
-          <h3 className="first-launch-sheet-section-title">7. Power-user shortcuts (optional)</h3>
+          <h3 className="first-launch-sheet-section-title">9. Power-user shortcuts (optional)</h3>
           <ul className="first-launch-sheet-tips">
             <li>
               <strong>-@ to reference files.</strong> Type <code>-@</code> in the composer to

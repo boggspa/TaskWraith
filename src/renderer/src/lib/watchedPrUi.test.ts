@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { GitPrSummary } from '../../../main/services/GitService'
 import {
   githubWatchDisabledReason,
+  isGithubCliMissingReason,
   watchedPrDescriptorFromGitHubUrl,
   watchedPrDescriptorsMatch
 } from './watchedPrUi'
@@ -78,5 +79,21 @@ describe('watchedPrUi', () => {
     expect(watchedPrDescriptorsMatch(descriptor, { ...descriptor })).toBe(true)
     expect(watchedPrDescriptorsMatch(descriptor, { ...descriptor, prNumber: 43 })).toBe(false)
     expect(watchedPrDescriptorsMatch(descriptor, null)).toBe(false)
+  })
+
+  it('identifies only the missing-binary reason as an install candidate', () => {
+    // The install affordance must never appear for an authenticated-but-absent
+    // PR, or for a gh that is present and merely unauthenticated: those need
+    // completely different fixes, and offering "Install" would be wrong advice.
+    expect(isGithubCliMissingReason(githubWatchDisabledReason('gh: command not found'))).toBe(true)
+    expect(
+      isGithubCliMissingReason(githubWatchDisabledReason('gh is not installed or not on PATH.'))
+    ).toBe(true)
+    expect(isGithubCliMissingReason(githubWatchDisabledReason('gh: not authenticated'))).toBe(false)
+    expect(isGithubCliMissingReason(githubWatchDisabledReason('no open pull request'))).toBe(false)
+    expect(isGithubCliMissingReason(githubWatchDisabledReason('detached HEAD'))).toBe(false)
+    expect(isGithubCliMissingReason(null)).toBe(false)
+    expect(isGithubCliMissingReason(undefined)).toBe(false)
+    expect(isGithubCliMissingReason('')).toBe(false)
   })
 })

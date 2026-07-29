@@ -1,5 +1,9 @@
 import { delimiter, dirname, extname, join } from 'path'
 import os from 'os'
+import {
+  expandCliPathDirectory,
+  normalizeCliPathDirectories
+} from '../../shared/cliPathDirectories'
 
 /**
  * Pure PATH/candidate-dir helpers, extracted from CliProviderRuntime.
@@ -17,11 +21,55 @@ import os from 'os'
  */
 
 /**
+ * User-configured extra directories (AppSettings.cliPathDirectories), already
+ * normalized and `~`-expanded.
+ *
+ * A module-level register rather than a parameter: this helper has ~40 call
+ * sites across provider resolution, host-tool probing, and Git/gh spawning, and
+ * threading a settings object through all of them would guarantee that some
+ * lane silently kept the old behaviour. It is also what keeps this module
+ * electron-free — MAIN publishes the value at startup and on every settings
+ * write; nothing here reaches into the store.
+ */
+let userCliSearchDirs: string[] = []
+
+/**
+ * Publish the user's extra CLI directories. MAIN owns this call.
+ *
+ * Returns true when the effective list actually changed, so the caller can
+ * invalidate resolution caches — without that, a tool probed as "missing"
+ * before the user fixed their PATH stays missing until relaunch, which is
+ * precisely the frustration this setting exists to remove.
+ */
+export function setUserCliSearchDirs(
+  dirs: readonly string[] | null | undefined,
+  homeDir: string = os.homedir()
+): boolean {
+  const next = normalizeCliPathDirectories(dirs ? [...dirs] : []).map((entry) =>
+    expandCliPathDirectory(entry, homeDir)
+  )
+  const changed =
+    next.length !== userCliSearchDirs.length ||
+    next.some((entry, index) => entry !== userCliSearchDirs[index])
+  userCliSearchDirs = next
+  return changed
+}
+
+/** The currently published extra directories. Diagnostics + tests. */
+export function getUserCliSearchDirs(): string[] {
+  return [...userCliSearchDirs]
+}
+
+/**
  * Candidate directories to probe for a CLI binary, most-specific first.
  *
  * Finder-launched apps don't inherit the shell PATH — the default launchd PATH
  * has no /opt/homebrew/bin — so the well-known install roots are appended
  * explicitly rather than trusting PATH alone.
+ *
+ * User-configured directories come first (after the explicitly resolved binary's
+ * own directory). They are an override: the user reaches for them precisely
+ * because the default order picked the wrong copy, so they have to win.
  */
 export function getCliSearchDirs(
   binaryPath?: string | null,
@@ -44,6 +92,7 @@ export function getCliSearchDirs(
       : []
   const dirs = [
     binaryPath ? dirname(binaryPath) : '',
+    ...userCliSearchDirs,
     ...(inheritedEnv.PATH || '').split(delimiter),
     ...windowsDirs,
     join(os.homedir(), '.local', 'bin'),

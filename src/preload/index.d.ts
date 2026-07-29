@@ -86,6 +86,7 @@ import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPre
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import type { HostCliToolId } from '../shared/hostCliToolCatalog'
 import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
 import type { OutlookConnectionStatus } from '../main/outlook/OutlookCredentialStore'
 import type { OutlookSignInPoll, OutlookSignInStart } from '../main/ipc/outlookAuthHandlers'
@@ -1284,6 +1285,22 @@ declare global {
         scope?: 'user-owned-provider-setup'
         managedRunReady?: false
         notice?: string
+      }>
+      /**
+       * Optional host CLIs (today only `gh`). Installs when the binary is
+       * absent and upgrades the resolved copy when it is present — the caller
+       * does not choose, because only MAIN can see which one applies.
+       */
+      openHostToolInstallTerminal: (toolId: HostCliToolId) => Promise<{
+        ok: boolean
+        error?: string
+        command?: string
+        alreadyInstalled?: boolean
+      }>
+      hostToolStatus: (toolId: HostCliToolId) => Promise<{
+        id: HostCliToolId
+        available: boolean
+        path?: string
       }>
       startPty: (workspacePath: string, sessionId?: string) => Promise<void>
       stopPty: (sessionId?: string) => Promise<void>

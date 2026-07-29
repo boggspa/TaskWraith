@@ -1437,6 +1437,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               userName={settings?.userName ?? ''}
               claudeBinaryPath={claudeBinaryPath}
               kimiBinaryPath={kimiBinaryPath}
+              cliPathDirectories={settings?.cliPathDirectories ?? []}
               ollamaBaseUrl={ollamaBaseUrl}
               ollamaDefaultModel={ollamaDefaultModel}
               auditOrchestration={settings?.auditOrchestration}

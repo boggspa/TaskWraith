@@ -7,6 +7,8 @@ import type {
 } from '../../../main/services/GitService'
 import { prLifecycle } from './GitStatusChips'
 import { type CiNotice } from '../lib/ciNotice'
+import { isGithubCliMissingReason } from '../lib/watchedPrUi'
+import { HostCliToolInstallButton, useHostCliToolStatus } from './HostCliToolInstall'
 
 /*
  * Hover popover for the GitHub satellite row. Reuses the shared
@@ -235,6 +237,16 @@ export function GitHubSatellitePopover({
   onMouseEnter: () => void
   onMouseLeave: () => void
 }): React.JSX.Element | null {
+  // Probe only when the failure text actually points at a missing `gh` — the
+  // happy path and the unauthenticated path must not pay for an IPC round trip
+  // on every hover. Hook order is why this sits above the early returns.
+  const ghLikelyMissing = isGithubCliMissingReason(watchDisabledReason)
+  const gh = useHostCliToolStatus('gh', ghLikelyMissing)
+  // Offer the install ONLY on a confirmed absence. 'unknown' (probe pending or
+  // failed) must not render it: telling someone to install a CLI they already
+  // have is the confusion this whole change exists to remove.
+  const offerGhInstall = ghLikelyMissing && gh.presence === 'absent'
+
   if (!anchorRect || typeof document === 'undefined') return null
   if (!model.pr && !model.ci && !watchDisabledReason && !isWatching) return null
 
@@ -321,6 +333,14 @@ export function GitHubSatellitePopover({
               watchStatusMessage ??
               'Notify this thread when checks finish'}
           </span>
+          {offerGhInstall && (
+            <div className="github-satellite-popover-install">
+              <HostCliToolInstallButton toolId="gh" onOpened={gh.refresh} />
+              <span className="github-satellite-popover-install-hint">
+                Already installed? Add its directory under Settings → Providers → CLI locations.
+              </span>
+            </div>
+          )}
         </div>
       )}
       {notice?.shouldOffer && onNotify && (

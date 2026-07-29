@@ -8,6 +8,7 @@ type ArgSpec =
   | 'antigravityGeminiApiKey'
   | 'piUpstreamId'
   | 'piApiKey'
+  | 'hostCliToolId'
   | 'optionalString'
   | 'number'
   | 'positiveInteger'
@@ -49,6 +50,11 @@ const PI_UPSTREAMS = new Set([
   'groq',
   'cerebras'
 ])
+// Optional host CLIs TaskWraith can install/upgrade on the user's behalf. Must
+// mirror HOST_CLI_TOOL_IDS in src/shared/hostCliToolCatalog.ts (this module
+// stays import-light by design); IpcValidation.test.ts asserts the mirror so a
+// catalog addition cannot silently be rejected at the IPC gate.
+const HOST_CLI_TOOL_IDS = new Set(['gh'])
 // Structural IPC/decode allowlist only. Live run/authority admission is enforced
 // downstream by the canonical selectable-provider contract.
 const PROVIDERS = new Set([
@@ -301,6 +307,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'provider:open-login-terminal': ['provider'],
   'provider:open-logout-terminal': ['provider'],
   'provider:open-upgrade-terminal': ['provider'],
+  // Optional host CLIs (gh) — a separate lane from the provider terminal
+  // channels because a host tool is not a ProviderId.
+  'host-tool:open-install-terminal': ['hostCliToolId'],
+  'host-tool:status': ['hostCliToolId'],
   'app:quit': [],
   // Auto-update service (no-arg snapshot/control channels).
   'update-snapshot': [],
@@ -645,6 +655,9 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
   }
   if (spec === 'piUpstreamId' && (typeof value !== 'string' || !PI_UPSTREAMS.has(value))) {
     throw new Error(`${label} must be a supported Pi upstream id.`)
+  }
+  if (spec === 'hostCliToolId' && (typeof value !== 'string' || !HOST_CLI_TOOL_IDS.has(value))) {
+    throw new Error(`${label} must be a supported host CLI tool id.`)
   }
   if (
     spec === 'piApiKey' &&

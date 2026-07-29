@@ -993,6 +993,33 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(false)
   })
 
+  it('persists and normalizes cliPathDirectories (SETTINGS_PATCH_KEYS guard)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Guards the landmine: cliPathDirectories must be in SETTINGS_PATCH_KEYS or
+    // the key is dropped before persist and the setting silently never applies.
+    expect(
+      sanitizeSettingsPatch({ cliPathDirectories: [' /opt/homebrew/bin ', '~/.local/bin'] })
+        .cliPathDirectories
+    ).toEqual(['/opt/homebrew/bin', '~/.local/bin'])
+  })
+
+  it('refuses relative and control-character entries in cliPathDirectories', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // These directories are searched FIRST for every external CLI, so an
+    // unvalidated patch here would be a binary-planting primitive.
+    expect(
+      sanitizeSettingsPatch({
+        cliPathDirectories: ['relative/bin', '/opt/ok/bin', '/evil\nrm -rf /', '']
+      }).cliPathDirectories
+    ).toEqual(['/opt/ok/bin'])
+    expect(
+      sanitizeSettingsPatch({ cliPathDirectories: 'not-an-array' as unknown as string[] })
+        .cliPathDirectories
+    ).toEqual([])
+  })
+
   it('gates a NEW wwdc26 selection by the limited-time window', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

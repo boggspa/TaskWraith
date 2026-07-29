@@ -4,6 +4,7 @@ import {
   OLLAMA_MODEL_COMMANDS,
   PROVIDER_INSTALL_COMMANDS
 } from '../../../shared/providerSetupCatalog'
+import { HOST_CLI_TOOLS } from '../../../shared/hostCliToolCatalog'
 import type {
   TaskWraithPluginActivatedProviderSetup,
   TaskWraithPluginActivationSnapshot
@@ -138,6 +139,36 @@ export function ProviderInstallCommands({
             )
           })}
         </>
+      )}
+      {/* Optional host CLIs. These are NOT providers — `gh` has no seat, model,
+          or run posture — but they were the one class of missing binary the
+          install catalog never covered, so a user who hit "GitHub CLI isn't
+          installed or isn't on PATH" in the PR popover had nowhere to go. */}
+      <div className="provider-install-subhead">
+        Optional tools — extra TaskWraith features, not providers
+      </div>
+      {HOST_CLI_TOOLS.flatMap((tool) =>
+        tool.installCommands.map((entry) => (
+          <div key={entry.id} className="provider-install-row is-model" data-host-tool={tool.id}>
+            <span className="provider-install-label">
+              {tool.label} ({entry.platform})
+            </span>
+            <code
+              className="provider-install-cmd"
+              title={`Official ${tool.source} install command — ${tool.purpose}`}
+            >
+              {entry.command}
+            </code>
+            <PillButton
+              size="compact"
+              className="provider-install-copy"
+              onClick={() => copy(entry.id, entry.command)}
+              aria-label={`Copy ${tool.label} (${entry.platform}) install command`}
+            >
+              {copiedId === entry.id ? 'Copied' : 'Copy'}
+            </PillButton>
+          </div>
+        ))
       )}
       {/* Ollama is local: after the runtime is installed, each model has to
           be pulled separately. These rows pull + run the exact tags

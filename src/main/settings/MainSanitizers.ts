@@ -49,6 +49,7 @@ import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRender
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import { normalizePiCerebrasMaxCompletionTokens } from '../../shared/piCerebrasCompletionCap'
+import { normalizeCliPathDirectories } from '../../shared/cliPathDirectories'
 import {
   coerceLiveProvider,
   isLiveSelectableProvider,
@@ -126,6 +127,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'windowBounds',
   'claudeBinaryPath',
   'kimiBinaryPath',
+  'cliPathDirectories',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
   'piCerebrasMaxCompletionTokens',
@@ -1660,6 +1662,14 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)
+    }
+    if ('cliPathDirectories' in sanitized) {
+      // These directories are searched FIRST for every external CLI, so a
+      // forged patch here would be a binary-planting primitive. Normalizing on
+      // WRITE bounds the count, rejects relative entries (which would resolve
+      // against an unpredictable cwd) and strips control characters that would
+      // corrupt the joined PATH.
+      sanitized.cliPathDirectories = normalizeCliPathDirectories(sanitized.cliPathDirectories)
     }
     if ('piCerebrasMaxCompletionTokens' in sanitized) {
       if (sanitized.piCerebrasMaxCompletionTokens === null) {

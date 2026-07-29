@@ -36,6 +36,8 @@ export type SettingsPanelUpdate = {
   chatContextTurns?: number
   /** Display name used to greet the user in New General Chat (blank = omit). */
   userName?: AppSettings['userName']
+  /** Extra directories searched first when resolving any external CLI. */
+  cliPathDirectories?: AppSettings['cliPathDirectories']
   /** 1.0.5-EW25 — Display currency for cost / token-spend chips. */
   currency?: AppSettings['currency']
   /** 1.0.5-EW34 — Conservative-overestimate bias percent (0–25). */

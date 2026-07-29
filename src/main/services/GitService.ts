@@ -1,7 +1,18 @@
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
 import { homedir, tmpdir } from 'os'
-import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+  sep
+} from 'path'
+import { getCliSearchDirs } from '../providers/CliSearchDirs'
 import {
   gitCommandEnvironment,
   hardenedGitCommandArgs,
@@ -1335,9 +1346,18 @@ async function runCommand(
     let stdout = ''
     let stderr = ''
     let settled = false
+    // Resolve `git`/`gh` from the SAME augmented search dirs the provider CLIs
+    // use. Bare-spawning them inherited the process PATH, which for a
+    // Finder-launched packaged app is the minimal launchd PATH with no
+    // /opt/homebrew/bin — so gh reported "not installed or not on PATH" on
+    // machines where it was plainly installed and working in the user's shell.
+    // Routing through getCliSearchDirs also picks up the user's configured
+    // extra CLI directories, so one setting fixes every lane at once.
+    const env = gitCommandEnvironment(command, options.env)
+    env.PATH = getCliSearchDirs(null, env).join(delimiter)
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: gitCommandEnvironment(command, options.env),
+      env,
       stdio: ['ignore', 'pipe', 'pipe']
     })
     const timeout = setTimeout(() => {

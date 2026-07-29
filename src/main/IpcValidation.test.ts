@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 import { installIpcValidation, validateIpcArgs, IPC_ARGUMENT_SCHEMAS } from './IpcValidation'
+import { HOST_CLI_TOOL_IDS } from '../shared/hostCliToolCatalog'
 
 describe('IpcValidation', () => {
   it('runs renderer authorization before dispatching a validated invocation', async () => {
@@ -377,6 +378,24 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('provider:open-upgrade-terminal', ['bad'])).toThrow(
       /known provider/
     )
+  })
+
+  it('bounds host CLI tool ids and mirrors the shared catalog exactly', () => {
+    for (const channel of ['host-tool:open-install-terminal', 'host-tool:status']) {
+      for (const id of HOST_CLI_TOOL_IDS) {
+        expect(() => validateIpcArgs(channel, [id])).not.toThrow()
+      }
+      // A host tool is not a provider, and vice versa — neither id set may leak
+      // into the other's channel.
+      expect(() => validateIpcArgs(channel, ['codex'])).toThrow(/host CLI tool/)
+      expect(() => validateIpcArgs(channel, [''])).toThrow(/host CLI tool/)
+      expect(() => validateIpcArgs(channel, [null])).toThrow(/host CLI tool/)
+    }
+    // Drift guard: IpcValidation mirrors the catalog rather than importing it,
+    // so a new catalog entry would otherwise be silently rejected at the gate.
+    for (const id of HOST_CLI_TOOL_IDS) {
+      expect(() => validateIpcArgs('host-tool:status', [id])).not.toThrow()
+    }
   })
 
   it('keeps structural Cursor decoding independent of the removed kill switch', () => {

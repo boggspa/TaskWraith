@@ -1210,3 +1210,211 @@
     width: 100%;
   }
 }
+
+/* ── Optional host CLI tools (gh) + CLI location editor ──────────────────────
+ * Deliberately mirrors the first-launch provider-card chrome (12px radius,
+ * translucent bed, same status dot) rather than defining a new visual language:
+ * these cards sit next to the provider cards in both the onboarding sheet and
+ * Settings → Providers, and the user should read them as the same KIND of
+ * thing — a setup card — while the separate section makes clear that a host
+ * tool is not a provider seat.
+ */
+.host-cli-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+.host-cli-tool-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+/* Presence tinting matches the provider card's signed-in / not-available
+ * treatment so "installed" reads the same green everywhere in the app. */
+.host-cli-tool-card[data-presence='present'] {
+  border-color: color-mix(in srgb, #3fb950 38%, transparent);
+  background: color-mix(in srgb, #3fb950 6%, rgba(255, 255, 255, 0.02));
+}
+.host-cli-tool-card[data-presence='absent'] {
+  border-color: color-mix(in srgb, #f85149 28%, transparent);
+  background: color-mix(in srgb, #f85149 4%, rgba(255, 255, 255, 0.02));
+}
+.host-cli-tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.host-cli-tool-card-label {
+  font-weight: 600;
+  font-size: 1em;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.host-cli-tool-card-optional-badge {
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-tertiary);
+}
+.host-cli-tool-card-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: var(--text-secondary);
+}
+.host-cli-tool-card-description {
+  margin: 0;
+  font-size: 0.85em;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.host-cli-tool-card-hint {
+  margin: 0;
+  font-size: 0.8em;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+.host-cli-tool-card-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.host-cli-tool-card-command code {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 0.78em;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+  color: var(--text-secondary);
+}
+.host-cli-tool-card-command span {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+}
+.host-cli-tool-card-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding-top: 4px;
+}
+.host-cli-tool-install {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.host-cli-tool-install-hint {
+  font-size: 0.75em;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+.host-cli-tool-install-hint.is-error {
+  color: color-mix(in srgb, #f85149 72%, var(--text-secondary));
+}
+
+/* Install offer inside the composer's PR popover. Only rendered on a CONFIRMED
+ * absence — see GitHubSatellitePopover — so this never crowds the happy path. */
+.github-satellite-popover-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+}
+.github-satellite-popover-install-hint {
+  font-size: 0.72em;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+}
+
+.cli-path-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.cli-path-editor.is-dense {
+  gap: 6px;
+}
+.cli-path-editor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cli-path-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--surface-border, rgba(255, 255, 255, 0.08));
+  background: rgba(255, 255, 255, 0.02);
+}
+.cli-path-editor-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-size: 0.8em;
+  color: var(--text-secondary);
+}
+.cli-path-editor-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.cli-path-editor-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.cli-path-editor-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8em;
+}
+.cli-path-editor-error {
+  margin: 0;
+  font-size: 0.75em;
+  line-height: 1.35;
+  color: color-mix(in srgb, #f85149 72%, var(--text-secondary));
+}
+
+:root[data-theme='light'] .host-cli-tool-card,
+.theme-light .host-cli-tool-card,
+:root[data-theme='light'] .cli-path-editor-row,
+.theme-light .cli-path-editor-row {
+  background: rgba(0, 0, 0, 0.03);
+}
+:root[data-theme='light'] .host-cli-tool-card-optional-badge,
+.theme-light .host-cli-tool-card-optional-badge {
+  background: rgba(0, 0, 0, 0.06);
+}
+:root[data-theme='light'] .host-cli-tool-card-command code,
+.theme-light .host-cli-tool-card-command code {
+  background: rgba(0, 0, 0, 0.06);
+}

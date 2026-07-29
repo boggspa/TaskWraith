@@ -411,6 +411,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'provider:open-logout-terminal',
   'provider:open-upgrade-terminal',
   'provider:open-kimi-upgrade-terminal',
+  'host-tool:open-install-terminal',
+  'host-tool:status',
   'get-gemini-mcp-bridge-status',
   'install-gemini-mcp-bridge',
   'set-gemini-mcp-bridge-enabled',

@@ -2224,6 +2224,22 @@ export interface AppSettings {
   claudeApiKey?: string
   kimiBinaryPath?: string
   kimiApiKey?: string
+  /**
+   * Extra directories searched FIRST when resolving any external CLI — provider
+   * binaries, `gh`, `git`, and the optional host tools alike.
+   *
+   * A Finder-launched macOS app inherits the minimal launchd PATH, so TaskWraith
+   * augments it with well-known install roots. Version managers (asdf/mise/
+   * volta), custom npm prefixes, and non-standard Homebrew prefixes fall outside
+   * those roots, leaving testers with CLIs that work in their shell, are
+   * invisible here, and end up installed twice. This is the user-owned
+   * correction; it is consumed through `setUserCliSearchDirs`, never read
+   * directly, so every resolution lane honours it identically.
+   *
+   * Entries are absolute (or `~/`-prefixed) and normalized by
+   * `shared/cliPathDirectories.ts`.
+   */
+  cliPathDirectories?: string[]
   ollamaBaseUrl?: string
   ollamaDefaultModel?: string
   /**

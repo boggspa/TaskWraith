@@ -30,7 +30,7 @@ import { cliBinaryNameCandidates, getCliSearchDirs } from './providers/CliSearch
  * path or every tool here goes dark.
  */
 
-export type HostToolId = 'ffmpeg' | 'ffprobe' | 'pdftoppm' | 'pdftotext'
+export type HostToolId = 'ffmpeg' | 'ffprobe' | 'pdftoppm' | 'pdftotext' | 'gh'
 
 export interface HostToolDescriptor {
   /** Binary name probed on PATH (Windows PATHEXT variants are added by the resolver). */
@@ -83,6 +83,20 @@ export const HOST_TOOLS: Record<HostToolId, HostToolDescriptor> = {
     label: 'pdftotext (poppler)',
     purpose: 'Extracts the text layer from PDFs so agents can read past the rasterized page limit.',
     installHint: 'brew install poppler'
+  },
+  /**
+   * `gh` was the counter-example this registry was built for and then didn't
+   * cover: GitService spawns it bare, so a user with gh installed under a
+   * Homebrew prefix that isn't on the launchd PATH sees "GitHub CLI isn't
+   * installed or isn't on PATH" with no way to tell those two cases apart and
+   * no affordance to fix either. Registering it here gives the PR popover a
+   * truthful installed/not-installed answer instead of an error string guess.
+   */
+  gh: {
+    binaryName: 'gh',
+    label: 'GitHub CLI',
+    purpose: 'Pull request status, CI checks, PR watching, and Create PR.',
+    installHint: 'brew install gh'
   }
 }
 

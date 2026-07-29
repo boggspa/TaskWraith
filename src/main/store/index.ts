@@ -33,6 +33,7 @@ export type {
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import { workflowAuthorityDigest } from '../WorkflowAuthorityDigest'
+import { publishCliPathDirectories } from '../CliPathDirectoriesPublisher'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -4347,6 +4348,13 @@ export class AppStore {
       current.storeLocalChatHistory !== false &&
       next.storeLocalChatHistory === false
     writeJson(settingsPath, next)
+    if (Object.prototype.hasOwnProperty.call(partial, 'cliPathDirectories')) {
+      // Published from the write choke-point so every settings lane (IPC patch,
+      // startup managed patch, settings service) applies it identically — and
+      // so the change takes effect on the next CLI resolution rather than the
+      // next app launch.
+      publishCliPathDirectories(next.cliPathDirectories as string[] | undefined)
+    }
     if (localHistoryDisabled) {
       deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
     }
