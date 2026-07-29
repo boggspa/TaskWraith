@@ -319,6 +319,7 @@ import {
 } from './bridge/BridgeTranscriptActivity'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
 import {
+  ANTIGRAVITY_PROVIDER_ID,
   DEFAULT_PROVIDER,
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
@@ -423,7 +424,7 @@ import {
   type ExternalPathGrantRunBindingContext
 } from './ExternalPathGrantBinding'
 import { resolveDaemonShouldRun } from './BridgeDaemonSettings'
-import { BridgeActionRouter } from './BridgeActionRouter'
+import { BridgeActionRouter, approvalModeFromPayload } from './BridgeActionRouter'
 import { buildRunQueueDispatchReceipt } from './RunQueueDispatchReceipt'
 import type {
   BridgeActionAuthorizationResolver,
@@ -439,6 +440,10 @@ import {
   type RemoteWorkspaceCapability
 } from './RemoteWorkspaceAllowlist'
 import { RemoteBridgeRuntime } from './remote/RemoteBridgeRuntime'
+import {
+  assertRemoteProviderGrant,
+  isRemoteProviderDispatchable
+} from './remote/RemoteProviderAdmission'
 import {
   isRemoteWorkflowRunnableChat,
   RemoteWorkflowActions,
@@ -38170,6 +38175,18 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    const isConditionallyDispatchableRemoteProvider = (provider: string): boolean => {
+      if (provider !== ANTIGRAVITY_PROVIDER_ID) return false
+      const settings = AppStore.getSettings()
+      return isAuthenticatedAntigravityConfiguredProvider(
+        settings,
+        managedRunConfiguredProviderDiscovery.statusSnapshot(settings),
+        managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
+      )
+    }
+    const isPairedDeviceProviderDispatchable = (provider: string): boolean =>
+      isRemoteProviderDispatchable(provider, isConditionallyDispatchableRemoteProvider)
+
     const createBridgeActionExecutor = (): MainProcessActionExecutor => {
       // Phase C-late: action executor wires policy-cleared actions to real
       // main-process services. Wired today: `cancelRun`, `approvalReply`,
@@ -38188,17 +38205,29 @@ if (isGeminiMcpBridgeProcess) {
       // huge worktree can't blow the relay frame budget.
       const assertPairedDeviceProviderId = (value: unknown): ProviderId => {
         const provider = assertProviderId(value)
-        if (provider !== 'antigravity') return assertLiveProviderId(provider)
-
-        const settings = AppStore.getSettings()
-        const configured = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
-        const models = managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
-        if (isAuthenticatedAntigravityConfiguredProvider(settings, configured, models)) {
+        if (provider !== ANTIGRAVITY_PROVIDER_ID) return assertLiveProviderId(provider)
+        if (isPairedDeviceProviderDispatchable(provider)) {
           return provider
         }
         throw new Error(
           'AntiGravity needs its consent and authenticated model catalog setup before this new run can start.'
         )
+      }
+      const assertPairedDeviceProviderGrant = (
+        value: unknown,
+        workspaceId: string,
+        capability: RemoteWorkspaceCapability,
+        approvalMode?: string
+      ): ProviderId => {
+        const provider = assertPairedDeviceProviderId(value)
+        assertRemoteProviderGrant({
+          allowlist: bridgeAllowlist,
+          workspaceId,
+          provider,
+          capability,
+          ...(approvalMode !== undefined ? { approvalMode } : {})
+        })
+        return provider
       }
       const bridgeGitService = new GitService()
       const MAX_BRIDGE_GIT_FILES = 200
@@ -39666,7 +39695,12 @@ if (isGeminiMcpBridgeProcess) {
               const provider =
                 existing?.provider === structuralProvider
                   ? structuralProvider
-                  : assertPairedDeviceProviderId(structuralProvider)
+                  : assertPairedDeviceProviderGrant(
+                      structuralProvider,
+                      action.workspaceId,
+                      'steer',
+                      approvalModeFromPayload(action)
+                    )
               const seed = existing ?? seedByProvider.get(provider)
               const base: EnsembleParticipant = existing
                 ? { ...existing }
@@ -40044,8 +40078,11 @@ if (isGeminiMcpBridgeProcess) {
             return AppStore.getChat(chat.appChatId) ?? chat
           }
           if (action.variant === 'global') {
-            const provider = assertPairedDeviceProviderId(
-              action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
+            const provider = assertPairedDeviceProviderGrant(
+              action.provider ?? AppStore.getSettings().activeProvider ?? 'claude',
+              action.workspaceId,
+              'startTurn',
+              approvalModeFromPayload(action)
             )
             const chat = createOrReuseRemoteDraft({
               variant: 'global',
@@ -40066,8 +40103,11 @@ if (isGeminiMcpBridgeProcess) {
             const configuredProviders = await detectManagedRunConfiguredProviders(
               AppStore.getSettings()
             )
-            const provider = assertPairedDeviceProviderId(
-              action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER
+            const provider = assertPairedDeviceProviderGrant(
+              action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER,
+              action.workspaceId,
+              'startTurn',
+              approvalModeFromPayload(action)
             )
             const reusableEnsemble =
               requestedChat ||
@@ -40110,7 +40150,12 @@ if (isGeminiMcpBridgeProcess) {
                   ])
                 )
                 const custom = action.participants.map((entry, index) => {
-                  const provider = assertPairedDeviceProviderId(entry.provider)
+                  const provider = assertPairedDeviceProviderGrant(
+                    entry.provider,
+                    action.workspaceId,
+                    'startTurn',
+                    approvalModeFromPayload(action)
+                  )
                   const seed = seedByProvider.get(provider)
                   return {
                     id: `ios-p${index + 1}-${provider}`,
@@ -40142,8 +40187,11 @@ if (isGeminiMcpBridgeProcess) {
             await finishRemoteDraft(saved, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
-          const provider = assertPairedDeviceProviderId(
-            action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
+          const provider = assertPairedDeviceProviderGrant(
+            action.provider ?? AppStore.getSettings().activeProvider ?? 'claude',
+            action.workspaceId,
+            'startTurn',
+            approvalModeFromPayload(action)
           )
           const chat = createOrReuseRemoteDraft({
             variant: normalizeRemoteDraftVariant(action.variant),
@@ -42729,7 +42777,9 @@ if (isGeminiMcpBridgeProcess) {
         bridgeAllowlist,
         bridgeActionExecutor,
         bridgeOwnershipValidator,
-        bridgeActionAuthorizationResolver
+        bridgeActionAuthorizationResolver,
+        undefined,
+        isConditionallyDispatchableRemoteProvider
       )
       const runtime = new RemoteBridgeRuntime({
         relayUrl,
@@ -43279,7 +43329,9 @@ if (isGeminiMcpBridgeProcess) {
         bridgeAllowlist,
         bridgeActionExecutor,
         bridgeOwnershipValidator,
-        bridgeActionAuthorizationResolver
+        bridgeActionAuthorizationResolver,
+        undefined,
+        isConditionallyDispatchableRemoteProvider
       )
       const daemon = new BridgeDaemonClient({
         onHello: (hello) => {

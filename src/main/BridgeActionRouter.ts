@@ -1,4 +1,3 @@
-import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
 import type {
   RemoteWorkspaceAllowlist,
   RemoteWorkspaceCapability
@@ -24,6 +23,10 @@ import {
   type RemoteDeviceAuditDecision,
   type RemoteDeviceAuditLedgerWriter
 } from './remote/RemoteDeviceAuditLedger'
+import {
+  isRemoteProviderDispatchable,
+  type RemoteProviderDispatchability
+} from './remote/RemoteProviderAdmission'
 
 /**
  * BridgeActionRouter — Electron-side handler for daemon→Electron requests.
@@ -214,6 +217,9 @@ export interface BridgeActionRouterOptions {
   replayRetentionMs?: number
   /** Optional device-attributed audit sink for capability-gated remote actions. */
   auditLedger?: RemoteDeviceAuditLedgerWriter | null
+  /** Runtime admission seam for conditionally offered providers. Additive:
+   * static-live and retired continuation providers never depend on it. */
+  isConditionallyDispatchableProvider?: RemoteProviderDispatchability
 }
 
 /** Error subclass the BridgeDaemonClient knows about — throwing one of these
@@ -240,6 +246,7 @@ export class BridgeActionRouter {
   private readonly now: () => number
   private readonly replayRetentionMs: number
   private readonly auditLedger?: RemoteDeviceAuditLedgerWriter
+  private readonly isConditionallyDispatchableProvider?: RemoteProviderDispatchability
   private readonly seenActionIds = new Map<string, { seenAt: number; expiresAt: number }>()
 
   constructor(options: BridgeActionRouterOptions = {}) {
@@ -251,6 +258,7 @@ export class BridgeActionRouter {
     this.actionAuthorizationResolver = options.actionAuthorizationResolver
     this.now = options.now ?? (() => Date.now())
     this.replayRetentionMs = options.replayRetentionMs ?? 24 * 60 * 60 * 1000
+    this.isConditionallyDispatchableProvider = options.isConditionallyDispatchableProvider
     this.auditLedger =
       options.auditLedger === undefined
         ? createDefaultRemoteDeviceAuditLedger({ log: this.log }) ?? undefined
@@ -270,7 +278,8 @@ export class BridgeActionRouter {
     executor?: BridgeActionExecutor,
     ownershipValidator?: BridgeActionOwnershipValidator,
     actionAuthorizationResolver?: BridgeActionAuthorizationResolver,
-    auditLedger?: RemoteDeviceAuditLedgerWriter | null
+    auditLedger?: RemoteDeviceAuditLedgerWriter | null,
+    isConditionallyDispatchableProvider?: RemoteProviderDispatchability
   ): BridgeActionRouter {
     const permissiveDev =
       process.env.TASKWRAITH_BRIDGE_PERMISSIVE === '1' ||
@@ -282,8 +291,22 @@ export class BridgeActionRouter {
       executor,
       ownershipValidator,
       actionAuthorizationResolver,
-      auditLedger
+      auditLedger,
+      isConditionallyDispatchableProvider
     })
+  }
+
+  private canDispatchProvider(provider: string): boolean {
+    try {
+      return isRemoteProviderDispatchable(provider, this.isConditionallyDispatchableProvider)
+    } catch (error) {
+      this.log(
+        `[BridgeActionRouter] conditional provider admission failed closed for "${provider}": ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
+      return isRemoteProviderDispatchable(provider)
+    }
   }
 
   /** Dispatch a daemon→Electron request to the right policy method. Throws
@@ -540,18 +563,12 @@ export class BridgeActionRouter {
       dispatchContext.approvalMode = resolvedAuthorization?.allowed
         ? resolvedAuthorization.approvalMode
         : approvalModeFromPayload(payload)
-      // "Never remotely dispatchable" (antigravity today) was only ever an
-      // accident of PROVIDER_OPTIONS membership — and the permissive-dev
-      // mode skips the allowlist entirely. Enforce it as its own invariant
-      // with an honest reason, before any allowlist consultation. Retired
-      // providers (gemini) stay admissible: retirement removes the OFFER,
-      // not the ability to continue an existing chat, and legacy allowlist
-      // entries legitimately still grant them.
-      if (
-        dispatchContext.provider &&
-        !isLiveSelectableProvider(dispatchContext.provider) &&
-        !isRetiredProvider(dispatchContext.provider)
-      ) {
+      // Provider dispatchability is independent from the workspace grant:
+      // conditional providers must clear their live runtime gate before the
+      // allowlist is consulted. Retired providers (gemini) stay admissible:
+      // retirement removes the OFFER, not the ability to continue an existing
+      // chat, and legacy allowlist entries legitimately still grant them.
+      if (dispatchContext.provider && !this.canDispatchProvider(dispatchContext.provider)) {
         const reason = `Provider "${dispatchContext.provider}" cannot be dispatched from a paired device.`
         this.log(
           `[BridgeActionRouter] DENY actionAck pairID=${pairID} kind=${payload.kind} ws=${workspaceId} reason="${reason}"`
@@ -844,7 +861,7 @@ export class BridgeActionRouter {
     // Same invariant as the actionAck path, and deliberately ABOVE the
     // permissive-dev bypass: a provider outside the live-selectable and
     // retired-continuable sets is never remotely dispatchable, in any mode.
-    if (provider && !isLiveSelectableProvider(provider) && !isRetiredProvider(provider)) {
+    if (provider && !this.canDispatchProvider(provider)) {
       const reason = `Provider "${provider}" cannot be dispatched from a paired device.`
       this.log(
         `[BridgeActionRouter] DENY prepareStartTurn pairID=${pairID} ws=${workspaceID} reason="${reason}"`

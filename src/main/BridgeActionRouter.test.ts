@@ -517,6 +517,17 @@ describe('BridgeActionRouter', () => {
       })
       return allowlist
     }
+    const seedAntigravityAllowlist = () => {
+      const allowlist = new RemoteWorkspaceAllowlist()
+      allowlist.upsert({
+        workspaceId: 'ws-antigravity',
+        path: '/Users/test/projects/antigravity',
+        mode: 'read-write',
+        allowedProviders: ['antigravity'],
+        allowedApprovalModes: ['default', 'plan']
+      })
+      return allowlist
+    }
 
     it('accepts prepareStartTurn when workspace is allowlisted', async () => {
       const allowlist = seedAllowlist()
@@ -721,7 +732,7 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toMatch(/composerPrompt|execution wiring pending/i)
     })
 
-    it('denies a never-dispatchable provider before the allowlist ever runs', async () => {
+    it('denies a conditional provider by default before the allowlist ever runs', async () => {
       const allowlist = seedAllowlist()
       const router = new BridgeActionRouter({ allowlist })
       const wire = Buffer.from(
@@ -747,7 +758,92 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toMatch(/cannot be dispatched from a paired device/i)
     })
 
-    it('denies a never-dispatchable provider on prepareStartTurn even in permissive-dev', async () => {
+    it('admits a conditional provider only when both runtime and workspace gates allow it', async () => {
+      const allowlist = seedAntigravityAllowlist()
+      const router = new BridgeActionRouter({
+        allowlist,
+        isConditionallyDispatchableProvider: (provider) => provider === 'antigravity'
+      })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'composerPrompt',
+            workspaceId: 'ws-antigravity',
+            threadId: 't-antigravity',
+            text: 'hello',
+            provider: 'antigravity',
+            approvalMode: 'default'
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; reasonCode?: string }
+      expect(result.accepted).toBe(true)
+      expect(result.reasonCode).toBe('accepted')
+    })
+
+    it('keeps the workspace provider grant independent from conditional admission', async () => {
+      const router = new BridgeActionRouter({
+        allowlist: seedAllowlist(),
+        isConditionallyDispatchableProvider: (provider) => provider === 'antigravity'
+      })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'composerPrompt',
+            workspaceId: 'ws-allowed',
+            threadId: 't-antigravity',
+            text: 'hello',
+            provider: 'antigravity',
+            approvalMode: 'default'
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; reasonCode?: string; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('workspaceDenied')
+      expect(result.message).toMatch(/provider "antigravity" is not allowed/i)
+    })
+
+    it('reevaluates conditional provider admission on every prepareStartTurn', async () => {
+      let configured = false
+      const router = new BridgeActionRouter({
+        allowlist: seedAntigravityAllowlist(),
+        isConditionallyDispatchableProvider: (provider) => provider === 'antigravity' && configured
+      })
+      const request = {
+        pairID: 'pair-1',
+        workspaceID: 'ws-antigravity',
+        provider: 'antigravity',
+        approvalMode: 'default'
+      }
+
+      let result = (await router.route('bridge.requestPrepareStartTurnAck', request)) as {
+        accepted: boolean
+        reasonCode?: string
+      }
+      expect(result.accepted).toBe(false)
+      expect(result.reasonCode).toBe('providerNotDispatchable')
+
+      configured = true
+      result = (await router.route('bridge.requestPrepareStartTurnAck', request)) as {
+        accepted: boolean
+        reasonCode?: string
+      }
+      expect(result.accepted).toBe(true)
+      expect(result.reasonCode).toBe('accepted')
+    })
+
+    it('denies a conditional provider on prepareStartTurn even in permissive-dev by default', async () => {
       const router = new BridgeActionRouter({ permissiveDev: true })
       const result = (await router.route('bridge.requestPrepareStartTurnAck', {
         pairID: 'pair-1',
