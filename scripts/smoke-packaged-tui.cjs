@@ -660,17 +660,64 @@ function resolveRunningHostUserData() {
   }
 
   const seen = new Set()
+  const abandoned = []
   for (const candidate of candidates) {
     const resolved = path.resolve(candidate.userDataPath)
     if (seen.has(resolved)) continue
     seen.add(resolved)
     const discoveryPath = path.join(resolved, 'taskwraith-control-v1.json')
     const tokenPath = path.join(resolved, 'taskwraith-control-v1.token')
-    if (fs.existsSync(discoveryPath) && fs.existsSync(tokenPath)) {
-      return { userDataPath: resolved, label: candidate.label }
+    if (!fs.existsSync(discoveryPath) || !fs.existsSync(tokenPath)) continue
+    // An explicitly named host is the caller's assertion that it is live: keep
+    // selecting it so a dead pid there fails loudly downstream rather than
+    // silently degrading to another seat.
+    if (candidate.label !== 'TASKWRAITH_USER_DATA' && !discoveryPidIsAlive(discoveryPath)) {
+      abandoned.push(candidate.label)
+      continue
     }
+    return { userDataPath: resolved, label: candidate.label }
+  }
+  if (abandoned.length > 0) {
+    console.log(
+      `running-host live smoke: skipped ${abandoned.length} abandoned control record(s) ` +
+        `(${abandoned.join(', ')}) whose owning process is gone.`
+    )
   }
   return null
+}
+
+/**
+ * A control discovery file outlives the App that wrote it: a crashed or killed
+ * seat leaves the record behind with a dead pid. Auto-discovery must treat that
+ * as "no host", not as a host — otherwise the FIRST candidate holding a stale
+ * record shadows every live seat behind it and hard-fails the release gate.
+ *
+ * Hit on 2026-07-29 during the 1.9.1 ship: three dev seats (`tuiqa0728`,
+ * `tuiqa2`, `verify-composer-`) had left records from processes dead for a day,
+ * so `validate:release` failed with "discovery pid 986 is not running" while the
+ * authoritative App — a pre-sidecar 1.9.0 release with no control server at all —
+ * was exactly the documented soft-skip case. Whether the gate passed depended on
+ * whether an unrelated seat had crashed days earlier.
+ *
+ * Unreadable or malformed records stay selectable: the liveness claim is only
+ * refuted by a pid we can positively prove is gone. Everything else keeps the
+ * existing downstream error paths, which report far better than this function can.
+ */
+function discoveryPidIsAlive(discoveryPath) {
+  let pid
+  try {
+    pid = Number(JSON.parse(fs.readFileSync(discoveryPath, 'utf8')).pid)
+  } catch {
+    return true
+  }
+  if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) return true
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    // EPERM means the process exists under another uid — alive, just not ours.
+    return error && error.code === 'EPERM'
+  }
 }
 
 function isRecoverablePackagedHostFailure(message) {
