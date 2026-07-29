@@ -20254,15 +20254,51 @@ function App(): React.JSX.Element {
     },
     [refreshSingleChat, requestAuthoritativeParticipantSeatChange, updateChatById]
   )
+  const requestLiveEnsembleRoundConfigUpdate = useCallback(
+    (
+      chatId: string,
+      patch: {
+        orchestrationMode?: EnsembleOrchestrationMode
+        fanoutPolicy?: EnsembleFanoutPolicy
+        maxContinuationHops?: number
+      }
+    ): void => {
+      const source = chatByIdRef.current.get(chatId)
+      if (!isEnsembleActiveRoundDispatchLive(source?.ensemble?.activeRound)) return
+      void window.api
+        .updateLiveEnsembleRoundConfig({ chatId, ...patch })
+        .then((result) => {
+          if (result.ok) return
+          window.alert(result.message || result.error || 'Live Ensemble control update failed.')
+          void refreshSingleChat(chatId)
+        })
+        .catch((error) => {
+          window.alert(
+            error instanceof Error ? error.message : 'Live Ensemble control update failed.'
+          )
+          void refreshSingleChat(chatId)
+        })
+    },
+    [refreshSingleChat]
+  )
   const updateEnsembleOrchestrationModeForChat = useCallback(
     (chatId: string, mode: EnsembleOrchestrationMode): void => {
       updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
+        const activeRound = source.ensemble.activeRound
         const patched: ChatRecord = {
           ...source,
           ensemble: {
             ...source.ensemble,
             orchestrationMode: mode,
+            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
+              ? {
+                  activeRound: {
+                    ...activeRound,
+                    orchestrationMode: mode
+                  }
+                }
+              : {}),
             maxParticipants:
               Number.isFinite(source.ensemble.maxParticipants) &&
               source.ensemble.maxParticipants >= 2 &&
@@ -20276,28 +20312,40 @@ function App(): React.JSX.Element {
         }
         return withSessionActivityLedger(source, patched)
       })
+      requestLiveEnsembleRoundConfigUpdate(chatId, { orchestrationMode: mode })
     },
-    [updateChatById]
+    [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   const updateEnsembleFanoutPolicyForChat = useCallback(
     (chatId: string, policy: EnsembleFanoutPolicy): void => {
       const nextPolicy = normalizeEnsembleFanoutPolicy(policy)
       updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
+        const activeRound = source.ensemble.activeRound
         const patched: ChatRecord = {
           ...source,
           ensemble: {
             ...source.ensemble,
             fanoutPolicy: nextPolicy,
             concurrentModeEnabled: ensembleFanoutPolicyEnabled(nextPolicy),
+            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
+              ? {
+                  activeRound: {
+                    ...activeRound,
+                    fanoutPolicy: nextPolicy,
+                    concurrentMode: ensembleFanoutPolicyEnabled(nextPolicy) || undefined
+                  }
+                }
+              : {}),
             updatedAt: new Date().toISOString()
           },
           updatedAt: Date.now()
         }
         return withSessionActivityLedger(source, patched)
       })
+      requestLiveEnsembleRoundConfigUpdate(chatId, { fanoutPolicy: nextPolicy })
     },
-    [updateChatById]
+    [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   const updateEnsembleFanoutIsolationForChat = useCallback(
     (chatId: string, isolation: EnsembleFanoutIsolation): void => {
@@ -20350,7 +20398,7 @@ function App(): React.JSX.Element {
           ensemble: {
             ...source.ensemble,
             maxContinuationHops: safeMax,
-            ...(activeRound
+            ...(activeRound && isEnsembleActiveRoundDispatchLive(activeRound)
               ? {
                   activeRound: {
                     ...activeRound,
@@ -20364,8 +20412,9 @@ function App(): React.JSX.Element {
         }
         return withSessionActivityLedger(source, patched)
       })
+      requestLiveEnsembleRoundConfigUpdate(chatId, { maxContinuationHops: safeMax })
     },
-    [updateChatById]
+    [requestLiveEnsembleRoundConfigUpdate, updateChatById]
   )
   // Slice F v2 (1.0.3) — write-through helper used by the composer
   // pickers when an ensemble chip is selected. Patches the targeted

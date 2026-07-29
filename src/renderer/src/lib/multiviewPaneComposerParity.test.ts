@@ -245,7 +245,7 @@ describe('Multiview pane Composer context parity', () => {
     expect(participantPatch).not.toContain('updateChatById(chatId, () =>')
     const applyPermissions = source.slice(
       source.indexOf('const applyEnsemblePermissionsToAllParticipantsForChat ='),
-      source.indexOf('const updateEnsembleOrchestrationModeForChat =')
+      source.indexOf('const requestLiveEnsembleRoundConfigUpdate =')
     )
     expect(applyPermissions).toContain(
       'applyParticipantPermissionsToEnsemble(source, participantId)'
@@ -269,6 +269,21 @@ describe('Multiview pane Composer context parity', () => {
     expect(applyPermissions.slice(updateIndex)).not.toContain('window.alert(')
     expect(applyPermissions).toContain('for (const participant')
     expect(applyPermissions.match(/updateChatById\(/g)).toHaveLength(1)
+    const liveRoundConfig = source.slice(
+      source.indexOf('const requestLiveEnsembleRoundConfigUpdate ='),
+      source.indexOf('const updateSelectedParticipant =')
+    )
+    expect(liveRoundConfig).toContain('.updateLiveEnsembleRoundConfig({ chatId, ...patch })')
+    expect(liveRoundConfig).toContain(
+      'requestLiveEnsembleRoundConfigUpdate(chatId, { orchestrationMode: mode })'
+    )
+    expect(liveRoundConfig).toContain(
+      'requestLiveEnsembleRoundConfigUpdate(chatId, { fanoutPolicy: nextPolicy })'
+    )
+    expect(liveRoundConfig).toContain(
+      'requestLiveEnsembleRoundConfigUpdate(chatId, { maxContinuationHops: safeMax })'
+    )
+    expect(liveRoundConfig).toContain('isEnsembleActiveRoundDispatchLive(activeRound)')
     expect(source).not.toContain('setSelectedParticipantId(')
     expect(source).toContain('setSelectedParticipantForChat(updatedChat.appChatId, null)')
   })
