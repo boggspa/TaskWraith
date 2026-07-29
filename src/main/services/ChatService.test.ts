@@ -13,6 +13,10 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from '../antigravity/AntigravityAgyOptInEnabledSignal'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -468,6 +472,46 @@ describe('ChatService', () => {
       })
       expect(store.saveChat).toHaveBeenCalledWith(saved)
     } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('admits a queued AntiGravity change on the agy opt-in alone, with NO API key', () => {
+    // Subthreads, forks, side chats and ensemble seats all admit through this
+    // same predicate, so keying it only on the Gemini API key stranded every
+    // agy-lane seat for a consented user who had never saved a key.
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    resetAntigravityAgyOptInEnabledProbeForTests()
+    const current = makeChat({ provider: 'claude', providerMetadata: {} })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+    const incoming = {
+      ...current,
+      providerMetadata: {
+        pendingProviderChange: {
+          provider: 'antigravity' as const,
+          queuedAt: '2026-07-19T00:00:00.000Z'
+        }
+      }
+    }
+
+    // Neither lane -> refused.
+    expect(() => new ChatService(deps).saveChat(incoming)).toThrow(
+      'antigravity is unavailable for new chats or delegated runs.'
+    )
+    expect(store.saveChat).not.toHaveBeenCalled()
+
+    // agy opt-in alone -> admitted, key still absent.
+    setAntigravityAgyOptInEnabledProbe(() => true)
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    try {
+      const saved = new ChatService(deps).saveChat(incoming)
+      expect(saved.providerMetadata?.pendingProviderChange).toMatchObject({
+        provider: 'antigravity'
+      })
+      expect(store.saveChat).toHaveBeenCalledWith(saved)
+    } finally {
+      resetAntigravityAgyOptInEnabledProbeForTests()
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
   })

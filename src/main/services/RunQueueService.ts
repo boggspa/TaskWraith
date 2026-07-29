@@ -28,6 +28,7 @@ import type {
 import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
@@ -649,17 +650,25 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 /**
- * Queue admission mirrors ComposerService's interactive-dispatch stance: the
- * Gemini API-key lane admits AntiGravity on a currently configured key alone
- * (its queued sends drain through the same in-app Gemini kernel), while the
- * separate agy/CLI ban-risk lane never queues interactive runs. Without this
- * union a send on a busy AntiGravity chat was rejected at enqueue even though
- * an immediate dispatch of the identical request would have been admitted.
+ * Queue admission mirrors ComposerService's interactive-dispatch stance
+ * EXACTLY, and must keep doing so: the invariant is that a queued send and an
+ * immediate dispatch of the identical request agree. It was a divergence here
+ * that rejected sends on a busy AntiGravity chat which would have been
+ * admitted had the chat been idle.
+ *
+ * So both lanes are admitted independently, each on evidence about itself —
+ * the agy/CLI ban-risk lane on its recorded opt-in, the Gemini API-key lane on
+ * a currently configured key. The earlier claim that the agy lane "never
+ * queues interactive runs" did not hold: its queued sends drain through the
+ * same dispatch path as any other CLI transport.
  */
 function assertRunnableProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
   if (isLiveSelectableProvider(provider)) return provider
-  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+  if (
+    provider === ANTIGRAVITY_PROVIDER_ID &&
+    (isAntigravityAgyOptInEnabled() || isAntigravityGeminiApiKeyConfigured())
+  ) {
     return provider
   }
   throw new Error('Provider is unavailable for new runs.')

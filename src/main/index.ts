@@ -321,6 +321,7 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/run
 import {
   ANTIGRAVITY_PROVIDER_ID,
   DEFAULT_PROVIDER,
+  isAntigravityOptInEnabled,
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../shared/retiredProviders'
@@ -1920,6 +1921,7 @@ import {
   registerAntigravityRateLimitHandler
 } from './antigravity/AntigravityRateLimitHandler'
 import { setAntigravityGeminiApiKeyConfiguredProbe } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { setAntigravityAgyOptInEnabledProbe } from './antigravity/AntigravityAgyOptInEnabledSignal'
 import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/AntigravityGeminiApiDiscoveryOutcome'
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
@@ -1939,6 +1941,13 @@ const antigravityGeminiApiDiscoveryOutcomeStore = new AntigravityGeminiApiDiscov
 setAntigravityGeminiApiKeyConfiguredProbe(
   () => antigravityGeminiApiSecretStoreRef?.getStatus()?.configured === true
 )
+// Twin of the probe above, for the INDEPENDENT agy/CLI ban-risk lane. Read at
+// the same three chokepoints so neither lane's absence can strand the other:
+// before this existed they admitted `antigravity` on the key signal alone, so
+// an opted-in user with no API key could select an agy quota model and could
+// not send it. Reads persisted settings live (not a snapshot) so withdrawing
+// consent in Settings takes effect on the next admission with no restart.
+setAntigravityAgyOptInEnabledProbe(() => isAntigravityOptInEnabled(AppStore.getSettings()))
 
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
