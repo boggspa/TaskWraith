@@ -39,6 +39,7 @@ import {
   GROK_45_MODEL_ID,
   isGrok45ReasoningModelId
 } from '../../../shared/grok45Models'
+import { activePiModelRows } from '../../../shared/piModelLifecycle'
 
 export interface EnsembleModelDefaults {
   modelOptions: CombinedModelPickerModelOption[]
@@ -794,7 +795,10 @@ export function resolveEnsembleParticipantSettings(
   }
 }
 
-export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDefaults {
+export function getEnsembleModelDefaults(
+  provider: ProviderId,
+  now: Date = new Date()
+): EnsembleModelDefaults {
   switch (provider) {
     case 'codex':
       return {
@@ -862,7 +866,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
       }
     case 'pi':
       return {
-        modelOptions: PI_MODELS,
+        modelOptions: activePiModelRows(PI_MODELS, now),
         reasoningOptions: [],
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),

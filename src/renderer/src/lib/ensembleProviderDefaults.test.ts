@@ -440,6 +440,21 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(codex.fastModeCapableModelIds.has('gpt-5.6-luna')).toBe(true)
   })
 
+  it('warns before Cerebras GLM-4.7 retires and removes only that row on the date', () => {
+    const before = getEnsembleModelDefaults('pi', new Date(2026, 7, 16, 23, 59))
+    expect(
+      before.modelOptions.find((option) => option.id === 'cerebras/zai-glm-4.7')
+    ).toMatchObject({
+      label: 'GLM-4.7 (Cerebras)',
+      retiresAt: '2026-08-17'
+    })
+
+    const retired = getEnsembleModelDefaults('pi', new Date(2026, 7, 17, 0, 0))
+    expect(retired.modelOptions.some((option) => option.id === 'cerebras/zai-glm-4.7')).toBe(false)
+    expect(retired.modelOptions.some((option) => option.id === 'zai/glm-4.7')).toBe(true)
+    expect(retired.modelOptions.some((option) => option.id === 'cerebras/gpt-oss-120b')).toBe(true)
+  })
+
   it('does not expose Default or CLI Default as ensemble picker model rows', () => {
     for (const provider of [
       'codex',

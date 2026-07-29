@@ -19,6 +19,8 @@
  * Widening any of these lists is a policy decision, not a code cleanup.
  */
 
+import { isPiModelRetired, piModelRetiresAt } from '../../shared/piModelLifecycle'
+
 export type PiUpstreamId =
   | 'deepseek'
   | 'zai'
@@ -76,7 +78,11 @@ export interface PiModelPolicyVerdict {
 }
 
 /** Fail-closed gate consulted before any `--provider`/`--model` reaches pi. */
-export function piModelPolicyVerdict(upstream: string, modelId: string): PiModelPolicyVerdict {
+export function piModelPolicyVerdict(
+  upstream: string,
+  modelId: string,
+  now: Date = new Date()
+): PiModelPolicyVerdict {
   if (!isPiUpstreamAllowed(upstream)) {
     return {
       allowed: false,
@@ -93,6 +99,14 @@ export function piModelPolicyVerdict(upstream: string, modelId: string): PiModel
         allowed: false,
         reason: `Pi model '${trimmed}' is a resold copy of a model TaskWraith hosts first-party.`
       }
+    }
+  }
+  const wireModelId = `${upstream}/${trimmed}`
+  if (isPiModelRetired(wireModelId, now)) {
+    const retiredAt = piModelRetiresAt(wireModelId)
+    return {
+      allowed: false,
+      reason: `${PI_UPSTREAM_LABELS[upstream]} model '${trimmed}' was retired on ${retiredAt}. Choose an active model before starting another run.`
     }
   }
   return { allowed: true }

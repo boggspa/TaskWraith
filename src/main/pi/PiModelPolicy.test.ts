@@ -6,7 +6,7 @@ import {
   isPiUpstreamAllowed,
   piModelPolicyVerdict
 } from './PiModelPolicy'
-import { PI_STATIC_MODELS, splitPiWireModelId } from './PiModels'
+import { PI_STATIC_MODELS, piModelsForConfiguredUpstreams, splitPiWireModelId } from './PiModels'
 
 describe('piModelPolicyVerdict', () => {
   it('refuses every hosted/first-party upstream by name', () => {
@@ -42,6 +42,19 @@ describe('piModelPolicyVerdict', () => {
     expect(piModelPolicyVerdict('groq', 'openai/gpt-oss-120b').allowed).toBe(true)
   })
 
+  it('refuses Cerebras GLM-4.7 from its sunset without affecting Z.ai or GPT-OSS', () => {
+    const before = new Date(2026, 7, 16, 23, 59)
+    const retired = new Date(2026, 7, 17, 0, 0)
+
+    expect(piModelPolicyVerdict('cerebras', 'zai-glm-4.7', before).allowed).toBe(true)
+    expect(piModelPolicyVerdict('cerebras', 'zai-glm-4.7', retired)).toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining('2026-08-17')
+    })
+    expect(piModelPolicyVerdict('zai', 'glm-4.7', retired).allowed).toBe(true)
+    expect(piModelPolicyVerdict('cerebras', 'gpt-oss-120b', retired).allowed).toBe(true)
+  })
+
   it('refuses empty model ids', () => {
     expect(piModelPolicyVerdict('deepseek', '  ').allowed).toBe(false)
   })
@@ -50,9 +63,19 @@ describe('piModelPolicyVerdict', () => {
 describe('catalog/policy lockstep', () => {
   it('every static model passes the policy wall', () => {
     for (const model of PI_STATIC_MODELS) {
-      const verdict = piModelPolicyVerdict(model.upstream, model.modelId)
+      const verdict = piModelPolicyVerdict(model.upstream, model.modelId, new Date(2026, 6, 29))
       expect(verdict.allowed, model.wireId).toBe(true)
     }
+  })
+
+  it('removes retired rows only from the configured-upstream offer projection', () => {
+    const configured = new Set(['cerebras'])
+    expect(
+      piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 16)).map((model) => model.wireId)
+    ).toEqual(['cerebras/zai-glm-4.7', 'cerebras/gpt-oss-120b'])
+    expect(
+      piModelsForConfiguredUpstreams(configured, new Date(2026, 7, 17)).map((model) => model.wireId)
+    ).toEqual(['cerebras/gpt-oss-120b'])
   })
 
   it('every static wire id round-trips through splitPiWireModelId', () => {

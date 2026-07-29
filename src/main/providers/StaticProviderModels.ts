@@ -14,6 +14,7 @@ import {
   isCursorGrok45ModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+import { activePiModelRows } from '../../shared/piModelLifecycle'
 import {
   MISTRAL_DEFAULT_MODEL,
   MISTRAL_MODEL_MEDIUM,
@@ -33,6 +34,7 @@ export {
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
+  now?: Date
 }
 
 export interface CodexModelContextConfig {
@@ -568,12 +570,17 @@ const KIMI_STATIC_MODELS = [
 // Pi seat picker rows derive from the curated pi-side catalog (single source
 // of truth for wire ids and the policy wall). Context windows live in
 // shared/contextWindows.ts, matching every other provider.
-const PI_STATIC_MODEL_ROWS = PI_STATIC_MODELS.map((model) => ({
-  id: model.wireId,
-  label: model.label,
-  description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
-  ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
-}))
+function piStaticModelRows(now: Date = new Date()) {
+  return activePiModelRows(
+    PI_STATIC_MODELS.map((model) => ({
+      id: model.wireId,
+      label: model.label,
+      description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
+      ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
+    })),
+    now
+  )
+}
 const PI_MODEL_WIRE_IDS = new Set(PI_STATIC_MODELS.map((model) => model.wireId))
 
 const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = [
@@ -813,7 +820,7 @@ export function getStaticProviderModels(
 ) {
   const models =
     provider === 'codex'
-      ? activeCodexModelRows(CODEX_STATIC_MODELS)
+      ? activeCodexModelRows(CODEX_STATIC_MODELS, options.now)
       : provider === 'claude'
         ? CLAUDE_STATIC_MODELS
         : provider === 'kimi'
@@ -829,7 +836,7 @@ export function getStaticProviderModels(
                   : provider === 'mistral'
                     ? MISTRAL_STATIC_MODELS
                     : provider === 'pi'
-                    ? PI_STATIC_MODEL_ROWS
+                    ? piStaticModelRows(options.now)
                     : provider === 'antigravity'
                     // Official agy-CLI rows stay discovery-owned (S4), but the
                     // BYO-key gemini-api sub-lane gets a deterministic static

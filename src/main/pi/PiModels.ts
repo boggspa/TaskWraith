@@ -16,6 +16,7 @@
  * Every entry must satisfy piModelPolicyVerdict; the test suite enforces it.
  */
 
+import { isPiModelRetired } from '../../shared/piModelLifecycle'
 import type { PiUpstreamId } from './PiModelPolicy'
 
 export interface PiModelDefinition {
@@ -75,7 +76,10 @@ export function findPiStaticModel(wireId: string): PiModelDefinition | undefined
 
 /** Models whose upstream has a configured key (the picker's visible set). */
 export function piModelsForConfiguredUpstreams(
-  configured: ReadonlySet<string>
+  configured: ReadonlySet<string>,
+  now: Date = new Date()
 ): PiModelDefinition[] {
-  return PI_STATIC_MODELS.filter((model) => configured.has(model.upstream))
+  return PI_STATIC_MODELS.filter(
+    (model) => configured.has(model.upstream) && !isPiModelRetired(model.wireId, now)
+  )
 }

@@ -50,6 +50,25 @@ describe('codexModelContextConfig', () => {
   })
 })
 
+describe('getStaticProviderModels (Pi lifecycle)', () => {
+  it('warns before Cerebras GLM-4.7 retires and removes it on the date', () => {
+    const before = getStaticProviderModels('pi', {
+      now: new Date(2026, 7, 16, 23, 59)
+    })
+    expect(before.find((model) => model.id === 'cerebras/zai-glm-4.7')).toMatchObject({
+      label: 'GLM-4.7 (Cerebras)',
+      retiresAt: '2026-08-17'
+    })
+
+    const retired = getStaticProviderModels('pi', {
+      now: new Date(2026, 7, 17, 0, 0)
+    })
+    expect(retired.some((model) => model.id === 'cerebras/zai-glm-4.7')).toBe(false)
+    expect(retired.some((model) => model.id === 'zai/glm-4.7')).toBe(true)
+    expect(retired.some((model) => model.id === 'cerebras/gpt-oss-120b')).toBe(true)
+  })
+})
+
 describe('normalizeCliProviderModel (claude)', () => {
   it('strips the TaskWraith-internal -1m marker so the CLI gets the base model id', () => {
     // The 1M window is entitlement-based on the base id.
