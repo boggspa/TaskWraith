@@ -96,12 +96,24 @@ export function captureAgyModelDiscoveryOutput(
  * `isAuthenticatedAntigravityConfiguredProvider` and made the whole provider
  * vanish from every surface with no message anywhere.
  *
- * Resolution order is live > cached > hardcoded:
- *   - a successful probe wins and is persisted as last-known-good;
- *   - a failure serves the cache from the last time discovery worked, which is
- *     per-account accurate and self-updating;
- *   - only a machine that has never once discovered successfully falls back to
- *     `antigravityAgyStaticModels()`.
+ * Preference order is live > cached > hardcoded, but the CACHE IS CONSULTED
+ * FIRST, and that ordering is the whole point:
+ *
+ * `agy models` is an authenticated CLI round-trip costing roughly 2.4s on the
+ * current official binary, while this function runs inside the configured-
+ * provider probe's 900ms bounded lane (itself inside a 1000ms total deadline).
+ * When the cache read sat AFTER the probe, control never reached it — the lane
+ * timed out mid-probe every single time, so the cache was written on every pass
+ * and read on none, and `antigravityAgyStaticModels()` was not a last-resort
+ * floor but the only outcome the picker ever saw. Reading the cache first is a
+ * local file read that finishes comfortably inside the budget.
+ *
+ * The probe still runs exactly once per settings generation, as before: when
+ * cached rows already exist it refreshes them for the NEXT generation rather
+ * than being awaited (stale-while-revalidate). That changes the picker's
+ * freshness, not the number of authenticated round-trips — deliberately, since
+ * request cadence against the AntiGravity backend is the thing that must not
+ * grow.
  *
  * The cache exists because the hardcoded list is a mirror of agy's output, not a
  * curated catalogue — see AntigravityAgyModelCache for why that distinction makes
@@ -123,32 +135,47 @@ export async function discoverAuthenticatedAgyModels(
   }
   if (!resolvedBinary.binaryPath) return []
 
-  try {
+  const runProbe = async (): Promise<AgyModel[]> => {
     const result = await probeAgyModels({
       resolveBinary: async () => resolvedBinary,
       capture: deps.capture ?? captureAgyModelDiscoveryOutput,
       env: deps.inheritedEnv,
       timeoutMs: deps.timeoutMs
     })
-    if (!result.error && result.models.length > 0) {
-      // Persisted, not awaited-for-correctness: a cache write failure must not
-      // turn a good discovery into a failed one. The `.catch` is load-bearing —
-      // `void` alone discards the promise WITHOUT a rejection handler, so a
-      // writer that rejects becomes an unhandled rejection in the main process.
-      // The cache stores the UNFILTERED catalogue (it mirrors agy's output);
-      // the resold-model policy is applied on the way OUT of every source so
-      // a policy change never requires a cache invalidation.
-      void (deps.writeCachedModels ?? writeCachedAgyModels)(result.models, deps.cache).catch(
-        () => {}
-      )
-      const offerable = offerableAgyModels(result.models)
-      if (offerable.length > 0) return offerable
-    }
-  } catch {
-    // Fall through to cache, then floor, rather than hiding the provider.
+    if (result.error || result.models.length === 0) return []
+    // Persisted, not awaited-for-correctness: a cache write failure must not
+    // turn a good discovery into a failed one. The `.catch` is load-bearing —
+    // `void` alone discards the promise WITHOUT a rejection handler, so a
+    // writer that rejects becomes an unhandled rejection in the main process.
+    // The cache stores the UNFILTERED catalogue (it mirrors agy's output);
+    // the resold-model policy is applied on the way OUT of every source so
+    // a policy change never requires a cache invalidation.
+    void (deps.writeCachedModels ?? writeCachedAgyModels)(result.models, deps.cache).catch(() => {})
+    return offerableAgyModels(result.models)
   }
 
-  const cached = offerableAgyModels(await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache))
-  if (cached.length > 0) return cached
+  let cached: AgyModel[] = []
+  try {
+    cached = offerableAgyModels(await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache))
+  } catch {
+    // An unreadable cache is not a discovery failure; fall through to the probe.
+  }
+
+  if (cached.length > 0) {
+    // Refresh in the background for the next generation. Unawaited on purpose:
+    // awaiting it is what previously guaranteed the lane timed out.
+    void runProbe().catch(() => {})
+    return cached
+  }
+
+  // Nothing cached — this machine has never discovered successfully. Await the
+  // probe: there is nothing better to return, and if it outruns the caller's
+  // budget the lane falls through to the floor exactly as it did before.
+  try {
+    const live = await runProbe()
+    if (live.length > 0) return live
+  } catch {
+    // Fall through to the floor rather than hiding the provider entirely.
+  }
   return offerableAgyModels(antigravityAgyStaticModels())
 }

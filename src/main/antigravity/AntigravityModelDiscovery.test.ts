@@ -162,6 +162,74 @@ describe('discoverAuthenticatedAgyModels', () => {
       ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
     })
 
+    // THE REGRESSION THIS PINS. `agy models` costs ~2.4s; this function runs
+    // inside a 900ms bounded lane. With the cache read placed after the probe,
+    // the lane always timed out mid-probe, so the cache was written every pass
+    // and read on none, and the hardcoded floor was not a fallback — it was the
+    // only list the picker ever received. A slow probe plus a populated cache
+    // must therefore resolve promptly with the CACHED rows.
+    it('returns cached rows without waiting for a slow probe', async () => {
+      // Initialized to a no-op so its type stays callable: the Promise executor
+      // below runs synchronously, so the real resolver is installed before the
+      // probe can reach the await.
+      let releaseProbe: () => void = () => {}
+      const probeGate = new Promise<void>((resolve) => {
+        releaseProbe = resolve
+      })
+      const probeStarted = vi.fn()
+      const slowCapture = vi.fn(async () => {
+        probeStarted()
+        await probeGate
+        return { stdout: 'gemini-9.9-flash-high', stderr: '', code: 0 }
+      })
+
+      const result = await discoverAuthenticatedAgyModels(optedIn, {
+        ...dependencies({}),
+        capture: slowCapture,
+        readCachedModels: async () => CACHED,
+        writeCachedModels: async () => undefined
+      })
+
+      // Resolved on the cache while the probe is still in flight.
+      expect(result).toEqual(CACHED)
+      expect(result).not.toEqual(antigravityAgyStaticModels())
+      // And the refresh really was started — stale-while-revalidate, not
+      // cache-only. This is what keeps the list self-updating.
+      expect(probeStarted).toHaveBeenCalledTimes(1)
+      releaseProbe()
+    })
+
+    it('fires exactly one probe per discovery pass, cached or not', async () => {
+      // Request cadence against the AntiGravity backend must not grow: serving
+      // the cache first changes freshness, never the number of authenticated
+      // round-trips.
+      const withCache = dependencies({ stdout: 'gemini-3.6-flash-high' })
+      await discoverAuthenticatedAgyModels(optedIn, {
+        ...withCache,
+        readCachedModels: async () => CACHED,
+        writeCachedModels: async () => undefined
+      })
+      expect(withCache.capture).toHaveBeenCalledTimes(1)
+
+      const withoutCache = dependencies({ stdout: 'gemini-3.6-flash-high' })
+      await discoverAuthenticatedAgyModels(optedIn, {
+        ...withoutCache,
+        readCachedModels: async () => [],
+        writeCachedModels: async () => undefined
+      })
+      expect(withoutCache.capture).toHaveBeenCalledTimes(1)
+    })
+
+    it('treats an unreadable cache as no cache, not as a discovery failure', async () => {
+      await expect(
+        discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.1-pro-low' }),
+          readCachedModels: async () => Promise.reject(new Error('EACCES')),
+          writeCachedModels: async () => undefined
+        })
+      ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
+    })
+
     it('never consults the cache without consent or a binary', async () => {
       const readCachedModels = vi.fn(async () => CACHED)
       await expect(
