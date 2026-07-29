@@ -36,10 +36,26 @@ describe('MistralAdminKeyStore', () => {
     rmSync(dir, { recursive: true, force: true })
   })
 
-  function store(safeStorage = fakeSafeStorage()): MistralAdminKeyStore {
+  // Neutralise ONLY the Linux encrypted-backend gate. On Linux this store also
+  // requires an encrypted safeStorage backend, so a suite that inherits the
+  // runner's platform asserts the runner's keyring instead of this class —
+  // every case below passed on macOS and returned `encryptionUnavailable` on
+  // headless Linux CI.
+  //
+  // Do NOT simply pin 'darwin': the store also branches on win32 for
+  // O_NOFOLLOW and mode enforcement, so telling a Windows runner it is darwin
+  // sends it down POSIX paths Windows cannot satisfy. Substitute darwin only
+  // where the gate would otherwise fire; run as the real host everywhere else.
+  const HOST_PLATFORM: NodeJS.Platform = process.platform === 'linux' ? 'darwin' : process.platform
+
+  function store(
+    safeStorage = fakeSafeStorage(),
+    platform: NodeJS.Platform = HOST_PLATFORM
+  ): MistralAdminKeyStore {
     return new MistralAdminKeyStore({
       userDataPath: dir,
       safeStorage,
+      platform,
       now: () => new Date('2026-07-27T12:00:00.000Z')
     })
   }
@@ -167,5 +183,41 @@ describe('MistralAdminKeyStore', () => {
     expect(
       () => new MistralAdminKeyStore({ userDataPath: 'relative', safeStorage: fakeSafeStorage() })
     ).toThrow(TypeError)
+  })
+
+  describe('Linux storage backend', () => {
+    // Untested in both directions until now: the gate only ever executed when
+    // CI happened to be Linux, where it broke every unrelated case rather than
+    // proving anything about itself. Same omission as PiKeyStore had.
+    const linuxStore = (backend?: string): MistralAdminKeyStore =>
+      store(
+        fakeSafeStorage({ getSelectedStorageBackend: backend ? () => backend : undefined }),
+        'linux'
+      )
+
+    it('accepts a real keyring backend', () => {
+      for (const backend of ['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6']) {
+        expect(linuxStore(backend).getStatus().encryptionAvailable, backend).toBe(true)
+      }
+    })
+
+    it('fails closed on the plaintext backend rather than storing an admin key in the clear', () => {
+      // `basic_text` is safeStorage's unencrypted fallback. Calling encryption
+      // available there would persist a Mistral ADMIN API key readably.
+      const s = linuxStore('basic_text')
+      expect(s.getStatus().encryptionAvailable).toBe(false)
+      expect(s.loadApiKey()).toEqual({ status: 'encryptionUnavailable' })
+    })
+
+    it('fails closed when the backend cannot be determined', () => {
+      expect(linuxStore().getStatus().encryptionAvailable).toBe(false)
+    })
+
+    it('does not impose the backend requirement off Linux', () => {
+      // macOS Keychain and Windows DPAPI expose no backend selector; requiring
+      // one there would disable the store on both.
+      expect(store(fakeSafeStorage(), 'darwin').getStatus().encryptionAvailable).toBe(true)
+      expect(store(fakeSafeStorage(), 'win32').getStatus().encryptionAvailable).toBe(true)
+    })
   })
 })

@@ -89,6 +89,16 @@ export interface MistralAdminKeyStoreOptions {
   readonly userDataPath: string
   readonly safeStorage: MistralAdminSafeStorage
   readonly now?: () => Date
+  /**
+   * Host platform, injectable for tests. Defaults to `process.platform`.
+   *
+   * A real dependency, not a convenience — the same one `PiKeyStore` learned
+   * the hard way. On Linux this store demands an ENCRYPTED safeStorage backend
+   * and fails closed otherwise, so a suite that inherits the runner's platform
+   * asserts the runner's keyring rather than this class: every classification
+   * passes on macOS and returns `encryptionUnavailable` on headless Linux CI.
+   */
+  readonly platform?: NodeJS.Platform
 }
 
 interface PersistedEnvelope {
@@ -133,7 +143,7 @@ export class MistralAdminKeyStore {
     this.secretPath = join(options.userDataPath, MISTRAL_ADMIN_KEY_FILENAME)
     this.safeStorage = options.safeStorage
     this.now = options.now ?? (() => new Date())
-    this.platform = process.platform
+    this.platform = options.platform ?? process.platform
   }
 
   getStatus(): MistralAdminKeyStatus {
