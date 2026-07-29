@@ -9610,6 +9610,12 @@ struct ComposerFloatingPillChrome: ViewModifier {
     /// they move — the behaviour that distinguishes Liquid Glass from a blur.
     var glassID: String? = nil
     var glassNamespace: Namespace.ID? = nil
+    /// When false, the iOS 26+ Liquid Glass effect stays non-interactive so
+    /// nested controls (e.g. the segmented Buttons inside ComposerToolsPill)
+    /// keep their own hit-testing and haptics. The diff pill uses interactive
+    /// glass because it is a single tappable readout; control clusters bring
+    /// their own ButtonStyle press feedback and conflict with `.interactive()`.
+    var interactive: Bool = true
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
@@ -9709,19 +9715,37 @@ struct ComposerFloatingPillChrome: ViewModifier {
             // Apply glassEffect ON the content — Color.clear + opacity in
             // .background collapses into an opaque slab and reads solid.
             // `.interactive()` gives the system's own press deformation, which
-            // is tuned better than anything hand-rolled here.
-            let glass = chrome.glassEffect(.regular.interactive(), in: pillShape)
-            rims(
-                Group {
-                    if let glassID, let glassNamespace {
-                        glass.glassEffectID(glassID, in: glassNamespace)
-                    } else {
-                        glass
+            // is tuned better than anything hand-rolled here. Control clusters
+            // that contain their own Buttons (ComposerToolsPill) pass
+            // interactive=false so the nested segments keep their own hit
+            // testing and haptics.
+            if interactive {
+                let glass = chrome.glassEffect(.regular.interactive(), in: pillShape)
+                rims(
+                    Group {
+                        if let glassID, let glassNamespace {
+                            glass.glassEffectID(glassID, in: glassNamespace)
+                        } else {
+                            glass
+                        }
                     }
-                }
-            )
-            .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
-            .shadow(color: ambientShadow, radius: ambientRadius, y: 8)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+                .shadow(color: ambientShadow, radius: ambientRadius, y: 8)
+            } else {
+                let glass = chrome.glassEffect(.regular, in: pillShape)
+                rims(
+                    Group {
+                        if let glassID, let glassNamespace {
+                            glass.glassEffectID(glassID, in: glassNamespace)
+                        } else {
+                            glass
+                        }
+                    }
+                )
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+                .shadow(color: ambientShadow, radius: ambientRadius, y: 8)
+            }
         } else {
             rims(
                 chrome
@@ -9742,14 +9766,16 @@ extension View {
         accentOverdrive: Double = 0,
         horizontalPadding: CGFloat = 12,
         glassID: String? = nil,
-        glassNamespace: Namespace.ID? = nil
+        glassNamespace: Namespace.ID? = nil,
+        interactive: Bool = true
     ) -> some View {
         modifier(
             ComposerFloatingPillChrome(
                 accent: accent, accentIntensity: accentIntensity,
                 accentOverdrive: accentOverdrive,
                 horizontalPadding: horizontalPadding,
-                glassID: glassID, glassNamespace: glassNamespace))
+                glassID: glassID, glassNamespace: glassNamespace,
+                interactive: interactive))
     }
 }
 

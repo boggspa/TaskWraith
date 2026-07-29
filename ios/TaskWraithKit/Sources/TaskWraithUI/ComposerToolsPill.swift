@@ -146,10 +146,14 @@ public struct ComposerToolsPill: View {
         }
         // Segments carry their own horizontal padding so the dividers can run
         // the full height of the chip rather than floating in a 12pt gutter.
+        // interactive=false: the segmented Buttons provide their own press
+        // feedback and haptics; leaving Liquid Glass `.interactive()` on the
+        // wrapper swallows segment taps on iOS 26.
         .composerFloatingPillChrome(
             horizontalPadding: 4,
             glassID: glassNamespace == nil ? nil : "tw.composer.pill.tools",
-            glassNamespace: glassNamespace
+            glassNamespace: glassNamespace,
+            interactive: false
         )
         .motionHaptic(MotionHaptics.selection, trigger: tapTick)
         .accessibilityElement(children: .contain)
@@ -169,6 +173,11 @@ public struct ComposerToolsPill: View {
                 initialRoute: selectedRoute
             )
             .twSheetLiquidGlass(detents: [.medium, .large])
+            // Scroll affordance: on short viewports (iPhone landscape, narrow
+            // iPad aspects) the .medium detent can clip the Goal/Plan panels.
+            // Prefer scrolling the sheet content over expanding the detent so
+            // the drag indicator still communicates resizeability.
+            .presentationContentInteraction(.scrolls)
         }
     }
 
