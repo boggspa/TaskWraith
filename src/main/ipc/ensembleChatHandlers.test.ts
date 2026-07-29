@@ -41,7 +41,7 @@ function createDeps() {
     maxContinuationHops: 6,
     activeRoundUpdated: true
   }))
-  const applyOrQueueUserRosterPreset = vi.fn(() => ({ ok: true, deferred: true } as const))
+  const applyOrQueueUserRosterPreset = vi.fn(() => ({ ok: true, deferred: true }) as const)
   return {
     chat,
     applyOrQueueUserRosterPreset,

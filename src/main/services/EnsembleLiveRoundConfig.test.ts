@@ -129,9 +129,10 @@ describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
       queuedAt: '2026-07-29T00:00:41.000Z'
     })
 
-    expect(
-      harness.orchestrator.applyOrQueueUserRosterPreset('ensemble-chat', plan)
-    ).toEqual({ ok: true, deferred: true })
+    expect(harness.orchestrator.applyOrQueueUserRosterPreset('ensemble-chat', plan)).toEqual({
+      ok: true,
+      deferred: true
+    })
     expect(harness.chat.providerMetadata).toMatchObject({
       pendingEnsembleRosterPresetApply: {
         presetId: 'next-roster',
