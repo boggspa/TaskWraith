@@ -78,8 +78,9 @@ Capture each at 100%, 125%, 150%, and 200% scale where the OS supports it:
 - Provider paths for Codex, Claude, Grok, local Ollama, Path-B managed Cursor,
   and admission-gated Kimi (admission is always-enabled; capture a
   Kimi-unavailable state only via a real admission failure such as bounded
-  probes failing or `TASKWRAITH_KIMI_ACP=0`); plus the retired-Gemini
-  historical state.
+  probes failing or `TASKWRAITH_KIMI_ACP=0`); the Pi, Mistral Vibe, and
+  opt-in AntiGravity seats (mark a lane N/A only if it is genuinely
+  unsupported on Windows); plus the retired-Gemini historical state.
 
 ## Themes And Materials
 

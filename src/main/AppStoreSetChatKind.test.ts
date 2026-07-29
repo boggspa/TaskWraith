@@ -69,7 +69,8 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(converted.appChatId).toBe(solo.appChatId)
     expect(converted.chatKind).toBe('ensemble')
     // Exactly the floor: the renderer's seat first, one companion behind it.
-    // The normalizeChatRecord 6-provider auto-fill landmine must NOT fire.
+    // The normalizeChatRecord full-default-roster auto-fill landmine (five
+    // seats today — see DEFAULT_ENSEMBLE_ROLES) must NOT fire.
     expect(converted.ensemble?.participants).toHaveLength(2)
     expect(converted.ensemble?.participants[0]?.id).toBe('seed-1')
     expect(converted.ensemble?.participants[0]?.provider).toBe('codex')

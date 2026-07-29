@@ -90,9 +90,9 @@ import { PillButton } from './PillButton'
 import { SegmentedControl } from './SegmentedControl'
 
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
-// the broader four-provider roster plus alternates (e.g. two Claudes
-// in different roles). The hard minimum is enforced in
-// `removeParticipant` below.
+// the broader then-four-provider roster plus alternates (e.g. two
+// Claudes in different roles; the supported roster is nine providers
+// today). The hard minimum is enforced in `removeParticipant` below.
 //
 // 1.0.5-EW1 — Ceiling raised again 8 → 12. The chip strip now wraps
 // at 7+ participants instead of overflowing horizontally.

@@ -43,7 +43,7 @@ const WELCOME_USAGE_TABS: Array<{
   // workspace concept without a new asset.
   { value: 'workspaces', label: 'Workspaces', Icon: FolderSymbolIcon },
   // 1.0.5-EW52 — Providers tab. Per-provider tokens + cost
-  // cards (all nine stable provider identities, always shown) above a
+  // cards (all ten stable provider identities, always shown) above a
   // giant 24H wall-time timecode display. Different shape from
   // Workspaces (which has a 30d chart underneath) — the
   // timecode emphasises "how much agent-time happened today"

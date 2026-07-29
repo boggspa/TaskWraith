@@ -67,7 +67,7 @@ export interface DailyCostBucket {
  * from the same `recordsAfterReset` walk as the existing
  * provider-token totals — but rolled up with cost so the
  * Providers tab can show "tokens · cost · share" parity with
- * the Workspaces tab. Always emits all nine stable provider identities
+ * the Workspaces tab. Always emits all ten stable provider identities
  * (zero-filled for any provider the user hasn't run yet) so the
  * tab's card list reads as a stable roster rather than a sparse
  * set that grows over time.
@@ -82,7 +82,7 @@ export interface ProviderCostBreakdownEntry {
   shareOfTotalCost: number
   /**
    * 1.0.5-EW52 follow-up — Percentage of post-reset *tokens* across
-   * all nine providers. 0–100. Drives the under-card meter on the
+   * all ten provider identities. 0–100. Drives the under-card meter on the
    * Providers tab because token totals are populated for every
    * provider (the cost field is often 0 for Gemini CLI runs, which
    * made the cost-based meter visually misleading). Mirrors the
@@ -320,7 +320,7 @@ export interface WelcomeUsageDashboardData {
    * Per-provider token totals across the selected range. Drives the
    * provider color rails on stat chips and the multi-provider mix
    * ribbon under the tabs — TaskWraith's structural differentiator from
-   * Claude's single-provider dashboard. Always carries all nine
+   * Claude's single-provider dashboard. Always carries all ten
    * provider keys (zero-filled when a provider has no activity).
    */
   providerTokenTotals: Record<ProviderId, number>
@@ -670,7 +670,7 @@ export const buildWelcomeUsageDashboardData = (
   const dailyCostCutoff = now - DASHBOARD_COST_CHART_DAY_COUNT * 24 * 60 * 60 * 1000
   const NO_WORKSPACE_KEY = '__no_workspace'
   // 1.0.5-EW52 — Per-provider aggregate (tokens + cost) for the
-  // new "Providers" dashboard tab. Initialised with all nine
+  // new "Providers" dashboard tab. Initialised with all ten
   // stable provider identities so the card list is a stable roster
   // regardless of which providers the user has actually run.
   // Cost source is the same `explicitCostUsd` field the
@@ -763,7 +763,7 @@ export const buildWelcomeUsageDashboardData = (
   // Multi-provider color rail aggregate. Each provider gets a running
   // token total scoped to the displayed range; the chip rail colour
   // is mixed weighted by these totals at render time. Always carries
-  // all nine provider keys so consumers don't need to null-check.
+  // all ten provider keys so consumers don't need to null-check.
   const providerTokenTotals = emptyProviderTotals()
   const hourlyTotals = new Array(24).fill(0) as number[]
   const dailyTotals = new Map<string, number>()

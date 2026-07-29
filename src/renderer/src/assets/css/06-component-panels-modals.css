@@ -1025,10 +1025,11 @@
  * the same 960px upper bound here, the cap is consistent regardless
  * of which rule wins. */
 .app-sidebar .model-usage-summary {
-  /* CRUX11 — raised 960 → 1400 / 46vh → 72vh so the six-provider meter list
-   * (gemini/codex/claude/kimi/cursor/grok) can be dragged to full height
-   * instead of capping early and hiding the Activity heatmap below it. Stays
-   * in lockstep with SIDEBAR_USAGE_MAX_HEIGHT (ModelUsageCard.tsx). */
+  /* CRUX11 — raised 960 → 1400 / 46vh → 72vh so the provider meter list
+   * (six providers when this was tuned; the stable roster is ten identities
+   * now) can be dragged to full height instead of capping early and hiding
+   * the Activity heatmap below it. Stays in lockstep with
+   * SIDEBAR_USAGE_MAX_HEIGHT (ModelUsageCard.tsx). */
   max-height: clamp(380px, 72vh, 1400px);
   min-height: min(360px, 42vh);
   overflow-y: auto;

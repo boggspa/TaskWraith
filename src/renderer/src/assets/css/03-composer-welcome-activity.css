@@ -2052,8 +2052,9 @@
 
 /* Phase K-followup — Provider color rail on every stat chip. The
  * rail colour comes from the inline CSS variable `--chip-rail-color`
- * (computed by App.tsx as a color-mix of the four provider hexes
- * weighted by their token share in the displayed range). When no
+ * (computed by WelcomeUsageDashboard.tsx as a color-mix of the full
+ * ten-identity provider palette weighted by token share in the
+ * displayed range; four provider hexes when Phase K shipped). When no
  * activity yet, falls through to a subtle accent default.
  *
  * Visually: a 2px coloured line hugging the top edge of each chip.

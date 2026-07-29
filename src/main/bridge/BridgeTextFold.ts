@@ -30,7 +30,9 @@ export type BridgeTextFold = { kind: 'append' } | { kind: 'skip' } | { kind: 'ta
  * Cursor snapshot frames.
  *
  * On the compat lane (sendAgentCompatLine payloads) this predicate is
- * EXHAUSTIVE: a six-provider audit (see commit 77cca2171) found every path
+ * EXHAUSTIVE: a six-provider audit (2026-07-02, commit 77cca2171 — the audited
+ * roster of the time; lanes added since, e.g. Pi/Mistral/AntiGravity, must
+ * preserve the same tag-or-prefix-slice contract) found every path
  * that can re-send already-streamed text is either prefix-sliced before
  * forwarding or carries one of these tags, so an untagged compat delta is a
  * verbatim increment and must be appended without shape detection — a

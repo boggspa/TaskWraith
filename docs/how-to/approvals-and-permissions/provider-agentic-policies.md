@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Agentic services are the global policy switches that decide whether an agent's shell commands, file edits, provider tools, sub-thread delegation, canvas interaction, media editing, and network access run automatically, prompt you first, or are blocked outright. The policy schema is retained across all nine stable provider records: static-live Codex, Claude, Kimi, Cursor, Grok, Ollama, and Pi; conditionally offered AntiGravity; and history-only Gemini. It gates only capabilities exposed by a runnable, admitted seat.
+Agentic services are the global policy switches that decide whether an agent's shell commands, file edits, provider tools, sub-thread delegation, canvas interaction, media editing, and network access run automatically, prompt you first, or are blocked outright. The policy schema is retained across all ten stable provider records: static-live Codex, Claude, Kimi, Cursor, Grok, Ollama, Pi, and Mistral; conditionally offered AntiGravity; and history-only Gemini. It gates only capabilities exposed by a runnable, admitted seat.
 
 These rows are policy ceilings, not capability guarantees. A provider can expose
 less authority than the selected policy permits. Managed Cursor can use

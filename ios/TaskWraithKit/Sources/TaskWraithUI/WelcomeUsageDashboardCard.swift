@@ -444,7 +444,7 @@ extension WelcomeDashboard {
             longestThreadMs: 6_120_000, totalWallTimeMs: 62_940_000, peakHour: "2 PM",
             sessions: 99, messages: 802, totalTokens: 19_000_000, totalCostUsd: 0,
             avgSessionMs: 636_000, tokensPerSession: 188_000, wallTime24hMs: 212_000,
-            comparisonText: "You've tracked 19M tokens across 7 providers.",
+            comparisonText: "You've tracked 19M tokens across 10 providers.",
             hasActivity: true, lifetimeHasActivity: true,
             providerTokenTotals: [
                 .init(provider: "gemini", tokens: 95_000_000),
@@ -453,6 +453,9 @@ extension WelcomeDashboard {
                 .init(provider: "kimi", tokens: 2_200_000),
                 .init(provider: "cursor", tokens: 1_400_000),
                 .init(provider: "ollama", tokens: 726_000),
+                .init(provider: "mistral", tokens: 410_000),
+                .init(provider: "antigravity", tokens: 268_000),
+                .init(provider: "pi", tokens: 141_000),
                 .init(provider: "grok", tokens: 93_000),
             ],
             modelBreakdown: [

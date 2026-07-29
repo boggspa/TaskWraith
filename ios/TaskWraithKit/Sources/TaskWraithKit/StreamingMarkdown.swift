@@ -250,7 +250,9 @@ public enum StreamingSnapshotFold {
 /// Main's adapters tag every full-turn restatement — `cumulative` on the
 /// Claude divergent envelope (handled by the caller's skip, since the live
 /// bubble already holds the streamed deltas), `runItemCumulative`/`snapshot`
-/// on Cursor snapshot frames — and a six-provider audit found every other
+/// on Cursor snapshot frames — and a six-provider audit (2026-07-02; lanes
+/// added since, e.g. Pi/Mistral/AntiGravity, must preserve the same
+/// contract) found every other
 /// re-send path is prefix-sliced before forwarding. So on a line that
 /// verifiably came from the audited compat chokepoint, an UNTAGGED delta is a
 /// verbatim increment and must append even when it byte-matches the bubble

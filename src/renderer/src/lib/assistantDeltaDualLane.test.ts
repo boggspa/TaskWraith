@@ -257,7 +257,8 @@ describe('assistant delta dual-lane dedupe', () => {
     // a repeat that exactly equals the whole bubble was shape-detected as a
     // restatement by resolveAssistantDeltaMerge and SWALLOWED ('test ' once).
     // Untagged sidecar deltas are verbatim increments by contract — a
-    // six-provider audit confirmed every restatement path is either
+    // six-provider audit (2026-07-02, commit 77cca2171; lanes added since must
+    // preserve the same contract) confirmed every restatement path is either
     // prefix-sliced main-side or cumulative-tagged — so the repeat appends.
     const { adapter, messages } = createDualLaneHarness(CHAT, RUN)
     for (const sequenceStart of [1, 2]) {

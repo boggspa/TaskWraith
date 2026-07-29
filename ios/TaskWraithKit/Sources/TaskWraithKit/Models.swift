@@ -263,7 +263,7 @@ public struct WelcomeDashboard: Codable, Sendable {
     public let tokensPerSession: Int
     /// Providers tab — rolling 24h cumulative wall-clock across runs.
     public let wallTime24hMs: Int
-    /// Statistics footer ("You've tracked 19M tokens across 7 providers.").
+    /// Statistics footer ("You've tracked 19M tokens across 10 providers.").
     public let comparisonText: String
     /// True when the 30-day window has activity (drives the empty state).
     public let hasActivity: Bool

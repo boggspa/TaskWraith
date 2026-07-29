@@ -2554,7 +2554,8 @@
   color: color-mix(in srgb, var(--provider-grok-color) 78%, var(--text-primary));
 }
 
-/* 1.0.72 — consistent provider-coloured hover lift across ALL six cards.
+/* 1.0.72 — consistent provider-coloured hover lift across ALL provider
+ * cards (six when this shipped; the sheet renders nine today).
  * `--card-accent` carries the per-provider colour; the `:hover` rule has the
  * same specificity as the `[data-provider]` tint but comes later in source
  * order, so it wins — every tile now brightens + glows in its own colour on
@@ -2943,7 +2944,8 @@
   align-items: stretch;
   justify-content: center;
   gap: 5px;
-  /* 1.0.72 — the six-provider role flow must stay on a single line. Chips
+  /* 1.0.72 — the provider role-flow strip (six chips then; five today —
+   * Codex/Claude/Kimi/Grok/Ollama) must stay on a single line. Chips
    * shrink (flex: 1 1 0; min-width: 0) to share the row width rather than
    * wrapping the last chip onto a second line. */
   flex-wrap: nowrap;
