@@ -14,7 +14,8 @@ import {
 import {
   buildParticipantContextRows,
   contextPercent,
-  currentContextTokens,
+  currentContextTokenLimit,
+  currentContextUsage,
   liveOutputTokensForParticipant,
   type ContextMeterModel
 } from './contextMeter'
@@ -28,6 +29,7 @@ interface PaneLiveOutputDeps {
 export interface PaneContextTelemetryDeps {
   provider: ProviderId
   modelId?: string
+  focusedParticipantId?: string
   liveOutputTokens: number
   isRunning: boolean
   resolveOllamaContextLength: (modelId?: string | null) => number | undefined
@@ -79,23 +81,47 @@ export function derivePaneContextTelemetry(
   chat: ChatRecord,
   deps: PaneContextTelemetryDeps
 ): PaneContextTelemetry {
-  const usedTokens = currentContextTokens(chat.runs || [], {
+  const fallbackUsage = currentContextUsage(chat.runs || [], {
     liveOutputTokens: deps.liveOutputTokens,
-    isRunning: deps.isRunning
+    isRunning: deps.isRunning,
+    messages: chat.messages || []
   })
   const liveOllamaContextLength =
     deps.provider === 'ollama' ? deps.resolveOllamaContextLength(deps.modelId) : undefined
-  const windowTokens = resolveContextWindow(
+  const fallbackWindowTokens = resolveContextWindow(
     isContextWindowProviderId(deps.provider) ? deps.provider : undefined,
     deps.modelId,
-    undefined,
+    currentContextTokenLimit(chat.runs || []),
     liveOllamaContextLength
   )
-  const usedPercent = contextPercent(usedTokens, windowTokens)
   const liveParticipantId =
     deps.isRunning && isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
       ? chat.ensemble?.activeRound?.activeParticipantId
       : undefined
+  const participantRows =
+    chat.chatKind === 'ensemble'
+      ? buildParticipantContextRows(chat.runs || [], chat.ensemble?.participants || [], {
+          participantId: liveParticipantId,
+          outputTokens: liveOutputTokensForParticipant(
+            chat.runs || [],
+            chat.messages || [],
+            liveParticipantId,
+            estimateLiveOutputTokensFromChars
+          ),
+          resolveWindowTokens: (participant) =>
+            participant.provider === 'ollama'
+              ? deps.resolveOllamaContextLength(participant.model)
+              : undefined,
+          messages: chat.messages || []
+        })
+      : undefined
+  const focusedRow = participantRows?.find((row) => row.id === deps.focusedParticipantId)
+  const usage = focusedRow ? focusedRow.usage : fallbackUsage
+  const usedTokens = focusedRow?.usedTokens ?? fallbackUsage?.contextTokens ?? 0
+  const windowTokens = focusedRow?.windowTokens ?? fallbackWindowTokens
+  const usedPercent = focusedRow?.percent ?? contextPercent(usedTokens, windowTokens)
+  const displayProvider = focusedRow?.provider ?? deps.provider
+  const displayModelId = focusedRow?.modelId ?? deps.modelId
 
   return {
     usedPercent,
@@ -103,28 +129,15 @@ export function derivePaneContextTelemetry(
     meter: {
       solo: {
         id: 'solo',
-        provider: deps.provider,
-        modelId: deps.modelId,
+        provider: displayProvider,
+        modelId: displayModelId,
         usedTokens,
         windowTokens,
-        percent: usedPercent
+        percent: usedPercent,
+        ...(usage ? { usage } : {})
       },
-      participants:
-        chat.chatKind === 'ensemble'
-          ? buildParticipantContextRows(chat.runs || [], chat.ensemble?.participants || [], {
-              participantId: liveParticipantId,
-              outputTokens: liveOutputTokensForParticipant(
-                chat.runs || [],
-                chat.messages || [],
-                liveParticipantId,
-                estimateLiveOutputTokensFromChars
-              ),
-              resolveWindowTokens: (participant) =>
-                participant.provider === 'ollama'
-                  ? deps.resolveOllamaContextLength(participant.model)
-                  : undefined
-            })
-          : undefined
+      participants: participantRows,
+      focusedId: focusedRow?.id
     }
   }
 }
@@ -161,6 +174,7 @@ export const cachedPaneContextTelemetry = createChatWalkCache(
   (a, b) =>
     a.provider === b.provider &&
     a.modelId === b.modelId &&
+    a.focusedParticipantId === b.focusedParticipantId &&
     a.liveOutputTokens === b.liveOutputTokens &&
     a.isRunning === b.isRunning &&
     a.resolveOllamaContextLength === b.resolveOllamaContextLength

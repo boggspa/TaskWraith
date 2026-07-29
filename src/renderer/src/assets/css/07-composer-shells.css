@@ -4041,47 +4041,111 @@
 .composer-combined-picker-popover.context-meter-popover {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 240px;
-  max-width: 320px;
-  padding: 10px 12px;
+  gap: 10px;
+  width: min(480px, calc(100vw - 16px));
+  min-width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  padding: 12px 14px;
   /* Many-participant ensembles: cap height + scroll rather than clip off the
      top (the popover is anchored above the donut via translateY(-100%)). */
-  max-height: min(60vh, 440px);
+  max-height: min(72vh, 680px);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .context-meter-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  opacity: 0.6;
+  color: var(--text-secondary);
+}
+.context-meter-header-hint {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
 }
 .context-meter-rows {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 .context-meter-row {
   --context-meter-row-accent: var(--accent);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
+  margin-inline: -8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+.context-meter-row:hover {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
 }
 /* The participant the composer footer is currently editing (focused roster chip)
    — matches the donut, which shows this participant's context. */
 .context-meter-row--focused {
   margin-inline: -8px;
   padding: 6px 8px;
-  border-radius: 8px;
   background: color-mix(in srgb, var(--context-meter-row-accent) 10%, transparent);
+}
+.context-meter-row--expanded {
+  border-color: color-mix(in srgb, var(--context-meter-row-accent) 28%, var(--panel-border));
+  background: color-mix(in srgb, var(--context-meter-row-accent) 8%, transparent);
 }
 .context-meter-row-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   font-size: 12px;
   min-width: 0;
+}
+.context-meter-row-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.context-meter-row-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--context-meter-row-accent) 72%, white);
+  outline-offset: 3px;
+  border-radius: 5px;
+}
+.context-meter-row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 9px;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition:
+    color 0.14s ease,
+    transform 0.14s ease;
+}
+.context-meter-row-chevron.is-expanded {
+  color: var(--context-meter-row-accent);
+  transform: rotate(90deg);
 }
 .context-meter-row-dot {
   width: 7px;
@@ -4130,6 +4194,7 @@
   min-width: 2px;
 }
 .context-meter-row-amount {
+  padding-left: 22px;
   font-size: 11px;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
@@ -4260,6 +4325,264 @@
 .context-meter-row-confirm-btn--no:hover {
   border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
   color: var(--text-primary);
+}
+
+/* Expanded per-seat context accounting. Provider-reported token makeup and
+ * TaskWraith-observed activity stay visually distinct: only the former fills
+ * the context bar, while observed traffic is explicitly approximate. */
+.context-meter-details {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 3px;
+  padding: 11px 2px 2px 22px;
+  border-top: 1px solid color-mix(in srgb, var(--context-meter-row-accent) 18%, transparent);
+}
+.context-meter-detail-hero {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.context-meter-detail-hero strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+}
+.context-meter-detail-hero-amount {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.context-meter-composition-bar {
+  display: flex;
+  width: 100%;
+  height: 9px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+.context-meter-composition-segment {
+  flex: 0 0 var(--context-meter-segment-width);
+  min-width: 0;
+}
+.context-meter-composition-segment + .context-meter-composition-segment {
+  box-shadow: -1px 0 0 color-mix(in srgb, var(--surface-base) 55%, transparent);
+}
+.context-meter-composition-segment.tone-input,
+.context-meter-token-swatch.tone-input {
+  background: var(--context-meter-row-accent);
+}
+.context-meter-composition-segment.tone-cache-read,
+.context-meter-token-swatch.tone-cache-read {
+  background: #39b7aa;
+}
+.context-meter-composition-segment.tone-cache-write,
+.context-meter-token-swatch.tone-cache-write {
+  background: #4f95d9;
+}
+.context-meter-composition-segment.tone-output,
+.context-meter-token-swatch.tone-output {
+  background: #63b86b;
+}
+.context-meter-composition-segment.tone-reasoning,
+.context-meter-token-swatch.tone-reasoning {
+  background: #a477d2;
+}
+.context-meter-composition-segment.tone-other,
+.context-meter-token-swatch.tone-other,
+.context-meter-composition-segment.tone-used,
+.context-meter-token-swatch.tone-used {
+  background: #8a94a3;
+}
+.context-meter-composition-segment.tone-free,
+.context-meter-token-swatch.tone-free {
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+.context-meter-detail-section {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+.context-meter-detail-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 28px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+.context-meter-detail-section > summary::-webkit-details-marker {
+  display: none;
+}
+.context-meter-detail-section > summary:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--context-meter-row-accent) 65%, transparent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.context-meter-detail-summary-meta {
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-meter-detail-section-body {
+  padding: 2px 0 6px;
+}
+.context-meter-precision-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.context-meter-precision-badge.is-exact {
+  border-color: color-mix(in srgb, #63b86b 42%, transparent);
+  background: color-mix(in srgb, #63b86b 10%, transparent);
+  color: color-mix(in srgb, #63b86b 74%, var(--text-primary));
+}
+.context-meter-precision-badge.is-derived {
+  border-color: color-mix(in srgb, #4f95d9 42%, transparent);
+  background: color-mix(in srgb, #4f95d9 9%, transparent);
+}
+.context-meter-precision-badge.is-estimated {
+  border-color: color-mix(in srgb, #f0a93f 42%, transparent);
+  background: color-mix(in srgb, #f0a93f 9%, transparent);
+}
+.context-meter-token-list,
+.context-meter-activity-grid,
+.context-meter-tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.context-meter-token-row {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.context-meter-token-row.is-subset {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+.context-meter-token-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.context-meter-token-subset-mark {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+.context-meter-detail-token {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.context-meter-activity-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.context-meter-activity-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.context-meter-activity-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.context-meter-activity-pills > span {
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--context-meter-row-accent) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--context-meter-row-accent) 7%, transparent);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.context-meter-tool-list {
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px dashed color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+.context-meter-tool-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+.context-meter-tool-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-meter-tool-count {
+  font-variant-numeric: tabular-nums;
+}
+.context-meter-detail-note {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.4;
+}
+.context-meter-detail-provenance {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  line-height: 1.45;
+}
+.context-meter-detail-provenance > span:last-child {
+  min-width: 0;
+}
+
+@media (max-width: 520px) {
+  .composer-combined-picker-popover.context-meter-popover {
+    min-width: 0;
+    max-height: min(68vh, 600px);
+    padding-inline: 12px;
+  }
+  .context-meter-header-hint {
+    display: none;
+  }
+  .context-meter-details {
+    padding-left: 18px;
+  }
 }
 
 /*

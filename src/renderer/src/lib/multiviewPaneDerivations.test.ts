@@ -146,6 +146,10 @@ describe('derivePaneContextTelemetry', () => {
     })
 
     expect(telemetry.meter.solo.usedTokens).toBe(1_240)
+    expect(telemetry.meter.solo.usage).toMatchObject({
+      contextTokens: 1_240,
+      precision: 'derived'
+    })
     expect(telemetry.meter.solo.windowTokens).toBe(200_000)
     expect(telemetry.meter.participants).toBeUndefined()
     expect(telemetry.label).toContain('context')
@@ -169,5 +173,94 @@ describe('derivePaneContextTelemetry', () => {
     expect(first).toBe(second)
     expect(changed).not.toBe(first)
     expect(first.meter.solo.windowTokens).toBe(65_536)
+  })
+
+  it('uses the latest provider-reported token limit like the main context meter', () => {
+    const source = chat({
+      runs: [
+        run({
+          status: 'success',
+          stats: {
+            input_tokens: 40_000,
+            output_tokens: 2_000,
+            total_tokens: 42_000,
+            totalTokenLimit: 1_048_576
+          }
+        })
+      ]
+    })
+
+    const telemetry = derivePaneContextTelemetry(source, {
+      provider: 'claude',
+      modelId: 'claude-sonnet-4-6',
+      liveOutputTokens: 0,
+      isRunning: false,
+      resolveOllamaContextLength: resolveNoOllamaContext
+    })
+
+    expect(telemetry.meter.solo.windowTokens).toBe(1_048_576)
+    expect(telemetry.usedPercent).toBeCloseTo((42_000 / 1_048_576) * 100)
+  })
+
+  it('drives an Ensemble pane donut from its selected participant and denominator', () => {
+    const source = chat({
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [
+          {
+            id: 'participant-1',
+            provider: 'claude',
+            model: 'claude-sonnet-4-6',
+            role: 'Builder',
+            instructions: '',
+            enabled: true,
+            order: 0
+          },
+          {
+            id: 'participant-2',
+            provider: 'codex',
+            model: 'gpt-5.5',
+            role: 'Reviewer',
+            instructions: '',
+            enabled: true,
+            order: 1
+          }
+        ]
+      },
+      runs: [
+        run({
+          runId: 'participant-1-run',
+          ensembleParticipantId: 'participant-1',
+          stats: { total_tokens: 1_000, totalTokenLimit: 10_000 }
+        }),
+        run({
+          runId: 'participant-2-run',
+          provider: 'codex',
+          ensembleParticipantId: 'participant-2',
+          stats: { total_tokens: 4_000, totalTokenLimit: 20_000 }
+        })
+      ]
+    })
+
+    const telemetry = derivePaneContextTelemetry(source, {
+      provider: 'claude',
+      modelId: 'claude-sonnet-4-6',
+      focusedParticipantId: 'participant-2',
+      liveOutputTokens: 0,
+      isRunning: false,
+      resolveOllamaContextLength: resolveNoOllamaContext
+    })
+
+    expect(telemetry.usedPercent).toBe(20)
+    expect(telemetry.label).toBe('4k / 20k context')
+    expect(telemetry.meter.focusedId).toBe('participant-2')
+    expect(telemetry.meter.solo).toMatchObject({
+      provider: 'codex',
+      modelId: 'gpt-5.5',
+      usedTokens: 4_000,
+      windowTokens: 20_000
+    })
   })
 })

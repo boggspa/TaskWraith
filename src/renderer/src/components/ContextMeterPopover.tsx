@@ -5,14 +5,17 @@
 // + window). The numbers are the HONEST current-context proxy (latest turn's
 // provider total ÷ window — see lib/contextMeter.ts); while a turn is live, a
 // provider snapshot takes precedence over the fallback estimate.
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { ComposerStyle, ProviderId } from '../../../main/store/types'
+import type { ChatMessage, ComposerStyle, ProviderId } from '../../../main/store/types'
 import {
   applyLiveContextTokenUsage,
+  buildContextActivitySummary,
+  type ContextActivitySummary,
   type ContextMeterModel,
   type ContextMeterRow
 } from '../lib/contextMeter'
+import type { ContextUsageSnapshot } from '../../../shared/contextUsage'
 import { formatContextTokens } from '../lib/contextWindows'
 import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import { contextPressureSeverity } from '../../../shared/contextCompaction'
@@ -20,6 +23,7 @@ import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderName } from './Sidebar'
 import { ContextWheel, ContextCompactionIcon } from './AppChromeSymbols'
+import { ContextMeterDetails } from './ContextMeterDetails'
 
 // Extremity ramp for the per-row compaction icon. A healthy seat reads in its
 // provider hue; as pressure builds the glyph warms to a bright, saturated
@@ -71,6 +75,9 @@ interface ContextMeterPopoverProps {
   /** Active run whose provider usage snapshot keeps the meter live. */
   activeRunId?: string | null
   running?: boolean
+  /** Used lazily for the one expanded row, so long transcripts are not walked
+   * on every streaming renderer update while the popover is closed. */
+  messages?: ReadonlyArray<ChatMessage>
 }
 
 interface RowView {
@@ -82,12 +89,23 @@ interface RowView {
   usedTokens: number
   windowTokens: number
   percent: number
+  usage?: ContextUsageSnapshot
+  activity?: ContextActivitySummary
 }
 
 export function contextMeterRowHueClass(
   row: Pick<ContextMeterRow, 'provider' | 'modelId'>
 ): string {
   return resolveProviderHueClass(row.provider, row.modelId)
+}
+
+/** Accordion transition: selecting another participant closes the previous one;
+ * selecting the open participant collapses it. */
+export function nextExpandedContextRow(
+  currentId: string | null,
+  selectedId: string
+): string | null {
+  return currentId === selectedId ? null : selectedId
 }
 
 function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
@@ -103,22 +121,27 @@ function toRowView(row: ContextMeterRow, isParticipant: boolean): RowView {
     providerClass: contextMeterRowHueClass(row),
     usedTokens: row.usedTokens,
     windowTokens: row.windowTokens,
-    percent: row.percent
+    percent: row.percent,
+    usage: row.usage,
+    activity: row.activity
   }
 }
 
-function MeterRow({
+export function MeterRow({
   row,
   focused,
+  expanded,
   compactable,
   speaking,
   confirming,
   onRequestCompact,
   onConfirmCompact,
-  onCancelCompact
+  onCancelCompact,
+  onToggleExpanded
 }: {
   row: RowView
   focused?: boolean
+  expanded?: boolean
   /** Show the compaction icon on this row (an enabled participant seat). */
   compactable?: boolean
   /** This seat is the live speaker — icon disabled to avoid racing its turn. */
@@ -128,13 +151,17 @@ function MeterRow({
   onRequestCompact?: () => void
   onConfirmCompact?: () => void
   onCancelCompact?: () => void
+  onToggleExpanded: () => void
 }): React.JSX.Element {
+  const disclosureId = useId()
+  const toggleId = `${disclosureId}-toggle`
   const accent = `var(--provider-${row.providerClass}-color, var(--accent))`
   const pctText = `${Math.round(row.percent)}%`
   const amount =
     row.windowTokens > 0
       ? `${formatContextTokens(row.usedTokens)} / ${formatContextTokens(row.windowTokens)}`
       : formatContextTokens(row.usedTokens)
+  const amountPrefix = row.usage?.precision === 'exact' ? '' : '≈'
   const severity = contextPressureSeverity(row.percent)
   // Nothing to compact until a seat has actually accrued context; the live
   // speaker is locked out so a manual compaction can't collide with its turn.
@@ -150,7 +177,9 @@ function MeterRow({
     <div
       className={`context-meter-row provider-${row.providerClass}${
         focused ? ' context-meter-row--focused' : ''
-      }${severity !== 'ok' ? ` context-meter-row--${severity}` : ''}`}
+      }${expanded ? ' context-meter-row--expanded' : ''}${
+        severity !== 'ok' ? ` context-meter-row--${severity}` : ''
+      }`}
       data-provider-hue={row.providerClass}
       style={
         {
@@ -159,9 +188,24 @@ function MeterRow({
       }
     >
       <div className="context-meter-row-head">
-        <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
-        <span className="context-meter-row-primary">{row.primary}</span>
-        {row.detail && <span className="context-meter-row-detail">{row.detail}</span>}
+        <button
+          id={toggleId}
+          type="button"
+          className="context-meter-row-toggle"
+          aria-expanded={Boolean(expanded)}
+          aria-controls={disclosureId}
+          onClick={onToggleExpanded}
+        >
+          <span
+            className={`context-meter-row-chevron${expanded ? ' is-expanded' : ''}`}
+            aria-hidden
+          >
+            ›
+          </span>
+          <span className="context-meter-row-dot" style={{ background: accent }} aria-hidden />
+          <span className="context-meter-row-primary">{row.primary}</span>
+          {row.detail && <span className="context-meter-row-detail">{row.detail}</span>}
+        </button>
         {compactable && (
           <button
             type="button"
@@ -215,7 +259,29 @@ function MeterRow({
           </span>
         </div>
       ) : (
-        <div className="context-meter-row-amount">{amount} context</div>
+        <div
+          className="context-meter-row-amount"
+          title={
+            row.usage?.precision === 'exact'
+              ? 'Provider-reported latest window snapshot'
+              : 'Best available context estimate'
+          }
+        >
+          {amountPrefix}
+          {amount} context
+        </div>
+      )}
+      {expanded && !confirming && (
+        <div id={disclosureId} role="region" aria-labelledby={toggleId}>
+          <ContextMeterDetails
+            primary={row.primary}
+            usedTokens={row.usedTokens}
+            windowTokens={row.windowTokens}
+            percent={row.percent}
+            usage={row.usage}
+            activity={row.activity}
+          />
+        </div>
       )}
     </div>
   )
@@ -233,7 +299,8 @@ export function ContextMeterPopover({
   compactableParticipantIds,
   speakingParticipantId,
   activeRunId,
-  running = false
+  running = false,
+  messages
 }: ContextMeterPopoverProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -241,6 +308,8 @@ export function ContextMeterPopover({
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   // Which participant row's inline "Compact X?" confirm is open (one at a time).
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  // Rich participant accordion — exactly one row may be expanded at a time.
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const liveUsage = useParticipantWorkingTokenSnapshot(running ? activeRunId : null)
   const trackedMeter = applyLiveContextTokenUsage(meter, liveUsage, speakingParticipantId)
 
@@ -249,6 +318,7 @@ export function ContextMeterPopover({
     if (!open) {
       setPosition(null)
       setConfirmingId(null)
+      setExpandedId(null)
       return
     }
     const compute = (): void => {
@@ -257,7 +327,7 @@ export function ContextMeterPopover({
       const rect = trigger.getBoundingClientRect()
       // Matches the popover's max-width so `rect.right - width` keeps even a
       // full-width popover anchored on-screen (the donut sits near the right edge).
-      const width = 320
+      const width = 480
       setPosition({ left: Math.max(8, rect.right - width), top: rect.top - 8 })
     }
     let cancelled = false
@@ -334,18 +404,25 @@ export function ContextMeterPopover({
       aria-label="Context usage"
     >
       <div className="context-meter-header">
-        {participantRows ? 'Context · per participant' : 'Context usage'}
+        <span>{participantRows ? 'Context · per participant' : 'Context usage'}</span>
+        <span className="context-meter-header-hint">Select a row for details</span>
       </div>
       <div className="context-meter-rows">
         {rows.map((row) => {
+          const expanded = expandedId === row.id
+          const detailActivity =
+            expanded && messages
+              ? buildContextActivitySummary(messages, participantRows ? row.id : undefined)
+              : row.activity
           const compactable = Boolean(
             participantRows && onCompactParticipant && compactableParticipantIds?.includes(row.id)
           )
           return (
             <MeterRow
               key={row.id}
-              row={row}
+              row={detailActivity === row.activity ? row : { ...row, activity: detailActivity }}
               focused={!!trackedMeter?.focusedId && row.id === trackedMeter.focusedId}
+              expanded={expanded}
               compactable={compactable}
               speaking={!!speakingParticipantId && row.id === speakingParticipantId}
               confirming={compactable && confirmingId === row.id}
@@ -355,6 +432,10 @@ export function ContextMeterPopover({
                 onCompactParticipant?.(row.id)
               }}
               onCancelCompact={() => setConfirmingId(null)}
+              onToggleExpanded={() => {
+                setConfirmingId(null)
+                setExpandedId((current) => nextExpandedContextRow(current, row.id))
+              }}
             />
           )
         })}
@@ -362,10 +443,12 @@ export function ContextMeterPopover({
       <div className="context-meter-foot">
         <span>
           {liveUsage
-            ? liveUsage.estimated
-              ? 'Live provider estimate'
-              : 'Live provider usage'
-            : 'Estimated from the latest turn'}
+            ? liveUsage.contextUsage?.precision === 'exact'
+              ? 'Live provider window snapshot'
+              : liveUsage.estimated
+                ? 'Live TaskWraith estimate'
+                : 'Live provider usage'
+            : 'Latest available window accounting'}
         </span>
         {showCompactAction && (
           <button

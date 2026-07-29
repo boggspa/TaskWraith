@@ -1,5 +1,9 @@
 import { useCallback, useSyncExternalStore } from 'react'
 import type { ParticipantWorkingTelemetryEvent } from '../../../shared/participantWorkingTelemetry'
+import {
+  contextUsageSnapshotsEqual,
+  normalizeContextUsageSnapshot
+} from '../../../shared/contextUsage'
 
 export type ParticipantWorkingTokenSnapshot = Extract<
   ParticipantWorkingTelemetryEvent,
@@ -46,6 +50,7 @@ export function ingestParticipantWorkingTelemetry(event: unknown): void {
   }
   if (payload.type !== 'snapshot') return
 
+  const contextUsage = normalizeContextUsageSnapshot(payload.contextUsage)
   const next: ParticipantWorkingTokenSnapshot = {
     type: 'snapshot',
     chatId: typeof payload.chatId === 'string' ? payload.chatId : '',
@@ -57,7 +62,8 @@ export function ingestParticipantWorkingTelemetry(event: unknown): void {
     inputTokens: positiveInteger(payload.inputTokens),
     outputTokens: positiveInteger(payload.outputTokens),
     totalTokens: positiveInteger(payload.totalTokens),
-    estimated: payload.estimated === true
+    estimated: payload.estimated === true,
+    ...(contextUsage ? { contextUsage } : {})
   }
   const previous = snapshotsByRunId.get(runId)
   if (
@@ -65,7 +71,8 @@ export function ingestParticipantWorkingTelemetry(event: unknown): void {
     previous.inputTokens === next.inputTokens &&
     previous.outputTokens === next.outputTokens &&
     previous.totalTokens === next.totalTokens &&
-    previous.estimated === next.estimated
+    previous.estimated === next.estimated &&
+    contextUsageSnapshotsEqual(previous.contextUsage, next.contextUsage)
   ) {
     return
   }

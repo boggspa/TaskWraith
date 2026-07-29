@@ -545,6 +545,7 @@ import {
 } from './lib/contextWindows'
 import {
   currentContextTokens,
+  currentContextUsage,
   contextPercent,
   buildParticipantContextRows,
   liveOutputTokensForParticipant,
@@ -21534,10 +21535,12 @@ function App(): React.JSX.Element {
   // sums every run and over-counts — see contextMeter.ts). cumulativeChatTokens
   // stays for the cost tally + plan-import estimate, which legitimately want
   // lifetime totals.
-  const currentContextUsedTokens = currentContextTokens(currentChat?.runs || [], {
+  const currentContextUsageSnapshot = currentContextUsage(currentChat?.runs || [], {
     liveOutputTokens: liveRunOutputTokens,
-    isRunning: isCurrentChatRunning
+    isRunning: isCurrentChatRunning,
+    messages: currentChat?.messages || []
   })
+  const currentContextUsedTokens = currentContextUsageSnapshot?.contextTokens || 0
   const activeContextPercent = contextPercent(currentContextUsedTokens, contextWindowSize)
   // Per-participant rows (ensemble) — also drive the DONUT when a roster chip is
   // focused: clicking a participant re-targets the whole composer footer (model /
@@ -21574,7 +21577,8 @@ function App(): React.JSX.Element {
           resolveWindowTokens: (participant) =>
             participant.provider === 'ollama'
               ? resolveLiveOllamaContextLength(participant.model)
-              : undefined
+              : undefined,
+          messages: currentChat?.messages || []
         }
       )
     : undefined
@@ -21592,7 +21596,8 @@ function App(): React.JSX.Element {
       modelId: contextModelId,
       usedTokens: currentContextUsedTokens,
       windowTokens: contextWindowSize,
-      percent: activeContextPercent
+      percent: activeContextPercent,
+      ...(currentContextUsageSnapshot ? { usage: currentContextUsageSnapshot } : {})
     },
     participants: contextParticipantRows,
     focusedId: focusedContextRow?.id
@@ -27302,6 +27307,7 @@ function App(): React.JSX.Element {
     const viewerContextTelemetry = cachedPaneContextTelemetry(viewerChat, {
       provider: viewerProvider,
       modelId: viewerContextModelId,
+      focusedParticipantId: viewerEnsembleProjection.selectedParticipant?.id,
       liveOutputTokens: viewerLiveOutputTokens,
       isRunning: viewerIsRunning,
       resolveOllamaContextLength: resolveLiveOllamaContextLength
@@ -28846,6 +28852,7 @@ function App(): React.JSX.Element {
       const paneContextTelemetry = cachedPaneContextTelemetry(viewerChat, {
         provider: viewerProvider,
         modelId: viewerContextModelId,
+        focusedParticipantId: viewerEnsembleProjection.selectedParticipant?.id,
         liveOutputTokens: viewerLiveOutputTokens,
         isRunning: viewerIsRunning,
         resolveOllamaContextLength: resolveLiveOllamaContextLength

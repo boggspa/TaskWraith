@@ -5,9 +5,12 @@ import {
   buildParticipantContextRows,
   liveOutputTokensForParticipant,
   applyLiveContextTokenUsage,
-  contextTokensFromUsage
+  contextTokensFromUsage,
+  currentContextUsage,
+  buildContextActivitySummary
 } from './contextMeter'
-import type { ChatRun, EnsembleParticipant } from '../../../main/store/types'
+import type { ChatMessage, ChatRun, EnsembleParticipant } from '../../../main/store/types'
+import { withContextUsageSnapshot } from '../../../shared/contextUsage'
 
 const run = (overrides: Partial<ChatRun> = {}): ChatRun =>
   ({
@@ -65,6 +68,159 @@ describe('currentContextTokens — honest proxy, NOT a cumulative sum', () => {
   it('uses a valid total-only provider snapshot instead of discarding the run', () => {
     expect(currentContextTokens([run({ stats: { total_tokens: 91_000 } })])).toBe(91_000)
   })
+
+  it('uses the atomic last invocation instead of a multi-request turn aggregate', () => {
+    const atomic = withContextUsageSnapshot(
+      {
+        input_tokens: 90_000,
+        output_tokens: 1_000,
+        total_tokens: 91_000
+      },
+      { source: 'provider-last-invocation', precision: 'exact' }
+    )
+    expect(
+      currentContextUsage([
+        run({
+          stats: {
+            input_tokens: 500_000,
+            output_tokens: 20_000,
+            total_tokens: 520_000,
+            _taskwraith_context_usage: atomic._taskwraith_context_usage
+          }
+        })
+      ])
+    ).toMatchObject({
+      contextTokens: 91_000,
+      source: 'provider-last-invocation',
+      precision: 'exact'
+    })
+  })
+
+  it('replaces a pre-compaction run snapshot with the provider post-token count', () => {
+    const messages = [
+      {
+        id: 'compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 22_000 }
+          }
+        }
+      }
+    ] as ChatMessage[]
+
+    expect(currentContextUsage([run({ stats: usage(90_000, 1_000) })], { messages })).toMatchObject(
+      {
+        contextTokens: 22_000,
+        unclassifiedTokens: 22_000,
+        source: 'provider-compaction',
+        precision: 'exact'
+      }
+    )
+  })
+
+  it('marks live output added to an exact compaction baseline as derived', () => {
+    const messages = [
+      {
+        id: 'compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 22_000 }
+          }
+        }
+      }
+    ] as ChatMessage[]
+
+    expect(
+      currentContextUsage([run({ stats: usage(90_000, 1_000) })], {
+        messages,
+        isRunning: true,
+        liveOutputTokens: 500
+      })
+    ).toMatchObject({
+      contextTokens: 22_500,
+      unclassifiedTokens: 22_000,
+      outputTokens: 500,
+      visibleOutputTokens: 500,
+      source: 'provider-compaction',
+      precision: 'derived'
+    })
+  })
+
+  it('keeps an atomic invocation received after an in-run compaction', () => {
+    const observedAt = Date.parse('2026-05-30T12:06:00.000Z')
+    const atomic = withContextUsageSnapshot(
+      { input_tokens: 25_000, output_tokens: 500 },
+      {
+        source: 'provider-last-invocation',
+        precision: 'exact',
+        observedAt
+      }
+    )
+    const messages = [
+      {
+        id: 'compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 22_000 }
+          }
+        }
+      }
+    ] as ChatMessage[]
+
+    expect(
+      currentContextUsage(
+        [
+          run({
+            startedAt: '2026-05-30T12:00:00.000Z',
+            stats: atomic
+          })
+        ],
+        { messages }
+      )
+    ).toMatchObject({
+      observedAt,
+      contextTokens: 25_500,
+      source: 'provider-last-invocation'
+    })
+  })
+
+  it('marks the prior count stale when compaction completes without post tokens', () => {
+    const messages = [
+      {
+        id: 'compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          contextCompaction: { kind: 'completed', telemetry: { provider: 'antigravity' } }
+        }
+      }
+    ] as ChatMessage[]
+
+    expect(currentContextUsage([run({ stats: usage(90_000, 1_000) })], { messages })).toMatchObject(
+      {
+        contextTokens: 91_000,
+        source: 'post-compaction-unknown',
+        precision: 'estimated'
+      }
+    )
+  })
 })
 
 describe('contextTokensFromUsage', () => {
@@ -78,15 +234,36 @@ describe('contextTokensFromUsage', () => {
 
 describe('buildParticipantContextRows — per-participant honest context', () => {
   const participants: EnsembleParticipant[] = [
-    { id: 'p1', provider: 'claude', enabled: true, role: 'Architect', order: 0 } as EnsembleParticipant,
+    {
+      id: 'p1',
+      provider: 'claude',
+      enabled: true,
+      role: 'Architect',
+      order: 0
+    } as EnsembleParticipant,
     { id: 'p2', provider: 'codex', enabled: true, role: 'Builder', order: 1 } as EnsembleParticipant
   ]
 
   it('scopes each row to that participant latest run (not the other participant)', () => {
     const runs = [
-      run({ runId: 'p1a', ensembleParticipantId: 'p1', startedAt: '2026-05-30T12:00:00.000Z', stats: usage(10_000, 500) }),
-      run({ runId: 'p1b', ensembleParticipantId: 'p1', startedAt: '2026-05-30T12:06:00.000Z', stats: usage(120_000, 4_000) }),
-      run({ runId: 'p2a', ensembleParticipantId: 'p2', startedAt: '2026-05-30T12:03:00.000Z', stats: usage(30_000, 1_000) })
+      run({
+        runId: 'p1a',
+        ensembleParticipantId: 'p1',
+        startedAt: '2026-05-30T12:00:00.000Z',
+        stats: usage(10_000, 500)
+      }),
+      run({
+        runId: 'p1b',
+        ensembleParticipantId: 'p1',
+        startedAt: '2026-05-30T12:06:00.000Z',
+        stats: usage(120_000, 4_000)
+      }),
+      run({
+        runId: 'p2a',
+        ensembleParticipantId: 'p2',
+        startedAt: '2026-05-30T12:03:00.000Z',
+        stats: usage(30_000, 1_000)
+      })
     ]
     const rows = buildParticipantContextRows(runs, participants)
     expect(rows.map((r) => [r.id, r.usedTokens])).toEqual([
@@ -149,6 +326,96 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
     })
     expect(rows.find((r) => r.id === 'p1')?.usedTokens).toBe(82_600) // 80k+2k + 600 live
     expect(rows.find((r) => r.id === 'p2')?.usedTokens).toBe(31_000) // untouched
+  })
+
+  it('applies completed compaction only to its matching participant row', () => {
+    const runs = [
+      run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
+      run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+    ]
+    const messages = [
+      {
+        id: 'p1-compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        metadata: {
+          kind: 'contextCompaction',
+          ensembleParticipantId: 'p1',
+          contextCompaction: {
+            kind: 'completed',
+            telemetry: { provider: 'claude', postTokens: 18_000 }
+          }
+        }
+      }
+    ] as ChatMessage[]
+
+    const rows = buildParticipantContextRows(runs, participants, { messages })
+    expect(rows.find((row) => row.id === 'p1')?.usedTokens).toBe(18_000)
+    expect(rows.find((row) => row.id === 'p2')?.usedTokens).toBe(31_000)
+  })
+
+  it('indexes compaction evidence once for every participant row', () => {
+    let metadataReads = 0
+    const metadata = {
+      kind: 'contextCompaction',
+      ensembleParticipantId: 'p1',
+      contextCompaction: {
+        kind: 'completed',
+        telemetry: { provider: 'claude', postTokens: 18_000 }
+      }
+    }
+    const messages = [
+      {
+        id: 'p1-compacted',
+        role: 'system',
+        content: 'Context compacted',
+        timestamp: '2026-05-30T12:05:00.000Z',
+        get metadata() {
+          metadataReads += 1
+          return metadata
+        }
+      }
+    ] as ChatMessage[]
+
+    const rows = buildParticipantContextRows(
+      [
+        run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) }),
+        run({ runId: 'p2a', ensembleParticipantId: 'p2', stats: usage(30_000, 1_000) })
+      ],
+      participants,
+      { messages }
+    )
+
+    expect(metadataReads).toBe(messages.length)
+    expect(rows.find((row) => row.id === 'p1')?.usedTokens).toBe(18_000)
+    expect(rows.find((row) => row.id === 'p2')?.usedTokens).toBe(31_000)
+  })
+
+  it('does not fall back to a pre-compaction run when exact post usage is zero', () => {
+    const rows = buildParticipantContextRows(
+      [run({ runId: 'p1a', ensembleParticipantId: 'p1', stats: usage(80_000, 2_000) })],
+      participants,
+      {
+        messages: [
+          {
+            id: 'p1-compacted-empty',
+            role: 'system',
+            content: 'Context compacted',
+            timestamp: '2026-05-30T12:05:00.000Z',
+            metadata: {
+              ensembleParticipantId: 'p1',
+              contextCompaction: {
+                kind: 'completed',
+                telemetry: { provider: 'claude', postTokens: 0 }
+              }
+            }
+          }
+        ] as ChatMessage[]
+      }
+    )
+
+    expect(rows.find((row) => row.id === 'p1')?.usedTokens).toBe(0)
   })
 
   it('no live add when participantId is unset', () => {
@@ -238,6 +505,156 @@ describe('applyLiveContextTokenUsage', () => {
     const updated = applyLiveContextTokenUsage(meter, { totalTokens: 90_000 }, 'p2')
     expect(updated?.participants?.map((row) => row.usedTokens)).toEqual([20_000, 90_000])
   })
+
+  it('lets an exact zero snapshot replace stale live context', () => {
+    const meter = {
+      solo: {
+        id: 'solo',
+        provider: 'claude' as const,
+        usedTokens: 90_000,
+        windowTokens: 200_000,
+        percent: 45
+      }
+    }
+    const updated = applyLiveContextTokenUsage(meter, {
+      contextUsage: {
+        observedAt: 1,
+        contextTokens: 0,
+        totalTokens: 0,
+        inputTokens: 0,
+        freshInputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 0,
+        visibleOutputTokens: 0,
+        reasoningTokens: 0,
+        toolUsePromptTokens: 0,
+        unclassifiedTokens: 0,
+        source: 'provider-compaction',
+        precision: 'exact'
+      }
+    })
+
+    expect(updated?.solo).toMatchObject({
+      usedTokens: 0,
+      percent: 0,
+      usage: {
+        contextTokens: 0,
+        source: 'provider-compaction',
+        precision: 'exact'
+      }
+    })
+  })
+
+  it('does not let a stale active-run snapshot undo a completed compaction', () => {
+    const meter = {
+      solo: {
+        id: 'solo',
+        provider: 'claude' as const,
+        usedTokens: 0,
+        windowTokens: 200_000,
+        percent: 0,
+        usage: {
+          observedAt: 200,
+          contextTokens: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          freshInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          outputTokens: 0,
+          visibleOutputTokens: 0,
+          reasoningTokens: 0,
+          toolUsePromptTokens: 0,
+          unclassifiedTokens: 0,
+          source: 'provider-compaction' as const,
+          precision: 'exact' as const
+        }
+      }
+    }
+    const staleLive = {
+      contextUsage: {
+        observedAt: 100,
+        contextTokens: 90_000,
+        totalTokens: 90_000,
+        inputTokens: 86_000,
+        freshInputTokens: 6_000,
+        cacheReadInputTokens: 80_000,
+        cacheCreationInputTokens: 0,
+        outputTokens: 4_000,
+        visibleOutputTokens: 4_000,
+        reasoningTokens: 0,
+        toolUsePromptTokens: 0,
+        unclassifiedTokens: 0,
+        source: 'provider-last-invocation' as const,
+        precision: 'exact' as const
+      }
+    }
+
+    expect(applyLiveContextTokenUsage(meter, staleLive)?.solo).toMatchObject({
+      usedTokens: 0,
+      percent: 0,
+      usage: {
+        observedAt: 200,
+        contextTokens: 0,
+        source: 'provider-compaction'
+      }
+    })
+  })
+
+  it('allows a provider invocation received after compaction to resume live context', () => {
+    const compacted = {
+      solo: {
+        id: 'solo',
+        provider: 'claude' as const,
+        usedTokens: 0,
+        windowTokens: 200_000,
+        percent: 0,
+        usage: {
+          observedAt: 100,
+          contextTokens: 0,
+          totalTokens: 0,
+          inputTokens: 0,
+          freshInputTokens: 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          outputTokens: 0,
+          visibleOutputTokens: 0,
+          reasoningTokens: 0,
+          toolUsePromptTokens: 0,
+          unclassifiedTokens: 0,
+          source: 'provider-compaction' as const,
+          precision: 'exact' as const
+        }
+      }
+    }
+    const laterLive = {
+      contextUsage: {
+        observedAt: 200,
+        contextTokens: 25_000,
+        totalTokens: 25_000,
+        inputTokens: 24_000,
+        freshInputTokens: 24_000,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        outputTokens: 1_000,
+        visibleOutputTokens: 1_000,
+        reasoningTokens: 0,
+        toolUsePromptTokens: 0,
+        unclassifiedTokens: 0,
+        source: 'provider-last-invocation' as const,
+        precision: 'exact' as const
+      }
+    }
+
+    expect(applyLiveContextTokenUsage(compacted, laterLive)?.solo).toMatchObject({
+      usedTokens: 25_000,
+      usage: {
+        observedAt: 200,
+        source: 'provider-last-invocation'
+      }
+    })
+  })
 })
 
 describe('liveOutputTokensForParticipant — scoped to the active participant only', () => {
@@ -270,5 +687,57 @@ describe('liveOutputTokensForParticipant — scoped to the active participant on
     const runs = [run({ runId: 'p2run', ensembleParticipantId: 'p2', status: 'running' })]
     expect(liveOutputTokensForParticipant(runs, [], undefined, id)).toBe(0)
     expect(liveOutputTokensForParticipant([], [], 'p2', id)).toBe(0)
+  })
+})
+
+describe('buildContextActivitySummary', () => {
+  it('tracks message, reasoning, and tool directions without adding them to provider totals', () => {
+    const messages = [
+      {
+        id: 'user',
+        role: 'user',
+        content: 'Read and update the file.',
+        timestamp: '2026-05-30T12:00:00.000Z'
+      },
+      {
+        id: 'tools',
+        role: 'tool',
+        content: '',
+        timestamp: '2026-05-30T12:00:01.000Z',
+        metadata: { ensembleParticipantId: 'p1' },
+        toolActivities: [
+          {
+            id: 'read',
+            toolName: 'read_file',
+            displayName: 'Read file',
+            category: 'read',
+            status: 'success',
+            parameters: { file_path: '/tmp/a.ts' },
+            outputPreview: 'const a = 1',
+            metadata: { ensembleParticipantId: 'p1' }
+          },
+          {
+            id: 'think',
+            toolName: 'codex_reasoning',
+            displayName: 'Reasoning',
+            category: 'unknown',
+            status: 'success',
+            outputPreview: 'Need to inspect the call site.',
+            metadata: { ensembleParticipantId: 'p1' }
+          }
+        ]
+      }
+    ] as ChatMessage[]
+
+    expect(buildContextActivitySummary(messages, 'p1')).toMatchObject({
+      messageCount: 1,
+      userMessageCount: 1,
+      toolCallCount: 1,
+      toolResultCount: 1,
+      readCalls: 1,
+      filesRead: 1,
+      reasoningSegmentCount: 1,
+      tools: [{ name: 'read_file', count: 1 }]
+    })
   })
 })

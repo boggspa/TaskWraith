@@ -17,9 +17,52 @@
 //
 // Label formatting (provider name + model) is deliberately left to the UI so this
 // stays a pure, dependency-light, testable module.
-import type { ChatRun, EnsembleParticipant, ProviderId } from '../../../main/store/types'
+import type {
+  ChatMessage,
+  ChatRun,
+  EnsembleParticipant,
+  ProviderId,
+  ToolActivity
+} from '../../../main/store/types'
 import { isContextWindowProviderId, resolveContextWindow } from './contextWindows'
-import { extractUsageCountsFromCandidate, extractUsageLimits } from './usageStats'
+import { extractUsageLimits } from './usageStats'
+import {
+  buildContextCompactionUsageEvidenceIndex,
+  contextUsageAfterCompaction,
+  contextUsageFromStats,
+  type ContextCompactionUsageEvidence,
+  type ContextUsageSnapshot
+} from '../../../shared/contextUsage'
+import { estimateTokensFromChars, visiblePayloadChars } from '../../../shared/tokenEstimate'
+import { isReasoningToolName } from './ToolParser'
+
+export interface ContextToolActivityEntry {
+  name: string
+  label: string
+  category: ToolActivity['category']
+  count: number
+}
+
+export interface ContextActivitySummary {
+  messageCount: number
+  messageTokens: number
+  userMessageCount: number
+  assistantMessageCount: number
+  toolCallCount: number
+  toolInputTokens: number
+  toolResultCount: number
+  toolResultTokens: number
+  reasoningSegmentCount: number
+  reasoningTextTokens: number
+  readCalls: number
+  writeCalls: number
+  searchCalls: number
+  shellCalls: number
+  otherCalls: number
+  filesRead: number
+  filesWritten: number
+  tools: ContextToolActivityEntry[]
+}
 
 export interface ContextMeterRow {
   /** Stable key: 'solo', or the ensemble participant id. */
@@ -34,6 +77,11 @@ export interface ContextMeterRow {
   windowTokens: number
   /** 0..100, clamped. 0 when the window is unknown. */
   percent: number
+  /** Provider-normalized token makeup for the latest invocation/estimate. */
+  usage?: ContextUsageSnapshot
+  /** Host-observed transcript/tool directions. Token counts here are estimates
+   * and are never added on top of provider usage. */
+  activity?: ContextActivitySummary
 }
 
 export interface ContextMeterModel {
@@ -52,6 +100,8 @@ export interface LiveContextTokenUsage {
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number
+  contextUsage?: ContextUsageSnapshot
+  estimated?: boolean
 }
 
 export function contextPercent(used: number, window: number): number {
@@ -63,6 +113,16 @@ function nonNegativeInteger(value: number | undefined): number {
   return Number.isFinite(value) && (value as number) > 0 ? Math.trunc(value as number) : 0
 }
 
+function estimatedUsageFromCounts(usage: LiveContextTokenUsage): ContextUsageSnapshot | null {
+  if (usage.contextUsage) return usage.contextUsage
+  return contextUsageFromStats({
+    input_tokens: nonNegativeInteger(usage.inputTokens),
+    output_tokens: nonNegativeInteger(usage.outputTokens),
+    total_tokens: nonNegativeInteger(usage.totalTokens),
+    ...(usage.estimated ? { _taskwraith_token_count_confidence: 'estimated' } : {})
+  })
+}
+
 /**
  * Context occupancy is normally input + output for the latest request. Prefer
  * a provider's explicit total when it includes tokens not broken out into
@@ -70,10 +130,32 @@ function nonNegativeInteger(value: number | undefined): number {
  * total-only snapshot.
  */
 export function contextTokensFromUsage(usage: LiveContextTokenUsage): number {
-  const input = nonNegativeInteger(usage.inputTokens)
-  const output = nonNegativeInteger(usage.outputTokens)
-  const total = nonNegativeInteger(usage.totalTokens)
-  return Math.max(total, input + output)
+  return estimatedUsageFromCounts(usage)?.contextTokens || 0
+}
+
+function withLiveOutput(
+  usage: ContextUsageSnapshot | null | undefined,
+  liveOutputTokens: number
+): ContextUsageSnapshot | undefined {
+  const live = Math.max(0, Math.trunc(liveOutputTokens))
+  if (live <= 0) return usage || undefined
+  if (!usage) {
+    return (
+      contextUsageFromStats({
+        output_tokens: live,
+        total_tokens: live,
+        _taskwraith_token_count_confidence: 'estimated'
+      }) || undefined
+    )
+  }
+  return {
+    ...usage,
+    contextTokens: usage.contextTokens + live,
+    totalTokens: usage.totalTokens + live,
+    outputTokens: usage.outputTokens + live,
+    visibleOutputTokens: usage.visibleOutputTokens + live,
+    precision: usage.precision === 'exact' ? 'derived' : usage.precision
+  }
 }
 
 /**
@@ -83,25 +165,53 @@ export function contextTokensFromUsage(usage: LiveContextTokenUsage): number {
 function latestRunContext(
   runs: ReadonlyArray<ChatRun>,
   participantId?: string
-): { tokens: number; totalTokenLimit?: number } {
+): {
+  tokens: number
+  usage?: ContextUsageSnapshot
+  totalTokenLimit?: number
+  observedAt: number
+} {
   let bestTime = Number.NEGATIVE_INFINITY
-  let best: { tokens: number; totalTokenLimit?: number } | null = null
+  let best: {
+    tokens: number
+    usage?: ContextUsageSnapshot
+    totalTokenLimit?: number
+    observedAt: number
+  } | null = null
   for (const run of runs) {
     if (participantId && run.ensembleParticipantId !== participantId) continue
-    const counts = extractUsageCountsFromCandidate(run?.stats)
-    const tokens = contextTokensFromUsage(counts)
-    if (tokens <= 0) continue
+    const usage = contextUsageFromStats(run?.stats)
+    if (!usage) continue
+    const tokens = usage.contextTokens
     const parsed = Date.parse(run.startedAt || '')
-    const time = Number.isFinite(parsed) ? parsed : 0
+    const time = usage?.observedAt ?? (Number.isFinite(parsed) ? parsed : 0)
     if (time >= bestTime) {
       bestTime = time
       best = {
         tokens,
-        ...extractUsageLimits(run?.stats)
+        ...(usage ? { usage } : {}),
+        ...extractUsageLimits(run?.stats),
+        observedAt: time
       }
     }
   }
-  return best ?? { tokens: 0 }
+  return best ?? { tokens: 0, observedAt: Number.NEGATIVE_INFINITY }
+}
+
+function latestContext(
+  runs: ReadonlyArray<ChatRun>,
+  compaction: ContextCompactionUsageEvidence | null | undefined,
+  participantId?: string
+): ReturnType<typeof latestRunContext> {
+  const latest = latestRunContext(runs, participantId)
+  if (!compaction || compaction.observedAt < latest.observedAt) return latest
+  const usage = contextUsageAfterCompaction(latest.usage, compaction)
+  return {
+    ...latest,
+    tokens: usage?.contextTokens ?? latest.tokens,
+    ...(usage ? { usage } : {}),
+    observedAt: compaction.observedAt
+  }
 }
 
 /**
@@ -110,12 +220,35 @@ function latestRunContext(
  */
 export function currentContextTokens(
   runs: ReadonlyArray<ChatRun>,
-  opts: { liveOutputTokens?: number; isRunning?: boolean } = {}
+  opts: {
+    liveOutputTokens?: number
+    isRunning?: boolean
+    messages?: ReadonlyArray<ChatMessage>
+  } = {}
 ): number {
-  const latest = latestRunContext(runs)
-  const base = latest.tokens
+  return currentContextUsage(runs, opts)?.contextTokens || 0
+}
+
+export function currentContextUsage(
+  runs: ReadonlyArray<ChatRun>,
+  opts: {
+    liveOutputTokens?: number
+    isRunning?: boolean
+    messages?: ReadonlyArray<ChatMessage>
+  } = {}
+): ContextUsageSnapshot | undefined {
+  const compaction = opts.messages
+    ? buildContextCompactionUsageEvidenceIndex(opts.messages).unscoped
+    : undefined
+  const latest = latestContext(runs, compaction)
   const live = opts.isRunning ? Math.max(0, opts.liveOutputTokens ?? 0) : 0
-  return base + live
+  return withLiveOutput(latest.usage, live)
+}
+
+/** Provider-reported context limit carried by the same latest run selected for
+ * current-window usage. Keeps main and multiview meters on the same denominator. */
+export function currentContextTokenLimit(runs: ReadonlyArray<ChatRun>): number | undefined {
+  return latestRunContext(runs).totalTokenLimit
 }
 
 /**
@@ -131,14 +264,30 @@ export function applyLiveContextTokenUsage(
   participantId?: string
 ): ContextMeterModel | null | undefined {
   if (!meter || !usage) return meter
-  const usedTokens = contextTokensFromUsage(usage)
-  if (usedTokens <= 0) return meter
+  const snapshot = estimatedUsageFromCounts(usage)
+  if (!snapshot) return meter
+  const usedTokens = snapshot.contextTokens
 
-  const withUsage = (row: ContextMeterRow): ContextMeterRow => ({
-    ...row,
-    usedTokens,
-    percent: contextPercent(usedTokens, row.windowTokens)
-  })
+  const withUsage = (row: ContextMeterRow): ContextMeterRow => {
+    const persistedObservedAt = row.usage?.observedAt
+    const liveObservedAt = snapshot.observedAt
+    // A compaction card can land while the run remains active. Its durable
+    // post-window state must not be overwritten by the last pre-compaction
+    // working snapshot; a genuinely later provider invocation carries a newer
+    // receipt time and resumes the live overlay naturally.
+    if (
+      persistedObservedAt !== undefined &&
+      (liveObservedAt === undefined || liveObservedAt <= persistedObservedAt)
+    ) {
+      return row
+    }
+    return {
+      ...row,
+      usedTokens,
+      percent: contextPercent(usedTokens, row.windowTokens),
+      usage: snapshot
+    }
+  }
 
   if (meter.participants?.length) {
     if (!participantId) return meter
@@ -192,6 +341,163 @@ export function liveOutputTokensForParticipant(
   return estimateFromChars(liveChars)
 }
 
+function stringField(source: Record<string, unknown> | undefined, keys: string[]): string {
+  if (!source) return ''
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function activityFilePath(activity: ToolActivity): string {
+  return (
+    activity.filePath ||
+    activity.affectedFilePath ||
+    stringField(activity.parameters, [
+      'file_path',
+      'filePath',
+      'path',
+      'absolute_path',
+      'target_path'
+    ])
+  )
+}
+
+function activityBelongsToParticipant(
+  message: ChatMessage,
+  activity: ToolActivity,
+  participantId?: string
+): boolean {
+  if (!participantId) return true
+  const activityParticipantId = activity.metadata?.ensembleParticipantId
+  if (activityParticipantId) return activityParticipantId === participantId
+  const messageParticipantId =
+    typeof message.metadata?.ensembleParticipantId === 'string'
+      ? message.metadata.ensembleParticipantId
+      : ''
+  return messageParticipantId === participantId
+}
+
+/**
+ * Host-observed directions which explain what generated token traffic without
+ * pretending TaskWraith can recover provider-owned system prompts or exact
+ * tokenizer boundaries. Counts are exact; the token figures use the shared
+ * chars÷4 estimate and stay visually marked as estimates.
+ */
+export function buildContextActivitySummary(
+  messages: ReadonlyArray<ChatMessage>,
+  participantId?: string
+): ContextActivitySummary {
+  let messageChars = 0
+  let messageCount = 0
+  let userMessageCount = 0
+  let assistantMessageCount = 0
+  let toolCallCount = 0
+  let toolInputChars = 0
+  let toolResultCount = 0
+  let toolResultChars = 0
+  let reasoningSegmentCount = 0
+  let reasoningTextChars = 0
+  let readCalls = 0
+  let writeCalls = 0
+  let searchCalls = 0
+  let shellCalls = 0
+  let otherCalls = 0
+  const filesRead = new Set<string>()
+  const filesWritten = new Set<string>()
+  const tools = new Map<string, ContextToolActivityEntry>()
+
+  for (const message of messages) {
+    if (message.content && message.role !== 'tool') {
+      messageCount += 1
+      messageChars += message.content.length
+      if (message.role === 'user') userMessageCount += 1
+      if (message.role === 'assistant') assistantMessageCount += 1
+    }
+
+    for (const activity of message.toolActivities || []) {
+      if (!activityBelongsToParticipant(message, activity, participantId)) continue
+      const reasoning = isReasoningToolName(activity.toolName || '')
+      const resultPayload =
+        activity.rawResultEvent ??
+        activity.outputPreview ??
+        activity.resultSummary ??
+        activity.outputSummary ??
+        ''
+      const hasResult =
+        activity.rawResultEvent !== undefined ||
+        Boolean(activity.outputPreview || activity.resultSummary || activity.outputSummary)
+      if (reasoning) {
+        reasoningSegmentCount += 1
+        reasoningTextChars += visiblePayloadChars(resultPayload)
+        continue
+      }
+
+      toolCallCount += 1
+      toolInputChars += visiblePayloadChars(activity.parameters ?? activity.rawUseEvent)
+      if (hasResult) toolResultCount += 1
+      toolResultChars += visiblePayloadChars(resultPayload)
+      const path = activityFilePath(activity)
+      switch (activity.category) {
+        case 'read':
+          readCalls += 1
+          if (path) filesRead.add(path)
+          break
+        case 'write':
+          writeCalls += 1
+          if (path) filesWritten.add(path)
+          break
+        case 'search':
+          searchCalls += 1
+          break
+        case 'shell':
+          shellCalls += 1
+          break
+        default:
+          otherCalls += 1
+          break
+      }
+
+      const name = activity.toolName || 'unknown'
+      const existing = tools.get(name)
+      if (existing) {
+        existing.count += 1
+      } else {
+        tools.set(name, {
+          name,
+          label: activity.displayName || name,
+          category: activity.category,
+          count: 1
+        })
+      }
+    }
+  }
+
+  return {
+    messageCount,
+    messageTokens: estimateTokensFromChars(messageChars),
+    userMessageCount,
+    assistantMessageCount,
+    toolCallCount,
+    toolInputTokens: estimateTokensFromChars(toolInputChars),
+    toolResultCount,
+    toolResultTokens: estimateTokensFromChars(toolResultChars),
+    reasoningSegmentCount,
+    reasoningTextTokens: estimateTokensFromChars(reasoningTextChars),
+    readCalls,
+    writeCalls,
+    searchCalls,
+    shellCalls,
+    otherCalls,
+    filesRead: filesRead.size,
+    filesWritten: filesWritten.size,
+    tools: [...tools.values()].sort(
+      (left, right) => right.count - left.count || left.name.localeCompare(right.name)
+    )
+  }
+}
+
 /**
  * Per-participant context rows for an ensemble chat (honest current-context).
  * `live` lets the ACTIVELY-RUNNING participant's row tick up with the in-flight
@@ -206,14 +512,23 @@ export function buildParticipantContextRows(
     participantId?: string
     outputTokens?: number
     resolveWindowTokens?: (participant: EnsembleParticipant) => number | undefined
+    messages?: ReadonlyArray<ChatMessage>
   }
 ): ContextMeterRow[] {
+  const compactions = live?.messages
+    ? buildContextCompactionUsageEvidenceIndex(live.messages)
+    : undefined
   return participants.map((participant) => {
-    const latest = latestRunContext(runs, participant.id)
-    let usedTokens = latest.tokens
+    const latest = latestContext(
+      runs,
+      compactions?.byParticipantId.get(participant.id),
+      participant.id
+    )
+    let usage = latest.usage
     if (live?.participantId && participant.id === live.participantId) {
-      usedTokens += Math.max(0, live.outputTokens ?? 0)
+      usage = withLiveOutput(usage, Math.max(0, live.outputTokens ?? 0))
     }
+    const usedTokens = usage ? usage.contextTokens : latest.tokens
     const liveWindowTokens = live?.resolveWindowTokens?.(participant)
     const windowTokens = resolveContextWindow(
       isContextWindowProviderId(participant.provider) ? participant.provider : undefined,
@@ -228,7 +543,8 @@ export function buildParticipantContextRows(
       role: participant.role,
       usedTokens,
       windowTokens,
-      percent: contextPercent(usedTokens, windowTokens)
+      percent: contextPercent(usedTokens, windowTokens),
+      ...(usage ? { usage } : {})
     }
   })
 }

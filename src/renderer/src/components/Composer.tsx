@@ -4075,6 +4075,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   speakingParticipantId={speakingParticipantId}
                                   activeRunId={activeRunId}
                                   running={isCurrentChatRunning}
+                                  messages={currentChat?.messages}
                                 />
                               )}
                               <CombinedModelPicker
@@ -4606,6 +4607,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             speakingParticipantId={speakingParticipantId}
                             activeRunId={activeRunId}
                             running={isCurrentChatRunning}
+                            messages={currentChat?.messages}
                           />
                         )}
                         {steerIndicatorMessage && (
