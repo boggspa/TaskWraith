@@ -10,6 +10,14 @@ import {
 } from './EnsembleRosterPresetContract'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
 import { isLiveSelectableProvider } from '../shared/retiredProviders'
+import {
+  AGENT_ROSTER_CONTEXT_MAX_CHARS,
+  AGENT_ROSTER_CONTEXT_MIN_CHARS,
+  AGENT_ROSTER_MAX_CONTINUATION_HOPS,
+  PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY,
+  readPendingEnsembleRosterPresetApply,
+  type PendingEnsembleRosterPresetApply
+} from '../shared/ensembleRosterPresetApply'
 import type {
   ChatRecord,
   EnsembleFanoutPolicy,
@@ -18,15 +26,22 @@ import type {
   ProviderId
 } from './store/types'
 
-export const PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY =
-  'pendingEnsembleRosterPresetApply'
+export {
+  AGENT_ROSTER_CONTEXT_MAX_CHARS,
+  AGENT_ROSTER_CONTEXT_MIN_CHARS,
+  AGENT_ROSTER_MAX_CONTINUATION_HOPS,
+  PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY,
+  buildUserEnsembleRosterPresetApplyPlan,
+  hasPendingEnsembleRosterPresetApply,
+  parsePendingEnsembleRosterPresetApply,
+  readPendingEnsembleRosterPresetApply,
+  type BuildUserEnsembleRosterPresetApplyPlanInput,
+  type PendingEnsembleRosterPresetApply
+} from '../shared/ensembleRosterPresetApply'
 
 export const AGENT_ROSTER_BRIEF_MAX_CHARS = 64_000
 export const AGENT_ROSTER_TOTAL_BRIEF_MAX_CHARS = 500_000
 export const AGENT_ROSTER_IMPORT_MAX_BYTES = 1_000_000
-export const AGENT_ROSTER_CONTEXT_MIN_CHARS = 5_000
-export const AGENT_ROSTER_CONTEXT_MAX_CHARS = 256_000
-export const AGENT_ROSTER_MAX_CONTINUATION_HOPS = 500
 
 const ASSIGNABLE_PERMISSION_PRESETS = new Set<PermissionPresetId>([
   'read_only',
@@ -96,77 +111,6 @@ export function buildAgentRosterPresetExportFromDraft(
   })
   parseSingleAgentRosterPresetExport(json)
   return json
-}
-
-export interface PendingEnsembleRosterPresetApply {
-  schemaVersion: 1
-  presetId: string
-  presetName: string
-  queuedAt: string
-  sourceRunId?: string
-  authority: 'user' | 'solo_inherited_boss' | 'ensemble_boss' | 'ensemble_captain'
-  participants: EnsembleParticipant[]
-  bossmanParticipantId: string
-  secondInCommandParticipantId?: string
-  orchestrationMode: 'turn_bound' | 'continuous'
-  fanoutPolicy: EnsembleFanoutPolicy
-  maxParticipants: number
-  maxContinuationHops: number
-  ensembleContextChars: number
-}
-
-export interface BuildUserEnsembleRosterPresetApplyPlanInput {
-  preset: EnsembleRosterPreset
-  participants: EnsembleParticipant[]
-  bossmanParticipantId: string
-  secondInCommandParticipantId?: string
-  queuedAt: string
-}
-
-/** Build a boundary-deferred roster change from an explicit renderer action. */
-export function buildUserEnsembleRosterPresetApplyPlan(
-  input: BuildUserEnsembleRosterPresetApplyPlanInput
-): PendingEnsembleRosterPresetApply {
-  const preset = cloneEnsembleRosterPreset(input.preset)
-  const maxParticipants = Math.min(
-    MAX_ROSTER_PRESET_PARTICIPANTS,
-    Math.max(input.participants.length, Math.round(preset.maxParticipants), 2)
-  )
-  const maxContinuationHops = Math.max(
-    1,
-    Math.min(
-      AGENT_ROSTER_MAX_CONTINUATION_HOPS,
-      Math.round(preset.maxContinuationHops ?? 6)
-    )
-  )
-  const ensembleContextChars = Math.max(
-    AGENT_ROSTER_CONTEXT_MIN_CHARS,
-    Math.min(
-      AGENT_ROSTER_CONTEXT_MAX_CHARS,
-      Math.round(preset.ensembleContextChars ?? 24_000)
-    )
-  )
-  return {
-    schemaVersion: 1,
-    presetId: preset.id,
-    presetName: preset.name,
-    queuedAt: input.queuedAt,
-    authority: 'user',
-    participants: input.participants.map((participant) => ({
-      ...participant,
-      linkedProviderSessionId: null
-    })),
-    bossmanParticipantId: input.bossmanParticipantId,
-    ...(input.secondInCommandParticipantId
-      ? { secondInCommandParticipantId: input.secondInCommandParticipantId }
-      : {}),
-    orchestrationMode:
-      preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
-    fanoutPolicy: normalizedFanoutPolicy(preset),
-    maxParticipants,
-    maxContinuationHops,
-    ensembleContextChars
-  }
 }
 
 export type BuildEnsembleRosterPresetApplyResult =
@@ -524,43 +468,6 @@ export function buildEnsembleRosterPresetApply(
       ensembleContextChars
     }
   }
-}
-
-export function parsePendingEnsembleRosterPresetApply(
-  value: unknown
-): PendingEnsembleRosterPresetApply | null {
-  if (!value || typeof value !== 'object') return null
-  const plan = value as PendingEnsembleRosterPresetApply
-  const valid =
-    plan.schemaVersion === 1 &&
-    typeof plan.presetId === 'string' &&
-    typeof plan.presetName === 'string' &&
-    typeof plan.queuedAt === 'string' &&
-    (plan.authority === 'user' ||
-      plan.authority === 'solo_inherited_boss' ||
-      plan.authority === 'ensemble_boss' ||
-      plan.authority === 'ensemble_captain') &&
-    Array.isArray(plan.participants) &&
-    plan.participants.length >= 1 &&
-    plan.participants.length <= MAX_ROSTER_PRESET_PARTICIPANTS &&
-    typeof plan.bossmanParticipantId === 'string' &&
-    plan.participants.some((participant) => participant.id === plan.bossmanParticipantId) &&
-    (plan.orchestrationMode === 'turn_bound' || plan.orchestrationMode === 'continuous') &&
-    typeof plan.maxParticipants === 'number' &&
-    typeof plan.maxContinuationHops === 'number' &&
-    typeof plan.ensembleContextChars === 'number'
-  return valid ? plan : null
-}
-
-export function readPendingEnsembleRosterPresetApply(
-  chat: ChatRecord
-): PendingEnsembleRosterPresetApply | null {
-  const value = chat.providerMetadata?.[PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY]
-  return parsePendingEnsembleRosterPresetApply(value)
-}
-
-export function hasPendingEnsembleRosterPresetApply(chat: ChatRecord): boolean {
-  return readPendingEnsembleRosterPresetApply(chat) !== null
 }
 
 export function queuePendingEnsembleRosterPresetApply(

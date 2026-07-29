@@ -41,17 +41,7 @@ import {
   taskWraithProviderLabel
 } from '../../shared/taskWraithProviderPresentation'
 import { isLiveSelectableProvider } from '../../shared/retiredProviders'
-// Pure Node-safe renderer-lib module (same cross-boundary precedent as
-// WelcomeDashboardRemote.ts): these are the exact curated rows the App picker
-// falls back to before IPC hydration, so the TUI can never offer a model the
-// App itself would not.
-import {
-  CLAUDE_DEFAULT_MODELS,
-  CODEX_DEFAULT_MODELS,
-  getStaticProviderModelOptions,
-  normalizeProviderModelKey,
-  type CodexModelOption
-} from '../../renderer/src/lib/providerModelDefaults'
+import { getStaticProviderModels } from '../providers/StaticProviderModels'
 import { LocalControlServer, type LocalControlServerOptions } from './LocalControlServer'
 
 export interface TaskWraithControlFacadeOptions {
@@ -87,6 +77,12 @@ function nonEmptyString(...values: unknown[]): string | undefined {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
   return undefined
+}
+
+function normalizeProviderModelKey(model?: string | null): string {
+  return String(model || '')
+    .trim()
+    .toLowerCase()
 }
 
 function latestRun(chat: Pick<ChatRecord, 'runs'>): ChatRun | undefined {
@@ -482,26 +478,39 @@ function workspaceAccessForChat(chat: ChatRecord): 'read' | 'write' {
 const TUI_MODEL_OFFER_LIMIT = 40
 const TUI_REASONING_OFFER_LIMIT = 12
 
+interface CuratedModelOption {
+  id: string
+  label?: string
+  isDefault?: boolean
+  disabled?: boolean
+  disabledReason?: string
+  retiresAt?: string
+  supportedReasoningEfforts?: Array<{
+    reasoningEffort: string
+    disabled?: boolean
+    disabledReason?: string
+  }>
+  defaultReasoningEffort?: string | null
+}
+
 /**
- * The curated picker rows for one provider, or a locked reason. Only rows the
- * App picker itself would present as its static fallback are ever offered;
+ * The curated picker rows for one provider, or a locked reason. Only rows from
+ * the main-owned static catalogue that also hydrates the App are ever offered;
  * machine-dependent catalogues (Ollama installs, Pi upstream keys) stay
  * App-side rather than offering models that would fail at dispatch.
  */
-function curatedRowsForProvider(provider: string): CodexModelOption[] | { locked: string } {
+function curatedRowsForProvider(provider: string): CuratedModelOption[] | { locked: string } {
   if (!isLiveSelectableProvider(provider)) {
     return { locked: 'This provider cannot be switched here — manage it in the App.' }
   }
   switch (provider) {
     case 'codex':
-      return CODEX_DEFAULT_MODELS
     case 'claude':
-      return CLAUDE_DEFAULT_MODELS
     case 'kimi':
     case 'grok':
     case 'cursor':
     case 'mistral':
-      return getStaticProviderModelOptions(provider)
+      return getStaticProviderModels(provider) as CuratedModelOption[]
     case 'ollama':
       return { locked: 'Ollama models follow the local install — pick them in the App.' }
     case 'pi':
@@ -511,7 +520,7 @@ function curatedRowsForProvider(provider: string): CodexModelOption[] | { locked
   }
 }
 
-function offerFromRow(row: CodexModelOption, currentKey: string): TaskWraithControlModelOffer {
+function offerFromRow(row: CuratedModelOption, currentKey: string): TaskWraithControlModelOffer {
   return {
     id: row.id,
     ...(row.label ? { label: row.label } : {}),

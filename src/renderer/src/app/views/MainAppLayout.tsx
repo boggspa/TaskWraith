@@ -101,7 +101,7 @@ import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
 import {
   buildUserEnsembleRosterPresetApplyPlan
-} from '../../../../main/EnsembleRosterPresetApply'
+} from '../../../../shared/ensembleRosterPresetApply'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 

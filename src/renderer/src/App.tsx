@@ -858,7 +858,7 @@ import {
 import {
   readPendingWorkspaceRebind,
   type PendingWorkspaceRebind
-} from '../../main/pendingWorkspaceRebind'
+} from '../../shared/pendingWorkspaceRebind'
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
   applyPendingEnsembleRosterPresetOnRunTerminal,
