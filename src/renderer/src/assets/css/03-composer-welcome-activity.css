@@ -5828,8 +5828,11 @@
   position: fixed;
   z-index: 12000;
   width: min(680px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
   max-height: min(360px, calc(100vh - 16px));
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   box-sizing: border-box;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
