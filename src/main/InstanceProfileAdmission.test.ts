@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import {
   admitPackagedIsolatedProfileRoot,
@@ -177,12 +177,19 @@ class FakeProfileFileSystem
   }
 }
 
-const appDataPath = '/Users/example/Library/Application Support'
+// `resolve`, not `join`, and not a hand-written literal: production runs every
+// admission path through `resolve()` (InstanceProfileAdmission.ts:145-147), and
+// on Windows that prepends the current drive — so a `join`-built expectation
+// reads `\Users\example\...` while production returns `D:\Users\example\...`
+// and twelve cases in this file fail for a reason that has nothing to do with
+// admission. Mirroring the production helper keeps the comparison about the
+// contract on every platform.
+const appDataPath = resolve('/Users/example/Library/Application Support')
 const currentUid = 501
 const instanceId = 'a'.repeat(32)
-const profileParentPath = join(appDataPath, 'TaskWraith Instances')
-const profileRootPath = join(profileParentPath, instanceId)
-const externalTargetPath = '/Users/example/external-private-directory'
+const profileParentPath = resolve(appDataPath, 'TaskWraith Instances')
+const profileRootPath = resolve(profileParentPath, instanceId)
+const externalTargetPath = resolve('/Users/example/external-private-directory')
 
 function admissionInput(fileSystem: FakeProfileFileSystem) {
   return {

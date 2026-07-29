@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildMcpBridgeRouteEnv,
@@ -14,6 +15,16 @@ import {
   parseMcpBridgeRouteFromEnv
 } from './McpBridgeRoute'
 
+// Socket-path fixtures must be CANONICAL ON THE HOST, not POSIX literals.
+// readSocketPath (McpBridgeRoute.ts:178) rejects any value where
+// `resolve(value) !== value`, which is what makes a traversal or
+// non-canonical form inert. On Windows `resolve('/private/a/...')` prefixes
+// the current drive, so a POSIX literal fails its OWN guard and every route
+// built from it comes back `ok: false` — six cases here plus the dev-bridge
+// seam in devAppName.test.ts, none of them about routing.
+const socketA = resolve('/private/a/taskwraith-gemini-mcp.sock')
+const socketB = resolve('/private/b/taskwraith-gemini-mcp.sock')
+const socketPrimary = resolve('/private/primary/taskwraith-gemini-mcp.sock')
 const tokenA = 'a'.repeat(64)
 const tokenB = 'b'.repeat(64)
 const instanceEpochA = 'c'.repeat(32)
@@ -43,13 +54,13 @@ function buildLiveEnvironment(input: {
 describe('MCP bridge route-from-env authority', () => {
   it('keeps persisted registration argv byte-identical while A and B resolve separate live endpoints', () => {
     const builtA = buildLiveEnvironment({
-      socketPath: '/private/a/taskwraith-gemini-mcp.sock',
+      socketPath: socketA,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 7
     })
     const builtB = buildLiveEnvironment({
-      socketPath: '/private/b/taskwraith-gemini-mcp.sock',
+      socketPath: socketB,
       brokerToken: tokenB,
       instanceEpoch: instanceEpochB,
       bridgeLogEpoch: 11
@@ -69,13 +80,13 @@ describe('MCP bridge route-from-env authority', () => {
     if (!parsedA.ok || !parsedB.ok) throw new Error('Expected parsed endpoint authority.')
 
     expect(parsedA.value.endpoint).toEqual({
-      socketPath: '/private/a/taskwraith-gemini-mcp.sock',
+      socketPath: socketA,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 7
     })
     expect(parsedB.value.endpoint).toEqual({
-      socketPath: '/private/b/taskwraith-gemini-mcp.sock',
+      socketPath: socketB,
       brokerToken: tokenB,
       instanceEpoch: instanceEpochB,
       bridgeLogEpoch: 11
@@ -99,7 +110,7 @@ describe('MCP bridge route-from-env authority', () => {
 
   it('requires every endpoint field and returns no secret-bearing error detail', () => {
     const built = buildLiveEnvironment({
-      socketPath: '/private/a/taskwraith-gemini-mcp.sock',
+      socketPath: socketA,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 7
@@ -148,7 +159,7 @@ describe('MCP bridge route-from-env authority', () => {
     })
 
     const primary = buildLiveEnvironment({
-      socketPath: '/private/primary/taskwraith-gemini-mcp.sock',
+      socketPath: socketPrimary,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 4
@@ -186,7 +197,7 @@ describe('MCP bridge route-from-env authority', () => {
     expect(
       buildMcpBridgeRouteEnv({
         endpoint: {
-          socketPath: '/private/primary/taskwraith-gemini-mcp.sock',
+          socketPath: socketPrimary,
           brokerToken: tokenA,
           instanceEpoch: instanceEpochA,
           bridgeLogEpoch: 4,
@@ -199,7 +210,7 @@ describe('MCP bridge route-from-env authority', () => {
 
   it('requires an explicit complete profile environment and never inherits a stale widening flag', () => {
     const built = buildLiveEnvironment({
-      socketPath: '/private/a/taskwraith-gemini-mcp.sock',
+      socketPath: socketA,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 7
@@ -306,7 +317,7 @@ describe('MCP bridge route-from-env authority', () => {
     ).toEqual({ appChatId: 'chat-456' })
 
     const built = buildLiveEnvironment({
-      socketPath: '/private/a/taskwraith-gemini-mcp.sock',
+      socketPath: socketA,
       brokerToken: tokenA,
       instanceEpoch: instanceEpochA,
       bridgeLogEpoch: 7,

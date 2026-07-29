@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from 'electron'
 import { registerMeshSceneHandlers } from './meshSceneHandlers'
@@ -214,7 +215,12 @@ describe('registerMeshSceneHandlers', () => {
       })
     )
     expect(controller.importUserSelectedScenePackage).toHaveBeenCalledWith(
-      { manifestPath: '/Users/artist/Downloads/gallery-package/taskwraith.mesh-scene.json' },
+      // join(), not a POSIX literal: the handler builds this with
+      // path.join(packageDirectory, ...) (meshSceneHandlers.ts:119), which
+      // emits backslashes on Windows.
+      {
+        manifestPath: join('/Users/artist/Downloads/gallery-package', 'taskwraith.mesh-scene.json')
+      },
       { chatId: 'chat-a', workspacePath: '/workspace' }
     )
     expect(imported).toEqual({

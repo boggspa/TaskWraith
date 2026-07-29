@@ -1,4 +1,4 @@
-import { join } from 'path'
+import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import { resolveInstanceLaunchPosture } from './InstanceLaunchPosture'
 import {
@@ -6,8 +6,13 @@ import {
   createInstanceResourceIdentity
 } from './InstanceResourceIdentity'
 
-const appDataPath = '/Users/example/Library/Application Support'
-const primaryUserDataPath = join(appDataPath, 'TaskWraith')
+// `resolve`, not `join`: production runs every derived path through `resolve()`
+// (InstanceResourceIdentity.ts:98,66), and on Windows that prepends the current
+// drive, so a `join`-built expectation compares `\Users\...` against
+// `D:\Users\...`. Mirror the production helper so the assertions stay about
+// resource derivation rather than the runner's drive letter.
+const appDataPath = resolve('/Users/example/Library/Application Support')
+const primaryUserDataPath = resolve(appDataPath, 'TaskWraith')
 const firstInstanceId = 'a'.repeat(32)
 const secondInstanceId = 'b'.repeat(32)
 
@@ -31,28 +36,33 @@ describe('createInstanceResourceIdentity', () => {
     const posture = isolatedPosture(firstInstanceId)
     const identity = createInstanceResourceIdentity({
       posture,
-      userDataPath: join(appDataPath, 'TaskWraith Instances', firstInstanceId)
+      userDataPath: resolve(appDataPath, 'TaskWraith Instances', firstInstanceId)
     })
 
     expect(identity).toMatchObject({
       postureKind: 'packaged-isolated',
       isPrivateProfile: true,
-      userDataPath: join(appDataPath, 'TaskWraith Instances', firstInstanceId),
-      geminiMcpSocketPath: join(
+      userDataPath: resolve(appDataPath, 'TaskWraith Instances', firstInstanceId),
+      geminiMcpSocketPath: resolve(
         appDataPath,
         'TaskWraith Instances',
         firstInstanceId,
         'taskwraith-gemini-mcp.sock'
       ),
-      bridgeLogDirectory: join(appDataPath, 'TaskWraith Instances', firstInstanceId, 'bridge-logs'),
-      bridgeLogPath: join(
+      bridgeLogDirectory: resolve(
+        appDataPath,
+        'TaskWraith Instances',
+        firstInstanceId,
+        'bridge-logs'
+      ),
+      bridgeLogPath: resolve(
         appDataPath,
         'TaskWraith Instances',
         firstInstanceId,
         'bridge-logs',
         'bridge-subprocess.log'
       ),
-      bridgeLogEpochPath: join(
+      bridgeLogEpochPath: resolve(
         appDataPath,
         'TaskWraith Instances',
         firstInstanceId,
@@ -67,11 +77,11 @@ describe('createInstanceResourceIdentity', () => {
   it('assigns independent sockets, logs, and epoch namespaces to independent profiles', () => {
     const first = createInstanceResourceIdentity({
       posture: isolatedPosture(firstInstanceId),
-      userDataPath: join(appDataPath, 'TaskWraith Instances', firstInstanceId)
+      userDataPath: resolve(appDataPath, 'TaskWraith Instances', firstInstanceId)
     })
     const second = createInstanceResourceIdentity({
       posture: isolatedPosture(secondInstanceId),
-      userDataPath: join(appDataPath, 'TaskWraith Instances', secondInstanceId)
+      userDataPath: resolve(appDataPath, 'TaskWraith Instances', secondInstanceId)
     })
 
     expect(first.geminiMcpSocketPath).not.toBe(second.geminiMcpSocketPath)
@@ -89,7 +99,7 @@ describe('createInstanceResourceIdentity', () => {
 
     expect(primary.isPrivateProfile).toBe(false)
     expect(primary.geminiMcpSocketPath).toBe(
-      join(primaryUserDataPath, 'taskwraith-gemini-mcp.sock')
+      resolve(primaryUserDataPath, 'taskwraith-gemini-mcp.sock')
     )
     expect(() =>
       createInstanceResourceIdentity({

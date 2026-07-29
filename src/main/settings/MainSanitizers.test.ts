@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMainSanitizers,
@@ -1495,7 +1496,7 @@ describe('MainSanitizers settings patches', () => {
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
     const grant = {
       id: 'grant-shell-1',
-      workspacePath: '/Users/chris/repo',
+      workspacePath: resolve('/Users/chris/repo'),
       provider: 'codex' as const,
       service: 'shellCommands' as const,
       createdAt: '2026-07-20T00:00:00.000Z',
@@ -1550,7 +1551,7 @@ describe('MainSanitizers settings patches', () => {
 
   it('consolidates legacy per-provider workspace grants into one agents row per workspace/service', () => {
     const base = {
-      workspacePath: '/Users/chris/repo',
+      workspacePath: resolve('/Users/chris/repo'),
       service: 'fileChanges' as const,
       expiresOn: 'workspace_revocation' as const
     }
@@ -1588,7 +1589,7 @@ describe('MainSanitizers settings patches', () => {
     expect(merged).toEqual([
       {
         id: 'grant-codex', // first member's id — stable across repeated runs
-        workspacePath: '/Users/chris/repo',
+        workspacePath: resolve('/Users/chris/repo'),
         provider: 'agents',
         service: 'fileChanges',
         createdAt: '2026-04-01T00:00:00.000Z', // earliest consent in the group
@@ -1605,7 +1606,7 @@ describe('MainSanitizers settings patches', () => {
   it('keeps an existing agents row id, unions expiry, and leaves canvasInteraction rows alone', () => {
     const agentsRow = {
       id: 'grant-agents-keep',
-      workspacePath: '/Users/chris/repo',
+      workspacePath: resolve('/Users/chris/repo'),
       provider: 'agents' as const,
       service: 'fileChanges' as const,
       createdAt: '2026-06-01T00:00:00.000Z',

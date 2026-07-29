@@ -107,7 +107,11 @@ describe('resolveInstanceLaunchPosture', () => {
   })
 
   it('retains the narrow package-smoke posture and propagates it to trusted helpers', () => {
-    const smokeUserDataPath = '/tmp/taskwraith-tui-package-smoke-abc123'
+    // resolvePackagedSmokeUserDataPath returns `resolve(rawPath)`
+    // (InstanceLaunchPosture.ts:162,165), so the expectation has to be the
+    // resolved form or Windows compares `/tmp/...` against `D:\tmp\...`.
+    // Containment is unaffected: production resolves the temporary root too.
+    const smokeUserDataPath = resolve('/tmp/taskwraith-tui-package-smoke-abc123')
     const posture = resolveInstanceLaunchPosture({
       isPackaged: true,
       argv: [PACKAGE_SMOKE_ARG, `${PACKAGE_SMOKE_USER_DATA_ARG}${smokeUserDataPath}`],

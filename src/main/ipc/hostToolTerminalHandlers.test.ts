@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -109,12 +110,17 @@ describe('registerHostToolTerminalHandlers', () => {
       command: 'brew install gh',
       alreadyInstalled: false
     })
-    const script = deps.written.get('/userdata/login/hosttool-gh-install.command')
+    // The handler composes this with join() (hostToolTerminalHandlers.ts:134,180),
+    // so the lookup key must be composed the same way — a POSIX literal misses
+    // the map entirely on Windows and `script` comes back undefined. The darwin
+    // branch itself is already pinned through deps.getPlatform(), so this stays
+    // a macOS assertion on every runner.
+    const script = deps.written.get(join('/userdata', 'login', 'hosttool-gh-install.command'))
     expect(script).toContain('brew install gh')
     // brew itself is frequently only on the shell PATH, which is the very
     // narrowing this feature exists to work around.
     expect(script).toContain('source "$HOME/.zprofile"')
-    expect(deps.opened).toEqual(['/userdata/login/hosttool-gh-install.command'])
+    expect(deps.opened).toEqual([join('/userdata', 'login', 'hosttool-gh-install.command')])
   })
 
   it('drops the presence cache so the next probe sees a fresh install', async () => {

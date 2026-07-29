@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { TASKWRAITH_MCP_TOOLS } from '../TaskWraithMcpTools'
 import {
@@ -37,8 +37,8 @@ function runtimeFor(input: { socketPath: string; brokerToken: string; instanceEp
     getGeminiMcpSocketPath: () => input.socketPath,
     getGeminiMcpBrokerToken: () => input.brokerToken,
     getInstanceEpoch: () => input.instanceEpoch,
-    getAppPath: () => '/Applications/TaskWraith.app/Contents/Resources/app.asar',
-    getProcessExecPath: () => '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+    getAppPath: () => resolve('/Applications/TaskWraith.app/Contents/Resources/app.asar'),
+    getProcessExecPath: () => resolve('/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
     isDev: () => false,
     isPackaged: () => true
   } as never)
@@ -205,7 +205,7 @@ describe('MCP bridge packaged instance isolation', () => {
       const socketPath = join(directory, 'taskwraith-gemini-mcp.sock')
       const staticArgs = runtime.taskwraithMcpBridgeStaticRegistrationArgs()
       const server = {
-        command: '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+        command: resolve('/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
         args: staticArgs,
         trust: true,
         includeTools: [...TASKWRAITH_MCP_TOOLS]
@@ -233,14 +233,16 @@ describe('MCP bridge packaged instance isolation', () => {
     const stdin = new PassThrough()
     const stdout = new PassThrough()
     const exit = vi.fn()
-    const getDefaultSocketPath = vi.fn(() => '/private/primary/taskwraith-gemini-mcp.sock')
+    const getDefaultSocketPath = vi.fn(() => resolve('/private/primary/taskwraith-gemini-mcp.sock'))
     startGeminiMcpBridgeProcess({
       getDefaultSocketPath,
       getAppVersion: () => 'test',
       getMcpToolDefinitions: () => [],
       argv: ['taskwraith', GEMINI_MCP_BRIDGE_ARG, MCP_BRIDGE_ROUTE_FROM_ENV_ARG],
       env: {
-        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: '/private/primary/taskwraith-gemini-mcp.sock'
+        [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: resolve(
+          '/private/primary/taskwraith-gemini-mcp.sock'
+        )
       },
       stdin: stdin as never,
       stdout: stdout as never,
@@ -299,27 +301,27 @@ describe('MCP bridge packaged instance isolation', () => {
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG
         ],
         [
-          '/Applications/Electron.app/Contents/MacOS/Electron',
-          '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+          resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
+          resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
           GEMINI_MCP_BRIDGE_ARG,
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
           '--extra'
         ],
         [
-          '/Applications/Electron.app/Contents/MacOS/Electron',
+          resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
           GEMINI_MCP_BRIDGE_ARG,
-          '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+          resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG
         ],
         [
-          '/Applications/Electron.app/Contents/MacOS/Electron',
-          '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+          resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
+          resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
           '--agentbench-gemini-mcp-bridge',
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG
         ],
         [
-          '/Applications/Electron.app/Contents/MacOS/Electron',
-          '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+          resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
+          resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
           GEMINI_MCP_BRIDGE_ARG,
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG,
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG
@@ -331,7 +333,7 @@ describe('MCP bridge packaged instance isolation', () => {
         const stdout = new PassThrough()
         const exit = vi.fn()
         const brokerRequest = vi.fn()
-        const getDefaultSocketPath = vi.fn(() => '/private/must-not-fallback.sock')
+        const getDefaultSocketPath = vi.fn(() => resolve('/private/must-not-fallback.sock'))
         startGeminiMcpBridgeProcess({
           getDefaultSocketPath,
           getAppVersion: () => 'test',
@@ -381,7 +383,7 @@ describe('MCP bridge packaged instance isolation', () => {
         const stdin = new PassThrough()
         const stdout = new PassThrough()
         const exit = vi.fn()
-        const getDefaultSocketPath = vi.fn(() => '/private/must-not-fallback.sock')
+        const getDefaultSocketPath = vi.fn(() => resolve('/private/must-not-fallback.sock'))
         startGeminiMcpBridgeProcess({
           getDefaultSocketPath,
           getAppVersion: () => 'test',
@@ -513,8 +515,8 @@ describe('MCP bridge packaged instance isolation', () => {
         getAppVersion: () => 'test',
         getMcpToolDefinitions: () => [{ name: 'read_file' }],
         argv: [
-          '/Applications/Electron.app/Contents/MacOS/Electron',
-          '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+          resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
+          resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
           GEMINI_MCP_BRIDGE_ARG,
           MCP_BRIDGE_ROUTE_FROM_ENV_ARG
         ],

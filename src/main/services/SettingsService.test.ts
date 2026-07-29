@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SettingsService,
@@ -242,7 +243,7 @@ describe('SettingsService', () => {
 
     const grant = {
       id: 'grant-1',
-      workspacePath: '/repo',
+      workspacePath: resolve('/repo'),
       provider: 'codex' as const,
       service: 'shellCommands' as const,
       createdAt: '2026-07-20T00:00:00.000Z',

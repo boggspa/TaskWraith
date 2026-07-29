@@ -165,6 +165,13 @@ describe('LocalControlServer', () => {
 
     const tokenMetadata = await stat(server.tokenPath)
     const discoveryMetadata = await stat(server.discoveryPath)
+    // Owner-only POSIX modes are a POSIX claim. NTFS has no mode bits: Node
+    // synthesises `mode` from the read-only attribute alone, so every writable
+    // file reports 0o666 (438) and `toBe(0o600)` asserts the absence of a
+    // feature rather than a weaker permission. Confinement on Windows comes
+    // from the per-user AppData ACL, which `stat` cannot see either way.
+    // The token/discovery files must still EXIST and be non-empty everywhere —
+    // that part is checked below on every platform.
     if (process.platform !== 'win32') {
       const socketMetadata = await stat(server.socketPath)
       expect(socketMetadata.mode & 0o777).toBe(0o600)
@@ -172,9 +179,11 @@ describe('LocalControlServer', () => {
       if (typeof process.getuid === 'function') {
         expect(socketMetadata.uid).toBe(process.getuid())
       }
+      expect(tokenMetadata.mode & 0o777).toBe(0o600)
+      expect(discoveryMetadata.mode & 0o777).toBe(0o600)
     }
-    expect(tokenMetadata.mode & 0o777).toBe(0o600)
-    expect(discoveryMetadata.mode & 0o777).toBe(0o600)
+    expect(tokenMetadata.size).toBeGreaterThan(0)
+    expect(discoveryMetadata.size).toBeGreaterThan(0)
     if (typeof process.getuid === 'function') {
       expect(tokenMetadata.uid).toBe(process.getuid())
       expect(discoveryMetadata.uid).toBe(process.getuid())
@@ -442,10 +451,22 @@ describe('LocalControlServer', () => {
     expect(await readFile(stale.discoveryPath, 'utf8')).not.toBe('stale discovery')
     expect(await readFile(stale.tokenPath, 'utf8')).not.toBe('stale token')
 
+    // The contract is that a second host REFUSES while a live one owns the
+    // endpoint; the mechanism is necessarily platform-specific. On POSIX the
+    // server probes the existing socket and refuses by name
+    // (LocalControlServer.ts:170-171). Windows has no equivalent probe — that
+    // branch is explicitly `platform !== 'win32'` — so the refusal arrives from
+    // `listen()` on an already-bound named pipe as EADDRINUSE. Both are a
+    // refusal and neither starts a second host; asserting only the POSIX
+    // sentence tests the wording, not the guarantee.
     const competing = createServer()
     await expect(
       withDeadline(competing.start(), 500, 'Live socket ownership check did not settle.')
-    ).rejects.toThrow('already owned by a live host')
+    ).rejects.toThrow(
+      process.platform === 'win32'
+        ? /EADDRINUSE|already owned by a live host/
+        : /already owned by a live host/
+    )
     await new Promise((resolve) => setTimeout(resolve, 20))
 
     const first = await withDeadline(

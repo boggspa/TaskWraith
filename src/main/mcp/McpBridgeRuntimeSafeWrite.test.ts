@@ -3,7 +3,7 @@ import { spawn } from 'child_process'
 import { createConnection } from 'net'
 import { syncBuiltinESMExports } from 'module'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { buildSync } from 'esbuild'
 import { describe, expect, it, vi } from 'vitest'
@@ -36,6 +36,14 @@ function privateBridgeTestDirectory(prefix: string): string {
   fs.chmodSync(path, 0o700)
   return path
 }
+
+// Canonical on the host, not a POSIX literal: normalizeMcpSocketPathForBridgeLog
+// (McpBridgeRuntime.ts:562) throws unless `resolve(socketPath) === socketPath`,
+// and on Windows `resolve('/tmp/...')` prefixes the current drive — so four
+// argv-composition cases died on 'MCP bridge socket path is invalid.' with
+// nothing wrong with the argv. `resolve()` is identity on POSIX (it does not
+// follow the /tmp symlink), so this changes nothing off Windows.
+const SOCKET_PATH = resolve('/tmp/taskwraith.sock')
 
 describe('MCP bridge stream writes', () => {
   it('clears the exact bridge diagnostic log during a full history purge', () => {
@@ -641,7 +649,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
@@ -654,7 +662,7 @@ describe('MCP bridge stream writes', () => {
         cwd: () => '/repo/subdir',
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -667,7 +675,7 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({
         id: 7,
         token: 'token-1',
@@ -693,7 +701,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest: vi.fn(async () => {
@@ -701,7 +709,7 @@ describe('MCP bridge stream writes', () => {
         }),
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -777,7 +785,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
@@ -788,7 +796,7 @@ describe('MCP bridge stream writes', () => {
         cwd: () => '/repo',
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -801,7 +809,7 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({
         tool: 'ask_user_question',
         parentProvider: 'claude'
@@ -1067,7 +1075,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [
           { name: 'read_file' },
@@ -1077,7 +1085,7 @@ describe('MCP bridge stream writes', () => {
         env: { TASKWRAITH_MCP_CORE_SUBSET: '1' },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 9, method: 'tools/list' },
       'line'
@@ -1093,7 +1101,7 @@ describe('MCP bridge stream writes', () => {
     const chunks: string[] = []
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [
           { name: 'read_file' },
@@ -1106,7 +1114,7 @@ describe('MCP bridge stream writes', () => {
           })
         } as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 91, method: 'tools/list' },
       'line'
@@ -1129,7 +1137,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [
           { name: 'read_file' },
@@ -1142,7 +1150,7 @@ describe('MCP bridge stream writes', () => {
         },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 16, method: 'tools/list' },
       'line'
@@ -1167,13 +1175,13 @@ describe('MCP bridge stream writes', () => {
       const chunks: string[] = []
       handleMcpJsonRpcMessage(
         {
-          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getDefaultSocketPath: () => SOCKET_PATH,
           getAppVersion: () => '1.0.0',
           getMcpToolDefinitions: () => tools,
           env,
           stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
         },
-        '/tmp/taskwraith.sock',
+        SOCKET_PATH,
         'token-1',
         { jsonrpc: '2.0', id: 24, method: 'tools/list' },
         'line'
@@ -1201,13 +1209,13 @@ describe('MCP bridge stream writes', () => {
       const chunks: string[] = []
       handleMcpJsonRpcMessage(
         {
-          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getDefaultSocketPath: () => SOCKET_PATH,
           getAppVersion: () => '1.0.0',
           getMcpToolDefinitions: () => tools,
           env,
           stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
         },
-        '/tmp/taskwraith.sock',
+        SOCKET_PATH,
         'token-1',
         { jsonrpc: '2.0', id: 25, method: 'tools/list' },
         'line'
@@ -1240,14 +1248,14 @@ describe('MCP bridge stream writes', () => {
       const brokerRequest = vi.fn(async () => ({ ok: true, text: 'updated' }))
       handleMcpJsonRpcMessage(
         {
-          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getDefaultSocketPath: () => SOCKET_PATH,
           getAppVersion: () => '1.0.0',
           getMcpToolDefinitions: () => [],
           brokerRequest,
           env,
           stdout: { write: vi.fn(() => true) } as never
         },
-        '/tmp/taskwraith.sock',
+        SOCKET_PATH,
         'token-1',
         {
           jsonrpc: '2.0',
@@ -1272,7 +1280,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_SKETCH_DIRECT: '1'
     })
     expect(fresh).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({
         tool: 'canvas_sketch_update',
         arguments: { canvasId: 'sketch-1', mode: 'clear' }
@@ -1292,7 +1300,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
@@ -1302,7 +1310,7 @@ describe('MCP bridge stream writes', () => {
         },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1318,7 +1326,7 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({
         tool: 'capability_invoke',
         arguments: {
@@ -1337,7 +1345,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
@@ -1347,7 +1355,7 @@ describe('MCP bridge stream writes', () => {
         },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1360,7 +1368,7 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({ tool: 'capability_search' })
     )
   })
@@ -1377,7 +1385,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
@@ -1387,7 +1395,7 @@ describe('MCP bridge stream writes', () => {
         },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1421,14 +1429,14 @@ describe('MCP bridge stream writes', () => {
 
       handleMcpJsonRpcMessage(
         {
-          getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+          getDefaultSocketPath: () => SOCKET_PATH,
           getAppVersion: () => '1.0.0',
           getMcpToolDefinitions: () => [],
           brokerRequest,
           env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },
           stdout: stream as never
         },
-        '/tmp/taskwraith.sock',
+        SOCKET_PATH,
         'token-1',
         {
           jsonrpc: '2.0',
@@ -1460,7 +1468,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [
           { name: 'read_file' },
@@ -1473,7 +1481,7 @@ describe('MCP bridge stream writes', () => {
         },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 11, method: 'tools/list' },
       'line'
@@ -1497,7 +1505,7 @@ describe('MCP bridge stream writes', () => {
       })
     }
     const deps = {
-      getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+      getDefaultSocketPath: () => SOCKET_PATH,
       getAppVersion: () => '1.0.0',
       getMcpToolDefinitions: () => [
         { name: 'read_file' },
@@ -1516,7 +1524,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       deps,
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 14, method: 'tools/list' },
       'line'
@@ -1529,7 +1537,7 @@ describe('MCP bridge stream writes', () => {
     chunks.length = 0
     handleMcpJsonRpcMessage(
       deps,
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1561,14 +1569,14 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
         env: { TASKWRAITH_MCP_CORE_SUBSET: '1' },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1598,14 +1606,14 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       {
-        getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+        getDefaultSocketPath: () => SOCKET_PATH,
         getAppVersion: () => '1.0.0',
         getMcpToolDefinitions: () => [],
         brokerRequest,
         env: { TASKWRAITH_MCP_GATEWAY_SUBSET: '1' },
         stdout: stream as never
       },
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1637,7 +1645,7 @@ describe('MCP bridge stream writes', () => {
       })
     }
     const deps = {
-      getDefaultSocketPath: () => '/tmp/taskwraith.sock',
+      getDefaultSocketPath: () => SOCKET_PATH,
       getAppVersion: () => '1.0.0',
       getMcpToolDefinitions: () => [{ name: 'read_file' }],
       brokerRequest,
@@ -1650,7 +1658,7 @@ describe('MCP bridge stream writes', () => {
 
     handleMcpJsonRpcMessage(
       deps,
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       { jsonrpc: '2.0', id: 12, method: 'tools/list' },
       'line'
@@ -1668,7 +1676,7 @@ describe('MCP bridge stream writes', () => {
     chunks.length = 0
     handleMcpJsonRpcMessage(
       deps,
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       'token-1',
       {
         jsonrpc: '2.0',
@@ -1681,7 +1689,7 @@ describe('MCP bridge stream writes', () => {
     await new Promise((resolve) => setImmediate(resolve))
 
     expect(brokerRequest).toHaveBeenCalledWith(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       expect.objectContaining({ tool: 'audit_record_finding' })
     )
   })
@@ -1715,12 +1723,12 @@ describe('MCP bridge stream writes', () => {
 
   it('carries the core profile atomically in bridge argv', () => {
     const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
       getGeminiMcpBrokerToken: () => 'token-1',
       isDev: () => false
     } as never)
 
-    const args = runtime.taskwraithMcpBridgeArgs('/tmp/taskwraith.sock', false, false, true)
+    const args = runtime.taskwraithMcpBridgeArgs(SOCKET_PATH, false, false, true)
 
     expect(args).toContain(GEMINI_MCP_CORE_SUBSET_ARG)
     expect(args).toContain(GEMINI_MCP_LOG_EPOCH_ARG)
@@ -1730,13 +1738,13 @@ describe('MCP bridge stream writes', () => {
 
   it('carries the gateway profile atomically in bridge argv', () => {
     const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
       getGeminiMcpBrokerToken: () => 'token-1',
       isDev: () => false
     } as never)
 
     const args = runtime.taskwraithMcpBridgeArgs(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       false,
       false,
       false,
@@ -1749,12 +1757,12 @@ describe('MCP bridge stream writes', () => {
 
   it('carries the mesh-direct catalogue receipt atomically beside the gateway profile', () => {
     const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
       getGeminiMcpBrokerToken: () => 'token-1',
       isDev: () => false
     } as never)
     const args = runtime.taskwraithMcpBridgeArgs(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       false,
       false,
       false,
@@ -1773,12 +1781,12 @@ describe('MCP bridge stream writes', () => {
 
   it('carries the sketch-direct v8 receipt atomically beside the gateway profile', () => {
     const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => '/tmp/taskwraith.sock',
+      getGeminiMcpSocketPath: () => SOCKET_PATH,
       getGeminiMcpBrokerToken: () => 'token-1',
       isDev: () => false
     } as never)
     const args = runtime.taskwraithMcpBridgeArgs(
-      '/tmp/taskwraith.sock',
+      SOCKET_PATH,
       false,
       false,
       false,
@@ -1839,7 +1847,7 @@ describe('MCP bridge stream writes', () => {
     } as never)
 
     await expect(
-      runtime.addKimiMcpBridgeRegistration('/usr/local/bin/kimi', '/tmp/taskwraith.sock')
+      runtime.addKimiMcpBridgeRegistration('/usr/local/bin/kimi', SOCKET_PATH)
     ).rejects.toThrow(
       'Global Kimi MCP registration is retired; managed Kimi uses a per-run authenticated HTTP gateway.'
     )

@@ -40,9 +40,14 @@ const appDataPath = resolve('/Users/example/Library/Application Support')
 const temporaryDirectory = '/tmp'
 const isolatedInstanceIdKey = MCP_BRIDGE_ENDPOINT_ENV_KEYS.isolatedInstanceId
 
+// The Electron app-path in a dev static-bridge argv gets the SAME canonicality
+// guard as a socket path: isDevStaticMcpBridgeProcessArgv (McpBridgeRoute.ts:423)
+// requires `resolve(appPath) === appPath`. A POSIX literal fails that on Windows,
+// the argv stops being exact route grammar, and the posture comes back `invalid`
+// — which reads as a rejected dev profile rather than an unresolvable fixture.
 function staticBridgeArgv(): string[] {
   return [
-    '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith',
+    resolve('/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
     MCP_BRIDGE_ENTRY_ARG,
     MCP_BRIDGE_ROUTE_FROM_ENV_ARG
   ]
@@ -50,8 +55,8 @@ function staticBridgeArgv(): string[] {
 
 function staticDevBridgeArgv(): string[] {
   return [
-    '/Applications/Electron.app/Contents/MacOS/Electron',
-    '/Applications/TaskWraith Dev.app/Contents/Resources/app.asar',
+    resolve('/Applications/Electron.app/Contents/MacOS/Electron'),
+    resolve('/Applications/TaskWraith Dev.app/Contents/Resources/app.asar'),
     MCP_BRIDGE_ENTRY_ARG,
     MCP_BRIDGE_ROUTE_FROM_ENV_ARG
   ]

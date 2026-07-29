@@ -216,34 +216,114 @@ describe('LaunchManager — self-launch refusal', () => {
     expect(JSON.stringify(persisted)).not.toContain('taskwraith-mcp-route-from-env')
   })
 
-  it('recognizes canonical, relative, and symlink aliases of the packaged executable', async () => {
-    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-alias-'))
-    const packageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-package-'))
-    const ownExecutable = path.join(
-      packageRoot,
-      'TaskWraith.app',
-      'Contents',
-      'MacOS',
-      'TaskWraith'
-    )
-    const ownRoot = path.join(packageRoot, 'TaskWraith.app', 'Contents', 'Resources', 'app.asar')
-    await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
-    await fs.writeFile(ownExecutable, '#!/bin/sh\n')
-    const symlinkAlias = path.join(workspacePath, 'TaskWraith-symlink')
-    await fs.symlink(ownExecutable, symlinkAlias)
-    const canonicalExecutable = await fs.realpath(ownExecutable)
-    const aliases = [
-      { label: 'canonical', argv0: ownExecutable },
-      { label: 'relative', argv0: path.relative(workspacePath, ownExecutable) },
-      { label: 'symlink', argv0: symlinkAlias }
-    ]
+  // Host-gated, not platform-gated: selfAwareFixture pins the manager to
+  // `darwin`, so canonicalLaunchPath uses path.posix (LaunchManager.ts:824,845)
+  // while these fixtures are REAL files from os.tmpdir(). On a Windows runner
+  // that returns `C:\Users\RUNNER~1\...`, which posix does not consider
+  // absolute — so it anchors the token at the repo cwd and the manager compares
+  // `/a/TaskWraith/TaskWraith/C:\Users\...` against a realpath. There is no
+  // way to have both a real temp directory and POSIX path semantics on Windows.
+  // Nothing is lost: the darwin behaviour is asserted on macOS and Linux, and
+  // Windows executable identity has its own win32-pinned case below, which uses
+  // synthetic `C:\Program Files\...` paths precisely to avoid this collision.
+  it.skipIf(process.platform === 'win32')(
+    'recognizes canonical, relative, and symlink aliases of the packaged executable',
+    async () => {
+      const workspacePath = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'taskwraith-launch-self-alias-')
+      )
+      const packageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-package-'))
+      const ownExecutable = path.join(
+        packageRoot,
+        'TaskWraith.app',
+        'Contents',
+        'MacOS',
+        'TaskWraith'
+      )
+      const ownRoot = path.join(packageRoot, 'TaskWraith.app', 'Contents', 'Resources', 'app.asar')
+      await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
+      await fs.writeFile(ownExecutable, '#!/bin/sh\n')
+      const symlinkAlias = path.join(workspacePath, 'TaskWraith-symlink')
+      await fs.symlink(ownExecutable, symlinkAlias)
+      const canonicalExecutable = await fs.realpath(ownExecutable)
+      const aliases = [
+        { label: 'canonical', argv0: ownExecutable },
+        { label: 'relative', argv0: path.relative(workspacePath, ownExecutable) },
+        { label: 'symlink', argv0: symlinkAlias }
+      ]
 
-    for (const [index, alias] of aliases.entries()) {
-      const storagePath = await tempFile()
-      const isolatedInstanceId = String(index + 1).repeat(32)
+      for (const [index, alias] of aliases.entries()) {
+        const storagePath = await tempFile()
+        const isolatedInstanceId = String(index + 1).repeat(32)
+        const mint = vi.fn(() => isolatedInstanceId)
+        const fixture = selfAwareFixture(storagePath, workspacePath, {
+          appRootPath: ownRoot,
+          appExecutablePath: ownExecutable,
+          createIsolatedInstanceId: mint
+        })
+
+        const result = await fixture.manager.startTarget({
+          sender: null,
+          provider: 'codex',
+          target: target(workspacePath, {
+            label: 'TaskWraith ' + alias.label,
+            command: {
+              raw: alias.argv0 + ' --qa',
+              argv: [alias.argv0, '--qa'],
+              cwd: workspacePath,
+              longRunning: true
+            }
+          })
+        })
+
+        expect(result.ok).toBe(true)
+        expect(mint).toHaveBeenCalledTimes(1)
+        expect(fixture.spawnProcess).toHaveBeenCalledWith(
+          canonicalExecutable,
+          ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+          expect.objectContaining({ shell: false })
+        )
+      }
+    }
+  )
+
+  // Host-gated, not platform-gated: selfAwareFixture pins the manager to
+  // `darwin`, so canonicalLaunchPath uses path.posix (LaunchManager.ts:824,845)
+  // while these fixtures are REAL files from os.tmpdir(). On a Windows runner
+  // that returns `C:\Users\RUNNER~1\...`, which posix does not consider
+  // absolute — so it anchors the token at the repo cwd and the manager compares
+  // `/a/TaskWraith/TaskWraith/C:\Users\...` against a realpath. There is no
+  // way to have both a real temp directory and POSIX path semantics on Windows.
+  // Nothing is lost: the darwin behaviour is asserted on macOS and Linux, and
+  // Windows executable identity has its own win32-pinned case below, which uses
+  // synthetic `C:\Program Files\...` paths precisely to avoid this collision.
+  it.skipIf(process.platform === 'win32')(
+    'uses the filesystem case identity instead of unconditional case folding',
+    async () => {
+      const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-case-'))
+      const packageRoot = await fs.mkdtemp(
+        path.join(os.tmpdir(), 'taskwraith-launch-case-package-')
+      )
+      const ownExecutable = path.join(
+        packageRoot,
+        'TaskWraith.app',
+        'Contents',
+        'MacOS',
+        'TaskWraith'
+      )
+      await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
+      await fs.writeFile(ownExecutable, '#!/bin/sh\n')
+      const caseAlias = path.join(path.dirname(ownExecutable), 'taskwraith')
+      let aliasesTheSameFile = false
+      try {
+        aliasesTheSameFile = (await fs.realpath(caseAlias)) === (await fs.realpath(ownExecutable))
+      } catch {
+        // A case-sensitive volume must not accidentally classify a nonexistent
+        // case variant as this app merely because the product is usually on macOS.
+      }
+      const isolatedInstanceId = 'c'.repeat(32)
       const mint = vi.fn(() => isolatedInstanceId)
-      const fixture = selfAwareFixture(storagePath, workspacePath, {
-        appRootPath: ownRoot,
+      const fixture = selfAwareFixture(await tempFile(), workspacePath, {
         appExecutablePath: ownExecutable,
         createIsolatedInstanceId: mint
       })
@@ -252,10 +332,9 @@ describe('LaunchManager — self-launch refusal', () => {
         sender: null,
         provider: 'codex',
         target: target(workspacePath, {
-          label: 'TaskWraith ' + alias.label,
           command: {
-            raw: alias.argv0 + ' --qa',
-            argv: [alias.argv0, '--qa'],
+            raw: caseAlias + ' --qa',
+            argv: [caseAlias, '--qa'],
             cwd: workspacePath,
             longRunning: true
           }
@@ -263,68 +342,19 @@ describe('LaunchManager — self-launch refusal', () => {
       })
 
       expect(result.ok).toBe(true)
-      expect(mint).toHaveBeenCalledTimes(1)
-      expect(fixture.spawnProcess).toHaveBeenCalledWith(
-        canonicalExecutable,
-        ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
-        expect.objectContaining({ shell: false })
-      )
+      if (aliasesTheSameFile) {
+        expect(mint).toHaveBeenCalledTimes(1)
+        expect(fixture.spawnProcess).toHaveBeenCalledWith(
+          await fs.realpath(ownExecutable),
+          ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
+          expect.anything()
+        )
+      } else {
+        expect(mint).not.toHaveBeenCalled()
+        expect(fixture.spawnProcess).toHaveBeenCalledWith(caseAlias, ['--qa'], expect.anything())
+      }
     }
-  })
-
-  it('uses the filesystem case identity instead of unconditional case folding', async () => {
-    const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-case-'))
-    const packageRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-case-package-'))
-    const ownExecutable = path.join(
-      packageRoot,
-      'TaskWraith.app',
-      'Contents',
-      'MacOS',
-      'TaskWraith'
-    )
-    await fs.mkdir(path.dirname(ownExecutable), { recursive: true })
-    await fs.writeFile(ownExecutable, '#!/bin/sh\n')
-    const caseAlias = path.join(path.dirname(ownExecutable), 'taskwraith')
-    let aliasesTheSameFile = false
-    try {
-      aliasesTheSameFile = (await fs.realpath(caseAlias)) === (await fs.realpath(ownExecutable))
-    } catch {
-      // A case-sensitive volume must not accidentally classify a nonexistent
-      // case variant as this app merely because the product is usually on macOS.
-    }
-    const isolatedInstanceId = 'c'.repeat(32)
-    const mint = vi.fn(() => isolatedInstanceId)
-    const fixture = selfAwareFixture(await tempFile(), workspacePath, {
-      appExecutablePath: ownExecutable,
-      createIsolatedInstanceId: mint
-    })
-
-    const result = await fixture.manager.startTarget({
-      sender: null,
-      provider: 'codex',
-      target: target(workspacePath, {
-        command: {
-          raw: caseAlias + ' --qa',
-          argv: [caseAlias, '--qa'],
-          cwd: workspacePath,
-          longRunning: true
-        }
-      })
-    })
-
-    expect(result.ok).toBe(true)
-    if (aliasesTheSameFile) {
-      expect(mint).toHaveBeenCalledTimes(1)
-      expect(fixture.spawnProcess).toHaveBeenCalledWith(
-        await fs.realpath(ownExecutable),
-        ['--qa', '--taskwraith-isolated-instance=' + isolatedInstanceId],
-        expect.anything()
-      )
-    } else {
-      expect(mint).not.toHaveBeenCalled()
-      expect(fixture.spawnProcess).toHaveBeenCalledWith(caseAlias, ['--qa'], expect.anything())
-    }
-  })
+  )
 
   it('uses case-insensitive executable identity on Windows', async () => {
     const workspacePath = await fs.mkdtemp(path.join(os.tmpdir(), 'taskwraith-launch-self-win32-'))
