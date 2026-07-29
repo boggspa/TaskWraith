@@ -260,13 +260,13 @@ user choices, and the exact data boundary.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Latest tagged public release: **v1.8.9**. Download installers from
-[GitHub Releases](https://github.com/boggspa/TaskWraith/releases/tag/v1.8.9)
+Download installers from the
+[latest GitHub Release](https://github.com/boggspa/TaskWraith/releases/latest)
 (see [Try a packaged build](#try-a-packaged-build)). See
 [CHANGELOG.md](CHANGELOG.md) for release notes. This checkout may contain
-additional repository work; the changelog's top **1.9.0 source-ahead** entry
-describes those changes only. They are not shipped until a new tag and matching
-artifacts are published.
+repository work newer than the latest tag; the changelog's top **source-ahead**
+entry describes those changes only. They are not shipped until a new tag and
+matching artifacts are published.
 
 ## Managed Enterprise Boundary
 
@@ -306,19 +306,20 @@ credentials are available, and secret-bundle guards. Commits carry
 ## Try a packaged build
 
 If you want to run TaskWraith without building from source, use the installers
-on the latest public release:
-[**v1.8.9 on GitHub Releases**](https://github.com/boggspa/TaskWraith/releases/tag/v1.8.9).
+on the
+[**latest GitHub Release**](https://github.com/boggspa/TaskWraith/releases/latest).
 
-Verified artifacts on that tag (names match the uploaded files exactly):
+Verified artifacts on each release (names match the uploaded files exactly, with
+`<version>` standing in for that release's version):
 
 | Platform | Artifact |
 | --- | --- |
-| macOS (Apple Silicon + Intel, universal) | `TaskWraith-1.8.9-universal-mac.dmg` (also `.zip`) |
-| Windows x64 | `TaskWraith-1.8.9-win-x64-setup.exe` |
-| Windows arm64 | `TaskWraith-1.8.9-win-arm64-setup.exe` |
-| Linux | `TaskWraith-1.8.9.AppImage` or `taskwraith_1.8.9_amd64.deb` |
+| macOS (Apple Silicon + Intel, universal) | `TaskWraith-<version>-universal-mac.dmg` (also `.zip`) |
+| Windows x64 | `TaskWraith-<version>-win-x64-setup.exe` |
+| Windows arm64 | `TaskWraith-<version>-win-arm64-setup.exe` |
+| Linux | `TaskWraith-<version>.AppImage` or `taskwraith_<version>_amd64.deb` |
 
-Checksums for those files are listed in `SHA256SUMS-1.8.9.txt` on the same
+Checksums for those files are listed in `SHA256SUMS-<version>.txt` on the same
 release page. Prefer the checksum-listed filenames over similarly named CI or
 side-channel builds.
 
