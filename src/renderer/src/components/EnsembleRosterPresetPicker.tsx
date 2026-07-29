@@ -161,6 +161,18 @@ export function rosterPresetMenuMeta(preset: EnsembleRosterPreset): string {
   }`
 }
 
+export function rosterPresetInteractionState(
+  ensemble: EnsembleConfig | null | undefined,
+  roundRunning: boolean
+): { canSave: boolean; canApply: boolean; applyAtBoundary: boolean } {
+  const available = Boolean(ensemble)
+  return {
+    canSave: available,
+    canApply: available,
+    applyAtBoundary: available && roundRunning
+  }
+}
+
 export function EnsembleRosterPresetPicker({
   ensemble,
   disabled = false,
@@ -174,6 +186,7 @@ export function EnsembleRosterPresetPicker({
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<{ left: number; top: number } | null>(null)
   const [presetNameDialog, setPresetNameDialog] = useState<PresetNameDialogState | null>(null)
+  const [pendingPresetName, setPendingPresetName] = useState<string | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const presetNameInputRef = useRef<HTMLInputElement | null>(null)
@@ -192,6 +205,10 @@ export function EnsembleRosterPresetPicker({
       setPresets(listEnsembleRosterPresets())
     })
   }, [])
+
+  useEffect(() => {
+    if (!disabled) setPendingPresetName(null)
+  }, [disabled])
 
   const rosterSelection = rosterPresetSelectionForEnsemble(ensemble, presets)
   const activePreset = rosterSelection.preset
@@ -289,19 +306,22 @@ export function EnsembleRosterPresetPicker({
     }
   }, [presetDialogOpen])
 
-  const canSave = Boolean(ensemble) && !disabled
+  const interactionState = rosterPresetInteractionState(ensemble, disabled)
+  const canSave = interactionState.canSave
   const defaultOverwritePreset = defaultRosterOverwritePreset(ensemble, presets)
   const canOverwriteActivePreset = canSave && Boolean(defaultOverwritePreset)
-  const triggerLabel = rosterPresetTriggerLabel(activePreset?.name)
+  const triggerLabel = pendingPresetName
+    ? `Pending: ${rosterPresetTriggerLabel(pendingPresetName)}`
+    : rosterPresetTriggerLabel(activePreset?.name)
 
   const handleSaveAsCurrent = (): void => {
-    if (!ensemble || disabled) return
+    if (!ensemble) return
     setPopoverOpen(false)
     setPresetNameDialog({ mode: 'save', name: currentRosterPresetName(presets), error: null })
   }
 
   const handleOverwritePreset = (preset?: EnsembleRosterPreset): void => {
-    if (!ensemble || disabled) return
+    if (!ensemble) return
     const target = preset || defaultOverwritePreset
     if (!target) {
       handleSaveAsCurrent()
@@ -320,7 +340,8 @@ export function EnsembleRosterPresetPicker({
   }
 
   const requestApplyPreset = (preset: EnsembleRosterPreset): void => {
-    if (disabled) return
+    if (!interactionState.canApply) return
+    setPendingPresetName(interactionState.applyAtBoundary ? preset.name : null)
     setPopoverOpen(false)
     onApplyPreset(preset)
   }
@@ -393,13 +414,18 @@ export function EnsembleRosterPresetPicker({
           aria-haspopup="menu"
           aria-expanded={popoverOpen}
           aria-label={
-            activePreset
+            pendingPresetName
+              ? `${pendingPresetName}, pending until the current round finishes`
+              : activePreset
               ? `${activePreset.name}${hasUnsavedChanges ? ', unsaved changes' : ''}`
               : ROSTER_TRIGGER_FALLBACK_LABEL
           }
           data-roster-preset-dirty={hasUnsavedChanges ? 'true' : 'false'}
+          data-roster-preset-pending={pendingPresetName ? 'true' : 'false'}
           title={
-            activePreset
+            pendingPresetName
+              ? `Pending after current round: ${pendingPresetName}`
+              : activePreset
               ? `${activePreset.name}${hasUnsavedChanges ? ' — unsaved changes' : ''}`
               : presets.length
                 ? `${presets.length} saved roster${presets.length === 1 ? '' : 's'}`
@@ -466,7 +492,7 @@ export function EnsembleRosterPresetPicker({
                     <button
                       type="button"
                       className="ensemble-roster-preset-popover-row-main-action"
-                      disabled={disabled}
+                      disabled={!interactionState.canApply}
                       onClick={() => {
                         requestApplyPreset(preset)
                       }}

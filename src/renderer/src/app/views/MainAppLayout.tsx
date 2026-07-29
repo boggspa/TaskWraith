@@ -99,6 +99,9 @@ import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
+import {
+  buildUserEnsembleRosterPresetApplyPlan
+} from '../../../../main/EnsembleRosterPresetApply'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 
@@ -793,7 +796,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     })
   }
   const applySideRosterPreset = (preset: any): void => {
-    if (!sideChat?.ensemble || isSideChatRunning) return
+    if (!sideChat?.ensemble) return
     const materialized = materializeParticipantsFromPresetWithBossman(preset.participants)
     const participants = hydrateParticipantsWithPooledAgentIdentity(materialized.participants)
     const firstEnabled =
@@ -802,6 +805,31 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
       preset.fanoutPolicy,
       preset.concurrentModeEnabled
     )
+    if (isSideChatRunning && firstEnabled) {
+      const pendingPlan = buildUserEnsembleRosterPresetApplyPlan({
+        preset,
+        participants,
+        bossmanParticipantId: materialized.bossmanParticipantId || firstEnabled.id,
+        secondInCommandParticipantId: materialized.secondInCommandParticipantId,
+        queuedAt: new Date().toISOString()
+      })
+      void window.api
+        .applyEnsembleRosterPresetAtBoundary({
+          chatId: sideChat.appChatId,
+          plan: pendingPlan
+        })
+        .then((result) => {
+          if (result.ok) {
+            persistSideChat(result.chat)
+          } else {
+            window.alert(result.message)
+          }
+        })
+        .catch((error) => {
+          window.alert(error instanceof Error ? error.message : 'Roster preset apply failed.')
+        })
+      return
+    }
     persistSideChatActivity({
       ...sideChat,
       providerMetadata: {

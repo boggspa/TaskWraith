@@ -6,6 +6,7 @@ import {
 } from '../lib/ensembleRosterPresets'
 import {
   defaultRosterOverwritePreset,
+  rosterPresetInteractionState,
   rosterPresetSelectionForEnsemble,
   rosterPresetMenuMeta,
   rosterPresetTriggerLabel,
@@ -61,6 +62,14 @@ function ensemble(): EnsembleConfig {
 }
 
 describe('EnsembleRosterPresetPicker', () => {
+  it('keeps preset library and apply actions responsive during a live round', () => {
+    expect(rosterPresetInteractionState(ensemble(), true)).toEqual({
+      canSave: true,
+      canApply: true,
+      applyAtBoundary: true
+    })
+  })
+
   it('summarizes saved roster contents for the picker menu', () => {
     const message = rosterPresetMenuMeta(preset(3))
 

@@ -22,6 +22,7 @@ import type {
   WorkflowDefinitionCreateInput,
   WorkflowDefinitionRendererUpdate
 } from '../main/store/types'
+import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
 import type {
@@ -1678,6 +1679,14 @@ const api = {
       error?: string
       message?: string
     }>,
+  applyEnsembleRosterPresetAtBoundary: (payload: {
+    chatId: string
+    plan: PendingEnsembleRosterPresetApply
+  }) =>
+    ipcRenderer.invoke('ensemble:apply-roster-preset', payload) as Promise<
+      | { ok: true; deferred: boolean; chat: ChatRecord; message: string }
+      | { ok: false; error: 'invalid_config' | 'not_ensemble'; message: string }
+    >,
   requestEnsembleParticipantSeatChange: (payload: {
     chatId: string
     participantId: string

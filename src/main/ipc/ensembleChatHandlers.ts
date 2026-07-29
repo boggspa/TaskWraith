@@ -4,6 +4,7 @@ import type {
   EnsembleLiveRoundConfigUpdateResult,
   EnsembleOrchestrator
 } from '../services/EnsembleOrchestrator'
+import { parsePendingEnsembleRosterPresetApply } from '../EnsembleRosterPresetApply'
 import type { ChatRecord, EnsembleFanoutPolicy, EnsembleOrchestrationMode } from '../store/types'
 
 const ENSEMBLE_FANOUT_POLICIES: readonly EnsembleFanoutPolicy[] = [
@@ -19,7 +20,10 @@ function invalidConfig(message: string): EnsembleLiveRoundConfigUpdateResult {
 }
 
 export interface EnsembleChatHandlerDeps {
-  getEnsembleOrchestrator: () => Pick<EnsembleOrchestrator, 'updateLiveRoundConfig'> | null
+  getEnsembleOrchestrator: () => Pick<
+    EnsembleOrchestrator,
+    'applyOrQueueUserRosterPreset' | 'updateLiveRoundConfig'
+  > | null
   getChat: (chatId: string) => ChatRecord | null
   /** Main renderers may address every chat; secondary renderers are scoped. */
   assertSenderChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
@@ -27,6 +31,10 @@ export interface EnsembleChatHandlerDeps {
   broadcastThreadUpdate: (chatId: string, options?: { remoteProjectionSnapshot?: boolean }) => void
   pushRemoteTaskCardDelta: (chatId: string) => void
 }
+
+export type UserEnsembleRosterPresetApplyResult =
+  | { ok: true; deferred: boolean; chat: ChatRecord; message: string }
+  | { ok: false; error: 'invalid_config' | 'not_ensemble'; message: string }
 
 /**
  * Composer-owned Ensemble controls. Unlike a participant-seat mutation these
@@ -99,6 +107,56 @@ export function registerEnsembleChatHandlers(deps: EnsembleChatHandlerDeps): voi
       deps.broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
       deps.pushRemoteTaskCardDelta(chatId)
       return result
+    }
+  )
+  ipcMain.handle(
+    'ensemble:apply-roster-preset',
+    (
+      event,
+      payload?: { chatId?: unknown; plan?: unknown }
+    ): UserEnsembleRosterPresetApplyResult => {
+      const chatId = typeof payload?.chatId === 'string' ? payload.chatId.trim() : ''
+      if (!chatId) {
+        return { ok: false, error: 'invalid_config', message: 'An Ensemble chat id is required.' }
+      }
+      deps.assertSenderChatScope(event, chatId)
+      const plan = parsePendingEnsembleRosterPresetApply(payload?.plan)
+      if (!plan || plan.authority !== 'user') {
+        return {
+          ok: false,
+          error: 'invalid_config',
+          message: 'The pending roster preset payload is invalid.'
+        }
+      }
+      const orchestrator = deps.getEnsembleOrchestrator()
+      if (!orchestrator) {
+        return {
+          ok: false,
+          error: 'invalid_config',
+          message: 'Ensemble orchestration is not initialized.'
+        }
+      }
+      const result = orchestrator.applyOrQueueUserRosterPreset(chatId, plan)
+      if (!result.ok) return result
+      const saved = deps.getChat(chatId)
+      if (!saved) {
+        return {
+          ok: false,
+          error: 'not_ensemble',
+          message: 'The Ensemble chat disappeared while applying the roster preset.'
+        }
+      }
+      deps.broadcastChatUpdated(saved)
+      deps.broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
+      deps.pushRemoteTaskCardDelta(chatId)
+      return {
+        ok: true,
+        deferred: result.deferred,
+        chat: saved,
+        message: result.deferred
+          ? `Roster preset "${plan.presetName}" will apply when the current round finishes.`
+          : `Roster preset "${plan.presetName}" applied immediately.`
+      }
     }
   )
 }

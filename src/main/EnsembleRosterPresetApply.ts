@@ -104,7 +104,7 @@ export interface PendingEnsembleRosterPresetApply {
   presetName: string
   queuedAt: string
   sourceRunId?: string
-  authority: 'solo_inherited_boss' | 'ensemble_boss' | 'ensemble_captain'
+  authority: 'user' | 'solo_inherited_boss' | 'ensemble_boss' | 'ensemble_captain'
   participants: EnsembleParticipant[]
   bossmanParticipantId: string
   secondInCommandParticipantId?: string
@@ -113,6 +113,60 @@ export interface PendingEnsembleRosterPresetApply {
   maxParticipants: number
   maxContinuationHops: number
   ensembleContextChars: number
+}
+
+export interface BuildUserEnsembleRosterPresetApplyPlanInput {
+  preset: EnsembleRosterPreset
+  participants: EnsembleParticipant[]
+  bossmanParticipantId: string
+  secondInCommandParticipantId?: string
+  queuedAt: string
+}
+
+/** Build a boundary-deferred roster change from an explicit renderer action. */
+export function buildUserEnsembleRosterPresetApplyPlan(
+  input: BuildUserEnsembleRosterPresetApplyPlanInput
+): PendingEnsembleRosterPresetApply {
+  const preset = cloneEnsembleRosterPreset(input.preset)
+  const maxParticipants = Math.min(
+    MAX_ROSTER_PRESET_PARTICIPANTS,
+    Math.max(input.participants.length, Math.round(preset.maxParticipants), 2)
+  )
+  const maxContinuationHops = Math.max(
+    1,
+    Math.min(
+      AGENT_ROSTER_MAX_CONTINUATION_HOPS,
+      Math.round(preset.maxContinuationHops ?? 6)
+    )
+  )
+  const ensembleContextChars = Math.max(
+    AGENT_ROSTER_CONTEXT_MIN_CHARS,
+    Math.min(
+      AGENT_ROSTER_CONTEXT_MAX_CHARS,
+      Math.round(preset.ensembleContextChars ?? 24_000)
+    )
+  )
+  return {
+    schemaVersion: 1,
+    presetId: preset.id,
+    presetName: preset.name,
+    queuedAt: input.queuedAt,
+    authority: 'user',
+    participants: input.participants.map((participant) => ({
+      ...participant,
+      linkedProviderSessionId: null
+    })),
+    bossmanParticipantId: input.bossmanParticipantId,
+    ...(input.secondInCommandParticipantId
+      ? { secondInCommandParticipantId: input.secondInCommandParticipantId }
+      : {}),
+    orchestrationMode:
+      preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
+    fanoutPolicy: normalizedFanoutPolicy(preset),
+    maxParticipants,
+    maxContinuationHops,
+    ensembleContextChars
+  }
 }
 
 export type BuildEnsembleRosterPresetApplyResult =
@@ -472,16 +526,20 @@ export function buildEnsembleRosterPresetApply(
   }
 }
 
-function isPendingEnsembleRosterPresetApply(
+export function parsePendingEnsembleRosterPresetApply(
   value: unknown
-): value is PendingEnsembleRosterPresetApply {
-  if (!value || typeof value !== 'object') return false
+): PendingEnsembleRosterPresetApply | null {
+  if (!value || typeof value !== 'object') return null
   const plan = value as PendingEnsembleRosterPresetApply
-  return (
+  const valid =
     plan.schemaVersion === 1 &&
     typeof plan.presetId === 'string' &&
     typeof plan.presetName === 'string' &&
     typeof plan.queuedAt === 'string' &&
+    (plan.authority === 'user' ||
+      plan.authority === 'solo_inherited_boss' ||
+      plan.authority === 'ensemble_boss' ||
+      plan.authority === 'ensemble_captain') &&
     Array.isArray(plan.participants) &&
     plan.participants.length >= 1 &&
     plan.participants.length <= MAX_ROSTER_PRESET_PARTICIPANTS &&
@@ -491,14 +549,14 @@ function isPendingEnsembleRosterPresetApply(
     typeof plan.maxParticipants === 'number' &&
     typeof plan.maxContinuationHops === 'number' &&
     typeof plan.ensembleContextChars === 'number'
-  )
+  return valid ? plan : null
 }
 
 export function readPendingEnsembleRosterPresetApply(
   chat: ChatRecord
 ): PendingEnsembleRosterPresetApply | null {
   const value = chat.providerMetadata?.[PENDING_ENSEMBLE_ROSTER_PRESET_APPLY_KEY]
-  return isPendingEnsembleRosterPresetApply(value) ? value : null
+  return parsePendingEnsembleRosterPresetApply(value)
 }
 
 export function hasPendingEnsembleRosterPresetApply(chat: ChatRecord): boolean {

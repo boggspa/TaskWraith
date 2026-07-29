@@ -41,11 +41,16 @@ function createDeps() {
     maxContinuationHops: 6,
     activeRoundUpdated: true
   }))
+  const applyOrQueueUserRosterPreset = vi.fn(() => ({ ok: true, deferred: true } as const))
   return {
     chat,
+    applyOrQueueUserRosterPreset,
     updateLiveRoundConfig,
     deps: {
-      getEnsembleOrchestrator: () => ({ updateLiveRoundConfig }),
+      getEnsembleOrchestrator: () => ({
+        applyOrQueueUserRosterPreset,
+        updateLiveRoundConfig
+      }),
       getChat: vi.fn(() => chat),
       assertSenderChatScope: vi.fn(),
       broadcastChatUpdated: vi.fn(),
@@ -59,6 +64,7 @@ describe('registerEnsembleChatHandlers', () => {
   it('registers the live Ensemble round configuration channel', () => {
     registerEnsembleChatHandlers(createDeps().deps)
     expect(handlerFor('ensemble:update-live-round-config')).toBeTypeOf('function')
+    expect(handlerFor('ensemble:apply-roster-preset')).toBeTypeOf('function')
   })
 
   it('authorizes, forwards, and broadcasts a valid live configuration update', () => {
@@ -132,5 +138,83 @@ describe('registerEnsembleChatHandlers', () => {
       )
     ).toThrow('Renderer chat ownership mismatch.')
     expect(updateLiveRoundConfig).not.toHaveBeenCalled()
+  })
+
+  it('queues a user roster atomically while the round is live', () => {
+    const { applyOrQueueUserRosterPreset, deps } = createDeps()
+    const chat = {
+      appChatId: 'chat-1',
+      chatKind: 'ensemble',
+      title: 'Live roster',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        orchestrationMode: 'turn_bound',
+        participants: [],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Work.',
+          startedAt: '2026-07-29T00:00:00.000Z',
+          activeParticipantId: 'current-seat',
+          participants: [
+            {
+              participantId: 'current-seat',
+              provider: 'codex',
+              role: 'Current',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      }
+    } as ChatRecord
+    deps.getChat.mockReturnValue(chat)
+    registerEnsembleChatHandlers(deps)
+
+    const result = handlerFor('ensemble:apply-roster-preset')(
+      { sender: { id: 1 } },
+      {
+        chatId: 'chat-1',
+        plan: {
+          schemaVersion: 1,
+          presetId: 'preset-1',
+          presetName: 'Next roster',
+          queuedAt: '2026-07-29T00:00:01.000Z',
+          authority: 'user',
+          participants: [
+            {
+              id: 'boss-1',
+              provider: 'codex',
+              enabled: true,
+              role: 'Boss',
+              instructions: '',
+              order: 1,
+              linkedProviderSessionId: null
+            }
+          ],
+          bossmanParticipantId: 'boss-1',
+          orchestrationMode: 'continuous',
+          fanoutPolicy: 'off',
+          maxParticipants: 2,
+          maxContinuationHops: 6,
+          ensembleContextChars: 24_000
+        }
+      }
+    )
+
+    expect(result).toMatchObject({ ok: true, deferred: true })
+    expect(applyOrQueueUserRosterPreset).toHaveBeenCalledWith(
+      'chat-1',
+      expect.objectContaining({
+        presetId: 'preset-1',
+        authority: 'user'
+      })
+    )
   })
 })

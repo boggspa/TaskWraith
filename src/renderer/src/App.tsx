@@ -849,6 +849,7 @@ import {
 import {
   applyPendingEnsembleRosterPresetOnFinalize,
   applyPendingEnsembleRosterPresetOnRunTerminal,
+  buildUserEnsembleRosterPresetApplyPlan,
   hasPendingEnsembleRosterPresetApply
 } from '../../main/EnsembleRosterPresetApply'
 import {
@@ -20136,12 +20137,7 @@ function App(): React.JSX.Element {
   const applyEnsembleRosterPresetToChat = useCallback(
     (chatId: string, preset: EnsembleRosterPreset): void => {
       const sourceChat = chatByIdRef.current.get(chatId)
-      if (
-        !sourceChat?.ensemble ||
-        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble.activeRound)
-      ) {
-        return
-      }
+      if (!sourceChat?.ensemble) return
       const materializedPreset = materializeParticipantsFromPresetWithBossman(
         preset.participants
       )
@@ -20153,6 +20149,37 @@ function App(): React.JSX.Element {
         MAX_ROSTER_PRESET_PARTICIPANTS,
         Math.max(preset.maxParticipants, participants.length, 2)
       )
+      if (
+        isEnsembleActiveRoundDispatchLive(sourceChat.ensemble.activeRound) &&
+        firstEnabled
+      ) {
+        const pendingPlan = buildUserEnsembleRosterPresetApplyPlan({
+          preset,
+          participants,
+          bossmanParticipantId: materializedPreset.bossmanParticipantId || firstEnabled.id,
+          secondInCommandParticipantId: materializedPreset.secondInCommandParticipantId,
+          queuedAt: new Date().toISOString()
+        })
+        void window.api
+          .applyEnsembleRosterPresetAtBoundary({ chatId, plan: pendingPlan })
+          .then((result) => {
+            if (!result.ok) {
+              window.alert(result.message)
+              return
+            }
+            applyChatSnapshot(result.chat)
+            if (!result.deferred) {
+              const selected = result.chat.ensemble?.participants.find(
+                (participant) => participant.enabled
+              )
+              if (selected) setSelectedParticipantForChat(chatId, selected.id)
+            }
+          })
+          .catch((error) => {
+            window.alert(error instanceof Error ? error.message : 'Roster preset apply failed.')
+          })
+        return
+      }
       const updated = updateChatById(chatId, (source) => {
         if (!source.ensemble) return source
         const patched: ChatRecord = {
@@ -20198,7 +20225,7 @@ function App(): React.JSX.Element {
         setSelectedParticipantForChat(chatId, firstEnabled.id)
       }
     },
-    [setSelectedParticipantForChat, updateChatById]
+    [applyChatSnapshot, setSelectedParticipantForChat, updateChatById]
   )
   const setActiveEnsembleRosterPresetIdForChat = useCallback(
     (chatId: string, presetId: string | null): void => {
@@ -20443,15 +20470,10 @@ function App(): React.JSX.Element {
   )
   const applyEnsembleRosterPreset = useCallback(
     (preset: EnsembleRosterPreset) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble || isCurrentEnsembleRoundRunning) return
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
       applyEnsembleRosterPresetToChat(currentChat.appChatId, preset)
     },
-    [
-      applyEnsembleRosterPresetToChat,
-      isCurrentEnsembleChat,
-      currentChat,
-      isCurrentEnsembleRoundRunning
-    ]
+    [applyEnsembleRosterPresetToChat, isCurrentEnsembleChat, currentChat]
   )
   const setActiveEnsembleRosterPresetId = useCallback(
     (presetId: string | null) => {

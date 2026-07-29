@@ -82,6 +82,7 @@ import {
   MemoryProposal,
   MemoryProposalPack
 } from '../main/store/types'
+import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
 import type { OutlookConnectionStatus } from '../main/outlook/OutlookCredentialStore'
@@ -1748,6 +1749,13 @@ declare global {
         error?: string
         message?: string
       }>
+      applyEnsembleRosterPresetAtBoundary: (payload: {
+        chatId: string
+        plan: PendingEnsembleRosterPresetApply
+      }) => Promise<
+        | { ok: true; deferred: boolean; chat: ChatRecord; message: string }
+        | { ok: false; error: 'invalid_config' | 'not_ensemble'; message: string }
+      >
       requestEnsembleParticipantSeatChange: (payload: {
         chatId: string
         participantId: string

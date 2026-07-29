@@ -4,6 +4,7 @@ import {
   type EnsembleLiveRoundConfigUpdateInput
 } from './EnsembleOrchestrator'
 import type { AppSettings, ChatRecord } from '../store/types'
+import { buildUserEnsembleRosterPresetApplyPlan } from '../EnsembleRosterPresetApply'
 
 function liveChat(): ChatRecord {
   return {
@@ -34,7 +35,16 @@ function liveChat(): ChatRecord {
         concurrentMode: true,
         continuationHops: 3,
         maxContinuationHops: 12,
-        participants: []
+        activeParticipantId: 'active-seat',
+        participants: [
+          {
+            participantId: 'active-seat',
+            provider: 'codex',
+            role: 'Active',
+            order: 1,
+            status: 'running'
+          }
+        ]
       }
     }
   }
@@ -84,6 +94,53 @@ function makeHarness() {
 }
 
 describe('EnsembleOrchestrator.updateLiveRoundConfig', () => {
+  it('queues an explicit user roster on the live round boundary', () => {
+    const harness = makeHarness()
+    const participant = {
+      id: 'next-boss',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'Next Boss',
+      instructions: '',
+      order: 1,
+      linkedProviderSessionId: null
+    }
+    const plan = buildUserEnsembleRosterPresetApplyPlan({
+      preset: {
+        id: 'next-roster',
+        name: 'Next roster',
+        createdAt: 1,
+        updatedAt: 1,
+        orchestrationMode: 'turn_bound',
+        maxParticipants: 2,
+        participants: [
+          {
+            provider: 'codex',
+            enabled: true,
+            role: 'Next Boss',
+            instructions: '',
+            order: 1,
+            isBossman: true
+          }
+        ]
+      },
+      participants: [participant],
+      bossmanParticipantId: participant.id,
+      queuedAt: '2026-07-29T00:00:41.000Z'
+    })
+
+    expect(
+      harness.orchestrator.applyOrQueueUserRosterPreset('ensemble-chat', plan)
+    ).toEqual({ ok: true, deferred: true })
+    expect(harness.chat.providerMetadata).toMatchObject({
+      pendingEnsembleRosterPresetApply: {
+        presetId: 'next-roster',
+        authority: 'user'
+      }
+    })
+    expect(harness.chat.ensemble?.activeRosterPresetId).toBeUndefined()
+  })
+
   it('updates the live runtime and durable round without interrupting an active execution', async () => {
     const harness = makeHarness()
     const input: EnsembleLiveRoundConfigUpdateInput = {

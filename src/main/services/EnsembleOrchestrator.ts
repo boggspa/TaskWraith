@@ -212,7 +212,8 @@ import {
   applyPendingEnsembleRosterPresetOnFinalize,
   buildEnsembleRosterPresetApply,
   queuePendingEnsembleRosterPresetApply,
-  type BuildEnsembleRosterPresetApplyResult
+  type BuildEnsembleRosterPresetApplyResult,
+  type PendingEnsembleRosterPresetApply
 } from '../EnsembleRosterPresetApply'
 import {
   isHostSeatCompactionProvider,
@@ -299,6 +300,14 @@ export type EnsembleLiveRoundConfigUpdateResult =
       /** True when the durable active-round snapshot was updated too. */
       activeRoundUpdated: boolean
     }
+  | {
+      ok: false
+      error: 'not_ensemble' | 'invalid_config'
+      message: string
+    }
+
+export type EnsembleUserRosterPresetApplyResult =
+  | { ok: true; deferred: boolean }
   | {
       ok: false
       error: 'not_ensemble' | 'invalid_config'
@@ -3245,6 +3254,36 @@ export class EnsembleOrchestrator {
       maxContinuationHops,
       activeRoundUpdated
     }
+  }
+
+  applyOrQueueUserRosterPreset(
+    chatId: string,
+    plan: PendingEnsembleRosterPresetApply
+  ): EnsembleUserRosterPresetApplyResult {
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        error: 'not_ensemble',
+        message: 'Roster presets require an Ensemble chat.'
+      }
+    }
+    if (plan.authority !== 'user') {
+      return {
+        ok: false,
+        error: 'invalid_config',
+        message: 'Only an explicit user roster change can use this route.'
+      }
+    }
+
+    const deferred = isEnsembleRoundDispatchLive(chat.ensemble.activeRound)
+    const queued = queuePendingEnsembleRosterPresetApply(chat, plan)
+    const next = deferred ? queued : applyPendingEnsembleRosterPresetOnFinalize(queued)
+    this.saveChatWithCheckpoint(
+      { ...next, updatedAt: this.deps.now() },
+      deferred ? 'round-updated' : 'participant-updated'
+    )
+    return { ok: true, deferred }
   }
 
   private startCursorCompletionWatchdog(run: ActiveParticipantRun): void {

@@ -4,6 +4,7 @@ import {
   applyPendingEnsembleRosterPresetOnRunTerminal,
   buildAgentRosterPresetExportFromDraft,
   buildEnsembleRosterPresetApply,
+  buildUserEnsembleRosterPresetApplyPlan,
   hasPendingEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
   queuePendingEnsembleRosterPresetApply
@@ -133,6 +134,50 @@ function idFactory(...ids: string[]): () => string {
 }
 
 describe('EnsembleRosterPresetApply', () => {
+  it('builds an explicit user roster change for the next round boundary', () => {
+    const boss = participant('new-boss', 'codex', 'Boss', 1)
+    boss.permissionOverrides = {
+      approvalMode: 'on-request',
+      networkAccess: 'allow'
+    }
+    const worker = participant('new-worker', 'claude', 'Worker', 2)
+    const plan = buildUserEnsembleRosterPresetApplyPlan({
+      preset: preset({
+        maxParticipants: 99,
+        maxContinuationHops: 999,
+        ensembleContextChars: 999_999
+      }),
+      participants: [boss, worker],
+      bossmanParticipantId: boss.id,
+      queuedAt: '2026-07-28T23:00:00.000Z'
+    })
+
+    expect(plan).toMatchObject({
+      authority: 'user',
+      presetId: 'agent-preset',
+      bossmanParticipantId: 'new-boss',
+      maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
+      maxContinuationHops: 500,
+      ensembleContextChars: 256_000
+    })
+    expect(plan.participants[0]).toMatchObject({
+      linkedProviderSessionId: null,
+      permissionOverrides: {
+        approvalMode: 'on-request',
+        networkAccess: 'allow'
+      }
+    })
+
+    const queued = queuePendingEnsembleRosterPresetApply(ensembleChat(), plan)
+    expect(hasPendingEnsembleRosterPresetApply(queued)).toBe(true)
+    const applied = applyPendingEnsembleRosterPresetOnFinalize(queued)
+    expect(applied.ensemble?.activeRosterPresetId).toBe('agent-preset')
+    expect(applied.ensemble?.participants.map((entry) => entry.id)).toEqual([
+      'new-boss',
+      'new-worker'
+    ])
+  })
+
   it('builds a valid export from compact agent input without caller metadata', () => {
     const json = buildAgentRosterPresetExportFromDraft(
       {
