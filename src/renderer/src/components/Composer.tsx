@@ -142,6 +142,7 @@ import {
 import type { ComposerVoiceCaptureState } from './ComposerVoiceInput'
 import { shouldOfferPlanImport } from '../lib/planImport'
 import { hasResolvedMention } from '../lib/mentionHighlight'
+import { planEmoticonAutoReplace } from '../lib/emoticonAutoReplace'
 import { formatApprovalCountdown, resolveApprovalTimeoutMs } from '../lib/approvalTimeoutCountdown'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
@@ -1289,6 +1290,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
    */
   const composerSelectionRef = useRef<{ start: number; end: number } | null>(null)
   const composerCaretRestoreEpochRef = useRef(0)
+  /**
+   * 1.0.5 — one-shot revert for an emoticon → emoji auto-replace.
+   * Set when a just-typed space converted `:-)` etc; Backspace with
+   * the draft + caret still exactly at the post-conversion state
+   * restores the literal emoticon instead of deleting the emoji
+   * (autocorrect-style escape hatch — programmatic draft updates
+   * reset the native undo stack, so Cmd+Z can't provide it).
+   * Cleared by any other edit; chat-scoped via `chatId`.
+   */
+  const composerEmoticonRevertRef = useRef<{
+    chatId: string
+    revertValue: string
+    revertCaret: number
+    appliedValue: string
+    appliedCaret: number
+  } | null>(null)
   // Which trigger fired the popover. `'mention'` (`@`) → sub-agents
   // (normal chats) or participants (ensemble); `'file-mention'`
   // (`-@`) → workspace files + external grants.
@@ -2726,16 +2743,57 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           void handleComposerPaste(event)
                         }}
                         onChange={(e) => {
-                          const nextValue = e.target.value
+                          const rawValue = e.target.value
+                          const rawStart = e.target.selectionStart ?? rawValue.length
+                          const rawEnd = e.target.selectionEnd ?? rawValue.length
+                          let nextValue = rawValue
+                          let nextStart = rawStart
+                          let nextEnd = rawEnd
+                          // 1.0.5 — emoticon → emoji auto-replace. Fires only
+                          // on a plain typed space (never paste, IME
+                          // composition, or programmatic edits) with a
+                          // collapsed selection. The plan rewrites the draft
+                          // BEFORE it enters the pipeline below, so the caret
+                          // snapshot, mention rebase, draft store, and popover
+                          // scan all see the final value exactly once — the
+                          // replacement behaves like typing, nothing more.
+                          const native = e.nativeEvent as unknown as {
+                            inputType?: string
+                            data?: string | null
+                            isComposing?: boolean
+                          }
+                          composerEmoticonRevertRef.current = null
+                          if (
+                            native?.inputType === 'insertText' &&
+                            native.data === ' ' &&
+                            !native.isComposing &&
+                            rawStart === rawEnd
+                          ) {
+                            const plan = planEmoticonAutoReplace(rawValue, rawStart)
+                            if (plan) {
+                              nextValue = plan.value
+                              nextStart = plan.caret
+                              nextEnd = plan.caret
+                              composerEmoticonRevertRef.current = {
+                                chatId: currentComposerChatId,
+                                revertValue: rawValue,
+                                revertCaret: rawStart,
+                                appliedValue: plan.value,
+                                appliedCaret: plan.caret
+                              }
+                            }
+                          }
                           // 1.0.4-AQ3 — snapshot the caret position from
                           // the change event BEFORE React reconciles. The
                           // restoration layout effect below reads this ref
                           // and re-applies the caret after the className
                           // flip + overlay mount that can land mid-keystroke
-                          // when an `@token` resolves.
+                          // when an `@token` resolves (or when an emoticon
+                          // auto-replace just rewrote the draft, which moves
+                          // the caret left of where the raw keystroke put it).
                           composerSelectionRef.current = {
-                            start: e.target.selectionStart ?? nextValue.length,
-                            end: e.target.selectionEnd ?? nextValue.length
+                            start: nextStart,
+                            end: nextEnd
                           }
                           composerCaretRestoreEpochRef.current += 1
                           rebasePickerParticipantMentions(
@@ -2750,7 +2808,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // after whitespace), then for an `@<query>` mention token.
                           // Whichever matches wins; the other is force-closed. Only
                           // one popover open at a time.
-                          const caret = e.target.selectionStart ?? nextValue.length
+                          const caret = nextStart
                           const slashMatch = parseSlashTokenBeforeCaret(nextValue, caret)
                           const mentionTrigger = !slashMatch
                             ? parseComposerMentionTrigger(nextValue, caret)
@@ -2826,6 +2884,41 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               composerSuggestion.dismiss()
                               return
                             }
+                          }
+                          // 1.0.5 — one-shot emoticon-revert: plain Backspace
+                          // immediately after an auto-replace (draft + caret
+                          // still exactly at the post-conversion state)
+                          // restores the literal emoticon instead of deleting
+                          // the emoji. Modified Backspace (word/line delete)
+                          // keeps its native meaning.
+                          const emoticonRevert = composerEmoticonRevertRef.current
+                          if (
+                            emoticonRevert &&
+                            e.key === 'Backspace' &&
+                            !e.metaKey &&
+                            !e.ctrlKey &&
+                            !e.altKey &&
+                            !e.nativeEvent.isComposing &&
+                            emoticonRevert.chatId === currentComposerChatId &&
+                            prompt === emoticonRevert.appliedValue &&
+                            e.currentTarget.selectionStart === emoticonRevert.appliedCaret &&
+                            e.currentTarget.selectionEnd === emoticonRevert.appliedCaret
+                          ) {
+                            e.preventDefault()
+                            composerEmoticonRevertRef.current = null
+                            composerSelectionRef.current = {
+                              start: emoticonRevert.revertCaret,
+                              end: emoticonRevert.revertCaret
+                            }
+                            composerCaretRestoreEpochRef.current += 1
+                            rebasePickerParticipantMentions(
+                              currentComposerChatId,
+                              prompt,
+                              emoticonRevert.revertValue
+                            )
+                            setChatPromptDraft(currentComposerChatId, emoticonRevert.revertValue)
+                            clearPlanImportIfDraftChanged(emoticonRevert.revertValue)
+                            return
                           }
                           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                             e.preventDefault()
