@@ -6,6 +6,7 @@ import {
   LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   PROVIDER_OPTIONS,
   READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES,
+  REMOTE_GRANTABLE_PROVIDER_IDS,
   READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   capabilitiesForRemoteWorkspaceMode,
   isAdminRemoteWorkspaceCapability
@@ -26,6 +27,11 @@ describe('remoteWorkspaceDefaults', () => {
       'mistral'
     ])
     expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
+  })
+
+  it('keeps AntiGravity grantable without widening the static default grant', () => {
+    expect([...REMOTE_GRANTABLE_PROVIDER_IDS]).toEqual([...PROVIDER_OPTIONS, 'antigravity'])
+    expect(PROVIDER_OPTIONS).not.toContain('antigravity')
   })
 
   it('mirrors the capability sets exactly', () => {

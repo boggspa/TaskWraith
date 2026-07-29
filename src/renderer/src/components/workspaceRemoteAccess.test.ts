@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import {
+  buildAllowlistUpsertForProviders,
   buildAllowlistUpsertForSegment,
   deriveWorkspaceRemoteSegment,
   entryCanPublishExternally,
@@ -31,6 +32,73 @@ describe('deriveWorkspaceRemoteSegment', () => {
     expect(deriveWorkspaceRemoteSegment(entry({ mode: 'read-write', expiresAt: 200 }), 100)).toBe(
       'read-write'
     )
+  })
+})
+
+describe('buildAllowlistUpsertForProviders', () => {
+  it('adds Pi and AntiGravity without changing any other workspace authority', () => {
+    const existing = entry({
+      workspaceId: 'ws-legacy',
+      path: '/repo/legacy',
+      mode: 'read-write',
+      capabilities: ['monitor', 'steer', 'fileBrowse', 'fileRead', 'fileWrite', 'pin'],
+      allowedProviders: ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'],
+      allowedApprovalModes: ['plan'],
+      expiresAt: 4102444800000
+    })
+
+    expect(
+      buildAllowlistUpsertForProviders(existing, [
+        'codex',
+        'claude',
+        'kimi',
+        'cursor',
+        'grok',
+        'ollama',
+        'pi',
+        'antigravity',
+        'unknown-provider'
+      ])
+    ).toEqual({
+      workspaceId: 'ws-legacy',
+      path: '/repo/legacy',
+      mode: 'read-write',
+      capabilities: ['monitor', 'steer', 'fileBrowse', 'fileRead', 'fileWrite', 'pin'],
+      allowedProviders: [
+        'gemini',
+        'codex',
+        'claude',
+        'kimi',
+        'cursor',
+        'grok',
+        'ollama',
+        'pi',
+        'antigravity'
+      ],
+      allowedApprovalModes: ['plan'],
+      expiresAt: 4102444800000
+    })
+  })
+
+  it('preserves legacy effective capabilities and retired provider ids', () => {
+    const existing = entry({
+      mode: 'read-write',
+      capabilities: undefined,
+      allowedProviders: ['gemini', 'codex', 'claude']
+    })
+    const out = buildAllowlistUpsertForProviders(existing, [' Pi ', 'pi'])
+
+    expect(out.capabilities).toEqual([
+      'monitor',
+      'approve',
+      'answer',
+      'cancel',
+      'startTurn',
+      'diffReview',
+      'steer'
+    ])
+    expect(out.allowedProviders).toEqual(['gemini', 'pi'])
+    expect(out.expiresAt).toBeUndefined()
   })
 })
 

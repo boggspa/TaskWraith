@@ -1,4 +1,4 @@
-import { LIVE_SELECTABLE_PROVIDER_IDS } from './retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, LIVE_SELECTABLE_PROVIDER_IDS } from './retiredProviders'
 
 /**
  * Node-builtin-FREE mirror of the remote-workspace allowlist capability/provider
@@ -53,6 +53,18 @@ export interface RemoteWorkspaceEntry {
  * Gemini remain readable through compatibility/history paths, but are not
  * granted for new phone-origin remote actions. */
 export const PROVIDER_OPTIONS = LIVE_SELECTABLE_PROVIDER_IDS
+
+/**
+ * Providers a remote-workspace grant may explicitly authorize. This is wider
+ * than the static live offer set only for conditionally admitted providers:
+ * granting AntiGravity here never offers or runs it by itself — the independent
+ * AGY consent / Gemini API credential + authenticated-catalog gates still apply
+ * at picker projection and every dispatch.
+ */
+export const REMOTE_GRANTABLE_PROVIDER_IDS = [
+  ...LIVE_SELECTABLE_PROVIDER_IDS,
+  ANTIGRAVITY_PROVIDER_ID
+] as const
 
 export const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 

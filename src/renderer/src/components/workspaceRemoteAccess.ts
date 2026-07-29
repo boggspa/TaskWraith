@@ -17,6 +17,7 @@ import {
   LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   PROVIDER_OPTIONS,
   READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES,
+  REMOTE_GRANTABLE_PROVIDER_IDS,
   READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   type RemoteWorkspaceCapability,
   type RemoteWorkspaceEntry,
@@ -130,5 +131,42 @@ export function buildAllowlistUpsertForSegment(
     allowedApprovalModes: existing.allowedApprovalModes
   }
   if (existing.expiresAt !== undefined) payload.expiresAt = existing.expiresAt
+  return payload
+}
+
+/**
+ * Build an explicit provider-policy edit for an existing remote workspace.
+ *
+ * Every non-provider field is carried forward verbatim/effectively: editing a
+ * provider grant must not change mode, file/admin capabilities, approval modes,
+ * expiry, workspace identity, or path. Historical provider ids that are no
+ * longer grantable stay intact so a provider edit cannot silently remove
+ * continuation authority for an existing thread.
+ */
+export function buildAllowlistUpsertForProviders(
+  entry: RemoteWorkspaceEntry,
+  selectedProviders: Iterable<string>
+): AllowlistUpsertPayload {
+  const grantable = new Set<string>(REMOTE_GRANTABLE_PROVIDER_IDS)
+  const selected = new Set(
+    Array.from(selectedProviders, (provider) => provider.trim().toLowerCase()).filter(
+      (provider) => provider && grantable.has(provider)
+    )
+  )
+  const historical = entry.allowedProviders.filter(
+    (provider) => !grantable.has(provider.trim().toLowerCase())
+  )
+  const payload: AllowlistUpsertPayload = {
+    workspaceId: entry.workspaceId,
+    path: entry.path,
+    mode: entry.mode,
+    capabilities: [...resolveEntryCapabilities(entry)],
+    allowedProviders: [
+      ...historical,
+      ...REMOTE_GRANTABLE_PROVIDER_IDS.filter((provider) => selected.has(provider))
+    ],
+    allowedApprovalModes: [...entry.allowedApprovalModes]
+  }
+  if (entry.expiresAt !== undefined) payload.expiresAt = entry.expiresAt
   return payload
 }

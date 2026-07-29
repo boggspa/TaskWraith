@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { PROVIDER_OPTIONS } from '../../../shared/remoteWorkspaceDefaults'
+import {
+  PROVIDER_OPTIONS,
+  REMOTE_GRANTABLE_PROVIDER_IDS
+} from '../../../shared/remoteWorkspaceDefaults'
 import { PillButton } from './PillButton'
+import { buildAllowlistUpsertForProviders } from './workspaceRemoteAccess'
 
 /**
  * RemoteWorkspacesPanel — Phase C4 admin UI for the iOS remote allowlist.
@@ -139,6 +143,12 @@ export function RemoteWorkspacesPanel(): ReactElement {
               <EntryRow
                 key={entry.workspaceId}
                 entry={entry}
+                onUpdateProviders={async (providers) => {
+                  await window.api.bridgeAllowlistUpsert(
+                    buildAllowlistUpsertForProviders(entry, providers)
+                  )
+                  await refresh()
+                }}
                 onEnableFiles={async () => {
                   await window.api.bridgeAllowlistUpsert({
                     workspaceId: entry.workspaceId,
@@ -196,20 +206,55 @@ export function RemoteWorkspacesPanel(): ReactElement {
 
 function EntryRow({
   entry,
+  onUpdateProviders,
   onEnableFiles,
   onTogglePublish,
   onRemove
 }: {
   entry: RemoteWorkspaceEntry
+  onUpdateProviders: (providers: string[]) => void | Promise<void>
   onEnableFiles: () => void | Promise<void>
   onTogglePublish: () => void | Promise<void>
   onRemove: () => void | Promise<void>
 }): ReactElement {
+  const [editingProviders, setEditingProviders] = useState(false)
+  const [providerDraft, setProviderDraft] = useState<Set<string>>(
+    () => new Set(entry.allowedProviders)
+  )
+  const [providerEditBusy, setProviderEditBusy] = useState(false)
+  const [providerEditError, setProviderEditError] = useState<string | null>(null)
   const expiresLabel =
     entry.expiresAt !== undefined ? new Date(entry.expiresAt).toLocaleString() : '—'
   const filesEnabled = workspaceEntryCanEditFiles(entry)
   const publishEnabled = entryCanPublishExternally(entry)
   const canEnableFiles = entry.mode === 'read-write' && !filesEnabled
+
+  useEffect(() => {
+    if (!editingProviders) setProviderDraft(new Set(entry.allowedProviders))
+  }, [editingProviders, entry.allowedProviders])
+
+  const toggleProvider = (provider: string): void => {
+    setProviderDraft((current) => {
+      const next = new Set(current)
+      if (next.has(provider)) next.delete(provider)
+      else next.add(provider)
+      return next
+    })
+  }
+
+  const saveProviders = async (): Promise<void> => {
+    setProviderEditBusy(true)
+    setProviderEditError(null)
+    try {
+      await onUpdateProviders(Array.from(providerDraft))
+      setEditingProviders(false)
+    } catch (error) {
+      setProviderEditError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setProviderEditBusy(false)
+    }
+  }
+
   return (
     <li className="remote-workspaces-entry-card">
       <div className="remote-workspaces-entry-layout">
@@ -247,8 +292,77 @@ function EntryRow({
               <span className="remote-workspaces-chip">{expiresLabel}</span>
             </div>
           </div>
+          {editingProviders ? (
+            <fieldset className="remote-workspaces-fieldset">
+              <legend>Providers allowed from iOS</legend>
+              <div className="remote-workspaces-toggle-grid">
+                {REMOTE_GRANTABLE_PROVIDER_IDS.map((provider) => (
+                  <label
+                    key={provider}
+                    className={`remote-workspaces-toggle-chip ${
+                      providerDraft.has(provider) ? 'active' : ''
+                    }`}
+                    title={
+                      provider === 'antigravity'
+                        ? 'This grants paired-device use only after AntiGravity also passes its independent consent, credential, and authenticated-catalog gates.'
+                        : undefined
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={providerDraft.has(provider)}
+                      onChange={() => toggleProvider(provider)}
+                      disabled={providerEditBusy}
+                    />
+                    <span>{provider}</span>
+                  </label>
+                ))}
+              </div>
+              <small className="remote-workspaces-field-hint">
+                AntiGravity remains unavailable unless its API-key or AGY consent setup is active on
+                this Mac.
+              </small>
+            </fieldset>
+          ) : null}
+          {providerEditError ? (
+            <div className="settings-error remote-workspaces-error">{providerEditError}</div>
+          ) : null}
         </div>
         <div className="remote-workspaces-entry-actions">
+          {editingProviders ? (
+            <>
+              <PillButton
+                size="compact"
+                variant="primary"
+                onClick={() => void saveProviders()}
+                disabled={providerEditBusy}
+              >
+                {providerEditBusy ? 'Saving…' : 'Save providers'}
+              </PillButton>
+              <PillButton
+                size="compact"
+                onClick={() => {
+                  setProviderDraft(new Set(entry.allowedProviders))
+                  setProviderEditError(null)
+                  setEditingProviders(false)
+                }}
+                disabled={providerEditBusy}
+              >
+                Cancel
+              </PillButton>
+            </>
+          ) : (
+            <PillButton
+              size="compact"
+              onClick={() => {
+                setProviderDraft(new Set(entry.allowedProviders))
+                setProviderEditError(null)
+                setEditingProviders(true)
+              }}
+            >
+              Edit providers
+            </PillButton>
+          )}
           {canEnableFiles ? (
             <PillButton
               size="compact"
