@@ -464,6 +464,12 @@ final class StreamingPublishGate {
         stagingByThread.removeAll()
     }
 
+    #if DEBUG
+        func waitForScheduledFlushForTesting(threadId: String) async {
+            await flushTasks[threadId]?.value
+        }
+    #endif
+
     private func publish(_ threadId: String) {
         guard let staging = stagingByThread[threadId] else { return }
         publishInvocationCount += 1
@@ -4364,6 +4370,10 @@ public final class RemoteSessionModel: ObservableObject {
 
         func flushStreamingPublishForTesting(threadId: String) {
             streamingPublishGate.flushBeforeTerminal(threadId: threadId)
+        }
+
+        func waitForStreamingPublishForTesting(threadId: String) async {
+            await streamingPublishGate.waitForScheduledFlushForTesting(threadId: threadId)
         }
 
         func markStreamingTerminalForTesting(threadId: String, exitRunId: String? = nil) {

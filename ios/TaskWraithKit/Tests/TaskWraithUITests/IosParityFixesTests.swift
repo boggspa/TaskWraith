@@ -1609,7 +1609,7 @@ struct IosParityFixesTests {
             threadId: "t1", data: streamingTokenLine("c"), runId: "run-1")
         #expect(model.streamingPublishInvocationCountForTesting == 1)
         #expect(model.streamingTexts["t1"] == "a")
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 500_000_000)
+        await model.waitForStreamingPublishForTesting(threadId: "t1")
         #expect(model.streamingTexts["t1"] == "abc")
         #expect(model.streamingPublishInvocationCountForTesting == 2)
     }
@@ -1621,7 +1621,7 @@ struct IosParityFixesTests {
             threadId: "t1", data: streamingTokenLine("one"), runId: "run-1")
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("two"), runId: "run-1")
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 500_000_000)
+        await model.waitForStreamingPublishForTesting(threadId: "t1")
         #expect(model.streamingTexts["t1"] == "onetwo")
     }
 
@@ -1662,7 +1662,7 @@ struct IosParityFixesTests {
         #expect(model.streamingTexts["t2"] == "b")
         model.appendStreamingDeltasForTesting(
             threadId: "t1", data: streamingTokenLine("c"), runId: "run-1")
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 500_000_000)
+        await model.waitForStreamingPublishForTesting(threadId: "t1")
         #expect(model.streamingTexts["t1"] == "ac")
         #expect(model.streamingTexts["t2"] == "b")
     }
@@ -1674,7 +1674,7 @@ struct IosParityFixesTests {
             model.appendStreamingDeltasForTesting(
                 threadId: "t1", data: streamingTokenLine(ch), runId: "run-1")
         }
-        try await Task.sleep(nanoseconds: StreamingPublishGate.streamingPublishCoalesceWindowNs + 500_000_000)
+        await model.waitForStreamingPublishForTesting(threadId: "t1")
         #expect(model.streamingTexts["t1"] == "first")
     }
 
