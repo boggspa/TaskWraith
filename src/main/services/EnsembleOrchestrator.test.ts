@@ -8710,7 +8710,14 @@ Next action:
   })
 
   it('applies idle Enabled and Stage edits immediately to the current round', async () => {
-    const harness = makeHarness()
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'codex'
+    initialChat.ensemble!.bossmanAutoApprovals = {
+      enabled: true,
+      mode: 'permission_preset_once',
+      confirmedAt: '2026-07-28T00:00:00.000Z'
+    }
+    const harness = makeHarness({ initialChat })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Plan and execute.',
@@ -8718,10 +8725,45 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
+    const background = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { stageRole: 'background' },
+      changedBy: 'user',
+      reason: 'User moved an idle seat to BG.'
+    })
+    expect(background).toMatchObject({ ok: true, status: 'applied' })
+    expect(harness.chat.ensemble).toMatchObject({
+      bossmanParticipantId: undefined,
+      bossmanAutoApprovals: undefined
+    })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({
+      status: 'skipped',
+      reason: 'Moved to BG during the active round.'
+    })
+
+    const restoredStage = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'codex',
+      participant: { stageRole: 'reviewer' },
+      changedBy: 'user',
+      reason: 'User restored the seat to Review.'
+    })
+    expect(restoredStage).toMatchObject({ ok: true, status: 'applied' })
+    expect(
+      harness.chat.ensemble!.activeRound?.participants.find(
+        (participant) => participant.participantId === 'codex'
+      )
+    ).toMatchObject({ status: 'idle' })
+
     const disabled = await harness.orchestrator.requestParticipantSeatChange({
       chatId: 'ensemble-chat',
       participantId: 'codex',
-      participant: { enabled: false, stageRole: 'background' },
+      participant: { enabled: false },
       changedBy: 'user',
       reason: 'User disabled an idle seat.'
     })
@@ -8738,9 +8780,9 @@ Next action:
     const reenabled = await harness.orchestrator.requestParticipantSeatChange({
       chatId: 'ensemble-chat',
       participantId: 'codex',
-      participant: { enabled: true, stageRole: 'reviewer' },
+      participant: { enabled: true },
       changedBy: 'user',
-      reason: 'User restored the idle seat.'
+      reason: 'User re-enabled the idle seat.'
     })
     expect(reenabled).toMatchObject({ ok: true, status: 'applied' })
     expect(

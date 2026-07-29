@@ -6535,11 +6535,26 @@ export class EnsembleOrchestrator {
       reason,
       nowIso
     )
+    const backgroundRestricted = isBackgroundParticipant(after)
+    const bossmanParticipantId =
+      backgroundRestricted && chat.ensemble!.bossmanParticipantId === before.id
+        ? undefined
+        : chat.ensemble!.bossmanParticipantId
+    const secondInCommandParticipantId =
+      backgroundRestricted && chat.ensemble!.secondInCommandParticipantId === before.id
+        ? undefined
+        : chat.ensemble!.secondInCommandParticipantId
     const saved: ChatRecord = {
       ...chat,
       ensemble: {
         ...chat.ensemble!,
         participants: nextParticipants,
+        bossmanParticipantId,
+        secondInCommandParticipantId,
+        bossmanAutoApprovals:
+          bossmanParticipantId || secondInCommandParticipantId
+            ? chat.ensemble!.bossmanAutoApprovals
+            : undefined,
         activeRound,
         sessionActivityLedger: [
           ...(chat.ensemble!.sessionActivityLedger || []),
@@ -6680,6 +6695,7 @@ export class EnsembleOrchestrator {
       if (
         affected &&
         affected.enabled !== false &&
+        !isBackgroundParticipant(affected) &&
         !remaining.some((participant) => participant.id === affected.id)
       ) {
         remaining.push(affected)
@@ -6694,7 +6710,10 @@ export class EnsembleOrchestrator {
     } else {
       const edited = remaining
         .map((participant) => nextById.get(participant.id) || participant)
-        .filter((participant) => participant.enabled !== false)
+        .filter(
+          (participant) =>
+            participant.enabled !== false && !isBackgroundParticipant(participant)
+        )
       const activeRound = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
       const affectedState = activeRound?.participants.find(
         (participant) => participant.participantId === affectedParticipantId
@@ -6702,11 +6721,13 @@ export class EnsembleOrchestrator {
       if (
         affected &&
         affected.enabled !== false &&
+        !isBackgroundParticipant(affected) &&
         !edited.some((participant) => participant.id === affected.id) &&
         (!affectedState ||
           affectedState.status === 'idle' ||
           (affectedState.status === 'skipped' &&
-            affectedState.reason === 'Disabled during the active round.'))
+            (affectedState.reason === 'Disabled during the active round.' ||
+              affectedState.reason === 'Moved to BG during the active round.')))
       ) {
         edited.push(affected)
       }
@@ -6729,10 +6750,14 @@ export class EnsembleOrchestrator {
       .map((state) => {
         const participant = nextById.get(state.participantId)!
         const disabledWhileIdle = participant.enabled === false && state.status === 'idle'
-        const reenabledFromDisabled =
+        const backgroundWhileIdle =
+          isBackgroundParticipant(participant) && state.status === 'idle'
+        const restoredToSerial =
           participant.enabled !== false &&
+          !isBackgroundParticipant(participant) &&
           state.status === 'skipped' &&
-          state.reason === 'Disabled during the active round.'
+          (state.reason === 'Disabled during the active round.' ||
+            state.reason === 'Moved to BG during the active round.')
         return {
           ...state,
           ...roundParticipantDisplayFields(participant),
@@ -6741,7 +6766,12 @@ export class EnsembleOrchestrator {
                 status: 'skipped' as const,
                 reason: 'Disabled during the active round.'
               }
-            : reenabledFromDisabled
+            : backgroundWhileIdle
+              ? {
+                  status: 'skipped' as const,
+                  reason: 'Moved to BG during the active round.'
+                }
+              : restoredToSerial
               ? {
                   status: 'idle' as const,
                   reason: undefined
@@ -6759,7 +6789,10 @@ export class EnsembleOrchestrator {
     const existingIds = new Set(existing.map((state) => state.participantId))
     const added = nextParticipants
       .filter(
-        (participant) => participant.enabled !== false && !existingIds.has(participant.id)
+        (participant) =>
+          participant.enabled !== false &&
+          !isBackgroundParticipant(participant) &&
+          !existingIds.has(participant.id)
       )
       .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
     const participantStates = [...existing, ...removed, ...added].sort((a, b) => a.order - b.order)
