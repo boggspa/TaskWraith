@@ -16,6 +16,7 @@ import type {
   ReapAbandonedChatsDeps,
   RendererReapContext
 } from '../AbandonedChatReaper'
+import { readPendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 
 export type SenderChatReadScope =
   | { kind: 'all' }
@@ -43,6 +44,7 @@ export interface ChatHandlerDeps {
     | 'createSideChat'
     | 'setChatKind'
     | 'rebindChatWorkspace'
+    | 'queueChatWorkspaceRebind'
     | 'getSideChats'
   >
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
@@ -371,15 +373,28 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('rebind-chat-workspace', (event, args: RebindChatWorkspaceInput) => {
     deps.assertSenderCanRebindChatWorkspace(event, args?.chatId)
     const before = deps.chatService.getChat(args?.chatId)
+    if (!deps.getChatWorkspaceRebindBlocker) {
+      throw new Error('Chat workspace rebind lifecycle guard is unavailable.')
+    }
+    const blocker = deps.getChatWorkspaceRebindBlocker(args?.chatId)
+    if (blocker && args?.deferIfBusy === true) {
+      const queued = deps.chatService.queueChatWorkspaceRebind(args)
+      const deferred = readPendingWorkspaceRebind(queued) !== null
+      if (
+        JSON.stringify(readPendingWorkspaceRebind(before ?? queued)) !==
+        JSON.stringify(readPendingWorkspaceRebind(queued))
+      ) {
+        deps.broadcastChatUpdated(queued)
+        deps.broadcastThreadUpdate(queued.appChatId)
+      }
+      return { chat: queued, changed: false, deferred }
+    }
     const rebound = deps.chatService.rebindChatWorkspace(args, {
       assertIdle: (canonical) => {
-        if (!deps.getChatWorkspaceRebindBlocker) {
-          throw new Error('Chat workspace rebind lifecycle guard is unavailable.')
-        }
-        const blocker = deps.getChatWorkspaceRebindBlocker(canonical.appChatId)
-        if (blocker) {
+        const lateBlocker = deps.getChatWorkspaceRebindBlocker?.(canonical.appChatId)
+        if (lateBlocker) {
           throw new Error(
-            `Cannot change chat workspace while a turn is ${blocker} — finish or cancel it first.`
+            `Cannot change chat workspace while a turn is ${lateBlocker} — finish or cancel it first.`
           )
         }
       }
@@ -390,9 +405,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         before.workspaceId !== rebound.workspaceId ||
         before.workspacePath !== rebound.workspacePath
     )
-    if (changed) {
+    const pendingChanged =
+      JSON.stringify(readPendingWorkspaceRebind(before ?? rebound)) !==
+      JSON.stringify(readPendingWorkspaceRebind(rebound))
+    if (changed || pendingChanged) {
       deps.broadcastChatUpdated(rebound)
       deps.broadcastThreadUpdate(rebound.appChatId)
+    }
+    if (changed) {
       // Moving a chat changes its workspace grouping in remote projections.
       deps.broadcastThreadList()
     }

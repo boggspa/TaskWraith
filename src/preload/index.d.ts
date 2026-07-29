@@ -1835,14 +1835,15 @@ declare global {
       }) => Promise<ChatRecord>
       rebindChatWorkspace: (
         args:
-          | { chatId: string; scope: 'global' }
+          | { chatId: string; scope: 'global'; deferIfBusy?: boolean }
           | {
               chatId: string
               scope: 'workspace'
               workspaceId: string
               workspacePath: string
+              deferIfBusy?: boolean
             }
-      ) => Promise<{ chat: ChatRecord; changed: boolean }>
+      ) => Promise<{ chat: ChatRecord; changed: boolean; deferred?: boolean }>
       listDiscordContextTargets: () => Promise<DiscordContextTargets>
       readDiscordContext: (selection: DiscordContextSelection) => Promise<DiscordContextSnapshot>
       humanCollaborationCreateShare: (input: {

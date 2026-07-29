@@ -409,6 +409,7 @@ export interface ComposerProps {
   pendingAgentApproval: any
   pendingApprovalQueueByChatId: any
   pendingPlanImport: any
+  pendingWorkspaceRebind: any
   permissionRequestMessage: any
   permissionRequestPaths: any
   permissionRequestSource: any
@@ -736,6 +737,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     pendingAgentApproval,
     pendingApprovalQueueByChatId,
     pendingPlanImport,
+    pendingWorkspaceRebind,
     permissionRequestMessage,
     permissionRequestPaths,
     permissionRequestSource,
@@ -5069,6 +5071,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <ComposerWorkspaceSwitcher
                     workspaces={workspaces}
                     currentWorkspace={currentWorkspace}
+                    pendingWorkspace={
+                      pendingWorkspaceRebind?.scope === 'workspace'
+                        ? workspaces.find(
+                            (workspace) => workspace.id === pendingWorkspaceRebind.workspaceId
+                          ) || {
+                            id: pendingWorkspaceRebind.workspaceId,
+                            path: pendingWorkspaceRebind.workspacePath,
+                            displayName:
+                              pendingWorkspaceRebind.workspacePath
+                                .split(/[\\/]/)
+                                .filter(Boolean)
+                                .pop() || 'Workspace',
+                            createdAt: 0,
+                            lastOpenedAt: 0,
+                            pinned: false
+                          }
+                        : null
+                    }
                     onPickExisting={handleSelectExistingWorkspace}
                     onAddNewWorkspace={handleSelectWorkspace}
                     onSelectNoWorkspace={handleNewGlobalChat}

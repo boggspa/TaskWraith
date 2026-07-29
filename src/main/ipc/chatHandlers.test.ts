@@ -3,6 +3,7 @@ import { ipcMain } from 'electron'
 import { registerChatHandlers } from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
+import { queuePendingWorkspaceRebind } from '../pendingWorkspaceRebind'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -80,7 +81,31 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
             workspacePath: args.scope === 'workspace' ? args.workspacePath : undefined
           })
         }
-      )
+      ),
+      queueChatWorkspaceRebind: vi.fn((args: RebindChatWorkspaceInput | undefined) => {
+        if (!args) throw new Error('Missing rebind args')
+        const current = chat(args.chatId, {
+          scope: 'workspace',
+          workspaceId: 'test-1',
+          workspacePath: '/Users/chrisizatt/Documents/Test 1'
+        })
+        return queuePendingWorkspaceRebind(
+          current,
+          args.scope === 'global'
+            ? {
+                schemaVersion: 1,
+                scope: 'global',
+                queuedAt: '2026-07-29T00:00:00.000Z'
+              }
+            : {
+                schemaVersion: 1,
+                scope: 'workspace',
+                workspaceId: args.workspaceId,
+                workspacePath: args.workspacePath,
+                queuedAt: '2026-07-29T00:00:00.000Z'
+              }
+        )
+      })
     },
     deleteExecutionGraphHistoryForChat: vi.fn(async () => undefined),
     revokeApprovalsForChat: vi.fn(),
@@ -530,6 +555,43 @@ describe('registerChatHandlers', () => {
       ).toThrow(`turn is ${blocker}`)
       expect(deps.broadcastChatUpdated).not.toHaveBeenCalled()
       expect(deps.broadcastThreadUpdate).not.toHaveBeenCalled()
+      expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['active', 'queued'] as const)(
+    'queues a visible workspace rebind while main reports %s turn ownership',
+    (blocker) => {
+      const deps = createDeps({
+        getChatWorkspaceRebindBlocker: vi.fn(() => blocker)
+      })
+      registerChatHandlers(deps)
+
+      const result = handlerFor('rebind-chat-workspace')({} as any, {
+        chatId: 'chat-1',
+        scope: 'workspace',
+        workspaceId: 'test-3',
+        workspacePath: '/Users/chrisizatt/Documents/Test 3',
+        deferIfBusy: true
+      })
+
+      expect(result).toMatchObject({
+        changed: false,
+        deferred: true,
+        chat: {
+          workspaceId: 'test-1',
+          providerMetadata: {
+            pendingWorkspaceRebind: {
+              workspaceId: 'test-3',
+              workspacePath: '/Users/chrisizatt/Documents/Test 3'
+            }
+          }
+        }
+      })
+      expect(deps.chatService.queueChatWorkspaceRebind).toHaveBeenCalledTimes(1)
+      expect(deps.chatService.rebindChatWorkspace).not.toHaveBeenCalled()
+      expect(deps.broadcastChatUpdated).toHaveBeenCalledTimes(1)
+      expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
       expect(deps.broadcastThreadList).not.toHaveBeenCalled()
     }
   )

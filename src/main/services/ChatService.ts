@@ -41,6 +41,11 @@ import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
 import {
+  clearPendingWorkspaceRebind,
+  queuePendingWorkspaceRebind,
+  type PendingWorkspaceRebind
+} from '../pendingWorkspaceRebind'
+import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
   collectExternalPathGrantsFromMetadata,
@@ -107,12 +112,14 @@ export type RebindChatWorkspaceInput =
   | {
       chatId: string
       scope: 'global'
+      deferIfBusy?: boolean
     }
   | {
       chatId: string
       scope: 'workspace'
       workspaceId: string
       workspacePath: string
+      deferIfBusy?: boolean
     }
 
 export interface RebindChatWorkspaceOptions {
@@ -124,6 +131,18 @@ export interface RebindChatWorkspaceOptions {
   assertIdle?: (chat: ChatRecord) => void
   now?: number
 }
+
+type ResolvedChatWorkspaceRebindTarget =
+  | {
+      chatId: string
+      scope: 'global'
+    }
+  | {
+      chatId: string
+      scope: 'workspace'
+      workspaceId: string
+      workspacePath: string
+    }
 
 export interface PrepareForkMessagesInput {
   /** Canonical main-owned source record loaded immediately before the fork. */
@@ -490,47 +509,35 @@ export class ChatService {
     input: RebindChatWorkspaceInput | undefined,
     options: RebindChatWorkspaceOptions = {}
   ): ChatRecord {
-    const chatId = requireSafeChatId(input?.chatId, 'Chat id')
-    const current = this.deps.appStore.getChat(chatId)
+    const target = this.resolveChatWorkspaceRebindTarget(input)
+    const current = this.deps.appStore.getChat(target.chatId)
     if (!current) throw new Error('Chat not found.')
 
-    let scope: ChatRecord['scope']
-    let workspaceId: string | undefined
-    let workspacePath: string | undefined
-    if (input?.scope === 'global') {
-      scope = 'global'
-    } else if (input?.scope === 'workspace') {
-      workspaceId = requireNonEmptyString(input.workspaceId, 'Workspace id')
-      const requestedPath = requireNonEmptyString(input.workspacePath, 'Workspace path')
-      const registered = this.deps.findRegisteredWorkspace(requestedPath)
-      if (!registered || registered.id !== workspaceId) {
-        throw new Error('Chat workspace must be a registered TaskWraith workspace.')
-      }
-      scope = 'workspace'
-      workspacePath = this.deps.canonicalPath(registered.path)
-    } else {
-      throw new Error('Chat workspace scope is invalid.')
-    }
-
-    if (chatMatchesRebindTarget(current, { scope, workspaceId, workspacePath })) {
-      return current
+    if (chatMatchesRebindTarget(current, target)) {
+      const cleared = clearPendingWorkspaceRebind(current)
+      if (cleared === current) return current
+      return this.saveChatInternal(
+        { ...cleared, updatedAt: options.now ?? Date.now() },
+        false
+      )
     }
     options.assertIdle?.(current)
 
     const now = options.now ?? Date.now()
-    const participants = current.ensemble?.participants.map(clearParticipantWorkspaceContinuity)
-    const providerMetadata = clearExternalPathGrantMetadata(current.providerMetadata)
+    const source = clearPendingWorkspaceRebind(current)
+    const participants = source.ensemble?.participants.map(clearParticipantWorkspaceContinuity)
+    const providerMetadata = clearExternalPathGrantMetadata(source.providerMetadata)
     const rebound: ChatRecord = {
-      ...current,
-      scope,
-      workspaceId,
-      workspacePath,
+      ...source,
+      scope: target.scope,
+      workspaceId: target.scope === 'workspace' ? target.workspaceId : undefined,
+      workspacePath: target.scope === 'workspace' ? target.workspacePath : undefined,
       updatedAt: now,
       providerMetadata,
-      ...(current.ensemble && participants
+      ...(source.ensemble && participants
         ? {
             ensemble: {
-              ...current.ensemble,
+              ...source.ensemble,
               participants,
               updatedAt: new Date(now).toISOString()
             }
@@ -547,7 +554,69 @@ export class ChatService {
     // the sole path allowed to persist a workspace transition; ordinary saves
     // return the canonical record when their binding is stale.
     const saved = this.saveChatInternal(rebound, true)
-    return this.deps.appStore.getChat(chatId) ?? saved
+    return this.deps.appStore.getChat(target.chatId) ?? saved
+  }
+
+  queueChatWorkspaceRebind(
+    input: RebindChatWorkspaceInput | undefined,
+    options: Pick<RebindChatWorkspaceOptions, 'now'> = {}
+  ): ChatRecord {
+    const target = this.resolveChatWorkspaceRebindTarget(input)
+    const current = this.deps.appStore.getChat(target.chatId)
+    if (!current) throw new Error('Chat not found.')
+    const now = options.now ?? Date.now()
+
+    if (chatMatchesRebindTarget(current, target)) {
+      const cleared = clearPendingWorkspaceRebind(current)
+      if (cleared === current) return current
+      return this.saveChatInternal({ ...cleared, updatedAt: now }, false)
+    }
+
+    const pending: PendingWorkspaceRebind =
+      target.scope === 'global'
+        ? {
+            schemaVersion: 1,
+            scope: 'global',
+            queuedAt: new Date(now).toISOString()
+          }
+        : {
+            schemaVersion: 1,
+            scope: 'workspace',
+            workspaceId: target.workspaceId,
+            workspacePath: target.workspacePath,
+            queuedAt: new Date(now).toISOString()
+          }
+    return this.saveChatInternal(
+      {
+        ...queuePendingWorkspaceRebind(current, pending),
+        updatedAt: now
+      },
+      false
+    )
+  }
+
+  private resolveChatWorkspaceRebindTarget(
+    input: RebindChatWorkspaceInput | undefined
+  ): ResolvedChatWorkspaceRebindTarget {
+    const chatId = requireSafeChatId(input?.chatId, 'Chat id')
+    if (input?.scope === 'global') {
+      return { chatId, scope: 'global' }
+    }
+    if (input?.scope !== 'workspace') {
+      throw new Error('Chat workspace scope is invalid.')
+    }
+    const workspaceId = requireNonEmptyString(input.workspaceId, 'Workspace id')
+    const requestedPath = requireNonEmptyString(input.workspacePath, 'Workspace path')
+    const registered = this.deps.findRegisteredWorkspace(requestedPath)
+    if (!registered || registered.id !== workspaceId) {
+      throw new Error('Chat workspace must be a registered TaskWraith workspace.')
+    }
+    return {
+      chatId,
+      scope: 'workspace',
+      workspaceId,
+      workspacePath: this.deps.canonicalPath(registered.path)
+    }
   }
 
   createHumanCollaborationShare(args: {

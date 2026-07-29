@@ -1760,17 +1760,19 @@ const api = {
   }) => ipcRenderer.invoke('set-chat-kind', args),
   rebindChatWorkspace: (
     args:
-      | { chatId: string; scope: 'global' }
+      | { chatId: string; scope: 'global'; deferIfBusy?: boolean }
       | {
           chatId: string
           scope: 'workspace'
           workspaceId: string
           workspacePath: string
+          deferIfBusy?: boolean
         }
   ) =>
     ipcRenderer.invoke('rebind-chat-workspace', args) as Promise<{
       chat: ChatRecord
       changed: boolean
+      deferred?: boolean
     }>,
   listDiscordContextTargets: () => ipcRenderer.invoke('discord-context:list-targets'),
   readDiscordContext: (selection: DiscordContextSelection) =>

@@ -973,6 +973,81 @@ describe('ChatService', () => {
     expect(store.saveChat).not.toHaveBeenCalled()
   })
 
+  it('queues a validated workspace target without changing the active binding, then clears it on rebind', () => {
+    const current = makeChat({
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1',
+      providerMetadata: { selectedModelType: 'gpt-5.6' }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({
+      appStore: store,
+      findRegisteredWorkspace: vi.fn((path: string) =>
+        path.endsWith('Test 1')
+          ? makeWorkspace({
+              id: 'test-1',
+              path: '/Users/chrisizatt/Documents/Test 1',
+              displayName: 'Test 1'
+            })
+          : makeWorkspace({
+              id: 'test-3',
+              path: '/Users/chrisizatt/Documents/Test 3',
+              displayName: 'Test 3'
+            })
+      ),
+      canonicalPath: vi.fn((path: string) => path)
+    })
+    const service = new ChatService(deps)
+    const target = {
+      chatId: current.appChatId,
+      scope: 'workspace' as const,
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3'
+    }
+
+    const queued = service.queueChatWorkspaceRebind(target, { now: 1234 })
+
+    expect(queued).toMatchObject({
+      workspaceId: 'test-1',
+      workspacePath: '/Users/chrisizatt/Documents/Test 1',
+      updatedAt: 1234,
+      providerMetadata: {
+        selectedModelType: 'gpt-5.6',
+        pendingWorkspaceRebind: {
+          schemaVersion: 1,
+          scope: 'workspace',
+          workspaceId: 'test-3',
+          workspacePath: '/Users/chrisizatt/Documents/Test 3',
+          queuedAt: new Date(1234).toISOString()
+        }
+      }
+    })
+    expect(queued.linkedProviderSessionId).toBe(current.linkedProviderSessionId)
+
+    const cancelled = service.queueChatWorkspaceRebind(
+      {
+        chatId: current.appChatId,
+        scope: 'workspace',
+        workspaceId: 'test-1',
+        workspacePath: '/Users/chrisizatt/Documents/Test 1'
+      },
+      { now: 2000 }
+    )
+    expect(cancelled.workspaceId).toBe('test-1')
+    expect(cancelled.providerMetadata).not.toHaveProperty('pendingWorkspaceRebind')
+
+    service.queueChatWorkspaceRebind(target, { now: 2100 })
+    const rebound = service.rebindChatWorkspace(target, { now: 2345 })
+
+    expect(rebound).toMatchObject({
+      workspaceId: 'test-3',
+      workspacePath: '/Users/chrisizatt/Documents/Test 3',
+      updatedAt: 2345,
+      providerMetadata: { selectedModelType: 'gpt-5.6' }
+    })
+    expect(rebound.providerMetadata).not.toHaveProperty('pendingWorkspaceRebind')
+  })
+
   it('rejects an unregistered rebind target without mutating the canonical chat', () => {
     const current = makeChat()
     const store = makeStatefulStore(current)

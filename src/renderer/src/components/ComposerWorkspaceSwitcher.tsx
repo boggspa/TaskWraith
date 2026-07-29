@@ -38,6 +38,8 @@ import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaul
 export interface ComposerWorkspaceSwitcherProps {
   workspaces: WorkspaceRecord[]
   currentWorkspace: WorkspaceRecord | null
+  /** Canonical target queued until the current chat releases its workspace. */
+  pendingWorkspace?: WorkspaceRecord | null
   /** Switch to (or rebind the chat to) an existing workspace. */
   onPickExisting: (ws: WorkspaceRecord) => void
   /** Open the system folder dialog and add the picked folder. */
@@ -139,6 +141,8 @@ function WorkspaceRevealButton({
 export interface ComposerWorkspaceKnownRowProps {
   workspace: WorkspaceRecord
   isPrimary: boolean
+  isPending?: boolean
+  canCancelPending?: boolean
   isAttached: boolean
   remoteEntries: RemoteWorkspaceEntry[]
   onMakePrimary: () => void
@@ -156,6 +160,8 @@ export interface ComposerWorkspaceKnownRowProps {
 export function ComposerWorkspaceKnownRow({
   workspace,
   isPrimary,
+  isPending = false,
+  canCancelPending = false,
   isAttached,
   remoteEntries,
   onMakePrimary,
@@ -170,6 +176,8 @@ export function ComposerWorkspaceKnownRow({
   return (
     <div
       className={`composer-workspace-known-row${isPrimary ? ' is-primary' : ''}${
+        isPending ? ' is-pending' : ''
+      }${
         isAttached ? ' is-attached' : ''
       }`}
       title={workspace.path}
@@ -178,16 +186,35 @@ export function ComposerWorkspaceKnownRow({
         type="button"
         className="composer-workspace-known-main"
         onClick={onMakePrimary}
-        disabled={isPrimary}
-        title={isPrimary ? 'Already the primary workspace' : `Make ${label} primary`}
+        disabled={(isPrimary && !canCancelPending) || isPending}
+        title={
+          isPrimary && canCancelPending
+            ? `Keep ${label} primary and cancel the pending workspace change`
+            : isPrimary
+            ? 'Already the primary workspace'
+            : isPending
+              ? 'Pending primary workspace'
+              : `Make ${label} primary`
+        }
         aria-label={
-          isPrimary ? `${label}, primary workspace` : `Switch primary workspace to ${label}`
+          isPrimary && canCancelPending
+            ? `Keep ${label} as primary workspace`
+            : isPrimary
+            ? `${label}, primary workspace`
+            : isPending
+              ? `${label}, pending primary workspace`
+              : `Switch primary workspace to ${label}`
         }
         aria-current={isPrimary ? 'true' : undefined}
       >
         <span className="composer-workspace-known-name">{label}</span>
         {isPrimary && (
           <span className="composer-workspace-badge composer-workspace-badge-primary">primary</span>
+        )}
+        {isPending && (
+          <span className="composer-workspace-badge composer-workspace-badge-attached">
+            pending
+          </span>
         )}
         {!isPrimary && isAttached && (
           <span className="composer-workspace-badge composer-workspace-badge-attached">
@@ -252,6 +279,7 @@ export function ComposerWorkspaceKnownRow({
 export function ComposerWorkspaceSwitcher({
   workspaces,
   currentWorkspace,
+  pendingWorkspace = null,
   onPickExisting,
   onAddNewWorkspace,
   onSelectNoWorkspace,
@@ -352,12 +380,17 @@ export function ComposerWorkspaceSwitcher({
     const byId = new Map<string, WorkspaceRecord>()
     for (const ws of workspaces) byId.set(ws.id, ws)
     if (currentWorkspace && !byId.has(currentWorkspace.id)) byId.set(currentWorkspace.id, currentWorkspace)
+    if (pendingWorkspace && !byId.has(pendingWorkspace.id)) {
+      byId.set(pendingWorkspace.id, pendingWorkspace)
+    }
     return [...byId.values()].sort((a, b) => {
       if (a.id === currentWorkspace?.id) return -1
       if (b.id === currentWorkspace?.id) return 1
+      if (a.id === pendingWorkspace?.id) return -1
+      if (b.id === pendingWorkspace?.id) return 1
       return (b.lastOpenedAt || b.createdAt || 0) - (a.lastOpenedAt || a.createdAt || 0)
     })
-  }, [currentWorkspace, workspaces])
+  }, [currentWorkspace, pendingWorkspace, workspaces])
 
   // 1.0.6-EW66 — collapse the per-provider grants into one entry
   // per PATH for the "Current workspaces" list. Order comes from
@@ -483,15 +516,22 @@ export function ComposerWorkspaceSwitcher({
   const primaryLabel = currentWorkspace
     ? currentWorkspace.displayName || currentWorkspace.path.split('/').pop() || 'Workspace'
     : 'Pick workspace'
+  const pendingLabel = pendingWorkspace
+    ? pendingWorkspace.displayName || pendingWorkspace.path.split('/').pop() || 'Workspace'
+    : null
 
   const additionalCount = additionalEntries.length
-  const triggerLabel = additionalCount > 0 ? `${primaryLabel} +${additionalCount}` : primaryLabel
+  const displayedPrimaryLabel = pendingLabel ? `Pending: ${pendingLabel}` : primaryLabel
+  const triggerLabel =
+    additionalCount > 0 ? `${displayedPrimaryLabel} +${additionalCount}` : displayedPrimaryLabel
 
-  const titleText = currentWorkspace
-    ? `Workspaces · ${currentWorkspace.displayName || currentWorkspace.path}${
-        additionalCount > 0 ? ` (+${additionalCount} attached)` : ''
-      }`
-    : 'Manage workspaces'
+  const titleText = pendingWorkspace
+    ? `Pending workspace change · ${pendingLabel} (currently ${primaryLabel})`
+    : currentWorkspace
+      ? `Workspaces · ${currentWorkspace.displayName || currentWorkspace.path}${
+          additionalCount > 0 ? ` (+${additionalCount} attached)` : ''
+        }`
+      : 'Manage workspaces'
 
   return (
     <>
@@ -502,6 +542,7 @@ export function ComposerWorkspaceSwitcher({
           popoverOpen ? 'is-open' : ''
         }`}
         data-composer-control="workspace"
+        data-pending-workspace={pendingWorkspace ? 'true' : 'false'}
         aria-expanded={popoverOpen}
         aria-haspopup="dialog"
         onClick={() => setPopoverOpen((open) => !open)}
@@ -534,12 +575,15 @@ export function ComposerWorkspaceSwitcher({
               <div className="welcome-workspace-popover-header">Workspaces</div>
               {registeredWorkspaces.map((ws) => {
                 const isPrimary = ws.id === currentWorkspace?.id
+                const isPending = ws.id === pendingWorkspace?.id
                 const isAttached = Boolean(ws.path && attachedPaths.has(ws.path))
                 return (
                   <ComposerWorkspaceKnownRow
                     key={ws.id}
                     workspace={ws}
                     isPrimary={isPrimary}
+                    isPending={isPending}
+                    canCancelPending={isPrimary && Boolean(pendingWorkspace)}
                     isAttached={isAttached}
                     remoteEntries={remoteAllowlist}
                     onMakePrimary={() => handleSelectFromPopover(() => onPickExisting(ws))}

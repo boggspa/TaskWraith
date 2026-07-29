@@ -847,6 +847,10 @@ import {
   type PendingProviderChange
 } from '../../main/providerChangeQueue'
 import {
+  readPendingWorkspaceRebind,
+  type PendingWorkspaceRebind
+} from '../../main/pendingWorkspaceRebind'
+import {
   applyPendingEnsembleRosterPresetOnFinalize,
   applyPendingEnsembleRosterPresetOnRunTerminal,
   buildUserEnsembleRosterPresetApplyPlan,
@@ -7992,6 +7996,10 @@ function App(): React.JSX.Element {
     return !workflowDefinitions.some((workflow) => workflow.template.chatId === chat.appChatId)
   }
 
+  const pendingWorkspaceRebindRetryRevisionRef = useRef<Map<string, string>>(new Map())
+  const workspaceRebindRevision = (chat: ChatRecord): string =>
+    `${chat.persistenceRevision ?? 0}:${chat.updatedAt}`
+
   const handleSelectExistingWorkspace = async (
     ws: WorkspaceRecord,
     options?: { intent?: WorkspaceSelectIntent }
@@ -8056,15 +8064,18 @@ function App(): React.JSX.Element {
         currentWorkspace?.path === ws.path
       let rebound: ChatRecord
       let canonicalChanged = false
+      let deferred = false
       try {
         const result = await window.api.rebindChatWorkspace({
           chatId: initiatingChatId,
           scope: 'workspace',
           workspaceId: ws.id,
-          workspacePath: ws.path
+          workspacePath: ws.path,
+          deferIfBusy: intent === 'switch'
         })
         rebound = result.chat
         canonicalChanged = result.changed
+        deferred = result.deferred === true
       } catch (error) {
         appendThreadRawLog(initiatingChatId, {
           type: 'stderr',
@@ -8072,6 +8083,15 @@ function App(): React.JSX.Element {
         })
         return
       }
+      if (deferred) {
+        pendingWorkspaceRebindRetryRevisionRef.current.set(
+          initiatingChatId,
+          workspaceRebindRevision(rebound)
+        )
+        updateChatById(initiatingChatId, () => rebound)
+        return
+      }
+      pendingWorkspaceRebindRetryRevisionRef.current.delete(initiatingChatId)
       const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
       updateChatById(initiatingChatId, () => chatWithLedger)
       // Main owns the canonical rebind even if this renderer's local snapshot
@@ -8182,6 +8202,47 @@ function App(): React.JSX.Element {
       void refreshWorkspaceTrust(ws)
     })
   }
+
+  const pendingWorkspaceRebind: PendingWorkspaceRebind | null = currentChat
+    ? readPendingWorkspaceRebind(currentChat)
+    : null
+  const pendingWorkspaceRebindRevision = currentChat
+    ? workspaceRebindRevision(currentChat)
+    : ''
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId || !pendingWorkspaceRebind) {
+      if (chatId) pendingWorkspaceRebindRetryRevisionRef.current.delete(chatId)
+      return
+    }
+    if (
+      pendingWorkspaceRebindRetryRevisionRef.current.get(chatId) ===
+      pendingWorkspaceRebindRevision
+    ) {
+      return
+    }
+    if (isChatBusy(chatId) || runningChatIds.has(chatId)) return
+    if (pendingWorkspaceRebind.scope !== 'workspace') return
+    const target = workspaces.find(
+      (workspace) => workspace.id === pendingWorkspaceRebind.workspaceId
+    )
+    if (!target) return
+    void handleSelectExistingWorkspace(target, { intent: 'switch' })
+  }, [
+    currentChat?.appChatId,
+    pendingWorkspaceRebind?.scope,
+    pendingWorkspaceRebind?.scope === 'workspace'
+      ? pendingWorkspaceRebind.workspaceId
+      : null,
+    pendingWorkspaceRebind?.scope === 'workspace'
+      ? pendingWorkspaceRebind.workspacePath
+      : null,
+    pendingWorkspaceRebindRevision,
+    queuedRuns,
+    runQueueJobs,
+    runningChatIds,
+    workspaces
+  ])
 
   // Sidebar rail / Settings → Workspaces selection. Clicking a workspace here
   // navigates to it; it must not silently relocate the chat the user is
@@ -27932,6 +27993,7 @@ function App(): React.JSX.Element {
       },
       currentWorkspace: viewerWorkspace,
       currentWorkspacePath: viewerWorkspace?.path,
+      pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
       externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
       externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
       externalPathRepoMetadata: paneExternalWorkspaceState.externalPathRepoMetadata,
@@ -29152,6 +29214,7 @@ function App(): React.JSX.Element {
         },
         currentWorkspace: viewerWorkspace,
         currentWorkspacePath: viewerWorkspace?.path,
+        pendingWorkspaceRebind: readPendingWorkspaceRebind(viewerChat),
         externalPathGrants: paneExternalWorkspaceState.externalPathGrants,
         externalWorkspaceGroups: paneExternalWorkspaceState.externalWorkspaceGroups,
         externalPathRepoMetadata: paneExternalWorkspaceState.externalPathRepoMetadata,
@@ -29561,6 +29624,7 @@ function App(): React.JSX.Element {
     activeRunId: composerActiveRunId,
     pendingAgentApproval,
     pendingPlanImport,
+    pendingWorkspaceRebind,
     permissionRequestMessage,
     permissionRequestPaths,
     permissionRequestSource,
