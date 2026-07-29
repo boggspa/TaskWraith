@@ -24,7 +24,8 @@ import {
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
   summarizeCollapsedActivityStack,
-  summarizeCollapsedSuperGroup
+  summarizeCollapsedSuperGroup,
+  type CollapsedStackLabelPart
 } from '../lib/collapsedActivityStack'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
@@ -401,6 +402,7 @@ function CollapsedTranscriptRow({
   header,
   metaLabel,
   label,
+  labelParts,
   icons,
   errored,
   compact,
@@ -413,6 +415,11 @@ function CollapsedTranscriptRow({
   /** Optional muted inline prefix (e.g. "System") when no block header. */
   metaLabel?: string
   label: string
+  /** Segmented form of `label` (activity summaries). When present, failed
+   * segments paint their leading verb — "Ran" when a command exited
+   * non-zero — in the user's diff-deletion red instead of tinting the whole
+   * line; `label` stays the a11y/tooltip string. */
+  labelParts?: readonly CollapsedStackLabelPart[]
   /** Optional leading icon strip (tool-family monoline SVGs). */
   icons?: ReactNode
   errored?: boolean
@@ -444,7 +451,27 @@ function CollapsedTranscriptRow({
         </span>
         {icons}
         {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
-        <span className="collapsed-activity-stack-label">{label}</span>
+        <span className="collapsed-activity-stack-label">
+          {labelParts
+            ? labelParts.map((part, index) => {
+                const prefix = index > 0 ? ' · ' : ''
+                if (!part.failed) {
+                  return <Fragment key={index}>{`${prefix}${part.text}`}</Fragment>
+                }
+                // Accent the leading verb ("Ran"); parts without one (the
+                // error tally) accent whole.
+                const accent =
+                  part.verb && part.text.startsWith(part.verb) ? part.verb : part.text
+                return (
+                  <Fragment key={index}>
+                    {prefix}
+                    <span className="collapsed-activity-stack-verb is-failed">{accent}</span>
+                    {part.text.slice(accent.length)}
+                  </Fragment>
+                )
+              })
+            : label}
+        </span>
       </button>
       {expanded ? children : null}
     </div>
@@ -500,6 +527,7 @@ function CollapsedActivityStackRow({
     <CollapsedTranscriptRow
       header={header}
       label={summary.label}
+      labelParts={summary.parts}
       icons={<CollapsedStackIconStrip families={summary.families} />}
       errored={summary.errorCount > 0}
       expanded={expanded}
@@ -4156,6 +4184,7 @@ export const TranscriptPanel = memo(
                         }
                         metaLabel={superGroup.headerMessage ? undefined : 'System'}
                         label={superSummary.label}
+                        labelParts={superSummary.parts}
                         icons={<CollapsedStackIconStrip families={superSummary.families} />}
                         compact={!superGroup.headerMessage}
                         errored={superSummary.errorCount > 0}

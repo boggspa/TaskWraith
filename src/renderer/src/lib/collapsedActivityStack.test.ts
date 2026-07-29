@@ -35,6 +35,8 @@ describe('summarizeCollapsedActivityStack', () => {
     expect(summary.families).toEqual(['thinking', 'search', 'read', 'write', 'shell'])
     expect(summary.activityCount).toBe(8)
     expect(summary.errorCount).toBe(0)
+    expect(summary.parts.map((part) => part.text).join(' · ')).toBe(summary.label)
+    expect(summary.parts.every((part) => !part.failed)).toBe(true)
   })
 
   it('counts distinct files, not raw call counts, for reads and edits', () => {
@@ -53,6 +55,35 @@ describe('summarizeCollapsedActivityStack', () => {
     ])
     expect(summary.label).toBe('Ran 2 commands · 1 error')
     expect(summary.errorCount).toBe(1)
+    // One failed command is enough to accent the family verb; the error
+    // tally part accents whole (no verb).
+    expect(summary.parts).toEqual([
+      { text: 'Ran 2 commands', verb: 'Ran', failed: true },
+      { text: '1 error', verb: '', failed: true }
+    ])
+  })
+
+  it('attributes failure to the family that errored, not its neighbours', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({ category: 'read', filePath: '/a/x.ts', status: 'error' }),
+      activity({ category: 'write', filePath: '/a/x.ts' }),
+      activity({ category: 'shell' })
+    ])
+    expect(summary.parts).toEqual([
+      { text: 'Read 1 file', verb: 'Read', failed: true },
+      { text: 'Edited 1 file', verb: 'Edited', failed: false },
+      { text: 'Ran 1 command', verb: 'Ran', failed: false },
+      { text: '1 error', verb: '', failed: true }
+    ])
+  })
+
+  it('marks the thinking part when a reasoning step errored', () => {
+    const summary = summarizeCollapsedActivityStack([
+      activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 3_000, status: 'error' }),
+      activity({ category: 'shell' })
+    ])
+    expect(summary.parts[0]).toEqual({ text: 'Thought for 3s', verb: 'Thought', failed: true })
+    expect(summary.parts[1]).toEqual({ text: 'Ran 1 command', verb: 'Ran', failed: false })
   })
 
   it('sums minute-scale thinking and never shows an empty label', () => {
@@ -129,6 +160,30 @@ describe('summarizeCollapsedSuperGroup', () => {
       'Thought for 12s · Ran 2 commands · Read 1 file · 2 system notices'
     )
     expect(summary.families).toEqual(['thinking', 'shell', 'read'])
+    expect(summary.parts.map((part) => part.text).join(' · ')).toBe(summary.label)
+    expect(summary.parts[summary.parts.length - 1]).toEqual({
+      text: '2 system notices',
+      verb: '',
+      failed: false
+    })
+  })
+
+  it('carries member-stack failure attribution through the merged line', () => {
+    const summary = summarizeCollapsedSuperGroup({
+      activities: [
+        activity({ category: 'shell', status: 'error' }),
+        activity({ category: 'read', filePath: '/a/x.ts' })
+      ],
+      systemCount: 1,
+      firstSystemPreview: 'Round settled.'
+    })
+    expect(summary.parts).toEqual([
+      { text: 'Ran 1 command', verb: 'Ran', failed: true },
+      { text: 'Read 1 file', verb: 'Read', failed: false },
+      { text: '1 error', verb: '', failed: true },
+      { text: '1 system notice', verb: '', failed: false }
+    ])
+    expect(summary.label).toBe('Ran 1 command · Read 1 file · 1 error · 1 system notice')
   })
 
   it('leads with the notice count and first preview for all-system groups', () => {

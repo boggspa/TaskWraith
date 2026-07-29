@@ -36,9 +36,23 @@ export function activityStackHasLiveWork(activities: readonly ToolActivity[]): b
 
 export type CollapsedStackFamily = 'thinking' | 'read' | 'write' | 'search' | 'shell' | 'task'
 
+/** One " · "-joined segment of the collapsed summary line. `verb` is the
+ * leading action word ("Ran", "Edited") — the failure-accent target when
+ * `failed` is set; a failed part with no verb (the error tally) accents the
+ * whole segment. */
+export interface CollapsedStackLabelPart {
+  text: string
+  verb: string
+  /** True when an activity behind this segment exited with error status. */
+  failed: boolean
+}
+
 export interface CollapsedStackSummary {
   /** "Thought for 12s · Searched ×8 · Read 5 files · Edited 2 files" */
   label: string
+  /** The same line as segments, with per-family failure attribution so the
+   * row can paint just the verb of the family that failed. */
+  parts: CollapsedStackLabelPart[]
   /** Activity families present, in label order — drives the icon strip. */
   families: CollapsedStackFamily[]
   /** Count of error-status activities, surfaced on the summary row. */
@@ -68,10 +82,12 @@ export function summarizeCollapsedActivityStack(
 ): CollapsedStackSummary {
   let thinkingCount = 0
   let thinkingMs = 0
+  let thinkingFailed = false
   let errorCount = 0
   const familyOrder: string[] = []
   const familyCounts = new Map<string, number>()
   const familyFiles = new Map<string, Set<string>>()
+  const failedFamilies = new Set<string>()
 
   const bump = (family: string, filePath?: string): void => {
     if (!familyCounts.has(family)) familyOrder.push(family)
@@ -84,52 +100,76 @@ export function summarizeCollapsedActivityStack(
   }
 
   for (const activity of activities) {
-    if (activity.status === 'error') errorCount += 1
+    const failed = activity.status === 'error'
+    if (failed) errorCount += 1
     if (isThinkingStackActivity(activity)) {
       thinkingCount += 1
       thinkingMs += Math.max(0, activity.durationMs || 0)
+      if (failed) thinkingFailed = true
       continue
     }
-    bump(activity.category === 'unknown' ? 'task' : activity.category, activity.filePath)
+    const family = activity.category === 'unknown' ? 'task' : activity.category
+    if (failed) failedFamilies.add(family)
+    bump(family, activity.filePath)
   }
 
-  const parts: string[] = []
+  const parts: CollapsedStackLabelPart[] = []
   const families: CollapsedStackFamily[] = []
   if (thinkingCount > 0) {
-    parts.push(thinkingDurationLabel(thinkingMs))
+    parts.push({ text: thinkingDurationLabel(thinkingMs), verb: 'Thought', failed: thinkingFailed })
     families.push('thinking')
   }
   for (const family of familyOrder) {
     const count = familyCounts.get(family) || 0
     const files = familyFiles.get(family)?.size || 0
+    const failed = failedFamilies.has(family)
     switch (family) {
       case 'read':
-        parts.push(files > 0 ? `Read ${pluralize(files, 'file')}` : `Read ×${count}`)
+        parts.push({
+          text: files > 0 ? `Read ${pluralize(files, 'file')}` : `Read ×${count}`,
+          verb: 'Read',
+          failed
+        })
         families.push('read')
         break
       case 'write':
-        parts.push(files > 0 ? `Edited ${pluralize(files, 'file')}` : `Edited ×${count}`)
+        parts.push({
+          text: files > 0 ? `Edited ${pluralize(files, 'file')}` : `Edited ×${count}`,
+          verb: 'Edited',
+          failed
+        })
         families.push('write')
         break
       case 'search':
-        parts.push(count === 1 ? 'Searched once' : `Searched ×${count}`)
+        parts.push({
+          text: count === 1 ? 'Searched once' : `Searched ×${count}`,
+          verb: 'Searched',
+          failed
+        })
         families.push('search')
         break
       case 'shell':
-        parts.push(`Ran ${pluralize(count, 'command')}`)
+        parts.push({ text: `Ran ${pluralize(count, 'command')}`, verb: 'Ran', failed })
         families.push('shell')
         break
       default:
-        parts.push(count === 1 ? 'Used 1 tool' : `Used ${count} tools`)
+        parts.push({
+          text: count === 1 ? 'Used 1 tool' : `Used ${count} tools`,
+          verb: 'Used',
+          failed
+        })
         families.push('task')
         break
     }
   }
-  if (parts.length === 0) parts.push('Activity')
-  if (errorCount > 0) parts.push(pluralize(errorCount, 'error'))
+  if (parts.length === 0) parts.push({ text: 'Activity', verb: '', failed: false })
+  if (errorCount > 0) {
+    parts.push({ text: pluralize(errorCount, 'error'), verb: '', failed: true })
+  }
 
   return {
-    label: parts.join(' · '),
+    label: parts.map((part) => part.text).join(' · '),
+    parts,
     families,
     errorCount,
     activityCount: activities.length
@@ -164,19 +204,23 @@ export function summarizeCollapsedSuperGroup(input: {
       ? `${input.systemCount} system ${input.systemCount === 1 ? 'notice' : 'notices'}`
       : ''
   if (input.activities.length === 0) {
+    const parts = [noticeSuffix || 'System notices', input.firstSystemPreview]
+      .filter(Boolean)
+      .map((text) => ({ text, verb: '', failed: false }))
     return {
-      label: [noticeSuffix || 'System notices', input.firstSystemPreview]
-        .filter(Boolean)
-        .join(' · '),
+      label: parts.map((part) => part.text).join(' · '),
+      parts,
       families: [],
       errorCount: 0,
       activityCount: 0
     }
   }
   const merged = summarizeCollapsedActivityStack(input.activities)
+  if (!noticeSuffix) return merged
   return {
     ...merged,
-    label: noticeSuffix ? `${merged.label} · ${noticeSuffix}` : merged.label
+    parts: [...merged.parts, { text: noticeSuffix, verb: '', failed: false }],
+    label: `${merged.label} · ${noticeSuffix}`
   }
 }
 

@@ -12384,8 +12384,19 @@ button.diff-file-row {
   white-space: nowrap;
   color: var(--text-secondary);
 }
-.collapsed-activity-stack.has-errors .collapsed-activity-stack-label {
+/* Failure accents. Compact (system/compaction) one-liners keep the whole-line
+ * amber; activity summaries instead paint ONLY the verb of the family that
+ * failed — "Ran" when a command exited non-zero — in the user's
+ * diff-deletion red (Settings → Appearance; --diff-stat-del-color is
+ * runtime-set on :root by useAppearance, fallback = its shipped default).
+ * Claude Code's failed-action idiom: the failure reads at a glance without
+ * shouting over the parts of the line that succeeded. The verb span sets its
+ * own color, so the hover text-primary lift on the label leaves it red. */
+.collapsed-activity-stack.is-compact.has-errors .collapsed-activity-stack-label {
   color: var(--tool-warning);
+}
+.collapsed-activity-stack-verb.is-failed {
+  color: var(--diff-stat-del-color, #ec3d35);
 }
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
   margin-bottom: 2px;
