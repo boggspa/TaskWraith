@@ -74,6 +74,7 @@ import {
   WorkspaceBoardCard,
   WorkspaceBoardDefinition,
   EnsembleFanoutPolicy,
+  EnsembleOrchestrationMode,
   PermissionOverrides,
   PooledAgentStatsSummary,
   PromptCacheCapability,
@@ -1733,6 +1734,20 @@ declare global {
         textPrefix?: string
       }) => Promise<{ ok: boolean; error?: string }>
       cancelEnsembleRound: (chatId: string) => Promise<boolean>
+      updateLiveEnsembleRoundConfig: (payload: {
+        chatId: string
+        orchestrationMode?: EnsembleOrchestrationMode
+        fanoutPolicy?: EnsembleFanoutPolicy
+        maxContinuationHops?: number
+      }) => Promise<{
+        ok: boolean
+        orchestrationMode?: EnsembleOrchestrationMode
+        fanoutPolicy?: EnsembleFanoutPolicy
+        maxContinuationHops?: number
+        activeRoundUpdated?: boolean
+        error?: string
+        message?: string
+      }>
       requestEnsembleParticipantSeatChange: (payload: {
         chatId: string
         participantId: string

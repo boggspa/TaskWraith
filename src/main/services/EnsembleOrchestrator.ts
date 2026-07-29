@@ -278,6 +278,34 @@ export type EnsembleQueuedPromptMutationResult = {
 }
 
 /**
+ * Main-authoritative configuration mutation requested from the composer while
+ * an Ensemble round may still be running. These controls affect only future
+ * admissions/continuations; an already-dispatched provider run is never
+ * cancelled or reconfigured underneath itself.
+ */
+export interface EnsembleLiveRoundConfigUpdateInput {
+  chatId: string
+  orchestrationMode?: EnsembleOrchestrationMode
+  fanoutPolicy?: EnsembleFanoutPolicy
+  maxContinuationHops?: number
+}
+
+export type EnsembleLiveRoundConfigUpdateResult =
+  | {
+      ok: true
+      orchestrationMode: EnsembleOrchestrationMode
+      fanoutPolicy: EnsembleFanoutPolicy
+      maxContinuationHops: number
+      /** True when the durable active-round snapshot was updated too. */
+      activeRoundUpdated: boolean
+    }
+  | {
+      ok: false
+      error: 'not_ensemble' | 'invalid_config'
+      message: string
+    }
+
+/**
  * 1.0.7 — sentinel workspace id for global-chat ensemble usage records. MUST
  * stay byte-identical to the renderer's `GLOBAL_USAGE_WORKSPACE_ID`
  * (App.tsx) so global-chat ensemble usage buckets into the same workspace
@@ -3122,6 +3150,102 @@ export class EnsembleOrchestrator {
   private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
+
+  /**
+   * Apply user-owned round controls to the canonical chat and, when present,
+   * the in-memory runtime. The runtime reads these fields at fan-out admission
+   * and at the continuation boundary, so current provider executions continue
+   * unchanged while the next decision observes the new value.
+   */
+  updateLiveRoundConfig(
+    input: EnsembleLiveRoundConfigUpdateInput
+  ): EnsembleLiveRoundConfigUpdateResult {
+    const chat = this.deps.getChat(input.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        error: 'not_ensemble',
+        message: 'Live round configuration requires an Ensemble chat.'
+      }
+    }
+
+    if (
+      (input.orchestrationMode !== undefined &&
+        input.orchestrationMode !== 'continuous' &&
+        input.orchestrationMode !== 'turn_bound') ||
+      (input.fanoutPolicy !== undefined && !isEnsembleFanoutPolicy(input.fanoutPolicy)) ||
+      (input.maxContinuationHops !== undefined && !Number.isFinite(input.maxContinuationHops))
+    ) {
+      return {
+        ok: false,
+        error: 'invalid_config',
+        message: 'Live round configuration contains an unsupported value.'
+      }
+    }
+
+    const orchestrationMode =
+      input.orchestrationMode ?? resolveEnsembleOrchestrationMode(chat.ensemble)
+    const fanoutPolicy = input.fanoutPolicy ?? resolveEnsembleFanoutPolicy(chat.ensemble)
+    const maxContinuationHops =
+      input.maxContinuationHops === undefined
+        ? resolveMaxContinuationHops(chat.ensemble)
+        : Math.max(
+            1,
+            Math.min(MAX_CONTINUATION_HOP_LIMIT, Math.floor(input.maxContinuationHops))
+          )
+    const activeRound = chat.ensemble.activeRound
+    const activeRoundUpdated = activeRound?.status === 'running'
+    const runtime = this.roundsByChatId.get(input.chatId)
+
+    if (
+      runtime &&
+      !runtime.cancelled &&
+      activeRoundUpdated &&
+      activeRound?.roundId === runtime.roundId
+    ) {
+      runtime.orchestrationMode = orchestrationMode
+      runtime.fanoutPolicy = fanoutPolicy
+      runtime.concurrentMode = fanoutPolicyEnablesConcurrent(fanoutPolicy) || undefined
+      runtime.maxContinuationHops = maxContinuationHops
+      // A newly raised cap should reopen a pending continuation boundary; a
+      // lowered cap is re-evaluated at that same boundary against the new cap.
+      runtime.continuationLimitNotified = false
+      runtime.continuationLimitPending = false
+    }
+
+    const updated: ChatRecord = {
+      ...chat,
+      ensemble: {
+        ...chat.ensemble,
+        orchestrationMode,
+        fanoutPolicy,
+        concurrentModeEnabled: fanoutPolicyEnablesConcurrent(fanoutPolicy),
+        maxContinuationHops,
+        ...(activeRoundUpdated && activeRound
+          ? {
+              activeRound: {
+                ...activeRound,
+                orchestrationMode,
+                fanoutPolicy,
+                concurrentMode: fanoutPolicyEnablesConcurrent(fanoutPolicy) || undefined,
+                maxContinuationHops
+              }
+            }
+          : {}),
+        updatedAt: this.deps.nowIso()
+      },
+      updatedAt: this.deps.now()
+    }
+    this.saveChatWithCheckpoint(updated, activeRoundUpdated ? 'round-updated' : 'participant-updated')
+
+    return {
+      ok: true,
+      orchestrationMode,
+      fanoutPolicy,
+      maxContinuationHops,
+      activeRoundUpdated
+    }
+  }
 
   private startCursorCompletionWatchdog(run: ActiveParticipantRun): void {
     // The live main wiring supplies an exact RunManager child-liveness probe.

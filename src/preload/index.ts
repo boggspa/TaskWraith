@@ -4,6 +4,7 @@ import type {
   BlackboardEntry,
   ChatRecord,
   EnsembleFanoutPolicy,
+  EnsembleOrchestrationMode,
   ProviderId,
   AgenticWorkspaceGrantProviderId,
   RunAnalystRequest,
@@ -1662,6 +1663,21 @@ const api = {
     textPrefix?: string
   }) => ipcRenderer.invoke('blackboard-queued-ensemble-prompt', payload),
   cancelEnsembleRound: (chatId: string) => ipcRenderer.invoke('cancel-ensemble-round', chatId),
+  updateLiveEnsembleRoundConfig: (payload: {
+    chatId: string
+    orchestrationMode?: EnsembleOrchestrationMode
+    fanoutPolicy?: EnsembleFanoutPolicy
+    maxContinuationHops?: number
+  }) =>
+    ipcRenderer.invoke('ensemble:update-live-round-config', payload) as Promise<{
+      ok: boolean
+      orchestrationMode?: EnsembleOrchestrationMode
+      fanoutPolicy?: EnsembleFanoutPolicy
+      maxContinuationHops?: number
+      activeRoundUpdated?: boolean
+      error?: string
+      message?: string
+    }>,
   requestEnsembleParticipantSeatChange: (payload: {
     chatId: string
     participantId: string
