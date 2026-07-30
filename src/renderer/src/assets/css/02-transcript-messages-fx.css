@@ -5888,14 +5888,51 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   font-size: var(--font-size-xs);
 }
 
+/* In-flow segment of the LEFT corner-control pill (MainAppLayout), not its own
+ * absolutely-positioned corner box. It was previously pinned at
+ * `top: 12px; right: 18px` of .app-transcript with z-index 4 — the exact corner
+ * .chat-corner-controls-right (MainPaneActionPill) already claims at z-index 5.
+ * The action icons painted over the People button and swallowed its clicks, so
+ * the only working "create a share" door in the app was unreachable.
+ *
+ * Left-anchored and in-flow means no magic right-offset has to track the action
+ * pill's icon count, and the shared `.chat-corner-controls > *` divider rule
+ * gives this segment the same left rule as the rest of the pill (hence the
+ * padding, which keeps "People" off that 1px line). */
 .human-collaboration-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline-start: 8px;
+  pointer-events: auto;
+}
+
+/* Popout-window wrapper ONLY. A chat popout renders neither the left corner pill
+ * nor MainPaneActionPill, so the top-right corner is genuinely free there and the
+ * old floating placement is correct — it is the main window, where the action pill
+ * sits at z-index 5, that could never host this. Keep the two surfaces distinct:
+ * do NOT "unify" them back onto one absolutely-positioned box. */
+.human-collaboration-header-floating {
   position: absolute;
   top: 12px;
   right: 18px;
-  z-index: 4;
+  z-index: 6;
   display: flex;
   justify-content: flex-end;
   pointer-events: none;
+}
+
+/* The pill's segment divider only applies inside .chat-corner-controls; floating
+ * on its own, that left padding just looks like a stray indent. */
+.human-collaboration-header-floating .human-collaboration-header {
+  padding-inline-start: 0;
+}
+
+/* Was an inline `style` prop on the button; moved here with the block so the
+ * danger tint survives the relocation. */
+.human-collaboration-people-btn.human-collaboration-stop-btn {
+  border-color: color-mix(in srgb, var(--danger, #e54d4d) 44%, var(--panel-border));
+  color: color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary));
 }
 
 .human-collaboration-people-btn {

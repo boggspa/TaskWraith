@@ -1619,6 +1619,19 @@ function App(): React.JSX.Element {
         chats.find((candidate) => candidate.appChatId === chatId) ||
         null
       if (!chat || typeof window.api.saveChat !== 'function') return
+      // A summary-only record is PROOF the chat is already on disk — the chat-list
+      // index only ever summarises persisted files — and StoreService.saveChat
+      // hard-throws on one. Main doesn't need this save at all: it re-reads the
+      // chat itself via chatService.getChat, so the file existing is the whole
+      // requirement. Skip instead of throwing.
+      //
+      // This is not a corner case: handleNewChat / handleNewEnsemble reuse a
+      // pristine draft found in `chats`, which for anything loaded from the index
+      // IS a summary ChatListItem, so "New Shared Chat" hit this on every call.
+      // If the chat genuinely isn't persisted, the readHumanCollaborationInviteHealth
+      // preflight right after this reports `chatAvailable: false` and the caller
+      // surfaces "This chat is not saved yet" — a real message, not a raw throw.
+      if (isChatSummaryRecord(chat)) return
       await window.api.saveChat(chat)
     },
     [chats, currentChat]

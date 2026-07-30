@@ -1190,6 +1190,58 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     ? 'ensemble'
     : currentChat?.provider || currentProvider
 
+  // People (collaboration) controls. Defined ONCE and rendered on two surfaces,
+  // because the two have opposite corner constraints:
+  //   - Main window: in-flow inside .chat-corner-controls-left. It cannot go
+  //     top-right, where it used to live — MainPaneActionPill
+  //     (.chat-corner-controls-right, z-index 5) claims that corner and painted
+  //     over this button, swallowing its clicks. Left-anchored needs no magic
+  //     offset tracking the action pill's icon count.
+  //   - Chat popout window: the left pill and the action pill are BOTH gated on
+  //     !isChatPopoutWindow, so top-right is free there and nothing occludes it.
+  //     This was in fact the only place the button worked before the move, so it
+  //     must keep working — hence the floating wrapper rather than dropping it.
+  const humanCollaborationControls =
+    currentChat && !isWelcomeChat ? (
+      <div className="human-collaboration-header">
+        <button
+          type="button"
+          className="human-collaboration-people-btn"
+          onClick={handleCreateHumanCollaborationShare}
+          title={
+            collaboratingChatIds.has(currentChat.appChatId)
+              ? 'Create another collaborator invite'
+              : 'Invite collaborators to this chat'
+          }
+        >
+          People
+          {collaboratingChatIds.has(currentChat.appChatId) && (
+            <span className="human-collaboration-live-dot" aria-label="Shared" />
+          )}
+        </button>
+        {currentChatHumanCollaborationShare && (
+          <button
+            type="button"
+            className="human-collaboration-people-btn"
+            onClick={handleCopyCurrentHumanCollaborationInvite}
+            title="Copy a fresh collaborator invite"
+          >
+            Copy invite
+          </button>
+        )}
+        {collaboratingChatIds.has(currentChat.appChatId) && (
+          <button
+            type="button"
+            className="human-collaboration-people-btn human-collaboration-stop-btn"
+            onClick={handleStopHumanCollaborationSharing}
+            title="Stop sharing this chat and revoke all collaborators"
+          >
+            Stop sharing
+          </button>
+        )}
+      </div>
+    ) : null
+
   return (
       <div
         className={`app-main ${isChatExpanded ? 'chat-expanded' : ''} ${providerShellClass} ${
@@ -1792,6 +1844,19 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   </span>
                 )}
               </div>
+              {/* Main-window surface — see humanCollaborationControls above for why
+                  this is left-anchored and in-flow rather than its own top-right box. */}
+              {humanCollaborationControls}
+            </div>
+          )}
+
+          {/* Popout-window surface. The left pill above is !isChatPopoutWindow, so
+              without this the button would VANISH in popouts — which is where it was
+              the only working door before. Floating top-right is safe here precisely
+              because MainPaneActionPill is also absent from popouts. */}
+          {isChatPopoutWindow && humanCollaborationControls && (
+            <div className="human-collaboration-header-floating">
+              {humanCollaborationControls}
             </div>
           )}
 
@@ -2065,52 +2130,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 the composer above-row stack, alongside the chip
                 flyout that replaced the EnsembleSetupSheet modal.
               */}
-              {currentChat && !isWelcomeChat && (
-                <div className="human-collaboration-header">
-                  <button
-                    type="button"
-                    className="human-collaboration-people-btn"
-                    onClick={handleCreateHumanCollaborationShare}
-                    title={
-                      collaboratingChatIds.has(currentChat.appChatId)
-                        ? 'Create another collaborator invite'
-                        : 'Invite collaborators to this chat'
-                    }
-                  >
-                    People
-                    {collaboratingChatIds.has(currentChat.appChatId) && (
-                      <span className="human-collaboration-live-dot" aria-label="Shared" />
-                    )}
-                  </button>
-                  {currentChatHumanCollaborationShare && (
-                    <button
-                      type="button"
-                      className="human-collaboration-people-btn"
-                      onClick={handleCopyCurrentHumanCollaborationInvite}
-                      title="Copy a fresh collaborator invite"
-                      style={{ marginInlineStart: 6 }}
-                    >
-                      Copy invite
-                    </button>
-                  )}
-                  {collaboratingChatIds.has(currentChat.appChatId) && (
-                    <button
-                      type="button"
-                      className="human-collaboration-people-btn human-collaboration-stop-btn"
-                      onClick={handleStopHumanCollaborationSharing}
-                      title="Stop sharing this chat and revoke all collaborators"
-                      style={{
-                        marginInlineStart: 6,
-                        borderColor:
-                          'color-mix(in srgb, var(--danger, #e54d4d) 44%, var(--panel-border))',
-                        color: 'color-mix(in srgb, var(--danger, #e54d4d) 88%, var(--text-primary))'
-                      }}
-                    >
-                      Stop sharing
-                    </button>
-                  )}
-                </div>
-              )}
               <ThreadSearchBar
                 open={threadSearchVisible}
                 query={threadSearchQuery}
