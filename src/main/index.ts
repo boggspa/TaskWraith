@@ -554,6 +554,8 @@ import {
   HumanCollaborationStore,
   type HumanCollaborationShare
 } from './collaboration/HumanCollaborationStore'
+import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
+import { resolveChatEffectiveRoster } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
@@ -44465,6 +44467,26 @@ if (isGeminiMcpBridgeProcess) {
     const humanCollaborationStore = new HumanCollaborationStore(
       join(app.getPath('userData'), 'human-collaboration.json')
     )
+    /**
+     * Tri-state presence for external collaborators, owned here so the sweep
+     * timer lives with the process rather than inside the pure tracker.
+     *
+     * Deliberately NOT expressed as `participant.enabled` on a roster seat:
+     * `computeEnsemblePromptShellStamp` hashes every enabled seat, so a flaky
+     * collaborator flipping that flag would bust the whole panel's prompt cache
+     * twice per reconnect.
+     */
+    const humanCollaborationPresence = new HumanCollaborationPresence({})
+    /** A seat's per-share colour override, when the host has set one. */
+    const resolveSeatColorIndex = (
+      share: HumanCollaborationShare,
+      collaboratorId: string
+    ): { colorIndex?: number } => {
+      const found = share.participants.find(
+        (participant) => participant.collaboratorId === collaboratorId
+      )
+      return typeof found?.colorIndex === 'number' ? { colorIndex: found.colorIndex } : {}
+    }
     // Active externals only. A revoked participant holds no seat, and a pending
     // one has not completed SAS — neither may carry an authority.
     resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] => {
@@ -45737,10 +45759,33 @@ if (isGeminiMcpBridgeProcess) {
       humanCollaborationRuntime = new HumanCollaborationRuntime({
         identityKeyPair: identity,
         store: humanCollaborationStore,
-        buildProjection: ({ share }) => {
+        presence: humanCollaborationPresence,
+        buildProjection: ({ share, collaboratorId }) => {
           const chat = chatService.getChat(share.chatId)
           if (!chat) throw new Error('Chat not found.')
-          return buildHumanShareProjection(chat, share)
+          // The effective panel: model seats from the chat, external seats from
+          // the share, presence from the tracker. Externals are never rows in
+          // `chat.ensemble.participants` — the roster is derived, not merged.
+          const roster = resolveChatEffectiveRoster({
+            participants: chat.ensemble?.participants,
+            share,
+            resolvePresence: (id) => humanCollaborationPresence.collaboratorState(id)
+          })
+          return buildHumanShareProjection(chat, share, {
+            // Lets the receiver tell their own words from everyone else's, which
+            // the whole presentation rule depends on.
+            viewerCollaboratorId: collaboratorId,
+            roster: roster.seats.map((seat) => ({
+              seatId: seat.seatId,
+              kind: seat.kind,
+              label: seat.label,
+              order: seat.order,
+              ...(seat.kind === 'external' ? { present: seat.present } : {}),
+              ...(seat.kind === 'external'
+                ? resolveSeatColorIndex(share, seat.collaboratorId)
+                : {})
+            }))
+          })
         },
         appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content, intent }) => {
           const result = chatService.appendCollaboratorComment({
@@ -46830,6 +46875,29 @@ if (isGeminiMcpBridgeProcess) {
       timer.unref?.()
       projectionDirtyTimers.set(chatId, timer)
     }
+    // Presence sweep. The tracker is a pure state machine and deliberately arms
+    // nothing itself, so the grace window only advances when somebody asks —
+    // this is the somebody. Each promotion from grace to expired is a seat
+    // leaving the panel, which both the host surfaces and any remaining
+    // collaborator need to see.
+    //
+    // A plain interval rather than a timer per deadline: the tracker is cheap,
+    // sweeps are idempotent, and one unref'd 15s tick cannot leak or drift the
+    // way a forest of per-session timers can. `silent` transitions are ignored —
+    // reaping a stale twin of someone still connected elsewhere is not a
+    // departure and must not churn anything.
+    const presenceSweep = setInterval(() => {
+      const transitions = humanCollaborationPresence.sweep()
+      const dirtyChatIds = new Set<string>()
+      for (const transition of transitions) {
+        if (transition.silent) continue
+        dirtyChatIds.add(transition.chatId)
+      }
+      for (const chatId of dirtyChatIds) {
+        broadcastHumanCollaborationUpdate(chatId)
+      }
+    }, 15_000)
+    presenceSweep.unref?.()
     disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({
       chatService,
       humanCollaborationStore,

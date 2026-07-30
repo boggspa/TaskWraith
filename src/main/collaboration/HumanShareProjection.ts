@@ -8,6 +8,43 @@ import {
 } from './HumanCollaboratorMessages'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
 
+/**
+ * What a row IS, as opposed to who said it. `role` (below) answers the second
+ * question and is kept for older collaborator builds; `kind` answers the first
+ * and is what a parity surface renders from.
+ */
+export type HumanShareProjectionRowKind = 'message' | 'toolActivity' | 'system' | 'placeholder'
+
+/**
+ * A tool call as an external may see it: DERIVED facts only.
+ *
+ * Never a filtered copy of the real activity. `parameters`, `resultSummary`,
+ * `outputPreview` and `rawResultEvent` are the fields that carry file contents,
+ * shell commands and command output, and none of them appear here — not
+ * redacted, absent. Redaction is a filter and fails open on the pattern nobody
+ * anticipated; a whitelist of scalars cannot leak a novel secret format at all.
+ *
+ * This is also why removing per-tool-call EXPANSION app-wide made the external
+ * side safe rather than merely tidier: with no body to show anywhere, there is
+ * no body to ship.
+ */
+export interface HumanShareProjectionToolRow {
+  /** Bare tool name — no arguments. */
+  name: string
+  category: 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
+  /** True when the call failed or was denied. The external gets to know THAT it
+   * failed; `why` is host business and lives in Raw Events, which they cannot
+   * reach. */
+  failed: boolean
+  /** Path-collapsed, workspace-relative when it is inside the shared workspace. */
+  target?: string
+  additions?: number
+  deletions?: number
+  /** Whether the counts are measured or estimated, so a surface can present
+   * them honestly rather than implying precision they do not have. */
+  confidence?: 'exact' | 'estimated' | 'unknown'
+}
+
 export interface HumanShareProjectionRow {
   id: string
   role: 'host' | 'assistant' | 'collaborator' | 'placeholder'
@@ -16,6 +53,30 @@ export interface HumanShareProjectionRow {
   truncated: boolean
   timestamp: string
   sequence?: number
+  /** v2, additive. Absent on rows an older host produced. */
+  kind?: HumanShareProjectionRowKind
+  /**
+   * Which SEAT authored this — a model participant id, or a collaboratorId for
+   * an external. Lets the viewer tell self from other (own messages render as
+   * bubbles, everyone else as named output) and lets each speaker carry their
+   * own accent instead of every model flattening to "Assistant".
+   */
+  authorSeatId?: string
+  /** Palette index for this author's accent. See the store's `colorIndex`. */
+  colorIndex?: number
+  /** Present only on `kind: 'toolActivity'`. */
+  tools?: HumanShareProjectionToolRow[]
+}
+
+/** One seat as an external may see it. Deliberately omits `seatDisabled`: a
+ * collaborator has no business learning the host's private mute state. */
+export interface HumanShareProjectionSeat {
+  seatId: string
+  kind: 'model' | 'external'
+  label: string
+  order: number
+  colorIndex?: number
+  present?: boolean
 }
 
 export interface HumanShareProjection {
@@ -38,6 +99,18 @@ export interface HumanShareProjection {
   }>
   rows: HumanShareProjectionRow[]
   totalRows: number
+  /**
+   * Which collaborator is RECEIVING this projection.
+   *
+   * Without it an external cannot tell their own words from anyone else's, and
+   * the presentation rule — only your own messages are bubbles, everyone else is
+   * named transcript output — is unimplementable. The projection is already
+   * built and sealed per session, so this costs nothing; it simply was never
+   * carried.
+   */
+  youAre?: string
+  /** The effective panel, so an external can render the seat row. */
+  roster?: HumanShareProjectionSeat[]
 }
 
 export interface HumanShareProjectionOptions {
@@ -47,6 +120,15 @@ export interface HumanShareProjectionOptions {
   maxBytes?: number
   generatedAt?: string
   hostLabel?: string
+  /** The receiving collaborator, so the projection can say who "you" are. */
+  viewerCollaboratorId?: string
+  /** The effective panel (`resolveChatEffectiveRoster`). Supplying it lets each
+   * speaker be named and accented; without it every model still flattens to
+   * "Assistant", which is the pre-parity behaviour. */
+  roster?: HumanShareProjectionSeat[]
+  /** Resolve a seat id to its display label + accent. Lets an assistant row be
+   * attributed without the builder knowing anything about rosters. */
+  resolveSeat?: (seatId: string) => { label?: string; colorIndex?: number } | undefined
 }
 
 const DEFAULT_MAX_ROWS = 120
@@ -70,11 +152,21 @@ export function buildHumanShareProjection(
   const projectable = (chat.messages || []).filter(
     (message) => Boolean(message?.id) && !isRetiredExternalChannelInboundMessage(message)
   )
+  // One lookup table for the whole build rather than a scan per row.
+  const seatById = new Map<string, { label?: string; colorIndex?: number }>()
+  for (const seat of opts.roster || []) {
+    seatById.set(seat.seatId, {
+      label: seat.label,
+      ...(typeof seat.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {})
+    })
+  }
+  const resolveSeat = opts.resolveSeat ?? ((seatId: string) => seatById.get(seatId))
   const rows = projectable.slice(Math.max(0, projectable.length - maxRows)).map((message) =>
     projectRow(message, {
       maxPreviewChars,
       hostLabel: opts.hostLabel || 'Host',
-      workspacePath: chat.workspacePath
+      workspacePath: chat.workspacePath,
+      resolveSeat
     })
   )
   const projection: HumanShareProjection = {
@@ -93,7 +185,23 @@ export function buildHumanShareProjection(
       status: participant.status
     })),
     rows,
-    totalRows: projectable.length
+    totalRows: projectable.length,
+    ...(opts.viewerCollaboratorId ? { youAre: opts.viewerCollaboratorId } : {}),
+    // Seats are copied field-by-field, not spread: `seatDisabled` must never
+    // reach a collaborator, and a spread would carry whatever the seat type
+    // grows next.
+    ...(opts.roster?.length
+      ? {
+          roster: opts.roster.map((seat) => ({
+            seatId: seat.seatId,
+            kind: seat.kind,
+            label: seat.label,
+            order: seat.order,
+            ...(typeof seat.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {}),
+            ...(typeof seat.present === 'boolean' ? { present: seat.present } : {})
+          }))
+        }
+      : {})
   }
   // Byte-budget trim: drop OLDEST rows (keep the most recent context) until the
   // serialized projection fits, so a long/multibyte transcript can never produce
@@ -108,18 +216,56 @@ function byteLength(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), 'utf8')
 }
 
+/**
+ * Derive the tool row an external may see. WHITELIST, not a filter — only the
+ * scalars named here are ever read, so a field that starts carrying secrets
+ * later cannot leak through this function by default.
+ */
+function projectToolActivities(
+  message: ChatMessage,
+  workspacePath?: string
+): HumanShareProjectionToolRow[] {
+  const activities = Array.isArray(message.toolActivities) ? message.toolActivities : []
+  return activities.slice(0, 24).map((activity) => {
+    const diff = activity.diffSummary
+    const failed = activity.status === 'error'
+    return {
+      name: String(activity.toolName || 'tool').slice(0, 64),
+      category: activity.category || 'unknown',
+      failed,
+      ...(activity.filePath
+        ? { target: redactSensitivePaths(String(activity.filePath), workspacePath).slice(0, 240) }
+        : {}),
+      // A failed write changed nothing, so its claimed counts would be a lie —
+      // the host transcript already suppresses them for exactly this reason.
+      ...(!failed && typeof diff?.additions === 'number' ? { additions: diff.additions } : {}),
+      ...(!failed && typeof diff?.deletions === 'number' ? { deletions: diff.deletions } : {}),
+      ...(!failed && diff?.confidence ? { confidence: diff.confidence } : {})
+    }
+  })
+}
+
 function projectRow(
   message: ChatMessage,
-  opts: { maxPreviewChars: number; hostLabel: string; workspacePath?: string }
+  opts: {
+    maxPreviewChars: number
+    hostLabel: string
+    workspacePath?: string
+    resolveSeat?: (seatId: string) => { label?: string; colorIndex?: number } | undefined
+  }
 ): HumanShareProjectionRow {
   if (isHumanCollaboratorComment(message)) {
     const metadata = humanCollaboratorMetadata(message)
+    const seat = metadata?.collaboratorId ? opts.resolveSeat?.(metadata.collaboratorId) : undefined
     return {
       id: message.id,
       role: 'collaborator',
       speaker: metadata?.collaboratorDisplayName || 'Collaborator',
       ...preview(message.content, opts),
       timestamp: message.timestamp,
+      kind: 'message',
+      ...(metadata?.collaboratorId ? { authorSeatId: metadata.collaboratorId } : {}),
+      ...(typeof seat?.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {}),
       ...(metadata ? { sequence: metadata.sequence } : {})
     }
   }
@@ -129,16 +275,42 @@ function projectRow(
       role: 'host',
       speaker: opts.hostLabel,
       ...preview(message.content, opts),
-      timestamp: message.timestamp
+      timestamp: message.timestamp,
+      kind: 'message'
     }
   }
   if (message.role === 'assistant') {
+    // Every model used to flatten to the single speaker "Assistant", so an
+    // external saw a named seat row above a transcript where nobody had a name.
+    // `metadata` carries an index signature, so the field arrives untyped.
+    const rawSeatId = message.metadata?.ensembleParticipantId
+    const seatId = typeof rawSeatId === 'string' && rawSeatId ? rawSeatId : undefined
+    const seat = seatId ? opts.resolveSeat?.(seatId) : undefined
     return {
       id: message.id,
       role: 'assistant',
-      speaker: 'Assistant',
+      speaker: seat?.label || 'Assistant',
       ...preview(message.content, opts),
-      timestamp: message.timestamp
+      timestamp: message.timestamp,
+      kind: 'message',
+      ...(seatId ? { authorSeatId: seatId } : {}),
+      ...(typeof seat?.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {})
+    }
+  }
+  if (message.role === 'tool') {
+    // Tool rows CROSS now, as a derived one-liner — never a body. Per-tool-call
+    // expansion was removed app-wide, so there is no expanded view to withhold:
+    // what the host sees on the collapsed row is what an external sees.
+    const tools = projectToolActivities(message, opts.workspacePath)
+    return {
+      id: message.id,
+      role: 'placeholder',
+      speaker: 'TaskWraith',
+      preview: '',
+      truncated: false,
+      timestamp: message.timestamp,
+      kind: 'toolActivity',
+      ...(tools.length ? { tools } : {})
     }
   }
   return {
