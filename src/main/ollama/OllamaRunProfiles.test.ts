@@ -118,7 +118,7 @@ describe('OllamaRunProfiles', () => {
     ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('qwen3.5:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBeUndefined()
+    ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('ornith:9b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
@@ -130,12 +130,12 @@ describe('OllamaRunProfiles', () => {
     // thinking, so they MUST stay off — Ollama rejects a `think` request
     // outright on a tag that does not advertise it.
     //
-    // qwen3.5:4b DOES advertise thinking, and is still excluded deliberately:
-    // it tracks its generation-mate qwen3.5:9b, which also advertises thinking
-    // and is pinned off just below. Flip the pair together or not at all.
+    // The qwen3.5 pair BOTH advertise thinking and were switched on together
+    // 2026-07-30. They move as a pair on purpose: splitting them would be a
+    // product difference the capabilities do not justify.
     expect(
       resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
-    ).toBeUndefined()
+    ).toBe('medium')
     expect(
       resolveOllamaThinkingLevel('devstral-small-2:24b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBeUndefined()
