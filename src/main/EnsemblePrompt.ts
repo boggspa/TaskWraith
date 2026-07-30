@@ -1102,13 +1102,18 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         const visible = selectBlackboardForRound(allEntries, input.roundId)
         const unseen = selectUnseenBlackboard(visible, input.participant.id)
         const seenCount = visible.length - unseen.length
-        const digest = formatBlackboardForPrompt(unseen, { allEntries })
+        // Ask for the slim-turn header rather than rewriting the rendered
+        // digest: the old `.replace()` matched Blackboard's header literal, so
+        // any edit there silently produced a digest still claiming to be the
+        // whole board.
+        const digest = formatBlackboardForPrompt(unseen, {
+          allEntries,
+          headerOverride:
+            'Ensemble blackboard — NEW entries since your previous turn (treat as agreed context):'
+        })
         const lines: string[] = []
         if (digest) {
-          lines.push('', digest.replace(
-            'Ensemble blackboard (shared scratchpad — treat as agreed context):',
-            'Ensemble blackboard — NEW entries since your previous turn (treat as agreed context):'
-          ))
+          lines.push('', digest)
         }
         if (seenCount > 0) {
           lines.push(

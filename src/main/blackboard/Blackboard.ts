@@ -623,9 +623,26 @@ function formatBlackboardPollForPrompt(entry: BlackboardEntry): string {
   return ` [poll ${poll.status}; ${participantVoteCount}/${poll.eligibleParticipantIds.length} participants voted; choices: ${tallies.join(', ')}${voteHint}]`
 }
 
+/**
+ * The digest's default first line.
+ *
+ * Exported because `EnsemblePrompt` needs a DIFFERENT first line for the
+ * slim-turn variant ("NEW entries since your previous turn"). It used to get
+ * one by `.replace()`-ing this exact sentence out of the rendered digest — so a
+ * single character changed here silently produced a digest with the wrong
+ * framing, with no test and no type error to catch it. Pass `headerOverride`
+ * instead of string-matching the output.
+ *
+ * The wording is also a trust ELEVATION ("treat as agreed context"), which is
+ * correct among the host's own agents and NOT correct for unreviewed human text
+ * arriving from another machine — see ExternalContributionContext.
+ */
+export const BLACKBOARD_DIGEST_HEADER =
+  'Ensemble blackboard (shared scratchpad — treat as agreed context):'
+
 export function formatBlackboardForPrompt(
   entries: BlackboardEntry[],
-  options?: { allEntries?: BlackboardEntry[] }
+  options?: { allEntries?: BlackboardEntry[]; headerOverride?: string }
 ): string {
   const capacityNotice = formatBlackboardCapacityNotice(options?.allEntries || entries)
   if (entries.length === 0 && !capacityNotice) return ''
@@ -635,7 +652,7 @@ export function formatBlackboardForPrompt(
     if (bucket) bucket.push(entry)
     else byCategory.set(entry.category, [entry])
   }
-  const lines: string[] = ['Ensemble blackboard (shared scratchpad — treat as agreed context):']
+  const lines: string[] = [options?.headerOverride || BLACKBOARD_DIGEST_HEADER]
   if (capacityNotice) lines.push(`  Capacity notice: ${capacityNotice}`)
   for (const category of BLACKBOARD_CATEGORY_ORDER) {
     const bucket = byCategory.get(category)

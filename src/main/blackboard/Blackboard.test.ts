@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BlackboardEntry } from '../store/types'
 import {
+  BLACKBOARD_DIGEST_HEADER,
   BLACKBOARD_MANUAL_ROUND_ID,
   BLACKBOARD_MAX_ENTRIES,
   BLACKBOARD_MAX_KEY_LEN,
@@ -492,6 +493,23 @@ describe('formatBlackboardForPrompt', () => {
     expect(out.indexOf('Decisions:')).toBeLessThan(out.indexOf('Open risks:'))
     // Notes render last.
     expect(out.indexOf('Open risks:')).toBeLessThan(out.indexOf('Notes:'))
+  })
+
+  /**
+   * The header used to be rewritten by the caller with a `.replace()` against
+   * this exact literal, so editing it here silently mis-framed the slim-turn
+   * digest. Callers now ASK for their header.
+   */
+  it('renders the exported default header, and lets a caller override it', () => {
+    const rows = [entry({ category: 'fact', key: 'k', value: 'v' })]
+    expect(formatBlackboardForPrompt(rows).split('\n')[0]).toBe(BLACKBOARD_DIGEST_HEADER)
+    expect(
+      formatBlackboardForPrompt(rows, { headerOverride: 'Only NEW entries:' }).split('\n')[0]
+    ).toBe('Only NEW entries:')
+    // The override replaces only the first line; the body is untouched.
+    expect(formatBlackboardForPrompt(rows, { headerOverride: 'Only NEW entries:' })).toContain(
+      'Verified facts:'
+    )
   })
 
   it('omits empty category headers', () => {
