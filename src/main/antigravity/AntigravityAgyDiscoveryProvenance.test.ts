@@ -4,7 +4,8 @@ import {
   agyProvenanceProvesAuthenticatedConnection,
   readAgyDiscoveryProvenance,
   recordAgyDiscoveryProvenance,
-  resetAgyDiscoveryProvenanceForTests
+  resetAgyDiscoveryProvenanceForTests,
+  seedAgyDiscoveryProvenanceFromCache
 } from './AntigravityAgyDiscoveryProvenance'
 
 const NOW_MS = Date.parse('2026-07-30T00:00:00.000Z')
@@ -90,5 +91,60 @@ describe('agyProvenanceProvesAuthenticatedConnection', () => {
         NOW_MS
       )
     ).toBe(false)
+  })
+})
+
+describe('seedAgyDiscoveryProvenanceFromCache', () => {
+  const CACHE_AT = 1_760_000_000_000
+  const record = (over: Record<string, unknown> = {}) => ({
+    models: [{ id: 'gemini-3-pro' }],
+    updatedAtMs: CACHE_AT,
+    ...over
+  })
+
+  it('seeds cached provenance when discovery has not run this session', async () => {
+    // The defect this closes: the slot is process-local and starts `none`, and
+    // only discovery writes it — so signing in and refreshing quota could never
+    // clear "no authenticated agy connection was detected".
+    expect(readAgyDiscoveryProvenance().source).toBe('none')
+    const seeded = await seedAgyDiscoveryProvenanceFromCache(async () => record())
+    expect(seeded).toEqual({ source: 'cached', cachedAtMs: CACHE_AT })
+    expect(readAgyDiscoveryProvenance()).toEqual({ source: 'cached', cachedAtMs: CACHE_AT })
+    expect(agyProvenanceProvesAuthenticatedConnection(seeded, CACHE_AT + 1_000)).toBe(true)
+  })
+
+  it('never downgrades live provenance', async () => {
+    recordAgyDiscoveryProvenance({ source: 'live', cachedAtMs: null })
+    await seedAgyDiscoveryProvenanceFromCache(async () => record())
+    expect(readAgyDiscoveryProvenance()).toEqual({ source: 'live', cachedAtMs: null })
+  })
+
+  it('fails closed on an empty catalogue, a missing timestamp, or a throwing read', async () => {
+    // An age without models is not evidence of anything, and an unreadable
+    // cache must never be treated as proof of a sign-in.
+    for (const reader of [
+      async () => record({ models: [] }),
+      async () => record({ updatedAtMs: null }),
+      async () => record({ updatedAtMs: Number.NaN }),
+      async () => null,
+      async () => {
+        throw new Error('unreadable')
+      }
+    ]) {
+      resetAgyDiscoveryProvenanceForTests()
+      await seedAgyDiscoveryProvenanceFromCache(reader as never)
+      expect(readAgyDiscoveryProvenance().source).toBe('none')
+    }
+  })
+
+  it('leaves an expired cache unable to open the gate', async () => {
+    const stale = CACHE_AT - AGY_CACHED_AUTH_EVIDENCE_TTL_MS - 1
+    const seeded = await seedAgyDiscoveryProvenanceFromCache(async () =>
+      record({ updatedAtMs: stale })
+    )
+    // Seeding still records it — expiry is the predicate's job, not the seed's,
+    // so the two stay independently testable.
+    expect(seeded.source).toBe('cached')
+    expect(agyProvenanceProvesAuthenticatedConnection(seeded, CACHE_AT)).toBe(false)
   })
 })

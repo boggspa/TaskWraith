@@ -636,8 +636,19 @@ function ProviderUsageBlock({ entry }: { entry: ModelUsageAggregate }) {
             />
           ))
         ) : (
-          <div className="model-usage-quota-unavailable" role="status">
-            {entry.quotaError || 'Quota unavailable.'}
+          // An empty quota row says "No data" and carries the WHY in its
+          // title, exactly as the compact strip already does. The reason is a
+          // full sentence ("no authenticated agy connection was detected. Sign
+          // in with the official CLI, then refresh.") — rendering it inline
+          // turned one provider's row into a paragraph that swamped every other
+          // provider in the card. The explanation is still one hover away, and
+          // still identical to the compact strip's, so the two cannot disagree.
+          <div
+            className="model-usage-quota-unavailable"
+            role="status"
+            title={entry.quotaError || 'Quota unavailable.'}
+          >
+            No data
           </div>
         )}
       </div>

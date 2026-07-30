@@ -56,6 +56,47 @@ export function readAgyDiscoveryProvenance(): AgyDiscoveryProvenance {
   return current
 }
 
+/**
+ * Seed the in-memory slot from the PERSISTED model cache when discovery has not
+ * run in this session.
+ *
+ * The slot above is process-local and starts at `none`, and the only writer is
+ * `discoverAuthenticatedAgyModels`. A quota refresh does not run discovery, so
+ * on a freshly started app the gate reported "no authenticated agy connection
+ * was detected" no matter how many times the user signed in with the CLI and
+ * hit refresh — the message named the one action that could not clear it.
+ *
+ * This module already treats a cached catalogue as evidence: the cache exists
+ * only because an authenticated `agy models` once succeeded, which is why
+ * AGY_CACHED_AUTH_EVIDENCE_TTL_MS exists to expire it. The gap was purely that
+ * nothing consulted the on-disk copy. Reading it is not a backend round-trip,
+ * so it does not grow request cadence against AntiGravity — the constraint the
+ * discovery module is explicit about protecting.
+ *
+ * Fail-closed throughout: an unreadable cache, an unparseable timestamp, or an
+ * empty catalogue all leave `none` in place. A LIVE provenance is never
+ * downgraded — only `none` is seeded.
+ */
+export async function seedAgyDiscoveryProvenanceFromCache(
+  readCachedRecord: () => Promise<{ models: unknown[]; updatedAtMs: number | null } | null>
+): Promise<AgyDiscoveryProvenance> {
+  if (current.source !== 'none') return current
+  let record: { models: unknown[]; updatedAtMs: number | null } | null = null
+  try {
+    record = await readCachedRecord()
+  } catch {
+    return current
+  }
+  if (!record || !Array.isArray(record.models) || record.models.length === 0) return current
+  const updatedAtMs = record.updatedAtMs
+  if (updatedAtMs === null || !Number.isFinite(updatedAtMs)) return current
+  // Re-check: an await boundary means a real discovery may have landed while
+  // the file read was in flight, and live proof must win over cached proof.
+  if (current.source !== 'none') return current
+  recordAgyDiscoveryProvenance({ source: 'cached', cachedAtMs: updatedAtMs })
+  return current
+}
+
 /** Test-only: restore the fail-closed default. */
 export function resetAgyDiscoveryProvenanceForTests(): void {
   current = UNKNOWN_PROVENANCE

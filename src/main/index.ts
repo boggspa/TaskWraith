@@ -1539,6 +1539,7 @@ import {
 } from './antigravity/AntigravityCombinedModeDispatch'
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
+import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import {
   AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
   agyQuotaUnavailableSnapshot,
@@ -47809,6 +47810,16 @@ if (isGeminiMcpBridgeProcess) {
       modelsSnapshot: (settings) => managedRunConfiguredProviderDiscovery.modelsSnapshot(settings),
       fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
         fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
+      // Lets a refresh recover authentication provenance that discovery has not
+      // established in this session. Reads the persisted catalogue only — no
+      // PTY, no backend round-trip — so it cannot affect the probe cadence the
+      // block below is careful to clamp.
+      readCachedProvenanceRecord: async () => {
+        const record = await readCachedAgyModelRecord({
+          userDataPath: app.getPath('userData')
+        })
+        return { models: record.models as unknown[], updatedAtMs: record.updatedAtMs }
+      },
       fetchAuthenticatedQuota: async (settings, force) => {
         // Every /usage probe is a real authenticated agy session, so cadence
         // is the fingerprint. The decision helper enforces the doctrine:
