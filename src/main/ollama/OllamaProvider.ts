@@ -473,7 +473,7 @@ function ollamaCanonicalJson(value: unknown): string {
 
 /** Stable per-run key for a (toolName, arguments) pair. */
 export function ollamaToolCallKey(toolName: string, args: Record<string, unknown>): string {
-  return `${toolName}${ollamaCanonicalJson(args || {})}`
+  return `${toolName}\u0001${ollamaCanonicalJson(args || {})}`
 }
 
 /**

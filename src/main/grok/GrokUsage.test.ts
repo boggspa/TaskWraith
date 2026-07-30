@@ -169,7 +169,7 @@ describe('parseGrokUsage', () => {
   })
 
   it('strips ANSI/VT control sequences before parsing', () => {
-    const raw = '[1m[32mCredits used:[0m 2.5%[0m'
+    const raw = '\x1b[1m\x1b[32mCredits used:\x1b[0m 2.5%\x1b[0m'
     const s = parseGrokUsage(raw)
     expect(s.creditsUsedPercent).toBe(2.5)
     expect(s.creditsUsedDisplay).toBe('2.5%')
@@ -219,11 +219,11 @@ describe('parseGrokUsage', () => {
 
 describe('stripGrokAnsi', () => {
   it('removes CSI color sequences but keeps text and spaces', () => {
-    expect(stripGrokAnsi('[1mhello [0mworld')).toBe('hello world')
+    expect(stripGrokAnsi('\x1b[1mhello \x1b[0mworld')).toBe('hello world')
   })
 
   it('removes OSC (title) sequences', () => {
-    expect(stripGrokAnsi(']0;some titletext')).toBe('text')
+    expect(stripGrokAnsi('\x1b]0;some title\x07text')).toBe('text')
   })
 
   it('converts carriage returns to newlines so line scans survive TUI redraws', () => {

@@ -545,14 +545,14 @@ describe('TaskWraithTui lifecycle', () => {
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
 
-    feed(input, '') // Ctrl+G
+    feed(input, '\u0007') // Ctrl+G
     await waitFor(() => output.lastFrame.includes('Model (preview)'), 'tune lens open')
     await waitFor(() => threadOffers.mock.calls.length > 0, 'offers fetched from the host')
     await waitFor(() => output.lastFrame.includes('Fable 5'), 'offers rendered')
 
     // Highlight opens on the current model; move to Fable 5 and raise the effort.
-    feed(input, '[B') // down
-    feed(input, '[C') // right
+    feed(input, '\u001b[B') // down
+    feed(input, '\u001b[C') // right
     feed(input, '\r')
     await waitFor(() => output.lastFrame.includes('Next send uses Fable 5'), 'selection staged')
 
@@ -621,11 +621,11 @@ describe('TaskWraithTui lifecycle', () => {
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'ensemble thread selected')
 
-    feed(input, '') // Ctrl+G
+    feed(input, '\u0007') // Ctrl+G
     await waitFor(() => output.lastFrame.includes('Seats (preview)'), 'seat lens open')
     expect(output.lastFrame).toContain('Review')
 
-    feed(input, '[B') // down to the disabled Review seat
+    feed(input, '\u001b[B') // down to the disabled Review seat
     feed(input, '\r') // toggle re-enables it
     await waitFor(() => toggleEnsembleSeat.mock.calls.length > 0, 'seat toggle dispatched')
     expect(toggleEnsembleSeat).toHaveBeenCalledWith('thread-1', 'review', true)
@@ -674,7 +674,7 @@ describe('TaskWraithTui lifecycle', () => {
     await tui.start()
     await waitFor(() => output.lastFrame.includes('Solo thread'), 'thread selected')
 
-    feed(input, '[200~first line\nsecond line[201~')
+    feed(input, '\u001b[200~first line\nsecond line\u001b[201~')
     await waitFor(() => output.lastFrame.includes('first line'), 'pasted text rendered')
     expect(output.lastFrame).toContain('first line')
     expect(output.lastFrame).toContain('second line')
