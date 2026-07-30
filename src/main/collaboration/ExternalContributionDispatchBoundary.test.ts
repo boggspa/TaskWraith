@@ -80,13 +80,14 @@ describe('F6 — an external contribution cannot start a round', () => {
     // still how a contribution would start work of its own.
     //
     // Matched as a case-insensitive CONCEPT rather than the exact symbol. The
-    // other session kept the now-slightly-wrong name `buildMidRunSteering*User*
-    // Message` specifically so this assertion would not be silently defeated —
-    // which is exactly the kind of favour a guard should not need. A rename to
-    // `buildMidRunSteeringMessage` would have passed the old exact-string check
-    // AND the old case-sensitive `'midRunSteering'` entry above it, because that
-    // spelling has a capital M. Now any rename that keeps the concept is caught,
-    // and the name is free to be corrected.
+    // other session initially kept the then-slightly-wrong name
+    // `buildMidRunSteering*User*Message` specifically so this assertion would
+    // not be silently defeated — which is exactly the kind of favour a guard
+    // should not need. The rename to `buildMidRunSteeringMessage` would have
+    // passed the old exact-string check AND the old case-sensitive
+    // `'midRunSteering'` entry above it, because that spelling has a capital M.
+    // Once this matched the concept the name was free to be corrected, and it
+    // has been — the builder is `buildMidRunSteeringMessage` as of the rename.
     expect(appendRegion()).not.toMatch(/buildmidrunsteering\w*message/i)
   })
 

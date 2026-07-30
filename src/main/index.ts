@@ -603,7 +603,7 @@ import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminali
 import {
   MidRunSteeringRegistry,
   HOST_MIDRUN_STEERING_AUTHOR,
-  buildMidRunSteeringUserMessage,
+  buildMidRunSteeringMessage,
   type MidRunSteeringEntry,
   findScheduledSteeringMessage,
   midRunSteeringAbsorbEligible,
@@ -14725,7 +14725,7 @@ function appendEnsembleSteerIntoLiveRound(chatId: string, text: string): void {
   const messageId = `midrun-steer-${randomUUID()}`
   appendMidRunSteeringMessage(
     chat,
-    buildMidRunSteeringUserMessage({
+    buildMidRunSteeringMessage({
       id: messageId,
       content: text,
       timestampIso: nowIso,
@@ -14779,7 +14779,7 @@ function maybeAppendScheduledSteeringForBusyTask(
     if (!alreadyAppended) {
       appendMidRunSteeringMessage(
         chat,
-        buildMidRunSteeringUserMessage({
+        buildMidRunSteeringMessage({
           id: messageId,
           content,
           timestampIso: firedAtIso,
@@ -14833,7 +14833,7 @@ function seedScheduledSoloTranscript(
   const userMessage: ChatMessage | null = existingSteeringMessage
     ? null
     : steeringEntry
-      ? buildMidRunSteeringUserMessage({
+      ? buildMidRunSteeringMessage({
           id: steeringEntry.messageId,
           content: task.displayPrompt || task.prompt,
           timestampIso: steeringEntry.createdAtIso,

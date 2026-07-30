@@ -258,7 +258,7 @@ export type MidRunSteeringAuthorKind = MidRunSteeringAuthor['kind']
 /** The host steering their own run — every caller in the app today. */
 export const HOST_MIDRUN_STEERING_AUTHOR: MidRunSteeringAuthor = { kind: 'host' }
 
-export function buildMidRunSteeringUserMessage(input: {
+export function buildMidRunSteeringMessage(input: {
   id: string
   content: string
   timestampIso: string
@@ -425,20 +425,27 @@ export function planLiveSteerDelivery(input: {
   if (!input.enabled) return false
   if (!liveSteerDeliverySupported(input.provider)) return false
   if (!input.text.trim()) return false
-  // HOST-ONLY, fail-closed. This lane writes `text` STRAIGHT DOWN THE PROVIDER
-  // TRANSPORT — it never passes through the transcript, so it never meets
-  // `projectTaggedTranscript` and never receives the untrusted frame. Stamping
-  // the message correctly (see MidRunSteeringAuthor) fixes every path that
-  // renders or serializes the transcript; it cannot fix this one, because this
-  // one does not read the transcript at all.
+  // HOST-ONLY, fail-closed — and the reason is architectural, not a trust call.
   //
-  // So external text is refused here regardless of how well it is stamped. That
-  // is also the right default on the merits: a live steer reaches the one seat
-  // that is mid-turn, which is the sharpest possible version of "a person on
-  // another machine can run agents on your Mac unattended". Async is pinned to
-  // Channels P3 and this refusal is not the reason — it should still hold after
-  // it is unpinned, and delivering external text into a running turn should be
-  // its own decision with its own framing, not a side effect of unpinning.
+  // At a round boundary the seat REBUILDS its prompt from the transcript, so
+  // `projectTaggedTranscript` applies the untrusted frame by construction and a
+  // promoted contribution needs no special handling to arrive framed. This lane
+  // does not do that. It writes `text` straight down the provider transport,
+  // bypassing prompt composition entirely, so external text here is not
+  // unframed because somebody forgot to frame it — it is UNFRAMABLE, because
+  // there is no composition seam on this path to frame it at. Stamping the
+  // message correctly (see MidRunSteeringAuthor) fixes every path that renders
+  // or serializes the transcript; it cannot fix this one, which never reads the
+  // transcript at all.
+  //
+  // That property does not change when Async is unpinned. Whoever builds
+  // Channels P3 must either add transport-layer framing, which does not exist
+  // today, or keep this refusal permanently — so "Async is unpinned now, this
+  // gate is stale" is never a sufficient argument for deleting it.
+  //
+  // It is also the right default on the merits: a live steer reaches the one
+  // seat that is mid-turn, which is the sharpest possible form of "a person on
+  // another machine can run agents on your Mac unattended".
   if (input.authorKind !== 'host') return false
   if (!input.hasLiveTransport) return false
   // Probe finding 3: after `agent_settled` pi still acks the frame but runs no
