@@ -284,10 +284,42 @@ export function catalogToolAgenticServiceForRawName(rawToolName: string): Agenti
 export function catalogToolOperationCategory(rawToolName: string): ToolOperationCategory {
   const catalog = resolveCatalogToolName(rawToolName)
   if (!catalog) return 'unknown'
-  const operation = TASKWRAITH_TOOL_ACTIONS[catalog].operation
-  if (operation === 'workspace.read') return 'read_file'
+  const action = TASKWRAITH_TOOL_ACTIONS[catalog]
+  const operation = action.operation
+  // `workspace.read` is a PERMISSION/AUDIT class, not a presentation class:
+  // read_file, git_status, git_log, github_pr_view and evidence reads all share
+  // it because they all read workspace state without mutating it. Only the
+  // file-oriented owner may collapse to the `read_file` category, which
+  // downstream treats as "this tool read a FILE" — it drives the transcript
+  // label and the row icon.
+  //
+  // Collapsing every workspace.read tool here made `git_status` render as
+  // "Read file" in the transcript (ToolParser.getToolCategory -> 'read' ->
+  // getToolDisplayName's `case 'read'`), silently overriding the curated
+  // `git_status: 'Git status'` label in ToolDisplayNames. The intent behind the
+  // taxonomy entry was that git status needs no approval at ANY posture — which
+  // was already true and shipped 2026-07-25 via the EXPLICIT
+  // MCP_AUTO_ALLOWED_TOOLS allowlist (git_status/git_diff/git_log in;
+  // git_show/git_blame deliberately gated). Permission availability and
+  // presentation class are different axes; do not re-couple them.
+  //
+  // Non-file owners return 'unknown' so the legacy name-based rules and the
+  // curated label table keep resolving them, which is what they did correctly
+  // before the taxonomy landed.
+  if (operation === 'workspace.read') {
+    return action.dispatchOwner === 'workspace-tools' ? 'read_file' : 'unknown'
+  }
   if (operation === 'workspace.mutate') return 'edit_file'
-  if (operation === 'workspace.search' || operation === 'network.read') return 'search'
+  // Same axis confusion as workspace.read above: `network.read` is shared by
+  // web_search/web_fetch (genuinely searches) and github_ci_status (a status
+  // read that rendered as "Searched"). Only the owners whose tools ARE searches
+  // may collapse to the `search` presentation category.
+  if (operation === 'workspace.search') {
+    return action.dispatchOwner === 'workspace-tools' ? 'search' : 'unknown'
+  }
+  if (operation === 'network.read') {
+    return action.dispatchOwner === 'web-tools' ? 'search' : 'unknown'
+  }
   if (operation === 'shell.execute') return 'shell'
   // No catalog tool resolves to 'update_topic' (that operation category is
   // produced by non-tool run events, e.g. topic/title changes), so there is no
