@@ -9453,35 +9453,135 @@ Next action:
     expect(roster).toHaveLength(2)
   })
 
-  for (const permissionPresetId of ['read_only', 'plan', 'default'] as const) {
-    it(`preserves an explicitly requested ${permissionPresetId} preset on replacement`, async () => {
-      const initialChat = makeChat()
-      initialChat.ensemble!.bossmanParticipantId = 'claude'
-      const harness = makeHarness({
-        initialChat,
-        probeParticipant: async () => ({ reachable: true })
-      })
-      harness.orchestrator.startRound({
-        chatId: 'ensemble-chat',
-        prompt: 'Plan and execute.',
-        event: { sender: {} as Electron.WebContents }
-      })
-      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-      const result = await harness.orchestrator.bossmanControlForRun(
-        harness.dispatched[0].appRunId,
-        {
-          action: 'replace_participant',
-          targetParticipantId: 'codex',
-          replacement: { provider: 'kimi', permissionPresetId }
-        }
-      )
-      expect(result.ok).toBe(true)
-      const replacement = harness.chat.ensemble!.participants.find(
+  /**
+   * A replacement is a model/provider swap on ONE seat. It must never move that
+   * seat's permissions — not wider, not narrower — because
+   * `ensemble_roster_edit` → edit_participant is the audited door for that, and
+   * a second door makes the invariant unreadable.
+   *
+   * The escalation this guards against was live: the old ceiling check rejected
+   * only full_access and custom, so a Boss could replace a read_only reviewer
+   * with a `default` one and hand it write access in the same call.
+   */
+  async function replaceSeatWithPermissions(
+    seat: Partial<EnsembleParticipant>,
+    replacement: Partial<EnsembleParticipant> & { provider: ProviderId }
+  ) {
+    const initialChat = makeChat()
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
+    const target = initialChat.ensemble!.participants.find(
+      (participant) => participant.id === 'codex'
+    )!
+    Object.assign(target, seat)
+    const harness = makeHarness({
+      initialChat,
+      probeParticipant: async () => ({ reachable: true })
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
+      action: 'replace_participant',
+      targetParticipantId: 'codex',
+      replacement
+    })
+    return {
+      result,
+      harness,
+      seated: harness.chat.ensemble!.participants.find(
         (participant) => participant.id === result.participantId
       )
-      expect(replacement?.permissionPresetId).toBe(permissionPresetId)
+    }
+  }
+
+  for (const permissionPresetId of ['read_only', 'plan', 'default'] as const) {
+    it(`inherits the target seat's ${permissionPresetId} preset when none is requested`, async () => {
+      const { result, seated } = await replaceSeatWithPermissions(
+        { permissionPresetId },
+        { provider: 'kimi' }
+      )
+      expect(result.ok).toBe(true)
+      expect(seated?.permissionPresetId).toBe(permissionPresetId)
+    })
+
+    it(`accepts an explicit restatement of the seat's own ${permissionPresetId} preset`, async () => {
+      // The schema advertises the field, so a model that faithfully echoes the
+      // current preset must not be punished for it.
+      const { result, seated } = await replaceSeatWithPermissions(
+        { permissionPresetId },
+        { provider: 'kimi', permissionPresetId }
+      )
+      expect(result.ok).toBe(true)
+      expect(seated?.permissionPresetId).toBe(permissionPresetId)
     })
   }
+
+  it('refuses to WIDEN a read_only seat to default through a replacement', async () => {
+    const { result, harness } = await replaceSeatWithPermissions(
+      { permissionPresetId: 'read_only' },
+      { provider: 'kimi', permissionPresetId: 'default' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('permission_ceiling')
+    // The seat survives at its original posture and no replacement was seated.
+    const roster = harness.chat.ensemble!.participants
+    expect(roster.find((participant) => participant.id === 'codex')?.permissionPresetId).toBe(
+      'read_only'
+    )
+    expect(roster.some((participant) => participant.id.startsWith('bossman-replacement'))).toBe(
+      false
+    )
+  })
+
+  it('refuses to NARROW a seat through a replacement either', async () => {
+    // Safe in isolation, refused on purpose: permitting it would make this path
+    // a permission-deciding path, and then "a swap never moves permissions"
+    // stops being checkable by reading one function.
+    const { result } = await replaceSeatWithPermissions(
+      { permissionPresetId: 'default' },
+      { provider: 'kimi', permissionPresetId: 'read_only' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('permission_ceiling')
+  })
+
+  it('refuses a preset on a seat that carries none, rather than inventing one', async () => {
+    const { result } = await replaceSeatWithPermissions(
+      { permissionPresetId: undefined },
+      { provider: 'kimi', permissionPresetId: 'default' }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('permission_ceiling')
+  })
+
+  it("carries the target seat's permissionOverrides onto the replacement", async () => {
+    // Dropping a NARROWING override widens the seat by omission just as surely
+    // as a wider preset does.
+    const permissionOverrides: EnsembleParticipant['permissionOverrides'] = {
+      approvalMode: 'never',
+      networkAccess: 'deny'
+    }
+    const { result, seated } = await replaceSeatWithPermissions(
+      { permissionPresetId: 'read_only', permissionOverrides },
+      { provider: 'kimi' }
+    )
+    expect(result.ok).toBe(true)
+    expect(seated?.permissionOverrides).toEqual(permissionOverrides)
+  })
+
+  it('refuses a replacement that supplies its own permissionOverrides', async () => {
+    // Not in the tool schema, but the input type is a Partial<EnsembleParticipant>
+    // and JSON Schema admits unlisted properties, so a caller can send it.
+    const { result } = await replaceSeatWithPermissions(
+      { permissionPresetId: 'read_only' },
+      { provider: 'kimi', permissionOverrides: { approvalMode: 'always' } }
+    )
+    expect(result.ok).toBe(false)
+    expect(result.error).toBe('permission_ceiling')
+  })
 
   it('rejects a replacement when the provider health check fails (replacement_unreachable)', async () => {
     const initialChat = makeChat()

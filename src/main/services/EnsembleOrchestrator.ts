@@ -253,7 +253,7 @@ export type EnsembleQueuedSteerResult = {
   error?: string
 }
 
-const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
   'scout',
   'worker',
@@ -9375,11 +9375,57 @@ export class EnsembleOrchestrator {
         error: 'health_check_unavailable'
       }
     }
+    // A replacement is a MODEL/PROVIDER swap on ONE seat, not a permission edit.
+    // The old check here only rejected full_access and custom, so `default`
+    // sailed straight through: a Boss could replace a read_only reviewer with a
+    // `default` one and hand the seat write access in the same call. That is a
+    // widening, and it contradicts what the authority checkpoint tells the model
+    // replace_participant does.
+    //
+    // The seat's posture is therefore INHERITED, always — preset AND overrides.
+    // An explicit value is accepted only when it restates what the seat already
+    // has, because the schema advertises the field and a model that faithfully
+    // echoes the current preset should not be punished for it. Anything else is
+    // refused rather than quietly ignored, so the Boss reads the rule instead of
+    // receiving a seat it did not ask for.
+    //
+    // NARROWING IS REFUSED TOO. It is safe in isolation, but permitting it
+    // would mean this path decides permission questions, and then "a swap never
+    // moves permissions" stops being checkable by reading one function.
+    // `ensemble_roster_edit` → edit_participant is the audited door for changing
+    // what a seat may do; keeping it the ONLY door is the whole property.
     const requestedPermissionPresetId = input.replacement?.permissionPresetId
-    if (
-      requestedPermissionPresetId &&
-      !BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET.has(String(requestedPermissionPresetId))
-    ) {
+    const inheritedPermissionPresetId = target.permissionPresetId
+    // Two conditions, not one. Equality alone would let a Boss NAME a preset
+    // outside the assignable set whenever the seat already sat there — harmless
+    // in effect, since the value is inherited either way, but it would put
+    // `full_access` in the audit trail as something a model asked for. The
+    // ceiling stays; equality is layered on top of it.
+    const restatesInheritedPreset =
+      requestedPermissionPresetId === inheritedPermissionPresetId &&
+      ASSIGNABLE_PERMISSION_PRESET_SET.has(String(requestedPermissionPresetId))
+    if (requestedPermissionPresetId !== undefined && !restatesInheritedPreset) {
+      const restatable =
+        inheritedPermissionPresetId &&
+        ASSIGNABLE_PERMISSION_PRESET_SET.has(String(inheritedPermissionPresetId))
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `Boss replacement rejected: a replacement keeps the seat's permissions unchanged, so replacement.permissionPresetId must be omitted${
+          restatable ? ` or set to "${inheritedPermissionPresetId}"` : ''
+        }. Use ensemble_roster_edit → edit_participant to change what a seat may do.`,
+        error: 'permission_ceiling'
+      }
+    }
+    // Not advertised in the tool schema, but the input type is a
+    // Partial<EnsembleParticipant> and JSON Schema admits unlisted properties,
+    // so a caller can supply this. It has always been dropped on the floor;
+    // refusing it says so out loud rather than leaving the safety resting on an
+    // omission somebody could "fix" later by wiring the field through.
+    if (input.replacement?.permissionOverrides !== undefined) {
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
@@ -9387,7 +9433,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Boss replacement rejected: permissionPresetId must be read_only, plan, or default.',
+          "Boss replacement rejected: a replacement keeps the seat's permissions unchanged, so replacement.permissionOverrides is not accepted. Use ensemble_roster_edit → edit_participant to change what a seat may do.",
         error: 'permission_ceiling'
       }
     }
@@ -9403,11 +9449,14 @@ export class EnsembleOrchestrator {
           : target.instructions,
       order: target.order,
       ...(input.replacement?.model ? { model: input.replacement.model } : {}),
-      ...(requestedPermissionPresetId
-        ? { permissionPresetId: requestedPermissionPresetId }
-        : target.permissionPresetId
-          ? { permissionPresetId: target.permissionPresetId }
-          : {}),
+      // Inherited, never requested — see the refusal above. Overrides ride along
+      // for the same reason: a target carrying a NARROWING override that the
+      // replacement dropped would be widened by omission just as surely as by a
+      // wider preset.
+      ...(inheritedPermissionPresetId
+        ? { permissionPresetId: inheritedPermissionPresetId }
+        : {}),
+      ...(target.permissionOverrides ? { permissionOverrides: target.permissionOverrides } : {}),
       ...(input.replacement?.reasoningEffort
         ? { reasoningEffort: input.replacement.reasoningEffort }
         : {}),

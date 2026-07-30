@@ -2776,7 +2776,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 type: 'string',
                 enum: [...ASSIGNABLE_PERMISSION_PRESETS],
                 description:
-                  'Coarse permission preset ceiling for boss replacement. full_access and custom are rejected.'
+                  "Optional, and it cannot change anything: a replacement swaps the seat's model/provider and INHERITS its permissions unchanged. Omit it, or set it to the preset the target seat already has. Any other value is rejected — use ensemble_roster_edit → edit_participant to change what a seat may do."
               },
               reasoningEffort: { type: 'string' },
               fastModeEnabled: { type: 'boolean' },
