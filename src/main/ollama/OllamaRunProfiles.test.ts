@@ -83,9 +83,14 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaThinkingLevel('ornith:35b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
-    // The three tags added 2026-07-30 stay OFF the thinking list: Ollama rejects
-    // a `think` request outright on a tag that does not advertise the
-    // capability, so a family only joins after the tag is confirmed to support it.
+    // Live daemon capabilities, read 2026-07-30: devstral-small-2:24b and
+    // ministral-3:14b advertise ["completion","vision","tools"] with NO
+    // thinking, so they MUST stay off — Ollama rejects a `think` request
+    // outright on a tag that does not advertise it.
+    //
+    // qwen3.5:4b DOES advertise thinking, and is still excluded deliberately:
+    // it tracks its generation-mate qwen3.5:9b, which also advertises thinking
+    // and is pinned off just below. Flip the pair together or not at all.
     expect(
       resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBeUndefined()

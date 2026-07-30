@@ -125,9 +125,25 @@ export function resolveOllamaModelFamily(
   if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
   if (meta.includes('ornith')) return 'ornith_9b'
   if (meta.includes('laguna') || meta.includes('poolside')) return 'laguna_xs_2_1'
-  if (meta.includes('devstral')) return 'devstral_small_2_24b'
-  if (meta.includes('ministral')) return 'ministral_3_14b'
+  // Live daemon (2026-07-30) reports `family: 'mistral3'` for BOTH local
+  // Mistral tags, so the architecture alone cannot pick the family — split on
+  // parameter size. An explicit brand word only appears when a custom tag
+  // names it in its own metadata.
+  if (meta.includes('mistral3') || meta.includes('devstral') || meta.includes('ministral')) {
+    if (meta.includes('devstral')) return 'devstral_small_2_24b'
+    if (meta.includes('ministral')) return 'ministral_3_14b'
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 20 ? 'ministral_3_14b' : 'devstral_small_2_24b'
+  }
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
+  // `qwen35` covers BOTH 3.5 sizes (the 35B MoE tags report `qwen35moe` and are
+  // caught above), so the 3.5 pair also splits on parameter size. Without this
+  // arm the generic `qwen3` fallbacks below sent every 3.5 tag to the 4B
+  // profile — including the 9B, whose "9.7B" never matched their `9b` needle.
+  if (meta.includes('qwen35') || meta.includes('qwen3.5')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 7 ? 'qwen3_5_4b' : 'qwen3_5_9b'
+  }
   if (meta.includes('nemotron')) return 'nemotron3_33b'
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
     return 'granite4_1_3b'

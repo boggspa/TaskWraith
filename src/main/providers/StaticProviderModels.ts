@@ -677,12 +677,13 @@ const OLLAMA_STATIC_MODELS = [
   {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
-    description: 'Mistral Devstral Small 2 24B via Ollama · 131k context · agentic coding/tools'
+    description:
+      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
   },
   {
     id: 'ministral-3:14b',
     label: 'Ministral 3 (14B Param)',
-    description: 'Mistral Ministral 3 14B via Ollama · 131k context · tools'
+    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
   },
   { id: 'custom', label: 'Custom model ID' }
 ]

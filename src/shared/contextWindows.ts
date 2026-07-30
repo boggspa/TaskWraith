@@ -138,8 +138,11 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'granite4.1:3b': 131_072,
   'granite4.1:30b': 131_072,
   'nemotron3:33b': 131_072,
-  'devstral-small-2:24b': 131_072,
-  'ministral-3:14b': 131_072
+  // Both read off the live daemon's `/api/show` `mistral3.context_length`
+  // (2026-07-30) rather than assumed from the upstream Mistral API — Devstral
+  // Small 2 carries a 384k window locally, 3x what the API tier documents.
+  'devstral-small-2:24b': 393_216,
+  'ministral-3:14b': 262_144
 }
 
 const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {

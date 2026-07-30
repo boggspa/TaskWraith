@@ -341,24 +341,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
-    @Test("ollama devstral-small-2:24b: 131_072 / 131k")
+    @Test("ollama devstral-small-2:24b: 393_216 / 393k")
     func ollamaDevstralSmall2() {
         let groups = ModelContextLengths.buildGroups(includeOllama: true)
         let row = groups.first { $0.provider == "ollama" }?
             .models.first { $0.modelId == "devstral-small-2:24b" }
         #expect(row?.label == "Devstral Small 2 (24B Param)")
-        #expect(row?.contextWindow == 131_072)
-        #expect(row?.formatted == "131k")
+        #expect(row?.contextWindow == 393_216)
+        #expect(row?.formatted == "393k")
     }
 
-    @Test("ollama ministral-3:14b: 131_072 / 131k")
+    @Test("ollama ministral-3:14b: 262_144 / 262k")
     func ollamaMinistral3() {
         let groups = ModelContextLengths.buildGroups(includeOllama: true)
         let row = groups.first { $0.provider == "ollama" }?
             .models.first { $0.modelId == "ministral-3:14b" }
         #expect(row?.label == "Ministral 3 (14B Param)")
-        #expect(row?.contextWindow == 131_072)
-        #expect(row?.formatted == "131k")
+        #expect(row?.contextWindow == 262_144)
+        #expect(row?.formatted == "262k")
     }
 
     // MARK: - excludeProviders
