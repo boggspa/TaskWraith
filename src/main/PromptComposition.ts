@@ -18,7 +18,10 @@ import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFence
 import { buildPendingThreadMessageContextBlock } from './ThreadMessageContext'
 import type { ThreadMessageEvent } from '../shared/threadMessage'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
-import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import {
+  isExternalUntrustedMessage,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   taskWraithToolNameForProvider,
@@ -535,6 +538,15 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
     (message) =>
       (message.role === 'user' || message.role === 'assistant') &&
       !isHumanCollaboratorComment(message) &&
+      // Solo composition has no untrusted frame to fall back on (that lives in
+      // the ensemble serializer), so external-authored text is refused outright
+      // here rather than rendered. Keyed on `sourceTrust`, not on the comment
+      // kind: the role gate above already stops today's `role: 'system'`
+      // collaborator rows, which is why the sibling check is redundant — but a
+      // row carrying external text on a `user` role would sail straight past it.
+      // That is not hypothetical; it is the shape the mid-run steering builder
+      // produces (P2c security review, F1).
+      !isExternalUntrustedMessage(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
       !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())

@@ -39,7 +39,10 @@
 
 import type { ChatMessage, ChatRecord } from './store/types'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
-import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import {
+  isExternalUntrustedMessage,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
@@ -159,6 +162,11 @@ export function chatMessagesToGeminiContents(
     if (!message || typeof message.content !== 'string') continue
     if (!message.content.trim()) continue
     if (isHumanCollaboratorComment(message)) continue
+    // Replay carries no untrusted frame, so external-authored text is refused
+    // outright. This check is ORDER-INDEPENDENT unlike the `includeSystem`
+    // guard below it — a `user`-role row carrying external text would otherwise
+    // be replayed as the host's own turn on every resumed Gemini session.
+    if (isExternalUntrustedMessage(message)) continue
     if (isRetiredExternalChannelInboundMessage(message)) continue
     if (isTaskWraithCloseoutMessage(message)) continue
     if (

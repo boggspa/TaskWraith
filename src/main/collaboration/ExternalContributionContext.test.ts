@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EXTERNAL_CONTRIBUTION_POSTAMBLE,
   EXTERNAL_CONTRIBUTION_PREAMBLE,
   EXTERNAL_CONTRIBUTION_TAG,
   FALLBACK_SENDER_LABEL,
@@ -178,7 +179,12 @@ describe('wrapExternalContribution', () => {
     })
     expect(occurrences(wrapped, OPEN_TAG)).toBe(1)
     expect(occurrences(wrapped, CLOSE_TAG)).toBe(1)
-    expect(wrapped.trimEnd().endsWith(CLOSE_TAG)).toBe(true)
+    // The close tag is the last STRUCTURAL element: only this module's own
+    // postamble may follow it. Asserted as an exact tail rather than
+    // `endsWith(CLOSE_TAG)` so the check keeps its original meaning — nothing
+    // collaborator-supplied got out past the fence — now that F3 appends a
+    // trailing boundary restatement.
+    expect(wrapped.trimEnd().endsWith(`${CLOSE_TAG}\n${EXTERNAL_CONTRIBUTION_POSTAMBLE}`)).toBe(true)
   })
 
   it('injection: the display name cannot add lines to the frame', () => {

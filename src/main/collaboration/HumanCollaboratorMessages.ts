@@ -29,6 +29,29 @@ export function isHumanCollaboratorComment(message: ChatMessage | null | undefin
   return message?.metadata?.kind === HUMAN_COLLABORATOR_COMMENT_KIND
 }
 
+/**
+ * Does this row carry text authored outside the host's trust boundary?
+ *
+ * DELIBERATELY KEYED ON `sourceTrust`, NOT ON THE COMMENT KIND, and the two are
+ * not interchangeable:
+ *
+ *  - `isHumanCollaboratorComment` is the EXCLUSION predicate. It answers "keep
+ *    this out of provider history entirely", and every serializer uses it.
+ *  - this one is the WRAPPING predicate. It answers "if this text is about to
+ *    reach a model anyway, it must arrive framed as untrusted."
+ *
+ * They diverge precisely where it matters. A P2c Promote row is meant to reach
+ * the model, so it must NOT be excluded — but it must still be wrapped. And a
+ * future path that carries external text without the comment kind (the mid-run
+ * steering builder stamps `role: 'user'` with `kind: 'midRunSteering'`, a
+ * Channels post will carry neither) is invisible to the exclusion predicate but
+ * must never be invisible to this one. Keying the wrapper on the kind would
+ * reproduce exactly the gap that makes the steering path unsafe.
+ */
+export function isExternalUntrustedMessage(message: ChatMessage | null | undefined): boolean {
+  return message?.metadata?.sourceTrust === 'external_untrusted'
+}
+
 export function humanCollaboratorMetadata(
   message: ChatMessage
 ): HumanCollaboratorCommentMetadata | null {

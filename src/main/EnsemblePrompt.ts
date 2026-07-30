@@ -61,7 +61,14 @@ import {
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
-import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import {
+  isExternalUntrustedMessage,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
+import {
+  looksExternallyWrapped,
+  wrapExternalContribution
+} from './collaboration/ExternalContributionContext'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
@@ -1778,7 +1785,30 @@ function projectTaggedTranscript(
     const trace = formatToolTraceSummary(message.toolActivities)
     const fileDigest = formatFileChangeDigest(message.toolActivities)
     const traceLines = [trace, fileDigest].filter(Boolean).join('\n')
-    const body = traceLines ? `${traceLines}\n${text}` : text
+    // THE CHOKE POINT (P2c security review, F2). This is the load-bearing
+    // serializer — the one every ensemble seat's prompt is built from — so the
+    // untrusted frame is applied HERE, by the code that renders the line, and
+    // not by whoever appended the message.
+    //
+    // Why here rather than an assertion that a caller wrapped it: the two fail
+    // in opposite directions. An assertion is only as good as the set of paths
+    // someone remembered to route through it, and a missed path fails OPEN, as
+    // raw text in front of a model. Wrapping at the point of render has no such
+    // set — there is one way for a message to become a transcript line, and it
+    // goes through here. `buildExternalContributionBody` is therefore reached by
+    // every present and future append path for free, including ones written by
+    // someone who has never read this review.
+    //
+    // Tool-trace lines are deliberately dropped for an external row rather than
+    // prepended: they are host-derived text, and splicing them alongside
+    // collaborator text inside one frame would blur exactly the authorship
+    // boundary the frame is drawing. An external row has no tool activity
+    // anyway; this is a guard, not a behaviour.
+    const body = isExternalUntrustedMessage(message)
+      ? buildExternalContributionBody(message, text)
+      : traceLines
+        ? `${traceLines}\n${text}`
+        : text
     const line = `[${tag}]\n${body}`
     if (used + line.length > maxChars && lines.length > 0) {
       truncated = true
@@ -1899,11 +1929,66 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
   )
 }
 
+/**
+ * Frame one external-untrusted row for the shared transcript.
+ *
+ * Idempotent by design: a body that already carries the frame is returned
+ * unchanged rather than double-wrapped. Two frames around one body would read as
+ * a nesting the model has to reason about, and would let a caller that DID wrap
+ * correctly end up with a worse prompt than one that forgot.
+ *
+ * Provenance is read from the row's own metadata and every field is optional —
+ * `wrapExternalContribution` sanitises each one itself and falls back to a fixed
+ * label, so a row with a missing or hostile `collaboratorDisplayName` still
+ * produces a well-formed frame. A malformed row must degrade to "wrapped with
+ * less attribution", never to "unwrapped".
+ */
+function buildExternalContributionBody(message: ChatMessage, text: string): string {
+  if (looksExternallyWrapped(text)) return text
+  const metadata = message.metadata || {}
+  return wrapExternalContribution(text, {
+    senderDisplayName:
+      typeof metadata.collaboratorDisplayName === 'string' ? metadata.collaboratorDisplayName : '',
+    ...(typeof metadata.shareId === 'string' ? { shareId: metadata.shareId } : {}),
+    ...(typeof metadata.collaboratorId === 'string'
+      ? { collaboratorId: metadata.collaboratorId }
+      : {}),
+    ...(message.id ? { messageId: message.id } : {}),
+    ...(message.timestamp ? { timestamp: message.timestamp } : {}),
+    // `promotedBy: 'host'` is the only thing that makes a contribution
+    // host-reviewed. Everything else — auto-append under a Promote grant, a
+    // replay, an unrecognised state — is reported as unreviewed, because the
+    // failure that matters is claiming review that did not happen.
+    review: metadata.promotedBy === 'host' ? 'host-approved' : 'auto-appended'
+  })
+}
+
+/**
+ * The transcript tag for a message authored outside the trust boundary.
+ *
+ * FIXED CONSTANT, and the collaborator's name is deliberately NOT in it. The tag
+ * sits at the start of its own line, immediately before the body — the single
+ * most valuable position in the transcript for forging structure — so nothing
+ * attacker-controlled may appear there. The (sanitised) name belongs on the
+ * attribution line INSIDE the frame, where `wrapExternalContribution` has
+ * already neutralised it.
+ *
+ * Without this, `messageTag` falls through to `'System'` for a collaborator row,
+ * because the row is `role: 'system'`. Tagging untrusted human text as System —
+ * the highest-authority voice a model recognises — is the exact inversion this
+ * whole review exists to prevent.
+ */
+const EXTERNAL_UNTRUSTED_TAG = 'External collaborator (untrusted, not the host)'
+
 function messageTag(
   message: ChatMessage,
   participantTokens?: Map<string, string>,
   modelLabels?: Map<string, string>
 ): string {
+  // Checked FIRST, ahead of every role branch. A future path that carries
+  // external text on a `user` or `assistant` role must not be able to pick up
+  // the host's tag by winning a race with the role checks below.
+  if (isExternalUntrustedMessage(message)) return EXTERNAL_UNTRUSTED_TAG
   if (message.role === 'user') return 'User'
   if (message.role === 'assistant') {
     const provider = message.metadata?.ensembleProvider as ProviderId | undefined
