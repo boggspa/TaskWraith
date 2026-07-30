@@ -50,7 +50,13 @@ describe('F6 — an external contribution cannot start a round', () => {
     // Every symbol by which main starts provider work. If the Promote slice
     // needs one of these here, that is a decision to take in the open — read
     // the F6 rationale above before deleting a line from this list.
-    for (const forbidden of [
+    //
+    // CASE-INSENSITIVE, deliberately. These are matched as concepts, not as
+    // exact identifiers: the same idea appears as a type (`RunCoordinator`), a
+    // member (`runCoordinator`), and a method fragment, and a guard that only
+    // recognised one casing would wave the other two through. The steering
+    // entry caught this for real — see the note on the next test.
+    for (const concept of [
       'runAgent',
       'dispatch(',
       'startRound',
@@ -60,16 +66,28 @@ describe('F6 — an external contribution cannot start a round', () => {
       'ensembleOrchestrator',
       'midRunSteering'
     ]) {
-      expect(region).not.toContain(forbidden)
+      expect(region).not.toMatch(new RegExp(concept.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
     }
   })
 
   it('the collaborator append path does not reach the mid-run steering builder', () => {
-    // Separately pinned because this is the sharpest version of the failure:
-    // `buildMidRunSteeringUserMessage` stamps `role: 'user'` with no
-    // `sourceTrust`, so routing a contribution through it would both start work
-    // AND strip the provenance the whole review depends on (F1).
-    expect(appendRegion()).not.toContain('buildMidRunSteeringUserMessage')
+    // Separately pinned because this is the sharpest version of the failure.
+    // The builder now REQUIRES an `author` and stamps `sourceTrust` +
+    // `role: 'system'` for the external variant (`7968c1618`), so text routed
+    // through it is no longer laundered into the host's voice — but this guard
+    // is about DISPATCH, not provenance: the steering lane is the only one that
+    // does not wait for a run boundary, so reaching it from the append path is
+    // still how a contribution would start work of its own.
+    //
+    // Matched as a case-insensitive CONCEPT rather than the exact symbol. The
+    // other session kept the now-slightly-wrong name `buildMidRunSteering*User*
+    // Message` specifically so this assertion would not be silently defeated —
+    // which is exactly the kind of favour a guard should not need. A rename to
+    // `buildMidRunSteeringMessage` would have passed the old exact-string check
+    // AND the old case-sensitive `'midRunSteering'` entry above it, because that
+    // spelling has a capital M. Now any rename that keeps the concept is caught,
+    // and the name is free to be corrected.
+    expect(appendRegion()).not.toMatch(/buildmidrunsteering\w*message/i)
   })
 
   it('ChatService takes no run-dispatching dependency at all', () => {
