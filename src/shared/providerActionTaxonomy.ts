@@ -1190,8 +1190,18 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'none',
     'none'
   ),
+  // `orchestration`, NOT `workspace_write` (user decision 2026-07-30). Opening a
+  // file is a focus-change, not a state mutation — the same reasoning already
+  // recorded for open_in_ide in McpAutoAllowedTools. Its three siblings
+  // (open_in_ide, open_in_ide_at_position, reveal_in_finder) carry an identical
+  // operation/mutation/lock triple and are all `orchestration`, so classifying
+  // this one as a write made it the sole member of the read-only deny set with
+  // no behavioural difference to justify it — read-only and recon seats were
+  // denied opening a file in the editor while being allowed to open one in an
+  // IDE. `dispatchOwner` stays `workspace-tools`: routing is a separate axis
+  // from the permission class.
   open_workspace_file: tool(
-    'workspace_write',
+    'orchestration',
     'mcpTools',
     'application.mutate',
     'workspace-tools',
