@@ -125,7 +125,20 @@ export type WorkspaceLockMcpAdmission =
 export class WorkspaceLockMcpAdmissionCoordinator {
   constructor(private readonly deps: WorkspaceLockMcpAdmissionCoordinatorDependencies) {}
 
-  async admit(input: WorkspaceLockMcpAdmissionInput): Promise<WorkspaceLockMcpAdmission> {
+  /**
+   * Generic in the CALLER's context, not in the class. Callers routinely pass a
+   * context richer than the base — `WorkspaceLockMcpExecutionContext` adds
+   * lifecycle and owner fields, and a caller may carry its own payload beyond
+   * that. This method reads only base fields (scope, cwd, workspacePath,
+   * appRunId, appChatId, ensembleRun) and neither stores the context nor
+   * returns it, so the extra fields are opaque pass-through and the class has
+   * no reason to carry a type parameter. Without the parameter here the input
+   * silently resolves to its DEFAULT argument and excess-property checking
+   * rejects every extended context at the call site.
+   */
+  async admit<Context extends WorkspaceLockMcpAdmissionContext = WorkspaceLockMcpAdmissionContext>(
+    input: WorkspaceLockMcpAdmissionInput<Context>
+  ): Promise<WorkspaceLockMcpAdmission> {
     const contract = resolveToolDispatchContractStrict(input.toolName, input.args)
     if (!contract.ok) {
       return this.denied(input.toolName, contract.reason, {
