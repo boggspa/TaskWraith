@@ -264,8 +264,17 @@ describe('DesktopToolExecutors host application effects', () => {
     })
     expect(openPath).toHaveBeenCalledWith('/workspace/docs/report.html')
     expect(showItemInFolder).not.toHaveBeenCalled()
+    // `orchestration`, matching open_in_ide / open_in_ide_at_position /
+    // reveal_in_finder, which share this exact operation/mutation/lock triple.
+    // Opening a file is a focus-change, not a state mutation — the reasoning
+    // McpAutoAllowedTools already records for that family — so this tool must
+    // NOT sit in the read-only deny set. User decision 2026-07-30, after this
+    // assertion and ToolClassTaxonomy's "workspace_write is exactly the
+    // read-only deny set" were found to contradict each other. The behavioural
+    // assertions above are independent of the class; this block only mirrors the
+    // taxonomy so a silent reclassification cannot slip through.
     expect(TASKWRAITH_TOOL_ACTIONS.open_workspace_file).toMatchObject({
-      toolClass: 'workspace_write',
+      toolClass: 'orchestration',
       operation: 'application.mutate',
       mutation: 'attached-application',
       lock: 'application-resource'
