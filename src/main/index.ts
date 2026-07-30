@@ -44569,6 +44569,11 @@ if (isGeminiMcpBridgeProcess) {
         closeRoomsForShares(humanCollaborationStore.listShares())
         humanCollaborationAuditLog.purgeAll()
         humanCollaborationStore.purgeAllShares()
+        // The queue is a SECOND store of erasable content and it is the one
+        // that still holds message bodies. purgeAll drops the tombstones too,
+        // which matters: a tombstone carries collaboratorId + clientMessageId
+        // for content that is supposed to be gone.
+        externalContributionQueue.purgeAll()
         return
       }
       const targets = new Set(chatIds)
@@ -44584,6 +44589,13 @@ if (isGeminiMcpBridgeProcess) {
         chatIds,
         shareIds: scopedShares.map((share) => share.shareId)
       })
+      // ABOVE the truncate early-return on purpose. A truncate keeps the share
+      // but erases the rows underneath it, and a queued contribution is exactly
+      // such a row — `purgeChats` was written for this hook ("Must run for
+      // truncate too") and had no caller until now. An approved-but-undelivered
+      // entry is deliberately exempt from every TTL and overflow path, so if
+      // erasure skips it nothing else will ever remove it.
+      externalContributionQueue.purgeChats(chatIds)
       if (kind !== 'truncate') {
         humanCollaborationStore.purgeChatShares(chatIds)
         return

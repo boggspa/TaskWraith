@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
  * Contributions an external has sent that are waiting for the host to release
@@ -43,6 +43,16 @@ export function PendingContributionsStack({
 }) {
   const [pending, setPending] = useState<PendingContribution[]>([])
   const [busyEntryId, setBusyEntryId] = useState<string | null>(null)
+  /**
+   * The chat this surface currently belongs to, assigned during RENDER rather
+   * than in an effect so it is already current when an awaited IPC reply is
+   * processed. Every fetch here is async and there are four callers (mount, the
+   * update broadcast, window focus, and the refresh after approve/deny), so
+   * without this a reply for the chat the host just left can land afterwards
+   * and paint one chat's pending queue underneath another's transcript.
+   */
+  const chatIdRef = useRef(chatId)
+  chatIdRef.current = chatId
 
   const refresh = useCallback(async () => {
     if (!chatId) {
@@ -52,10 +62,12 @@ export function PendingContributionsStack({
     if (typeof window.api?.humanCollaborationListPendingContributions !== 'function') return
     try {
       const entries = await window.api.humanCollaborationListPendingContributions(chatId)
+      if (chatIdRef.current !== chatId) return
       setPending(Array.isArray(entries) ? (entries as PendingContribution[]) : [])
     } catch {
       // A chat the renderer no longer owns throws by design. Showing nothing is
       // the honest result — never a stale queue from a previous chat.
+      if (chatIdRef.current !== chatId) return
       setPending([])
     }
   }, [chatId])
@@ -118,6 +130,7 @@ export function PendingContributionsStack({
             <button
               type="button"
               className="pending-contribution-approve"
+              aria-label={`Approve the contribution from ${entry.displayName}`}
               disabled={busyEntryId === entry.entryId}
               onClick={() => void resolve(entry.entryId, 'approve')}
             >
@@ -126,6 +139,7 @@ export function PendingContributionsStack({
             <button
               type="button"
               className="pending-contribution-deny"
+              aria-label={`Deny the contribution from ${entry.displayName}`}
               disabled={busyEntryId === entry.entryId}
               onClick={() => void resolve(entry.entryId, 'deny')}
             >

@@ -86,6 +86,10 @@ const AUDIT_KIND_LABELS: Record<string, string> = {
   'contribution.received': 'Comment received',
   'contribution.deduped': 'Duplicate ignored',
   'contribution.rejected': 'Contribution rejected',
+  // Approve MARKS ONLY — delivery happens at the contributor's next turn — so
+  // the label must not claim the message has already reached the panel.
+  'contribution.approved': 'You approved — waiting to be delivered',
+  'contribution.denied': 'You denied this contribution',
   'draft.inserted': 'Inserted into your composer'
 }
 

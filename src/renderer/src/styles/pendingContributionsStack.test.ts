@@ -67,6 +67,42 @@ describe('pending contributions surface', () => {
     expect(source).toContain('if (pending.length === 0) return null')
   })
 
+  it('rides real theme tokens, so light themes are not a black slab', () => {
+    // Regression: the first version used --surface-raised and --border-strong,
+    // which do not exist in this repo (they are the visualisation design
+    // system's names). Undefined tokens fall through to whatever fallback is
+    // written, and the fallbacks were dark — invisible text on light themes.
+    const css = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
+    const block = css.slice(css.indexOf('.pending-contribution {'))
+    expect(block).toContain('background: var(--panel-elevated-bg)')
+    expect(block).toContain('color: var(--text-primary)')
+    expect(css).not.toContain('--surface-raised')
+  })
+
+  it('bounds a single row, not just the stack', () => {
+    // A Multiview pane is a fraction of the viewport, so the stack's own vh cap
+    // can exceed the cell; one long contribution would push its Approve and
+    // Deny past the top edge.
+    const css = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
+    const block = css.slice(css.indexOf('.pending-contribution-text {'))
+    expect(block).toContain('max-height: 120px')
+  })
+
+  it('discards a fetch that resolved after the host changed chats', () => {
+    // Four async callers (mount, broadcast, focus, post-resolve refresh). Without
+    // the guard a reply for the previous chat can land last and paint one chat's
+    // queue under another's transcript.
+    const source = readSource('src/renderer/src/components/PendingContributionsStack.tsx')
+    expect(source).toContain('chatIdRef.current = chatId')
+    expect(source).toContain('if (chatIdRef.current !== chatId) return')
+  })
+
+  it('names each row’s controls after its author', () => {
+    const source = readSource('src/renderer/src/components/PendingContributionsStack.tsx')
+    expect(source).toContain('aria-label={`Approve the contribution from ${entry.displayName}`}')
+    expect(source).toContain('aria-label={`Deny the contribution from ${entry.displayName}`}')
+  })
+
   it('never optimistically removes a row — main is the authority', () => {
     const source = readSource('src/renderer/src/components/PendingContributionsStack.tsx')
     // approve/deny return null when the entry was already resolved, so the

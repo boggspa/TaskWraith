@@ -102,6 +102,32 @@ describe('history deletion startup integration', () => {
     expect(mailboxGuard).toBeLessThan(mailboxRecovery)
   })
 
+  /**
+   * TW-SEC-014 completeness. The external-contribution queue is a SECOND store
+   * of erasable content, and the only one that still holds message BODIES.
+   * Every self-heal path deliberately refuses to touch an approved-but-
+   * undelivered entry — sweep() skips non-queued states and isReapable()
+   * exempts it from both the retention reap and the overflow eviction — so if
+   * erasure does not purge it, nothing ever will.
+   */
+  it('purges the external-contribution queue on every erasure kind', () => {
+    const fn = indexSource.indexOf('const purgeHumanCollaborationForErasure =')
+    expect(fn).toBeGreaterThanOrEqual(0)
+    const end = indexSource.indexOf('\n    }', indexSource.indexOf('reopenCollaborationRooms()', fn))
+    const body = indexSource.slice(fn, end)
+
+    expect(body).toContain('externalContributionQueue.purgeAll()')
+    expect(body).toContain('externalContributionQueue.purgeChats(chatIds)')
+
+    // The scoped purge must sit ABOVE the truncate early-return, or a truncate
+    // keeps the share, erases the rows underneath it, and leaves the queued
+    // contributions for those rows behind.
+    const scopedPurge = body.indexOf('externalContributionQueue.purgeChats(chatIds)')
+    const truncateReturn = body.indexOf("if (kind !== 'truncate') {")
+    expect(scopedPurge).toBeGreaterThanOrEqual(0)
+    expect(truncateReturn).toBeGreaterThan(scopedPurge)
+  })
+
   it('releases the correlated usage hold only from the post-commit release phase', () => {
     const commit = indexSource.indexOf('commit: (operationId) => {')
     // Checkpoint and collaboration purges run under the frozen intent, before
