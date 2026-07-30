@@ -9805,10 +9805,28 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
   }
 }
 
+/**
+ * Set once the collaboration runtime exists (see `markProjectionDirty` at its
+ * construction site). A module-level hook because `broadcastChatUpdated` is
+ * top-level and the runtime is built much later inside app setup.
+ *
+ * Why this exists at all: until now NOTHING republished a collaborator's
+ * projection when the transcript changed. `broadcastHumanCollaborationUpdate`
+ * was only ever called by the external's own `appendComment` and by nine share-
+ * ADMINISTRATION handlers (create/revoke/rules) — none of which fire when the
+ * host or a model speaks. So a collaborator saw the transcript as it stood at
+ * the moment they joined and then nothing, for the rest of the session. That is
+ * the "no live updates after joining" report, and the frame cap was never
+ * involved: the projection is bounded at ~144k chars with the options actually
+ * used, nowhere near the relay's 1 MiB close.
+ */
+let markHumanCollaborationProjectionDirty: ((chatId: string) => void) | null = null
+
 function broadcastChatUpdated(chat: ChatRecord): void {
   enqueueChatUpdated(mainWindow, chat)
   broadcastChatPopoutUpdate(chat)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
+  markHumanCollaborationProjectionDirty?.(chat.appChatId)
 }
 
 function enqueueChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
@@ -46619,9 +46637,7 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderCanRebindChatWorkspace: (event) => assertMainRendererSender(event),
       assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
     })
-    const broadcastHumanCollaborationUpdate = (chatId: string): void => {
-      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
-      broadcastThreadUpdate(chatId)
+    const publishCollaborationProjection = (chatId: string): void => {
       humanCollaborationRuntime?.publishProjectionUpdates(chatId).catch((err) => {
         console.warn(
           `[human-collaboration] projection publish failed: ${
@@ -46629,6 +46645,41 @@ if (isGeminiMcpBridgeProcess) {
           }`
         )
       })
+    }
+    const broadcastHumanCollaborationUpdate = (chatId: string): void => {
+      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
+      broadcastThreadUpdate(chatId)
+      publishCollaborationProjection(chatId)
+    }
+    // Transcript-driven projection republish. Deliberately NOT a direct call to
+    // `publishProjectionUpdates` off the chat-update hot path: that rebuilds,
+    // re-redacts and re-seals the whole projection per subscriber, and the
+    // byte-budget trim `JSON.stringify`s it once per dropped row, synchronously
+    // on main — a 600 KB stringify storm on every streamed token batch.
+    //
+    // Two guards make it cheap. The subscriber check answers "is anyone
+    // watching?" before any work, so the overwhelming majority of chats (never
+    // shared) pay one map lookup. The trailing-edge debounce then coalesces a
+    // burst of streamed updates into one publish, at roughly the cadence the
+    // host transport already flushes at (FLUSH_MIN_INTERVAL_MS = 200 ms), so we
+    // never queue faster than the wire drains.
+    //
+    // This does not make the BUILD cheap — it still reconstructs the whole
+    // projection each time. Delta frames are the fix for that and are a separate
+    // slice; this one is only about the channel being pumped at all.
+    const PROJECTION_DIRTY_DEBOUNCE_MS = 300
+    const projectionDirtyTimers = new Map<string, NodeJS.Timeout>()
+    markHumanCollaborationProjectionDirty = (chatId: string): void => {
+      if (!chatId) return
+      if (!humanCollaborationRuntime?.hasProjectionSubscriberForChat(chatId)) return
+      if (projectionDirtyTimers.has(chatId)) return
+      const timer = setTimeout(() => {
+        projectionDirtyTimers.delete(chatId)
+        publishCollaborationProjection(chatId)
+      }, PROJECTION_DIRTY_DEBOUNCE_MS)
+      // Never hold the process open for a pending republish.
+      timer.unref?.()
+      projectionDirtyTimers.set(chatId, timer)
     }
     disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({
       chatService,

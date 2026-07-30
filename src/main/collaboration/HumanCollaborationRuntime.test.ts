@@ -826,3 +826,109 @@ describe('HumanCollaborationRuntime', () => {
   })
 })
 
+
+/**
+ * Projection PUMP behaviour, as opposed to projection CONTENT.
+ *
+ * These cover the two independent defects behind the reported "collaborator
+ * joins, sees the transcript as it stood at that instant, then never sees
+ * another word". Neither had anything to do with the relay's 1 MiB frame cap —
+ * the projection is bounded far below it by the row/preview caps actually in
+ * use — so both are pump defects, not payload defects.
+ */
+describe('HumanCollaborationRuntime projection pump', () => {
+  async function admitSubscribedSession(opts: {
+    buildProjection: HumanCollaborationRuntime['opts']['buildProjection']
+    chatId?: string
+  }) {
+    const chatId = opts.chatId || 'chat-1'
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId, mode: 'comments', now: 1000, inviteTtlMs: 10000 })
+    const collaborator = makeCollaborationIdentity()
+    const published: string[] = []
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: opts.buildProjection,
+      appendComment: vi.fn(),
+      publishProjection: async (sessionId: string) => {
+        published.push(sessionId)
+      },
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId,
+      displayName: 'Olly',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const contextHash = computeHumanCollaborationTranscriptHash(
+      makeTranscriptContext({
+        shareId: share.share.shareId,
+        chatId,
+        inviteId: begin.inviteId,
+        inviteToken: share.inviteToken,
+        inviteExpiresAt: begin.expiresAt,
+        shareMode: 'comments',
+        hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+        hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+        hostNonceB64: begin.hostNonceB64,
+        hostCollaborator: collaborator
+      })
+    )
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, contextHash)
+      )
+    })
+    // Subscription happens exactly ONCE, here. Nothing re-subscribes later —
+    // which is what makes an erroneous unsubscribe permanent.
+    await runtime.subscribeProjection({ sessionId: session.sessionId })
+    return { runtime, session, published, chatId }
+  }
+
+  it('keeps the subscription after a TRANSIENT build failure, so the next publish recovers', async () => {
+    let calls = 0
+    const buildProjection = vi.fn(() => {
+      calls += 1
+      // Fail only the first push, the way a store read racing a write would.
+      if (calls === 2) throw new Error('Chat not found.')
+      return { schemaVersion: 1 as const, rows: [] }
+    })
+    const { runtime, session, published } = await admitSubscribedSession({ buildProjection })
+
+    await runtime.publishProjectionUpdates()
+    expect(published).toEqual([])
+
+    // The regression: this used to be silence forever. The subscriber must have
+    // survived the throw.
+    await runtime.publishProjectionUpdates()
+    expect(published).toEqual([session.sessionId])
+  })
+
+  it('drops the subscriber only when the session itself is gone', async () => {
+    const buildProjection = vi.fn(() => ({ schemaVersion: 1 as const, rows: [] }))
+    const { runtime, session, published } = await admitSubscribedSession({ buildProjection })
+
+    await runtime.disconnect({ sessionId: session.sessionId })
+    await runtime.publishProjectionUpdates()
+    expect(published).toEqual([])
+  })
+
+  it('reports whether a chat has a live projection subscriber (the hot-path gate)', async () => {
+    const buildProjection = vi.fn(() => ({ schemaVersion: 1 as const, rows: [] }))
+    const { runtime, session } = await admitSubscribedSession({ buildProjection })
+
+    expect(runtime.hasProjectionSubscriberForChat('chat-1')).toBe(true)
+    // The gate must be chat-scoped, or every unshared chat pays for a rebuild.
+    expect(runtime.hasProjectionSubscriberForChat('chat-2')).toBe(false)
+
+    await runtime.disconnect({ sessionId: session.sessionId })
+    expect(runtime.hasProjectionSubscriberForChat('chat-1')).toBe(false)
+  })
+})

@@ -515,6 +515,26 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   }
 
   /**
+   * Is anyone actually watching this chat's projection right now?
+   *
+   * The cheap gate in front of `publishProjectionUpdates`. Publishing is
+   * expensive — it rebuilds, re-redacts and re-seals the whole projection per
+   * subscriber, and the byte-budget trim `JSON.stringify`s the projection once
+   * per dropped row (HumanShareProjection.ts:101-103), synchronously on main.
+   * The transcript hot path fires on every streamed chat update for EVERY chat,
+   * the overwhelming majority of which are not shared at all, so callers on
+   * that path must be able to answer "is this worth doing?" without paying for
+   * it. Deliberately narrower than `connectedChatIds()`: a session that has not
+   * subscribed has nothing to receive.
+   */
+  hasProjectionSubscriberForChat(chatId: string): boolean {
+    for (const sessionId of this.projectionSubscribers) {
+      if (this.sessions.get(sessionId)?.chatId === chatId) return true
+    }
+    return false
+  }
+
+  /**
    * P2a presence clarity (spec §6): per-session summaries so host surfaces can
    * distinguish "participant active in the store" from "live session connected
    * right now" — per share AND per collaborator, not just per chat. Only
@@ -619,7 +639,18 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
           await this.opts.publishEncryptedProjection(sessionId, frame)
         }
       } catch (err) {
-        this.projectionSubscribers.delete(sessionId)
+        // Do NOT unsubscribe on a transient failure. A projection build reads
+        // the chat through `buildProjection`, which can throw for reasons that
+        // pass — a store read racing a write, a chat momentarily unresolvable
+        // mid-save. The subscription is established exactly ONCE, at admission
+        // (`:443`), and the collaborator never re-subscribes, so dropping it
+        // here is PERMANENT for the life of the session: the external's
+        // transcript freezes silently and neither side is told why. That is one
+        // of the two independent causes of the "no live updates after joining"
+        // report. Only give up when the session itself has gone (a concurrent
+        // disconnect during the await); otherwise keep the subscription and let
+        // the next publish retry.
+        if (!this.sessions.has(sessionId)) this.projectionSubscribers.delete(sessionId)
         this.opts.log?.(
           `[human-collaboration] projection push skipped for session ${sessionId}: ${
             err instanceof Error ? err.message : String(err)
