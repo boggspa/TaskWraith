@@ -360,8 +360,14 @@ function takeSnapshot(root, label) {
       label || 'work-guard snapshot'
     ])
     if (commit === null) return { ok: false, reason: 'commit-tree failed' }
+    // The stamp is second-resolution, so two snapshots inside the same second
+    // would resolve to the same ref and the second would silently overwrite the
+    // first — losing exactly the work the snapshot exists to hold. The commit
+    // sha disambiguates, and it differs whenever the tree does (an identical
+    // tree is already short-circuited above).
+    const sha = commit.trim()
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '')
-    const ref = `refs/wip/${stamp}`
+    const ref = `refs/wip/${stamp}-${sha.slice(0, 7)}`
     if (gitQuiet(root, ['update-ref', ref, commit.trim()]) === null) {
       return { ok: false, reason: 'update-ref failed' }
     }
@@ -636,5 +642,7 @@ module.exports = {
   evaluate,
   takeSnapshot,
   listSnapshots,
+  pruneSnapshots,
+  SNAPSHOT_KEEP_MS,
   isMarkerFile
 }

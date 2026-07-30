@@ -33,7 +33,9 @@ const {
   liveness,
   evaluate,
   takeSnapshot,
-  listSnapshots
+  listSnapshots,
+  pruneSnapshots,
+  SNAPSHOT_KEEP_MS
 } = require('./work-guard.cjs') as {
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
@@ -51,6 +53,8 @@ const {
   }
   takeSnapshot: (root: string, label?: string) => { ok: boolean; ref?: string; skipped?: boolean }
   listSnapshots: (root: string) => { ref: string; atMs: number }[]
+  pruneSnapshots: (root: string, now: number) => number
+  SNAPSHOT_KEEP_MS: number
 }
 
 const DEAD_PID = 2147483646 // far above any real pid; process.kill(_, 0) must reject
@@ -358,6 +362,71 @@ describe('snapshots', () => {
       encoding: 'utf8'
     })
     expect(count.trim()).toBe('1')
+    expect(listSnapshots(root)).toHaveLength(1)
+  })
+
+  it('does not let two snapshots in the same second overwrite each other', () => {
+    // The ref stamp is second-resolution. Before the sha suffix, a second
+    // snapshot inside the same wall-clock second resolved to the same ref and
+    // silently replaced the first — losing precisely the work the snapshot
+    // exists to hold. Caught by the pruning test, so it gets its own name.
+    const root = makeRepo()
+    writeFileSync(join(root, 'src', 'seed.ts'), 'export const seed = 100\n')
+    const first = takeSnapshot(root, 'same-second A')
+    writeFileSync(join(root, 'src', 'seed.ts'), 'export const seed = 200\n')
+    const second = takeSnapshot(root, 'same-second B')
+
+    expect(first.ok && second.ok).toBe(true)
+    expect(second.ref).not.toBe(first.ref)
+    expect(listSnapshots(root)).toHaveLength(2)
+    // Both payloads are still retrievable, which is the property that matters.
+    const readBack = (ref: string): string =>
+      execFileSync('git', ['show', `${ref}:src/seed.ts`], { cwd: root, encoding: 'utf8' })
+    expect(readBack(first.ref as string)).toContain('seed = 100')
+    expect(readBack(second.ref as string)).toContain('seed = 200')
+  })
+
+  it('prunes only aged snapshots, and never the newest one', () => {
+    // `update-ref -d` is the ONLY destructive thing this tool does, and it
+    // deletes the safety net itself. A pruner that took the newest ref would
+    // quietly undo the entire point on an idle machine.
+    const root = makeRepo()
+    const stamp = (daysAgo: number): string =>
+      new Date(NOW - daysAgo * 24 * 60 * 60 * 1000).toISOString()
+    const previous = process.env.GIT_COMMITTER_DATE
+    try {
+      for (const [index, daysAgo] of [30, 20, 0].entries()) {
+        process.env.GIT_COMMITTER_DATE = stamp(daysAgo)
+        writeFileSync(join(root, 'src', 'seed.ts'), `export const seed = ${index + 10}\n`)
+        expect(takeSnapshot(root, `aged ${daysAgo}d`).ok).toBe(true)
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GIT_COMMITTER_DATE
+      else process.env.GIT_COMMITTER_DATE = previous
+    }
+    expect(listSnapshots(root)).toHaveLength(3)
+
+    pruneSnapshots(root, NOW)
+    const survivors = listSnapshots(root)
+    expect(survivors).toHaveLength(1)
+    // The survivor is the newest, which is the one holding current work.
+    expect(NOW - survivors[0].atMs).toBeLessThan(SNAPSHOT_KEEP_MS)
+  })
+
+  it('keeps the newest snapshot even when every snapshot is past the window', () => {
+    const root = makeRepo()
+    const previous = process.env.GIT_COMMITTER_DATE
+    try {
+      for (const [index, daysAgo] of [40, 35].entries()) {
+        process.env.GIT_COMMITTER_DATE = new Date(NOW - daysAgo * 24 * 60 * 60 * 1000).toISOString()
+        writeFileSync(join(root, 'src', 'seed.ts'), `export const seed = ${index + 20}\n`)
+        takeSnapshot(root, `ancient ${daysAgo}d`)
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GIT_COMMITTER_DATE
+      else process.env.GIT_COMMITTER_DATE = previous
+    }
+    pruneSnapshots(root, NOW)
     expect(listSnapshots(root)).toHaveLength(1)
   })
 
