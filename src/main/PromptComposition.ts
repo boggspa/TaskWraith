@@ -109,9 +109,22 @@ const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxBlockChars: MAX_CONTEXT_BLOCK_CHARS
 }
 
-/** Provider/model-aware caps for the compact conversation-context block. */
-export function resolveContextBudget(provider: ProviderId, modelId?: string): ContextBudget {
-  if (provider === 'ollama') return resolveOllamaContextBudget(modelId)
+/**
+ * Provider/model-aware caps for the compact conversation-context block.
+ *
+ * `ollamaLiveContextTokens` is a context length MEASURED from the running daemon
+ * (see `OllamaModelInfo.contextLength`). It is optional because not every caller
+ * has it — the renderer's call site has no model id at all — and its absence must
+ * stay safe: `resolveOllamaContextBudget` only widens an unrecognised tag's budget
+ * when the window is measured, never when it is assumed from a table or a
+ * provider default.
+ */
+export function resolveContextBudget(
+  provider: ProviderId,
+  modelId?: string,
+  ollamaLiveContextTokens?: number | null
+): ContextBudget {
+  if (provider === 'ollama') return resolveOllamaContextBudget(modelId, ollamaLiveContextTokens)
   return DEFAULT_CONTEXT_BUDGET
 }
 
@@ -801,6 +814,18 @@ export interface ComposeRunPromptInput {
   nextModel?: string
   /** Pruned Ollama session memory persisted on the chat (tool trajectory summaries). */
   ollamaSessionMemory?: OllamaSessionMemory | null
+  /**
+   * Context length MEASURED from the running Ollama daemon for `nextModel`
+   * (`OllamaModelInfo.contextLength`, sourced from `/api/show` metadata) — never
+   * a table lookup or a provider default.
+   *
+   * Supplied so the context-block budget can size itself against the model's real
+   * window instead of `CONTEXT_WINDOWS_BY_MODEL`, which is hand-maintained and has
+   * already drifted (it carries `lfm2.5:8b` as 131,072 where the daemon reports
+   * 128,000). Omitting it is always safe: an unrecognised tag then keeps the
+   * conservative floor rather than scaling off a fabricated window.
+   */
+  ollamaLiveContextTokens?: number | null
   /** The set of handoff-keys already applied to this chat (so we only inject
    * once per direction). */
   codexHandoffsApplied: string[]
@@ -941,7 +966,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       applicationLog: `${providerLabel}: verbatim slash dispatch — prompt composition skipped.`
     }
   }
-  const contextBudget = resolveContextBudget(provider, nextModel)
+  const contextBudget = resolveContextBudget(provider, nextModel, input.ollamaLiveContextTokens)
   const nativeSubAgentInstruction = nativeSubAgentPromptInstruction(
     nativeSubAgentRequests,
     provider
