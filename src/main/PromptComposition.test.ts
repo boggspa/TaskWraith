@@ -1426,6 +1426,32 @@ describe('composeRunPrompt sessionless resume-provider seeding', () => {
     timestamp: '2026-07-02T11:00:00Z'
   })
 
+  it('injects a stored summary on a Mistral turn even though a session id exists', () => {
+    // The payoff the /compact writer buys: Mistral opens a FRESH vibe-acp
+    // session every turn and re-injects a bounded transcript, so a stored
+    // session id is not resumed. The summary must therefore ride every turn —
+    // gating it on `!resumeSessionId` (correct for claude/codex) would silently
+    // drop it exactly where it is the only carrier of older history.
+    const result = composeRunPrompt({
+      provider: 'mistral',
+      finalPrompt: 'Continue the work.',
+      messages: [priorTurn],
+      chatContextTurns: 6,
+      codexHandoffsApplied: [],
+      isGlobalRun: false,
+      approvalMode: 'default',
+      providerLabel: 'Mistral',
+      resumeSessionId: 'sess_mistral_stale',
+      contextCompactionSummary: summary
+    })
+
+    expect(result.contextualPrompt).toContain('Prior session summary (context was compacted')
+    expect(result.contextualPrompt.indexOf('Prior session summary')).toBeLessThan(
+      result.contextualPrompt.indexOf('PRIOR detail')
+    )
+    expect(result.applicationLog).toContain('Vibe ACP lane opens a fresh session each turn')
+  })
+
   it('seeds a sessionless Claude dispatch with summary + compact transcript', () => {
     const result = composeRunPrompt({
       provider: 'claude',
