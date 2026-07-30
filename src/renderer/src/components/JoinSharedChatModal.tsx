@@ -314,7 +314,7 @@ export function JoinSharedChatModal({
         shareId: invite.shareId,
         chatId: invite.chatId,
         inviteToken: invite.inviteToken,
-        displayName: displayName.trim() || 'Guest',
+        displayName: displayName.trim() || 'External',
         mode: invite.mode,
         relayUrl: invite.relayUrl,
         relayUrls: invite.relayUrls,
