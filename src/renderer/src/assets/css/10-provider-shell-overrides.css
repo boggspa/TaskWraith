@@ -3197,6 +3197,7 @@
     .composer-ensemble-toggle-button,
     .composer-goal-button,
     .composer-plan-button,
+    .composer-terminal-button,
     .composer-copy-transcript-button,
     .composer-workspace-button,
     .composer-thread-token-tally,
@@ -3225,6 +3226,8 @@
     .composer-goal-button.is-open,
     .composer-plan-button:hover,
     .composer-plan-button.is-open,
+    .composer-terminal-button:hover,
+    .composer-terminal-button.is-open,
     .composer-copy-transcript-button:hover,
     .composer-copy-transcript-button.is-open,
     .composer-workspace-button:hover
@@ -3255,6 +3258,7 @@
     .composer-ensemble-toggle-button,
     .composer-goal-button,
     .composer-plan-button,
+    .composer-terminal-button,
     .composer-copy-transcript-button,
     .composer-workspace-button,
     .composer-thread-token-tally,
@@ -3287,6 +3291,8 @@
     .composer-goal-button.is-open,
     .composer-plan-button:hover,
     .composer-plan-button.is-open,
+    .composer-terminal-button:hover,
+    .composer-terminal-button.is-open,
     .composer-copy-transcript-button:hover,
     .composer-copy-transcript-button.is-open,
     .composer-workspace-button:hover
