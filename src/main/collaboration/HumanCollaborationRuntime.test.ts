@@ -932,3 +932,147 @@ describe('HumanCollaborationRuntime projection pump', () => {
     expect(runtime.hasProjectionSubscriberForChat('chat-1')).toBe(false)
   })
 })
+
+/**
+ * Presence wiring. The tracker itself is unit-tested in
+ * HumanCollaborationPresence.test.ts; these pin that the RUNTIME feeds it the
+ * right signals at the right moments, which is where the two easy mistakes are:
+ * forgetting that a passive watcher generates no traffic, and conflating the
+ * session's lifetime with the seat's.
+ */
+describe('HumanCollaborationRuntime presence signals', () => {
+  function stubPresence() {
+    const calls: string[] = []
+    let state: 'live' | 'grace' | 'expired' | 'unknown' = 'unknown'
+    return {
+      calls,
+      setState(next: typeof state) {
+        state = next
+      },
+      observeActivity(ref: { sessionId: string }) {
+        calls.push(`activity:${ref.sessionId}`)
+        return null
+      },
+      noteGracefulLeave(sessionId: string) {
+        calls.push(`leave:${sessionId}`)
+        return null
+      },
+      expireCollaborator(collaboratorId: string, reason: string) {
+        calls.push(`expire:${collaboratorId}:${reason}`)
+        return []
+      },
+      collaboratorState() {
+        return state
+      }
+    }
+  }
+
+  async function admit(presence?: ReturnType<typeof stubPresence>) {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 10000
+    })
+    const collaborator = makeCollaborationIdentity()
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn(() => ({ schemaVersion: 1 as const })),
+      appendComment: vi.fn(() => ({ messageId: 'm1' })),
+      ...(presence ? { presence } : {}),
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Olly',
+      inviteToken: created.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const hash = computeHumanCollaborationTranscriptHash(
+      makeTranscriptContext({
+        shareId: created.share.shareId,
+        chatId: 'chat-1',
+        inviteId: begin.inviteId,
+        inviteToken: created.inviteToken,
+        inviteExpiresAt: begin.expiresAt,
+        shareMode: 'comments',
+        hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+        hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+        hostNonceB64: begin.hostNonceB64,
+        hostCollaborator: collaborator
+      })
+    )
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(signEd25519(collaborator.identity.privateKey, hash))
+    })
+    return { runtime, session }
+  }
+
+  it('records activity on a completed handshake', async () => {
+    const presence = stubPresence()
+    const { session } = await admit(presence)
+    expect(presence.calls).toEqual([`activity:${session.sessionId}`])
+  })
+
+  it('records activity on subscribe AND on append — a watcher sends nothing else', async () => {
+    const presence = stubPresence()
+    const { runtime, session } = await admit(presence)
+    presence.calls.length = 0
+    await runtime.subscribeProjection({ sessionId: session.sessionId })
+    await runtime.appendComment({
+      sessionId: session.sessionId,
+      clientMessageId: 'c1',
+      content: 'hello'
+    })
+    expect(presence.calls).toEqual([
+      `activity:${session.sessionId}`,
+      `activity:${session.sessionId}`
+    ])
+  })
+
+  /**
+   * The session dies on a graceful leave — its keys go with it, which is the
+   * point of saying goodbye — but the SEAT enters grace instead of vanishing, so
+   * a tab reload is not a departure. If these two were conflated we would either
+   * keep sealed keys alive for the grace window or make every reload churn the
+   * transcript.
+   */
+  it('ends the SESSION on a graceful leave while handing the SEAT to grace', async () => {
+    const presence = stubPresence()
+    const { runtime, session } = await admit(presence)
+    presence.calls.length = 0
+    await runtime.disconnect({ sessionId: session.sessionId })
+    expect(presence.calls).toEqual([`leave:${session.sessionId}`])
+    // The session really is gone: a further action on it must fail closed.
+    await expect(runtime.subscribeProjection({ sessionId: session.sessionId })).rejects.toThrow()
+  })
+
+  it('does not report a leave for a sessionId that was never live', async () => {
+    const presence = stubPresence()
+    const { runtime } = await admit(presence)
+    presence.calls.length = 0
+    expect(await runtime.disconnect({ sessionId: 'never-existed' })).toBe(false)
+    expect(presence.calls).toEqual([])
+  })
+
+  it('surfaces the tracker state, and treats a missing tracker as unknown', async () => {
+    const presence = stubPresence()
+    const withTracker = await admit(presence)
+    presence.setState('grace')
+    expect(withTracker.runtime.collaboratorPresenceState(withTracker.session.collaboratorId)).toBe(
+      'grace'
+    )
+    // No tracker wired ⇒ 'unknown', which callers must read as NOT present.
+    const without = await admit()
+    expect(without.runtime.collaboratorPresenceState(without.session.collaboratorId)).toBe(
+      'unknown'
+    )
+  })
+})

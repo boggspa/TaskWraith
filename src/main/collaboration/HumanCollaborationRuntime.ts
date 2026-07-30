@@ -44,6 +44,7 @@ import {
 } from './HumanCollaborationStore'
 import { HumanCollaborationDenialError } from './HumanContributionRules'
 import type { HumanCollaborationAuditLike } from './HumanCollaborationAuditLog'
+import type { HumanCollaborationPresenceSessionRef } from './HumanCollaborationPresence'
 
 // Append rate limit (per shareId:collaboratorId). Collaborators are untrusted;
 // each accepted append triggers a whole-chat persist + a projection reseal +
@@ -104,8 +105,36 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
   }) => void
   /** P2a durable audit sink (admission, session, rejected-contribution events). */
   audit?: HumanCollaborationAuditLike
+  /**
+   * Tri-state presence tracker (live / in-grace / expired). Injected rather than
+   * constructed here so it stays unit-testable and so the caller owns the sweep
+   * timer — the tracker is a pure state machine and deliberately arms nothing.
+   *
+   * Presence is NOT the session map. A graceful leave still deletes the session
+   * (its keys die with it, which is the point of saying goodbye); presence
+   * separately records `grace`, so the seat survives a reload without the
+   * sealed session surviving it. Conflating the two would either keep keys
+   * alive for the grace window or make a reload look like a departure.
+   */
+  presence?: HumanCollaborationPresenceLike
   now?: () => number
   log?: (line: string) => void
+}
+
+/**
+ * The slice of `HumanCollaborationPresence` the runtime uses. A structural type
+ * rather than the class, so the runtime never depends on the tracker's internals
+ * and tests can pass a stub.
+ */
+export interface HumanCollaborationPresenceLike {
+  observeActivity(ref: HumanCollaborationPresenceSessionRef, at?: number): unknown
+  noteGracefulLeave(sessionId: string, at?: number): unknown
+  expireCollaborator(
+    collaboratorId: string,
+    reason: 'revoked' | 'kicked' | 'shareDisabled',
+    at?: number
+  ): unknown
+  collaboratorState(collaboratorId: string): 'live' | 'grace' | 'expired' | 'unknown'
 }
 
 interface RuntimePendingAdmission {
@@ -419,6 +448,11 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     this.sessions.set(sessionId, session)
     this.pending.delete(input.handshakeId)
+    // A completed handshake is the strongest possible liveness evidence. Note it
+    // BEFORE the audit row so a reconnect inside the grace window resolves to
+    // `live` — and therefore reports `silent` — rather than the caller seeing a
+    // spurious join for someone who never really left.
+    this.notePresenceActivity(session)
     this.opts.audit?.append({
       kind: 'admission.sas_confirmed',
       chatId: pending.chatId,
@@ -440,6 +474,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
 
   async subscribeProjection(input: HumanCollaborationSubscribeProjectionInput): Promise<ProjectionType> {
     const session = this.requireActiveSession(input.sessionId)
+    this.notePresenceActivity(session)
     this.projectionSubscribers.add(session.sessionId)
     const share = this.getActiveShare(session.shareId)
     return this.opts.buildProjection({
@@ -456,6 +491,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     input: HumanCollaborationAppendCommentInput & { sessionId: string }
   ): Promise<AppendType> {
     const session = this.requireActiveSession(input.sessionId)
+    this.notePresenceActivity(session)
     this.enforceAppendRateLimit(session)
     this.opts.store.validateAppend({
       shareId: session.shareId,
@@ -488,6 +524,12 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const removed = this.sessions.delete(input.sessionId)
     this.projectionSubscribers.delete(input.sessionId)
     if (!removed) return false
+    // The SESSION goes — its keys die with it, which is the whole point of
+    // saying goodbye — but the SEAT does not. Presence records `grace` so a tab
+    // reload or a roam between networks does not read as a departure. The seat
+    // only leaves when the grace window expires, and that is the caller's sweep
+    // to run, not ours.
+    this.opts.presence?.noteGracefulLeave(input.sessionId)
     if (session) {
       this.opts.audit?.append({
         kind: 'session.disconnected',
@@ -497,6 +539,28 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       })
     }
     return true
+  }
+
+  /**
+   * Tri-state presence for one collaborator, or `'unknown'` when no tracker is
+   * wired. Callers must treat `'unknown'` as NOT present — absence of evidence
+   * is not evidence of presence.
+   */
+  collaboratorPresenceState(collaboratorId: string): 'live' | 'grace' | 'expired' | 'unknown' {
+    return this.opts.presence?.collaboratorState(collaboratorId) ?? 'unknown'
+  }
+
+  /** Record liveness from any authenticated interaction. Inbound frames are the
+   * only liveness signal a passive watcher generates, so subscribing and
+   * commenting both count. */
+  private notePresenceActivity(session: RuntimeSession): void {
+    this.opts.presence?.observeActivity({
+      sessionId: session.sessionId,
+      chatId: session.chatId,
+      shareId: session.shareId,
+      collaboratorId: session.collaboratorId,
+      displayName: session.displayName
+    })
   }
 
   /**
