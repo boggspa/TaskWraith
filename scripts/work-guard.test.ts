@@ -35,7 +35,11 @@ const {
   takeSnapshot,
   listSnapshots,
   pruneSnapshots,
-  SNAPSHOT_KEEP_MS
+  SNAPSHOT_KEEP_MS,
+  TICK_STALE_MS,
+  timerHealth,
+  writeTickRecord,
+  stableNodePath
 } = require('./work-guard.cjs') as {
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
@@ -55,6 +59,13 @@ const {
   listSnapshots: (root: string) => { ref: string; atMs: number }[]
   pruneSnapshots: (root: string, now: number) => number
   SNAPSHOT_KEEP_MS: number
+  TICK_STALE_MS: number
+  timerHealth: (
+    root: string,
+    now: number
+  ) => { everRan: boolean; stale: boolean; ageMs: number | null }
+  writeTickRecord: (root: string, now: number) => void
+  stableNodePath: (execPath: string, probe: (p: string) => string | null) => string
 }
 
 const DEAD_PID = 2147483646 // far above any real pid; process.kill(_, 0) must reject
@@ -293,6 +304,64 @@ describe('orphan alarm', () => {
     expect(result.orphans.map((o) => o.path).filter((p) => p.includes('WORK-IN-PROGRESS'))).toEqual(
       []
     )
+  })
+})
+
+describe('timer liveness', () => {
+  it('distinguishes never-armed from armed-then-died', () => {
+    // These need different fixes — "load the agent" vs "your agent is broken" —
+    // and conflating them sends you down the wrong path.
+    const root = makeRepo()
+    expect(timerHealth(root, NOW).everRan).toBe(false)
+
+    writeTickRecord(root, NOW - 60_000)
+    const fresh = timerHealth(root, NOW)
+    expect(fresh.everRan).toBe(true)
+    expect(fresh.stale).toBe(false)
+
+    writeTickRecord(root, NOW - TICK_STALE_MS - 1000)
+    const dead = timerHealth(root, NOW)
+    expect(dead.everRan).toBe(true)
+    expect(dead.stale).toBe(true)
+  })
+
+  it('treats an unreadable or malformed receipt as never-armed, not as healthy', () => {
+    // Failing closed matters more here than anywhere else: reporting a broken
+    // daemon as healthy is the exact vacuous pass this receipt exists to stop.
+    const root = makeRepo()
+    mkdirSync(join(root, '.work-guard'), { recursive: true })
+    writeFileSync(join(root, '.work-guard', 'tick.json'), 'not json{')
+    expect(timerHealth(root, NOW).everRan).toBe(false)
+    writeFileSync(join(root, '.work-guard', 'tick.json'), '{"lastTickMs":"soon"}')
+    expect(timerHealth(root, NOW).everRan).toBe(false)
+  })
+})
+
+describe('launchd interpreter path', () => {
+  it('prefers a stable symlink over a versioned one that resolves to it', () => {
+    // process.execPath under Homebrew is /opt/homebrew/Cellar/node/<ver>/bin/node.
+    // `brew upgrade node` deletes that directory and launchd can no longer
+    // spawn the job — silently, because a healthy tick prints nothing.
+    const cellar = '/opt/homebrew/Cellar/node/25.9.0_3/bin/node'
+    const real = '/opt/homebrew/Cellar/node/25.9.0_3/bin/node'
+    const probe = (p: string): string | null =>
+      p === cellar || p === '/opt/homebrew/bin/node' ? real : null
+    expect(stableNodePath(cellar, probe)).toBe('/opt/homebrew/bin/node')
+  })
+
+  it('keeps execPath when no stable candidate resolves to the same binary', () => {
+    const exec = '/some/custom/node'
+    const probe = (p: string): string | null => (p === exec ? '/some/custom/node' : null)
+    expect(stableNodePath(exec, probe)).toBe(exec)
+  })
+
+  it('never swaps in a symlink pointing at a DIFFERENT node', () => {
+    // A machine with two node installs must not have its daemon silently
+    // repointed at the wrong runtime.
+    const exec = '/opt/homebrew/Cellar/node/25.9.0_3/bin/node'
+    const probe = (p: string): string | null =>
+      p === exec ? '/real/a' : p === '/opt/homebrew/bin/node' ? '/real/b' : null
+    expect(stableNodePath(exec, probe)).toBe(exec)
   })
 })
 

@@ -51,6 +51,14 @@ const SNAPSHOT_KEEP_MS = 7 * 24 * 60 * 60 * 1000
 const SNAPSHOT_KEEP_MAX = 300
 const SIDECAR_DIR = '.work-guard'
 const SIDECAR_FILE = 'heartbeat.json'
+const TICK_FILE = 'tick.json'
+/**
+ * How long before a missing tick means the timer is dead rather than merely
+ * between runs. The shipped launchd interval is 300s, so this is four missed
+ * ticks — long enough not to cry wolf over a sleeping laptop, short enough
+ * that a broken daemon surfaces the same working day.
+ */
+const TICK_STALE_MS = 20 * 60 * 1000
 
 const MARKER_RE = /^(?:\.WORK-IN-PROGRESS-.+\.md|SHIP-HOLD-.+\.md|SESSION-IN-PROGRESS-.+\.md)$/
 
@@ -256,6 +264,77 @@ function writeSidecar(root, data) {
   } catch {
     // A sidecar we cannot write only costs us the heartbeat upgrade; the
     // pid+expires path still works. Never fail the caller for it.
+  }
+}
+
+// ── timer liveness ──────────────────────────────────────────────────────────
+//
+// The tick is silent when healthy, which means a DEAD daemon and a working one
+// produce byte-identical evidence: an empty tick.log. A safety net you cannot
+// tell is dead is worse than no safety net, because you stop looking. So the
+// tick leaves a receipt, and `status` reads it back.
+
+function tickRecordPath(root) {
+  return path.join(root, SIDECAR_DIR, TICK_FILE)
+}
+
+function readTickRecord(root) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(tickRecordPath(root), 'utf8'))
+    const lastTickMs = Number(parsed?.lastTickMs)
+    return Number.isFinite(lastTickMs) ? { lastTickMs } : null
+  } catch {
+    return null
+  }
+}
+
+function writeTickRecord(root, now) {
+  try {
+    fs.mkdirSync(path.join(root, SIDECAR_DIR), { recursive: true })
+    const tmp = path.join(root, SIDECAR_DIR, `.${TICK_FILE}.${process.pid}.tmp`)
+    fs.writeFileSync(tmp, `${JSON.stringify({ lastTickMs: now }, null, 2)}\n`)
+    fs.renameSync(tmp, tickRecordPath(root))
+  } catch {
+    /* a receipt we cannot write only costs the staleness report */
+  }
+}
+
+/**
+ * `null` when no tick has ever run — reported differently from "stale", since
+ * "never armed" and "armed then died" need different fixes.
+ */
+function timerHealth(root, now) {
+  const record = readTickRecord(root)
+  if (!record) return { everRan: false, stale: true, ageMs: null }
+  const ageMs = now - record.lastTickMs
+  return { everRan: true, stale: ageMs > TICK_STALE_MS, ageMs }
+}
+
+/**
+ * The launchd plist must not name a VERSIONED interpreter path.
+ * `process.execPath` under Homebrew is the Cellar path
+ * (`/opt/homebrew/Cellar/node/<version>/bin/node`); `brew upgrade node` deletes
+ * that directory and launchd silently stops being able to spawn the job —
+ * combined with a silent-when-healthy tick, the daemon dies invisibly. Prefer a
+ * stable symlink that resolves to the SAME binary; fall back to execPath when
+ * none does, since a working absolute path beats a guessed one.
+ */
+function stableNodePath(execPath, probe) {
+  const candidates = ['/opt/homebrew/bin/node', '/usr/local/bin/node']
+  const target = probe(execPath)
+  if (!target) return execPath
+  for (const candidate of candidates) {
+    if (candidate === execPath) continue
+    if (probe(candidate) === target) return candidate
+  }
+  return execPath
+}
+
+function realpathProbe(candidate) {
+  try {
+    return fs.realpathSync(candidate)
+  } catch {
+    return null
   }
 }
 
@@ -476,6 +555,16 @@ function cmdStatus(root, now, { json, hook }) {
         )} — ${result.aged[0].path}\n        \`node scripts/work-guard.cjs status\` lists them.\n`
       )
     }
+    // Only worth saying once the timer has been armed at all: on a machine that
+    // never loaded it, this is not news and would be pure noise every commit.
+    const timer = timerHealth(root, now)
+    if (timer.everRan && timer.stale) {
+      process.stdout.write(
+        `  note: work-guard timer looks dead — last tick ${humanAge(
+          timer.ageMs
+        )} ago. Snapshots are NOT being taken.\n`
+      )
+    }
     return 0
   }
 
@@ -511,6 +600,14 @@ function cmdStatus(root, now, { json, hook }) {
       snaps.length ? `, newest ${humanAge(now - snaps[0].atMs)} ago (${snaps[0].ref})` : ''
     }`
   )
+  const timer = timerHealth(root, now)
+  lines.push(
+    !timer.everRan
+      ? 'TIMER      never run — `node scripts/work-guard.cjs timer` prints the launchd agent'
+      : timer.stale
+        ? `TIMER      STALE, last tick ${humanAge(timer.ageMs)} ago — NOT snapshotting`
+        : `TIMER      healthy, last tick ${humanAge(timer.ageMs)} ago`
+  )
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0
 }
@@ -518,6 +615,7 @@ function cmdStatus(root, now, { json, hook }) {
 function cmdTick(root, now) {
   const markers = listMarkers(root)
   const dirty = dirtyEntries(root)
+  writeTickRecord(root, now)
   advanceHeartbeats(root, markers, dirty, now)
   const label = `work-guard snapshot — ${dirty.length} dirty, ${markers.length} claim(s)`
   const snap = takeSnapshot(root, label)
@@ -563,7 +661,7 @@ function cmdCheck(root, now) {
  */
 function cmdTimer(root) {
   const label = 'com.taskwraith.work-guard'
-  const nodeBin = process.execPath
+  const nodeBin = stableNodePath(process.execPath, realpathProbe)
   const logDir = path.join(root, SIDECAR_DIR)
   process.stdout.write(
     `<?xml version="1.0" encoding="UTF-8"?>
@@ -644,5 +742,9 @@ module.exports = {
   listSnapshots,
   pruneSnapshots,
   SNAPSHOT_KEEP_MS,
+  TICK_STALE_MS,
+  timerHealth,
+  writeTickRecord,
+  stableNodePath,
   isMarkerFile
 }
