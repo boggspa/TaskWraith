@@ -140,6 +140,7 @@ export function SharesPanelView({
   onCopyInvite,
   onRevokeParticipant,
   onChangeRules,
+  onChangeHostReview,
   liveSessionKeys,
   auditEvents,
   auditError,
@@ -155,6 +156,7 @@ export function SharesPanelView({
   onRevokeParticipant?: (shareId: string, collaboratorId: string) => void
   /** P2a: host-only contribution-rules preset change. */
   onChangeRules?: (shareId: string, preset: string) => void
+  onChangeHostReview?: (shareId: string, requiresHostApproval: boolean) => void
   /** P2a presence clarity: `${shareId}:${collaboratorId}` keys with a LIVE session. */
   liveSessionKeys?: Set<string>
   /** Newest-first audit timeline. Omitted entirely when the bridge lacks it. */
@@ -257,6 +259,25 @@ export function SharesPanelView({
                         </option>
                       ))}
                     </select>
+                  )}
+                  {/* Separate from the rules preset on purpose. A preset is
+                      something the collaborator is SHOWN; whether the host
+                      reviews before delivery is not, so folding this into
+                      updateShareRules would put a host-only fact into a
+                      collaborator-displayable field. */}
+                  {onChangeHostReview && (
+                    <label className="shares-panel-host-review">
+                      <input
+                        type="checkbox"
+                        checked={share.requiresHostApproval === true}
+                        onChange={(event) =>
+                          onChangeHostReview(share.shareId, event.target.checked)
+                        }
+                      />
+                      <span title="Contributions wait for you to approve them before they reach the panel.">
+                        Review before delivery
+                      </span>
+                    </label>
                   )}
                 </div>
                 {onCopyInvite && (
@@ -552,6 +573,20 @@ export function SharesPanel() {
     [refresh]
   )
 
+  const handleChangeHostReview = useCallback(
+    (shareId: string, requiresHostApproval: boolean) => {
+      if (typeof window.api.humanCollaborationSetHostReview !== 'function') return
+      void window.api
+        .humanCollaborationSetHostReview({ shareId, requiresHostApproval })
+        .then(() => refresh())
+        .catch(() => {
+          setError('Could not change host review for this share.')
+          refresh()
+        })
+    },
+    [refresh]
+  )
+
   const handleCopyInvite = useCallback(
     (share: HumanCollaborationShare) => {
       if (typeof window.api.humanCollaborationCreateShare !== 'function') return
@@ -606,6 +641,7 @@ export function SharesPanel() {
       onCopyInvite={handleCopyInvite}
       onRevokeParticipant={handleRevokeParticipant}
       onChangeRules={handleChangeRules}
+      onChangeHostReview={handleChangeHostReview}
       connectedChatIds={connectedChatIds}
       liveSessionKeys={liveSessionKeys}
       auditEvents={auditEvents}

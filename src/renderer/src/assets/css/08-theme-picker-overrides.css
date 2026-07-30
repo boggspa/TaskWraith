@@ -973,6 +973,21 @@
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
 }
+/* Host review opt-in. Sits beside the rules preset but is deliberately a
+   separate control: a preset is collaborator-displayable, host review is not. */
+.shares-panel-host-review {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.shares-panel-host-review input {
+  margin: 0;
+  cursor: pointer;
+}
 .shares-panel-revoke {
   flex: 0 0 auto;
   border: 1px solid color-mix(in srgb, var(--danger, #e2554f) 45%, transparent);
