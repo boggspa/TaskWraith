@@ -446,6 +446,23 @@ for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
 done
 shopt -u nullglob
 
+# ── 6. ADVISE: dirty work that no live claim covers ─────────────────────────
+# Every section above fires at COMMIT time — which is exactly the moment the
+# real failures have already happened. On 2026-07-30 a session sat ~11 hours on
+# 8,600 uncommitted lines without a single commit, so this hook was never
+# invoked once, and a visible bug shipped in 1.9.1 with its fix uncommitted for
+# the same reason. work-guard answers the one question none of the sections
+# above can — "is there dirty work nobody has promised to finish?" — and its
+# timer runs between commits, where the hook cannot reach. Advisory and
+# fail-open: no node or no script means no notice, never a blocked commit.
+if command -v node >/dev/null 2>&1 && [ -f scripts/work-guard.cjs ]; then
+  guard_note="$(node scripts/work-guard.cjs status --hook 2>/dev/null || true)"
+  if [ -n "$guard_note" ]; then
+    printf '%s\n' "$guard_note"
+    warn=1
+  fi
+fi
+
 if [ "$block" -eq 1 ]; then
   if [ "$derived_runtime_recovery_block" -eq 1 ]; then
     printf '\n  A runtime-derived workspace lock needs TaskWraith recovery reconciliation.\n'

@@ -694,6 +694,74 @@ describe('ChatService', () => {
     expect(saved.providerMetadata).toEqual({ rendererSetting: 'next' })
   })
 
+  /**
+   * The refusal used to live only in the desktop `set-chat-kind` IPC handler,
+   * under a comment claiming it was "the gate every surface goes through". It
+   * was not: the bridge/iOS action calls this method directly. It lives here
+   * now, which is the one thing every door has in common.
+   */
+  describe('a shared chat cannot be switched out of panel mode', () => {
+    function makeSharedDeps(chat: ChatRecord, shares: Array<{ enabled: boolean }>) {
+      const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+        makeChat({ appChatId: chatId, chatKind: targetKind })
+      )
+      const { deps } = makeDeps({
+        appStore: makeStore({ setChatKind, getChat: vi.fn(() => chat) }),
+        humanCollaborationStore: {
+          listShares: vi.fn(() => shares)
+        } as unknown as ChatServiceDeps['humanCollaborationStore']
+      })
+      return { deps, setChatKind }
+    }
+
+    it('refuses the collapse and never reaches the destructive store mutation', () => {
+      // AppStore.setChatKind strips the roster into providerMetadata.stashedEnsemble
+      // before anything else can object, and a later preset-apply consumes that
+      // stash — so a seat removed by a collapse can RESURRECT. With externals in
+      // seats that is a kicked person coming back.
+      const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
+        { enabled: true }
+      ])
+
+      expect(() =>
+        new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      ).toThrow(/shared/i)
+      expect(setChatKind).not.toHaveBeenCalled()
+    })
+
+    it('allows the collapse once every share is disabled', () => {
+      const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
+        { enabled: false }
+      ])
+
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalled()
+    })
+
+    it('never blocks turning panel mode ON, shared or not', () => {
+      const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'single' }), [
+        { enabled: true }
+      ])
+
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'ensemble' })
+      expect(setChatKind).toHaveBeenCalled()
+    })
+
+    it('does not fail a plain solo conversion when no collaboration store is configured', () => {
+      // No store means no shares can exist, so there is nothing to protect —
+      // the accessor that throws on an absent store must not be on this path.
+      const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
+        makeChat({ appChatId: chatId, chatKind: targetKind })
+      )
+      const { deps } = makeDeps({
+        appStore: makeStore({ setChatKind, getChat: vi.fn(() => makeChat({ chatKind: 'ensemble' })) })
+      })
+
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalled()
+    })
+  })
+
   it('strips renderer grant authority from chat-kind conversion inputs', () => {
     const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
       makeChat({ appChatId: chatId, chatKind: targetKind })
@@ -740,6 +808,166 @@ describe('ChatService', () => {
       },
       canonicalProvider: undefined,
       canonicalProviderMetadata: undefined
+    })
+  })
+
+  /**
+   * `save-chat` takes a whole renderer-authored record, so before this fence it
+   * could flip `chatKind` without meeting a single one of setChatKind's
+   * conditions — the idle-only running guard, the roster seed/strip, or the
+   * refusal to collapse a SHARED chat out of panel mode.
+   */
+  describe('chatKind is main-owned and cannot be changed through saveChat', () => {
+    /** A plan that actually parses — parsePendingEnsembleRosterPresetApply
+     *  rejects anything missing schemaVersion, presetName or queuedAt, and a
+     *  fixture it rejects would make these tests pass for the wrong reason. */
+    function pendingPresetPlan(presetId: string) {
+      return {
+        schemaVersion: 1 as const,
+        presetId,
+        presetName: 'Fixture preset',
+        queuedAt: '2026-07-30T00:00:00.000Z',
+        authority: 'user' as const,
+        participants: [
+          {
+            id: 'seat-1',
+            provider: 'claude' as const,
+            enabled: true,
+            role: 'Boss',
+            instructions: '',
+            order: 0
+          }
+        ],
+        bossmanParticipantId: 'seat-1',
+        orchestrationMode: 'turn_bound' as const,
+        maxParticipants: 20,
+        maxContinuationHops: 3,
+        ensembleContextChars: 4000
+      }
+    }
+
+    function ensembleChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
+      return makeChat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 20,
+          participants: [
+            {
+              id: 'seat-claude',
+              provider: 'claude',
+              enabled: true,
+              role: 'Lead',
+              instructions: '',
+              order: 0
+            }
+          ]
+        },
+        ...overrides
+      })
+    }
+
+    it('pins the stored ensemble kind when a save tries to collapse to solo', () => {
+      const current = ensembleChat()
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const { ensemble: _dropped, ...withoutRoster } = current
+      const saved = new ChatService(deps).saveChat({
+        ...withoutRoster,
+        chatKind: 'single',
+        title: 'Renamed while collapsing'
+      })
+
+      expect(saved.chatKind).toBe('ensemble')
+      // The roster comes back with the kind. Leaving it dropped would let
+      // normalizeChatRecord seed a DEFAULT multi-provider roster over the
+      // user's seats — a worse outcome than the collapse we just refused.
+      expect(saved.ensemble?.participants).toEqual(current.ensemble?.participants)
+      // Everything else in the save still lands: this is a one-field fence, not
+      // a rejection of the record.
+      expect(saved.title).toBe('Renamed while collapsing')
+    })
+
+    it('pins the stored solo kind when a save tries to open panel mode', () => {
+      const current = makeChat({ chatKind: 'single' })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({ ...current, chatKind: 'ensemble' })
+
+      expect(saved.chatKind).toBe('single')
+    })
+
+    it('honours the incoming kind when there is no stored record to defend', () => {
+      // Creation — fork, side chat, sub-thread. The incoming kind is the only
+      // one that exists.
+      const { deps } = makeDeps({ appStore: makeStore({ getChat: vi.fn(() => null) }) })
+
+      // A live provider: with no stored record the provider fence has nothing
+      // to compare against and refuses retired ids outright.
+      const saved = new ChatService(deps).saveChat(
+        makeChat({ chatKind: 'ensemble', provider: 'claude' })
+      )
+
+      expect(saved.chatKind).toBe('ensemble')
+    })
+
+    it('allows single→ensemble when the STORED record carries a pending roster preset', () => {
+      // The queued preset-apply path legitimately promotes a solo chat at a
+      // turn boundary. The authorisation is main-verifiable — it lives on the
+      // stored record, written by preset-apply — rather than being asserted by
+      // the incoming snapshot, and it can only ever turn panel mode ON.
+      const current = makeChat({
+        chatKind: 'single',
+        providerMetadata: {
+          pendingEnsembleRosterPresetApply: pendingPresetPlan('preset-1')
+        }
+      })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({
+        ...current,
+        chatKind: 'ensemble',
+        providerMetadata: undefined
+      })
+
+      expect(saved.chatKind).toBe('ensemble')
+    })
+
+    it('does not let an INCOMING pending preset authorise its own promotion', () => {
+      // The renderer writes the snapshot, so a plan that only appears on the
+      // incoming record proves nothing.
+      const current = makeChat({ chatKind: 'single' })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({
+        ...current,
+        chatKind: 'ensemble',
+        providerMetadata: {
+          pendingEnsembleRosterPresetApply: pendingPresetPlan('forged')
+        }
+      })
+
+      expect(saved.chatKind).toBe('single')
+    })
+
+    it('never lets a pending preset launder a collapse out of panel mode', () => {
+      // The carve-out is direction-specific: ensemble→single is refused even
+      // with a plan present, so it can never be used to strip a shared roster.
+      const current = ensembleChat({
+        providerMetadata: {
+          pendingEnsembleRosterPresetApply: pendingPresetPlan('preset-1')
+        }
+      })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({ ...current, chatKind: 'single' })
+
+      expect(saved.chatKind).toBe('ensemble')
     })
   })
 

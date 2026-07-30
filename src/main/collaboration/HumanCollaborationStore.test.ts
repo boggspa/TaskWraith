@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest'
-import { HumanCollaborationStore } from './HumanCollaborationStore'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, describe, expect, it } from 'vitest'
+import {
+  HumanCollaborationStore,
+  type HumanCollaboratorParticipant
+} from './HumanCollaborationStore'
 
 describe('HumanCollaborationStore', () => {
   it('creates single-use high-entropy invites and pins collaborator identity', () => {
@@ -271,6 +277,18 @@ describe('HumanCollaborationStore', () => {
     // Legitimate names that merely contain a reserved token are untouched.
     expect(admit('Claudia', 'k5')).toBe('Claudia')
     expect(admit('Yousef', 'k6')).toBe('Yousef')
+    // The two trust labels the UI itself renders. "External" is the static
+    // badge the transcript paints beside a collaborator's name, and it is also
+    // the DEFAULT a nameless joiner arrives with — so it has to be unclaimable
+    // in both directions, or a collaborator can present as the badge and an
+    // unnamed one renders as "External [External]". "Guest" was the old default
+    // and was reserved; this test never covered it, which is how the rename to
+    // "External" quietly opened the hole.
+    expect(admit('External', 'k7')).toBe('External (collaborator)')
+    expect(admit('guest', 'k8')).toBe('guest (collaborator)')
+    expect(admit('Collaborator', 'k9')).toBe('Collaborator (collaborator)')
+    // …and the badge word inside a real name is still fine.
+    expect(admit('Externals Ltd', 'k10')).toBe('Externals Ltd')
   })
 
   it('hasShareForChat is a cheap existence check', () => {
@@ -497,5 +515,469 @@ describe('HumanCollaborationStore contribution rules (P2a)', () => {
     // getShare returned a clone, so the store itself was never mutated —
     // but the normalizer's behavior is what this test pins:
     expect(snapshot.contributionRules?.providerDispatch).not.toBe('direct-limited')
+  })
+})
+
+/*
+ * Seat presentation on the collaborator's own record: roster position
+ * (`seatOrder`), palette index (`colorIndex`) and host-mute (`seatDisabled`).
+ *
+ * Every test below pins a REJECT-or-DROP decision, because the lazy alternative
+ * is silent and plausible in each case: clamping a bad order to 0 promotes
+ * someone to the front of the turn queue, clamping a bad colour honours a
+ * request nobody made, coercing junk on load fabricates a position out of a
+ * hand-edit, treating `null` as `undefined` makes "clear" a no-op, and folding
+ * mute into revoke turns a reversible presentation toggle into an un-kickable
+ * kick. A suite that only ever passes good values cannot see any of it.
+ */
+describe('HumanCollaborationStore participant seats', () => {
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    while (tempDirs.length) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function tempStorePath(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-collab-seats-'))
+    tempDirs.push(dir)
+    return join(dir, 'human-collaboration.json')
+  }
+
+  /** A real admission: createShare + consumeInvite, no hand-built records. */
+  const admit = (
+    store: HumanCollaborationStore,
+    chatId: string,
+    publicKeyId = 'ed25519:olly'
+  ): { shareId: string; collaboratorId: string } => {
+    const created = store.createShare({ chatId, mode: 'comments', now: 1000 })
+    const consumed = store.consumeInvite({
+      shareId: created.share.shareId,
+      inviteToken: created.inviteToken,
+      displayName: 'Olly',
+      publicKeyId,
+      now: 1100
+    })
+    return { shareId: created.share.shareId, collaboratorId: consumed.participant.collaboratorId }
+  }
+
+  const seatOf = (
+    store: HumanCollaborationStore,
+    shareId: string,
+    collaboratorId: string
+  ): HumanCollaboratorParticipant | undefined =>
+    store
+      .getShare(shareId)
+      ?.participants.find((participant) => participant.collaboratorId === collaboratorId)
+
+  /** A hand-written on-disk snapshot — the shape a text editor can produce. */
+  function writeSnapshot(path: string, participants: readonly unknown[]): void {
+    writeFileSync(
+      path,
+      JSON.stringify({
+        shares: [
+          {
+            shareId: 'share-1',
+            chatId: 'chat-1',
+            mode: 'comments',
+            enabled: true,
+            createdAt: 1000,
+            updatedAt: 1000,
+            nextSequence: 1,
+            participants,
+            invites: [],
+            idempotency: {}
+          }
+        ]
+      })
+    )
+  }
+
+  it('seats an active participant, returns the updated share, and moves updatedAt', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+    const before = store.getShare(shareId)?.updatedAt
+    expect(before).toBe(1100)
+
+    const updated = store.updateParticipantSeat({
+      shareId,
+      collaboratorId,
+      seatOrder: 2,
+      colorIndex: 5,
+      seatDisabled: true,
+      now: 5000
+    })
+
+    // The returned clone is what the IPC publish path ships, so it has to carry
+    // the write — not just the store's private copy.
+    expect(updated?.participants[0]).toMatchObject({
+      status: 'active',
+      seatOrder: 2,
+      colorIndex: 5,
+      seatDisabled: true
+    })
+    expect(seatOf(store, shareId, collaboratorId)).toMatchObject({
+      status: 'active',
+      seatOrder: 2,
+      colorIndex: 5,
+      seatDisabled: true
+    })
+    expect(store.getShare(shareId)?.updatedAt).toBe(5000)
+  })
+
+  it('REJECTS an out-of-range seatOrder instead of clamping it to the front of the queue', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+
+    // 0 is a legitimate front position — a lazy `> 0` guard would reject it.
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 0, now: 2000 })
+    ).not.toBeNull()
+    expect(seatOf(store, shareId, collaboratorId)?.seatOrder).toBe(0)
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 5, now: 2500 })
+
+    for (const bad of [-1, -0.5, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      // Clamping -1 or NaN to 0 would silently promote this person ahead of
+      // every model seat; clamping +Infinity would park them at the end. Both
+      // are positions the host never asked for, so the write must FAIL.
+      expect(
+        store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: bad, now: 9000 })
+      ).toBeNull()
+      expect(seatOf(store, shareId, collaboratorId)?.seatOrder).toBe(5)
+      // A rejected write is not a write: the share's mtime must not move either,
+      // or every rejection looks like a change to anything watching updatedAt.
+      expect(store.getShare(shareId)?.updatedAt).toBe(2500)
+    }
+  })
+
+  it('REJECTS an out-of-palette colorIndex instead of clamping it into the palette', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+
+    // 7 is the last slot in the 8-colour palette and must be accepted; 8 is off
+    // the end. Pinning both sides catches an off-by-one in either direction.
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 7, now: 2000 })
+    ).not.toBeNull()
+    expect(seatOf(store, shareId, collaboratorId)?.colorIndex).toBe(7)
+    store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 4, now: 2500 })
+
+    for (const bad of [-1, 8, 99, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      // Clamping 99 to 7 would paint this person the palette's last colour on
+      // the strength of a value that means nothing.
+      expect(
+        store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: bad, now: 9000 })
+      ).toBeNull()
+      expect(seatOf(store, shareId, collaboratorId)?.colorIndex).toBe(4)
+      expect(store.getShare(shareId)?.updatedAt).toBe(2500)
+    }
+  })
+
+  it('validates every field before applying any of them (a rejected write is atomic)', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 1, colorIndex: 2, now: 2000 })
+
+    // A good order paired with a bad colour must not land the order…
+    expect(
+      store.updateParticipantSeat({
+        shareId,
+        collaboratorId,
+        seatOrder: 6,
+        colorIndex: 99,
+        now: 9000
+      })
+    ).toBeNull()
+    // …and a good colour and a mute paired with a bad order must land neither.
+    expect(
+      store.updateParticipantSeat({
+        shareId,
+        collaboratorId,
+        seatOrder: -1,
+        colorIndex: 6,
+        seatDisabled: true,
+        now: 9000
+      })
+    ).toBeNull()
+
+    const seat = seatOf(store, shareId, collaboratorId)
+    expect(seat).toMatchObject({ seatOrder: 1, colorIndex: 2 })
+    expect(seat && 'seatDisabled' in seat).toBe(false)
+    expect(store.getShare(shareId)?.updatedAt).toBe(2000)
+  })
+
+  it('DROPS junk seat fields from a hand-edited snapshot instead of coercing them', () => {
+    const path = tempStorePath()
+    writeSnapshot(path, [
+      {
+        collaboratorId: 'good',
+        displayName: 'Olly',
+        publicKeyId: 'pk-good',
+        status: 'active',
+        seatOrder: 4,
+        colorIndex: 7,
+        seatDisabled: true
+      },
+      {
+        collaboratorId: 'junk-range',
+        displayName: 'Sam',
+        publicKeyId: 'pk-range',
+        status: 'active',
+        seatOrder: -3,
+        colorIndex: 99
+      },
+      {
+        collaboratorId: 'junk-type',
+        displayName: 'Nia',
+        publicKeyId: 'pk-type',
+        status: 'active',
+        seatOrder: '2',
+        colorIndex: 2.5,
+        seatDisabled: 'yes'
+      }
+    ])
+
+    const store = new HumanCollaborationStore(path)
+    const share = store.getShare('share-1')
+    const byId = (id: string): HumanCollaboratorParticipant | undefined =>
+      share?.participants.find((participant) => participant.collaboratorId === id)
+
+    // Valid values survive the load — without this the drop assertions below
+    // would pass just as happily against a normalizer that dropped everything.
+    expect(byId('good')).toMatchObject({ seatOrder: 4, colorIndex: 7, seatDisabled: true })
+
+    // Junk is OMITTED, not coerced. The renderer's own fallbacks (append after
+    // the model seats, derive a hue from the pubkey) are strictly better than a
+    // fabricated 0 / a clamped 7 / a mute conjured out of a truthy string — and
+    // they are only reachable if the field is actually absent.
+    const range = byId('junk-range')
+    expect(range && 'seatOrder' in range).toBe(false)
+    expect(range && 'colorIndex' in range).toBe(false)
+    const wrongType = byId('junk-type')
+    expect(wrongType && 'seatOrder' in wrongType).toBe(false)
+    expect(wrongType && 'colorIndex' in wrongType).toBe(false)
+    expect(wrongType && 'seatDisabled' in wrongType).toBe(false)
+  })
+
+  it('treats null as CLEAR and an omitted field as LEAVE ALONE', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+    store.updateParticipantSeat({
+      shareId,
+      collaboratorId,
+      seatOrder: 3,
+      colorIndex: 5,
+      seatDisabled: true,
+      now: 2000
+    })
+
+    // Clearing the colour must clear it — if `null` were folded into
+    // `undefined`, colorIndex would still be 5 and "reset to default" would be
+    // an operation the host cannot perform at all.
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: null, now: 3000 })
+    ).not.toBeNull()
+    let seat = seatOf(store, shareId, collaboratorId)
+    expect(seat && 'colorIndex' in seat).toBe(false)
+    // …and the fields it did not name must be untouched.
+    expect(seat?.seatOrder).toBe(3)
+    expect(seat?.seatDisabled).toBe(true)
+    expect(store.getShare(shareId)?.updatedAt).toBe(3000)
+
+    // Clearing the order must not resurrect the colour or drop the mute.
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: null, now: 4000 })
+    seat = seatOf(store, shareId, collaboratorId)
+    expect(seat && 'seatOrder' in seat).toBe(false)
+    expect(seat && 'colorIndex' in seat).toBe(false)
+    expect(seat?.seatDisabled).toBe(true)
+
+    // Unmuting leaves the position and colour it was not asked about alone.
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 6, colorIndex: 1, now: 5000 })
+    store.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: false, now: 6000 })
+    seat = seatOf(store, shareId, collaboratorId)
+    expect(seat?.seatOrder).toBe(6)
+    expect(seat?.colorIndex).toBe(1)
+    expect(seat && 'seatDisabled' in seat).toBe(false)
+  })
+
+  it('refuses to seat a REVOKED participant and leaves the old seat as it was', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 2, now: 2000 })
+    store.revokeParticipant({ shareId, collaboratorId, now: 3000 })
+
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 0, now: 9000 })
+    ).toBeNull()
+    expect(seatOf(store, shareId, collaboratorId)).toMatchObject({
+      status: 'revoked',
+      seatOrder: 2
+    })
+    expect(store.getShare(shareId)?.updatedAt).toBe(3000)
+  })
+
+  it('refuses to seat a PENDING participant (no completed SAS, no seat)', () => {
+    // No writer on this store produces a `pending` participant — consumeInvite
+    // admits straight to `active` — so the only way a pending record exists at
+    // runtime is on disk, where an absent/unknown status normalizes to pending.
+    // That is the real path, so drive it: a real store over a real file, and
+    // real updateParticipantSeat calls against what it loaded.
+    const path = tempStorePath()
+    writeSnapshot(path, [
+      { collaboratorId: 'pending-1', displayName: 'Olly', publicKeyId: 'pk-pending' }
+    ])
+
+    const store = new HumanCollaborationStore(path)
+    expect(store.getShare('share-1')?.participants[0]).toMatchObject({
+      collaboratorId: 'pending-1',
+      status: 'pending'
+    })
+
+    expect(
+      store.updateParticipantSeat({
+        shareId: 'share-1',
+        collaboratorId: 'pending-1',
+        seatOrder: 0,
+        colorIndex: 3,
+        now: 9000
+      })
+    ).toBeNull()
+    const seat = seatOf(store, 'share-1', 'pending-1')
+    expect(seat && 'seatOrder' in seat).toBe(false)
+    expect(seat && 'colorIndex' in seat).toBe(false)
+    expect(store.getShare('share-1')?.updatedAt).toBe(1000)
+  })
+
+  it('mute is NOT revoke: seatDisabled is reversible and never touches status', () => {
+    const store = new HumanCollaborationStore()
+    const { shareId, collaboratorId } = admit(store, 'chat-1')
+    store.updateParticipantSeat({
+      shareId,
+      collaboratorId,
+      seatOrder: 1,
+      seatDisabled: true,
+      now: 2000
+    })
+
+    const muted = seatOf(store, shareId, collaboratorId)
+    expect(muted?.seatDisabled).toBe(true)
+    // The whole point: muting is presentation. Trust is untouched.
+    expect(muted?.status).toBe('active')
+    expect(muted?.revokedAt).toBeUndefined()
+    // A muted seat is still a seat — it keeps its position and stays a
+    // reconnect target, where a revoked one drops off entirely.
+    expect(muted?.seatOrder).toBe(1)
+    expect(store.listReconnectCandidates('ed25519:olly')).toHaveLength(1)
+    // …and a muted identity is still admissible on a fresh invite.
+    const whileMuted = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 2100 })
+    expect(
+      store.verifyInvite({
+        shareId,
+        inviteToken: whileMuted.inviteToken,
+        displayName: 'Olly',
+        publicKeyId: 'ed25519:olly',
+        now: 2200
+      }).existingParticipant
+    ).toMatchObject({ status: 'active', seatDisabled: true })
+
+    // Unmute restores exactly the pre-mute seat. Revoke has no such inverse.
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: false, now: 3000 })
+    ).not.toBeNull()
+    const unmuted = seatOf(store, shareId, collaboratorId)
+    expect(unmuted && 'seatDisabled' in unmuted).toBe(false)
+    expect(unmuted?.status).toBe('active')
+    expect(unmuted?.seatOrder).toBe(1)
+
+    // Revoke is the other verb: it withdraws trust, permanently.
+    store.revokeParticipant({ shareId, collaboratorId, now: 4000 })
+    expect(seatOf(store, shareId, collaboratorId)).toMatchObject({
+      status: 'revoked',
+      revokedAt: 4000
+    })
+    expect(store.listReconnectCandidates('ed25519:olly')).toHaveLength(0)
+    const afterRevoke = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 5000 })
+    expect(() =>
+      store.verifyInvite({
+        shareId,
+        inviteToken: afterRevoke.inviteToken,
+        displayName: 'Olly',
+        publicKeyId: 'ed25519:olly',
+        now: 5100
+      })
+    ).toThrow(/revoked/)
+    // And the seat writer is not a back door to un-revoking.
+    expect(
+      store.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: false, now: 6000 })
+    ).toBeNull()
+  })
+})
+
+/**
+ * Follow-ups from the seat-field review: the guards that were asymmetric or
+ * missing when the writer first landed.
+ */
+describe('HumanCollaborationStore participant seats — tightened guards', () => {
+  function admitted() {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({ chatId: 'chat-seat', mode: 'comments', now: 1000 })
+    const { participant } = store.consumeInvite({
+      shareId: created.share.shareId,
+      inviteToken: created.inviteToken,
+      displayName: 'Olly',
+      publicKeyId: 'pk-seat',
+      now: 1001
+    })
+    return { store, shareId: created.share.shareId, collaboratorId: participant.collaboratorId }
+  }
+
+  /**
+   * `1.9` used to be accepted and floored to `1`, tying with whoever already
+   * held slot 1 — the exact quiet reordering the guard exists to prevent, and
+   * asymmetric with colorIndex, which always rejected non-integers.
+   */
+  it('REJECTS a fractional seatOrder rather than flooring it into a tie', () => {
+    const { store, shareId, collaboratorId } = admitted()
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 1.9 })).toBeNull()
+    const seat = store
+      .listShares('chat-seat')[0]
+      ?.participants.find((p) => p.collaboratorId === collaboratorId)
+    expect(seat && 'seatOrder' in seat).toBe(false)
+  })
+
+  it('REJECTS an absurd seatOrder rather than storing it', () => {
+    const { store, shareId, collaboratorId } = admitted()
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 1e300 })).toBeNull()
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 5000 })).toBeNull()
+    // The bound is inclusive at the top and zero is legitimate (front of queue).
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 0 })).not.toBeNull()
+  })
+
+  /**
+   * A drag-reorder UI emits a great many no-ops. Persisting each one bumps
+   * updatedAt and triggers a whole-snapshot synchronous write — the repo's known
+   * main-thread stall class.
+   */
+  it('does not persist or move updatedAt when nothing actually changed', () => {
+    const { store, shareId, collaboratorId } = admitted()
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 4, now: 2000 })
+    const afterWrite = store.listShares('chat-seat')[0]?.updatedAt
+
+    // Same value again, and a call carrying no seat fields at all.
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 4, now: 9999 })
+    store.updateParticipantSeat({ shareId, collaboratorId, now: 9999 })
+    expect(store.listShares('chat-seat')[0]?.updatedAt).toBe(afterWrite)
+
+    // A real change still moves it.
+    store.updateParticipantSeat({ shareId, collaboratorId, seatOrder: 5, now: 3000 })
+    expect(store.listShares('chat-seat')[0]?.updatedAt).toBe(3000)
+  })
+
+  it('shares ONE palette bound with the contacts store', () => {
+    const { store, shareId, collaboratorId } = admitted()
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 7 })).not.toBeNull()
+    expect(store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 8 })).toBeNull()
   })
 })

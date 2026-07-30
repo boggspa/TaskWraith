@@ -166,8 +166,10 @@ describe('buildModelContextLengthGroups', () => {
     expect(ollamaGroup).toBeDefined()
     const row = ollamaGroup!.models.find((m) => m.modelId === 'lfm2.5:8b')
     expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(131_072)
-    expect(row!.formatted).toBe('131k')
+    // The test NAME already said 128K while the assertion said 131_072 — the name
+    // had the daemon's value and the table was the outlier. Corrected 2026-07-30.
+    expect(row!.contextWindow).toBe(128_000)
+    expect(row!.formatted).toBe('128k')
   })
 
   it("{ excludeProviders: ['gemini'] }: drops the gemini group, keeps the rest", () => {

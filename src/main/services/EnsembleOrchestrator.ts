@@ -116,6 +116,13 @@ import {
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
+import { isMeasuredDiffSummary } from '../../shared/toolDiffSummaryMerge'
+import { sampleWorkspaceChurn } from '../DiffService'
+import {
+  diffWorkspaceChurn,
+  formatWorkspaceChurnStanza,
+  type WorkspaceChurnSample
+} from '../WorkspaceChurn'
 import {
   createActiveGoal,
   normalizeActiveGoalObjective,
@@ -246,7 +253,7 @@ export type EnsembleQueuedSteerResult = {
   error?: string
 }
 
-const BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
+const ASSIGNABLE_PERMISSION_PRESET_SET = new Set<string>(ASSIGNABLE_PERMISSION_PRESETS)
 const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
   'scout',
   'worker',
@@ -2727,6 +2734,14 @@ function mergeToolDiffSummaries(
   const normalizedResult = normalizeToolDiffSummary(result, filePath)
   if (!normalizedExisting) return normalizedResult
   if (!normalizedResult) return normalizedExisting
+  // First-counts-wins below keeps a streamed ensemble activity stable, but it also
+  // means a MEASURED summary arriving second is rejected — and one arriving first
+  // would be safe only by luck. Assert the precedence explicitly in both directions;
+  // everything after this is the pre-existing rule, unchanged.
+  if (isMeasuredDiffSummary(normalizedResult) && !isMeasuredDiffSummary(normalizedExisting)) {
+    return normalizedResult
+  }
+  if (isMeasuredDiffSummary(normalizedExisting)) return normalizedExisting
   const existingHasCounts =
     typeof normalizedExisting.additions === 'number' ||
     typeof normalizedExisting.deletions === 'number'
@@ -3074,6 +3089,18 @@ interface ActiveRoundRuntime {
    * briefs.
    */
   scoutBriefs?: ScoutBriefRecord[]
+  /**
+   * Tree-derived churn baseline for this round, captured lazily on the FIRST
+   * dispatch (before any seat has written) and subtracted on every later
+   * dispatch so each seat sees what its peers actually changed.
+   *
+   * Lives on the runtime rather than in a keyed registry so it dies with the
+   * round exactly like `scoutBriefs` — nothing to reap, nothing to persist. Set
+   * to `null` once sampling has been attempted and failed (not a repository, no
+   * commits, git error) so a doomed sample is not retried on every dispatch of
+   * a long round.
+   */
+  workspaceChurnBaseline?: WorkspaceChurnSample | null
   unreachableParticipantIds?: Set<string>
   orchestrationMode: EnsembleOrchestrationMode
   fanoutPolicy?: EnsembleFanoutPolicy
@@ -9348,11 +9375,57 @@ export class EnsembleOrchestrator {
         error: 'health_check_unavailable'
       }
     }
+    // A replacement is a MODEL/PROVIDER swap on ONE seat, not a permission edit.
+    // The old check here only rejected full_access and custom, so `default`
+    // sailed straight through: a Boss could replace a read_only reviewer with a
+    // `default` one and hand the seat write access in the same call. That is a
+    // widening, and it contradicts what the authority checkpoint tells the model
+    // replace_participant does.
+    //
+    // The seat's posture is therefore INHERITED, always — preset AND overrides.
+    // An explicit value is accepted only when it restates what the seat already
+    // has, because the schema advertises the field and a model that faithfully
+    // echoes the current preset should not be punished for it. Anything else is
+    // refused rather than quietly ignored, so the Boss reads the rule instead of
+    // receiving a seat it did not ask for.
+    //
+    // NARROWING IS REFUSED TOO. It is safe in isolation, but permitting it
+    // would mean this path decides permission questions, and then "a swap never
+    // moves permissions" stops being checkable by reading one function.
+    // `ensemble_roster_edit` → edit_participant is the audited door for changing
+    // what a seat may do; keeping it the ONLY door is the whole property.
     const requestedPermissionPresetId = input.replacement?.permissionPresetId
-    if (
-      requestedPermissionPresetId &&
-      !BOSSMAN_ASSIGNABLE_PERMISSION_PRESET_SET.has(String(requestedPermissionPresetId))
-    ) {
+    const inheritedPermissionPresetId = target.permissionPresetId
+    // Two conditions, not one. Equality alone would let a Boss NAME a preset
+    // outside the assignable set whenever the seat already sat there — harmless
+    // in effect, since the value is inherited either way, but it would put
+    // `full_access` in the audit trail as something a model asked for. The
+    // ceiling stays; equality is layered on top of it.
+    const restatesInheritedPreset =
+      requestedPermissionPresetId === inheritedPermissionPresetId &&
+      ASSIGNABLE_PERMISSION_PRESET_SET.has(String(requestedPermissionPresetId))
+    if (requestedPermissionPresetId !== undefined && !restatesInheritedPreset) {
+      const restatable =
+        inheritedPermissionPresetId &&
+        ASSIGNABLE_PERMISSION_PRESET_SET.has(String(inheritedPermissionPresetId))
+      return {
+        ok: false,
+        tool: 'ensemble_bossman_control',
+        action: 'replace_participant',
+        roundId: runtime.roundId,
+        participantId: targetParticipantId,
+        message: `Boss replacement rejected: a replacement keeps the seat's permissions unchanged, so replacement.permissionPresetId must be omitted${
+          restatable ? ` or set to "${inheritedPermissionPresetId}"` : ''
+        }. Use ensemble_roster_edit → edit_participant to change what a seat may do.`,
+        error: 'permission_ceiling'
+      }
+    }
+    // Not advertised in the tool schema, but the input type is a
+    // Partial<EnsembleParticipant> and JSON Schema admits unlisted properties,
+    // so a caller can supply this. It has always been dropped on the floor;
+    // refusing it says so out loud rather than leaving the safety resting on an
+    // omission somebody could "fix" later by wiring the field through.
+    if (input.replacement?.permissionOverrides !== undefined) {
       return {
         ok: false,
         tool: 'ensemble_bossman_control',
@@ -9360,7 +9433,7 @@ export class EnsembleOrchestrator {
         roundId: runtime.roundId,
         participantId: targetParticipantId,
         message:
-          'Boss replacement rejected: permissionPresetId must be read_only, plan, or default.',
+          "Boss replacement rejected: a replacement keeps the seat's permissions unchanged, so replacement.permissionOverrides is not accepted. Use ensemble_roster_edit → edit_participant to change what a seat may do.",
         error: 'permission_ceiling'
       }
     }
@@ -9376,11 +9449,14 @@ export class EnsembleOrchestrator {
           : target.instructions,
       order: target.order,
       ...(input.replacement?.model ? { model: input.replacement.model } : {}),
-      ...(requestedPermissionPresetId
-        ? { permissionPresetId: requestedPermissionPresetId }
-        : target.permissionPresetId
-          ? { permissionPresetId: target.permissionPresetId }
-          : {}),
+      // Inherited, never requested — see the refusal above. Overrides ride along
+      // for the same reason: a target carrying a NARROWING override that the
+      // replacement dropped would be widened by omission just as surely as by a
+      // wider preset.
+      ...(inheritedPermissionPresetId
+        ? { permissionPresetId: inheritedPermissionPresetId }
+        : {}),
+      ...(target.permissionOverrides ? { permissionOverrides: target.permissionOverrides } : {}),
       ...(input.replacement?.reasoningEffort
         ? { reasoningEffort: input.replacement.reasoningEffort }
         : {}),
@@ -12828,6 +12904,50 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Tree-derived churn stanza for the seat about to be dispatched, or undefined.
+   *
+   * Exactly ONE git sample per dispatch: the first dispatch of a round stores
+   * its sample as the baseline and returns nothing (definitionally, no seat has
+   * written yet), and every later dispatch subtracts the baseline from a fresh
+   * sample. That keeps the added cost to one `git diff --numstat` plus one
+   * `git status` per turn, and makes the opening turn free.
+   *
+   * Fails open in every direction — no workspace, no repository, a git error, or
+   * a throw all yield undefined, and the prompt simply omits the section. This
+   * is evidence, not a gate: it must never be able to block a dispatch.
+   */
+  private async resolveWorkspaceChurnStanza(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord
+  ): Promise<string | undefined> {
+    const workspacePath = (chat.workspacePath || '').trim()
+    if (!workspacePath) return undefined
+    // A prior attempt already failed for this round; do not retry per dispatch.
+    if (runtime.workspaceChurnBaseline === null) return undefined
+    try {
+      const sample = await sampleWorkspaceChurn(workspacePath)
+      if (!sample) {
+        runtime.workspaceChurnBaseline = null
+        return undefined
+      }
+      const baseline = runtime.workspaceChurnBaseline
+      if (!baseline) {
+        runtime.workspaceChurnBaseline = sample
+        return undefined
+      }
+      return (
+        formatWorkspaceChurnStanza(diffWorkspaceChurn(baseline, sample), {
+          heading:
+            'Workspace changes so far this round (tree-derived — this is what the files actually hold):'
+        }) || undefined
+      )
+    } catch {
+      runtime.workspaceChurnBaseline = null
+      return undefined
+    }
+  }
+
   private async runRound(
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[],
@@ -13314,6 +13434,10 @@ export class EnsembleOrchestrator {
           (entry) => entry.id
         )
       })()
+      // Tree-derived churn evidence. Sampled here — immediately before the
+      // prompt is composed — so the numbers describe the tree the seat is about
+      // to act on, not the tree as it stood when the round opened.
+      const workspaceChurnStanza = await this.resolveWorkspaceChurnStanza(runtime, dispatchChat)
       const prompt = buildEnsembleParticipantPrompt({
         chat: dispatchChat,
         config: ensembleConfigForRound,
@@ -13323,6 +13447,7 @@ export class EnsembleOrchestrator {
           : runtime.prompt,
         roundId: runtime.roundId,
         chatContextTurns,
+        ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
         // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
         // when a parallel fan-out pass just completed. Empty array
         // (or undefined) skips the section entirely.
@@ -13352,7 +13477,10 @@ export class EnsembleOrchestrator {
               slimTurn: false,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode,
-              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
+              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+              // Same dispatch, same evidence — reuse the sample rather than
+              // re-shelling git for the resume-failure fallback.
+              ...(workspaceChurnStanza ? { workspaceChurnStanza } : {})
             })}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
@@ -14834,6 +14962,11 @@ export class EnsembleOrchestrator {
         chatContextTurns,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode
+        // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
+        // CONCURRENTLY, so a sample taken now would blend siblings' in-flight
+        // writes with no way to attribute them, and `isolation: 'worktree'`
+        // lanes do not even share the workspace the sample would measure. The
+        // serial turn that follows the pass reports the settled result instead.
       })
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,

@@ -301,14 +301,15 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "131k")
     }
 
-    @Test("ollama lfm2.5:8b: 131_072 / 131k")
+    @Test("ollama lfm2.5:8b: 128_000 / 128k")
     func ollamaLfm25() {
         let groups = ModelContextLengths.buildGroups(includeOllama: true)
         let row = groups.first { $0.provider == "ollama" }?
             .models.first { $0.modelId == "lfm2.5:8b" }
         #expect(row?.label == "LFM 2.5 (8B-A1B)")
-        #expect(row?.contextWindow == 131_072)
-        #expect(row?.formatted == "131k")
+        // A round 128k, not 128Ki — corrected against the daemon 2026-07-30.
+        #expect(row?.contextWindow == 128_000)
+        #expect(row?.formatted == "128k")
     }
 
     @Test("ollama ornith:35b: 262_144 / 262k")

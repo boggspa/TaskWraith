@@ -9,6 +9,7 @@ import {
 } from './AntigravityCombinedModelCatalog'
 import {
   readAgyDiscoveryProvenance,
+  seedAgyDiscoveryProvenanceFromCache,
   type AgyDiscoveryProvenance
 } from './AntigravityAgyDiscoveryProvenance'
 
@@ -31,6 +32,16 @@ export interface AntigravityRateLimitHandlerDependencies<T> {
   readonly readProvenance?: () => AgyDiscoveryProvenance | null
   /** Test seam for the cached-evidence TTL comparison. */
   readonly nowMs?: () => number
+  /**
+   * Reads the PERSISTED agy model cache so a refresh can recover provenance
+   * that discovery has not established in this session. Optional: when absent
+   * the handler behaves exactly as before, which keeps every existing test and
+   * any caller that has no userData path unchanged.
+   */
+  readonly readCachedProvenanceRecord?: () => Promise<{
+    models: unknown[]
+    updatedAtMs: number | null
+  } | null>
 }
 
 export function createAntigravityRateLimitHandler<T>(
@@ -42,6 +53,15 @@ export function createAntigravityRateLimitHandler<T>(
     const configuredModels = dependencies.modelsSnapshot(settings).get('antigravity') as
       | AntigravityCombinedCatalogModel[]
       | undefined
+    // Discovery is the only writer of the in-memory provenance slot, and a
+    // refresh does not run discovery — so on a freshly started app the slot is
+    // still `none` even for a user who is signed in. Recover it from the
+    // persisted cache first (a file read, not a backend round-trip), otherwise
+    // the meter tells the user to sign in and refresh, and refreshing can never
+    // clear it. Only seeds when provenance is `none`; live proof always wins.
+    if (dependencies.readCachedProvenanceRecord) {
+      await seedAgyDiscoveryProvenanceFromCache(dependencies.readCachedProvenanceRecord)
+    }
     const authenticatedConnection = isAuthenticatedAgyRateLimitConnection(
       configuredSnapshot,
       configuredModels,

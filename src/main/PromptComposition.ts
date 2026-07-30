@@ -18,7 +18,10 @@ import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFence
 import { buildPendingThreadMessageContextBlock } from './ThreadMessageContext'
 import type { ThreadMessageEvent } from '../shared/threadMessage'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
-import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import {
+  isExternalUntrustedMessage,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
   taskWraithToolNameForProvider,
@@ -109,9 +112,22 @@ const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxBlockChars: MAX_CONTEXT_BLOCK_CHARS
 }
 
-/** Provider/model-aware caps for the compact conversation-context block. */
-export function resolveContextBudget(provider: ProviderId, modelId?: string): ContextBudget {
-  if (provider === 'ollama') return resolveOllamaContextBudget(modelId)
+/**
+ * Provider/model-aware caps for the compact conversation-context block.
+ *
+ * `ollamaLiveContextTokens` is a context length MEASURED from the running daemon
+ * (see `OllamaModelInfo.contextLength`). It is optional because not every caller
+ * has it — the renderer's call site has no model id at all — and its absence must
+ * stay safe: `resolveOllamaContextBudget` only widens an unrecognised tag's budget
+ * when the window is measured, never when it is assumed from a table or a
+ * provider default.
+ */
+export function resolveContextBudget(
+  provider: ProviderId,
+  modelId?: string,
+  ollamaLiveContextTokens?: number | null
+): ContextBudget {
+  if (provider === 'ollama') return resolveOllamaContextBudget(modelId, ollamaLiveContextTokens)
   return DEFAULT_CONTEXT_BUDGET
 }
 
@@ -522,6 +538,15 @@ function eligibleConversationMessages(messages: ChatMessage[]): ChatMessage[] {
     (message) =>
       (message.role === 'user' || message.role === 'assistant') &&
       !isHumanCollaboratorComment(message) &&
+      // Solo composition has no untrusted frame to fall back on (that lives in
+      // the ensemble serializer), so external-authored text is refused outright
+      // here rather than rendered. Keyed on `sourceTrust`, not on the comment
+      // kind: the role gate above already stops today's `role: 'system'`
+      // collaborator rows, which is why the sibling check is redundant — but a
+      // row carrying external text on a `user` role would sail straight past it.
+      // That is not hypothetical; it is the shape the mid-run steering builder
+      // produces (P2c security review, F1).
+      !isExternalUntrustedMessage(message) &&
       !isRetiredExternalChannelInboundMessage(message) &&
       !isTaskWraithCloseoutMessage(message) &&
       Boolean(message.content && message.content.trim())
@@ -801,6 +826,20 @@ export interface ComposeRunPromptInput {
   nextModel?: string
   /** Pruned Ollama session memory persisted on the chat (tool trajectory summaries). */
   ollamaSessionMemory?: OllamaSessionMemory | null
+  /**
+   * Context length MEASURED from the running Ollama daemon for `nextModel`
+   * (`OllamaModelInfo.contextLength`, sourced from `/api/show` metadata) — never
+   * a table lookup or a provider default.
+   *
+   * Supplied so the context-block budget can size itself against the model's real
+   * window instead of `CONTEXT_WINDOWS_BY_MODEL`, which is hand-maintained and has
+   * drifted from the daemon before (`lfm2.5:8b` was 131,072 there against a
+   * measured 128,000, corrected 2026-07-30 — the point is that a hand-maintained
+   * table drifts, not that any particular entry is wrong today). Omitting this is
+   * always safe: an unrecognised tag then keeps the conservative floor rather than
+   * scaling off a fabricated window.
+   */
+  ollamaLiveContextTokens?: number | null
   /** The set of handoff-keys already applied to this chat (so we only inject
    * once per direction). */
   codexHandoffsApplied: string[]
@@ -941,7 +980,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       applicationLog: `${providerLabel}: verbatim slash dispatch — prompt composition skipped.`
     }
   }
-  const contextBudget = resolveContextBudget(provider, nextModel)
+  const contextBudget = resolveContextBudget(provider, nextModel, input.ollamaLiveContextTokens)
   const nativeSubAgentInstruction = nativeSubAgentPromptInstruction(
     nativeSubAgentRequests,
     provider

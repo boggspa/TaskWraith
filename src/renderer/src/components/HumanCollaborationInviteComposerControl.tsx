@@ -212,7 +212,9 @@ export function HumanCollaborationInviteComposerControl({
           {activeCollaborators.length > 0 ? (
             <div className="composer-human-invite-collaborators">
               {activeCollaborators.map((participant) => (
-                <span key={participant.collaboratorId}>{participant.displayName || 'Guest'}</span>
+                <span key={participant.collaboratorId}>
+                  {participant.displayName || 'External'}
+                </span>
               ))}
             </div>
           ) : (

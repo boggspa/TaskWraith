@@ -7,6 +7,7 @@ import type {
   ToolDiffSummary
 } from '../../../main/store/types'
 import { lookupToolDisplayName, titleCaseToolName } from './ToolDisplayNames'
+import { preserveMeasuredDiffSummary } from '../../../shared/toolDiffSummaryMerge'
 import {
   catalogToolOperationCategory,
   isCatalogFileEditTool
@@ -1144,10 +1145,16 @@ export function pairToolResult(activity: ToolActivity, toolResultEvent: any): To
     status,
     endedAt,
     durationMs,
-    diffSummary:
-      deriveToolDiffSummary(inferredToolName, inferredParameters, resultOutput) ||
-      inferred.diffSummary ||
+    // "Freshly derived wins" is deliberate here — a result-derived diff should beat
+    // the parameter guess made at tool-use time — but it also discards a MEASURED
+    // summary, which must never be displaced by an estimate. The guard asserts only
+    // that; every estimate-versus-estimate outcome below is unchanged.
+    diffSummary: preserveMeasuredDiffSummary(
       activity.diffSummary,
+      deriveToolDiffSummary(inferredToolName, inferredParameters, resultOutput) ||
+        inferred.diffSummary ||
+        activity.diffSummary
+    ),
     resultSummary: summaryText,
     outputPreview: summaryText,
     rawResultEvent: toolResultEvent,

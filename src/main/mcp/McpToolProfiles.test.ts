@@ -344,8 +344,16 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // unchanged, so all three transport catalogues retain their prior budgets.
     // Gateway-v9 adds permission retry only to capability discovery, so its
     // direct transport catalogues remain byte-identical to v8.
-    expect(fullChars).toBe(138_100)
-    expect(gatewayChars).toBe(39_935)
+    // Re-measured after replace_participant stopped accepting a permission
+    // change. ensemble_bossman_control IS in the gateway catalogue, which sits
+    // ~65 characters under a hard 40,000 transport ceiling, so the replacement
+    // description was written to be SHORTER than the ceiling text it replaced
+    // rather than clearer at any price: full and gateway each drop 5 characters
+    // and the two fresh-session catalogues are untouched. The rule itself, and
+    // the pointer to edit_participant, live in the refusal message where they
+    // cost nothing until someone gets it wrong.
+    expect(fullChars).toBe(138_095)
+    expect(gatewayChars).toBe(39_930)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
     expect(freshGatewayChars).toBe(37_051)

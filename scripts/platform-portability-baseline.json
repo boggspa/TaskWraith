@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "note": "Accepted pre-existing violations, per rule and file. Counts may shrink, never grow. Regenerate only with a deliberate decision to accept new debt.",
+  "generatedFromTestFileCount": 1388,
+  "accepted": {
+    "posix-shebang": {
+      "scripts/provider-containment-canary.test.ts": 1,
+      "src/main/CodexCodeModeHost.test.ts": 1,
+      "src/main/DiffService.test.ts": 3,
+      "src/main/HostToolResolver.test.ts": 1,
+      "src/main/UserMcpServers.test.ts": 1,
+      "src/main/launch/LaunchManager.test.ts": 2,
+      "src/main/scheduling/SealEvidenceCore.test.ts": 3,
+      "src/main/services/GitService.test.ts": 2
+    },
+    "system-path-literal-expectation": {
+      "src/main/KimiMcpBridge.test.ts": 2,
+      "src/main/TailscaleAuth.test.ts": 1,
+      "src/main/antigravity/AntigravityConversationReceipt.test.ts": 1,
+      "src/main/ipc/hostToolTerminalHandlers.test.ts": 1,
+      "src/main/ipc/providerTerminalHandlers.test.ts": 1,
+      "src/main/localServers/parsers.test.ts": 1,
+      "src/main/mistral/MistralCliArgs.test.ts": 1,
+      "src/main/pi/PiCliArgs.test.ts": 1,
+      "src/main/pi/PiModelPolicy.test.ts": 1,
+      "src/main/providers/CliInstallChannel.test.ts": 1,
+      "src/main/providers/CliSearchDirs.test.ts": 7,
+      "src/renderer/src/components/CliPathDirectoriesEditor.test.tsx": 3,
+      "src/renderer/src/components/HostCliToolInstall.test.tsx": 1,
+      "src/renderer/src/lib/ActivityPathDisplay.test.ts": 3,
+      "src/renderer/src/lib/providerAuthSummary.test.ts": 1,
+      "src/shared/cliPathDirectories.test.ts": 1
+    },
+    "real-fs-mode": {
+      "src/main/canvas/CanvasStore.test.ts": 1,
+      "src/main/cursor/CursorGlobalBrokerRegistrationTransaction.test.ts": 2
+    },
+    "inode-identity": {
+      "src/main/cursor/CursorGlobalBrokerRegistrationTransaction.test.ts": 1,
+      "src/main/services/RegenerableHistoryByteStore.test.ts": 1
+    }
+  }
+}

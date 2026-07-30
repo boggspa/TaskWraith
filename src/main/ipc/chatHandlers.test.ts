@@ -63,6 +63,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getSubThreads: vi.fn(() => [chat('sub-thread')]),
       createSideChat: vi.fn(() => chat('side-chat', { parentChatRelation: 'sideChat' })),
       getSideChats: vi.fn(() => [chat('side-chat')]),
+      listHumanCollaborationShares: vi.fn(() => []),
       setChatKind: vi.fn((args: { chatId: string; targetKind: 'single' | 'ensemble' }) =>
         chat(args.chatId, { chatKind: args.targetKind })
       ),
@@ -411,6 +412,54 @@ describe('registerChatHandlers', () => {
       chatId: 'chat-1',
       targetKind: 'single'
     })
+  })
+
+  /**
+   * A shared panel must not be collapsible. The collapse path strips the roster
+   * and stashes it, and a later preset-apply consumes that stash — so a seat
+   * removed by a collapse can come back. With external collaborators holding
+   * seats that means a removed person's seat could resurrect, which is why this
+   * is refused at the main-side gate rather than made collapse-aware.
+   */
+  it('refuses to collapse a SHARED ensemble chat out of panel mode', () => {
+    const deps = createDeps({})
+    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
+      { shareId: 'share-1', enabled: true } as never
+    ])
+    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+    registerChatHandlers(deps)
+
+    expect(() =>
+      handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    ).toThrow(/shared/i)
+    expect(deps.chatService.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('still allows the collapse when the share is disabled', () => {
+    const deps = createDeps({})
+    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
+      { shareId: 'share-1', enabled: false } as never
+    ])
+    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
+    registerChatHandlers(deps)
+
+    handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    expect(deps.chatService.setChatKind).toHaveBeenCalled()
+  })
+
+  // A shared chat that is ALREADY solo is not a collapse — refusing there would
+  // reject a harmless no-op, and a shared solo thread is a real state (it only
+  // PRESENTS as a panel; the persisted kind stays 'single').
+  it('does not refuse a no-op on a shared chat that is already solo', () => {
+    const deps = createDeps({})
+    deps.chatService.listHumanCollaborationShares = vi.fn(() => [
+      { shareId: 'share-1', enabled: true } as never
+    ])
+    deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'single' }))
+    registerChatHandlers(deps)
+
+    handlerFor('set-chat-kind')({} as any, { chatId: 'chat-1', targetKind: 'single' })
+    expect(deps.chatService.setChatKind).toHaveBeenCalled()
   })
 
   it.each([

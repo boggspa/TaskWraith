@@ -1377,6 +1377,22 @@ export interface BlackboardEntry {
   scope: BlackboardScope
   /** Provenance — a tool-call id or a prior entry id this was derived from. */
   derivedFrom?: string
+  /**
+   * Author trust class. Absent means a host-side author (a model seat, the
+   * synthesizer, or the system) — the historical and overwhelmingly common
+   * case, left unstamped so no migration is needed.
+   *
+   * `'external'` marks an entry authored by a human collaborator on ANOTHER
+   * machine. It is not decoration: `formatBlackboardForPrompt` partitions on
+   * it, because the digest's default header tells every model to treat the
+   * board as agreed context and the `do-not-repeat` category is a standing
+   * behavioural directive. Filing unreviewed external text under either is a
+   * trust elevation (P2c security review, F4).
+   *
+   * ANY future path that lets an external post MUST stamp this. It is optional
+   * only to avoid restamping existing entries.
+   */
+  authorKind?: 'external'
   createdAt: string
   /**
    * Participant ids that have had this entry surfaced to them — via prompt
@@ -2250,6 +2266,22 @@ export interface AppSettings {
   piCerebrasMaxCompletionTokens?: number | null
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
+  /**
+   * Per-model context length MEASURED from the running Ollama daemon
+   * (`OllamaModelInfo.contextLength`, ultimately `/api/show` metadata) — never a
+   * table lookup or a provider default.
+   *
+   * Cached here because the measurement is only reachable through an async model
+   * load, while prompt composition is synchronous and runs BEFORE the launch plan
+   * that holds it. Persisting the fact once lets the context-block budget size
+   * itself against the model's real window instead of the hand-maintained
+   * `CONTEXT_WINDOWS_BY_MODEL` table, which drifts from the daemon over time
+   * (`lfm2.5:8b` was 131_072 there against a measured 128_000 until 2026-07-30).
+   *
+   * Written only when the value CHANGES — `updateSettings` does a synchronous full
+   * settings write, so recording it per run would put a disk write in the hot path.
+   */
+  ollamaModelContextTokens?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
    * DISABLED by default. Becomes offer/run eligible only when this is true AND
    * `antigravityOptInAcceptedAt` is set — see `isAntigravityOptInEnabled`. */
@@ -5739,6 +5771,11 @@ export interface ToolDiffSummary {
     | 'string_replace'
     | 'content'
     | 'result_diff'
+    // Measured from the workspace by `git diff --numstat`, not inferred from a
+    // tool's parameters or output. Outranks every estimate above regardless of
+    // magnitude — see `ToolDiffSummaryMerge`, which explains why larger-wins
+    // rejected exactly this source for being smaller.
+    | 'git_numstat'
     | 'unknown'
   confidence: 'exact' | 'estimated' | 'unknown'
 }

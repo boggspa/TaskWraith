@@ -64,6 +64,7 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
+import { PendingContributionsStack } from '../components/PendingContributionsStack'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
@@ -2058,6 +2059,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
             }`}
             ref={composerAreaRef}
           >
+            {/* First in-flow child of the bottom-anchored column, so it sits
+                ABOVE the above-bar stack and the composer surface and grows the
+                measured reserve rather than covering the transcript's tail. */}
+            <PendingContributionsStack chatId={currentChat?.appChatId} />
             {shouldShowGhostCompanion && <GhostCompanion />}
             {/*
               Phase K-followup — Removed `provider-shell-status-row`.

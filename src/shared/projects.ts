@@ -1489,7 +1489,7 @@ export function migrateProjectGraphEdges(
     const to = entry.toChatId.trim()
     if (!from || !to || from === to) continue
     if (!project.memberChatIds.includes(from) || !project.memberChatIds.includes(to)) continue
-    const dedupeKey = `${entry.projectId} ${from} ${to}`
+    const dedupeKey = `${entry.projectId}\u0000${from}\u0000${to}`
     if (dedupe.has(dedupeKey)) continue
     seenIds.add(entry.id)
     dedupe.add(dedupeKey)

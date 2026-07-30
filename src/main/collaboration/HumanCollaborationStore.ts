@@ -12,6 +12,18 @@ import {
   type HumanContributionPreset,
   type HumanContributionRules
 } from './HumanContributionRules'
+// The ONE palette-bound guard, shared with the contacts store so a ninth hue
+// cannot be silently rejected here while being accepted there.
+import { isContactColorIndex } from './HumanCollaborationContactsStore'
+
+/**
+ * A valid roster position: a non-negative integer, bounded so a hostile or buggy
+ * value cannot be stored. Fractions are REJECTED, not floored — see `seatOrder`.
+ */
+const MAX_SEAT_ORDER = 4096
+function isSeatOrder(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= MAX_SEAT_ORDER
+}
 
 export type HumanCollaborationMode = 'readOnly' | 'comments'
 export type HumanCollaboratorStatus = 'pending' | 'active' | 'revoked'
@@ -23,6 +35,47 @@ export interface HumanCollaboratorParticipant {
   status: HumanCollaboratorStatus
   joinedAt?: number
   revokedAt?: number
+  /**
+   * Roster position in the effective panel. Lives HERE, on the collaborator's
+   * own record, and never on the chat — that is what lets a join or a leave
+   * reorder the panel without rewriting chat state (see
+   * `src/shared/effectiveEnsembleRoster.ts` for why the roster is derived).
+   * Absent ⇒ the resolver appends them after every model seat.
+   *
+   * A non-negative INTEGER. Fractions are rejected rather than floored: `1.9`
+   * flooring to `1` would silently tie with whoever already holds slot 1, which
+   * is the same quiet reordering this field's guards exist to prevent.
+   *
+   * Ties are NOT renumbered here. Two actives may legitimately hold the same
+   * order mid-drag, and `resolveEffectiveRoster` breaks a tie deterministically
+   * (model seat first, then by seat id) so a render and a turn queue built from
+   * the same inputs can never disagree.
+   */
+  seatOrder?: number
+  /**
+   * Index into the shared bubble-colour palette, accenting this person's name
+   * chip and their own message bubbles. An INDEX, never a CSS string — a
+   * free-form colour would be an injection surface the moment any surface
+   * interpolates it into a stylesheet.
+   *
+   * Scope: this is a PER-SHARE OVERRIDE. `HumanCollaborationContactsStore` holds
+   * the person's cross-chat default (and derives a stable hue from their pubkey
+   * when unset). Resolution order for a renderer is: this field, then the
+   * contact's, then the pubkey derivation. Recolouring someone in one share
+   * deliberately does not repaint them everywhere.
+   *
+   * NB it does NOT currently cross to the collaborator: `buildHumanShareProjection`
+   * whitelists `collaboratorId`/`displayName`/`status` only. That is the right
+   * posture — an external should not learn the host's private mute state — so if
+   * a future slice projects seat data, project the colour and NOT `seatDisabled`.
+   */
+  colorIndex?: number
+  /**
+   * Host-muted. A muted external keeps its seat and its position — this is not
+   * a soft delete, and it must never be confused with `status: 'revoked'`,
+   * which withdraws trust and cannot be undone.
+   */
+  seatDisabled?: boolean
 }
 
 export interface HumanCollaborationInvite {
@@ -56,6 +109,22 @@ export interface HumanCollaborationShare {
    * frames and renderer state are never authority for this field.
    */
   contributionRules?: HumanContributionRules
+  /**
+   * Host review: contributions from this share are QUEUED rather than appended,
+   * and reach the transcript only when the host approves them.
+   *
+   * Deliberately a share field and NOT part of `contributionRules`. The rules
+   * object is derived per-preset by `contributionRulesForPreset`, so a value
+   * living there would be recomputed away on the next preset write; this has to
+   * survive one. It is also a different question — the rules say what a
+   * collaborator MAY do, this says whether the host sees it first.
+   *
+   * Absent ⇒ off, which is what keeps every existing share behaving exactly as
+   * it does today. The queue is the end state, but it is inert until a host
+   * opts a share in, so a build carrying the machinery cannot change anyone's
+   * behaviour before the review surface exists to go with it.
+   */
+  requiresHostApproval?: boolean
 }
 
 export interface HumanCollaborationSnapshot {
@@ -281,6 +350,105 @@ export class HumanCollaborationStore {
         ? { ...participant, status: 'revoked', revokedAt: now }
         : participant
     )
+    share.updatedAt = now
+    this.persist()
+    return cloneShare(share)
+  }
+
+  /**
+   * Turn host review on or off for a share. HOST-only: a collaborator frame is
+   * never authority for this, which is why it is not reachable through
+   * `updateShareRules` (that takes a preset a collaborator's UI can display).
+   */
+  setRequiresHostApproval(args: {
+    shareId: string
+    requiresHostApproval: boolean
+    now?: number
+  }): HumanCollaborationShare | null {
+    const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
+    if (!share || !share.enabled) return null
+    const next = args.requiresHostApproval === true
+    if ((share.requiresHostApproval === true) === next) return cloneShare(share)
+    if (next) share.requiresHostApproval = true
+    else delete share.requiresHostApproval
+    share.updatedAt = args.now ?? Date.now()
+    this.persist()
+    return cloneShare(share)
+  }
+
+  /**
+   * Host-only seat presentation: roster position, name-chip colour, muted.
+   *
+   * Deliberately separate from `revokeParticipant`. Muting a seat is reversible
+   * presentation; revoking withdraws trust, permanently rejects that pubkey for
+   * the share, and has no undo. Collapsing them into one "disable" verb is how
+   * you end up with a kick that can be taken back.
+   *
+   * Only an ACTIVE participant can be reseated — a pending one has not completed
+   * SAS and a revoked one holds no seat, so neither has a position to move.
+   * Every field is optional and `null` clears it; an out-of-range value is
+   * REJECTED (returns null) rather than clamped, so a bad write fails loudly
+   * instead of quietly reordering the panel.
+   */
+  updateParticipantSeat(args: {
+    shareId: string
+    collaboratorId: string
+    seatOrder?: number | null
+    colorIndex?: number | null
+    seatDisabled?: boolean
+    now?: number
+  }): HumanCollaborationShare | null {
+    const now = args.now ?? Date.now()
+    const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
+    // Explicit rather than incidental: today `revokeShare` revokes every active
+    // participant, so a disabled share has no seatable target anyway. A future
+    // path that disables a share WITHOUT revoking people would open this.
+    if (!share || !share.enabled) return null
+    const target = share.participants.find(
+      (participant) =>
+        participant.collaboratorId === args.collaboratorId && participant.status === 'active'
+    )
+    if (!target) return null
+    if (args.seatOrder !== undefined && args.seatOrder !== null && !isSeatOrder(args.seatOrder)) {
+      return null
+    }
+    if (
+      args.colorIndex !== undefined &&
+      args.colorIndex !== null &&
+      !isContactColorIndex(args.colorIndex)
+    ) {
+      return null
+    }
+    // Validate everything BEFORE applying anything, then apply only if something
+    // actually changes. A no-op write would still bump `updatedAt` and trigger a
+    // whole-snapshot synchronous write — and a drag-reorder UI emits a great many
+    // no-ops, which is exactly the sync-writeJson main-thread stall class.
+    let changed = false
+    if (args.seatOrder !== undefined) {
+      const next = args.seatOrder === null ? undefined : args.seatOrder
+      if (target.seatOrder !== next) {
+        if (next === undefined) delete target.seatOrder
+        else target.seatOrder = next
+        changed = true
+      }
+    }
+    if (args.colorIndex !== undefined) {
+      const next = args.colorIndex === null ? undefined : args.colorIndex
+      if (target.colorIndex !== next) {
+        if (next === undefined) delete target.colorIndex
+        else target.colorIndex = next
+        changed = true
+      }
+    }
+    if (args.seatDisabled !== undefined) {
+      const next = args.seatDisabled === true ? true : undefined
+      if (target.seatDisabled !== next) {
+        if (next === undefined) delete target.seatDisabled
+        else target.seatDisabled = true
+        changed = true
+      }
+    }
+    if (!changed) return cloneShare(share)
     share.updatedAt = now
     this.persist()
     return cloneShare(share)
@@ -617,6 +785,14 @@ const RESERVED_DISPLAY_NAMES = new Set([
   'thehost',
   'system',
   'guest',
+  // The transcript renders a static "External" badge beside a collaborator's
+  // name, so it is the single strongest trust label in this feature — and it is
+  // also the default a nameless joiner arrives with. Reserving it stops a
+  // collaborator presenting AS the badge (and stops the default rendering as
+  // the tautological "External [External]"); an unnamed joiner becomes
+  // "External (collaborator)", the same shape "Guest" produced before it.
+  'external',
+  'collaborator',
   'remote',
   'you',
   'user',
@@ -674,7 +850,23 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
                     ...(typeof participant.joinedAt === 'number' ? { joinedAt: participant.joinedAt } : {}),
                     ...(typeof participant.revokedAt === 'number'
                       ? { revokedAt: participant.revokedAt }
-                      : {})
+                      : {}),
+                    // Seat fields. A non-finite or negative order is DROPPED
+                    // rather than coerced to 0 — coercing would silently move
+                    // that person to the front of the turn queue, which is
+                    // exactly the kind of quiet promotion nobody asked for.
+                    ...(isSeatOrder(participant.seatOrder)
+                      ? { seatOrder: participant.seatOrder }
+                      : {}),
+                    // Out-of-range palette indices are dropped, not clamped, so
+                    // the renderer falls back to its pubkey-derived hue instead
+                    // of honouring a request nobody legitimately made. Shares the
+                    // ONE palette guard with the contacts store — hard-coding the
+                    // bound here would silently keep rejecting a ninth hue.
+                    ...(isContactColorIndex(participant.colorIndex)
+                      ? { colorIndex: participant.colorIndex }
+                      : {}),
+                    ...(participant.seatDisabled === true ? { seatDisabled: true } : {})
                   }))
               : [],
             invites: Array.isArray(share.invites)
@@ -703,7 +895,13 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
                   const rules = normalizeContributionRules(share.contributionRules)
                   return rules ? { contributionRules: rules } : {}
                 })()
-              : {})
+              : {}),
+            // Strict `=== true`, so a truthy junk value from a hand-edited file
+            // cannot switch host review on. This normaliser is an ALLOWLIST
+            // rebuild applied on every read AND every write — a field missing
+            // from it is silently dropped on load and permanently erased on the
+            // next persist, with no error anywhere.
+            ...(share.requiresHostApproval === true ? { requiresHostApproval: true } : {})
           }))
       : []
   }

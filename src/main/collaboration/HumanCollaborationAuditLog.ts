@@ -34,6 +34,11 @@ export type HumanCollaborationAuditEventKind =
   | 'contribution.received'
   | 'contribution.deduped'
   | 'contribution.rejected'
+  // Host review of a queued external contribution. `approved` records only
+  // that the host released it for delivery — delivery itself happens later, at
+  // the contributor's dispatch turn, and is not this row's claim.
+  | 'contribution.approved'
+  | 'contribution.denied'
   | 'draft.inserted'
 
 export interface HumanCollaborationAuditEvent {

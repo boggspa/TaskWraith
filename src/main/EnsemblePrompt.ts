@@ -61,7 +61,14 @@ import {
 // chains from ephemeral-reasoning providers' messages before they enter
 // future-round transcript context (Codex reasoning is retained).
 import { stripReasoningChains } from './EnsembleThinkingEphemerality'
-import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
+import {
+  isExternalUntrustedMessage,
+  isHumanCollaboratorComment
+} from './collaboration/HumanCollaboratorMessages'
+import {
+  looksExternallyWrapped,
+  wrapExternalContribution
+} from './collaboration/ExternalContributionContext'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
 import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
@@ -132,6 +139,24 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
   /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
+  /**
+   * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
+   * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
+   * relative to a snapshot taken at round start.
+   *
+   * Round-volatile evidence, so it is emitted on slim resumed turns as well as
+   * full briefings — a resumed seat needs to know what its peers actually wrote
+   * just as much as a freshly briefed one. It reaches the prompt through `input`
+   * rather than `config` specifically so it stays OUT of
+   * `computeEnsemblePromptShellStamp`: churn changes every round, and folding it
+   * into the shell identity would invalidate every seat's shell receipt each
+   * round and force a full re-briefing — turning an evidence improvement into a
+   * permanent token cost.
+   *
+   * Undefined (no workspace, not a git repo, git error, or nothing changed)
+   * omits the section entirely.
+   */
+  workspaceChurnStanza?: string
 }
 
 // v4 (capability-surface repair 2026-07): tool names are now conditional on
@@ -1084,13 +1109,18 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         const visible = selectBlackboardForRound(allEntries, input.roundId)
         const unseen = selectUnseenBlackboard(visible, input.participant.id)
         const seenCount = visible.length - unseen.length
-        const digest = formatBlackboardForPrompt(unseen, { allEntries })
+        // Ask for the slim-turn header rather than rewriting the rendered
+        // digest: the old `.replace()` matched Blackboard's header literal, so
+        // any edit there silently produced a digest still claiming to be the
+        // whole board.
+        const digest = formatBlackboardForPrompt(unseen, {
+          allEntries,
+          headerOverride:
+            'Ensemble blackboard — NEW entries since your previous turn (treat as agreed context):'
+        })
         const lines: string[] = []
         if (digest) {
-          lines.push('', digest.replace(
-            'Ensemble blackboard (shared scratchpad — treat as agreed context):',
-            'Ensemble blackboard — NEW entries since your previous turn (treat as agreed context):'
-          ))
+          lines.push('', digest)
         }
         if (seenCount > 0) {
           lines.push(
@@ -1100,6 +1130,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         }
         return lines
       })(),
+      ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
       '',
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
@@ -1144,6 +1175,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     ...(workspaceStanza ? [workspaceStanza] : []),
     '',
     dynamicStateSnapshot.block,
+    // Tree-derived churn sits immediately after the dynamic state block: both
+    // are round-volatile evidence, and it reads directly above the roster whose
+    // members it describes.
+    ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
     '',
     'Participant roster:',
     roster || '- No other enabled participants.',
@@ -1729,6 +1764,14 @@ function projectTaggedTranscript(
   const suppliedMessages: ChatMessage[] = []
   let used = 0
   let truncated = false
+  // F8 — external rows are metered separately from the shared budget so a
+  // flood cannot displace the panel's own history. Newest-first fill means the
+  // rows that survive the cap are the most recent ones, matching how the
+  // overall budget already behaves.
+  const externalBudget = Math.floor(maxChars * EXTERNAL_TRANSCRIPT_BUDGET_RATIO)
+  let externalUsed = 0
+  let externalCount = 0
+  let externalDropped = 0
   for (let i = relevant.length - 1; i >= 0; i--) {
     const message = relevant[i]
     const tag = messageTag(message, participantTokens, modelLabels)
@@ -1750,8 +1793,46 @@ function projectTaggedTranscript(
     const trace = formatToolTraceSummary(message.toolActivities)
     const fileDigest = formatFileChangeDigest(message.toolActivities)
     const traceLines = [trace, fileDigest].filter(Boolean).join('\n')
-    const body = traceLines ? `${traceLines}\n${text}` : text
+    // THE CHOKE POINT (P2c security review, F2). This is the load-bearing
+    // serializer — the one every ensemble seat's prompt is built from — so the
+    // untrusted frame is applied HERE, by the code that renders the line, and
+    // not by whoever appended the message.
+    //
+    // Why here rather than an assertion that a caller wrapped it: the two fail
+    // in opposite directions. An assertion is only as good as the set of paths
+    // someone remembered to route through it, and a missed path fails OPEN, as
+    // raw text in front of a model. Wrapping at the point of render has no such
+    // set — there is one way for a message to become a transcript line, and it
+    // goes through here. `buildExternalContributionBody` is therefore reached by
+    // every present and future append path for free, including ones written by
+    // someone who has never read this review.
+    //
+    // Tool-trace lines are deliberately dropped for an external row rather than
+    // prepended: they are host-derived text, and splicing them alongside
+    // collaborator text inside one frame would blur exactly the authorship
+    // boundary the frame is drawing. An external row has no tool activity
+    // anyway; this is a guard, not a behaviour.
+    const body = isExternalUntrustedMessage(message)
+      ? buildExternalContributionBody(message, text)
+      : traceLines
+        ? `${traceLines}\n${text}`
+        : text
     const line = `[${tag}]\n${body}`
+    if (isExternalUntrustedMessage(message)) {
+      // SKIP, never break. Breaking would let one over-budget external row
+      // truncate away all the OLDER host history behind it — handing a
+      // collaborator a cheap way to blank the panel's context instead of
+      // merely failing to add to it.
+      if (
+        externalCount >= MAX_EXTERNAL_ROWS_PER_PROMPT ||
+        externalUsed + line.length > externalBudget
+      ) {
+        externalDropped += 1
+        continue
+      }
+      externalUsed += line.length
+      externalCount += 1
+    }
     if (used + line.length > maxChars && lines.length > 0) {
       truncated = true
       break
@@ -1759,6 +1840,15 @@ function projectTaggedTranscript(
     used += line.length
     lines.unshift(line)
     suppliedMessages.unshift(message)
+  }
+  if (externalDropped > 0) {
+    // Stated, not silent. A seat that cannot see a contribution should know one
+    // was withheld rather than reason from a transcript it believes is
+    // complete — and a host reading the prompt log should be able to tell a
+    // flood happened. Count only; no content, no author.
+    lines.unshift(
+      `[${externalDropped} external collaborator contribution(s) withheld from this prompt: external-content budget reached.]`
+    )
   }
   if (truncated) {
     lines.unshift('[Transcript truncated to fit Ensemble V1 context budget.]')
@@ -1871,11 +1961,92 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
   )
 }
 
+/**
+ * Share of the transcript budget external-authored rows may occupy, and the
+ * hard ceiling on how many of them any one prompt may carry.
+ *
+ * P2c security review, F8. The existing append limit (750ms spacing, 30/min per
+ * collaborator) was sized for TRANSCRIPT rows, back when a collaborator comment
+ * could never reach a model. Once external text is provider-visible, every
+ * contribution is charged to a budget that EVERY seat pays on EVERY hop: thirty
+ * messages a minute at the 8000-byte contribution cap is 240KB/min against a
+ * 5K–256K window. That is a context-exhaustion attack that needs no bug — just
+ * a talkative or compromised collaborator — and it crowds out the real history
+ * the panel needs to do its work.
+ *
+ * Enforced HERE, at render, rather than only at append, for the same reason the
+ * frame is: this is the one place every prompt is built, so the bound holds
+ * whatever the append path allowed, however the text got in, and whichever grant
+ * tier is live. An append-time per-round cap is still worth having as an
+ * ergonomic control — it can tell the collaborator "not this round" instead of
+ * silently dropping — but it is not the security boundary.
+ *
+ * A fifth of the window is deliberately generous enough that ordinary
+ * collaboration never notices the cap and only abuse reaches it.
+ */
+const EXTERNAL_TRANSCRIPT_BUDGET_RATIO = 0.2
+const MAX_EXTERNAL_ROWS_PER_PROMPT = 8
+
+/**
+ * Frame one external-untrusted row for the shared transcript.
+ *
+ * Idempotent by design: a body that already carries the frame is returned
+ * unchanged rather than double-wrapped. Two frames around one body would read as
+ * a nesting the model has to reason about, and would let a caller that DID wrap
+ * correctly end up with a worse prompt than one that forgot.
+ *
+ * Provenance is read from the row's own metadata and every field is optional —
+ * `wrapExternalContribution` sanitises each one itself and falls back to a fixed
+ * label, so a row with a missing or hostile `collaboratorDisplayName` still
+ * produces a well-formed frame. A malformed row must degrade to "wrapped with
+ * less attribution", never to "unwrapped".
+ */
+function buildExternalContributionBody(message: ChatMessage, text: string): string {
+  if (looksExternallyWrapped(text)) return text
+  const metadata = message.metadata || {}
+  return wrapExternalContribution(text, {
+    senderDisplayName:
+      typeof metadata.collaboratorDisplayName === 'string' ? metadata.collaboratorDisplayName : '',
+    ...(typeof metadata.shareId === 'string' ? { shareId: metadata.shareId } : {}),
+    ...(typeof metadata.collaboratorId === 'string'
+      ? { collaboratorId: metadata.collaboratorId }
+      : {}),
+    ...(message.id ? { messageId: message.id } : {}),
+    ...(message.timestamp ? { timestamp: message.timestamp } : {}),
+    // `promotedBy: 'host'` is the only thing that makes a contribution
+    // host-reviewed. Everything else — auto-append under a Promote grant, a
+    // replay, an unrecognised state — is reported as unreviewed, because the
+    // failure that matters is claiming review that did not happen.
+    review: metadata.promotedBy === 'host' ? 'host-approved' : 'auto-appended'
+  })
+}
+
+/**
+ * The transcript tag for a message authored outside the trust boundary.
+ *
+ * FIXED CONSTANT, and the collaborator's name is deliberately NOT in it. The tag
+ * sits at the start of its own line, immediately before the body — the single
+ * most valuable position in the transcript for forging structure — so nothing
+ * attacker-controlled may appear there. The (sanitised) name belongs on the
+ * attribution line INSIDE the frame, where `wrapExternalContribution` has
+ * already neutralised it.
+ *
+ * Without this, `messageTag` falls through to `'System'` for a collaborator row,
+ * because the row is `role: 'system'`. Tagging untrusted human text as System —
+ * the highest-authority voice a model recognises — is the exact inversion this
+ * whole review exists to prevent.
+ */
+const EXTERNAL_UNTRUSTED_TAG = 'External collaborator (untrusted, not the host)'
+
 function messageTag(
   message: ChatMessage,
   participantTokens?: Map<string, string>,
   modelLabels?: Map<string, string>
 ): string {
+  // Checked FIRST, ahead of every role branch. A future path that carries
+  // external text on a `user` or `assistant` role must not be able to pick up
+  // the host's tag by winning a race with the role checks below.
+  if (isExternalUntrustedMessage(message)) return EXTERNAL_UNTRUSTED_TAG
   if (message.role === 'user') return 'User'
   if (message.role === 'assistant') {
     const provider = message.metadata?.ensembleProvider as ProviderId | undefined

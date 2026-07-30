@@ -2,10 +2,29 @@
  * M6 (1.0.7) — Ensemble thinking-ephemerality policy.
  *
  * Blueprint goal: a participant's *reasoning chain* (chain-of-thought /
- * thinking block) must not accumulate in the prompt context fed to FUTURE
- * rounds, except where a provider explicitly streams reasoning as durable
- * output (Codex). Claude / Gemini / Kimi / Grok / Cursor reasoning is
- * ephemeral by design and should be dropped from next-round context.
+ * thinking block) must not accumulate in the SHARED PANEL TRANSCRIPT fed to
+ * FUTURE rounds, except where a provider explicitly streams reasoning as durable
+ * output (Codex). Every other provider's reasoning is ephemeral here by design.
+ *
+ * SCOPE — this is about CROSS-SEAT bleed, NOT about a seat's own continuity.
+ * Two different things get confused otherwise, and the earlier wording of this
+ * comment did confuse them:
+ *   - "seat B must not read seat A's chain-of-thought" — THIS module's job, and
+ *     the right policy: a peer's raw CoT is cost and noise in your context.
+ *   - "seat A should still have its OWN reasoning next turn" — NOT this module's
+ *     job, and genuinely valuable (OpenAI's 2026-07-29 ARC-AGI-3 write-up
+ *     attributes a large share of a 3x score / 6x output-token improvement to
+ *     retaining reasoning across turns). Whether that holds is decided per lane
+ *     by the TRANSPORT: providers whose native session resumes keep it
+ *     internally; lanes TaskWraith reconstructs from a transcript never had it.
+ *     Nothing here either helps or harms that — do not "fix" self-continuity by
+ *     loosening this guard, which would leak every seat's CoT to every peer.
+ *
+ * The policy list is deliberately an ALLOWlist of durable providers rather than
+ * a denylist of ephemeral ones, so it stays correct as the fleet grows: a new
+ * ProviderId is ephemeral until someone deliberately opts it in. (An earlier
+ * version of this comment enumerated five providers by name and went stale as
+ * the fleet reached ten — the code was always fleet-complete; the prose wasn't.)
  *
  * Current state (verified 1.0.7): the ensemble transcript builder already only
  * carries `message.content`, and `ChatMessage` has no reasoning field — so

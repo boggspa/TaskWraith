@@ -202,7 +202,9 @@ protocol. Runtime-derived markers are excluded: restart TaskWraith and use its
 exact recovery path instead of adopting or deleting them.
 
 1. **Confirm decay.** Expired, or `kill -0 <pid>` fails. An alive pid past
-   expiry is still decayed (see above).
+   expiry is still decayed (see above). Prefer `npm run work-guard`, which
+   reads all three signals together — a stale pid or a passed expiry does
+   **not** mean decayed if the claim's own files are still being written.
 2. **Hunt for stranded work before your first edit.** Check the marker's
    `paths:` in `git status`, and check its `worktree:` (or `git worktree list`
    for the marker's slug). A session that died mid-task leaves half-done work;
@@ -277,6 +279,64 @@ it rather than deleting someone's marker.
 
 Hooks are not cloned by a fresh checkout and only fire at commit time, so this
 is a backstop, not a guarantee — the rules above still stand on their own.
+
+### The clock, for the hours between commits
+
+Everything above is edge-triggered on `git commit`: the hook, "raise your
+marker before your first edit", "drop it in the same breath as your final
+commit". On 2026-07-30 every failure happened in the gaps. One session sat
+**~11 hours on 8,600 uncommitted lines without a single commit**, so the hook
+was never invoked once and its marker's scope list was the only trace; a
+visible bug shipped in 1.9.1 because its fix was uncommitted the whole time;
+and a marker decayed while its session was demonstrably still working. That is
+one defect, not three — **nothing ran between commits.**
+
+[`scripts/work-guard.cjs`](scripts/work-guard.cjs) is the clock. It is
+read-only with respect to shared state: it never writes the index, the working
+tree, another session's marker, or any branch, and it never pushes.
+
+```bash
+npm run work-guard           # who is live, what is unclaimed, snapshot count
+npm run work-guard:check     # exit 1 on aged unclaimed work — use before a tag
+```
+
+**Unclaimed dirty work is the alarm.** The question it answers is the one no
+marker can: *is there dirty work that nobody has promised to finish?* That
+needs no attribution — you never have to work out whose file it is. A path is
+orphaned when it is dirty and no **live** claim covers it, and a decayed claim
+covers nothing, which is exactly how the 8,600-line case would have surfaced
+within the hour instead of the next day.
+
+**Snapshots make loss impossible.** Every tick commits the whole working tree
+to `refs/wip/<timestamp>` — tracked edits, other sessions' staged work, and
+untracked files, plus the markers themselves so a dead session's intent
+survives with its diff. Nothing is pushed and nothing appears in `git status`,
+`git log`, or `git branch`. To recover:
+
+```bash
+git for-each-ref --format='%(refname) %(committerdate:relative)' refs/wip/
+git show refs/wip/<stamp>:path/to/file
+git checkout refs/wip/<stamp> -- path/to/file
+```
+
+Note that `git stash create` is **not** what this uses: measured on git 2.49.0
+it does not capture untracked files, which is precisely where new work lives.
+The tree is built through a throwaway `GIT_INDEX_FILE`, which is why the real
+index comes back byte-identical.
+
+**The heartbeat stops false decay.** `lastSeen` is *derived* — the newest mtime
+among the dirty files a marker actually claims, plus a live pid — and it lives
+in a sidecar (`.work-guard/heartbeat.json`), never inside the marker, so the
+timer never writes a file another session owns. A claim is live when its
+heartbeat is fresh **or** the old pid-and-expiry rule says so, which is what
+kept all three of today's false decays from mattering: a pid recorded from a
+subshell, a host process that died mid-session, and an `expires` guessed too
+short. A marker carrying no heartbeat behaves exactly as it did before, so
+claims written before this existed are unaffected.
+
+It does **not** join the `ci` chain, deliberately: CI checks out clean and has
+no sessions or markers to reason about. It is local concurrency tooling, and a
+green CI run says nothing about it.
 
 ---
 

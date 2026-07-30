@@ -241,6 +241,7 @@ import {
 } from './RendererAttachmentAuthorization'
 import { bindRuntimeWorktreeBaseWorkspace, derivePopoutRunPayload } from './RendererRunAuthority'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
+import { mergeToolDiffSummary } from '../shared/toolDiffSummaryMerge'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,
@@ -555,7 +556,13 @@ import {
   type HistoryClearDispatchReservation,
   type HistoryClearRunPersistenceAuthority
 } from './HistoryClearAdmissionGate'
-import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
+import {
+  HumanCollaborationStore,
+  type HumanCollaborationShare
+} from './collaboration/HumanCollaborationStore'
+import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
+import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
+import { resolveChatEffectiveRoster } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
@@ -601,7 +608,9 @@ import {
 import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
 import {
   MidRunSteeringRegistry,
-  buildMidRunSteeringUserMessage,
+  HOST_MIDRUN_STEERING_AUTHOR,
+  buildMidRunSteeringMessage,
+  type MidRunSteeringEntry,
   findScheduledSteeringMessage,
   midRunSteeringAbsorbEligible,
   planLiveSteerDelivery,
@@ -1543,6 +1552,7 @@ import {
 } from './antigravity/AntigravityCombinedModeDispatch'
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
+import { readCachedAgyModelRecord } from './antigravity/AntigravityAgyModelCache'
 import {
   AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
   agyQuotaUnavailableSnapshot,
@@ -1565,6 +1575,7 @@ import {
 import { createOllamaMainRuntime } from './ollama/OllamaMainRuntime'
 import { OLLAMA_ADVERTISED_TOOL_NAMES } from './ollama/OllamaToolTiers'
 import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
+import { resolveOllamaMeasuredContextTokens } from './ollama/OllamaContextBudget'
 import {
   assertOllamaResolvedToolPolicy,
   ollamaResolvedToolPolicyError,
@@ -5069,6 +5080,36 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
  * `createThreadMessageAccessResolver`, which owns the approval-ledger row for
  * every allow no human saw. This block is wiring only.
  */
+/**
+ * Does this chat have an approval authority that is NOT an external human?
+ *
+ * Boss is primary and Captain is the fallback, so either alone is enough — but
+ * an authority held by an external is no authority at all for permission
+ * purposes. If the only assigned leadership is external, consent recorded on
+ * the ensemble must stop elevating anything.
+ *
+ * Fails OPEN when the collaboration store is unreachable, matching the
+ * behaviour before externals existed: the gate is only reachable during a live
+ * run, and an external id cannot satisfy any live-roster check anyway, so a
+ * missing answer here cannot manufacture an external authority. If that ever
+ * stops being true this must be revisited — it is the one place in this pair
+ * that is not fail-closed, and it is deliberate.
+ */
+function hasNonExternalApprovalAuthority(
+  chatId: string | undefined,
+  chat: {
+    ensemble?: { bossmanParticipantId?: string; secondInCommandParticipantId?: string }
+  } | null
+): boolean {
+  const boss = chat?.ensemble?.bossmanParticipantId
+  const captain = chat?.ensemble?.secondInCommandParticipantId
+  const assigned = [boss, captain].filter((id): id is string => Boolean(id))
+  if (assigned.length === 0) return false
+  if (!chatId || !resolveExternalCollaboratorSeatIds) return true
+  const externals = new Set(resolveExternalCollaboratorSeatIds(chatId))
+  return assigned.some((id) => !externals.has(id))
+}
+
 const threadMessageAccessResolver = createThreadMessageAccessResolver({
   resolveServicePolicy: ({ context }) => {
     const ctx = context as { effectivePermissions?: EffectiveRunPermissions }
@@ -5100,11 +5141,22 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
             workspacePath: context.workspacePath
           })
       ),
-      // The recorded user consent is the signal here. Which participant holds the
-      // approval authority is `evaluateBossmanAutoApproval`'s question, and that
-      // gate deliberately never covers non-shell/file services — see
+      // The recorded user consent is the signal here. WHICH model participant
+      // holds the authority is `evaluateBossmanAutoApproval`'s question, and
+      // that gate deliberately never covers non-shell/file services — see
       // ThreadMessagePermission for why elevation lives in our own gate.
-      bossAutoApproval: consent?.enabled === true && consent.mode === 'permission_preset_once'
+      //
+      // One identity question this gate MUST answer for itself, though: an
+      // authority held by an EXTERNAL human collaborator elevates nothing.
+      // Externals never receive approval prompts, so treating their authority as
+      // consent would let a thread-wide flag carry an unattended wake — a turn
+      // started in another thread with nobody watching — on the strength of
+      // someone who is never asked. `evaluateBossmanAutoApproval` cannot cover
+      // it: this path never reaches that gate.
+      bossAutoApproval:
+        consent?.enabled === true &&
+        consent.mode === 'permission_preset_once' &&
+        hasNonExternalApprovalAuthority(context.appChatId, chat)
     }
   },
   requestApproval: async ({ context, parentProvider, crossWorkspace, requestedDelivery }) => {
@@ -10030,10 +10082,51 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
   }
 }
 
+/**
+ * Set once the collaboration runtime exists (see `markProjectionDirty` at its
+ * construction site). A module-level hook because `broadcastChatUpdated` is
+ * top-level and the runtime is built much later inside app setup.
+ *
+ * Why this exists at all: until now NOTHING republished a collaborator's
+ * projection when the transcript changed. `broadcastHumanCollaborationUpdate`
+ * was only ever called by the external's own `appendComment` and by nine share-
+ * ADMINISTRATION handlers (create/revoke/rules) — none of which fire when the
+ * host or a model speaks. So a collaborator saw the transcript as it stood at
+ * the moment they joined and then nothing, for the rest of the session. That is
+ * the "no live updates after joining" report, and the frame cap was never
+ * involved: the projection is bounded at ~144k chars with the options actually
+ * used, nowhere near the relay's 1 MiB close.
+ */
+let markHumanCollaborationProjectionDirty: ((chatId: string) => void) | null = null
+
+/**
+ * Seat ids held by EXTERNAL human collaborators on a chat, or `undefined` when
+ * the collaboration store does not exist yet.
+ *
+ * A module-level hook because the permission gates that need this are top-level
+ * functions while the store is built far down inside app setup.
+ *
+ * The id IS the `collaboratorId`: externals are never written into
+ * `chat.ensemble.participants` (see `src/shared/effectiveEnsembleRoster.ts` for
+ * why the roster is derived rather than merged), so the share participant is the
+ * only source, and its `collaboratorId` is the seat id every authority field
+ * stores.
+ *
+ * `undefined` rather than `[]` when unresolvable, deliberately: it means "no
+ * answer", which the consumers treat as today's behaviour. That is safe only
+ * because the gate is reachable exclusively during a live run, by which point
+ * the store exists — and because externals are absent from the roster anyway,
+ * so an external id cannot satisfy a live-membership check. An empty array
+ * would assert "there are no externals", which is a different and unearned
+ * claim.
+ */
+let resolveExternalCollaboratorSeatIds: ((chatId: string) => readonly string[]) | null = null
+
 function broadcastChatUpdated(chat: ChatRecord): void {
   enqueueChatUpdated(mainWindow, chat)
   broadcastChatPopoutUpdate(chat)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
+  markHumanCollaborationProjectionDirty?.(chat.appChatId)
 }
 
 function enqueueChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
@@ -11999,16 +12092,12 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
         })
       : undefined
   if (stats) {
-    if (!activity.diffSummary) {
-      activity.diffSummary = stats
-    } else if (activity.diffSummary.source === stats.source) {
-      activity.diffSummary = { ...activity.diffSummary, ...stats }
-    } else if (
-      (stats.additions ?? 0) > (activity.diffSummary.additions ?? 0) ||
-      (stats.deletions ?? 0) > (activity.diffSummary.deletions ?? 0)
-    ) {
-      activity.diffSummary = { ...activity.diffSummary, ...stats }
-    }
+    // Precedence lives in `mergeToolDiffSummary` so it is unit-tested rather
+    // than asserted only by how the odometer looks. Larger-wins is preserved
+    // for every estimating source; the one addition is that a WORKSPACE-MEASURED
+    // summary outranks estimates regardless of magnitude, because git numbers are
+    // usually smaller than the estimators' and were being rejected for it.
+    activity.diffSummary = mergeToolDiffSummary(activity.diffSummary, stats)
     // Late filename: a patch streamed via results names the card too.
     if (!activity.filePath) {
       const paths = new Set(
@@ -13111,6 +13200,13 @@ function bossmanAutoApprovalMetadata(input: {
     primaryBossUnavailableReason: primary.reason,
     autoApprovals: ensemble.bossmanAutoApprovals,
     participantIds: ensemble.participants.map((participant) => participant.id),
+    // An authority held by an external approves nothing for anybody. Passed
+    // explicitly rather than relying on externals being absent from
+    // `participantIds` — that is safety by representation, and this gate must
+    // hold as a rule once a caller ever passes an effective roster.
+    ...(chatId && resolveExternalCollaboratorSeatIds
+      ? { externalParticipantIds: resolveExternalCollaboratorSeatIds(chatId) }
+      : {}),
     targetParticipantId: ensembleRun.participantId,
     targetProvider: ensembleRun.provider,
     targetRole: ensembleRun.role,
@@ -14793,20 +14889,26 @@ function appendEnsembleSteerIntoLiveRound(chatId: string, text: string): void {
   const messageId = `midrun-steer-${randomUUID()}`
   appendMidRunSteeringMessage(
     chat,
-    buildMidRunSteeringUserMessage({ id: messageId, content: text, timestampIso: nowIso })
+    buildMidRunSteeringMessage({
+      id: messageId,
+      content: text,
+      timestampIso: nowIso,
+      author: HOST_MIDRUN_STEERING_AUTHOR
+    })
   )
   const entry = midRunSteeringRegistry.register({
     chatId,
     messageId,
     text,
     source: 'ensembleSteer',
+    authorKind: 'host',
     createdAtIso: nowIso
   })
   // The seat that is RUNNING right now is the one seat no later hop prompt can
   // reach. A pi seat can take the interjection mid-turn; every other provider
   // composes its turn once at dispatch and must wait for the boundary. Opt-in,
   // best-effort, and confirmed only by pi's own queue drain.
-  attemptPiLiveSteerDelivery(chatId, entry.id, text)
+  attemptPiLiveSteerDelivery(chatId, entry)
 }
 
 /**
@@ -14841,7 +14943,12 @@ function maybeAppendScheduledSteeringForBusyTask(
     if (!alreadyAppended) {
       appendMidRunSteeringMessage(
         chat,
-        buildMidRunSteeringUserMessage({ id: messageId, content, timestampIso: firedAtIso })
+        buildMidRunSteeringMessage({
+          id: messageId,
+          content,
+          timestampIso: firedAtIso,
+          author: HOST_MIDRUN_STEERING_AUTHOR
+        })
       )
     }
     // Register either way: after a restart the durable append survives while
@@ -14851,6 +14958,7 @@ function maybeAppendScheduledSteeringForBusyTask(
       messageId,
       text: content,
       source: 'scheduledTask',
+      authorKind: 'host',
       createdAtIso: firedAtIso,
       scheduledTaskId: task.id
     })
@@ -14889,10 +14997,11 @@ function seedScheduledSoloTranscript(
   const userMessage: ChatMessage | null = existingSteeringMessage
     ? null
     : steeringEntry
-      ? buildMidRunSteeringUserMessage({
+      ? buildMidRunSteeringMessage({
           id: steeringEntry.messageId,
           content: task.displayPrompt || task.prompt,
-          timestampIso: steeringEntry.createdAtIso
+          timestampIso: steeringEntry.createdAtIso,
+          author: HOST_MIDRUN_STEERING_AUTHOR
         })
       : {
           id: promptMessageId,
@@ -17504,7 +17613,11 @@ function releasePiLiveSteerBinding(appRunId: string | undefined): void {
  * that never drains the queue all leave the entry untouched for the existing
  * boundary path. Never throws into the caller's absorb path.
  */
-function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: string): void {
+// Takes the ENTRY rather than a loose (id, text) pair: the delivery decision
+// now depends on who authored the text, and passing the pieces separately would
+// let a caller hand this function one entry's id with another's words.
+function attemptPiLiveSteerDelivery(chatId: string, entry: MidRunSteeringEntry): void {
+  const { id: entryId, text } = entry
   if (!piLiveSteerEnabled()) return
   try {
     for (const session of runManager.getActiveByProvider('pi')) {
@@ -17517,6 +17630,7 @@ function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: strin
           enabled: true,
           provider: 'pi',
           text,
+          authorKind: entry.authorKind,
           hasLiveTransport: Boolean(writer),
           // A settled run still ACKS a steer and never runs another turn.
           runSettled: Boolean(state?.completed)
@@ -40616,6 +40730,23 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             return { ok: false, error: 'Ensemble mode is disabled on your Mac.' }
           }
+          // Same refusal as the desktop `set-chat-kind` handler: a SHARED chat
+          // cannot leave panel mode. This path does not go through that handler
+          // — it calls chatService.setChatKind directly and re-implements the
+          // linked-child, workspace and ensemble-mode checks — so without this
+          // the phone could do what the Mac is refused, and the collapse would
+          // strip a roster containing external seats into a stash that a later
+          // preset-apply can resurrect.
+          if (
+            action.targetKind !== 'ensemble' &&
+            chat.chatKind === 'ensemble' &&
+            chatService.listHumanCollaborationShares(action.threadId).some((share) => share.enabled)
+          ) {
+            return {
+              ok: false,
+              error: 'This chat is shared. Stop sharing before switching it out of panel mode.'
+            }
+          }
           try {
             const updated = chatService.setChatKind({
               chatId: action.threadId,
@@ -41124,17 +41255,31 @@ if (isGeminiMcpBridgeProcess) {
           // the leadership precondition. Disabling always clears; enabling
           // preserves an existing confirmedAt (re-toggles aren't re-consent).
           const shouldUpdateAutoApprovals = typeof action.bossmanAutoApprovals === 'boolean'
-          const hasLeadershipForAutoApprovals = Boolean(
-            chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
+          // An external human holding Boss/Captain is not leadership for this
+          // purpose: they never receive approval prompts, so consent recorded
+          // against them would auto-allow other seats on the strength of
+          // somebody who is never asked. Refuse at the ENABLE door as well as
+          // in the gates, so the flag cannot be switched on in that state at
+          // all rather than being switched on and then ignored.
+          const hasLeadershipForAutoApprovals = hasNonExternalApprovalAuthority(
+            chat.appChatId,
+            chat
           )
           if (
             shouldUpdateAutoApprovals &&
             action.bossmanAutoApprovals === true &&
             !hasLeadershipForAutoApprovals
           ) {
+            // Two different reasons reach this refusal and telling a host to
+            // "assign a Boss" when they plainly have one is worse than useless.
+            const hasAnyLeadership = Boolean(
+              chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
+            )
             return {
               ok: false,
-              error: 'Assign a Boss or Captain before enabling Auto Approvals.'
+              error: hasAnyLeadership
+                ? 'Auto Approvals needs a Boss or Captain who can answer prompts. An external collaborator cannot hold it.'
+                : 'Assign a Boss or Captain before enabling Auto Approvals.'
             }
           }
           const nextBossmanAutoApprovals =
@@ -42809,7 +42954,14 @@ if (isGeminiMcpBridgeProcess) {
             // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
               ? {
-                  ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
+                  ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory),
+                  // Daemon-measured window cached by a prior run. Absent on a
+                  // model's first run, which is safe — the budget then keeps its
+                  // conservative default instead of scaling off an assumed window.
+                  ollamaLiveContextTokens: resolveOllamaMeasuredContextTokens(
+                    bridgeSettings.ollamaModelContextTokens,
+                    inheritedModel
+                  )
                 }
               : {})
           } satisfies Parameters<typeof composeRunPrompt>[0]
@@ -45626,6 +45778,44 @@ if (isGeminiMcpBridgeProcess) {
     const humanCollaborationStore = new HumanCollaborationStore(
       join(app.getPath('userData'), 'human-collaboration.json')
     )
+    /**
+     * Tri-state presence for external collaborators, owned here so the sweep
+     * timer lives with the process rather than inside the pure tracker.
+     *
+     * Deliberately NOT expressed as `participant.enabled` on a roster seat:
+     * `computeEnsemblePromptShellStamp` hashes every enabled seat, so a flaky
+     * collaborator flipping that flag would bust the whole panel's prompt cache
+     * twice per reconnect.
+     */
+    const humanCollaborationPresence = new HumanCollaborationPresence({})
+    /**
+     * Host-review queue. Inert until a share opts in via `requiresHostApproval`,
+     * so carrying it changes nothing for an existing share.
+     */
+    const externalContributionQueue = new ExternalContributionQueueStore(
+      join(app.getPath('userData'), 'external-contribution-queue.json'),
+      (line) => console.warn(line)
+    )
+    /** A seat's per-share colour override, when the host has set one. */
+    const resolveSeatColorIndex = (
+      share: HumanCollaborationShare,
+      collaboratorId: string
+    ): { colorIndex?: number } => {
+      const found = share.participants.find(
+        (participant) => participant.collaboratorId === collaboratorId
+      )
+      return typeof found?.colorIndex === 'number' ? { colorIndex: found.colorIndex } : {}
+    }
+    // Active externals only. A revoked participant holds no seat, and a pending
+    // one has not completed SAS — neither may carry an authority.
+    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] => {
+      if (!chatId) return []
+      const share = humanCollaborationStore.getShareForChat(chatId)
+      if (!share) return []
+      return share.participants
+        .filter((participant) => participant.status === 'active')
+        .map((participant) => participant.collaboratorId)
+    }
     // P2a — bounded, durable audit of host-visible collaboration events
     // (rules changes, invites, admission, contributions, drafts, revocations).
     const humanCollaborationAuditLog = new HumanCollaborationAuditLog(
@@ -45643,18 +45833,52 @@ if (isGeminiMcpBridgeProcess) {
       kind: 'chat' | 'truncate' | 'workspace' | 'global',
       chatIds: readonly string[]
     ): void => {
+      // Close the live doors BEFORE the records go, or the roomIds needed to
+      // find them are gone with the share. Purging a share record does not
+      // disturb the collaborator's socket at all: they keep an open sealed
+      // channel to erased content, and the next projection build throws with
+      // nothing surfaced on either side. Given TW-SEC-014, an erasure that
+      // leaves a live reader attached is the wrong failure direction.
+      const closeRoomsForShares = (shares: readonly HumanCollaborationShare[]): void => {
+        for (const share of shares) {
+          for (const invite of share.invites) {
+            if (invite.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
+          }
+        }
+      }
       if (kind === 'global') {
+        closeRoomsForShares(humanCollaborationStore.listShares())
         humanCollaborationAuditLog.purgeAll()
         humanCollaborationStore.purgeAllShares()
         return
       }
       const targets = new Set(chatIds)
-      const shareIds = humanCollaborationStore
+      const scopedShares = humanCollaborationStore
         .listShares()
         .filter((share) => targets.has(share.chatId))
-        .map((share) => share.shareId)
-      humanCollaborationAuditLog.purgeEntries({ chatIds, shareIds })
-      if (kind !== 'truncate') humanCollaborationStore.purgeChatShares(chatIds)
+      // `truncate` deliberately KEEPS the share (the chat shell survives), but
+      // the rows underneath the collaborator are being erased — so the channel
+      // still has to drop rather than silently serve a transcript that no
+      // longer matches the host's.
+      closeRoomsForShares(scopedShares)
+      humanCollaborationAuditLog.purgeEntries({
+        chatIds,
+        shareIds: scopedShares.map((share) => share.shareId)
+      })
+      if (kind !== 'truncate') {
+        humanCollaborationStore.purgeChatShares(chatIds)
+        return
+      }
+      // …but a truncate must not leave the share advertising itself as live
+      // with no door behind it. Closing alone would strand the collaborator
+      // until the host restarted the app or minted a fresh invite, because
+      // `openRoom` has only two callers (boot re-open and create-invite) —
+      // while the host's Shares UI went on showing the share as enabled. Re-open
+      // so the pinned-identity reconnect can land: the session is still dropped,
+      // so they re-handshake and get the TRUNCATED projection, never the erased
+      // rows. Guarded on the transport already existing, so startup erasure
+      // recovery cannot construct the runtime ahead of its own wiring.
+      if (humanCollaborationHostTransport) reopenCollaborationRooms()
     }
 
     const drainOrphanSubThreadsBeforeRunQueue = async (): Promise<void> => {
@@ -46785,7 +47009,11 @@ if (isGeminiMcpBridgeProcess) {
       sanitizeChatForSave,
       assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
       clearHistoryTransaction: clearBroadChatHistory,
-      appendDurableRunEventForRoute
+      appendDurableRunEventForRoute,
+      // Evaluated lazily — the transport is constructed further down this same
+      // flow, and a destructive chat path can only fire long after that.
+      closeCollaborationRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId),
+      externalContributionQueue
     })
     let humanCollaborationRuntime: HumanCollaborationRuntime<
       HumanShareProjection,
@@ -46869,10 +47097,43 @@ if (isGeminiMcpBridgeProcess) {
       humanCollaborationRuntime = new HumanCollaborationRuntime({
         identityKeyPair: identity,
         store: humanCollaborationStore,
-        buildProjection: ({ share }) => {
+        presence: humanCollaborationPresence,
+        buildProjection: ({ share, collaboratorId }) => {
           const chat = chatService.getChat(share.chatId)
           if (!chat) throw new Error('Chat not found.')
-          return buildHumanShareProjection(chat, share)
+          // The effective panel: model seats from the chat, external seats from
+          // the share, presence from the tracker. Externals are never rows in
+          // `chat.ensemble.participants` — the roster is derived, not merged.
+          const roster = resolveChatEffectiveRoster({
+            participants: chat.ensemble?.participants,
+            share,
+            resolvePresence: (id) => humanCollaborationPresence.collaboratorState(id)
+          })
+          // The viewer's OWN entries only. Scoped here rather than in the
+          // builder, because "whose queue is this" is a collaboration question
+          // and the builder is deliberately queue-agnostic. `toCollaboratorView`
+          // is the whitelist — the body never crosses (they wrote it), nor the
+          // ids, nor the messageId the entry will become.
+          const pendingForViewer = externalContributionQueue
+            .listForCollaborator(collaboratorId)
+            .filter((entry) => entry.chatId === chat.appChatId)
+            .map((entry) => ExternalContributionQueueStore.toCollaboratorView(entry))
+          return buildHumanShareProjection(chat, share, {
+            ...(pendingForViewer.length ? { pendingForViewer } : {}),
+            // Lets the receiver tell their own words from everyone else's, which
+            // the whole presentation rule depends on.
+            viewerCollaboratorId: collaboratorId,
+            roster: roster.seats.map((seat) => ({
+              seatId: seat.seatId,
+              kind: seat.kind,
+              label: seat.label,
+              order: seat.order,
+              ...(seat.kind === 'external' ? { present: seat.present } : {}),
+              ...(seat.kind === 'external'
+                ? resolveSeatColorIndex(share, seat.collaboratorId)
+                : {})
+            }))
+          })
         },
         appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content, intent }) => {
           const result = chatService.appendCollaboratorComment({
@@ -46888,7 +47149,12 @@ if (isGeminiMcpBridgeProcess) {
           // P2b auto-draft: hand the wrapped, provenance-carrying draft to the
           // host renderer so it can pre-fill the composer. Display-only — the
           // renderer never sends it; the host reviews and sends.
-          if (result.autoDraft) {
+          //
+          // A QUEUED contribution has no transcript row yet and so no message to
+          // reference — the draft moves to approve time, where the row is
+          // actually created. Guarded on the message rather than on `queued` so
+          // any future path that yields no row is covered by construction.
+          if (result.autoDraft && result.message) {
             mainWindow?.webContents.send('human-collaboration-action-request', {
               chatId: result.chat.appChatId,
               messageId: result.message.id,
@@ -47918,9 +48184,7 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderCanRebindChatWorkspace: (event) => assertMainRendererSender(event),
       assertSenderCanManageChatCollection: (event) => assertMainRendererSender(event)
     })
-    const broadcastHumanCollaborationUpdate = (chatId: string): void => {
-      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
-      broadcastThreadUpdate(chatId)
+    const publishCollaborationProjection = (chatId: string): void => {
       humanCollaborationRuntime?.publishProjectionUpdates(chatId).catch((err) => {
         console.warn(
           `[human-collaboration] projection publish failed: ${
@@ -47929,6 +48193,83 @@ if (isGeminiMcpBridgeProcess) {
         )
       })
     }
+    const broadcastHumanCollaborationUpdate = (chatId: string): void => {
+      mainWindow?.webContents.send('human-collaboration-updated', { chatId })
+      broadcastThreadUpdate(chatId)
+      publishCollaborationProjection(chatId)
+    }
+    // Transcript-driven projection republish. Deliberately NOT a direct call to
+    // `publishProjectionUpdates` off the chat-update hot path: that rebuilds,
+    // re-redacts and re-seals the whole projection per subscriber, and the
+    // byte-budget trim `JSON.stringify`s it once per dropped row, synchronously
+    // on main — a 600 KB stringify storm on every streamed token batch.
+    //
+    // Two guards make it cheap. The subscriber check answers "is anyone
+    // watching?" before any work, so the overwhelming majority of chats (never
+    // shared) pay one map lookup. The trailing-edge debounce then coalesces a
+    // burst of streamed updates into one publish, at roughly the cadence the
+    // host transport already flushes at (FLUSH_MIN_INTERVAL_MS = 200 ms), so we
+    // never queue faster than the wire drains.
+    //
+    // This does not make the BUILD cheap — it still reconstructs the whole
+    // projection each time. Delta frames are the fix for that and are a separate
+    // slice; this one is only about the channel being pumped at all.
+    const PROJECTION_DIRTY_DEBOUNCE_MS = 300
+    const projectionDirtyTimers = new Map<string, NodeJS.Timeout>()
+    markHumanCollaborationProjectionDirty = (chatId: string): void => {
+      if (!chatId) return
+      if (!humanCollaborationRuntime?.hasProjectionSubscriberForChat(chatId)) return
+      if (projectionDirtyTimers.has(chatId)) return
+      const timer = setTimeout(() => {
+        projectionDirtyTimers.delete(chatId)
+        publishCollaborationProjection(chatId)
+      }, PROJECTION_DIRTY_DEBOUNCE_MS)
+      // Never hold the process open for a pending republish.
+      timer.unref?.()
+      projectionDirtyTimers.set(chatId, timer)
+    }
+    // Presence sweep. The tracker is a pure state machine and deliberately arms
+    // nothing itself, so the grace window only advances when somebody asks —
+    // this is the somebody. Each promotion from grace to expired is a seat
+    // leaving the panel, which both the host surfaces and any remaining
+    // collaborator need to see.
+    //
+    // A plain interval rather than a timer per deadline: the tracker is cheap,
+    // sweeps are idempotent, and one unref'd 15s tick cannot leak or drift the
+    // way a forest of per-session timers can. `silent` transitions are ignored —
+    // reaping a stale twin of someone still connected elsewhere is not a
+    // departure and must not churn anything.
+    const presenceSweep = setInterval(() => {
+      // WRAPPED, and this is not defensive habit. This interval is created
+      // unconditionally in the ready flow and fires for every user whether or
+      // not they have ever shared anything; Electron's main process registers
+      // only an uncaughtException MONITOR, which does not suppress the default
+      // action. An unhandled throw here would therefore crash main every
+      // fifteen seconds for the entire install base — from something as small as
+      // one malformed persisted record.
+      try {
+        const dirtyChatIds = new Set<string>()
+        for (const transition of humanCollaborationPresence.sweep()) {
+          if (transition.silent) continue
+          dirtyChatIds.add(transition.chatId)
+        }
+        // Expiring a contribution is a fact the person who wrote it is owed, and
+        // the projection is the only channel that reaches them.
+        for (const lapsed of externalContributionQueue.sweep()) {
+          dirtyChatIds.add(lapsed.chatId)
+        }
+        for (const chatId of dirtyChatIds) {
+          broadcastHumanCollaborationUpdate(chatId)
+        }
+      } catch (err) {
+        console.warn(
+          `[human-collaboration] sweep failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      }
+    }, 15_000)
+    presenceSweep.unref?.()
     disposeHumanCollaborationIpcHandlers = registerHumanCollaborationHandlers({
       chatService,
       humanCollaborationStore,
@@ -47959,6 +48300,14 @@ if (isGeminiMcpBridgeProcess) {
       },
       broadcastChatUpdated,
       broadcastHumanCollaborationUpdate,
+      // Host review changes what the CONTRIBUTOR sees, and approve/deny touch
+      // only the queue's own JSON — the ChatRecord is untouched, so the
+      // projection's usual trigger (broadcastChatUpdated) never fires for them.
+      // The dirty marker is debounced and self-gates on there being a live
+      // subscriber, so calling it on a chat nobody is watching costs nothing.
+      republishHumanCollaborationProjection: (chatId: string): void => {
+        markHumanCollaborationProjectionDirty?.(chatId)
+      },
       assertMainRendererSender,
       resolveSenderHumanCollaborationScope: (event) => {
         if (isMainRendererSender(event)) return { kind: 'main' }
@@ -48832,6 +49181,16 @@ if (isGeminiMcpBridgeProcess) {
       modelsSnapshot: (settings) => managedRunConfiguredProviderDiscovery.modelsSnapshot(settings),
       fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
         fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
+      // Lets a refresh recover authentication provenance that discovery has not
+      // established in this session. Reads the persisted catalogue only — no
+      // PTY, no backend round-trip — so it cannot affect the probe cadence the
+      // block below is careful to clamp.
+      readCachedProvenanceRecord: async () => {
+        const record = await readCachedAgyModelRecord({
+          userDataPath: app.getPath('userData')
+        })
+        return { models: record.models as unknown[], updatedAtMs: record.updatedAtMs }
+      },
       fetchAuthenticatedQuota: async (settings, force) => {
         // Every /usage probe is a real authenticated agy session, so cadence
         // is the fingerprint. The decision helper enforces the doctrine:

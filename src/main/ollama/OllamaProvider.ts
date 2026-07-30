@@ -155,6 +155,12 @@ export interface OllamaProviderDeps {
   >
   getTotalMemoryBytes?: () => number
   markOllamaModelPreflightComplete?: (modelId: string) => void
+  /**
+   * Persist a daemon-measured context length for this model so synchronous
+   * consumers can read it later (see `AppSettings.ollamaModelContextTokens`).
+   * Implementations must write only on change — this is called per run.
+   */
+  recordOllamaModelContextTokens?: (modelId: string, contextTokens?: number | null) => void
   emitOllamaModelPreflight?: (
     sender: Electron.WebContents,
     result: OllamaModelPreflightResult,
@@ -460,7 +466,7 @@ function ollamaCanonicalJson(value: unknown): string {
 
 /** Stable per-run key for a (toolName, arguments) pair. */
 export function ollamaToolCallKey(toolName: string, args: Record<string, unknown>): string {
-  return `${toolName}${ollamaCanonicalJson(args || {})}`
+  return `${toolName}\u0001${ollamaCanonicalJson(args || {})}`
 }
 
 /**
@@ -2665,6 +2671,12 @@ export async function runOllamaProvider(
     const messages = JSON.parse(
       JSON.stringify(launchPlan.openingMessages)
     ) as OllamaChatMessage[]
+    // Cache the daemon's own context length for this model, keyed on the plain
+    // model id (not the preflight key, which folds in a digest). Recorded on every
+    // run rather than only inside the preflight gate below, because that gate is
+    // one-shot per model+digest and a model whose preflight already ran would
+    // otherwise never publish its window. The implementation writes only on change.
+    deps.recordOllamaModelContextTokens?.(model, modelInfo?.contextLength)
     const preflightKey = ollamaModelPreflightKey(model, modelInfo)
     if (
       shouldRunOllamaModelPreflight(settings.ollamaModelPreflightAt, preflightKey) &&

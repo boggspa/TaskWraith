@@ -156,7 +156,7 @@ export function agentQuestionTombstoneKey(
     tombstone.outcome,
     tombstone.answer ?? '',
     tombstone.isCustomAnswer ? 'custom' : 'preset',
-    tombstone.options.join(''),
+    tombstone.options.join('\u001f'),
     suppressedReply ? 'hidden' : 'shown'
   ].join('|')
 }

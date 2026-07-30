@@ -3254,6 +3254,19 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   border-top: 1px solid color-mix(in srgb, var(--panel-border) 76%, transparent);
 }
 
+/* An explained-empty quota row. This class shipped with NO stylesheet entry at
+ * all, so it fell back to UA body text — roughly double the card's own scale —
+ * and one provider's "no authenticated connection" sentence visually swamped
+ * every metered provider above and below it. Matches the muted label tone the
+ * window rows use; the full reason lives in the element's `title`. */
+.model-usage-quota-unavailable {
+  font-size: 11px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--text-secondary) 62%, transparent);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
 .model-usage-window {
   display: flex;
   flex-direction: column;

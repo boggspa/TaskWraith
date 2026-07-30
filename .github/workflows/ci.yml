@@ -3,15 +3,31 @@ name: CI
 on:
   push:
   pull_request:
+  # Nightly platform sweep. The local gate runs on macOS, so a defect shaped by
+  # Linux or Windows is invisible until something triggers the matrix — and on
+  # the 1.9.0 candidate the thing that triggered it was ship night. Three of
+  # five legs went red with five separate defects, every one in a feature that
+  # landed after v1.8.9 and had therefore never executed on those platforms.
+  # A nightly run surfaces that class the day it lands instead of on the eve of
+  # a release. scripts/platform-portability-guard.cjs catches the greppable
+  # signatures locally; this catches everything that is only visible by running.
+  #
+  # Only `test` (the four-OS matrix) and `ios` execute on this trigger: the
+  # release jobs require a `refs/tags/v` ref and the unsigned build jobs require
+  # `github.event_name == 'workflow_dispatch'`, so neither fires on a schedule.
+  # GitHub runs scheduled workflows on the DEFAULT BRANCH only, and disables the
+  # schedule after 60 days without repository activity.
+  schedule:
+    - cron: '17 3 * * *' # 03:17 UTC daily — off the hour, which is peak queueing
   workflow_dispatch:
     inputs:
       build_unsigned_windows:
-        description: "Build SHA/run-labelled unsigned Windows test artifacts. Never publishes a release."
+        description: 'Build SHA/run-labelled unsigned Windows test artifacts. Never publishes a release.'
         required: true
         type: boolean
         default: false
       build_unsigned_linux:
-        description: "Build SHA/run-labelled unsigned Linux test artifacts. Never publishes a release."
+        description: 'Build SHA/run-labelled unsigned Linux test artifacts. Never publishes a release.'
         required: true
         type: boolean
         default: false
@@ -72,7 +88,7 @@ jobs:
       - name: Select Xcode 26.0 (Swift 6.2 — matches ship toolchain)
         uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
         with:
-          xcode-version: "26.0"
+          xcode-version: '26.0'
       - name: Toolchain versions
         run: xcodebuild -version && swift --version
       # `swift test` builds TaskWraithKit + TaskWraithUI (all the SwiftUI/Glass

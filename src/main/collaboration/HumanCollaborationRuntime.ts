@@ -44,6 +44,7 @@ import {
 } from './HumanCollaborationStore'
 import { HumanCollaborationDenialError } from './HumanContributionRules'
 import type { HumanCollaborationAuditLike } from './HumanCollaborationAuditLog'
+import type { HumanCollaborationPresenceSessionRef } from './HumanCollaborationPresence'
 
 // Append rate limit (per shareId:collaboratorId). Collaborators are untrusted;
 // each accepted append triggers a whole-chat persist + a projection reseal +
@@ -104,8 +105,36 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
   }) => void
   /** P2a durable audit sink (admission, session, rejected-contribution events). */
   audit?: HumanCollaborationAuditLike
+  /**
+   * Tri-state presence tracker (live / in-grace / expired). Injected rather than
+   * constructed here so it stays unit-testable and so the caller owns the sweep
+   * timer — the tracker is a pure state machine and deliberately arms nothing.
+   *
+   * Presence is NOT the session map. A graceful leave still deletes the session
+   * (its keys die with it, which is the point of saying goodbye); presence
+   * separately records `grace`, so the seat survives a reload without the
+   * sealed session surviving it. Conflating the two would either keep keys
+   * alive for the grace window or make a reload look like a departure.
+   */
+  presence?: HumanCollaborationPresenceLike
   now?: () => number
   log?: (line: string) => void
+}
+
+/**
+ * The slice of `HumanCollaborationPresence` the runtime uses. A structural type
+ * rather than the class, so the runtime never depends on the tracker's internals
+ * and tests can pass a stub.
+ */
+export interface HumanCollaborationPresenceLike {
+  observeActivity(ref: HumanCollaborationPresenceSessionRef, at?: number): unknown
+  noteGracefulLeave(sessionId: string, at?: number): unknown
+  expireCollaborator(
+    collaboratorId: string,
+    reason: 'revoked' | 'kicked' | 'shareDisabled',
+    at?: number
+  ): unknown
+  collaboratorState(collaboratorId: string): 'live' | 'grace' | 'expired' | 'unknown'
 }
 
 interface RuntimePendingAdmission {
@@ -419,6 +448,11 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     this.sessions.set(sessionId, session)
     this.pending.delete(input.handshakeId)
+    // A completed handshake is the strongest possible liveness evidence. Note it
+    // BEFORE the audit row so a reconnect inside the grace window resolves to
+    // `live` — and therefore reports `silent` — rather than the caller seeing a
+    // spurious join for someone who never really left.
+    this.notePresenceActivity(session)
     this.opts.audit?.append({
       kind: 'admission.sas_confirmed',
       chatId: pending.chatId,
@@ -440,6 +474,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
 
   async subscribeProjection(input: HumanCollaborationSubscribeProjectionInput): Promise<ProjectionType> {
     const session = this.requireActiveSession(input.sessionId)
+    this.notePresenceActivity(session)
     this.projectionSubscribers.add(session.sessionId)
     const share = this.getActiveShare(session.shareId)
     return this.opts.buildProjection({
@@ -456,6 +491,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     input: HumanCollaborationAppendCommentInput & { sessionId: string }
   ): Promise<AppendType> {
     const session = this.requireActiveSession(input.sessionId)
+    this.notePresenceActivity(session)
     this.enforceAppendRateLimit(session)
     this.opts.store.validateAppend({
       shareId: session.shareId,
@@ -488,6 +524,12 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const removed = this.sessions.delete(input.sessionId)
     this.projectionSubscribers.delete(input.sessionId)
     if (!removed) return false
+    // The SESSION goes — its keys die with it, which is the whole point of
+    // saying goodbye — but the SEAT does not. Presence records `grace` so a tab
+    // reload or a roam between networks does not read as a departure. The seat
+    // only leaves when the grace window expires, and that is the caller's sweep
+    // to run, not ours.
+    this.opts.presence?.noteGracefulLeave(input.sessionId)
     if (session) {
       this.opts.audit?.append({
         kind: 'session.disconnected',
@@ -497,6 +539,28 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       })
     }
     return true
+  }
+
+  /**
+   * Tri-state presence for one collaborator, or `'unknown'` when no tracker is
+   * wired. Callers must treat `'unknown'` as NOT present — absence of evidence
+   * is not evidence of presence.
+   */
+  collaboratorPresenceState(collaboratorId: string): 'live' | 'grace' | 'expired' | 'unknown' {
+    return this.opts.presence?.collaboratorState(collaboratorId) ?? 'unknown'
+  }
+
+  /** Record liveness from any authenticated interaction. Inbound frames are the
+   * only liveness signal a passive watcher generates, so subscribing and
+   * commenting both count. */
+  private notePresenceActivity(session: RuntimeSession): void {
+    this.opts.presence?.observeActivity({
+      sessionId: session.sessionId,
+      chatId: session.chatId,
+      shareId: session.shareId,
+      collaboratorId: session.collaboratorId,
+      displayName: session.displayName
+    })
   }
 
   /**
@@ -512,6 +576,26 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const ids = new Set<string>()
     for (const session of this.sessions.values()) ids.add(session.chatId)
     return Array.from(ids)
+  }
+
+  /**
+   * Is anyone actually watching this chat's projection right now?
+   *
+   * The cheap gate in front of `publishProjectionUpdates`. Publishing is
+   * expensive — it rebuilds, re-redacts and re-seals the whole projection per
+   * subscriber, and the byte-budget trim `JSON.stringify`s the projection once
+   * per dropped row (HumanShareProjection.ts:101-103), synchronously on main.
+   * The transcript hot path fires on every streamed chat update for EVERY chat,
+   * the overwhelming majority of which are not shared at all, so callers on
+   * that path must be able to answer "is this worth doing?" without paying for
+   * it. Deliberately narrower than `connectedChatIds()`: a session that has not
+   * subscribed has nothing to receive.
+   */
+  hasProjectionSubscriberForChat(chatId: string): boolean {
+    for (const sessionId of this.projectionSubscribers) {
+      if (this.sessions.get(sessionId)?.chatId === chatId) return true
+    }
+    return false
   }
 
   /**
@@ -619,7 +703,18 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
           await this.opts.publishEncryptedProjection(sessionId, frame)
         }
       } catch (err) {
-        this.projectionSubscribers.delete(sessionId)
+        // Do NOT unsubscribe on a transient failure. A projection build reads
+        // the chat through `buildProjection`, which can throw for reasons that
+        // pass — a store read racing a write, a chat momentarily unresolvable
+        // mid-save. The subscription is established exactly ONCE, at admission
+        // (`:443`), and the collaborator never re-subscribes, so dropping it
+        // here is PERMANENT for the life of the session: the external's
+        // transcript freezes silently and neither side is told why. That is one
+        // of the two independent causes of the "no live updates after joining"
+        // report. Only give up when the session itself has gone (a concurrent
+        // disconnect during the await); otherwise keep the subscription and let
+        // the next publish retry.
+        if (!this.sessions.has(sessionId)) this.projectionSubscribers.delete(sessionId)
         this.opts.log?.(
           `[human-collaboration] projection push skipped for session ${sessionId}: ${
             err instanceof Error ? err.message : String(err)

@@ -10898,7 +10898,7 @@ function App(): React.JSX.Element {
       string,
       {
         chatId: string
-        provider: 'kimi' | 'antigravity'
+        provider: 'kimi' | 'antigravity' | 'mistral'
         trigger: 'manual' | 'auto'
         preTokens?: number
         startedAtMs: number
@@ -11011,6 +11011,12 @@ function App(): React.JSX.Element {
     const antigravityApiLane =
       provider === 'antigravity' &&
       Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
+    // Mistral is deliberately ABSENT despite having a manual lever (see
+    // compactChatContext). Its only available evidence is generic run usage,
+    // which `shouldAutoCompactHostContext` rejects by design — so admitting it
+    // here would add a branch that provably never fires, the same dead-code-
+    // behind-a-false-gate the seat-session lane was omitted to avoid. It joins
+    // when prompt-projection evidence is wired, as Kimi's is specified to be.
     if (provider !== 'kimi' && !antigravityApiLane) return
     // Never chain off an in-flight compaction, and respect the cooldown.
     if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chatId)) return
@@ -16576,6 +16582,23 @@ function App(): React.JSX.Element {
       })
       return
     }
+    // A shared thread cannot leave panel mode, and main refuses it. Bail HERE,
+    // before the destructive save below.
+    //
+    // `chatWithSeatRemoved` is persisted BEFORE the mode change on purpose (see
+    // the note above — it is what makes setChatKind stash the post-removal
+    // roster). So letting main's refusal be the first line of defence would
+    // delete the seat and THEN decline the collapse, leaving a shared panel
+    // sitting below its own floor with nothing to undo it. Main's guard stays
+    // the authority against callers that never come through here; this one
+    // exists so the data is never destroyed on the way to being told no.
+    if (activeHumanCollaborationShareByChatId.has(targetChat.appChatId)) {
+      appendThreadRawLog(targetChat.appChatId, {
+        type: 'info',
+        content: 'This chat is shared. Stop sharing before switching it out of panel mode.'
+      })
+      return
+    }
     chatKindTogglingRef.current = true
     setChatKindMutationBusy(true)
     try {
@@ -21739,10 +21762,23 @@ function App(): React.JSX.Element {
         })
         return
       }
-      if (provider === 'kimi') {
+      if (provider === 'kimi' || provider === 'mistral') {
         // Host-side fallback: no native lever exists, so compaction is a REAL
         // summarize turn, captured on exit by finalizeHostCompactionRun. Legacy
         // Kimi summarizes the bounded transcript projection carried here.
+        //
+        // Mistral joins this branch UNCHANGED rather than getting its own,
+        // because the seat is the same shape: `mistralSeatSessionsEnabled()` is
+        // hard-false, so every turn spawns a fresh `vibe-acp` and opens a new
+        // `session/new`, and PromptComposition re-injects a BOUNDED transcript
+        // (`mistralNeedsContextInjection`, unconditional). So there is no
+        // provider-side history to compact and no session to clear — what
+        // compaction buys is the same as Kimi's: the stored summary upgrades a
+        // lossy window, and its `bounded_prompt_window` provenance lets covered
+        // rows drop from later injections so more useful history fits the
+        // budget. PromptComposition already honours a mistral summary (it is in
+        // the `compactionSummaryBlock` provider gate); only this writer was
+        // missing, which is why /compact silently did nothing on a Mistral chat.
         if (!(chat.messages || []).some((m) => m.role === 'assistant')) return
         if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
           return
@@ -21821,7 +21857,12 @@ function App(): React.JSX.Element {
         : currentProvider === 'antigravity'
           ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://')) &&
             Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-          : false)
+          : // Mistral carries its material in-prompt (fresh ACP session every
+            // turn), so like legacy Kimi it needs NO session token — the lever
+            // exists as soon as there is something to summarize.
+            currentProvider === 'mistral'
+            ? Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+            : false)
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext

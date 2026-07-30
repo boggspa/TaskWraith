@@ -178,6 +178,83 @@ describe('enableTailscaleServe', () => {
     expect(result.message).toContain('HTTPS is not enabled')
     expect(result.message).toContain('admin/dns')
   })
+
+  /**
+   * Regression: re-asserting the door used to DISARM Funnel. Plain
+   * `tailscale serve` is tailnet-only, so the CLI answers `Removing Funnel for
+   * <host>:<port>` and a published relay silently reverts to tailnet-only.
+   * Creating a People invite calls enableTailscaleServe, so copying an invite
+   * broke the very door that invite advertises — the collaborator then failed on
+   * every URL with nothing on the host to explain it.
+   */
+  it('re-asserts a PUBLIC door with `funnel`, not `serve` (never disarms Funnel)', async () => {
+    const calls: string[][] = []
+    const result = await enableTailscaleServe({
+      cliPath: CLI,
+      relayPort: 8787,
+      exec: async (_cmd, args) => {
+        calls.push(args)
+        if (args[0] === 'serve' && args[1] === 'status') {
+          return {
+            stdout: JSON.stringify({
+              TCP: { '443': { HTTPS: true } },
+              Web: {
+                'mac.tailnet.ts.net:443': {
+                  Handlers: { '/': { Proxy: 'http://127.0.0.1:8787' } }
+                }
+              },
+              AllowFunnel: { 'mac.tailnet.ts.net:443': true }
+            }),
+            stderr: ''
+          }
+        }
+        return { stdout: 'Available on the internet:\n', stderr: '' }
+      }
+    })
+    expect(calls[calls.length - 1]).toEqual(['funnel', '--bg', '--https=443', '8787'])
+    expect(result.ok).toBe(true)
+  })
+
+  it('keeps `serve` when AllowFunnel belongs to a DIFFERENT front door', async () => {
+    const calls: string[][] = []
+    await enableTailscaleServe({
+      cliPath: CLI,
+      relayPort: 8787,
+      exec: async (_cmd, args) => {
+        calls.push(args)
+        if (args[0] === 'serve' && args[1] === 'status') {
+          return {
+            stdout: JSON.stringify({
+              Web: {
+                'mac.tailnet.ts.net:443': {
+                  Handlers: { '/': { Proxy: 'http://127.0.0.1:8787' } }
+                }
+              },
+              // Public door on someone else's port — must not make OURS public.
+              AllowFunnel: { 'mac.tailnet.ts.net:8443': true }
+            }),
+            stderr: ''
+          }
+        }
+        return { stdout: '', stderr: '' }
+      }
+    })
+    expect(calls[calls.length - 1]).toEqual(['serve', '--bg', '--https=443', '8787'])
+  })
+
+  it('falls back to `serve` when the status read fails — never widens exposure', async () => {
+    const calls: string[][] = []
+    await enableTailscaleServe({
+      cliPath: CLI,
+      relayPort: 8787,
+      exec: async (_cmd, args) => {
+        calls.push(args)
+        if (args[0] === 'serve' && args[1] === 'status') throw new Error('tailscaled not running')
+        return { stdout: '', stderr: '' }
+      }
+    })
+    expect(calls[calls.length - 1]).toEqual(['serve', '--bg', '--https=443', '8787'])
+  })
 })
 
 describe('disableTailscaleServe', () => {

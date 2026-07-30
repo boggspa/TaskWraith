@@ -28,6 +28,12 @@ import type {
   HumanCollaborationShare,
   HumanCollaborationStore
 } from '../collaboration/HumanCollaborationStore'
+import { HumanCollaborationDenialError } from '../collaboration/HumanContributionRules'
+import {
+  MAX_QUEUED_PER_COLLABORATOR,
+  type ExternalContributionEntry,
+  type ExternalContributionQueueStore
+} from '../collaboration/ExternalContributionQueueStore'
 import {
   effectiveContributionRules,
   type HumanContributionPreset
@@ -46,6 +52,7 @@ import {
   queuePendingWorkspaceRebind,
   type PendingWorkspaceRebind
 } from '../pendingWorkspaceRebind'
+import { hasPendingEnsembleRosterPresetApply } from '../../shared/ensembleRosterPresetApply'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
@@ -195,8 +202,26 @@ export interface ChatServiceDeps {
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
   /** Main-owned topology fence checked immediately before child persistence. */
   assertParentChatCreationAllowed?: (parentChatId: string) => void
+  /**
+   * Host-review queue. Optional so a ChatService built without one simply never
+   * offers host review — a share that asks for it then fails loudly rather than
+   * silently appending unreviewed text, which is the safe direction.
+   */
+  externalContributionQueue?: ExternalContributionQueueStore
   /** Clears history stored outside Electron userData (currently bridge diagnostics). */
   clearExternalChatHistory?: (workspaceId?: string) => void | Promise<void>
+  /**
+   * Drop the relay room behind a collaboration invite, which also disconnects
+   * every runtime session bound to it. The transport lives in main, so this is
+   * a thin seam — the same one the revoke IPC handlers use.
+   *
+   * Load-bearing on every destructive chat path. Revoking a share only flips a
+   * record; the collaborator's sealed socket stays open and their app keeps
+   * rendering a transcript whose chat no longer exists. Without this the next
+   * projection build throws 'Chat not found.' and the external is left staring
+   * at a frozen transcript with no indication anything happened.
+   */
+  closeCollaborationRoom?: (roomId: string) => void
   /** Main-owned durable prepare/quiesce/commit single-flight. */
   clearHistoryTransaction?: (workspaceId?: string) => Promise<void>
   /** Releases the scope admission fence after the durable clear commits/fails. */
@@ -420,6 +445,31 @@ export class ChatService {
       ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
       : undefined
     if (seedParticipant) assertLiveProviderId(seedParticipant.provider)
+    // A SHARED thread cannot leave panel mode — not the host, not an agent, not
+    // any renderer. Collapsing routes through AppStore.setChatKind, which strips
+    // the roster into `providerMetadata.stashedEnsemble`; a later preset-apply
+    // consumes that stash, so a seat removed by a collapse can RESURRECT. With
+    // externals occupying seats, that means a kicked person's seat coming back.
+    //
+    // The refusal lives HERE because this is the only thing all the doors have
+    // in common. The desktop `set-chat-kind` handler and the bridge/iOS action
+    // both check it too, so their callers get shaped errors instead of a throw —
+    // but the bridge path reaches this method directly, and a comment on the
+    // desktop handler used to claim it was "the gate every surface goes
+    // through". It was not. This is.
+    if (targetKind !== 'ensemble') {
+      // Read the store directly rather than through the accessor that throws
+      // when it is unconfigured: no store means no shares can exist, so there is
+      // nothing here to protect and no reason to fail a plain solo conversion.
+      const shared = (this.deps.humanCollaborationStore?.listShares(chatId) ?? []).some(
+        (share) => share.enabled
+      )
+      if (shared && this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble') {
+        throw new Error(
+          'This chat is shared. Stop sharing before switching it out of panel mode.'
+        )
+      }
+    }
     const canonicalProviderMetadata =
       args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
         ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)
@@ -484,7 +534,8 @@ export class ChatService {
     ) {
       return current
     }
-    const providerAdmissionFenced = fenceSavedProviderAdmission(sanitizedInput, current)
+    const kindFenced = preserveCanonicalChatKind(sanitizedInput, current)
+    const providerAdmissionFenced = fenceSavedProviderAdmission(kindFenced, current)
     const grantFenced = allowWorkspaceTransition
       ? providerAdmissionFenced
       : preserveCanonicalExternalPathGrantMetadata(providerAdmissionFenced, current)
@@ -676,6 +727,114 @@ export class ChatService {
     return updated
   }
 
+  /**
+   * Host review of queued external contributions.
+   *
+   * The three verbs below are deliberately split so the IPC layer can do the
+   * one thing it must do FIRST: resolve the entry and scope on the entry's OWN
+   * chatId. `ExternalContributionQueueStore.approve/deny` match on entryId
+   * across a single global array and verify NOTHING about ownership, so a
+   * handler that scoped on a renderer-supplied chatId would let a popout bound
+   * to chat A resolve and approve chat B's contribution. Read the entry, assert
+   * against what it says, then mutate.
+   */
+  getExternalContribution(entryId: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    return queue.get(requireNonEmptyString(entryId, 'Contribution id'))
+  }
+
+  /**
+   * Queued-and-unreviewed contributions for ONE chat.
+   *
+   * `chatId` is required, unlike the store's optional parameter: `listQueued()`
+   * with it omitted returns every chat's entries including the raw body, so an
+   * optional pass-through here would leak the whole cross-chat queue to any
+   * caller that forgot to supply one.
+   */
+  listPendingExternalContributions(chatId: string): ExternalContributionEntry[] {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return []
+    return queue.listQueued(requireSafeChatId(chatId, 'Chat id'))
+  }
+
+  /**
+   * Release a queued contribution for delivery.
+   *
+   * This marks ONLY. Delivery happens at the contributor's dispatch turn, which
+   * does not exist yet, so an approved entry waits in
+   * `listAwaitingMaterialisation()` — that is the seam the dispatch slice
+   * consumes. The store deliberately exempts approved-but-undelivered entries
+   * from every eviction path (`isReapable`), because an approval the host
+   * granted must not silently expire before it is delivered.
+   *
+   * Returns null when the entry is already resolved. That is "nothing to do",
+   * not a failure — but it must not be reported as a successful approval.
+   */
+  approveExternalContribution(entryId: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    const approved = queue.approve(requireNonEmptyString(entryId, 'Contribution id'))
+    if (approved) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.approved',
+        chatId: approved.chatId,
+        shareId: approved.shareId,
+        collaboratorId: approved.collaboratorId,
+        detail: 'released for delivery at the contributor’s next turn'
+      })
+    }
+    return approved
+  }
+
+  /** Refuse a queued contribution. The body is retained for a bounded window so
+   *  the host can see what they denied; the contributor is told it was refused. */
+  denyExternalContribution(entryId: string, reason?: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    const denied = queue.deny(
+      requireNonEmptyString(entryId, 'Contribution id'),
+      typeof reason === 'string' && reason.trim() ? reason.trim() : undefined
+    )
+    if (denied) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.denied',
+        chatId: denied.chatId,
+        shareId: denied.shareId,
+        collaboratorId: denied.collaboratorId,
+        ...(denied.hostReason ? { detail: denied.hostReason } : {})
+      })
+    }
+    return denied
+  }
+
+  /**
+   * Per-share host review opt-in. Deliberately NOT folded into
+   * `updateHumanCollaborationShareRules`: a contribution PRESET is something
+   * the collaborator is shown, and whether the host reviews before delivery is
+   * not. Keeping them separate keeps a host-only fact out of a
+   * collaborator-displayable field.
+   */
+  setHumanCollaborationHostReview(args: {
+    shareId: string
+    requiresHostApproval: boolean
+  }): HumanCollaborationShare | null {
+    const store = this.requireHumanCollaborationStore()
+    const updated = store.setRequiresHostApproval({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      requiresHostApproval: args.requiresHostApproval === true
+    })
+    if (updated) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'share.rules_changed',
+        chatId: updated.chatId,
+        shareId: updated.shareId,
+        detail: `host review ${updated.requiresHostApproval === true ? 'on' : 'off'}`
+      })
+    }
+    return updated
+  }
+
   listHumanCollaborationShares(chatId?: string): HumanCollaborationShare[] {
     const store = this.requireHumanCollaborationStore()
     const normalizedChatId = chatId ? requireSafeChatId(chatId, 'Chat id') : undefined
@@ -745,7 +904,16 @@ export class ChatService {
     content: string
     /** P2b intent; anything but the exact action-request string is a comment. */
     intent?: HumanCollaboratorContributionKind
-  }): { chat: ChatRecord; message: ChatMessage; deduped: boolean; autoDraft?: string } {
+  }): {
+    chat: ChatRecord
+    /** Absent when the contribution was QUEUED — there is no transcript row yet. */
+    message?: ChatMessage
+    deduped: boolean
+    autoDraft?: string
+    /** True when this went to host review instead of the transcript. */
+    queued?: boolean
+    queueEntryId?: string
+  } {
     const store = this.requireHumanCollaborationStore()
     const content = requireBoundedText(args.content, 'Comment', 8000)
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
@@ -787,8 +955,113 @@ export class ChatService {
         })
         return { chat: current, message: existing, deduped: true }
       }
+      // THE THIRD STATE. The idempotency map binds a clientMessageId to a
+      // messageId, and this branch used to ask only "is that message in the
+      // transcript?". A QUEUED contribution is mapped but not yet appended, so
+      // the answer is no and the retry fell straight through and enqueued a
+      // second copy of the same message. Ask the queue before giving up.
+      const pending = this.deps.externalContributionQueue?.findByClientMessageId(
+        chatId,
+        validation.participant.collaboratorId,
+        args.clientMessageId
+      )
+      if (pending) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        // `queued` is derived from the entry's STATE, not from its existence.
+        // The lookup matches any state, so a retry after the host denied — or
+        // after a lapse, or after an approve not yet materialised — would
+        // otherwise report "still awaiting review" about something already
+        // resolved.
+        return {
+          chat: current,
+          deduped: true,
+          queued: pending.state === 'queued',
+          queueEntryId: pending.entryId
+        }
+      }
     }
 
+    // Both host-review refusals are decided BEFORE `recordAppend`, on purpose.
+    // That call allocates a sequence number and binds the idempotency key to a
+    // messageId; refusing after it means every retry against a misconfigured or
+    // full queue burns a sequence and leaves a binding naming a row that will
+    // never exist, so `nextSequence` climbs forever.
+    if (validation.share.requiresHostApproval === true) {
+      const queue = this.deps.externalContributionQueue
+      if (!queue) {
+        // Typed, like every other refusal in this method — a generic Error
+        // reaches a code-mapping caller as an internal failure rather than a
+        // reason. Fail CLOSED: a share that asked for review must never quietly
+        // append unreviewed text because the queue was missing.
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: 'rule_denied',
+          detail: 'host review is enabled but the review queue is unavailable'
+        })
+        throw new HumanCollaborationDenialError(
+          'rule_denied',
+          'Host review is enabled for this share but the review queue is unavailable.'
+        )
+      }
+      // Ask the queue BEFORE allocating, not only inside the idempotency guard
+      // above. The share's binding is capped and evicts oldest-first, so a retry
+      // whose binding is gone but whose entry survives would otherwise reach
+      // `enqueue`, burn a sequence, and only then be told it is a duplicate.
+      const alreadyQueued = queue.findByClientMessageId(
+        chatId,
+        validation.participant.collaboratorId,
+        args.clientMessageId
+      )
+      if (alreadyQueued) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        return {
+          chat: current,
+          deduped: true,
+          queued: alreadyQueued.state === 'queued',
+          queueEntryId: alreadyQueued.entryId
+        }
+      }
+      if (
+        queue.queuedCountForCollaborator(chatId, validation.participant.collaboratorId) >=
+        MAX_QUEUED_PER_COLLABORATOR
+      ) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: 'quota_exceeded',
+          detail: 'too many contributions awaiting host review'
+        })
+        throw new HumanCollaborationDenialError(
+          'quota_exceeded',
+          'You have too many messages awaiting review.'
+        )
+      }
+    }
+
+    // The messageId is minted HERE, before the branch, and a queued entry
+    // carries it from the start. That keeps sequence allocation and the
+    // idempotency binding exactly where they were — one atomic store write —
+    // and means an approved entry materialises under the id the map already
+    // points at, so the dedupe branch above resolves normally the moment the row
+    // exists. Splitting allocation across enqueue and approve would have meant
+    // two writes and two failure windows for no gain.
     const messageId = randomUUID()
     const sequence = store.recordAppend({
       shareId: validation.share.shareId,
@@ -797,6 +1070,73 @@ export class ChatService {
       clientMessageId: args.clientMessageId,
       messageId
     })
+
+    // HOST REVIEW. Nothing reaches the transcript until the host approves. The
+    // gates above all still ran — validation, the share's byte ceiling, the rate
+    // limit upstream — so the queue only ever receives bounded, authenticated,
+    // sequence-allocated work.
+    if (validation.share.requiresHostApproval === true) {
+      // Presence was proven above, before the sequence was allocated.
+      const queue = this.deps.externalContributionQueue!
+      const result = queue.enqueue({
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        displayName: validation.participant.displayName,
+        clientMessageId: args.clientMessageId,
+        messageId,
+        sequence,
+        body: content,
+        ...(isActionRequest ? { intent: 'requestHostAction' as const } : {})
+      })
+      if (!result.ok && result.denial === 'duplicate' && result.existing) {
+        // The share's idempotency map is capped and evicts oldest-first, so a
+        // binding can disappear while its entry is still pending — that retry
+        // misses the dedupe branch above and lands here. The queue returns
+        // `existing` precisely so this is answerable rather than an error.
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        return {
+          chat: current,
+          deduped: true,
+          queued: result.existing.state === 'queued',
+          queueEntryId: result.existing.entryId
+        }
+      }
+      if (!result.ok || !result.entry) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: result.denial === 'quota_exceeded' ? 'quota_exceeded' : 'rule_denied',
+          detail: `queue refused the contribution: ${result.denial ?? 'unknown'}`
+        })
+        throw new HumanCollaborationDenialError(
+          result.denial === 'quota_exceeded' ? 'quota_exceeded' : 'rule_denied',
+          result.denial === 'quota_exceeded'
+            ? 'You have too many messages awaiting review.'
+            : 'That message could not be queued for review.'
+        )
+      }
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.received',
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        preview: content,
+        contentHash: auditContentHash(content)
+      })
+      // The chat is returned UNCHANGED — deliberately. A queued contribution is
+      // not in the transcript, so nothing about the chat has moved, and a caller
+      // that broadcasts this is broadcasting a no-op rather than leaking a row.
+      return { chat: current, deduped: false, queued: true, queueEntryId: result.entry.entryId }
+    }
     let message = makeHumanCollaboratorComment({
       id: messageId,
       content,
@@ -897,6 +1237,43 @@ export class ChatService {
     return { chat: updated, draft }
   }
 
+  /**
+   * End every live channel for these shares, then revoke them.
+   *
+   * Revoking alone is not enough on a destructive path. `revokeShare` flips a
+   * record, and the runtime only notices on the collaborator's NEXT inbound
+   * frame — but a collaborator who is merely watching sends nothing. Their
+   * sealed socket stays open against a chat that no longer exists, the next
+   * projection build throws, and they are left on a frozen transcript with no
+   * signal at all. Closing the room drops the socket and, via the transport,
+   * every runtime session bound to it.
+   *
+   * Every invite room is closed, not just the first: a share mints a fresh
+   * roomId per invite, so a share that has been invited from twice has two live
+   * doors and closing one leaves the other open.
+   */
+  private endCollaborationShares(shares: readonly HumanCollaborationShare[]): void {
+    const store = this.deps.humanCollaborationStore
+    if (!store) return
+    for (const share of shares) {
+      for (const invite of share.invites) {
+        if (!invite.roomId) continue
+        // A transport in a bad state must never block the deletion the user
+        // asked for. Failing to close a socket is a leaked channel; throwing
+        // here would abort the caller and leave the chat undeleted with its
+        // share half-torn — strictly worse, and on the destructive path the
+        // deletion is the part that has to be unconditional.
+        try {
+          this.deps.closeCollaborationRoom?.(invite.roomId)
+        } catch {
+          // Best-effort: revocation below still fails the collaborator closed
+          // on their next inbound frame.
+        }
+      }
+      if (share.enabled) store.revokeShare(share.shareId)
+    }
+  }
+
   deleteChat(chatId: string): void {
     const id = requireSafeChatId(chatId, 'Chat id')
     // Settle any active shares first so deleting a shared chat actually ends the
@@ -904,9 +1281,7 @@ export class ChatService {
     // of leaving an orphaned enabled share record pointing at a missing chat.
     const store = this.deps.humanCollaborationStore
     if (store && store.hasShareForChat(id)) {
-      for (const share of store.listShares(id)) {
-        if (share.enabled) store.revokeShare(share.shareId)
-      }
+      this.endCollaborationShares(store.listShares(id))
     }
     this.deps.appStore.deleteChat(id)
   }
@@ -939,7 +1314,44 @@ export class ChatService {
    * approval cannot be accepted while that deletion is in flight.
    */
   async prepareClearChats(workspaceId?: string): Promise<void> {
+    // Collaboration is an external history authority too, and it was the one
+    // authority this phase never revoked: the chats went and every
+    // collaborator's socket stayed open against them.
+    //
+    // NB this is the FALLBACK path. When `clearHistoryTransaction` is supplied
+    // — and main does supply it — `clearChats` delegates and never reaches this
+    // method at all; that route closes rooms in `purgeHumanCollaborationForErasure`
+    // instead, from the deletion coordinator's commit. Both paths are covered
+    // deliberately; do not delete this one as dead code.
+    this.endCollaborationSharesInClearScope(workspaceId)
     await this.deps.clearExternalChatHistory?.(workspaceId)
+  }
+
+  /** Shares whose chat is about to be cleared. No workspace ⇒ the whole store. */
+  private endCollaborationSharesInClearScope(workspaceId?: string): void {
+    const store = this.deps.humanCollaborationStore
+    if (!store) return
+    const shares = store.listShares()
+    if (!shares.length) return
+    if (!workspaceId) {
+      this.endCollaborationShares(shares)
+      return
+    }
+    // Summary lists, not one getChat per share — the chat-list index already
+    // answers both questions and never materialises a full record.
+    const scoped = new Set(this.deps.appStore.getChatList(workspaceId).map((c) => c.appChatId))
+    const known = new Set(this.deps.appStore.getChatList().map((c) => c.appChatId))
+    this.endCollaborationShares(
+      shares.filter(
+        // In the doomed workspace, OR orphaned. An orphan — a share whose chat
+        // no longer exists anywhere — has to end here, because no other path
+        // will ever come for it and it is a live channel to content that is
+        // already gone. Scoping on the workspace list alone would silently keep
+        // that door open. A share belonging to a DIFFERENT, surviving workspace
+        // is untouched: over-reaching would kill a share whose chat is fine.
+        (share) => scoped.has(share.chatId) || !known.has(share.chatId)
+      )
+    )
   }
 
   /** Commit the durable chat deletion after every external store has cleared. */
@@ -1328,6 +1740,53 @@ function assertLiveProviderId(value: unknown): ProviderId {
     return provider
   }
   throw new Error(`${provider} is unavailable for new chats or delegated runs.`)
+}
+
+/**
+ * `chatKind` is main-owned. `setChatKind` is the door for changing it: it
+ * enforces the idle-only running guard, seeds or strips the roster, and refuses
+ * to collapse a SHARED chat out of panel mode. `save-chat` accepts a whole
+ * renderer-authored record and walked straight past all of that — a fence with a
+ * gate standing open beside it.
+ *
+ * The stored kind therefore wins. Two carve-outs, both narrow:
+ *
+ *   - NO STORED RECORD. This is a creation (fork, side chat, sub-thread) and the
+ *     incoming kind is the only one that exists.
+ *   - A PENDING ROSTER-PRESET PLAN on the STORED record authorises exactly one
+ *     transition — single → ensemble — at the turn or round boundary that
+ *     consumes it. The plan is main-verifiable and was written by the
+ *     preset-apply path, so it is authority rather than renderer assertion, and
+ *     it can only ever turn panel mode ON. It cannot launder a collapse.
+ *
+ * Pinning rather than rejecting the record is deliberate. A save carrying a
+ * stale kind usually also carries real transcript work, and every other fence in
+ * this chain preserves one field rather than discarding the whole snapshot.
+ *
+ * Restoring the stored ensemble block alongside the kind is load-bearing:
+ * `normalizeChatRecord` seeds a DEFAULT multi-provider roster onto any chat that
+ * is `ensemble` without one, so pinning the kind while leaving the incoming
+ * record's dropped roster in place would replace the user's seats with defaults.
+ */
+function preserveCanonicalChatKind(next: ChatRecord, current: ChatRecord | null): ChatRecord {
+  if (!current) return next
+  const storedKind: ChatKind = current.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  const incomingKind: ChatKind = next.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  if (storedKind === incomingKind) return next
+  if (
+    storedKind === 'single' &&
+    incomingKind === 'ensemble' &&
+    hasPendingEnsembleRosterPresetApply(current)
+  ) {
+    return next
+  }
+  return {
+    ...next,
+    chatKind: storedKind,
+    ...(storedKind === 'ensemble' && !next.ensemble && current.ensemble
+      ? { ensemble: current.ensemble }
+      : {})
+  }
 }
 
 /**

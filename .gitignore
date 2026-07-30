@@ -12,6 +12,16 @@ out
 /build/tui-runtime/**
 !/build/tui-runtime/README.md
 
+# Concurrent-work markers (AGENTS.md) and the work-guard heartbeat sidecar.
+# These are per-session coordination state, never source. Ignoring them keeps
+# `git status --porcelain` — the check AGENTS.md tells you to trust for "is
+# anything uncommitted right now" — free of coordination noise, and stops a
+# stray `git add -A` from committing one session's claim into the tree.
+/.WORK-IN-PROGRESS-*.md
+/SHIP-HOLD-*.md
+/SESSION-IN-PROGRESS-*.md
+/.work-guard/
+
 # Local-only planning/release material kept out of the public source tree
 .local-only/
 papercuts/*

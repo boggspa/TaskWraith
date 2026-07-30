@@ -2775,8 +2775,14 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               permissionPresetId: {
                 type: 'string',
                 enum: [...ASSIGNABLE_PERMISSION_PRESETS],
+                // Deliberately no longer than the ceiling text it replaces: this
+                // tool is in the gateway catalogue, which sits ~65 characters
+                // under a hard 40,000 transport limit. The refusal message
+                // carries the full explanation and the pointer to
+                // edit_participant, so the schema only has to stop the common
+                // mistake, not teach the whole rule.
                 description:
-                  'Coarse permission preset ceiling for boss replacement. full_access and custom are rejected.'
+                  "A replacement inherits the seat's permissions. Omit, or restate the seat's own preset."
               },
               reasoningEffort: { type: 'string' },
               fastModeEnabled: { type: 'boolean' },

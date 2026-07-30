@@ -1,0 +1,87 @@
+/**
+ * Bridge between the two halves of the effective roster.
+ *
+ * `src/shared/effectiveEnsembleRoster.ts` knows how model seats and external
+ * seats compose, but it is deliberately pure and knows nothing about shares or
+ * presence. This module is the only place that turns collaboration state — a
+ * share's participants plus their live presence — into the `ExternalSeatInput[]`
+ * that resolver expects.
+ *
+ * Keeping the mapping here rather than inside the shared resolver matters for
+ * one reason: the rules about WHICH collaborators hold a seat are collaboration
+ * rules, not roster rules, and they are security-adjacent. A revoked
+ * participant holds nothing. A pending one has not completed SAS. An expired
+ * presence means the grace window ran out. Every one of those is a "no", and
+ * they belong next to the store that defines them.
+ */
+
+import {
+  resolveEffectiveRoster,
+  type EffectiveRoster,
+  type ExternalSeatInput
+} from '../../shared/effectiveEnsembleRoster'
+import type { EnsembleParticipant } from '../store/types'
+import type { HumanCollaborationShare } from './HumanCollaborationStore'
+import type { HumanCollaborationPresenceState } from './HumanCollaborationPresence'
+
+/** How the caller answers "is this collaborator still here?". Returning
+ * `undefined` means "no presence record", which is treated as NOT present —
+ * absence of evidence is not evidence of presence. */
+export type ResolveCollaboratorPresence = (
+  collaboratorId: string
+) => HumanCollaborationPresenceState | 'unknown' | undefined
+
+/**
+ * External seats for one share.
+ *
+ * A seat is contributed only for an ACTIVE participant. `present` follows
+ * presence: `live` and `grace` both count as present, because the whole point of
+ * the grace window is that a reconnecting collaborator does not vanish from the
+ * panel mid-reconnect. `expired` and `unknown` do not.
+ *
+ * A muted seat (`seatDisabled`) still appears and still holds its position — it
+ * is presentation, not removal. That is deliberately different from revocation,
+ * which withdraws trust and yields no seat at all.
+ */
+export function externalSeatsForShare(
+  share: HumanCollaborationShare | null | undefined,
+  resolvePresence?: ResolveCollaboratorPresence
+): ExternalSeatInput[] {
+  if (!share || share.enabled === false) return []
+  const seats: ExternalSeatInput[] = []
+  for (const participant of share.participants || []) {
+    if (!participant || participant.status !== 'active') continue
+    const presence = resolvePresence?.(participant.collaboratorId)
+    seats.push({
+      shareId: share.shareId,
+      collaboratorId: participant.collaboratorId,
+      displayName: participant.displayName,
+      // No presence resolver at all (a caller that only wants the seat list,
+      // e.g. an admin surface) means "don't judge presence" — default present.
+      // A resolver that answers `expired`/`unknown` is a real negative.
+      present: resolvePresence ? presence === 'live' || presence === 'grace' : true,
+      ...(typeof participant.seatOrder === 'number' ? { seatOrder: participant.seatOrder } : {}),
+      ...(participant.seatDisabled === true ? { enabled: false } : {})
+    })
+  }
+  return seats
+}
+
+/**
+ * The effective roster for one chat: its model seats plus its share's externals.
+ *
+ * The chat argument is intentionally a narrow structural type rather than
+ * `ChatRecord` — resolving a roster must never require materialising a whole
+ * chat, because the callers that need it most (permission gates, projection
+ * builds) run on hot paths and some of them only hold a summary.
+ */
+export function resolveChatEffectiveRoster(input: {
+  participants?: readonly EnsembleParticipant[] | null
+  share?: HumanCollaborationShare | null
+  resolvePresence?: ResolveCollaboratorPresence
+}): EffectiveRoster {
+  return resolveEffectiveRoster({
+    participants: input.participants ?? [],
+    externals: externalSeatsForShare(input.share, input.resolvePresence)
+  })
+}

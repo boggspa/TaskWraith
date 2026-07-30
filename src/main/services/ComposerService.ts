@@ -15,6 +15,7 @@ import {
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
+import { resolveOllamaMeasuredContextTokens } from '../ollama/OllamaContextBudget'
 import { isOllamaRunProfileId } from '../ollama/OllamaRunProfiles'
 import { MISTRAL_DEFAULT_MODEL } from '../mistral/MistralCliArgs'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
@@ -550,7 +551,15 @@ export class ComposerService {
       ...(kimiNativeSessionResume ? { nativeSessionResume: true } : {}),
       ...(provider === 'ollama'
         ? {
-            ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
+            ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory),
+            // Daemon-measured window cached by a prior run (see
+            // `recordOllamaModelContextTokens`). Absent on a model's very first
+            // run, which is safe: the budget then keeps its conservative default
+            // rather than scaling off an assumed window.
+            ollamaLiveContextTokens: resolveOllamaMeasuredContextTokens(
+              settings.ollamaModelContextTokens,
+              requestedModel
+            )
           }
         : {})
     } satisfies Parameters<typeof composeRunPrompt>[0]
