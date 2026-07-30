@@ -28,7 +28,7 @@
  * Everything else keeps the previous behaviour byte for byte; the tests pin that
  * so this stays additive for every source shipping today.
  */
-import type { ToolDiffSummary } from './store/types'
+import type { ToolDiffSummary } from '../main/store/types'
 
 /**
  * Sources whose numbers come from measuring the workspace rather than inferring
@@ -52,6 +52,33 @@ const MEASURED_SOURCES: ReadonlySet<ToolDiffSummary['source']> = new Set(['git_n
  */
 export function isMeasuredDiffSummary(summary: ToolDiffSummary | undefined): boolean {
   return Boolean(summary && MEASURED_SOURCES.has(summary.source) && summary.confidence === 'exact')
+}
+
+/**
+ * Minimal guard for the two lanes that do NOT use `mergeToolDiffSummary`.
+ *
+ * Three code paths write `ToolActivity.diffSummary` and each settled on its own
+ * precedence: the bridge lane merges (this module), the DESKTOP lane in
+ * `ToolParser.pairToolResult` lets a freshly derived summary win unconditionally,
+ * and the ENSEMBLE lane's `mergeToolDiffSummaries` is first-counts-wins. Both of
+ * the latter would discard a measured summary — in opposite ways.
+ *
+ * Rather than re-point those two at the full merge (their existing rules are
+ * deliberate: "fresh wins" lets a result-derived diff beat a parameter guess, and
+ * first-counts-wins keeps a streamed ensemble activity stable), this asserts ONLY
+ * the property architecture A needs: measured truth is never displaced. Every
+ * estimate-versus-estimate outcome in those lanes stays byte-identical, so this
+ * cannot regress behaviour that ships today.
+ *
+ * Returns `existing` when it is measured, otherwise whatever the lane decided.
+ */
+export function preserveMeasuredDiffSummary(
+  existing: ToolDiffSummary | undefined,
+  laneResult: ToolDiffSummary | undefined
+): ToolDiffSummary | undefined {
+  return isMeasuredDiffSummary(existing) && !isMeasuredDiffSummary(laneResult)
+    ? existing
+    : laneResult
 }
 
 /**

@@ -116,6 +116,7 @@ import {
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
+import { isMeasuredDiffSummary } from '../../shared/toolDiffSummaryMerge'
 import { sampleWorkspaceChurn } from '../DiffService'
 import {
   diffWorkspaceChurn,
@@ -2733,6 +2734,14 @@ function mergeToolDiffSummaries(
   const normalizedResult = normalizeToolDiffSummary(result, filePath)
   if (!normalizedExisting) return normalizedResult
   if (!normalizedResult) return normalizedExisting
+  // First-counts-wins below keeps a streamed ensemble activity stable, but it also
+  // means a MEASURED summary arriving second is rejected — and one arriving first
+  // would be safe only by luck. Assert the precedence explicitly in both directions;
+  // everything after this is the pre-existing rule, unchanged.
+  if (isMeasuredDiffSummary(normalizedResult) && !isMeasuredDiffSummary(normalizedExisting)) {
+    return normalizedResult
+  }
+  if (isMeasuredDiffSummary(normalizedExisting)) return normalizedExisting
   const existingHasCounts =
     typeof normalizedExisting.additions === 'number' ||
     typeof normalizedExisting.deletions === 'number'

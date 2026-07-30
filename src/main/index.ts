@@ -236,7 +236,7 @@ import {
 } from './RendererAttachmentAuthorization'
 import { bindRuntimeWorktreeBaseWorkspace, derivePopoutRunPayload } from './RendererRunAuthority'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
-import { mergeToolDiffSummary } from './ToolDiffSummaryMerge'
+import { mergeToolDiffSummary } from '../shared/toolDiffSummaryMerge'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,

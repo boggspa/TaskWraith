@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { isMeasuredDiffSummary, mergeToolDiffSummary } from './ToolDiffSummaryMerge'
-import type { ToolDiffSummary } from './store/types'
+import {
+  isMeasuredDiffSummary,
+  mergeToolDiffSummary,
+  preserveMeasuredDiffSummary
+} from './toolDiffSummaryMerge'
+import type { ToolDiffSummary } from '../main/store/types'
 
 function summary(overrides: Partial<ToolDiffSummary> = {}): ToolDiffSummary {
   return {
@@ -144,5 +148,48 @@ describe('mergeToolDiffSummary — PINS the pre-existing behaviour', () => {
     mergeToolDiffSummary(existing, incoming)
     expect(existing).toEqual(existingCopy)
     expect(incoming).toEqual(incomingCopy)
+  })
+})
+
+describe('preserveMeasuredDiffSummary — the guard for the two non-merging lanes', () => {
+  const measured = (a: number, d: number): ToolDiffSummary =>
+    summary({ additions: a, deletions: d, source: 'git_numstat', confidence: 'exact' })
+  const estimate = (a: number, d: number): ToolDiffSummary =>
+    summary({ additions: a, deletions: d, source: 'string_replace', confidence: 'estimated' })
+
+  it('keeps measured truth when the lane would have replaced it with an estimate', () => {
+    // Desktop: `derived || inferred || activity` hands back the fresh estimate.
+    // Ensemble: first-counts-wins hands back whichever landed first.
+    const kept = preserveMeasuredDiffSummary(measured(2, 1), estimate(40, 40))
+    expect(kept).toMatchObject({ additions: 2, deletions: 1, source: 'git_numstat' })
+  })
+
+  it('accepts a measured summary arriving from the lane', () => {
+    expect(preserveMeasuredDiffSummary(estimate(40, 40), measured(2, 1))).toMatchObject({
+      source: 'git_numstat'
+    })
+  })
+
+  it('lets a NEWER measurement replace an older one', () => {
+    // Both measured → no reason to pin the stale value.
+    expect(preserveMeasuredDiffSummary(measured(2, 1), measured(9, 3))).toMatchObject({
+      additions: 9,
+      deletions: 3
+    })
+  })
+
+  it('is a no-op for every estimate-versus-estimate case', () => {
+    // The whole safety claim: lanes that ship today are byte-identical.
+    const laneChoice = estimate(1, 1)
+    expect(preserveMeasuredDiffSummary(estimate(99, 99), laneChoice)).toBe(laneChoice)
+    expect(preserveMeasuredDiffSummary(undefined, laneChoice)).toBe(laneChoice)
+    expect(preserveMeasuredDiffSummary(estimate(5, 5), undefined)).toBeUndefined()
+    expect(preserveMeasuredDiffSummary(undefined, undefined)).toBeUndefined()
+  })
+
+  it('does not treat a DEGRADED git_numstat summary as measured', () => {
+    const degraded = summary({ source: 'git_numstat', confidence: 'estimated', additions: 3 })
+    const laneChoice = estimate(1, 1)
+    expect(preserveMeasuredDiffSummary(degraded, laneChoice)).toBe(laneChoice)
   })
 })
