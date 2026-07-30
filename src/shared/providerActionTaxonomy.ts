@@ -1,8 +1,5 @@
 import type { AgenticServiceId, ProviderId } from '../main/store/types'
-import {
-  TASKWRAITH_MCP_TOOLS,
-  type TaskWraithMcpToolName
-} from './taskWraithMcpCatalog'
+import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './taskWraithMcpCatalog'
 
 /**
  * The harness-level action vocabulary. Provider-native spellings stay native,
@@ -112,8 +109,10 @@ function tool(
   dispatchOwner: CanonicalDispatchOwner,
   mutation: CanonicalMutationScope,
   lock: CanonicalLockSemantics,
-  networkEgress: CanonicalNetworkEgress =
-    operation === 'network.read' || operation === 'external.mutate' ? 'always' : 'none'
+  networkEgress: CanonicalNetworkEgress = operation === 'network.read' ||
+  operation === 'external.mutate'
+    ? 'always'
+    : 'none'
 ): CanonicalToolActionMetadata {
   return { toolClass, service, operation, dispatchOwner, mutation, lock, networkEgress }
 }
@@ -2410,10 +2409,31 @@ function strictUnqualifiedCatalogCanonicalName(value: string): string | null {
   if (!normalized || normalized.startsWith('mcp_') || normalized.startsWith('taskwraith')) {
     return null
   }
+  // Aliases resolve BEFORE the ownership check. `ensemble_control` is the
+  // provider-portable invocation shape for the `ensemble_bossman_control`
+  // authority primitive, and it is a declared member of
+  // TASKWRAITH_OWNED_MCP_ACTIONS so it can be advertised and audited in its own
+  // right. That membership satisfied the hasOwnProperty branch first and
+  // returned the ALIAS, leaving the mapping below as dead code — so dispatch
+  // looked for a branch named `ensemble_control`, of which there is none (the
+  // executor is registered as `ensemble_bossman_control`). The MCP dispatcher
+  // has no terminal else, so a missing branch is a SILENT EMPTY SUCCESS rather
+  // than an error: every portable ensemble_control call would have reported
+  // success while doing nothing. Caught by McpDispatcherExhaustiveness and
+  // PortableEnsembleControl.
+  //
+  // This function must return the name the EXECUTOR is registered under. The
+  // outward/advertised name is a separate concern, resolved through
+  // `advertisedToolName` in McpBridgeRuntime, so the profile-fenced advertise
+  // split (fresh profile shows ensemble_control, legacy shows
+  // ensemble_bossman_control) is unaffected. Keep this in agreement with
+  // `canonicalTaskWraithToolName` in taskWraithMcpCatalog.ts, which already
+  // maps the same alias the same way.
+  if (normalized === 'ensemble_control') return 'ensemble_bossman_control'
   if (Object.prototype.hasOwnProperty.call(TASKWRAITH_OWNED_MCP_ACTIONS, normalized)) {
     return normalized
   }
-  return normalized === 'ensemble_control' ? 'ensemble_bossman_control' : null
+  return null
 }
 
 /**
