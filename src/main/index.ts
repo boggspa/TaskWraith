@@ -602,7 +602,9 @@ import {
 import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
 import {
   MidRunSteeringRegistry,
+  HOST_MIDRUN_STEERING_AUTHOR,
   buildMidRunSteeringUserMessage,
+  type MidRunSteeringEntry,
   findScheduledSteeringMessage,
   midRunSteeringAbsorbEligible,
   planLiveSteerDelivery,
@@ -14723,20 +14725,26 @@ function appendEnsembleSteerIntoLiveRound(chatId: string, text: string): void {
   const messageId = `midrun-steer-${randomUUID()}`
   appendMidRunSteeringMessage(
     chat,
-    buildMidRunSteeringUserMessage({ id: messageId, content: text, timestampIso: nowIso })
+    buildMidRunSteeringUserMessage({
+      id: messageId,
+      content: text,
+      timestampIso: nowIso,
+      author: HOST_MIDRUN_STEERING_AUTHOR
+    })
   )
   const entry = midRunSteeringRegistry.register({
     chatId,
     messageId,
     text,
     source: 'ensembleSteer',
+    authorKind: 'host',
     createdAtIso: nowIso
   })
   // The seat that is RUNNING right now is the one seat no later hop prompt can
   // reach. A pi seat can take the interjection mid-turn; every other provider
   // composes its turn once at dispatch and must wait for the boundary. Opt-in,
   // best-effort, and confirmed only by pi's own queue drain.
-  attemptPiLiveSteerDelivery(chatId, entry.id, text)
+  attemptPiLiveSteerDelivery(chatId, entry)
 }
 
 /**
@@ -14771,7 +14779,12 @@ function maybeAppendScheduledSteeringForBusyTask(
     if (!alreadyAppended) {
       appendMidRunSteeringMessage(
         chat,
-        buildMidRunSteeringUserMessage({ id: messageId, content, timestampIso: firedAtIso })
+        buildMidRunSteeringUserMessage({
+          id: messageId,
+          content,
+          timestampIso: firedAtIso,
+          author: HOST_MIDRUN_STEERING_AUTHOR
+        })
       )
     }
     // Register either way: after a restart the durable append survives while
@@ -14781,6 +14794,7 @@ function maybeAppendScheduledSteeringForBusyTask(
       messageId,
       text: content,
       source: 'scheduledTask',
+      authorKind: 'host',
       createdAtIso: firedAtIso,
       scheduledTaskId: task.id
     })
@@ -14822,7 +14836,8 @@ function seedScheduledSoloTranscript(
       ? buildMidRunSteeringUserMessage({
           id: steeringEntry.messageId,
           content: task.displayPrompt || task.prompt,
-          timestampIso: steeringEntry.createdAtIso
+          timestampIso: steeringEntry.createdAtIso,
+          author: HOST_MIDRUN_STEERING_AUTHOR
         })
       : {
           id: promptMessageId,
@@ -17428,7 +17443,11 @@ function releasePiLiveSteerBinding(appRunId: string | undefined): void {
  * that never drains the queue all leave the entry untouched for the existing
  * boundary path. Never throws into the caller's absorb path.
  */
-function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: string): void {
+// Takes the ENTRY rather than a loose (id, text) pair: the delivery decision
+// now depends on who authored the text, and passing the pieces separately would
+// let a caller hand this function one entry's id with another's words.
+function attemptPiLiveSteerDelivery(chatId: string, entry: MidRunSteeringEntry): void {
+  const { id: entryId, text } = entry
   if (!piLiveSteerEnabled()) return
   try {
     for (const session of runManager.getActiveByProvider('pi')) {
@@ -17441,6 +17460,7 @@ function attemptPiLiveSteerDelivery(chatId: string, entryId: string, text: strin
           enabled: true,
           provider: 'pi',
           text,
+          authorKind: entry.authorKind,
           hasLiveTransport: Boolean(writer),
           // A settled run still ACKS a steer and never runs another turn.
           runSettled: Boolean(state?.completed)

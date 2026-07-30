@@ -42,6 +42,13 @@ export interface MidRunSteeringEntry {
   messageId: string
   text: string
   source: MidRunSteeringSource
+  /**
+   * Whose words `text` is. Carried on the entry because the live-delivery lane
+   * writes `text` down the provider transport without ever loading the
+   * transcript message, so the entry is the only place that decision can be
+   * read from at delivery time.
+   */
+  authorKind: MidRunSteeringAuthorKind
   createdAtIso: string
   /** Present for `source: 'scheduledTask'` — dedupes the fire-time append. */
   scheduledTaskId?: string
@@ -68,6 +75,7 @@ export class MidRunSteeringRegistry {
     messageId: string
     text: string
     source: MidRunSteeringSource
+    authorKind: MidRunSteeringAuthorKind
     createdAtIso: string
     scheduledTaskId?: string
   }): MidRunSteeringEntry {
@@ -78,6 +86,7 @@ export class MidRunSteeringRegistry {
       messageId: input.messageId,
       text: input.text,
       source: input.source,
+      authorKind: input.authorKind,
       createdAtIso: input.createdAtIso,
       ...(input.scheduledTaskId ? { scheduledTaskId: input.scheduledTaskId } : {}),
       deliveredToParticipantIds: []
@@ -213,21 +222,75 @@ export function findScheduledSteeringMessage(
   return messages.find((message) => message.id === messageId && message.role === 'user') || null
 }
 
+/**
+ * Whose words does a steering message carry?
+ *
+ * P2c security review. This builder used to stamp `role: 'user'` with
+ * `kind: 'midRunSteering'` and nothing else, which silently asserted HOST
+ * authorship for whatever text it was handed. Routing an external contribution
+ * through the steering path is the NATURAL way to deliver a message into a live
+ * round — it is the only lane in the app that does not wait for a boundary — and
+ * doing so would have produced a row that:
+ *
+ *   - escapes all three exclusion filters, which key on the collaborator kind it
+ *     does not have;
+ *   - escapes the render-time untrusted frame, which keys on `sourceTrust`;
+ *   - renders as the host; and
+ *   - is written verbatim into the running pi seat mid-turn.
+ *
+ * Authorship is therefore REQUIRED, not assumed. Nobody can build one of these
+ * without saying whose words it carries, and the external variant stamps exactly
+ * what `makeHumanCollaboratorComment` stamps, so the wrapping predicate and the
+ * transcript projection both see it. This invents no new row shape — it reuses
+ * the established external one.
+ */
+export type MidRunSteeringAuthor =
+  | { kind: 'host' }
+  | {
+      kind: 'externalCollaborator'
+      shareId: string
+      collaboratorId: string
+      collaboratorDisplayName: string
+    }
+
+export type MidRunSteeringAuthorKind = MidRunSteeringAuthor['kind']
+
+/** The host steering their own run — every caller in the app today. */
+export const HOST_MIDRUN_STEERING_AUTHOR: MidRunSteeringAuthor = { kind: 'host' }
+
 export function buildMidRunSteeringUserMessage(input: {
   id: string
   content: string
   timestampIso: string
+  author: MidRunSteeringAuthor
 }): ChatMessage {
+  const external = input.author.kind === 'externalCollaborator' ? input.author : null
   return {
     id: input.id,
-    role: 'user',
+    // `role` is the impersonation surface, so it follows authorship. External
+    // rows take `system` for the same reason makeHumanCollaboratorComment does:
+    // a `user` row IS the host in every renderer, prompt serializer and export.
+    // The function keeps its historical name despite that — a rename would
+    // silently defeat the F6 tripwire in ExternalContributionDispatchBoundary,
+    // which pins this exact symbol out of the collaborator append path.
+    role: external ? 'system' : 'user',
     content: input.content,
     timestamp: input.timestampIso,
     // An open-union kind (ChatMessage.metadata.kind accepts arbitrary
     // strings): renderers treat unknown kinds on user rows as plain user
     // messages, so no renderer/iOS vocabulary work is required for the
     // message to appear instantly.
-    metadata: { kind: 'midRunSteering' }
+    metadata: {
+      kind: 'midRunSteering',
+      ...(external
+        ? {
+            sourceTrust: 'external_untrusted' as const,
+            shareId: external.shareId,
+            collaboratorId: external.collaboratorId,
+            collaboratorDisplayName: external.collaboratorDisplayName
+          }
+        : {})
+    }
   }
 }
 
@@ -352,6 +415,8 @@ export function planLiveSteerDelivery(input: {
   enabled: boolean
   provider: ProviderId
   text: string
+  /** Whose words the entry carries. Live delivery is HOST-ONLY — see below. */
+  authorKind: MidRunSteeringAuthorKind
   /** A stdin writer is still registered for this run's transport. */
   hasLiveTransport: boolean
   /** The run's terminal result has already been projected. */
@@ -360,6 +425,21 @@ export function planLiveSteerDelivery(input: {
   if (!input.enabled) return false
   if (!liveSteerDeliverySupported(input.provider)) return false
   if (!input.text.trim()) return false
+  // HOST-ONLY, fail-closed. This lane writes `text` STRAIGHT DOWN THE PROVIDER
+  // TRANSPORT — it never passes through the transcript, so it never meets
+  // `projectTaggedTranscript` and never receives the untrusted frame. Stamping
+  // the message correctly (see MidRunSteeringAuthor) fixes every path that
+  // renders or serializes the transcript; it cannot fix this one, because this
+  // one does not read the transcript at all.
+  //
+  // So external text is refused here regardless of how well it is stamped. That
+  // is also the right default on the merits: a live steer reaches the one seat
+  // that is mid-turn, which is the sharpest possible version of "a person on
+  // another machine can run agents on your Mac unattended". Async is pinned to
+  // Channels P3 and this refusal is not the reason — it should still hold after
+  // it is unpinned, and delivering external text into a running turn should be
+  // its own decision with its own framing, not a side effect of unpinning.
+  if (input.authorKind !== 'host') return false
   if (!input.hasLiveTransport) return false
   // Probe finding 3: after `agent_settled` pi still acks the frame but runs no
   // further turn. Never write into a settled run.
