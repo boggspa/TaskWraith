@@ -51,6 +51,7 @@ import {
   queuePendingWorkspaceRebind,
   type PendingWorkspaceRebind
 } from '../pendingWorkspaceRebind'
+import { hasPendingEnsembleRosterPresetApply } from '../../shared/ensembleRosterPresetApply'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
@@ -443,6 +444,31 @@ export class ChatService {
       ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
       : undefined
     if (seedParticipant) assertLiveProviderId(seedParticipant.provider)
+    // A SHARED thread cannot leave panel mode — not the host, not an agent, not
+    // any renderer. Collapsing routes through AppStore.setChatKind, which strips
+    // the roster into `providerMetadata.stashedEnsemble`; a later preset-apply
+    // consumes that stash, so a seat removed by a collapse can RESURRECT. With
+    // externals occupying seats, that means a kicked person's seat coming back.
+    //
+    // The refusal lives HERE because this is the only thing all the doors have
+    // in common. The desktop `set-chat-kind` handler and the bridge/iOS action
+    // both check it too, so their callers get shaped errors instead of a throw —
+    // but the bridge path reaches this method directly, and a comment on the
+    // desktop handler used to claim it was "the gate every surface goes
+    // through". It was not. This is.
+    if (targetKind !== 'ensemble') {
+      // Read the store directly rather than through the accessor that throws
+      // when it is unconfigured: no store means no shares can exist, so there is
+      // nothing here to protect and no reason to fail a plain solo conversion.
+      const shared = (this.deps.humanCollaborationStore?.listShares(chatId) ?? []).some(
+        (share) => share.enabled
+      )
+      if (shared && this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble') {
+        throw new Error(
+          'This chat is shared. Stop sharing before switching it out of panel mode.'
+        )
+      }
+    }
     const canonicalProviderMetadata =
       args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
         ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)
@@ -507,7 +533,8 @@ export class ChatService {
     ) {
       return current
     }
-    const providerAdmissionFenced = fenceSavedProviderAdmission(sanitizedInput, current)
+    const kindFenced = preserveCanonicalChatKind(sanitizedInput, current)
+    const providerAdmissionFenced = fenceSavedProviderAdmission(kindFenced, current)
     const grantFenced = allowWorkspaceTransition
       ? providerAdmissionFenced
       : preserveCanonicalExternalPathGrantMetadata(providerAdmissionFenced, current)
@@ -1604,6 +1631,53 @@ function assertLiveProviderId(value: unknown): ProviderId {
     return provider
   }
   throw new Error(`${provider} is unavailable for new chats or delegated runs.`)
+}
+
+/**
+ * `chatKind` is main-owned. `setChatKind` is the door for changing it: it
+ * enforces the idle-only running guard, seeds or strips the roster, and refuses
+ * to collapse a SHARED chat out of panel mode. `save-chat` accepts a whole
+ * renderer-authored record and walked straight past all of that — a fence with a
+ * gate standing open beside it.
+ *
+ * The stored kind therefore wins. Two carve-outs, both narrow:
+ *
+ *   - NO STORED RECORD. This is a creation (fork, side chat, sub-thread) and the
+ *     incoming kind is the only one that exists.
+ *   - A PENDING ROSTER-PRESET PLAN on the STORED record authorises exactly one
+ *     transition — single → ensemble — at the turn or round boundary that
+ *     consumes it. The plan is main-verifiable and was written by the
+ *     preset-apply path, so it is authority rather than renderer assertion, and
+ *     it can only ever turn panel mode ON. It cannot launder a collapse.
+ *
+ * Pinning rather than rejecting the record is deliberate. A save carrying a
+ * stale kind usually also carries real transcript work, and every other fence in
+ * this chain preserves one field rather than discarding the whole snapshot.
+ *
+ * Restoring the stored ensemble block alongside the kind is load-bearing:
+ * `normalizeChatRecord` seeds a DEFAULT multi-provider roster onto any chat that
+ * is `ensemble` without one, so pinning the kind while leaving the incoming
+ * record's dropped roster in place would replace the user's seats with defaults.
+ */
+function preserveCanonicalChatKind(next: ChatRecord, current: ChatRecord | null): ChatRecord {
+  if (!current) return next
+  const storedKind: ChatKind = current.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  const incomingKind: ChatKind = next.chatKind === 'ensemble' ? 'ensemble' : 'single'
+  if (storedKind === incomingKind) return next
+  if (
+    storedKind === 'single' &&
+    incomingKind === 'ensemble' &&
+    hasPendingEnsembleRosterPresetApply(current)
+  ) {
+    return next
+  }
+  return {
+    ...next,
+    chatKind: storedKind,
+    ...(storedKind === 'ensemble' && !next.ensemble && current.ensemble
+      ? { ensemble: current.ensemble }
+      : {})
+  }
 }
 
 /**

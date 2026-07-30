@@ -374,11 +374,13 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       // `providerMetadata.stashedEnsemble`; the next preset-apply consumes that
       // stash, so a seat removed by a collapse can silently RESURRECT later.
       // With external collaborators occupying seats that is not a cosmetic
-      // problem — a kicked person's seat could come back. Refusing at the
-      // main-side gate is far safer than trying to teach the collapse path
-      // about external seats, and it is the gate every surface goes through.
-      // The share check runs first because it is cheap; only then do we pay for
-      // a chat read to confirm this is actually a collapse and not a no-op.
+      // problem — a kicked person's seat could come back.
+      //
+      // `ChatService.setChatKind` refuses this too, and THAT is the gate every
+      // door goes through; this copy is kept because it is cheap and because it
+      // fails before any of the argument validation below. The share check runs
+      // first because it is cheap; only then do we pay for a chat read to
+      // confirm this is actually a collapse and not a no-op.
       if (args?.targetKind !== 'ensemble') {
         const shared = deps.chatService
           .listHumanCollaborationShares(args.chatId)
