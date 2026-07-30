@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../store/types'
 import { makeHumanCollaboratorComment } from './HumanCollaboratorMessages'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
-import { buildHumanShareProjection } from './HumanShareProjection'
+import { buildHumanShareProjection, MAX_PROJECTED_PENDING_ENTRIES } from './HumanShareProjection'
 
 function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -492,5 +492,101 @@ describe('buildHumanShareProjection v2 vocabulary', () => {
     )
     expect(projection.rows[0]?.tools?.[0]?.target).toBe('[workspace]/src/main.ts')
     expect(JSON.stringify(projection)).not.toContain('/Users/chris')
+  })
+})
+
+/**
+ * The collaborator notice. Carried as a projection FIELD, not a new wire event:
+ * the cipher hard-throws on any method outside its known set and the
+ * collaborator surfaces that as a user-visible error on every frame, so a new
+ * event would spam an older build. An unknown JSON field is simply ignored.
+ */
+describe('buildHumanShareProjection yourPending', () => {
+  const share = {
+    shareId: 'share-1',
+    chatId: 'chat-1',
+    mode: 'comments' as const,
+    enabled: true,
+    createdAt: 1,
+    updatedAt: 1,
+    nextSequence: 1,
+    participants: [],
+    invites: []
+  }
+  const emptyChat = { appChatId: 'chat-1', title: 'Shared chat', messages: [], runs: [] }
+
+  function entry(over: Record<string, unknown> = {}) {
+    return {
+      entryId: 'e1',
+      clientMessageId: 'c1',
+      state: 'queued' as const,
+      enqueuedAt: 1000,
+      expiresAt: 2000,
+      ...over
+    }
+  }
+
+  it('omits the field entirely when the viewer has nothing pending', () => {
+    const projection = buildHumanShareProjection(emptyChat as never, share as never, {
+      viewerCollaboratorId: 'collab-1'
+    })
+    expect('yourPending' in projection).toBe(false)
+  })
+
+  it('carries the viewer’s entries newest-first', () => {
+    const projection = buildHumanShareProjection(emptyChat as never, share as never, {
+      viewerCollaboratorId: 'collab-1',
+      pendingForViewer: [
+        entry({ entryId: 'old', enqueuedAt: 1000 }),
+        entry({ entryId: 'new', enqueuedAt: 3000 }),
+        entry({ entryId: 'mid', enqueuedAt: 2000 })
+      ]
+    })
+    expect(projection.yourPending?.map((p) => p.entryId)).toEqual(['new', 'mid', 'old'])
+  })
+
+  it('bounds the field so a week of denials cannot grow it without limit', () => {
+    const many = Array.from({ length: MAX_PROJECTED_PENDING_ENTRIES + 25 }, (_, i) =>
+      entry({ entryId: `e-${i}`, enqueuedAt: 1000 + i })
+    )
+    const projection = buildHumanShareProjection(emptyChat as never, share as never, {
+      pendingForViewer: many
+    })
+    expect(projection.yourPending).toHaveLength(MAX_PROJECTED_PENDING_ENTRIES)
+    // Newest kept, oldest dropped — the thing you just sent is what you are
+    // looking for.
+    expect(projection.yourPending?.[0]?.entryId).toBe(`e-${many.length - 1}`)
+  })
+
+  it('carries a denial reason and a lapse reason through to the person', () => {
+    const projection = buildHumanShareProjection(emptyChat as never, share as never, {
+      pendingForViewer: [
+        entry({ entryId: 'denied', state: 'denied', resolvedAt: 1500, hostReason: 'not now' }),
+        entry({ entryId: 'lapsed', state: 'lapsed', resolvedAt: 1600, lapseReason: 'expired' })
+      ]
+    })
+    const byId = new Map(projection.yourPending?.map((p) => [p.entryId, p]))
+    expect(byId.get('denied')?.hostReason).toBe('not now')
+    expect(byId.get('lapsed')?.lapseReason).toBe('expired')
+  })
+
+  /**
+   * The caller scopes to the viewer and whitelists via `toCollaboratorView`;
+   * this pins that the builder adds nothing back. A body reaching the wire would
+   * be harmless to its author but would also mean the projection had stopped
+   * being a whitelist.
+   */
+  it('carries nothing the caller did not put in it', () => {
+    const projection = buildHumanShareProjection(emptyChat as never, share as never, {
+      pendingForViewer: [entry()]
+    })
+    expect(Object.keys(projection.yourPending?.[0] ?? {}).sort()).toEqual([
+      'clientMessageId',
+      'enqueuedAt',
+      'entryId',
+      'expiresAt',
+      'state'
+    ])
+    expect(JSON.stringify(projection)).not.toContain('collaboratorId')
   })
 })

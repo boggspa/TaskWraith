@@ -45790,7 +45790,17 @@ if (isGeminiMcpBridgeProcess) {
             share,
             resolvePresence: (id) => humanCollaborationPresence.collaboratorState(id)
           })
+          // The viewer's OWN entries only. Scoped here rather than in the
+          // builder, because "whose queue is this" is a collaboration question
+          // and the builder is deliberately queue-agnostic. `toCollaboratorView`
+          // is the whitelist — the body never crosses (they wrote it), nor the
+          // ids, nor the messageId the entry will become.
+          const pendingForViewer = externalContributionQueue
+            .listForCollaborator(collaboratorId)
+            .filter((entry) => entry.chatId === chat.appChatId)
+            .map((entry) => ExternalContributionQueueStore.toCollaboratorView(entry))
           return buildHumanShareProjection(chat, share, {
+            ...(pendingForViewer.length ? { pendingForViewer } : {}),
             // Lets the receiver tell their own words from everyone else's, which
             // the whole presentation rule depends on.
             viewerCollaboratorId: collaboratorId,
@@ -46911,14 +46921,33 @@ if (isGeminiMcpBridgeProcess) {
     // reaping a stale twin of someone still connected elsewhere is not a
     // departure and must not churn anything.
     const presenceSweep = setInterval(() => {
-      const transitions = humanCollaborationPresence.sweep()
-      const dirtyChatIds = new Set<string>()
-      for (const transition of transitions) {
-        if (transition.silent) continue
-        dirtyChatIds.add(transition.chatId)
-      }
-      for (const chatId of dirtyChatIds) {
-        broadcastHumanCollaborationUpdate(chatId)
+      // WRAPPED, and this is not defensive habit. This interval is created
+      // unconditionally in the ready flow and fires for every user whether or
+      // not they have ever shared anything; Electron's main process registers
+      // only an uncaughtException MONITOR, which does not suppress the default
+      // action. An unhandled throw here would therefore crash main every
+      // fifteen seconds for the entire install base — from something as small as
+      // one malformed persisted record.
+      try {
+        const dirtyChatIds = new Set<string>()
+        for (const transition of humanCollaborationPresence.sweep()) {
+          if (transition.silent) continue
+          dirtyChatIds.add(transition.chatId)
+        }
+        // Expiring a contribution is a fact the person who wrote it is owed, and
+        // the projection is the only channel that reaches them.
+        for (const lapsed of externalContributionQueue.sweep()) {
+          dirtyChatIds.add(lapsed.chatId)
+        }
+        for (const chatId of dirtyChatIds) {
+          broadcastHumanCollaborationUpdate(chatId)
+        }
+      } catch (err) {
+        console.warn(
+          `[human-collaboration] sweep failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
       }
     }, 15_000)
     presenceSweep.unref?.()

@@ -111,6 +111,35 @@ export interface HumanShareProjection {
   youAre?: string
   /** The effective panel, so an external can render the seat row. */
   roster?: HumanShareProjectionSeat[]
+  /**
+   * THIS viewer's contributions awaiting or past host review.
+   *
+   * Carried as a projection FIELD rather than a new wire event, deliberately.
+   * The cipher hard-throws on any method outside its known set and the
+   * collaborator catches that into a user-visible error — so a new event shown
+   * to an older build produces an error on every frame, while an unknown JSON
+   * field is simply ignored and that build degrades to today's behaviour.
+   *
+   * Scoped to the viewer by the CALLER. One person's queue is not another's
+   * business, and this projection is built per session, so there is no reason
+   * for anyone else's entries to be in it.
+   */
+  yourPending?: HumanShareProjectionPendingEntry[]
+}
+
+/** Exactly `ExternalContributionQueueStore.toCollaboratorView`'s shape — the
+ * whitelist of what may cross about a queued contribution. Notably NOT the
+ * body (they wrote it), nor the chat/share/collaborator ids, nor the messageId
+ * it will become. */
+export interface HumanShareProjectionPendingEntry {
+  entryId: string
+  clientMessageId: string
+  state: 'queued' | 'approved' | 'denied' | 'lapsed'
+  enqueuedAt: number
+  expiresAt: number
+  resolvedAt?: number
+  hostReason?: string
+  lapseReason?: 'expired' | 'revoked' | 'shareEnded' | 'chatGone'
 }
 
 export interface HumanShareProjectionOptions {
@@ -129,7 +158,22 @@ export interface HumanShareProjectionOptions {
   /** Resolve a seat id to its display label + accent. Lets an assistant row be
    * attributed without the builder knowing anything about rosters. */
   resolveSeat?: (seatId: string) => { label?: string; colorIndex?: number } | undefined
+  /**
+   * The viewing collaborator's own queued/resolved contributions, already
+   * whitelisted and already scoped to them by the caller. The builder stays
+   * queue-agnostic — it never learns what a queue is, only that it was handed
+   * some entries to carry.
+   */
+  pendingForViewer?: HumanShareProjectionPendingEntry[]
 }
+
+/**
+ * How many of the viewer's own entries cross. The queue caps a person at 20
+ * awaiting review, and resolved entries linger a week — so an unbounded field
+ * would grow with every denial. Newest first, because the thing you just sent
+ * is the thing you are looking for.
+ */
+export const MAX_PROJECTED_PENDING_ENTRIES = 30
 
 const DEFAULT_MAX_ROWS = 120
 const DEFAULT_MAX_PREVIEW_CHARS = 1200
@@ -187,6 +231,14 @@ export function buildHumanShareProjection(
     rows,
     totalRows: projectable.length,
     ...(opts.viewerCollaboratorId ? { youAre: opts.viewerCollaboratorId } : {}),
+    ...(opts.pendingForViewer?.length
+      ? {
+          yourPending: opts.pendingForViewer
+            .slice()
+            .sort((a, b) => b.enqueuedAt - a.enqueuedAt)
+            .slice(0, MAX_PROJECTED_PENDING_ENTRIES)
+        }
+      : {}),
     // Seats are copied field-by-field, not spread: `seatDisabled` must never
     // reach a collaborator, and a spread would carry whatever the seat type
     // grows next.
