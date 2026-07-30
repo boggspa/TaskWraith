@@ -44,7 +44,7 @@ describe('OllamaRunProfiles', () => {
     // local_scout 65_536 ceiling — the whole point of dropping the restriction.
     expect(resolveOllamaRunProfile('ornith:35b').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('gpt-oss:20b', 'provider_parity').contextCapTokens).toBe(131_072)
-    expect(resolveOllamaRunProfile('lfm2.5:8b', 'provider_parity').contextCapTokens).toBe(131_072)
+    expect(resolveOllamaRunProfile('lfm2.5:8b', 'provider_parity').contextCapTokens).toBe(128_000)
     expect(resolveOllamaRunProfile('laguna-xs-2.1:q8_0', 'provider_parity').contextCapTokens).toBe(
       262_144
     )

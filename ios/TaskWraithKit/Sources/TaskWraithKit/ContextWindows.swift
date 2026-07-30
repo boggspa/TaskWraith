@@ -124,9 +124,12 @@ public enum ContextWindows {
         "gpt-oss:20b": 131_072,
         "gpt-oss:latest": 131_072,
         "openai/gpt-oss-20b": 131_072,
-        "lfm2.5": 131_072,
-        "lfm2.5:8b": 131_072,
-        "lfm2.5:latest": 131_072,
+        // 128_000, not 131_072 — the daemon reports a round 128k for this one.
+        // Mirrors src/shared/contextWindows.ts. iOS has no daemon to probe, so
+        // unlike desktop this table IS the only source here.
+        "lfm2.5": 128_000,
+        "lfm2.5:8b": 128_000,
+        "lfm2.5:latest": 128_000,
         "minicpm-v4.5:8b": 40_960,
         "granite4.1:3b": 131_072,
         "granite4.1:30b": 131_072,

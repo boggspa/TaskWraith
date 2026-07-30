@@ -2259,8 +2259,8 @@ export interface AppSettings {
    * load, while prompt composition is synchronous and runs BEFORE the launch plan
    * that holds it. Persisting the fact once lets the context-block budget size
    * itself against the model's real window instead of the hand-maintained
-   * `CONTEXT_WINDOWS_BY_MODEL` table, which has already drifted (`lfm2.5:8b` is
-   * 131_072 there and 128_000 on the daemon).
+   * `CONTEXT_WINDOWS_BY_MODEL` table, which drifts from the daemon over time
+   * (`lfm2.5:8b` was 131_072 there against a measured 128_000 until 2026-07-30).
    *
    * Written only when the value CHANGES — `updateSettings` does a synchronous full
    * settings write, so recording it per run would put a disk write in the hot path.

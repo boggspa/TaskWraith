@@ -79,16 +79,18 @@ describe('resolveOllamaContextBudget — measured daemon window', () => {
   })
 
   it('prefers the measured window over the hand-maintained table for KNOWN families', () => {
-    // `lfm2.5:8b` sits in CONTEXT_WINDOWS_BY_MODEL as 131_072 while the daemon
-    // reports 128_000. The measured value must win, so the table can drift without
-    // silently mis-sizing the block.
-    const fromTable = resolveOllamaContextBudget('lfm2.5:8b')
-    const fromDaemon = resolveOllamaContextBudget('lfm2.5:8b', 128_000)
-    expect(fromDaemon.maxBlockChars).toBeLessThanOrEqual(fromTable.maxBlockChars)
-    // A drastically smaller measurement must actually shrink the block.
-    expect(
-      resolveOllamaContextBudget('lfm2.5:8b', 16_384).maxBlockChars
-    ).toBeLessThan(fromTable.maxBlockChars)
+    // Deliberately NOT asserted via a model whose table entry is currently wrong —
+    // that made the test vacuous the moment the entry was corrected. Instead drive
+    // the SAME known tag with measurements above and below its table value and
+    // require the block to follow the measurement in both directions, which holds
+    // however accurate the table happens to be.
+    const fromTable = resolveOllamaContextBudget('qwen3.5:4b')
+    expect(resolveOllamaContextBudget('qwen3.5:4b', 400_000).maxBlockChars).toBeGreaterThan(
+      fromTable.maxBlockChars
+    )
+    expect(resolveOllamaContextBudget('qwen3.5:4b', 16_384).maxBlockChars).toBeLessThan(
+      fromTable.maxBlockChars
+    )
   })
 
   it('treats non-positive or non-finite measurements as absent', () => {

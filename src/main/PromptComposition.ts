@@ -821,9 +821,11 @@ export interface ComposeRunPromptInput {
    *
    * Supplied so the context-block budget can size itself against the model's real
    * window instead of `CONTEXT_WINDOWS_BY_MODEL`, which is hand-maintained and has
-   * already drifted (it carries `lfm2.5:8b` as 131,072 where the daemon reports
-   * 128,000). Omitting it is always safe: an unrecognised tag then keeps the
-   * conservative floor rather than scaling off a fabricated window.
+   * drifted from the daemon before (`lfm2.5:8b` was 131,072 there against a
+   * measured 128,000, corrected 2026-07-30 — the point is that a hand-maintained
+   * table drifts, not that any particular entry is wrong today). Omitting this is
+   * always safe: an unrecognised tag then keeps the conservative floor rather than
+   * scaling off a fabricated window.
    */
   ollamaLiveContextTokens?: number | null
   /** The set of handoff-keys already applied to this chat (so we only inject

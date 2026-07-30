@@ -21,7 +21,8 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('qwen3.6:35b')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('laguna-xs-2.1:q8_0')).toBe(262_144)
     expect(resolveOllamaContextTokenLimit('gpt-oss:20b')).toBe(131_072)
-    expect(resolveOllamaContextTokenLimit('lfm2.5:8b')).toBe(131_072)
+    // A round 128k, not 128Ki — corrected against the daemon 2026-07-30.
+    expect(resolveOllamaContextTokenLimit('lfm2.5:8b')).toBe(128_000)
     expect(resolveOllamaContextTokenLimit('minicpm-v4.5:8b')).toBe(40_960)
     expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)

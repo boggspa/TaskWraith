@@ -131,9 +131,14 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gpt-oss:20b': 131_072,
   'gpt-oss:latest': 131_072,
   'openai/gpt-oss-20b': 131_072,
-  'lfm2.5': 131_072,
-  'lfm2.5:8b': 131_072,
-  'lfm2.5:latest': 131_072,
+  // 128_000, not 131_072: the daemon reports a round 128k rather than 128Ki for
+  // this one. Verified against `/api/show` — it was the ONLY drifted entry when
+  // all twelve installed tags were compared on 2026-07-30. Desktop now prefers a
+  // live daemon reading over this table, but iOS mirrors it with no daemon to
+  // probe, so the number here is load-bearing there.
+  'lfm2.5': 128_000,
+  'lfm2.5:8b': 128_000,
+  'lfm2.5:latest': 128_000,
   'minicpm-v4.5:8b': 40_960,
   'granite4.1:3b': 131_072,
   'granite4.1:30b': 131_072,
