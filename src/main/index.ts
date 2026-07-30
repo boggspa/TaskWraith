@@ -44426,14 +44426,26 @@ if (isGeminiMcpBridgeProcess) {
       // `truncate` deliberately KEEPS the share (the chat shell survives), but
       // the rows underneath the collaborator are being erased — so the channel
       // still has to drop rather than silently serve a transcript that no
-      // longer matches the host's. The share record staying enabled is what
-      // lets the host re-share without re-inviting.
+      // longer matches the host's.
       closeRoomsForShares(scopedShares)
       humanCollaborationAuditLog.purgeEntries({
         chatIds,
         shareIds: scopedShares.map((share) => share.shareId)
       })
-      if (kind !== 'truncate') humanCollaborationStore.purgeChatShares(chatIds)
+      if (kind !== 'truncate') {
+        humanCollaborationStore.purgeChatShares(chatIds)
+        return
+      }
+      // …but a truncate must not leave the share advertising itself as live
+      // with no door behind it. Closing alone would strand the collaborator
+      // until the host restarted the app or minted a fresh invite, because
+      // `openRoom` has only two callers (boot re-open and create-invite) —
+      // while the host's Shares UI went on showing the share as enabled. Re-open
+      // so the pinned-identity reconnect can land: the session is still dropped,
+      // so they re-handshake and get the TRUNCATED projection, never the erased
+      // rows. Guarded on the transport already existing, so startup erasure
+      // recovery cannot construct the runtime ahead of its own wiring.
+      if (humanCollaborationHostTransport) reopenCollaborationRooms()
     }
 
     const drainOrphanSubThreadsBeforeRunQueue = async (): Promise<void> => {
