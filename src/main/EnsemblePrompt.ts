@@ -132,6 +132,24 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
   /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
+  /**
+   * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
+   * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
+   * relative to a snapshot taken at round start.
+   *
+   * Round-volatile evidence, so it is emitted on slim resumed turns as well as
+   * full briefings — a resumed seat needs to know what its peers actually wrote
+   * just as much as a freshly briefed one. It reaches the prompt through `input`
+   * rather than `config` specifically so it stays OUT of
+   * `computeEnsemblePromptShellStamp`: churn changes every round, and folding it
+   * into the shell identity would invalidate every seat's shell receipt each
+   * round and force a full re-briefing — turning an evidence improvement into a
+   * permanent token cost.
+   *
+   * Undefined (no workspace, not a git repo, git error, or nothing changed)
+   * omits the section entirely.
+   */
+  workspaceChurnStanza?: string
 }
 
 // v4 (capability-surface repair 2026-07): tool names are now conditional on
@@ -1100,6 +1118,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         }
         return lines
       })(),
+      ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
       '',
       'New since your previous turn (tagged transcript):',
       deltaTranscript || '[No new panel activity since your previous turn.]',
@@ -1144,6 +1163,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     ...(workspaceStanza ? [workspaceStanza] : []),
     '',
     dynamicStateSnapshot.block,
+    // Tree-derived churn sits immediately after the dynamic state block: both
+    // are round-volatile evidence, and it reads directly above the roster whose
+    // members it describes.
+    ...(input.workspaceChurnStanza ? ['', input.workspaceChurnStanza] : []),
     '',
     'Participant roster:',
     roster || '- No other enabled participants.',

@@ -116,6 +116,12 @@ import {
   type ContextPressureSeverity
 } from '../../shared/contextCompaction'
 import type { ScoutBriefRecord } from '../ScoutBrief'
+import { sampleWorkspaceChurn } from '../DiffService'
+import {
+  diffWorkspaceChurn,
+  formatWorkspaceChurnStanza,
+  type WorkspaceChurnSample
+} from '../WorkspaceChurn'
 import {
   createActiveGoal,
   normalizeActiveGoalObjective,
@@ -3074,6 +3080,18 @@ interface ActiveRoundRuntime {
    * briefs.
    */
   scoutBriefs?: ScoutBriefRecord[]
+  /**
+   * Tree-derived churn baseline for this round, captured lazily on the FIRST
+   * dispatch (before any seat has written) and subtracted on every later
+   * dispatch so each seat sees what its peers actually changed.
+   *
+   * Lives on the runtime rather than in a keyed registry so it dies with the
+   * round exactly like `scoutBriefs` — nothing to reap, nothing to persist. Set
+   * to `null` once sampling has been attempted and failed (not a repository, no
+   * commits, git error) so a doomed sample is not retried on every dispatch of
+   * a long round.
+   */
+  workspaceChurnBaseline?: WorkspaceChurnSample | null
   unreachableParticipantIds?: Set<string>
   orchestrationMode: EnsembleOrchestrationMode
   fanoutPolicy?: EnsembleFanoutPolicy
@@ -12828,6 +12846,50 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Tree-derived churn stanza for the seat about to be dispatched, or undefined.
+   *
+   * Exactly ONE git sample per dispatch: the first dispatch of a round stores
+   * its sample as the baseline and returns nothing (definitionally, no seat has
+   * written yet), and every later dispatch subtracts the baseline from a fresh
+   * sample. That keeps the added cost to one `git diff --numstat` plus one
+   * `git status` per turn, and makes the opening turn free.
+   *
+   * Fails open in every direction — no workspace, no repository, a git error, or
+   * a throw all yield undefined, and the prompt simply omits the section. This
+   * is evidence, not a gate: it must never be able to block a dispatch.
+   */
+  private async resolveWorkspaceChurnStanza(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord
+  ): Promise<string | undefined> {
+    const workspacePath = (chat.workspacePath || '').trim()
+    if (!workspacePath) return undefined
+    // A prior attempt already failed for this round; do not retry per dispatch.
+    if (runtime.workspaceChurnBaseline === null) return undefined
+    try {
+      const sample = await sampleWorkspaceChurn(workspacePath)
+      if (!sample) {
+        runtime.workspaceChurnBaseline = null
+        return undefined
+      }
+      const baseline = runtime.workspaceChurnBaseline
+      if (!baseline) {
+        runtime.workspaceChurnBaseline = sample
+        return undefined
+      }
+      return (
+        formatWorkspaceChurnStanza(diffWorkspaceChurn(baseline, sample), {
+          heading:
+            'Workspace changes so far this round (tree-derived — this is what the files actually hold):'
+        }) || undefined
+      )
+    } catch {
+      runtime.workspaceChurnBaseline = null
+      return undefined
+    }
+  }
+
   private async runRound(
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[],
@@ -13314,6 +13376,10 @@ export class EnsembleOrchestrator {
           (entry) => entry.id
         )
       })()
+      // Tree-derived churn evidence. Sampled here — immediately before the
+      // prompt is composed — so the numbers describe the tree the seat is about
+      // to act on, not the tree as it stood when the round opened.
+      const workspaceChurnStanza = await this.resolveWorkspaceChurnStanza(runtime, dispatchChat)
       const prompt = buildEnsembleParticipantPrompt({
         chat: dispatchChat,
         config: ensembleConfigForRound,
@@ -13323,6 +13389,7 @@ export class EnsembleOrchestrator {
           : runtime.prompt,
         roundId: runtime.roundId,
         chatContextTurns,
+        ...(workspaceChurnStanza ? { workspaceChurnStanza } : {}),
         // 1.0.4-AK6 — thread fan-out briefs into the writer's prompt
         // when a parallel fan-out pass just completed. Empty array
         // (or undefined) skips the section entirely.
@@ -13352,7 +13419,10 @@ export class EnsembleOrchestrator {
               slimTurn: false,
               dynamicStateSnapshot,
               effectiveApprovalMode: permissions.approvalMode,
-              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint
+              authorityRoutingCheckpoint: run.authorityRoutingCheckpoint,
+              // Same dispatch, same evidence — reuse the sample rather than
+              // re-shelling git for the resume-failure fallback.
+              ...(workspaceChurnStanza ? { workspaceChurnStanza } : {})
             })}${formatDiscordContextPromptAppendix(
               runtime.discordContextSnapshots
             )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
@@ -14834,6 +14904,11 @@ export class EnsembleOrchestrator {
         chatContextTurns,
         dynamicStateSnapshot,
         effectiveApprovalMode: permissions.approvalMode
+        // No `workspaceChurnStanza` here, deliberately: lanes in this pass run
+        // CONCURRENTLY, so a sample taken now would blend siblings' in-flight
+        // writes with no way to attribute them, and `isolation: 'worktree'`
+        // lanes do not even share the workspace the sample would measure. The
+        // serial turn that follows the pass reports the settled result instead.
       })
       const shellRoutingPrompt = buildProviderShellRoutingPrompt({
         provider: participant.provider,

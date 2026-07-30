@@ -16,6 +16,7 @@ import type {
   RunDiffResult,
   FileSnapshot
 } from './store/types'
+import { parseNumstatByPath, type WorkspaceChurnSample } from './WorkspaceChurn'
 
 const NOISE_PATHS = ['.DS_Store', 'Thumbs.db', 'node_modules', 'dist', 'build', '.vite']
 const SENSITIVE_PATTERNS = [/\.env$/i, /\.pem$/i, /\.key$/i, /secret/i, /password/i, /token/i]
@@ -618,6 +619,109 @@ export async function captureWorkspaceSnapshot(workspace: string): Promise<Works
     isGitRepo: true,
     workspacePath: workspace,
     gitStatus: statusOut
+  }
+}
+
+/**
+ * Sample tree-derived per-file churn for `WorkspaceChurn`.
+ *
+ * Two reads, both scoped to the workspace prefix so a workspace bound to a
+ * subdirectory of a larger repository never reports its siblings:
+ *   1. `diff --numstat HEAD` — churn for TRACKED files. Diffing against HEAD
+ *      (rather than the two-call staged/unstaged pair `countGitFileDiffLines`
+ *      uses) collapses index and worktree into one number in one subprocess,
+ *      which matters because this runs per dispatch rather than per file.
+ *   2. `status --porcelain=v1 -z -uall` — UNTRACKED paths, which numstat cannot
+ *      see at all. Their lines are counted directly (bounded, noise-filtered),
+ *      because a name-only entry made a new file invisible after the turn it
+ *      first appeared — a seat could keep growing it unseen.
+ *
+ * Returns `null` — never a partial or zeroed sample — when the workspace is not
+ * a repository, has no commit to diff against, or git errors. A missing stanza
+ * is honest; a stanza reading `+0/-0` because git failed is a lie the panel
+ * would act on.
+ */
+export async function sampleWorkspaceChurn(
+  workspace: string
+): Promise<WorkspaceChurnSample | null> {
+  let scope: Awaited<ReturnType<typeof resolveGitWorkspaceScope>>
+  try {
+    scope = await resolveGitWorkspaceScope(workspace)
+  } catch {
+    return null
+  }
+  if (!scope) return null
+  const pathspec = workspacePathspec(scope.workspacePrefix)
+
+  const numstat = await spawnGit(scope.repoRoot, [
+    'diff',
+    '--numstat',
+    '--no-ext-diff',
+    '--no-textconv',
+    'HEAD',
+    ...pathspec
+  ])
+  // An unborn HEAD (no commits yet) fails here rather than reporting the whole
+  // tree as additions. Nothing to baseline against, so decline the sample.
+  if (numstat.code !== 0) return null
+
+  const status = await spawnGit(scope.repoRoot, [
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    ...pathspec
+  ])
+  const untracked: WorkspaceChurnSample['untracked'] = {}
+  if (status.code === 0) {
+    for (const entry of parseGitStatusZ(status.stdout)) {
+      if (classifyStatus(entry.statusCode) !== 'untracked') continue
+      if (!entry.filePath || isNoiseFile(entry.filePath)) continue
+      untracked[entry.filePath] = countUntrackedFileLines(path.join(scope.repoRoot, entry.filePath))
+    }
+  }
+
+  return { tracked: parseNumstatByPath(numstat.stdout), untracked }
+}
+
+/** Bound on untracked files we will read to count lines. */
+const UNTRACKED_LINE_COUNT_MAX_BYTES = 512 * 1024
+
+/**
+ * Line count for a file git is not tracking, expressed as `additions` so it
+ * subtracts cleanly against a later sample.
+ *
+ * Anything unreadable, oversized, or binary comes back flagged `binary` rather
+ * than as a zero: a real zero means "empty file", and conflating the two would
+ * let an unreadable 10k-line file read as no work at all. Binary detection is
+ * the usual NUL-in-the-first-chunk heuristic, which keeps a newly added PNG from
+ * being reported as a few thousand stray lines.
+ */
+function countUntrackedFileLines(absolutePath: string): {
+  additions: number
+  deletions: number
+  binary?: boolean
+} {
+  try {
+    const stat = fs.statSync(absolutePath)
+    if (!stat.isFile()) return { additions: 0, deletions: 0, binary: true }
+    if (stat.size > UNTRACKED_LINE_COUNT_MAX_BYTES) {
+      return { additions: 0, deletions: 0, binary: true }
+    }
+    const buffer = fs.readFileSync(absolutePath)
+    if (buffer.subarray(0, 8192).includes(0)) {
+      return { additions: 0, deletions: 0, binary: true }
+    }
+    if (buffer.length === 0) return { additions: 0, deletions: 0 }
+    let lines = 0
+    for (const byte of buffer) {
+      if (byte === 0x0a) lines += 1
+    }
+    // A trailing byte that is not a newline still terminates a line.
+    if (buffer[buffer.length - 1] !== 0x0a) lines += 1
+    return { additions: lines, deletions: 0 }
+  } catch {
+    return { additions: 0, deletions: 0, binary: true }
   }
 }
 
