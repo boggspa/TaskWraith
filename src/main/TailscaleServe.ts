@@ -35,6 +35,11 @@ export interface TailscaleServeStatus {
   httpsPort?: number
   /** The proxy target found (diagnostic). */
   proxyTarget?: string
+  /** True when THIS front door is published to the public internet via Funnel
+   * (`AllowFunnel` set for our host:port), rather than tailnet-only. Load-bearing:
+   * `enableTailscaleServe` re-asserts with the matching verb so re-running it
+   * cannot silently downgrade a Funnel door. */
+  funnelEnabled?: boolean
   /** Set when the status read itself failed. */
   error?: string
 }
@@ -43,6 +48,8 @@ export interface TailscaleServeStatus {
 interface ServeConfigRaw {
   TCP?: Record<string, unknown>
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>
+  /** Keyed by the same `host:port` string as `Web`. Present only for public doors. */
+  AllowFunnel?: Record<string, boolean>
 }
 
 function parseServeHostPort(hostPort: string): { host?: string; port?: number } {
@@ -104,7 +111,10 @@ export async function getTailscaleServeStatus(input: {
           configured: true,
           ...(parsed.host ? { dnsName: parsed.host } : {}),
           httpsPort: Number.isInteger(frontDoorPort) && frontDoorPort > 0 ? frontDoorPort : 443,
-          proxyTarget: proxy
+          proxyTarget: proxy,
+          // Present only when public, mirroring the conditional-spread style of
+          // the other optional fields — consumers test `=== true`.
+          ...(raw.AllowFunnel?.[hostPort] === true ? { funnelEnabled: true } : {})
         }
       }
     }
@@ -131,11 +141,35 @@ export async function enableTailscaleServe(input: {
   exec?: ServeExec
 }): Promise<TailscaleServeResult> {
   const exec = input.exec ?? defaultExec
+  const httpsPort = input.httpsPort ?? 443
+  // FUNNEL PRESERVATION. `tailscale serve` is tailnet-only and DOWNGRADES an
+  // existing Funnel door — the CLI answers `Removing Funnel for <host>:<port>`
+  // and the door silently reverts to tailnet-only. Creating a People invite
+  // calls this function, so a host who had published their relay via Funnel had
+  // it disarmed by the very act of copying the invite that advertises it. The
+  // collaborator then failed on every door with no indication why.
+  //
+  // Re-assert with the SAME verb the door already has: `funnel` keeps a public
+  // door public, `serve` keeps a tailnet door tailnet-only. Both take identical
+  // flags. A failed status read falls through to `serve`, which is the safe
+  // default — it can only ever narrow exposure, never widen it.
+  let verb = 'serve'
+  try {
+    const existing = await getTailscaleServeStatus({
+      cliPath: input.cliPath,
+      relayPort: input.relayPort,
+      httpsPort,
+      exec
+    })
+    if (existing.configured && existing.funnelEnabled) verb = 'funnel'
+  } catch {
+    // Keep `serve`; never widen exposure because a status read failed.
+  }
   try {
     const { stdout, stderr } = await exec(input.cliPath, [
-      'serve',
+      verb,
       '--bg',
-      `--https=${input.httpsPort ?? 443}`,
+      `--https=${httpsPort}`,
       String(input.relayPort)
     ])
     return { ok: true, message: (stderr || stdout).trim() || undefined }
