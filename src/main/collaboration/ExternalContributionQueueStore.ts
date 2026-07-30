@@ -60,9 +60,11 @@ export interface ExternalContributionEntry {
    * Retained while `queued` and while `denied` — a denial is editable and
    * requeueable, and the collaborator's own draft is ephemeral React state that
    * a reload destroys, so dropping it here would make a denied message
-   * unrecoverable. DROPPED on `approved` (it lives in the transcript now) and on
-   * `lapsed` (nobody wants it), because retaining hundreds of bodies means
-   * re-serialising megabytes synchronously on a hot path.
+   * unrecoverable. Retained on `approved` too — approve only RELEASES the
+   * message, and the body is what the eventual dispatch turn materialises; it
+   * is `markMaterialised` that drops it, once the transcript row exists.
+   * DROPPED on `lapsed` (nobody wants it), because retaining hundreds of bodies
+   * means re-serialising megabytes synchronously on a hot path.
    */
   body?: string
   /** Survives the body so an audit can still answer "how big was it". */

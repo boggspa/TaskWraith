@@ -31,6 +31,7 @@ import type {
 import { HumanCollaborationDenialError } from '../collaboration/HumanContributionRules'
 import {
   MAX_QUEUED_PER_COLLABORATOR,
+  type ExternalContributionEntry,
   type ExternalContributionQueueStore
 } from '../collaboration/ExternalContributionQueueStore'
 import {
@@ -721,6 +722,114 @@ export class ChatService {
         chatId: updated.chatId,
         shareId: updated.shareId,
         detail: `preset ${updated.contributionRules?.preset ?? updated.mode}`
+      })
+    }
+    return updated
+  }
+
+  /**
+   * Host review of queued external contributions.
+   *
+   * The three verbs below are deliberately split so the IPC layer can do the
+   * one thing it must do FIRST: resolve the entry and scope on the entry's OWN
+   * chatId. `ExternalContributionQueueStore.approve/deny` match on entryId
+   * across a single global array and verify NOTHING about ownership, so a
+   * handler that scoped on a renderer-supplied chatId would let a popout bound
+   * to chat A resolve and approve chat B's contribution. Read the entry, assert
+   * against what it says, then mutate.
+   */
+  getExternalContribution(entryId: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    return queue.get(requireNonEmptyString(entryId, 'Contribution id'))
+  }
+
+  /**
+   * Queued-and-unreviewed contributions for ONE chat.
+   *
+   * `chatId` is required, unlike the store's optional parameter: `listQueued()`
+   * with it omitted returns every chat's entries including the raw body, so an
+   * optional pass-through here would leak the whole cross-chat queue to any
+   * caller that forgot to supply one.
+   */
+  listPendingExternalContributions(chatId: string): ExternalContributionEntry[] {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return []
+    return queue.listQueued(requireSafeChatId(chatId, 'Chat id'))
+  }
+
+  /**
+   * Release a queued contribution for delivery.
+   *
+   * This marks ONLY. Delivery happens at the contributor's dispatch turn, which
+   * does not exist yet, so an approved entry waits in
+   * `listAwaitingMaterialisation()` — that is the seam the dispatch slice
+   * consumes. The store deliberately exempts approved-but-undelivered entries
+   * from every eviction path (`isReapable`), because an approval the host
+   * granted must not silently expire before it is delivered.
+   *
+   * Returns null when the entry is already resolved. That is "nothing to do",
+   * not a failure — but it must not be reported as a successful approval.
+   */
+  approveExternalContribution(entryId: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    const approved = queue.approve(requireNonEmptyString(entryId, 'Contribution id'))
+    if (approved) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.approved',
+        chatId: approved.chatId,
+        shareId: approved.shareId,
+        collaboratorId: approved.collaboratorId,
+        detail: 'released for delivery at the contributor’s next turn'
+      })
+    }
+    return approved
+  }
+
+  /** Refuse a queued contribution. The body is retained for a bounded window so
+   *  the host can see what they denied; the contributor is told it was refused. */
+  denyExternalContribution(entryId: string, reason?: string): ExternalContributionEntry | null {
+    const queue = this.deps.externalContributionQueue
+    if (!queue) return null
+    const denied = queue.deny(
+      requireNonEmptyString(entryId, 'Contribution id'),
+      typeof reason === 'string' && reason.trim() ? reason.trim() : undefined
+    )
+    if (denied) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.denied',
+        chatId: denied.chatId,
+        shareId: denied.shareId,
+        collaboratorId: denied.collaboratorId,
+        ...(denied.hostReason ? { detail: denied.hostReason } : {})
+      })
+    }
+    return denied
+  }
+
+  /**
+   * Per-share host review opt-in. Deliberately NOT folded into
+   * `updateHumanCollaborationShareRules`: a contribution PRESET is something
+   * the collaborator is shown, and whether the host reviews before delivery is
+   * not. Keeping them separate keeps a host-only fact out of a
+   * collaborator-displayable field.
+   */
+  setHumanCollaborationHostReview(args: {
+    shareId: string
+    requiresHostApproval: boolean
+  }): HumanCollaborationShare | null {
+    const store = this.requireHumanCollaborationStore()
+    const updated = store.setRequiresHostApproval({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      requiresHostApproval: args.requiresHostApproval === true
+    })
+    if (updated) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'share.rules_changed',
+        chatId: updated.chatId,
+        shareId: updated.shareId,
+        detail: `host review ${updated.requiresHostApproval === true ? 'on' : 'off'}`
       })
     }
     return updated

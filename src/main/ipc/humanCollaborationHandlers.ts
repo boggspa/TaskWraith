@@ -76,6 +76,11 @@ type HumanCollaborationChatService = Pick<
   | 'appendCollaboratorComment'
   | 'promoteCollaboratorComment'
   | 'updateHumanCollaborationShareRules'
+  | 'getExternalContribution'
+  | 'listPendingExternalContributions'
+  | 'approveExternalContribution'
+  | 'denyExternalContribution'
+  | 'setHumanCollaborationHostReview'
 >
 
 interface HumanCollaborationStoreLike {
@@ -126,6 +131,16 @@ export interface HumanCollaborationHandlersDeps {
   sendToMainWindow: (channel: string, payload: unknown) => void
   broadcastChatUpdated: (chat: ChatRecord) => void
   broadcastHumanCollaborationUpdate: (chatId: string) => void
+  /**
+   * Rebuild and publish the collaborator-facing projection for one chat.
+   *
+   * Distinct from `broadcastHumanCollaborationUpdate`, which reaches the HOST
+   * renderer only. Approving or denying changes what the CONTRIBUTOR should
+   * see (`yourPending`), and nothing else on this path would tell them:
+   * approve/deny mutate a JSON file and do not touch the ChatRecord, so the
+   * projection's usual trigger — broadcastChatUpdated — never fires.
+   */
+  republishHumanCollaborationProjection: (chatId: string) => void
   /**
    * The main renderer may manage every collaboration share. A chat popout is
    * bound by main to one persisted chat and must not use payload chat/share
@@ -531,6 +546,69 @@ export function registerHumanCollaborationHandlers(
       const result = deps.chatService.updateHumanCollaborationShareRules({
         shareId: input.shareId,
         preset: input.preset as HumanContributionPreset
+      })
+      if (result) deps.broadcastHumanCollaborationUpdate(result.chatId)
+      return result
+    }
+  )
+
+  /**
+   * Host review of queued external contributions.
+   *
+   * SCOPE IS RESOLVED FROM THE ENTRY, NEVER FROM THE PAYLOAD. The queue store's
+   * approve/deny match on entryId across one global array and verify nothing
+   * about ownership, so trusting a renderer-supplied chatId here would let a
+   * popout bound to chat A approve chat B's contribution. Read the entry, assert
+   * against the chatId IT carries, then mutate — the same order
+   * `assertSenderOwnsPersistedShare` uses for shares.
+   *
+   * These are host verbs and must stay off the wire. Do NOT add them to
+   * HUMAN_COLLABORATION_METHODS or give them a branch in `routeEncryptedAction`:
+   * that terminal throw is the only thing keeping them unreachable by a
+   * collaborator, and the store's missing ownership check is a popout bug today
+   * but would be remote privilege escalation the moment these verbs are routable.
+   */
+  ipcMain.handle('human-collaboration:list-pending-contributions', (event, chatId: string) => {
+    // Required, not optional: the store's listQueued() returns EVERY chat's
+    // entries — bodies included — when the chat id is omitted.
+    assertSenderOwnsPersistedChat(event, chatId)
+    return deps.chatService.listPendingExternalContributions(chatId)
+  })
+
+  ipcMain.handle('human-collaboration:approve-contribution', (event, entryId: string) => {
+    const entry = deps.chatService.getExternalContribution(entryId)
+    if (!entry) throw new Error('Contribution not found.')
+    assertSenderOwnsPersistedChat(event, entry.chatId)
+    const approved = deps.chatService.approveExternalContribution(entryId)
+    if (approved) {
+      deps.broadcastHumanCollaborationUpdate(approved.chatId)
+      deps.republishHumanCollaborationProjection(approved.chatId)
+    }
+    return approved
+  })
+
+  ipcMain.handle(
+    'human-collaboration:deny-contribution',
+    (event, input: { entryId: string; reason?: string }) => {
+      const entry = deps.chatService.getExternalContribution(input?.entryId)
+      if (!entry) throw new Error('Contribution not found.')
+      assertSenderOwnsPersistedChat(event, entry.chatId)
+      const denied = deps.chatService.denyExternalContribution(input.entryId, input?.reason)
+      if (denied) {
+        deps.broadcastHumanCollaborationUpdate(denied.chatId)
+        deps.republishHumanCollaborationProjection(denied.chatId)
+      }
+      return denied
+    }
+  )
+
+  ipcMain.handle(
+    'human-collaboration:set-host-review',
+    (event, input: { shareId: string; requiresHostApproval: boolean }) => {
+      assertSenderOwnsPersistedShare(event, input?.shareId)
+      const result = deps.chatService.setHumanCollaborationHostReview({
+        shareId: input.shareId,
+        requiresHostApproval: input?.requiresHostApproval === true
       })
       if (result) deps.broadcastHumanCollaborationUpdate(result.chatId)
       return result

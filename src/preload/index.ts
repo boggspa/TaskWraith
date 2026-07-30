@@ -1819,6 +1819,14 @@ const api = {
     ipcRenderer.invoke('human-collaboration:connected-chat-ids'),
   humanCollaborationRevokeShare: (shareId: string) =>
     ipcRenderer.invoke('human-collaboration:revoke-share', shareId),
+  humanCollaborationSetHostReview: (input: { shareId: string; requiresHostApproval: boolean }) =>
+    ipcRenderer.invoke('human-collaboration:set-host-review', input),
+  humanCollaborationListPendingContributions: (chatId: string) =>
+    ipcRenderer.invoke('human-collaboration:list-pending-contributions', chatId),
+  humanCollaborationApproveContribution: (entryId: string) =>
+    ipcRenderer.invoke('human-collaboration:approve-contribution', entryId),
+  humanCollaborationDenyContribution: (input: { entryId: string; reason?: string }) =>
+    ipcRenderer.invoke('human-collaboration:deny-contribution', input),
   humanCollaborationRevokeParticipant: (input: { shareId: string; collaboratorId: string }) =>
     ipcRenderer.invoke('human-collaboration:revoke-participant', input),
   humanCollaborationConsumeInvite: (input: {

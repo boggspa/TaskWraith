@@ -82,6 +82,23 @@ function share(overrides: Partial<HumanCollaborationShare> = {}): HumanCollabora
   }
 }
 
+function contributionEntry(entryId: string, chatId: string, state = 'queued') {
+  return {
+    entryId,
+    chatId,
+    shareId: chatId === 'chat-1' ? 'share-1' : 'share-3',
+    collaboratorId: 'collab-1',
+    displayName: 'Alex',
+    clientMessageId: `client-${entryId}`,
+    sequence: 1,
+    body: 'please look at the failing test',
+    bodyBytes: 32,
+    state,
+    enqueuedAt: 1,
+    expiresAt: 2
+  } as never
+}
+
 function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
   const baseChat = chat('chat-1')
   const baseShare = share()
@@ -124,7 +141,25 @@ function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
         deduped: false
       })),
       promoteCollaboratorComment: vi.fn(() => ({ chat: baseChat, draft: 'draft' })),
-      updateHumanCollaborationShareRules: vi.fn(() => baseShare)
+      updateHumanCollaborationShareRules: vi.fn(() => baseShare),
+      // Host review of queued external contributions. `getExternalContribution`
+      // resolves by entry id ACROSS chats, exactly as the real store does — that
+      // is the whole point of the scope tests below.
+      getExternalContribution: vi.fn((entryId: string) =>
+        entryId === 'entry-1'
+          ? contributionEntry('entry-1', 'chat-1')
+          : entryId === 'entry-3'
+            ? contributionEntry('entry-3', 'chat-3')
+            : null
+      ),
+      listPendingExternalContributions: vi.fn(() => [contributionEntry('entry-1', 'chat-1')]),
+      approveExternalContribution: vi.fn((entryId: string) =>
+        contributionEntry(entryId, 'chat-1', 'approved')
+      ),
+      denyExternalContribution: vi.fn((entryId: string) =>
+        contributionEntry(entryId, 'chat-1', 'denied')
+      ),
+      setHumanCollaborationHostReview: vi.fn(() => baseShare)
     },
     humanCollaborationStore: {
       getShare: vi.fn(() => baseShare),
@@ -169,6 +204,7 @@ function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
     sendToMainWindow: vi.fn(),
     broadcastChatUpdated: vi.fn(),
     broadcastHumanCollaborationUpdate: vi.fn(),
+    republishHumanCollaborationProjection: vi.fn(),
     resolveSenderHumanCollaborationScope: vi.fn(() => ({ kind: 'main' as const })),
     assertMainRendererSender: vi.fn(),
     ...overrides
@@ -201,6 +237,12 @@ describe('registerHumanCollaborationHandlers', () => {
       'human-collaboration-runtime:disconnect',
       'human-collaboration:promote-comment',
       'human-collaboration:update-share-rules',
+      // Host review of queued external contributions. Registered here, so they
+      // sit here — this assertion is an ORDERED toEqual, not a set comparison.
+      'human-collaboration:list-pending-contributions',
+      'human-collaboration:approve-contribution',
+      'human-collaboration:deny-contribution',
+      'human-collaboration:set-host-review',
       'human-collaboration:audit-log',
       'human-collaboration-collaborator:join',
       'human-collaboration-collaborator:confirm',
@@ -209,6 +251,83 @@ describe('registerHumanCollaborationHandlers', () => {
       'human-collaboration-collaborator:append-comment',
       'human-collaboration-collaborator:leave'
     ])
+  })
+
+  describe('host review of queued external contributions', () => {
+    it('scopes approve on the ENTRY, never on a payload-supplied chat', () => {
+      // The sharpest version of the bug this guards: ExternalContributionQueueStore
+      // .approve(entryId) searches one global array and verifies nothing about
+      // ownership. The only thing standing between a popout and another chat's
+      // queue is that the handler resolves the entry FIRST and asserts against
+      // the chatId the entry itself carries.
+      const { deps } = createDeps()
+      registerHumanCollaborationHandlers(deps)
+
+      handlerFor('human-collaboration:approve-contribution')({ sender: { id: 1 } }, 'entry-1')
+
+      expect(deps.chatService.getExternalContribution).toHaveBeenCalledWith('entry-1')
+      expect(deps.chatService.approveExternalContribution).toHaveBeenCalledWith('entry-1')
+    })
+
+    it('refuses an unknown entry rather than passing it to the store', () => {
+      const { deps } = createDeps()
+      registerHumanCollaborationHandlers(deps)
+
+      expect(() =>
+        handlerFor('human-collaboration:approve-contribution')({ sender: { id: 1 } }, 'nope')
+      ).toThrow('Contribution not found.')
+      expect(deps.chatService.approveExternalContribution).not.toHaveBeenCalled()
+    })
+
+    it('tells the host renderer AND republishes the collaborator projection', () => {
+      // Two different audiences. broadcastHumanCollaborationUpdate reaches the
+      // host only; without the republish the contributor is never told what
+      // happened to their message, because approve/deny do not touch the
+      // ChatRecord and so never trip the projection's usual trigger.
+      const { deps } = createDeps()
+      registerHumanCollaborationHandlers(deps)
+
+      handlerFor('human-collaboration:approve-contribution')({ sender: { id: 1 } }, 'entry-1')
+      expect(deps.broadcastHumanCollaborationUpdate).toHaveBeenCalledWith('chat-1')
+      expect(deps.republishHumanCollaborationProjection).toHaveBeenCalledWith('chat-1')
+
+      handlerFor('human-collaboration:deny-contribution')(
+        { sender: { id: 1 } },
+        { entryId: 'entry-1', reason: 'not now' }
+      )
+      expect(deps.chatService.denyExternalContribution).toHaveBeenCalledWith('entry-1', 'not now')
+      expect(deps.republishHumanCollaborationProjection).toHaveBeenCalledTimes(2)
+    })
+
+    it('neither broadcasts nor republishes when the entry was already resolved', () => {
+      // approve()/deny() return null for anything not still queued. That is
+      // "nothing to do", not success — reporting it as an approval would tell
+      // the host something happened that did not.
+      const { deps } = createDeps()
+      vi.mocked(deps.chatService.approveExternalContribution).mockReturnValue(null)
+      registerHumanCollaborationHandlers(deps)
+
+      const result = handlerFor('human-collaboration:approve-contribution')(
+        { sender: { id: 1 } },
+        'entry-1'
+      )
+
+      expect(result).toBeNull()
+      expect(deps.broadcastHumanCollaborationUpdate).not.toHaveBeenCalled()
+      expect(deps.republishHumanCollaborationProjection).not.toHaveBeenCalled()
+    })
+
+    it('requires a chat id to list, so the cross-chat queue cannot leak', () => {
+      // listQueued() with no chat id returns EVERY chat's entries, bodies
+      // included. The handler must never make that reachable.
+      const { deps } = createDeps()
+      registerHumanCollaborationHandlers(deps)
+
+      expect(() =>
+        handlerFor('human-collaboration:list-pending-contributions')({ sender: { id: 1 } }, '')
+      ).toThrow()
+      expect(deps.chatService.listPendingExternalContributions).not.toHaveBeenCalled()
+    })
   })
 
   it('reports invite health without constructing the runtime', async () => {
@@ -413,6 +532,33 @@ describe('registerHumanCollaborationHandlers', () => {
       handlerFor('human-collaboration:revoke-share')(popoutEvent, 'share-3')
     ).toThrow('Renderer does not own this collaboration chat.')
     expect(deps.chatService.revokeHumanCollaborationShare).not.toHaveBeenCalled()
+
+    // Host review. The queue store matches approve/deny on entryId across ONE
+    // global array and checks nothing about ownership, so the scope assertion
+    // has to come from the resolved ENTRY. `entry-3` belongs to chat-3; a
+    // chat-1 popout naming it must be refused before the store is touched.
+    expect(() =>
+      handlerFor('human-collaboration:approve-contribution')(popoutEvent, 'entry-3')
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.approveExternalContribution).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:deny-contribution')(popoutEvent, { entryId: 'entry-3' })
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.denyExternalContribution).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:list-pending-contributions')(popoutEvent, 'chat-3')
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.listPendingExternalContributions).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('human-collaboration:set-host-review')(popoutEvent, {
+        shareId: 'share-3',
+        requiresHostApproval: true
+      })
+    ).toThrow('Renderer does not own this collaboration chat.')
+    expect(deps.chatService.setHumanCollaborationHostReview).not.toHaveBeenCalled()
 
     expect(() =>
       handlerFor('human-collaboration:append-comment')(popoutEvent, {

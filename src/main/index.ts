@@ -47001,6 +47001,14 @@ if (isGeminiMcpBridgeProcess) {
       },
       broadcastChatUpdated,
       broadcastHumanCollaborationUpdate,
+      // Host review changes what the CONTRIBUTOR sees, and approve/deny touch
+      // only the queue's own JSON — the ChatRecord is untouched, so the
+      // projection's usual trigger (broadcastChatUpdated) never fires for them.
+      // The dirty marker is debounced and self-gates on there being a live
+      // subscriber, so calling it on a chat nobody is watching costs nothing.
+      republishHumanCollaborationProjection: (chatId: string): void => {
+        markHumanCollaborationProjectionDirty?.(chatId)
+      },
       assertMainRendererSender,
       resolveSenderHumanCollaborationScope: (event) => {
         if (isMainRendererSender(event)) return { kind: 'main' }

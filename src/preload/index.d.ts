@@ -172,6 +172,7 @@ import type {
   HumanCollaborationShare
 } from '../main/collaboration/HumanCollaborationStore'
 import type { HumanShareProjection } from '../main/collaboration/HumanShareProjection'
+import type { ExternalContributionEntry } from '../main/collaboration/ExternalContributionQueueStore'
 import type {
   HumanCollaborationAppendCommentInput,
   HumanCollaborationBeginHandshakeInput,
@@ -1898,6 +1899,20 @@ declare global {
       humanCollaborationListShares: (chatId?: string) => Promise<HumanCollaborationShare[]>
       humanCollaborationConnectedChatIds: () => Promise<string[]>
       humanCollaborationRevokeShare: (shareId: string) => Promise<HumanCollaborationShare | null>
+      humanCollaborationSetHostReview: (input: {
+        shareId: string
+        requiresHostApproval: boolean
+      }) => Promise<HumanCollaborationShare | null>
+      humanCollaborationListPendingContributions: (
+        chatId: string
+      ) => Promise<ExternalContributionEntry[]>
+      humanCollaborationApproveContribution: (
+        entryId: string
+      ) => Promise<ExternalContributionEntry | null>
+      humanCollaborationDenyContribution: (input: {
+        entryId: string
+        reason?: string
+      }) => Promise<ExternalContributionEntry | null>
       humanCollaborationRevokeParticipant: (input: {
         shareId: string
         collaboratorId: string
