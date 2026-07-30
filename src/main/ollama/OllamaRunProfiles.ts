@@ -6,7 +6,29 @@ import type {
 import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
 
-const OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX = 262_144
+/**
+ * Ceiling for a profile's context cap, raised from 262,144 on 2026-07-30 so a
+ * model whose real window EXCEEDS 256K can actually use it — `devstral-small-2:24b`
+ * measures 393,216 locally and was being clipped by a third.
+ *
+ * Safe to set generously because `resolveOllamaNumCtx` is DEMAND-DRIVEN:
+ * `min(limit, roundUp(tokens the messages actually need))` with an 8,192 floor. A
+ * ceiling is not an allocation — it only bounds how far `num_ctx` may grow once a
+ * conversation genuinely gets long. Headroom left above 393,216 for future pulls.
+ */
+const OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX = 524_288
+
+/**
+ * Ceiling for the working profiles (`approved_patcher`, `verify_with_shell`).
+ * Raised from 131,072 on 2026-07-30: most of the installed fleet measures 262,144,
+ * so the old value halved a model's real window on the profiles used for actual
+ * work. `local_scout` deliberately keeps a much lower cap — it trades context for
+ * speed on purpose.
+ */
+const OLLAMA_WORKING_PROFILE_CONTEXT_CAP = 262_144
+
+/** `local_scout` stays deliberately small; it is the fast/cheap recon profile. */
+const OLLAMA_SCOUT_PROFILE_CONTEXT_CAP = 65_536
 
 export const OLLAMA_RUN_PROFILE_PRESETS: Record<
   Exclude<OllamaRunProfileId, 'custom'>,
@@ -79,29 +101,59 @@ export function isOllamaRunProfileId(value: unknown): value is OllamaRunProfileI
   )
 }
 
-function knownModelContextWindow(modelId?: string | null): number | null {
+/**
+ * The model's context window, or `null` when it is not trustworthy enough to size
+ * a cap from.
+ *
+ * `measuredContextTokens` is a window READ FROM THE RUNNING DAEMON
+ * (`OllamaModelInfo.contextLength`). When present it is authoritative and the
+ * family gate is bypassed entirely — the gate exists only because an unrecognised
+ * tag has no trustworthy window, and a measurement removes that doubt. Without it
+ * the previous behaviour stands: a known family reads the static table, and an
+ * `unknown` family returns null so the caller keeps its conservative preset.
+ *
+ * That gate was the real cause of "why is my new local model throttled": a freshly
+ * pulled tag resolves `unknown`, so it fell back to a 32K–65K preset regardless of
+ * supporting 262K. A measurement now rescues it without anyone hand-adding an arm.
+ */
+function knownModelContextWindow(
+  modelId?: string | null,
+  measuredContextTokens?: number | null
+): number | null {
   const trimmed = String(modelId || '').trim()
-  if (!trimmed || resolveOllamaModelFamily(trimmed) === 'unknown') return null
+  if (!trimmed) return null
+  const measured =
+    typeof measuredContextTokens === 'number' &&
+    Number.isFinite(measuredContextTokens) &&
+    measuredContextTokens > 0
+      ? Math.trunc(measuredContextTokens)
+      : undefined
+  if (measured) return resolveContextWindow('ollama', trimmed, undefined, measured)
+  if (resolveOllamaModelFamily(trimmed) === 'unknown') return null
   return resolveContextWindow('ollama', trimmed)
 }
 
 function defaultContextCapTokens(
   baseId: Exclude<OllamaRunProfileId, 'custom'>,
   modelId: string | null | undefined,
-  fallback: number
+  fallback: number,
+  measuredContextTokens?: number | null
 ): number {
-  const modelWindow = knownModelContextWindow(modelId)
+  const modelWindow = knownModelContextWindow(modelId, measuredContextTokens)
   if (!modelWindow) return fallback
-  if (baseId === 'local_scout') return Math.min(modelWindow, 65_536)
+  if (baseId === 'local_scout') {
+    return Math.min(modelWindow, OLLAMA_SCOUT_PROFILE_CONTEXT_CAP)
+  }
   if (baseId === 'provider_parity') {
     return Math.min(modelWindow, OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX)
   }
-  return Math.min(modelWindow, 131_072)
+  return Math.min(modelWindow, OLLAMA_WORKING_PROFILE_CONTEXT_CAP)
 }
 
 export function resolveOllamaRunProfile(
   modelId?: string | null,
-  chatProfile?: string | null
+  chatProfile?: string | null,
+  measuredContextTokens?: number | null
 ): OllamaRunProfile {
   // The global run-profile settings surface (ollamaDefaultRunProfile /
   // ollamaRunProfiles) was removed — it had no UI and only added a confusing,
@@ -121,7 +173,12 @@ export function resolveOllamaRunProfile(
   return {
     ...base,
     id: selectedId,
-    contextCapTokens: defaultContextCapTokens(selectedId, modelId, base.contextCapTokens)
+    contextCapTokens: defaultContextCapTokens(
+      selectedId,
+      modelId,
+      base.contextCapTokens,
+      measuredContextTokens
+    )
   }
 }
 

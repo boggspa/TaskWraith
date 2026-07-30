@@ -173,7 +173,18 @@ export async function resolveOllamaFinalLaunchPlan(
     input.mcpToolsPolicy !== 'deny'
   const toolProtocolEnabled = toolProtocolEligible && input.taskWraithMcpAdvertised !== false
   const toolControlTier: OllamaToolControlTier = 'provider_parity'
-  const runProfile = resolveOllamaRunProfile(model, input.ollamaRunProfile)
+  // `merged` (line above) already carries the daemon's own `/api/show` metadata,
+  // so the profile's context cap can be sized against the model's MEASURED window
+  // rather than the hand-maintained `CONTEXT_WINDOWS_BY_MODEL` table plus a family
+  // gate. That gate returned null for any tag without a family arm, dropping a
+  // freshly pulled model to a 32K–65K preset however much context it really
+  // supports; a measurement bypasses it. The cap is only a ceiling — `num_ctx` is
+  // still demand-driven, so this does not pre-allocate.
+  const runProfile = resolveOllamaRunProfile(
+    model,
+    input.ollamaRunProfile,
+    merged?.contextLength
+  )
   const nativeToolsSupported = ollamaModelSupportsNativeTools(merged)
   const compactToolSchemas =
     input.ensemble.enabled ||

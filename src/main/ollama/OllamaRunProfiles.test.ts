@@ -37,7 +37,9 @@ describe('OllamaRunProfiles', () => {
   it('uses larger context caps for known high-context local coding models', () => {
     expect(resolveOllamaRunProfile('ornith:35b', 'provider_parity').contextCapTokens).toBe(262_144)
     expect(resolveOllamaRunProfile('qwen3.6:35b', 'provider_parity').contextCapTokens).toBe(262_144)
-    expect(resolveOllamaRunProfile('ornith:35b', 'verify_with_shell').contextCapTokens).toBe(131_072)
+    // 2026-07-30: the working profiles' ceiling rose 131_072 -> 262_144, so a
+    // 262K model is capped by ITS OWN window rather than by the profile.
+    expect(resolveOllamaRunProfile('ornith:35b', 'verify_with_shell').contextCapTokens).toBe(262_144)
     // Default (no selection) now scales to the model window instead of the old
     // local_scout 65_536 ceiling — the whole point of dropping the restriction.
     expect(resolveOllamaRunProfile('ornith:35b').contextCapTokens).toBe(262_144)
@@ -46,6 +48,46 @@ describe('OllamaRunProfiles', () => {
     expect(resolveOllamaRunProfile('laguna-xs-2.1:q8_0', 'provider_parity').contextCapTokens).toBe(
       262_144
     )
+  })
+
+  it('lets provider_parity exceed 256K where the model genuinely does', () => {
+    // devstral measures 393,216 locally and was being clipped to 262,144 by the
+    // old OLLAMA_RUN_PROFILE_CONTEXT_CAP_MAX. This is also the one case where the
+    // working/parity distinction still bites: the working profiles stop at 262,144,
+    // parity follows the model.
+    expect(
+      resolveOllamaRunProfile('devstral-small-2:24b', 'provider_parity').contextCapTokens
+    ).toBe(393_216)
+    expect(
+      resolveOllamaRunProfile('devstral-small-2:24b', 'verify_with_shell').contextCapTokens
+    ).toBe(262_144)
+  })
+
+  it('keeps local_scout deliberately small even on a huge-window model', () => {
+    // Scout trades context for speed on purpose; raising the other ceilings must
+    // not drag it up too.
+    expect(resolveOllamaRunProfile('devstral-small-2:24b', 'local_scout').contextCapTokens).toBe(
+      65_536
+    )
+  })
+
+  it('rescues an unknown tag from the fallback cap once its window is MEASURED', () => {
+    // The family gate exists because an unrecognised tag has no trustworthy window.
+    // A daemon reading removes that doubt, so a freshly pulled 262K model no longer
+    // sits on a 65_536 preset just because nobody hand-added a family arm.
+    expect(
+      resolveOllamaRunProfile('unknown-local:latest', 'provider_parity', 262_144).contextCapTokens
+    ).toBe(262_144)
+    // A measured SMALL window is still respected — this is a ceiling, not a floor.
+    expect(
+      resolveOllamaRunProfile('unknown-local:latest', 'provider_parity', 8_192).contextCapTokens
+    ).toBe(8_192)
+    // Junk measurements fall back to the preset rather than widening anything.
+    for (const bad of [0, -1, Number.NaN, null, undefined]) {
+      expect(
+        resolveOllamaRunProfile('unknown-local:latest', 'provider_parity', bad).contextCapTokens
+      ).toBe(65_536)
+    }
   })
 
   it('keeps unknown local tags at the preset fallback cap', () => {
