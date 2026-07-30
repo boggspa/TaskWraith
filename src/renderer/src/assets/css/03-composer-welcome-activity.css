@@ -14113,3 +14113,87 @@ button.diff-file-row {
   box-shadow: none;
   opacity: 0.62;
 }
+
+/*
+ * Pending contributions — external messages awaiting the host's release.
+ *
+ * Rendered as the FIRST in-flow child of `.composer-area`, which is a
+ * bottom-anchored flex column, so this sits above the above-bar stack and the
+ * composer surface and grows the measured reserve rather than covering the
+ * transcript's tail. See PendingContributionsStack.tsx for why the column and
+ * not an `.app-transcript` sibling.
+ *
+ * `pointer-events: auto` is LOAD-BEARING, not defensive: `.composer-area` is
+ * `pointer-events: none` so the transcript stays scrollable through the gaps
+ * around the composer, and any child shipping buttons must opt back in or
+ * Approve and Deny are silently dead. The agent-approval overlay re-enables it
+ * for exactly this reason.
+ *
+ * Deliberately NOT styled like `.composer-above-bar-stack` or the queued-message
+ * strip. Those are the host's OWN pending messages; blurring the two is the
+ * specific confusion this surface exists to avoid.
+ */
+.pending-contributions-stack {
+  pointer-events: auto;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: var(--composer-content-max-width, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* Bounded so a long contribution can never push the action row out of view
+     or eat the transcript. Each row scrolls its own text instead. */
+  max-height: min(38vh, 320px);
+  overflow-y: auto;
+}
+
+.pending-contribution {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  background: var(--surface-raised, rgba(20, 22, 28, 0.92));
+}
+
+.pending-contribution-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pending-contribution-author {
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  opacity: 0.72;
+  margin-bottom: 3px;
+}
+
+.pending-contribution-text {
+  font-size: 13px;
+  line-height: 1.45;
+  /* Untrusted text: wrap it rather than let a single unbroken token stretch
+     the row and shove the actions off the edge. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.pending-contribution-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.pending-contribution-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  cursor: pointer;
+}
+
+.pending-contribution-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
