@@ -197,6 +197,18 @@ export interface ChatServiceDeps {
   assertParentChatCreationAllowed?: (parentChatId: string) => void
   /** Clears history stored outside Electron userData (currently bridge diagnostics). */
   clearExternalChatHistory?: (workspaceId?: string) => void | Promise<void>
+  /**
+   * Drop the relay room behind a collaboration invite, which also disconnects
+   * every runtime session bound to it. The transport lives in main, so this is
+   * a thin seam — the same one the revoke IPC handlers use.
+   *
+   * Load-bearing on every destructive chat path. Revoking a share only flips a
+   * record; the collaborator's sealed socket stays open and their app keeps
+   * rendering a transcript whose chat no longer exists. Without this the next
+   * projection build throws 'Chat not found.' and the external is left staring
+   * at a frozen transcript with no indication anything happened.
+   */
+  closeCollaborationRoom?: (roomId: string) => void
   /** Main-owned durable prepare/quiesce/commit single-flight. */
   clearHistoryTransaction?: (workspaceId?: string) => Promise<void>
   /** Releases the scope admission fence after the durable clear commits/fails. */
@@ -897,6 +909,43 @@ export class ChatService {
     return { chat: updated, draft }
   }
 
+  /**
+   * End every live channel for these shares, then revoke them.
+   *
+   * Revoking alone is not enough on a destructive path. `revokeShare` flips a
+   * record, and the runtime only notices on the collaborator's NEXT inbound
+   * frame — but a collaborator who is merely watching sends nothing. Their
+   * sealed socket stays open against a chat that no longer exists, the next
+   * projection build throws, and they are left on a frozen transcript with no
+   * signal at all. Closing the room drops the socket and, via the transport,
+   * every runtime session bound to it.
+   *
+   * Every invite room is closed, not just the first: a share mints a fresh
+   * roomId per invite, so a share that has been invited from twice has two live
+   * doors and closing one leaves the other open.
+   */
+  private endCollaborationShares(shares: readonly HumanCollaborationShare[]): void {
+    const store = this.deps.humanCollaborationStore
+    if (!store) return
+    for (const share of shares) {
+      for (const invite of share.invites) {
+        if (!invite.roomId) continue
+        // A transport in a bad state must never block the deletion the user
+        // asked for. Failing to close a socket is a leaked channel; throwing
+        // here would abort the caller and leave the chat undeleted with its
+        // share half-torn — strictly worse, and on the destructive path the
+        // deletion is the part that has to be unconditional.
+        try {
+          this.deps.closeCollaborationRoom?.(invite.roomId)
+        } catch {
+          // Best-effort: revocation below still fails the collaborator closed
+          // on their next inbound frame.
+        }
+      }
+      if (share.enabled) store.revokeShare(share.shareId)
+    }
+  }
+
   deleteChat(chatId: string): void {
     const id = requireSafeChatId(chatId, 'Chat id')
     // Settle any active shares first so deleting a shared chat actually ends the
@@ -904,9 +953,7 @@ export class ChatService {
     // of leaving an orphaned enabled share record pointing at a missing chat.
     const store = this.deps.humanCollaborationStore
     if (store && store.hasShareForChat(id)) {
-      for (const share of store.listShares(id)) {
-        if (share.enabled) store.revokeShare(share.shareId)
-      }
+      this.endCollaborationShares(store.listShares(id))
     }
     this.deps.appStore.deleteChat(id)
   }
@@ -939,7 +986,44 @@ export class ChatService {
    * approval cannot be accepted while that deletion is in flight.
    */
   async prepareClearChats(workspaceId?: string): Promise<void> {
+    // Collaboration is an external history authority too, and it was the one
+    // authority this phase never revoked: the chats went and every
+    // collaborator's socket stayed open against them.
+    //
+    // NB this is the FALLBACK path. When `clearHistoryTransaction` is supplied
+    // — and main does supply it — `clearChats` delegates and never reaches this
+    // method at all; that route closes rooms in `purgeHumanCollaborationForErasure`
+    // instead, from the deletion coordinator's commit. Both paths are covered
+    // deliberately; do not delete this one as dead code.
+    this.endCollaborationSharesInClearScope(workspaceId)
     await this.deps.clearExternalChatHistory?.(workspaceId)
+  }
+
+  /** Shares whose chat is about to be cleared. No workspace ⇒ the whole store. */
+  private endCollaborationSharesInClearScope(workspaceId?: string): void {
+    const store = this.deps.humanCollaborationStore
+    if (!store) return
+    const shares = store.listShares()
+    if (!shares.length) return
+    if (!workspaceId) {
+      this.endCollaborationShares(shares)
+      return
+    }
+    // Summary lists, not one getChat per share — the chat-list index already
+    // answers both questions and never materialises a full record.
+    const scoped = new Set(this.deps.appStore.getChatList(workspaceId).map((c) => c.appChatId))
+    const known = new Set(this.deps.appStore.getChatList().map((c) => c.appChatId))
+    this.endCollaborationShares(
+      shares.filter(
+        // In the doomed workspace, OR orphaned. An orphan — a share whose chat
+        // no longer exists anywhere — has to end here, because no other path
+        // will ever come for it and it is a live channel to content that is
+        // already gone. Scoping on the workspace list alone would silently keep
+        // that door open. A share belonging to a DIFFERENT, surviving workspace
+        // is untouched: over-reaching would kill a share whose chat is fine.
+        (share) => scoped.has(share.chatId) || !known.has(share.chatId)
+      )
+    )
   }
 
   /** Commit the durable chat deletion after every external store has cleared. */

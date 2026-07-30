@@ -549,7 +549,10 @@ import {
   type HistoryClearDispatchReservation,
   type HistoryClearRunPersistenceAuthority
 } from './HistoryClearAdmissionGate'
-import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
+import {
+  HumanCollaborationStore,
+  type HumanCollaborationShare
+} from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
@@ -44380,17 +44383,39 @@ if (isGeminiMcpBridgeProcess) {
       kind: 'chat' | 'truncate' | 'workspace' | 'global',
       chatIds: readonly string[]
     ): void => {
+      // Close the live doors BEFORE the records go, or the roomIds needed to
+      // find them are gone with the share. Purging a share record does not
+      // disturb the collaborator's socket at all: they keep an open sealed
+      // channel to erased content, and the next projection build throws with
+      // nothing surfaced on either side. Given TW-SEC-014, an erasure that
+      // leaves a live reader attached is the wrong failure direction.
+      const closeRoomsForShares = (shares: readonly HumanCollaborationShare[]): void => {
+        for (const share of shares) {
+          for (const invite of share.invites) {
+            if (invite.roomId) humanCollaborationHostTransport?.closeRoom(invite.roomId)
+          }
+        }
+      }
       if (kind === 'global') {
+        closeRoomsForShares(humanCollaborationStore.listShares())
         humanCollaborationAuditLog.purgeAll()
         humanCollaborationStore.purgeAllShares()
         return
       }
       const targets = new Set(chatIds)
-      const shareIds = humanCollaborationStore
+      const scopedShares = humanCollaborationStore
         .listShares()
         .filter((share) => targets.has(share.chatId))
-        .map((share) => share.shareId)
-      humanCollaborationAuditLog.purgeEntries({ chatIds, shareIds })
+      // `truncate` deliberately KEEPS the share (the chat shell survives), but
+      // the rows underneath the collaborator are being erased — so the channel
+      // still has to drop rather than silently serve a transcript that no
+      // longer matches the host's. The share record staying enabled is what
+      // lets the host re-share without re-inviting.
+      closeRoomsForShares(scopedShares)
+      humanCollaborationAuditLog.purgeEntries({
+        chatIds,
+        shareIds: scopedShares.map((share) => share.shareId)
+      })
       if (kind !== 'truncate') humanCollaborationStore.purgeChatShares(chatIds)
     }
 
@@ -45504,7 +45529,10 @@ if (isGeminiMcpBridgeProcess) {
       sanitizeChatForSave,
       assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
       clearHistoryTransaction: clearBroadChatHistory,
-      appendDurableRunEventForRoute
+      appendDurableRunEventForRoute,
+      // Evaluated lazily — the transport is constructed further down this same
+      // flow, and a destructive chat path can only fire long after that.
+      closeCollaborationRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId)
     })
     let humanCollaborationRuntime: HumanCollaborationRuntime<
       HumanShareProjection,
