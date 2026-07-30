@@ -712,6 +712,48 @@ describe('Ensemble prompt composition', () => {
     expect(prompt.split('</external_contribution>').length - 1).toBe(1)
   })
 
+  it('F8: an external flood is capped and cannot displace host history', () => {
+    const shared = chat()
+    const hostMarker = 'HOST HISTORY THAT MUST SURVIVE'
+    shared.messages = [
+      ...shared.messages,
+      {
+        id: 'host-old',
+        role: 'user',
+        content: hostMarker,
+        timestamp: '2026-05-24T00:00:01.000Z'
+      },
+      // Well past MAX_EXTERNAL_ROWS_PER_PROMPT (8).
+      ...Array.from({ length: 24 }, (_, index) => ({
+        ...externalRow(`flood body number ${index}`),
+        id: `external-flood-${index}`,
+        timestamp: `2026-05-24T00:01:${String(index).padStart(2, '0')}.000Z`
+      }))
+    ]
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config: ensemble,
+      participant: ensemble.participants[1],
+      currentPrompt: 'Please implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 60
+    })
+
+    const included = Array.from({ length: 24 }, (_, index) => `flood body number ${index}`).filter(
+      (body) => prompt.includes(body)
+    )
+    expect(included.length).toBeLessThanOrEqual(8)
+    expect(included.length).toBeGreaterThan(0)
+    // Newest-first fill: the surviving rows are the most recent ones.
+    expect(prompt).toContain('flood body number 23')
+    // The drop is reported, not silent.
+    expect(prompt).toContain('external collaborator contribution(s) withheld')
+    // The point of skipping rather than breaking: host history behind the
+    // flood is still there.
+    expect(prompt).toContain(hostMarker)
+  })
+
   it('a hostile display name cannot forge the frame from inside the transcript', () => {
     const shared = chat()
     const row = externalRow('the real body')

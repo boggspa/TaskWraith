@@ -1764,6 +1764,14 @@ function projectTaggedTranscript(
   const suppliedMessages: ChatMessage[] = []
   let used = 0
   let truncated = false
+  // F8 — external rows are metered separately from the shared budget so a
+  // flood cannot displace the panel's own history. Newest-first fill means the
+  // rows that survive the cap are the most recent ones, matching how the
+  // overall budget already behaves.
+  const externalBudget = Math.floor(maxChars * EXTERNAL_TRANSCRIPT_BUDGET_RATIO)
+  let externalUsed = 0
+  let externalCount = 0
+  let externalDropped = 0
   for (let i = relevant.length - 1; i >= 0; i--) {
     const message = relevant[i]
     const tag = messageTag(message, participantTokens, modelLabels)
@@ -1810,6 +1818,21 @@ function projectTaggedTranscript(
         ? `${traceLines}\n${text}`
         : text
     const line = `[${tag}]\n${body}`
+    if (isExternalUntrustedMessage(message)) {
+      // SKIP, never break. Breaking would let one over-budget external row
+      // truncate away all the OLDER host history behind it — handing a
+      // collaborator a cheap way to blank the panel's context instead of
+      // merely failing to add to it.
+      if (
+        externalCount >= MAX_EXTERNAL_ROWS_PER_PROMPT ||
+        externalUsed + line.length > externalBudget
+      ) {
+        externalDropped += 1
+        continue
+      }
+      externalUsed += line.length
+      externalCount += 1
+    }
     if (used + line.length > maxChars && lines.length > 0) {
       truncated = true
       break
@@ -1817,6 +1840,15 @@ function projectTaggedTranscript(
     used += line.length
     lines.unshift(line)
     suppliedMessages.unshift(message)
+  }
+  if (externalDropped > 0) {
+    // Stated, not silent. A seat that cannot see a contribution should know one
+    // was withheld rather than reason from a transcript it believes is
+    // complete — and a host reading the prompt log should be able to tell a
+    // flood happened. Count only; no content, no author.
+    lines.unshift(
+      `[${externalDropped} external collaborator contribution(s) withheld from this prompt: external-content budget reached.]`
+    )
   }
   if (truncated) {
     lines.unshift('[Transcript truncated to fit Ensemble V1 context budget.]')
@@ -1928,6 +1960,32 @@ export function findUncoveredEnsemblePromptMessageIds(input: {
       !represented.has(id)
   )
 }
+
+/**
+ * Share of the transcript budget external-authored rows may occupy, and the
+ * hard ceiling on how many of them any one prompt may carry.
+ *
+ * P2c security review, F8. The existing append limit (750ms spacing, 30/min per
+ * collaborator) was sized for TRANSCRIPT rows, back when a collaborator comment
+ * could never reach a model. Once external text is provider-visible, every
+ * contribution is charged to a budget that EVERY seat pays on EVERY hop: thirty
+ * messages a minute at the 8000-byte contribution cap is 240KB/min against a
+ * 5K–256K window. That is a context-exhaustion attack that needs no bug — just
+ * a talkative or compromised collaborator — and it crowds out the real history
+ * the panel needs to do its work.
+ *
+ * Enforced HERE, at render, rather than only at append, for the same reason the
+ * frame is: this is the one place every prompt is built, so the bound holds
+ * whatever the append path allowed, however the text got in, and whichever grant
+ * tier is live. An append-time per-round cap is still worth having as an
+ * ergonomic control — it can tell the collaborator "not this round" instead of
+ * silently dropping — but it is not the security boundary.
+ *
+ * A fifth of the window is deliberately generous enough that ordinary
+ * collaboration never notices the cap and only abuse reaches it.
+ */
+const EXTERNAL_TRANSCRIPT_BUDGET_RATIO = 0.2
+const MAX_EXTERNAL_ROWS_PER_PROMPT = 8
 
 /**
  * Frame one external-untrusted row for the shared transcript.
