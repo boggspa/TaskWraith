@@ -1,6 +1,35 @@
 import type { ContextBudget } from '../PromptComposition'
 import { resolveContextWindow } from '../../shared/contextWindows'
+import { ollamaModelIdsMatch } from '../../shared/ollamaModelAvailability'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
+
+/**
+ * Read a daemon-measured context length out of the cache in
+ * `AppSettings.ollamaModelContextTokens`.
+ *
+ * Takes the plain record rather than `AppSettings` so this module stays free of
+ * settings types. Returns undefined when nothing usable is cached, which every
+ * consumer must treat as "not measured" rather than as zero.
+ */
+export function resolveOllamaMeasuredContextTokens(
+  measuredByModelId: Record<string, number> | undefined | null,
+  modelId: string | null | undefined
+): number | undefined {
+  const trimmed = String(modelId || '').trim()
+  if (!trimmed || !measuredByModelId) return undefined
+  const usable = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0
+  const exact = measuredByModelId[trimmed]
+  if (usable(exact)) return Math.trunc(exact)
+  // The cache is written under the RESOLVED model id while callers usually hold
+  // the REQUESTED one, and `gemma:7b` / `gemma:7b-latest` are the same model. Fall
+  // back to the alias-aware matcher; the record holds one entry per installed
+  // model, so this is a handful of comparisons rather than a scan of anything big.
+  for (const [key, value] of Object.entries(measuredByModelId)) {
+    if (usable(value) && ollamaModelIdsMatch(trimmed, key)) return Math.trunc(value)
+  }
+  return undefined
+}
 
 const OLLAMA_DEFAULT_BUDGET: ContextBudget = {
   maxTurns: 8,

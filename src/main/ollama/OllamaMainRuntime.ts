@@ -524,6 +524,34 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
     })
   }
 
+  /**
+   * Cache a context length measured from the daemon so synchronous consumers
+   * (prompt composition, which runs before the launch plan that holds the model
+   * info) can size a budget against the model's real window.
+   *
+   * Writes only on CHANGE. `updateSettings` performs a synchronous full-settings
+   * `writeJson`, so an unconditional write here would put disk I/O on every run —
+   * the persistence-freeze class. In practice this fires once per model, ever.
+   */
+  function recordModelContextTokens(modelId: string, contextTokens?: number | null): void {
+    const key = modelId.trim()
+    if (!key) return
+    if (
+      typeof contextTokens !== 'number' ||
+      !Number.isFinite(contextTokens) ||
+      contextTokens <= 0
+    ) {
+      return
+    }
+    const measured = Math.trunc(contextTokens)
+    const settings = deps.store.getSettings()
+    const existing = settings.ollamaModelContextTokens || {}
+    if (existing[key] === measured) return
+    deps.store.updateSettings({
+      ollamaModelContextTokens: { ...existing, [key]: measured }
+    })
+  }
+
   function emitModelPreflight(
     sender: WebContents,
     result: OllamaModelPreflightResult,
@@ -613,6 +641,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         getSettings: deps.store.getSettings,
         getTotalMemoryBytes: () => os.totalmem(),
         markOllamaModelPreflightComplete: markModelPreflightComplete,
+        recordOllamaModelContextTokens: recordModelContextTokens,
         emitOllamaModelPreflight: emitModelPreflight,
         sendAgentCompatLine: deps.sendAgentCompatLine,
         sendAgentCompatError: deps.sendAgentCompatError,

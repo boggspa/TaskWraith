@@ -2250,6 +2250,22 @@ export interface AppSettings {
   piCerebrasMaxCompletionTokens?: number | null
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
+  /**
+   * Per-model context length MEASURED from the running Ollama daemon
+   * (`OllamaModelInfo.contextLength`, ultimately `/api/show` metadata) — never a
+   * table lookup or a provider default.
+   *
+   * Cached here because the measurement is only reachable through an async model
+   * load, while prompt composition is synchronous and runs BEFORE the launch plan
+   * that holds it. Persisting the fact once lets the context-block budget size
+   * itself against the model's real window instead of the hand-maintained
+   * `CONTEXT_WINDOWS_BY_MODEL` table, which has already drifted (`lfm2.5:8b` is
+   * 131_072 there and 128_000 on the daemon).
+   *
+   * Written only when the value CHANGES — `updateSettings` does a synchronous full
+   * settings write, so recording it per run would put a disk write in the hot path.
+   */
+  ollamaModelContextTokens?: Record<string, number>
   /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
    * DISABLED by default. Becomes offer/run eligible only when this is true AND
    * `antigravityOptInAcceptedAt` is set — see `isAntigravityOptInEnabled`. */

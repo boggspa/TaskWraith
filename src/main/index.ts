@@ -1561,6 +1561,7 @@ import {
 import { createOllamaMainRuntime } from './ollama/OllamaMainRuntime'
 import { OLLAMA_ADVERTISED_TOOL_NAMES } from './ollama/OllamaToolTiers'
 import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
+import { resolveOllamaMeasuredContextTokens } from './ollama/OllamaContextBudget'
 import {
   assertOllamaResolvedToolPolicy,
   ollamaResolvedToolPolicyError,
@@ -41650,7 +41651,14 @@ if (isGeminiMcpBridgeProcess) {
             // tool-trajectory memory the desktop composer injects.
             ...(provider === 'ollama'
               ? {
-                  ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
+                  ollamaSessionMemory: normalizeOllamaSessionMemory(chat.ollamaSessionMemory),
+                  // Daemon-measured window cached by a prior run. Absent on a
+                  // model's first run, which is safe — the budget then keeps its
+                  // conservative default instead of scaling off an assumed window.
+                  ollamaLiveContextTokens: resolveOllamaMeasuredContextTokens(
+                    bridgeSettings.ollamaModelContextTokens,
+                    inheritedModel
+                  )
                 }
               : {})
           } satisfies Parameters<typeof composeRunPrompt>[0]
