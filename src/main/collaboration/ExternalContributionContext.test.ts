@@ -184,7 +184,9 @@ describe('wrapExternalContribution', () => {
     // `endsWith(CLOSE_TAG)` so the check keeps its original meaning — nothing
     // collaborator-supplied got out past the fence — now that F3 appends a
     // trailing boundary restatement.
-    expect(wrapped.trimEnd().endsWith(`${CLOSE_TAG}\n${EXTERNAL_CONTRIBUTION_POSTAMBLE}`)).toBe(true)
+    expect(wrapped.trimEnd().endsWith(`${CLOSE_TAG}\n${EXTERNAL_CONTRIBUTION_POSTAMBLE}`)).toBe(
+      true
+    )
   })
 
   it('injection: the display name cannot add lines to the frame', () => {

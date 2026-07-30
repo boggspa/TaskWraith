@@ -237,5 +237,8 @@ export function wrapExternalContribution(
  * already made the body opaque by then.
  */
 export function looksExternallyWrapped(text: string): boolean {
-  return text.includes(`<${EXTERNAL_CONTRIBUTION_TAG}`) && text.includes(`</${EXTERNAL_CONTRIBUTION_TAG}>`)
+  return (
+    text.includes(`<${EXTERNAL_CONTRIBUTION_TAG}`) &&
+    text.includes(`</${EXTERNAL_CONTRIBUTION_TAG}>`)
+  )
 }

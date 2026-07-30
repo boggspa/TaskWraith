@@ -38,7 +38,11 @@ function sourceRegion(source: string, startMarker: string, endMarker: string): s
 
 describe('F6 — an external contribution cannot start a round', () => {
   const appendRegion = (): string =>
-    sourceRegion(chatServiceSource, '  appendCollaboratorComment(args: {', '\n  promoteCollaboratorComment(')
+    sourceRegion(
+      chatServiceSource,
+      '  appendCollaboratorComment(args: {',
+      '\n  promoteCollaboratorComment('
+    )
 
   it('the collaborator append path contains no run-dispatch call', () => {
     const region = appendRegion()
