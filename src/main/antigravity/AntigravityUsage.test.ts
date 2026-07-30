@@ -160,7 +160,11 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
 
     const authenticatedConnection = isAuthenticatedAgyRateLimitConnection(
       { ready: true, configuredProviders: new Set(['antigravity']) },
-      apiOnlyModels
+      apiOnlyModels,
+      // Even with a live probe on record, API-only rows mean no agy lane is
+      // offered, so the gate stays shut.
+      { source: 'live', cachedAtMs: null },
+      Date.parse('2026-07-23T12:00:00.000Z')
     )
     expect(authenticatedConnection).toBe(false)
 

@@ -230,6 +230,70 @@ describe('discoverAuthenticatedAgyModels', () => {
       ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
     })
 
+    // The quota gate reads this instead of guessing from row shape.
+    describe('records where the rows came from', () => {
+      it('records live for a successful probe', async () => {
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModelRecord: async () => ({ models: [], updatedAtMs: null }),
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'live', cachedAtMs: null })
+      })
+
+      it('records cached WITH the cache write time when serving cache', async () => {
+        const recordProvenance = vi.fn()
+        const updatedAtMs = Date.parse('2026-07-29T00:00:00.000Z')
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModelRecord: async () => ({ models: CACHED, updatedAtMs }),
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'cached', cachedAtMs: updatedAtMs })
+      })
+
+      it('records floor when falling back to the hardcoded mirror', async () => {
+        // The floor is not evidence of a connection. Recording it as such is
+        // what closes the quota gate on a machine that never signed in.
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stderr: 'Not logged in', code: 1 }),
+          readCachedModelRecord: async () => ({ models: [], updatedAtMs: null }),
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'floor', cachedAtMs: null })
+      })
+
+      it('records none without consent or a binary', async () => {
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels({}, { ...dependencies({}), recordProvenance })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'none', cachedAtMs: null })
+
+        recordProvenance.mockClear()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          resolveBinary: async () => ({ binaryPath: null, source: 'missing' }),
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'none', cachedAtMs: null })
+      })
+
+      it('treats the legacy age-less cache seam as unknown age', async () => {
+        // readCachedModels (no timestamp) must not be reported as fresh
+        // evidence; the predicate fails closed on a null age.
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModels: async () => CACHED,
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'cached', cachedAtMs: null })
+      })
+    })
+
     it('never consults the cache without consent or a binary', async () => {
       const readCachedModels = vi.fn(async () => CACHED)
       await expect(

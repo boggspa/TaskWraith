@@ -7,6 +7,9 @@ import {
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
 import { antigravityGeminiApiStaticModels } from './AntigravityGeminiApiStaticModels'
+import { AGY_CACHED_AUTH_EVIDENCE_TTL_MS } from './AntigravityAgyDiscoveryProvenance'
+
+const NOW_MS = Date.parse('2026-07-30T00:00:00.000Z')
 
 const optedIn = {
   antigravityEnabled: true,
@@ -32,9 +35,64 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     expect(
       isAuthenticatedAgyRateLimitConnection(
         { ready: true, configuredProviders: new Set(['antigravity']) },
-        [{ id: 'gemini-api:gemini-2.5-flash', label: 'API' }]
+        [{ id: 'gemini-api:gemini-2.5-flash', label: 'API' }],
+        { source: 'live', cachedAtMs: null },
+        NOW_MS
       )
     ).toBe(false)
+  })
+
+  // The gate used to be shape-based, which the hardcoded floor satisfied, so it
+  // was open on machines that had never authenticated. It is now evidence-based.
+  describe('quota-probe gate provenance', () => {
+    const READY = { ready: true, configuredProviders: new Set(['antigravity']) }
+    const AGY_ROWS = [{ id: 'gemini-3.6-flash-high', label: 'Gemini 3.6 Flash High' }]
+
+    it('opens on a live probe', () => {
+      expect(
+        isAuthenticatedAgyRateLimitConnection(READY, AGY_ROWS, { source: 'live', cachedAtMs: null }, NOW_MS)
+      ).toBe(true)
+    })
+
+    it('opens on a cache written inside the evidence window', () => {
+      expect(
+        isAuthenticatedAgyRateLimitConnection(
+          READY,
+          AGY_ROWS,
+          { source: 'cached', cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS + 1_000 },
+          NOW_MS
+        )
+      ).toBe(true)
+    })
+
+    it('closes on a cache older than the evidence window', () => {
+      expect(
+        isAuthenticatedAgyRateLimitConnection(
+          READY,
+          AGY_ROWS,
+          { source: 'cached', cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS - 1_000 },
+          NOW_MS
+        )
+      ).toBe(false)
+    })
+
+    it('CLOSES on floor rows — the forgery this replaced', () => {
+      // Identical rows and snapshot to the live case above; only the provenance
+      // differs. Under the old shape test this returned true.
+      expect(
+        isAuthenticatedAgyRateLimitConnection(READY, AGY_ROWS, { source: 'floor', cachedAtMs: null }, NOW_MS)
+      ).toBe(false)
+    })
+
+    it('fails closed with no provenance, or a cache of unknown age', () => {
+      expect(isAuthenticatedAgyRateLimitConnection(READY, AGY_ROWS, null, NOW_MS)).toBe(false)
+      expect(
+        isAuthenticatedAgyRateLimitConnection(READY, AGY_ROWS, { source: 'none', cachedAtMs: null }, NOW_MS)
+      ).toBe(false)
+      expect(
+        isAuthenticatedAgyRateLimitConnection(READY, AGY_ROWS, { source: 'cached', cachedAtMs: null }, NOW_MS)
+      ).toBe(false)
+    })
   })
   it('merges AGY-first rows when both lanes are admitted', async () => {
     const discoverAgy = vi.fn(async () => [
@@ -160,7 +218,9 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     expect(
       isAuthenticatedAgyRateLimitConnection(
         { ready: true, configuredProviders: new Set(['antigravity']) },
-        fallback
+        fallback,
+        { source: 'live', cachedAtMs: null },
+        NOW_MS
       )
     ).toBe(false)
   })

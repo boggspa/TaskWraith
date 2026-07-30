@@ -7,6 +7,10 @@ import {
   isAuthenticatedAgyRateLimitConnection,
   type AntigravityCombinedCatalogModel
 } from './AntigravityCombinedModelCatalog'
+import {
+  readAgyDiscoveryProvenance,
+  type AgyDiscoveryProvenance
+} from './AntigravityAgyDiscoveryProvenance'
 
 export interface AntigravityRateLimitHandlerDependencies<T> {
   readonly getSettings: () => AppSettings
@@ -18,6 +22,15 @@ export interface AntigravityRateLimitHandlerDependencies<T> {
     options: Record<string, never>
   ) => Promise<T>
   readonly fetchAuthenticatedQuota: (settings: AppSettings, force: boolean) => Promise<T>
+  /**
+   * Where the last agy discovery got its rows. Consulted instead of inferring
+   * authentication from row shape — the hardcoded floor's bare ids satisfied
+   * the old shape test, so the gate was open on machines that had never signed
+   * in. Test seam; production reads the main-process single slot.
+   */
+  readonly readProvenance?: () => AgyDiscoveryProvenance | null
+  /** Test seam for the cached-evidence TTL comparison. */
+  readonly nowMs?: () => number
 }
 
 export function createAntigravityRateLimitHandler<T>(
@@ -31,7 +44,9 @@ export function createAntigravityRateLimitHandler<T>(
       | undefined
     const authenticatedConnection = isAuthenticatedAgyRateLimitConnection(
       configuredSnapshot,
-      configuredModels
+      configuredModels,
+      (dependencies.readProvenance ?? readAgyDiscoveryProvenance)(),
+      (dependencies.nowMs ?? Date.now)()
     )
     if (!authenticatedConnection) {
       return dependencies.fetchQuota(settings, false, {})

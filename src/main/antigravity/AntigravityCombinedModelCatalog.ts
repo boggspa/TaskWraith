@@ -1,6 +1,10 @@
 import type { AppSettings, ProviderId } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import {
+  agyProvenanceProvesAuthenticatedConnection,
+  type AgyDiscoveryProvenance
+} from './AntigravityAgyDiscoveryProvenance'
+import {
   discoverAuthenticatedAntigravityGeminiApiModels,
   type AntigravityGeminiApiDiscoveredModel,
   type AntigravityGeminiApiDiscoveryResult,
@@ -79,20 +83,43 @@ export function isAntigravityGeminiApiModelId(value: unknown): value is string {
   return typeof value === 'string' && /^gemini-api:gemini-[a-z0-9][a-z0-9._-]{0,127}$/.test(value)
 }
 
+/**
+ * Whether the catalogue offers any agy-lane row at all.
+ *
+ * NOT a test of authentication, despite reading like one. The hardcoded floor's
+ * rows are bare ids too, so this is true whenever the agy lane is offered from
+ * ANY source — including a machine that has never signed in. It was the quota
+ * gate's authentication check, which is why that gate was always open; see
+ * `AntigravityAgyDiscoveryProvenance`. Kept because "is an agy row offered" is
+ * still a real question, e.g. the `gemini-api:`-prefix invariant on fallback
+ * rows depends on it.
+ */
 export function hasAuthenticatedAgyCatalogRow(
   models: readonly AntigravityCombinedCatalogModel[] | null | undefined
 ): boolean {
   return Boolean(models?.some((model) => !isAntigravityGeminiApiModelId(model.id)))
 }
 
+/**
+ * May a `/usage` quota probe run? Every probe opens a real authenticated agy
+ * session, so this must be evidence-based rather than shape-based: the offer
+ * being present says nothing about whether anyone ever signed in.
+ *
+ * Rows must still be offered AND the last discovery must have proved a
+ * connection (live, or a cache written inside
+ * `AGY_CACHED_AUTH_EVIDENCE_TTL_MS`). Fails closed when provenance is absent.
+ */
 export function isAuthenticatedAgyRateLimitConnection(
   snapshot: { ready: boolean; configuredProviders: ReadonlySet<string> },
-  models: readonly AntigravityCombinedCatalogModel[] | null | undefined
+  models: readonly AntigravityCombinedCatalogModel[] | null | undefined,
+  provenance: AgyDiscoveryProvenance | null | undefined,
+  nowMs: number
 ): boolean {
   return (
     snapshot.ready &&
     snapshot.configuredProviders.has('antigravity') &&
-    hasAuthenticatedAgyCatalogRow(models)
+    hasAuthenticatedAgyCatalogRow(models) &&
+    agyProvenanceProvesAuthenticatedConnection(provenance, nowMs)
   )
 }
 

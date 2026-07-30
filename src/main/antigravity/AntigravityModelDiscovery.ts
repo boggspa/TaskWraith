@@ -16,10 +16,15 @@ import {
 } from './AntigravityCli'
 import { antigravityAgyStaticModels, offerableAgyModels } from './AntigravityAgyStaticModels'
 import {
-  readCachedAgyModels,
+  readCachedAgyModelRecord,
   writeCachedAgyModels,
-  type AgyModelCacheDependencies
+  type AgyModelCacheDependencies,
+  type CachedAgyModelRecord
 } from './AntigravityAgyModelCache'
+import {
+  recordAgyDiscoveryProvenance,
+  type AgyDiscoveryProvenance
+} from './AntigravityAgyDiscoveryProvenance'
 
 const MAX_CAPTURED_OUTPUT = 80_000
 
@@ -36,10 +41,16 @@ export interface AuthenticatedAgyModelDiscoveryDependencies {
   cache?: AgyModelCacheDependencies
   /** Test seams. */
   readCachedModels?: (cache?: AgyModelCacheDependencies) => Promise<AgyModel[]>
+  readCachedModelRecord?: (cache?: AgyModelCacheDependencies) => Promise<CachedAgyModelRecord>
   writeCachedModels?: (
     models: readonly AgyModel[],
     cache?: AgyModelCacheDependencies
   ) => Promise<void>
+  /**
+   * Records where the rows came from, so the quota gate can stop inferring
+   * authentication from row shape. Defaults to the main-process single slot.
+   */
+  recordProvenance?: (provenance: AgyDiscoveryProvenance) => void
 }
 
 /**
@@ -123,7 +134,11 @@ export async function discoverAuthenticatedAgyModels(
   settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined,
   deps: AuthenticatedAgyModelDiscoveryDependencies = {}
 ): Promise<AgyModel[]> {
-  if (!isAntigravityOptInEnabled(settings)) return []
+  const record = deps.recordProvenance ?? recordAgyDiscoveryProvenance
+  if (!isAntigravityOptInEnabled(settings)) {
+    record({ source: 'none', cachedAtMs: null })
+    return []
+  }
 
   // Resolved once and reused, so the probe cannot observe a different binary
   // than the presence gate did.
@@ -131,9 +146,13 @@ export async function discoverAuthenticatedAgyModels(
   try {
     resolvedBinary = await (deps.resolveBinary ?? resolveAgyCliBinary)()
   } catch {
+    record({ source: 'none', cachedAtMs: null })
     return []
   }
-  if (!resolvedBinary.binaryPath) return []
+  if (!resolvedBinary.binaryPath) {
+    record({ source: 'none', cachedAtMs: null })
+    return []
+  }
 
   const runProbe = async (): Promise<AgyModel[]> => {
     const result = await probeAgyModels({
@@ -151,21 +170,40 @@ export async function discoverAuthenticatedAgyModels(
     // the resold-model policy is applied on the way OUT of every source so
     // a policy change never requires a cache invalidation.
     void (deps.writeCachedModels ?? writeCachedAgyModels)(result.models, deps.cache).catch(() => {})
-    return offerableAgyModels(result.models)
+    const offerable = offerableAgyModels(result.models)
+    // A successful probe is CURRENT proof of an authenticated connection, and
+    // it is recorded even when it lands after the caller's bounded window gave
+    // up on it: the round-trip really did succeed, which is exactly what the
+    // quota gate needs to know. That is why a first-ever launch can still open
+    // the gate a couple of seconds after showing the floor.
+    if (offerable.length > 0) record({ source: 'live', cachedAtMs: null })
+    return offerable
   }
 
-  let cached: AgyModel[] = []
+  let cached: CachedAgyModelRecord = { models: [], updatedAtMs: null }
   try {
-    cached = offerableAgyModels(await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache))
+    if (deps.readCachedModelRecord) {
+      cached = await deps.readCachedModelRecord(deps.cache)
+    } else if (deps.readCachedModels) {
+      // Legacy seam: rows without an age. Treated as an unknown-age cache,
+      // which the provenance predicate fails closed on.
+      cached = { models: await deps.readCachedModels(deps.cache), updatedAtMs: null }
+    } else {
+      cached = await readCachedAgyModelRecord(deps.cache)
+    }
   } catch {
     // An unreadable cache is not a discovery failure; fall through to the probe.
+    cached = { models: [], updatedAtMs: null }
   }
 
-  if (cached.length > 0) {
+  const cachedOfferable = offerableAgyModels(cached.models)
+  if (cachedOfferable.length > 0) {
+    record({ source: 'cached', cachedAtMs: cached.updatedAtMs })
     // Refresh in the background for the next generation. Unawaited on purpose:
-    // awaiting it is what previously guaranteed the lane timed out.
+    // awaiting it is what previously guaranteed the lane timed out. If it
+    // succeeds it upgrades the provenance to 'live'.
     void runProbe().catch(() => {})
-    return cached
+    return cachedOfferable
   }
 
   // Nothing cached — this machine has never discovered successfully. Await the
@@ -177,5 +215,8 @@ export async function discoverAuthenticatedAgyModels(
   } catch {
     // Fall through to the floor rather than hiding the provider entirely.
   }
+  // The floor is a hardcoded mirror, NOT evidence of anything. Recording it as
+  // such is the whole point of this signal.
+  record({ source: 'floor', cachedAtMs: null })
   return offerableAgyModels(antigravityAgyStaticModels())
 }
