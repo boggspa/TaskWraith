@@ -5729,6 +5729,11 @@ export interface ToolDiffSummary {
     | 'string_replace'
     | 'content'
     | 'result_diff'
+    // Measured from the workspace by `git diff --numstat`, not inferred from a
+    // tool's parameters or output. Outranks every estimate above regardless of
+    // magnitude — see `ToolDiffSummaryMerge`, which explains why larger-wins
+    // rejected exactly this source for being smaller.
+    | 'git_numstat'
     | 'unknown'
   confidence: 'exact' | 'estimated' | 'unknown'
 }

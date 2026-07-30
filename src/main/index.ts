@@ -236,6 +236,7 @@ import {
 } from './RendererAttachmentAuthorization'
 import { bindRuntimeWorktreeBaseWorkspace, derivePopoutRunPayload } from './RendererRunAuthority'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
+import { mergeToolDiffSummary } from './ToolDiffSummaryMerge'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
   buildCodexFastServiceTierCompatibilityArgs,
@@ -11795,16 +11796,12 @@ function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any
         })
       : undefined
   if (stats) {
-    if (!activity.diffSummary) {
-      activity.diffSummary = stats
-    } else if (activity.diffSummary.source === stats.source) {
-      activity.diffSummary = { ...activity.diffSummary, ...stats }
-    } else if (
-      (stats.additions ?? 0) > (activity.diffSummary.additions ?? 0) ||
-      (stats.deletions ?? 0) > (activity.diffSummary.deletions ?? 0)
-    ) {
-      activity.diffSummary = { ...activity.diffSummary, ...stats }
-    }
+    // Precedence lives in `mergeToolDiffSummary` so it is unit-tested rather
+    // than asserted only by how the odometer looks. Larger-wins is preserved
+    // for every estimating source; the one addition is that a WORKSPACE-MEASURED
+    // summary outranks estimates regardless of magnitude, because git numbers are
+    // usually smaller than the estimators' and were being rejected for it.
+    activity.diffSummary = mergeToolDiffSummary(activity.diffSummary, stats)
     // Late filename: a patch streamed via results names the card too.
     if (!activity.filePath) {
       const paths = new Set(
