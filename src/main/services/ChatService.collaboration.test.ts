@@ -10,6 +10,10 @@ import {
   RESOLVED_RETENTION_MS
 } from '../collaboration/ExternalContributionQueueStore'
 import { HumanCollaborationDenialError } from '../collaboration/HumanContributionRules'
+import {
+  EXTERNAL_CONTRIBUTION_POSTAMBLE,
+  EXTERNAL_CONTRIBUTION_PREAMBLE
+} from '../collaboration/ExternalContributionContext'
 import type { HumanCollaborationAuditInput } from '../collaboration/HumanCollaborationAuditLog'
 import { isHumanCollaboratorComment } from '../collaboration/HumanCollaboratorMessages'
 import type { ChatListItem, ChatRecord } from '../store/types'
@@ -238,7 +242,17 @@ describe('ChatService collaborator comments', () => {
       messageId: appended.message!.id
     })
 
-    expect(promoted.draft).toContain('Host-approved request from collaborator Alex')
+    // P2c F9. The old copy opened "Host-approved request from collaborator Alex",
+    // which reads as the host vouching for the request rather than merely
+    // releasing it. Host approval is recorded as provenance INSIDE the frame
+    // (`review=host-approved`) and nowhere else — the frame itself is identical
+    // to the unreviewed one, so nothing about a promoted contribution looks
+    // more authoritative than its content earns.
+    expect(promoted.draft).not.toContain('Host-approved request from collaborator')
+    expect(promoted.draft).toContain('review=host-approved')
+    expect(promoted.draft).toContain('<external_contribution')
+    expect(promoted.draft).toContain(EXTERNAL_CONTRIBUTION_PREAMBLE)
+    expect(promoted.draft).toContain(EXTERNAL_CONTRIBUTION_POSTAMBLE)
     expect(promoted.draft).toContain('Run the narrow test')
     expect(
       promoted.chat.messages.find((message) => message.id === appended.message!.id)?.metadata
@@ -313,9 +327,20 @@ describe('ChatService collaborator action requests (P2b)', () => {
       content: 'please add a regression test',
       intent: 'requestHostAction'
     })
-    expect(result.autoDraft).toContain('Auto-drafted from an action request by collaborator Alex')
-    expect(result.autoDraft).toContain('external, untrusted')
-    expect(result.autoDraft).toContain('review and edit it before sending')
+    // P2c F9: the draft now carries the SAME untrusted frame the composition
+    // choke point emits, not a prose summary of one. This is the path that
+    // frame cannot reach later — once the host sends the draft it is an
+    // ordinary host `user` message with no `sourceTrust` to re-detect — so the
+    // frame has to be here or it never exists for this text.
+    expect(result.autoDraft).toContain('<external_contribution')
+    expect(result.autoDraft).toContain('</external_contribution>')
+    expect(result.autoDraft).toContain(EXTERNAL_CONTRIBUTION_PREAMBLE)
+    expect(result.autoDraft).toContain(EXTERNAL_CONTRIBUTION_POSTAMBLE)
+    expect(result.autoDraft).toContain('Alex')
+    // An auto-draft was NOT read by the host before insertion, so it must never
+    // claim review it did not get.
+    expect(result.autoDraft).toContain('review=unreviewed')
+    expect(result.autoDraft).not.toContain('review=host-approved')
     // Provenance: share id, message id, timestamp.
     expect(result.autoDraft).toContain(shareId)
     expect(result.autoDraft).toContain(result.message!.id)

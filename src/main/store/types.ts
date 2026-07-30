@@ -1377,6 +1377,22 @@ export interface BlackboardEntry {
   scope: BlackboardScope
   /** Provenance — a tool-call id or a prior entry id this was derived from. */
   derivedFrom?: string
+  /**
+   * Author trust class. Absent means a host-side author (a model seat, the
+   * synthesizer, or the system) — the historical and overwhelmingly common
+   * case, left unstamped so no migration is needed.
+   *
+   * `'external'` marks an entry authored by a human collaborator on ANOTHER
+   * machine. It is not decoration: `formatBlackboardForPrompt` partitions on
+   * it, because the digest's default header tells every model to treat the
+   * board as agreed context and the `do-not-repeat` category is a standing
+   * behavioural directive. Filing unreviewed external text under either is a
+   * trust elevation (P2c security review, F4).
+   *
+   * ANY future path that lets an external post MUST stamp this. It is optional
+   * only to avoid restamping existing entries.
+   */
+  authorKind?: 'external'
   createdAt: string
   /**
    * Participant ids that have had this entry surfaced to them — via prompt
