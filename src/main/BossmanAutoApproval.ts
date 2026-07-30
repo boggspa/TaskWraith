@@ -42,6 +42,20 @@ export interface BossmanAutoApprovalContext {
   autoApprovals: { enabled?: boolean; mode?: string; confirmedAt?: string } | undefined
   /** All participant ids currently in the roster. */
   participantIds: string[]
+  /**
+   * Roster ids held by EXTERNAL human collaborators (the People/Shares
+   * externals), when the caller can resolve them. Named `externalParticipant*`
+   * rather than bare `external*` because `hasExternalPathDetection` above
+   * already spends the word "external" on out-of-workspace FILESYSTEM paths;
+   * these are seats, in the same id namespace as `participantIds`.
+   *
+   * Absent or empty means "this caller resolved no externals" and is treated
+   * exactly as the pre-external behaviour, so nothing regresses before the
+   * callers are updated. That is a migration affordance, not a safety
+   * property: every caller that can seat an external MUST populate this, and a
+   * present-but-non-array value is refused rather than ignored.
+   */
+  externalParticipantIds?: readonly string[]
   /** The requesting (target) participant — must be a live roster member. */
   targetParticipantId: string | undefined
   targetProvider: string | undefined
@@ -63,7 +77,9 @@ export interface BossmanAutoApprovalContext {
  *    (so MCP-tool / sub-thread / canvas grants are NEVER auto-allowed);
  *  - requires explicit, mode-correct user consent;
  *  - requires a live Boss or Captain authority plus a live requesting
- *    participant.
+ *    participant;
+ *  - never lets an EXTERNAL human collaborator holding Boss/Captain approve
+ *    anything for anybody (see the external-authority refusal below).
  * The returned grant is always request-scoped (the caller passes `'request'`).
  */
 export function evaluateBossmanAutoApproval(
@@ -108,6 +124,30 @@ export function evaluateBossmanAutoApproval(
         }
       : null
   if (!authority) return null
+  // INVARIANT: an approval authority held by an EXTERNAL human collaborator
+  // auto-resolves nothing, for anybody, ever.
+  //
+  // Externals deliberately never receive approval prompts, so an external Boss
+  // — or Captain, on the fallback path above — would see no modal AND silently
+  // allow every other seat's shell/file request. That inverts the authority
+  // checkpoint's documented contract, which "never changes provider admission
+  // or permissions" (`EnsembleAuthorityRoutingCheckpoint`) and reshapes the
+  // remaining queue only.
+  //
+  // The refusal is deliberately independent of roster membership.
+  // `participantIds` answers "is this seat live", never "may this seat
+  // approve", so an id present in BOTH lists is external and refused: sitting
+  // in the roster must not buy back an authority the external half denies.
+  // Until callers pass an effective roster, the hole is closed only by
+  // REPRESENTATION (externals are not yet members of
+  // `chat.ensemble.participants`, so their ids never reach `participantIds`);
+  // this makes it a rule instead, ahead of the first caller that seats one.
+  if (ctx.externalParticipantIds !== undefined) {
+    // Unusable evidence about who is external is NOT the same as no externals:
+    // a value that arrives in the wrong shape is refused, not ignored.
+    if (!Array.isArray(ctx.externalParticipantIds)) return null
+    if (ctx.externalParticipantIds.includes(authority.participantId)) return null
+  }
   if (!ctx.targetParticipantId || !ctx.participantIds.includes(ctx.targetParticipantId)) {
     return null
   }
