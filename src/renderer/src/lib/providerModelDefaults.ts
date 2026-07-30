@@ -316,6 +316,11 @@ const OLLAMA_DEFAULT_MODELS = [
     isDefault: true
   },
   {
+    id: 'qwen3.5:4b',
+    label: 'Qwen 3.5 (4B Param)',
+    description: 'Qwen 3.5 4B via Ollama · 262k context'
+  },
+  {
     id: 'qwen3.5:9b',
     label: 'Qwen 3.5 (9B Param)',
     description: 'Qwen 3.5 9B via Ollama · 262k context'
@@ -374,6 +379,17 @@ const OLLAMA_DEFAULT_MODELS = [
     id: 'nemotron3:33b',
     label: 'Nemotron 3 Nano Omni (33B Param)',
     description: 'NVIDIA Nemotron 3 Nano Omni 33B via Ollama · 131k context · vision/tools/thinking'
+  },
+  {
+    id: 'devstral-small-2:24b',
+    label: 'Devstral Small 2 (24B Param)',
+    description:
+      'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
+  },
+  {
+    id: 'ministral-3:14b',
+    label: 'Ministral 3 (14B Param)',
+    description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
   },
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]

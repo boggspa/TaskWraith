@@ -175,6 +175,13 @@ import { composerVoicePlacementForStyle } from '../lib/composerVoicePlacement'
 import { composerPermissionOptions } from '../lib/planModeLabels'
 import { pathComparisonKey } from '../lib/pathDisplay'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
+import {
+  MIN_WORKSPACE_TERMINAL_HEIGHT,
+  MAX_WORKSPACE_TERMINAL_HEIGHT,
+  clampWorkspaceTerminalHeight,
+  getStoredWorkspaceTerminalHeight,
+  setStoredWorkspaceTerminalHeight
+} from '../lib/panelWidths'
 import { createPortal } from 'react-dom'
 
 /**
@@ -538,6 +545,14 @@ function ComposerPrimaryStack({
 const normalizeComposerWorkflowMode = (value: unknown): ChatWorkflowMode | null =>
   value === 'plan' || value === 'normal' ? value : null
 
+// Air kept between the composer's bottom edge and the terminal's top edge when
+// the terminal is dragged tall. Covers `--workspace-terminal-bottom-gap` plus a
+// little breathing room, so the two surfaces never touch, let alone overlap.
+const WORKSPACE_TERMINAL_COMPOSER_CLEARANCE = 28
+// …and the terminal never takes more than this share of the pane, so the
+// transcript itself is never reduced to a sliver.
+const WORKSPACE_TERMINAL_MAX_PANE_SHARE = 0.62
+
 export function shouldRenderWelcomeNotifications(
   isWelcomeChat: boolean,
   showWelcomeNotifications = true
@@ -868,6 +883,102 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       transcriptRoot.classList.remove('workspace-terminal-open')
     }
   }, [isTerminalOpen, transcriptRoot])
+
+  // Terminal pane height. The stored value is a global preference (like the
+  // sidebar/inspector widths), but it is APPLIED per pane by writing the CSS
+  // var onto this composer's own `.app-transcript` — so a multiview cell that
+  // never opened its terminal keeps the stylesheet default.
+  const [terminalHeight, setTerminalHeight] = useState(getStoredWorkspaceTerminalHeight)
+
+  useEffect(() => {
+    if (!transcriptRoot || !isTerminalOpen) return
+    transcriptRoot.style.setProperty('--workspace-terminal-height', `${terminalHeight}px`)
+    return () => {
+      transcriptRoot.style.removeProperty('--workspace-terminal-height')
+    }
+  }, [isTerminalOpen, terminalHeight, transcriptRoot])
+
+  useEffect(() => {
+    setStoredWorkspaceTerminalHeight(terminalHeight)
+  }, [terminalHeight])
+
+  // The pane's top edge must never climb past the composer. Measured LIVE from
+  // where the composer actually ends rather than derived from its height,
+  // because the two layouts disagree: a docked chat re-offsets `.composer-area`
+  // from the terminal height (`.workspace-terminal-open .composer-area`) so the
+  // composer rises with the drag, while the welcome layout centres the composer
+  // and it stays put. One geometric invariant covers both. The flat share of
+  // the pane is the backstop for the reflowing case, so a rising composer can't
+  // let the terminal swallow the transcript.
+  const terminalHeightRange = (): { min: number; max: number } => {
+    const paneHeight = transcriptRoot?.clientHeight ?? window.innerHeight
+    const rootTop = transcriptRoot?.getBoundingClientRect().top ?? 0
+    const composerArea = composerAreaRef?.current ?? null
+    const composerBottomEdge = composerArea?.querySelector('.composer-surface') ?? composerArea
+    const composerBottom = composerBottomEdge
+      ? composerBottomEdge.getBoundingClientRect().bottom - rootTop
+      : 0
+    const ceiling = Math.min(
+      Math.floor(paneHeight * WORKSPACE_TERMINAL_MAX_PANE_SHARE),
+      Math.floor(paneHeight - composerBottom - WORKSPACE_TERMINAL_COMPOSER_CLEARANCE)
+    )
+    return {
+      min: MIN_WORKSPACE_TERMINAL_HEIGHT,
+      max: Math.max(MIN_WORKSPACE_TERMINAL_HEIGHT, Math.min(MAX_WORKSPACE_TERMINAL_HEIGHT, ceiling))
+    }
+  }
+
+  const startTerminalResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!transcriptRoot) return
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = Math.max(
+      MIN_WORKSPACE_TERMINAL_HEIGHT,
+      Math.min(terminalHeightRange().max, terminalHeight)
+    )
+    let liveHeight = startHeight
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Re-measured per move, not frozen at drag start: in a docked chat the
+      // composer rises as the pane grows, which lifts the ceiling with it.
+      const { min, max } = terminalHeightRange()
+      // The divider sits on the pane's TOP edge, so dragging up grows it.
+      liveHeight = Math.max(min, Math.min(max, startHeight - (moveEvent.clientY - startY)))
+      // Written straight to the CSS var for the duration of the drag: the var
+      // is what the pane, the composer offset and the transcript reserve all
+      // read, so this is a complete layout update — and it keeps a
+      // mousemove-rate drag off this (very large) component's render path.
+      // React state catches up once, on mouseup.
+      transcriptRoot.style.setProperty('--workspace-terminal-height', `${liveHeight}px`)
+    }
+
+    const handleMouseUp = () => {
+      document.body.classList.remove('is-resizing-workspace-terminal')
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      setTerminalHeight(clampWorkspaceTerminalHeight(liveHeight))
+    }
+
+    document.body.classList.add('is-resizing-workspace-terminal')
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+  }
+
+  const handleTerminalResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return
+
+    event.preventDefault()
+    const { min, max } = terminalHeightRange()
+    const step = event.shiftKey ? 48 : 16
+    let nextHeight = Math.max(min, Math.min(max, terminalHeight))
+
+    if (event.key === 'ArrowUp') nextHeight += step
+    if (event.key === 'ArrowDown') nextHeight -= step
+    if (event.key === 'Home') nextHeight = min
+    if (event.key === 'End') nextHeight = max
+
+    setTerminalHeight(clampWorkspaceTerminalHeight(Math.max(min, Math.min(max, nextHeight))))
+  }
 
   const pendingSoloProvider =
     !isCurrentEnsembleChat && currentChat
@@ -5666,11 +5777,30 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               transcriptRoot &&
               currentWorkspace?.path &&
               createPortal(
-                <TerminalPanel
-                  workspacePath={currentWorkspace.path}
-                  className="workspace-terminal-split"
-                  variant="pane"
-                />,
+                <>
+                  {/* Sits on the pane's top edge (it overlaps 2px into it) and
+                      is the drag target for the terminal's height. Portaled
+                      beside the pane because both are positioned against the
+                      same `.app-transcript`. */}
+                  <div
+                    className="workspace-terminal-resize-divider"
+                    role="separator"
+                    tabIndex={0}
+                    aria-orientation="horizontal"
+                    aria-label="Resize workspace terminal"
+                    aria-valuemin={MIN_WORKSPACE_TERMINAL_HEIGHT}
+                    aria-valuemax={MAX_WORKSPACE_TERMINAL_HEIGHT}
+                    aria-valuenow={terminalHeight}
+                    onMouseDown={startTerminalResize}
+                    onKeyDown={handleTerminalResizeKeyDown}
+                    title="Resize workspace terminal"
+                  />
+                  <TerminalPanel
+                    workspacePath={currentWorkspace.path}
+                    className="workspace-terminal-split"
+                    variant="pane"
+                  />
+                </>,
                 transcriptRoot
               )}
           </div>

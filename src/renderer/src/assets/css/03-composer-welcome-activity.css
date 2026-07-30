@@ -5363,6 +5363,49 @@
   animation: none;
 }
 
+/* 1.9.2 — workspace-terminal toggle. This button shipped with a class that had
+ * NO stylesheet entry at all, so it fell all the way back to UA `<button>`
+ * chrome: a `buttonface` fill, `buttontext` glyph and a default border. On every
+ * dark theme that read as a solid white chip wedged between its transparent
+ * neighbours. It also nests `AppleTerminalIcon`, whose `.chat-corner-symbol`
+ * span is sized 28px for the transcript corner rail, so the chip was oversized
+ * as well. Mirror the screen-watch / goal / plan idiom exactly: transparent
+ * ground, muted secondary tone, accent tint on hover, accent-active when open. */
+.composer-terminal-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-secondary) 54%, transparent);
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-terminal-button:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.composer-terminal-button.is-open {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text-primary));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Clamp the 28px corner-rail glyph down to the 14px telemetry-row size its
+ * siblings use via `.composer-control-icon`. */
+.composer-terminal-button .chat-corner-symbol,
+.composer-terminal-button .chat-corner-symbol svg {
+  width: 14px;
+  height: 14px;
+}
+
 .composer-ensemble-toggle-control-wrap {
   position: relative;
   display: inline-flex;

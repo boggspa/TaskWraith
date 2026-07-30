@@ -634,6 +634,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(ollama.defaultModelId).toBe('qwen3.5:9b')
     expect(ollama.modelOptions.map((o) => o.id)).toEqual([
       'qwen3:4b-instruct',
+      'qwen3.5:4b',
       'qwen3.5:9b',
       'qwen3.6:35b',
       'gemma4:12b',
@@ -645,7 +646,9 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'minicpm-v4.5:8b',
       'granite4.1:3b',
       'granite4.1:30b',
-      'nemotron3:33b'
+      'nemotron3:33b',
+      'devstral-small-2:24b',
+      'ministral-3:14b'
     ])
     expect(ollama.reasoningOptions).toEqual([])
   })

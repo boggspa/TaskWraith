@@ -61,6 +61,35 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines.join(' ')).toContain('thinking support')
   })
 
+  it('adds Devstral agentic-coding and Ministral scout guidance', () => {
+    const devstral = ollamaModelFamilyPromptLines('devstral-small-2:24b').join(' ')
+    expect(devstral).toContain('Devstral Small 2 24B')
+    expect(devstral).toContain('agentic coding')
+    expect(devstral).toContain('verification notes')
+
+    const ministralReadOnly = ollamaModelFamilyPromptLines(
+      'ministral-3:14b',
+      'workspace',
+      'read_only'
+    ).join(' ')
+    expect(ministralReadOnly).toContain('Ministral 3 14B')
+    expect(ministralReadOnly).toContain('short plan')
+    const ministralEdits = ollamaModelFamilyPromptLines(
+      'ministral-3:14b',
+      'workspace',
+      'approved_edits'
+    ).join(' ')
+    expect(ministralEdits).toContain('small localized edits directly')
+    expect(ministralEdits).not.toContain('short plan')
+  })
+
+  it('gives the 3.5 4B tag its own lightweight profile, not the unknown fallback', () => {
+    const lines = ollamaModelFamilyPromptLines('qwen3.5:4b').join(' ')
+    expect(lines).toContain('Qwen 3.5 4B')
+    expect(lines).toContain('stay lightweight')
+    expect(lines).not.toContain('Model profile (local)')
+  })
+
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest', 'conversational')
     expect(lines.join(' ')).toContain('tool-intent stub')

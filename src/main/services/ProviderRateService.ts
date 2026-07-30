@@ -548,6 +548,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        modelId: 'qwen3.5:4b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Qwen 3.5 4B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'qwen3.5:9b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
@@ -728,6 +738,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'OpenAI gpt-oss 20B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'devstral-small-2:24b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Mistral Devstral Small 2 24B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'ministral-3:14b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Mistral Ministral 3 14B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
       }
     ]

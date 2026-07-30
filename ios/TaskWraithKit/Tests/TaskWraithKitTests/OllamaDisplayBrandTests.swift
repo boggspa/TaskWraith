@@ -31,6 +31,12 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.resolve(modelId: "laguna-xs-2.1:q8_0")?.providerLabel
                 == "Poolside")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "devstral-small-2:24b")?.providerLabel
+                == "Mistral")
+        // `ministral` carries its own needle — 'mistral' is NOT a substring of it.
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "ministral-3:14b")?.providerClass == "mistral")
     }
 
     @Test("returns nil for unbranded / empty models")
@@ -49,8 +55,8 @@ struct OllamaDisplayBrandTests {
     func explicitOrder() {
         #expect(
             OllamaDisplayBrands.all.map(\.id) == [
-                "alibaba", "deep-reinforce", "google", "ibm", "liquid", "nvidia", "openai",
-                "openbmb", "poolside",
+                "alibaba", "deep-reinforce", "google", "ibm", "liquid", "mistral", "nvidia",
+                "openai", "openbmb", "poolside",
             ])
     }
 
@@ -62,6 +68,10 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "laguna-xs-2.1:q8_0") == "poolside")
+        // Reuses the first-class Mistral seat's hue — one brand, one colour.
+        #expect(
+            OllamaDisplayBrands.providerHueClass(
+                provider: "ollama", modelId: "devstral-small-2:24b") == "mistral")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(

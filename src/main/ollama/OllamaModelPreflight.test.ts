@@ -30,7 +30,83 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('granite4.1:30b')).toBe('granite4_1_30b')
     expect(resolveOllamaModelFamily('nemotron3:33b')).toBe('nemotron3_33b')
     expect(resolveOllamaModelFamily('gpt-oss:latest')).toBe('gpt_oss_20b')
+    expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
+    expect(resolveOllamaModelFamily('ministral-3:14b')).toBe('ministral_3_14b')
     expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('unknown')
+  })
+
+  it('keeps the two 3.5 sizes on separate families', () => {
+    // `qwen3.5:4b` matches NEITHER the `qwen3:4b` nor the `qwen3.5:9b` prefix
+    // (dot vs colon), so without its own arm it fell through to the metadata
+    // heuristics and resolved 'unknown' whenever /api/tags was unavailable —
+    // which drops the tag out of ensemble context sharing entirely.
+    expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('qwen3.5:4b-instruct-q4_K_M')).toBe('qwen3_5_4b')
+    expect(resolveOllamaModelFamily('qwen3.5:9b')).toBe('qwen3_5_9b')
+  })
+
+  it('splits the shared mistral3 architecture by parameter size', () => {
+    // The live daemon reports `family: 'mistral3'` for BOTH local Mistral tags
+    // (verified 2026-07-30), so the architecture alone cannot pick the family —
+    // an earlier pass guessed 'devstral'/'ministral' family strings that Ollama
+    // never emits, which left a custom-named tag resolving 'unknown'.
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'mistral3',
+        parameterSize: '24.0B'
+      })
+    ).toBe('devstral_small_2_24b')
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'mistral3',
+        parameterSize: '13.9B'
+      })
+    ).toBe('ministral_3_14b')
+    // An explicit brand word in a custom tag's own metadata still wins.
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'ministral',
+        parameterSize: '13.9B'
+      })
+    ).toBe('ministral_3_14b')
+  })
+
+  it('splits the shared qwen35 architecture by parameter size', () => {
+    // `qwen35` is what the daemon reports for BOTH 3.5 sizes. Before this arm
+    // the generic `qwen3` fallback sent every 3.5 tag to the 4B profile — the
+    // 9B included, because its real "9.7B" never matched the `9b` needle.
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'qwen35',
+        parameterSize: '4.7B'
+      })
+    ).toBe('qwen3_5_4b')
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'qwen35',
+        parameterSize: '9.7B'
+      })
+    ).toBe('qwen3_5_9b')
+    // The 35B MoE tags report `qwen35moe` and must keep resolving to 3.6.
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'qwen35moe',
+        parameterSize: '36.0B'
+      })
+    ).toBe('qwen3_6_35b')
   })
 
   it('uses exact tags before architecture metadata that could be ambiguous', () => {

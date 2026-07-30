@@ -327,6 +327,7 @@ import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/run
 import {
   ANTIGRAVITY_PROVIDER_ID,
   DEFAULT_PROVIDER,
+  isAntigravityOptInEnabled,
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../shared/retiredProviders'
@@ -1543,6 +1544,8 @@ import {
 import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import {
+  AGY_USAGE_MANUAL_MIN_INTERVAL_MS,
+  agyQuotaUnavailableSnapshot,
   agyUsageProbeDecision,
   fetchAuthenticatedAgyQuotaSnapshot,
   type AgyPtyLike
@@ -1959,6 +1962,7 @@ import {
   registerAntigravityRateLimitHandler
 } from './antigravity/AntigravityRateLimitHandler'
 import { setAntigravityGeminiApiKeyConfiguredProbe } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { setAntigravityAgyOptInEnabledProbe } from './antigravity/AntigravityAgyOptInEnabledSignal'
 import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/AntigravityGeminiApiDiscoveryOutcome'
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
@@ -1978,6 +1982,13 @@ const antigravityGeminiApiDiscoveryOutcomeStore = new AntigravityGeminiApiDiscov
 setAntigravityGeminiApiKeyConfiguredProbe(
   () => antigravityGeminiApiSecretStoreRef?.getStatus()?.configured === true
 )
+// Twin of the probe above, for the INDEPENDENT agy/CLI ban-risk lane. Read at
+// the same three chokepoints so neither lane's absence can strand the other:
+// before this existed they admitted `antigravity` on the key signal alone, so
+// an opted-in user with no API key could select an agy quota model and could
+// not send it. Reads persisted settings live (not a snapshot) so withdrawing
+// consent in Settings takes effect on the next admission with no restart.
+setAntigravityAgyOptInEnabledProbe(() => isAntigravityOptInEnabled(AppStore.getSettings()))
 
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
@@ -48838,9 +48849,18 @@ if (isGeminiMcpBridgeProcess) {
           return antigravityUsageProbeCache.snapshot
         }
         if (probeDecision !== 'probe') {
-          // Unavailable-until-manual-refresh: same shape the unauthenticated
-          // lane reports, so every surface degrades identically.
-          return fetchAuthenticatedAgyQuotaSnapshot(settings, false, {})
+          // Reaching here means the connection IS authenticated (the handler
+          // only calls this path when it is) but no probe ran. Report WHICH of
+          // the two doctrine rules withheld it. This previously returned the
+          // unauthenticated lane's snapshot — configured false, no reason —
+          // which the renderer cannot surface at all, so "the heartbeat is
+          // cache-only by design" and "your ↻ was rate-limited" and "there is
+          // no agy lane" were one indistinguishable blank meter.
+          return agyQuotaUnavailableSnapshot(
+            force === true
+              ? `a manual refresh ran less than ${Math.round(AGY_USAGE_MANUAL_MIN_INTERVAL_MS / 60_000)} minutes ago. Every /usage probe is a real authenticated agy session, so refreshes are deliberately rate-limited — try again shortly.`
+              : 'the agy /usage probe only ever runs on an explicit manual refresh, because each one opens a real authenticated agy session. Press refresh to read your quota.'
+          )
         }
         antigravityUsageProbeLastAttemptAt = Date.now()
 

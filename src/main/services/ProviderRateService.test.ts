@@ -333,7 +333,10 @@ describe('BAKED_IN_RATES', () => {
         'minicpm-v4.5:8b',
         'granite4.1:3b',
         'granite4.1:30b',
-        'nemotron3:33b'
+        'nemotron3:33b',
+        'qwen3.5:4b',
+        'devstral-small-2:24b',
+        'ministral-3:14b'
       ])
     )
   })

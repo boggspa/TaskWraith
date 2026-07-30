@@ -26,6 +26,10 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from '../antigravity/AntigravityAgyOptInEnabledSignal'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -459,17 +463,34 @@ describe('ComposerService', () => {
     }
   })
 
-  it('still rejects the official agy/CLI antigravity lane from interactive compose even with a configured key', () => {
-    // Interactive compose only ever dispatches the in-app Gemini API kernel;
-    // the agy/CLI lane always opens an external terminal instead, so a
-    // configured key alone does not change that this local admission check
-    // never depends on the AGY opt-in flag.
+  it('admits a new antigravity run on the agy opt-in alone, with NO Gemini API key', () => {
+    // The regression this pins: admission keyed ONLY on the API-key signal, so
+    // a user who had accepted the agy ban-risk opt-in but never saved a key
+    // could select a bare quota model and the send died here, before IPC
+    // dispatch. The two lanes are independent; a key is not evidence about agy.
+    setAntigravityAgyOptInEnabledProbe(() => true)
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    try {
+      const payload = compose({ provider: 'antigravity' }, {})
+      expect(payload.provider).toBe('antigravity')
+    } finally {
+      resetAntigravityAgyOptInEnabledProbeForTests()
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('rejects a new antigravity run when NEITHER lane is admitted', () => {
+    // Previously titled as proving the agy lane is refused "even with a
+    // configured key" — but it set the key probe to false, so it only ever
+    // asserted the both-absent case. Named for what it actually checks.
+    setAntigravityAgyOptInEnabledProbe(() => false)
     setAntigravityGeminiApiKeyConfiguredProbe(() => false)
     try {
       expect(() => compose({ provider: 'antigravity' }, {})).toThrow(
         'antigravity is unavailable for new runs.'
       )
     } finally {
+      resetAntigravityAgyOptInEnabledProbeForTests()
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
   })

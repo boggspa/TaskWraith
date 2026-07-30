@@ -29,6 +29,22 @@ describe('resolveOllamaContextBudget', () => {
     )
   })
 
+  it('sizes the three new local tags by their own class, not the unknown floor', () => {
+    const unknown = resolveOllamaContextBudget('unknown-local:latest')
+    // Devstral is the coding tag of the three and gets the large-coding budget;
+    // Ministral the mid tier; the 4B Qwen the same lightweight budget as
+    // qwen3:4b-instruct.
+    expect(resolveOllamaContextBudget('devstral-small-2:24b').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('ministral-3:14b').maxBlockChars
+    )
+    expect(resolveOllamaContextBudget('ministral-3:14b').maxBlockChars).toBeGreaterThan(
+      unknown.maxBlockChars
+    )
+    expect(resolveOllamaContextBudget('qwen3.5:4b')).toEqual(
+      resolveOllamaContextBudget('qwen3:4b-instruct')
+    )
+  })
+
   it('keeps unknown local tags conservative until live model metadata is known', () => {
     const unknown = resolveOllamaContextBudget('unknown-local:latest')
     expect(unknown.maxTurns).toBe(8)

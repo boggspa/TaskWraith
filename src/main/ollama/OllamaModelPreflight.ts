@@ -3,6 +3,7 @@ import type { ProviderCapabilityWarning } from '../store/types'
 
 export type OllamaModelFamily =
   | 'qwen3_4b'
+  | 'qwen3_5_4b'
   | 'qwen3_5_9b'
   | 'qwen3_6_35b'
   | 'gemma4_12b'
@@ -15,6 +16,8 @@ export type OllamaModelFamily =
   | 'granite4_1_3b'
   | 'granite4_1_30b'
   | 'nemotron3_33b'
+  | 'devstral_small_2_24b'
+  | 'ministral_3_14b'
   | 'unknown'
 
 export interface OllamaModelPreflightInput {
@@ -75,7 +78,14 @@ export function resolveOllamaModelFamily(
   if (key === 'granite4.1:30b' || key.startsWith('granite4.1:30b-')) return 'granite4_1_30b'
   if (key === 'nemotron3:33b' || key.startsWith('nemotron3:33b-')) return 'nemotron3_33b'
   if (key === 'qwen3:4b-instruct' || key.startsWith('qwen3:4b')) return 'qwen3_4b'
+  // The 3.5 sizes must be matched BEFORE the bare `qwen3` metadata fallbacks
+  // below, and 4b before 9b is only cosmetic — the tags do not overlap.
+  if (key === 'qwen3.5:4b' || key.startsWith('qwen3.5:4b')) return 'qwen3_5_4b'
   if (key === 'qwen3.5:9b' || key.startsWith('qwen3.5:9b')) return 'qwen3_5_9b'
+  if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
+    return 'devstral_small_2_24b'
+  }
+  if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) return 'ministral_3_14b'
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b')) return 'gemma4_12b'
   if (
     key === 'ornith' ||
@@ -115,7 +125,25 @@ export function resolveOllamaModelFamily(
   if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
   if (meta.includes('ornith')) return 'ornith_9b'
   if (meta.includes('laguna') || meta.includes('poolside')) return 'laguna_xs_2_1'
+  // Live daemon (2026-07-30) reports `family: 'mistral3'` for BOTH local
+  // Mistral tags, so the architecture alone cannot pick the family — split on
+  // parameter size. An explicit brand word only appears when a custom tag
+  // names it in its own metadata.
+  if (meta.includes('mistral3') || meta.includes('devstral') || meta.includes('ministral')) {
+    if (meta.includes('devstral')) return 'devstral_small_2_24b'
+    if (meta.includes('ministral')) return 'ministral_3_14b'
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 20 ? 'ministral_3_14b' : 'devstral_small_2_24b'
+  }
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
+  // `qwen35` covers BOTH 3.5 sizes (the 35B MoE tags report `qwen35moe` and are
+  // caught above), so the 3.5 pair also splits on parameter size. Without this
+  // arm the generic `qwen3` fallbacks below sent every 3.5 tag to the 4B
+  // profile — including the 9B, whose "9.7B" never matched their `9b` needle.
+  if (meta.includes('qwen35') || meta.includes('qwen3.5')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 7 ? 'qwen3_5_4b' : 'qwen3_5_9b'
+  }
   if (meta.includes('nemotron')) return 'nemotron3_33b'
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
     return 'granite4_1_3b'
@@ -221,6 +249,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For edits, shell work, or multi-step refactors, choose an edit-capable Ollama tier and a model/profile sized for the scope.'
       }
+    case 'qwen3_5_4b':
+      return {
+        guidance: `${modelLabel} is a small long-context local model — good for quick lookups, targeted reads, and short focused patches.`,
+        delegateHint:
+          'Keep the scope narrow; for multi-file refactors or long test-fix loops, hand off a short plan rather than looping locally.'
+      }
     case 'minicpm_v45_8b':
       return {
         guidance: `${modelLabel} is a compact multimodal local model with tools and thinking support.`,
@@ -275,6 +309,18 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it for deep local analysis and visual checks; pair broad multi-file implementation with an explicit verification plan when latency or reliability matters.'
       }
+    case 'devstral_small_2_24b':
+      return {
+        guidance: `${modelLabel} is an agentic-coding local model built for tool-driven workspace edits.`,
+        delegateHint:
+          'Use it for scoped implementation: search, read the exact target, patch, then state what you verified. Slice broad refactors rather than running them in one pass.'
+      }
+    case 'ministral_3_14b':
+      return {
+        guidance: `${modelLabel} is a compact tool-capable local model for fast reads, planning, and small focused edits.`,
+        delegateHint:
+          'Use it as a local scout or patcher; for release-critical or multi-file work, pair it with a larger local tag or an explicit verification pass.'
+      }
     case 'gpt_oss_20b':
       return {
         guidance: `${modelLabel} has stronger reasoning but can be finicky with tool calls; TaskWraith will nudge it when it stalls.`,
@@ -293,6 +339,7 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
 function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | null {
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_4b':
       return 4
     case 'qwen3_5_9b':
       return 9
@@ -316,6 +363,10 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 30
     case 'nemotron3_33b':
       return 33
+    case 'devstral_small_2_24b':
+      return 24
+    case 'ministral_3_14b':
+      return 14
     case 'gpt_oss_20b':
       return 20
     default:

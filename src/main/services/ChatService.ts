@@ -39,6 +39,7 @@ import {
 import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
 import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
 import {
   clearPendingWorkspaceRebind,
@@ -1305,17 +1306,25 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 /**
- * The official agy/CLI AntiGravity lane never dispatches through subthreads,
- * forks, side chats, or ensemble participants created here (it opens an
- * external terminal), so it is never admitted regardless of opt-in. The
- * independent Gemini API-key lane DOES dispatch an in-app turn through the
- * Gemini kernel, so it is admitted here on a currently configured key alone
- * -- see `AntigravityGeminiApiKeyConfiguredSignal`.
+ * Subthreads, forks, side chats and ensemble participants admit AntiGravity's
+ * two lanes INDEPENDENTLY, each on evidence about itself: the agy/CLI ban-risk
+ * lane on its recorded opt-in, the Gemini API-key lane on a currently
+ * configured key. Neither lane's absence may strand the other — see the note
+ * in `ComposerService.assertLiveProviderId` for why gating on the key alone
+ * broke agy seats, and `AntigravityAgyOptInEnabledSignal` for why this reads a
+ * wired boolean rather than `AppSettings`.
+ *
+ * The previous comment here claimed the agy lane "opens an external terminal".
+ * It does not — `runAntigravityAgyProvider` spawns an in-app PTY child through
+ * `runCliProviderProcess`, like every other CLI transport.
  */
 function assertLiveProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
   if (isLiveSelectableProvider(provider)) return provider
-  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+  if (
+    provider === ANTIGRAVITY_PROVIDER_ID &&
+    (isAntigravityAgyOptInEnabled() || isAntigravityGeminiApiKeyConfigured())
+  ) {
     return provider
   }
   throw new Error(`${provider} is unavailable for new chats or delegated runs.`)

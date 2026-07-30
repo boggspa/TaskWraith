@@ -5805,6 +5805,7 @@
     .composer-ensemble-toggle-button,
     .composer-goal-button,
     .composer-plan-button,
+    .composer-terminal-button,
     .composer-copy-transcript-button,
     .composer-workspace-button,
     .composer-thread-token-tally
@@ -5823,6 +5824,8 @@
     .composer-goal-button.is-open,
     .composer-plan-button:hover,
     .composer-plan-button.is-open,
+    .composer-terminal-button:hover,
+    .composer-terminal-button.is-open,
     .composer-copy-transcript-button:hover,
     .composer-copy-transcript-button.is-open,
     .composer-workspace-button:hover
@@ -9653,6 +9656,12 @@
 
 .composer-combined-picker-provider-row[data-ollama-provider-class="liquid"] {
   --composer-ollama-brand-color: var(--provider-liquid-color);
+}
+
+/* Local Devstral / Ministral tags spoof the Mistral brand, reusing the
+ * first-class Mistral seat's hue rather than adding a tenth brand colour. */
+.composer-combined-picker-provider-row[data-ollama-provider-class="mistral"] {
+  --composer-ollama-brand-color: var(--provider-mistral-color);
 }
 
 .composer-combined-picker-provider-row[data-ollama-provider-class="nvidia"] {

@@ -197,6 +197,13 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'granite4.1:3b')).toBe('Granite 4.1 (3B Param)')
       expect(humaniseModelId('ollama', 'granite4.1:30b')).toBe('Granite 4.1 (30B Param)')
       expect(humaniseModelId('ollama', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
+      expect(humaniseModelId('ollama', 'qwen3.5:4b')).toBe('Qwen 3.5 (4B Param)')
+      expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
+      expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')
+      expect(humaniseModelId('ollama', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
+      // The Mistral Vibe seat's own bare `devstral-small` row is a DIFFERENT
+      // identity and must not be pulled onto the local tag's label.
+      expect(humaniseModelId('mistral', 'devstral-small')).toBe('Devstral Small')
     })
   })
 
@@ -298,6 +305,9 @@ describe('humaniseModelId', () => {
       expect(labels['minicpm-v4.5:8b']).toBeDefined()
       expect(labels['granite4.1:30b']).toBeDefined()
       expect(labels['nemotron3:33b']).toBeDefined()
+      expect(labels['qwen3.5:4b']).toBeDefined()
+      expect(labels['devstral-small-2:24b']).toBeDefined()
+      expect(labels['ministral-3:14b']).toBeDefined()
     })
   })
 })

@@ -10,6 +10,10 @@ import {
   resetAntigravityGeminiApiKeyConfiguredProbeForTests,
   setAntigravityGeminiApiKeyConfiguredProbe
 } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import {
   signRunPermissionPosture,
@@ -938,6 +942,37 @@ describe('RunQueueService', () => {
       resetAntigravityGeminiApiKeyConfiguredProbeForTests()
     }
 
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    expect(() => service.requestJob(request)).toThrow('Provider is unavailable for new runs.')
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('admits AntiGravity queue jobs on the agy opt-in alone, with NO API key configured', () => {
+    // The regression this pins: queue admission keyed ONLY on the Gemini
+    // API-key signal, so a user who had accepted the agy ban-risk opt-in but
+    // never saved an API key could pick a bare quota model and have the send
+    // rejected. The key says nothing about the agy lane, in either direction.
+    const request = {
+      provider: 'antigravity',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    }
+    setAntigravityAgyOptInEnabledProbe(() => true)
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    try {
+      const { deps, repository } = makeDeps()
+      const service = new RunQueueService(deps)
+      const job = service.requestJob(request)
+      expect(job.provider).toBe('antigravity')
+      expect(repository.saveRunQueueJob).toHaveBeenCalled()
+    } finally {
+      resetAntigravityAgyOptInEnabledProbeForTests()
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+
+    // Neither lane admitted -> still fails closed.
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
     expect(() => service.requestJob(request)).toThrow('Provider is unavailable for new runs.')

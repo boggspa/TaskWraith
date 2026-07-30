@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   AGY_USAGE_COMMAND,
   AGY_USAGE_TUI_ARGS,
+  agyQuotaUnavailableSnapshot,
   fetchAuthenticatedAgyQuotaSnapshot,
   parseAgyUsagePanel,
   stripAgyUsageTerminalControls,
@@ -159,10 +160,20 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
 
     const authenticatedConnection = isAuthenticatedAgyRateLimitConnection(
       { ready: true, configuredProviders: new Set(['antigravity']) },
-      apiOnlyModels
+      apiOnlyModels,
+      // Even with a live probe on record, API-only rows mean no agy lane is
+      // offered, so the gate stays shut.
+      { source: 'live', cachedAtMs: null },
+      Date.parse('2026-07-23T12:00:00.000Z')
     )
     expect(authenticatedConnection).toBe(false)
 
+    // Opted in, but the catalogue holds only `gemini-api:` rows so there is no
+    // authenticated agy connection. Reportable rather than silent: `configured`
+    // is true and a reason is attached, because the renderer surfaces a quota
+    // entry only when it has windows OR configured+error. Returning
+    // configured:false here made an unauthenticated CLI look identical to a
+    // lane that does not exist.
     await expect(
       fetchAuthenticatedAgyQuotaSnapshot(
         optedIn,
@@ -174,8 +185,32 @@ describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
           now
         }
       )
-    ).resolves.toMatchObject({ configured: false })
+    ).resolves.toMatchObject({
+      configured: true,
+      error: expect.stringContaining('no authenticated agy connection')
+    })
 
+    // The point of this case is unchanged: reporting the state must not touch
+    // the binary or spawn a session.
+    expect(resolveBinary).not.toHaveBeenCalled()
+    expect(spawnPty).not.toHaveBeenCalled()
+  })
+
+  it('stays fully silent (configured false, no reason) when no opt-in is recorded', async () => {
+    // The one state that must NOT surface: without recorded consent the
+    // ban-risk lane does not exist as far as any meter is concerned.
+    const resolveBinary = vi.fn()
+    const spawnPty = vi.fn()
+
+    const snapshot = await fetchAuthenticatedAgyQuotaSnapshot({}, true, {
+      cwd: '/private/tmp/agy-test',
+      resolveBinary,
+      spawnPty,
+      now
+    })
+
+    expect(snapshot).toMatchObject({ configured: false })
+    expect(snapshot.error).toBeUndefined()
     expect(resolveBinary).not.toHaveBeenCalled()
     expect(spawnPty).not.toHaveBeenCalled()
   })
@@ -342,5 +377,42 @@ describe('agyUsageProbeDecision', () => {
         lastAttemptAtMs: T0
       })
     ).toBe('unavailable')
+  })
+})
+
+describe('agyQuotaUnavailableSnapshot', () => {
+  // These are the states that used to be indistinguishable blanks. The renderer
+  // admits a quota entry only when it has windows OR configured+error, so
+  // `configured: true` plus a reason is what makes each one visible at all.
+  it('marks the lane configured and carries the reason', () => {
+    const snapshot = agyQuotaUnavailableSnapshot('because reasons.', now)
+    expect(snapshot).toMatchObject({
+      provider: 'antigravity',
+      source: 'agy-usage-tui',
+      configured: true,
+      fetchedAt: '2026-07-23T12:00:00.000Z',
+      error: 'Quota unavailable: because reasons.'
+    })
+  })
+
+  it('reports no windows, so the caller cannot mistake it for quota data', () => {
+    expect(agyQuotaUnavailableSnapshot('nope.', now).windows).toBeUndefined()
+  })
+
+  it('distinguishes the awaiting-manual-refresh and rate-limited reasons', () => {
+    // The two doctrine rules that withhold a probe. Before this they returned
+    // one identical configured-false snapshot, so a ↻ that was silently
+    // clamped looked exactly like a ↻ that had never been pressed.
+    const awaiting = agyQuotaUnavailableSnapshot(
+      'the agy /usage probe only ever runs on an explicit manual refresh.',
+      now
+    )
+    const clamped = agyQuotaUnavailableSnapshot(
+      'a manual refresh ran less than 5 minutes ago.',
+      now
+    )
+    expect(awaiting.error).not.toBe(clamped.error)
+    expect(awaiting.configured).toBe(true)
+    expect(clamped.configured).toBe(true)
   })
 })

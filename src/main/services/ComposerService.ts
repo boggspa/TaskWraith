@@ -5,6 +5,7 @@ import {
   isLiveSelectableProvider
 } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { isAntigravityAgyOptInEnabled } from '../antigravity/AntigravityAgyOptInEnabledSignal'
 import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
 import {
   formatDiscordContextPromptAppendix,
@@ -913,16 +914,29 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 /**
- * The official agy/CLI AntiGravity lane never dispatches through interactive
- * compose (it opens an external terminal), so it is never admitted here
- * regardless of opt-in. The independent Gemini API-key lane DOES dispatch an
- * in-app turn through the Gemini kernel, so it is admitted here on a
- * currently configured key alone -- see `AntigravityGeminiApiKeyConfiguredSignal`.
+ * AntiGravity's two lanes are admitted INDEPENDENTLY, and each on evidence
+ * about itself:
+ * - the agy/CLI ban-risk lane on its recorded opt-in, and
+ * - the Gemini API-key lane on a currently configured key.
+ *
+ * The union matters because it is a lane-agnostic gate: a bare quota model and
+ * a `gemini-api:` model both arrive here as provider `antigravity`, and the
+ * dispatch fork happens later in `dispatchAntigravityCombinedMode`. Gating on
+ * the key alone therefore stranded the OTHER lane — an opted-in user with no
+ * API key could select an agy quota model and physically could not send it.
+ *
+ * The previous comment here claimed the agy lane "opens an external terminal"
+ * and so never reaches interactive compose. That was wrong:
+ * `runAntigravityAgyProvider` spawns an in-app PTY child through
+ * `runCliProviderProcess`, exactly like every other CLI transport.
  */
 function assertLiveProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
   if (isLiveSelectableProvider(provider)) return provider
-  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+  if (
+    provider === ANTIGRAVITY_PROVIDER_ID &&
+    (isAntigravityAgyOptInEnabled() || isAntigravityGeminiApiKeyConfigured())
+  ) {
     return provider
   }
   throw new Error(`${provider} is unavailable for new runs.`)

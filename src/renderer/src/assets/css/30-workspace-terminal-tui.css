@@ -80,14 +80,33 @@
 }
 
 /* -------------------------------------------------------------------------
- * Body — flush to the cell grid, no extra padding or radial washes
+ * Body — inset cell grid, no radial washes
+ *
+ * The pane shipped with no inset at all, which put the shell's first row hard
+ * against the header's bottom border — reads as clipped rather than compact.
+ *
+ * The pad goes on `.xterm`, NOT on this body. FitAddon takes the PARENT's
+ * `getComputedStyle().height` as the available height, and this app is
+ * globally `box-sizing: border-box`, so that reports the border box — body
+ * padding would be invisible to the fit and the grid would over-fit by a row
+ * and get clipped by the pane's `overflow: hidden` (measured: 19 rows laid
+ * into a 216px content box). FitAddon *does* subtract the padding of the
+ * terminal's own element, so padding there keeps the row count honest.
+ *
+ * The body carries the background — matching TUI_TERMINAL_THEME.background in
+ * TerminalPanel.tsx rather than staying transparent — so the inset reads as
+ * terminal surface instead of a lighter frame drawn around the grid.
  * ---------------------------------------------------------------------- */
 
 .terminal-panel--pane .terminal-panel-body {
   flex: 1;
   min-height: 0;
   padding: 0;
-  background: transparent;
+  background: #05080d;
+}
+
+.terminal-panel--pane .terminal-panel-body .xterm {
+  padding: 8px 10px 6px;
 }
 
 /* -------------------------------------------------------------------------

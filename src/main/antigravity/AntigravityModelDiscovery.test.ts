@@ -162,6 +162,138 @@ describe('discoverAuthenticatedAgyModels', () => {
       ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
     })
 
+    // THE REGRESSION THIS PINS. `agy models` costs ~2.4s; this function runs
+    // inside a 900ms bounded lane. With the cache read placed after the probe,
+    // the lane always timed out mid-probe, so the cache was written every pass
+    // and read on none, and the hardcoded floor was not a fallback — it was the
+    // only list the picker ever received. A slow probe plus a populated cache
+    // must therefore resolve promptly with the CACHED rows.
+    it('returns cached rows without waiting for a slow probe', async () => {
+      // Initialized to a no-op so its type stays callable: the Promise executor
+      // below runs synchronously, so the real resolver is installed before the
+      // probe can reach the await.
+      let releaseProbe: () => void = () => {}
+      const probeGate = new Promise<void>((resolve) => {
+        releaseProbe = resolve
+      })
+      const probeStarted = vi.fn()
+      const slowCapture = vi.fn(async () => {
+        probeStarted()
+        await probeGate
+        return { stdout: 'gemini-9.9-flash-high', stderr: '', code: 0 }
+      })
+
+      const result = await discoverAuthenticatedAgyModels(optedIn, {
+        ...dependencies({}),
+        capture: slowCapture,
+        readCachedModels: async () => CACHED,
+        writeCachedModels: async () => undefined
+      })
+
+      // Resolved on the cache while the probe is still in flight.
+      expect(result).toEqual(CACHED)
+      expect(result).not.toEqual(antigravityAgyStaticModels())
+      // And the refresh really was started — stale-while-revalidate, not
+      // cache-only. This is what keeps the list self-updating.
+      expect(probeStarted).toHaveBeenCalledTimes(1)
+      releaseProbe()
+    })
+
+    it('fires exactly one probe per discovery pass, cached or not', async () => {
+      // Request cadence against the AntiGravity backend must not grow: serving
+      // the cache first changes freshness, never the number of authenticated
+      // round-trips.
+      const withCache = dependencies({ stdout: 'gemini-3.6-flash-high' })
+      await discoverAuthenticatedAgyModels(optedIn, {
+        ...withCache,
+        readCachedModels: async () => CACHED,
+        writeCachedModels: async () => undefined
+      })
+      expect(withCache.capture).toHaveBeenCalledTimes(1)
+
+      const withoutCache = dependencies({ stdout: 'gemini-3.6-flash-high' })
+      await discoverAuthenticatedAgyModels(optedIn, {
+        ...withoutCache,
+        readCachedModels: async () => [],
+        writeCachedModels: async () => undefined
+      })
+      expect(withoutCache.capture).toHaveBeenCalledTimes(1)
+    })
+
+    it('treats an unreadable cache as no cache, not as a discovery failure', async () => {
+      await expect(
+        discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.1-pro-low' }),
+          readCachedModels: async () => Promise.reject(new Error('EACCES')),
+          writeCachedModels: async () => undefined
+        })
+      ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
+    })
+
+    // The quota gate reads this instead of guessing from row shape.
+    describe('records where the rows came from', () => {
+      it('records live for a successful probe', async () => {
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModelRecord: async () => ({ models: [], updatedAtMs: null }),
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'live', cachedAtMs: null })
+      })
+
+      it('records cached WITH the cache write time when serving cache', async () => {
+        const recordProvenance = vi.fn()
+        const updatedAtMs = Date.parse('2026-07-29T00:00:00.000Z')
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModelRecord: async () => ({ models: CACHED, updatedAtMs }),
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'cached', cachedAtMs: updatedAtMs })
+      })
+
+      it('records floor when falling back to the hardcoded mirror', async () => {
+        // The floor is not evidence of a connection. Recording it as such is
+        // what closes the quota gate on a machine that never signed in.
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stderr: 'Not logged in', code: 1 }),
+          readCachedModelRecord: async () => ({ models: [], updatedAtMs: null }),
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'floor', cachedAtMs: null })
+      })
+
+      it('records none without consent or a binary', async () => {
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels({}, { ...dependencies({}), recordProvenance })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'none', cachedAtMs: null })
+
+        recordProvenance.mockClear()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          resolveBinary: async () => ({ binaryPath: null, source: 'missing' }),
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'none', cachedAtMs: null })
+      })
+
+      it('treats the legacy age-less cache seam as unknown age', async () => {
+        // readCachedModels (no timestamp) must not be reported as fresh
+        // evidence; the predicate fails closed on a null age.
+        const recordProvenance = vi.fn()
+        await discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+          readCachedModels: async () => CACHED,
+          writeCachedModels: async () => undefined,
+          recordProvenance
+        })
+        expect(recordProvenance).toHaveBeenCalledWith({ source: 'cached', cachedAtMs: null })
+      })
+    })
+
     it('never consults the cache without consent or a binary', async () => {
       const readCachedModels = vi.fn(async () => CACHED)
       await expect(

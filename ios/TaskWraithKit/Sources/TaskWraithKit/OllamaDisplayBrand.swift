@@ -66,6 +66,16 @@ public enum OllamaDisplayBrands {
             providerClass: "liquid",
             needles: ["lfm2.5", "lfm 2.5", "lfm"],
             fallbackModelLabel: "LFM 2.5 (8B-A1B)"),
+        // The `mistral` hue class + label already exist for the first-class
+        // Mistral Vibe seat, so a local Devstral / Ministral tag reuses them
+        // rather than introducing a tenth brand colour. `ministral` needs its
+        // own needle: 'mistral' is NOT a substring of 'ministral'.
+        OllamaDisplayBrandDefinition(
+            id: "mistral",
+            providerLabel: "Mistral",
+            providerClass: "mistral",
+            needles: ["devstral", "ministral", "magistral", "mistral"],
+            fallbackModelLabel: "Devstral Small 2 (24B Param)"),
         OllamaDisplayBrandDefinition(
             id: "nvidia",
             providerLabel: "NVIDIA",

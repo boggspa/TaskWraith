@@ -4,12 +4,15 @@ import { projectRows } from './TranscriptVirtualWindow'
 import {
   GUTTER_LENS_BLEED_PX,
   GUTTER_LENS_MIN_HEIGHT_PX,
+  GUTTER_MIN_HEIGHT_PX,
+  GUTTER_VERTICAL_OFFSET_PX,
   buildTranscriptUserGutterMarkers,
   findActiveGutterMarkerKey,
   gutterBulgeRadiusPx,
   hiddenRoundMarkerRowKey,
   isHiddenRoundMarkerRowKey,
   layoutGutterLens,
+  layoutGutterVerticalFrame,
   layoutTranscriptUserGutterMarkers,
   userGutterPreview,
   userGutterTitle
@@ -328,6 +331,52 @@ describe('layoutGutterLens (reading-lens carriage)', () => {
     const above = layoutGutterLens(top, bottom, 42, 0.25)
     expect(below!.topPx).toBeCloseTo(top - GUTTER_LENS_BLEED_PX, 5)
     expect(above!.topPx + above!.heightPx).toBeCloseTo(bottom + GUTTER_LENS_BLEED_PX, 5)
+  })
+})
+
+describe('layoutGutterVerticalFrame (rail band vs the workspace terminal)', () => {
+  // A tall pane: 12% top inset clamps to 96, 8% bottom inset to 64.
+  const scrollerTop = 100
+  const scrollerHeight = 800
+  const scrollerBottom = scrollerTop + scrollerHeight
+
+  it('keeps the resting band when nothing occludes the pane floor', () => {
+    const frame = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, scrollerBottom)
+    expect(frame.top).toBe(scrollerTop + 96 + GUTTER_VERTICAL_OFFSET_PX)
+    expect(frame.bottom).toBe(scrollerBottom - 64 + GUTTER_VERTICAL_OFFSET_PX)
+    expect(frame.height).toBe(scrollerHeight - 96 - 64)
+  })
+
+  it('budges the band up off an open terminal instead of painting over it', () => {
+    // 260px terminal + 16px bottom gap + 10px rail clearance.
+    const clearBottom = scrollerBottom - 286
+    const resting = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, scrollerBottom)
+    const lifted = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, clearBottom)
+
+    expect(lifted.bottom).toBe(clearBottom)
+    expect(lifted.bottom).toBeLessThan(resting.bottom)
+    // Shrinks from the bottom — the top stays on the transcript's reading line.
+    expect(lifted.top).toBe(resting.top)
+    expect(lifted.height).toBe(clearBottom - resting.top)
+    expect(lifted.top + lifted.height).toBe(lifted.bottom)
+  })
+
+  it('never stretches the band DOWN to a clear bottom below the pane floor', () => {
+    const frame = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, scrollerBottom + 400)
+    expect(frame.bottom).toBe(scrollerBottom - 64 + GUTTER_VERTICAL_OFFSET_PX)
+  })
+
+  it('honours the minimum band height when the clear band collapses', () => {
+    // Pane so short the terminal leaves under 120px of travel: the floor wins
+    // (the rail has no usable travel below it either way).
+    const frame = layoutGutterVerticalFrame(0, 460, 460 - 286)
+    expect(frame.height).toBe(GUTTER_MIN_HEIGHT_PX)
+    expect(frame.bottom).toBe(frame.top + GUTTER_MIN_HEIGHT_PX)
+  })
+
+  it('falls back to the resting bottom on an unmeasured clear bottom', () => {
+    const resting = layoutGutterVerticalFrame(scrollerTop, scrollerHeight, scrollerBottom)
+    expect(layoutGutterVerticalFrame(scrollerTop, scrollerHeight, Number.NaN)).toEqual(resting)
   })
 })
 

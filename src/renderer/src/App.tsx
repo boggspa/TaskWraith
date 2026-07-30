@@ -1619,6 +1619,19 @@ function App(): React.JSX.Element {
         chats.find((candidate) => candidate.appChatId === chatId) ||
         null
       if (!chat || typeof window.api.saveChat !== 'function') return
+      // A summary-only record is PROOF the chat is already on disk — the chat-list
+      // index only ever summarises persisted files — and StoreService.saveChat
+      // hard-throws on one. Main doesn't need this save at all: it re-reads the
+      // chat itself via chatService.getChat, so the file existing is the whole
+      // requirement. Skip instead of throwing.
+      //
+      // This is not a corner case: handleNewChat / handleNewEnsemble reuse a
+      // pristine draft found in `chats`, which for anything loaded from the index
+      // IS a summary ChatListItem, so "New Shared Chat" hit this on every call.
+      // If the chat genuinely isn't persisted, the readHumanCollaborationInviteHealth
+      // preflight right after this reports `chatAvailable: false` and the caller
+      // surfaces "This chat is not saved yet" — a real message, not a raw throw.
+      if (isChatSummaryRecord(chat)) return
       await window.api.saveChat(chat)
     },
     [chats, currentChat]
@@ -23955,7 +23968,20 @@ function App(): React.JSX.Element {
         primaryHeight +
         (heatmap ? composerGap + flexHeatmapMargin + heatmapHeight : 0)
 
-      const availableHeight = transcript.clientHeight
+      // The workspace terminal is absolutely positioned over the bottom of the
+      // pane, so the welcome flow's real budget is the pane MINUS whatever the
+      // terminal (plus its gap) covers. Measured off the pane element rather
+      // than `--workspace-terminal-height`, because the gap beside it is a
+      // `var()` token that getPropertyValue hands back unresolved. Without this
+      // the ladder never sheds anything when the terminal opens or is dragged
+      // taller — it just covers the heatmaps it should have collapsed first.
+      const terminalPane = transcript.querySelector<HTMLElement>('.workspace-terminal-split')
+      const terminalPaneRect = terminalPane?.getBoundingClientRect()
+      const terminalReserve =
+        terminalPaneRect && terminalPaneRect.height > 0
+          ? Math.max(0, transcript.getBoundingClientRect().bottom - terminalPaneRect.top)
+          : 0
+      const availableHeight = transcript.clientHeight - terminalReserve
       // The floating notification can overlap its preceding content because it
       // is absolutely positioned, so retain its geometry-based collision
       // projection. It supplements rather than replaces the ordinary flowed
@@ -24041,6 +24067,14 @@ function App(): React.JSX.Element {
           })
         : null
     mutationObserver?.observe(composer, { childList: true })
+    // Opening the workspace terminal toggles `workspace-terminal-open` on the
+    // transcript, and dragging it writes `--workspace-terminal-height` inline
+    // there. Both change the welcome budget without resizing any observed box,
+    // so neither ResizeObserver would fire — watch the attributes instead.
+    mutationObserver?.observe(transcript, {
+      attributes: true,
+      attributeFilter: ['class', 'style']
+    })
     window.addEventListener('resize', scheduleMeasure)
     scheduleMeasure()
 

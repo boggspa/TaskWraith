@@ -224,6 +224,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const ollama = getStaticProviderModels('ollama').map((m) => m.id)
     expect(ollama).toEqual([
       'qwen3:4b-instruct',
+      'qwen3.5:4b',
       'qwen3.5:9b',
       'qwen3.6:35b',
       'gemma4:12b',
@@ -235,6 +236,8 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'granite4.1:3b',
       'granite4.1:30b',
       'nemotron3:33b',
+      'devstral-small-2:24b',
+      'ministral-3:14b',
       'custom'
     ])
   })

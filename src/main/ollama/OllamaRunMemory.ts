@@ -141,6 +141,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
   const family = resolveOllamaModelFamily(trimmedModelId)
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_4b':
     case 'granite4_1_3b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 420,
@@ -159,6 +160,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'lfm2_5_8b':
     case 'gpt_oss_20b':
     case 'granite4_1_30b':
+    case 'ministral_3_14b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 760,
         contextShare: 0.035,
@@ -168,6 +170,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'ornith_35b':
     case 'laguna_xs_2_1':
     case 'nemotron3_33b':
+    case 'devstral_small_2_24b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 1200,
         contextShare: 0.045,

@@ -88,19 +88,55 @@ export function sanitizeCachedAgyModels(parsed: unknown): AgyModel[] {
   return models
 }
 
+export interface CachedAgyModelRecord {
+  readonly models: AgyModel[]
+  /**
+   * Epoch ms of the cache write, or null when absent/unparseable.
+   *
+   * `updatedAt` has always been WRITTEN below and never read back. It matters
+   * now because a cache is the only durable evidence that an authenticated
+   * `agy models` once succeeded on this machine, and that evidence is used to
+   * decide whether a quota probe may run — evidence which should not be
+   * treated as good forever.
+   */
+  readonly updatedAtMs: number | null
+}
+
+/** Pure half: recover the write time from a parsed cache record. */
+export function cachedAgyModelUpdatedAtMs(parsed: unknown): number | null {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const raw = (parsed as { updatedAt?: unknown }).updatedAt
+  if (typeof raw !== 'string') return null
+  const parsedMs = Date.parse(raw)
+  return Number.isFinite(parsedMs) ? parsedMs : null
+}
+
+/** Best-effort: any failure yields an empty record so the caller falls through. */
+export async function readCachedAgyModelRecord(
+  deps: AgyModelCacheDependencies = {}
+): Promise<CachedAgyModelRecord> {
+  const userDataPath = deps.userDataPath
+  if (!userDataPath) return { models: [], updatedAtMs: null }
+  const readFile = deps.readFile ?? ((path: string) => fsPromises.readFile(path, 'utf8'))
+  try {
+    const parsed: unknown = JSON.parse(await readFile(agyModelCachePath(userDataPath)))
+    const models = sanitizeCachedAgyModels(parsed)
+    // Only report an age for a record that actually yielded rows: an age
+    // without models is not evidence of anything.
+    return {
+      models,
+      updatedAtMs: models.length > 0 ? cachedAgyModelUpdatedAtMs(parsed) : null
+    }
+  } catch {
+    return { models: [], updatedAtMs: null }
+  }
+}
+
 /** Best-effort: any failure yields [] so the caller falls through to the floor. */
 export async function readCachedAgyModels(
   deps: AgyModelCacheDependencies = {}
 ): Promise<AgyModel[]> {
-  const userDataPath = deps.userDataPath
-  if (!userDataPath) return []
-  const readFile = deps.readFile ?? ((path: string) => fsPromises.readFile(path, 'utf8'))
-  try {
-    const raw = await readFile(agyModelCachePath(userDataPath))
-    return sanitizeCachedAgyModels(JSON.parse(raw))
-  } catch {
-    return []
-  }
+  return (await readCachedAgyModelRecord(deps)).models
 }
 
 /**
