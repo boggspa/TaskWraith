@@ -74,8 +74,15 @@ export interface ExternalContributionEntry {
   /** Host-authored denial reason. Optional and never required. */
   hostReason?: string
   lapseReason?: ExternalContributionLapseReason
-  /** Set when approved: the transcript row this became. */
+  /**
+   * The transcript row this WILL become. Minted at enqueue, not at approve, so
+   * sequence allocation and the caller's idempotency binding stay one atomic
+   * write and an approved entry materialises under the id that binding already
+   * points at.
+   */
   messageId?: string
+  /** P2b contribution intent, carried so approve can reproduce it faithfully. */
+  intent?: 'requestHostAction'
   /**
    * True once the approved entry has actually been written into the transcript.
    * The two writes cannot be made atomic — this store does not fsync and the
@@ -340,6 +347,8 @@ export class ExternalContributionQueueStore {
     clientMessageId: string
     sequence: number
     body: string
+    messageId?: string
+    intent?: 'requestHostAction'
     now?: number
     ttlMs?: number
   }): ExternalContributionEnqueueResult {
@@ -359,8 +368,13 @@ export class ExternalContributionQueueStore {
     // idempotency map: that map is capped at 512 and evicts oldest-first, so a
     // pending entry could lose its dedupe key while still waiting and a retry
     // would enqueue a second copy.
+    // Chat-scoped, matching the tombstone key and `findByClientMessageId`. All
+    // three must agree: two different chats can legitimately carry the same
+    // clientMessageId from the same person, and treating that as a duplicate
+    // silently refuses a real contribution.
     const existing = this.entries.find(
       (entry) =>
+        entry.chatId === args.chatId &&
         entry.collaboratorId === args.collaboratorId &&
         entry.clientMessageId === args.clientMessageId
     )
@@ -378,8 +392,16 @@ export class ExternalContributionQueueStore {
     ) {
       return { ok: false, denial: 'too_large' }
     }
+    // Chat-scoped, matching `queuedCountForCollaborator` and the dedupe scan
+    // above. If this counted across chats while the caller's pre-check did not,
+    // the pre-check would pass and this would refuse — AFTER the caller had
+    // already allocated a sequence number, which is precisely the defect the
+    // pre-check exists to remove.
     const queuedForCollaborator = this.entries.filter(
-      (entry) => entry.collaboratorId === args.collaboratorId && entry.state === 'queued'
+      (entry) =>
+        entry.chatId === args.chatId &&
+        entry.collaboratorId === args.collaboratorId &&
+        entry.state === 'queued'
     ).length
     if (queuedForCollaborator >= MAX_QUEUED_PER_COLLABORATOR) {
       return { ok: false, denial: 'quota_exceeded' }
@@ -396,12 +418,31 @@ export class ExternalContributionQueueStore {
       bodyBytes: Buffer.byteLength(body, 'utf8'),
       state: 'queued',
       enqueuedAt: now,
-      expiresAt: now + (args.ttlMs ?? EXTERNAL_CONTRIBUTION_TTL_MS)
+      expiresAt: now + (args.ttlMs ?? EXTERNAL_CONTRIBUTION_TTL_MS),
+      ...(args.messageId ? { messageId: args.messageId } : {}),
+      ...(args.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
     }
     this.entries.push(entry)
     this.compact(now)
     this.persist()
     return { ok: true, entry: clone(entry) }
+  }
+
+  /**
+   * How many contributions this person already has awaiting review.
+   *
+   * Exists so a caller can refuse BEFORE allocating a sequence number and
+   * binding an idempotency key. Discovering the quota only at enqueue means
+   * every refused retry burns a sequence and leaves a binding naming a row that
+   * will never exist.
+   */
+  queuedCountForCollaborator(chatId: string, collaboratorId: string): number {
+    return this.entries.filter(
+      (entry) =>
+        entry.state === 'queued' &&
+        entry.chatId === chatId &&
+        entry.collaboratorId === collaboratorId
+    ).length
   }
 
   /** Queued entries, oldest first — review order is arrival order. */
@@ -461,6 +502,22 @@ export class ExternalContributionQueueStore {
       .map(clone)
   }
 
+  /** The pending-or-resolved entry a retry maps to. Lets a caller's idempotency
+   * check answer the third state — mapped, but not yet in the transcript. */
+  findByClientMessageId(
+    chatId: string,
+    collaboratorId: string,
+    clientMessageId: string
+  ): ExternalContributionEntry | null {
+    const found = this.entries.find(
+      (entry) =>
+        entry.chatId === chatId &&
+        entry.collaboratorId === collaboratorId &&
+        entry.clientMessageId === clientMessageId
+    )
+    return found ? clone(found) : null
+  }
+
   get(entryId: string): ExternalContributionEntry | null {
     const found = this.entries.find((entry) => entry.entryId === entryId)
     return found ? clone(found) : null
@@ -471,14 +528,19 @@ export class ExternalContributionQueueStore {
    * NOT drop the body yet — the caller still has to write the transcript row,
    * and `markMaterialised` is what closes the loop. See `materialised`.
    */
-  approve(entryId: string, messageId: string, now = this.now()): ExternalContributionEntry | null {
+  approve(entryId: string, messageId?: string, now = this.now()): ExternalContributionEntry | null {
     const entry = this.entries.find(
       (candidate) => candidate.entryId === entryId && candidate.state === 'queued'
     )
-    if (!entry || !messageId) return null
+    if (!entry) return null
+    // The id minted at enqueue is the default; an explicit one still wins so a
+    // caller that owns row identity can supply it. Neither ⇒ refuse: an approved
+    // entry with no target row could never be materialised.
+    const targetMessageId = messageId || entry.messageId
+    if (!targetMessageId) return null
     entry.state = 'approved'
     entry.resolvedAt = now
-    entry.messageId = messageId
+    entry.messageId = targetMessageId
     entry.materialised = false
     this.persist()
     return clone(entry)
@@ -724,6 +786,7 @@ function normalizeEntries(value: unknown): ExternalContributionEntry[] {
       // is arbitrary content wearing a typed field's name.
       ...(isLapseReason(entry.lapseReason) ? { lapseReason: entry.lapseReason } : {}),
       ...(typeof entry.messageId === 'string' ? { messageId: entry.messageId } : {}),
+      ...(entry.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {}),
       ...(entry.materialised === true ? { materialised: true } : {}),
       ...(state === 'approved' && entry.materialised !== true ? { materialised: false } : {})
     })

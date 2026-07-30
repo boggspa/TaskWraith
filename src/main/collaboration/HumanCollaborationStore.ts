@@ -109,6 +109,22 @@ export interface HumanCollaborationShare {
    * frames and renderer state are never authority for this field.
    */
   contributionRules?: HumanContributionRules
+  /**
+   * Host review: contributions from this share are QUEUED rather than appended,
+   * and reach the transcript only when the host approves them.
+   *
+   * Deliberately a share field and NOT part of `contributionRules`. The rules
+   * object is derived per-preset by `contributionRulesForPreset`, so a value
+   * living there would be recomputed away on the next preset write; this has to
+   * survive one. It is also a different question — the rules say what a
+   * collaborator MAY do, this says whether the host sees it first.
+   *
+   * Absent ⇒ off, which is what keeps every existing share behaving exactly as
+   * it does today. The queue is the end state, but it is inert until a host
+   * opts a share in, so a build carrying the machinery cannot change anyone's
+   * behaviour before the review surface exists to go with it.
+   */
+  requiresHostApproval?: boolean
 }
 
 export interface HumanCollaborationSnapshot {
@@ -335,6 +351,27 @@ export class HumanCollaborationStore {
         : participant
     )
     share.updatedAt = now
+    this.persist()
+    return cloneShare(share)
+  }
+
+  /**
+   * Turn host review on or off for a share. HOST-only: a collaborator frame is
+   * never authority for this, which is why it is not reachable through
+   * `updateShareRules` (that takes a preset a collaborator's UI can display).
+   */
+  setRequiresHostApproval(args: {
+    shareId: string
+    requiresHostApproval: boolean
+    now?: number
+  }): HumanCollaborationShare | null {
+    const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
+    if (!share || !share.enabled) return null
+    const next = args.requiresHostApproval === true
+    if ((share.requiresHostApproval === true) === next) return cloneShare(share)
+    if (next) share.requiresHostApproval = true
+    else delete share.requiresHostApproval
+    share.updatedAt = args.now ?? Date.now()
     this.persist()
     return cloneShare(share)
   }
@@ -858,7 +895,13 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
                   const rules = normalizeContributionRules(share.contributionRules)
                   return rules ? { contributionRules: rules } : {}
                 })()
-              : {})
+              : {}),
+            // Strict `=== true`, so a truthy junk value from a hand-edited file
+            // cannot switch host review on. This normaliser is an ALLOWLIST
+            // rebuild applied on every read AND every write — a field missing
+            // from it is silently dropped on load and permanently erased on the
+            // next persist, with no error anywhere.
+            ...(share.requiresHostApproval === true ? { requiresHostApproval: true } : {})
           }))
       : []
   }

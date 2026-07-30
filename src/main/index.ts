@@ -555,6 +555,7 @@ import {
   type HumanCollaborationShare
 } from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
+import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
 import { resolveChatEffectiveRoster } from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
@@ -44486,6 +44487,14 @@ if (isGeminiMcpBridgeProcess) {
      * twice per reconnect.
      */
     const humanCollaborationPresence = new HumanCollaborationPresence({})
+    /**
+     * Host-review queue. Inert until a share opts in via `requiresHostApproval`,
+     * so carrying it changes nothing for an existing share.
+     */
+    const externalContributionQueue = new ExternalContributionQueueStore(
+      join(app.getPath('userData'), 'external-contribution-queue.json'),
+      (line) => console.warn(line)
+    )
     /** A seat's per-share colour override, when the host has set one. */
     const resolveSeatColorIndex = (
       share: HumanCollaborationShare,
@@ -45684,7 +45693,8 @@ if (isGeminiMcpBridgeProcess) {
       appendDurableRunEventForRoute,
       // Evaluated lazily — the transport is constructed further down this same
       // flow, and a destructive chat path can only fire long after that.
-      closeCollaborationRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId)
+      closeCollaborationRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId),
+      externalContributionQueue
     })
     let humanCollaborationRuntime: HumanCollaborationRuntime<
       HumanShareProjection,
@@ -45810,7 +45820,12 @@ if (isGeminiMcpBridgeProcess) {
           // P2b auto-draft: hand the wrapped, provenance-carrying draft to the
           // host renderer so it can pre-fill the composer. Display-only — the
           // renderer never sends it; the host reviews and sends.
-          if (result.autoDraft) {
+          //
+          // A QUEUED contribution has no transcript row yet and so no message to
+          // reference — the draft moves to approve time, where the row is
+          // actually created. Guarded on the message rather than on `queued` so
+          // any future path that yields no row is covered by construction.
+          if (result.autoDraft && result.message) {
             mainWindow?.webContents.send('human-collaboration-action-request', {
               chatId: result.chat.appChatId,
               messageId: result.message.id,

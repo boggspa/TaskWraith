@@ -28,6 +28,11 @@ import type {
   HumanCollaborationShare,
   HumanCollaborationStore
 } from '../collaboration/HumanCollaborationStore'
+import { HumanCollaborationDenialError } from '../collaboration/HumanContributionRules'
+import {
+  MAX_QUEUED_PER_COLLABORATOR,
+  type ExternalContributionQueueStore
+} from '../collaboration/ExternalContributionQueueStore'
 import {
   effectiveContributionRules,
   type HumanContributionPreset
@@ -195,6 +200,12 @@ export interface ChatServiceDeps {
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
   /** Main-owned topology fence checked immediately before child persistence. */
   assertParentChatCreationAllowed?: (parentChatId: string) => void
+  /**
+   * Host-review queue. Optional so a ChatService built without one simply never
+   * offers host review — a share that asks for it then fails loudly rather than
+   * silently appending unreviewed text, which is the safe direction.
+   */
+  externalContributionQueue?: ExternalContributionQueueStore
   /** Clears history stored outside Electron userData (currently bridge diagnostics). */
   clearExternalChatHistory?: (workspaceId?: string) => void | Promise<void>
   /**
@@ -757,7 +768,16 @@ export class ChatService {
     content: string
     /** P2b intent; anything but the exact action-request string is a comment. */
     intent?: HumanCollaboratorContributionKind
-  }): { chat: ChatRecord; message: ChatMessage; deduped: boolean; autoDraft?: string } {
+  }): {
+    chat: ChatRecord
+    /** Absent when the contribution was QUEUED — there is no transcript row yet. */
+    message?: ChatMessage
+    deduped: boolean
+    autoDraft?: string
+    /** True when this went to host review instead of the transcript. */
+    queued?: boolean
+    queueEntryId?: string
+  } {
     const store = this.requireHumanCollaborationStore()
     const content = requireBoundedText(args.content, 'Comment', 8000)
     const chatId = requireSafeChatId(args.chatId, 'Chat id')
@@ -799,8 +819,113 @@ export class ChatService {
         })
         return { chat: current, message: existing, deduped: true }
       }
+      // THE THIRD STATE. The idempotency map binds a clientMessageId to a
+      // messageId, and this branch used to ask only "is that message in the
+      // transcript?". A QUEUED contribution is mapped but not yet appended, so
+      // the answer is no and the retry fell straight through and enqueued a
+      // second copy of the same message. Ask the queue before giving up.
+      const pending = this.deps.externalContributionQueue?.findByClientMessageId(
+        chatId,
+        validation.participant.collaboratorId,
+        args.clientMessageId
+      )
+      if (pending) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        // `queued` is derived from the entry's STATE, not from its existence.
+        // The lookup matches any state, so a retry after the host denied — or
+        // after a lapse, or after an approve not yet materialised — would
+        // otherwise report "still awaiting review" about something already
+        // resolved.
+        return {
+          chat: current,
+          deduped: true,
+          queued: pending.state === 'queued',
+          queueEntryId: pending.entryId
+        }
+      }
     }
 
+    // Both host-review refusals are decided BEFORE `recordAppend`, on purpose.
+    // That call allocates a sequence number and binds the idempotency key to a
+    // messageId; refusing after it means every retry against a misconfigured or
+    // full queue burns a sequence and leaves a binding naming a row that will
+    // never exist, so `nextSequence` climbs forever.
+    if (validation.share.requiresHostApproval === true) {
+      const queue = this.deps.externalContributionQueue
+      if (!queue) {
+        // Typed, like every other refusal in this method — a generic Error
+        // reaches a code-mapping caller as an internal failure rather than a
+        // reason. Fail CLOSED: a share that asked for review must never quietly
+        // append unreviewed text because the queue was missing.
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: 'rule_denied',
+          detail: 'host review is enabled but the review queue is unavailable'
+        })
+        throw new HumanCollaborationDenialError(
+          'rule_denied',
+          'Host review is enabled for this share but the review queue is unavailable.'
+        )
+      }
+      // Ask the queue BEFORE allocating, not only inside the idempotency guard
+      // above. The share's binding is capped and evicts oldest-first, so a retry
+      // whose binding is gone but whose entry survives would otherwise reach
+      // `enqueue`, burn a sequence, and only then be told it is a duplicate.
+      const alreadyQueued = queue.findByClientMessageId(
+        chatId,
+        validation.participant.collaboratorId,
+        args.clientMessageId
+      )
+      if (alreadyQueued) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        return {
+          chat: current,
+          deduped: true,
+          queued: alreadyQueued.state === 'queued',
+          queueEntryId: alreadyQueued.entryId
+        }
+      }
+      if (
+        queue.queuedCountForCollaborator(chatId, validation.participant.collaboratorId) >=
+        MAX_QUEUED_PER_COLLABORATOR
+      ) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: 'quota_exceeded',
+          detail: 'too many contributions awaiting host review'
+        })
+        throw new HumanCollaborationDenialError(
+          'quota_exceeded',
+          'You have too many messages awaiting review.'
+        )
+      }
+    }
+
+    // The messageId is minted HERE, before the branch, and a queued entry
+    // carries it from the start. That keeps sequence allocation and the
+    // idempotency binding exactly where they were — one atomic store write —
+    // and means an approved entry materialises under the id the map already
+    // points at, so the dedupe branch above resolves normally the moment the row
+    // exists. Splitting allocation across enqueue and approve would have meant
+    // two writes and two failure windows for no gain.
     const messageId = randomUUID()
     const sequence = store.recordAppend({
       shareId: validation.share.shareId,
@@ -809,6 +934,73 @@ export class ChatService {
       clientMessageId: args.clientMessageId,
       messageId
     })
+
+    // HOST REVIEW. Nothing reaches the transcript until the host approves. The
+    // gates above all still ran — validation, the share's byte ceiling, the rate
+    // limit upstream — so the queue only ever receives bounded, authenticated,
+    // sequence-allocated work.
+    if (validation.share.requiresHostApproval === true) {
+      // Presence was proven above, before the sequence was allocated.
+      const queue = this.deps.externalContributionQueue!
+      const result = queue.enqueue({
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        displayName: validation.participant.displayName,
+        clientMessageId: args.clientMessageId,
+        messageId,
+        sequence,
+        body: content,
+        ...(isActionRequest ? { intent: 'requestHostAction' as const } : {})
+      })
+      if (!result.ok && result.denial === 'duplicate' && result.existing) {
+        // The share's idempotency map is capped and evicts oldest-first, so a
+        // binding can disappear while its entry is still pending — that retry
+        // misses the dedupe branch above and lands here. The queue returns
+        // `existing` precisely so this is answerable rather than an error.
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.deduped',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          contentHash: auditContentHash(content)
+        })
+        return {
+          chat: current,
+          deduped: true,
+          queued: result.existing.state === 'queued',
+          queueEntryId: result.existing.entryId
+        }
+      }
+      if (!result.ok || !result.entry) {
+        this.deps.humanCollaborationAudit?.append({
+          kind: 'contribution.rejected',
+          chatId,
+          shareId: validation.share.shareId,
+          collaboratorId: validation.participant.collaboratorId,
+          code: result.denial === 'quota_exceeded' ? 'quota_exceeded' : 'rule_denied',
+          detail: `queue refused the contribution: ${result.denial ?? 'unknown'}`
+        })
+        throw new HumanCollaborationDenialError(
+          result.denial === 'quota_exceeded' ? 'quota_exceeded' : 'rule_denied',
+          result.denial === 'quota_exceeded'
+            ? 'You have too many messages awaiting review.'
+            : 'That message could not be queued for review.'
+        )
+      }
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'contribution.received',
+        chatId,
+        shareId: validation.share.shareId,
+        collaboratorId: validation.participant.collaboratorId,
+        preview: content,
+        contentHash: auditContentHash(content)
+      })
+      // The chat is returned UNCHANGED — deliberately. A queued contribution is
+      // not in the transcript, so nothing about the chat has moved, and a caller
+      // that broadcasts this is broadcasting a no-op rather than leaking a row.
+      return { chat: current, deduped: false, queued: true, queueEntryId: result.entry.entryId }
+    }
     let message = makeHumanCollaboratorComment({
       id: messageId,
       content,

@@ -589,6 +589,37 @@ describe('ExternalContributionQueueStore', () => {
     expect(store.listForCollaborator(BEA)[0].body).toBe('bea speaking')
   })
 
+  it('treats the SAME clientMessageId from the SAME collaborator in a DIFFERENT chat as a separate entry', () => {
+    const store = openStore()
+    const inChatOne = mustEnqueue(store, { chatId: 'chat-1', clientMessageId: 'shared-id' })
+    const inChatTwo = enqueue(store, {
+      chatId: 'chat-2',
+      clientMessageId: 'shared-id',
+      body: 'a different conversation'
+    })
+
+    // The scan must agree with the tombstone key and `findByClientMessageId`,
+    // both of which are chat-scoped. A two-field scan silently refuses a
+    // legitimate contribution the moment someone reuses a clientMessageId —
+    // which a client that numbers its own messages per session will do.
+    expect(inChatTwo.ok).toBe(true)
+    expect(inChatTwo.denial).toBeUndefined()
+    expect(inChatTwo.entry?.entryId).not.toBe(inChatOne.entryId)
+    expect(store.listQueued('chat-1')).toHaveLength(1)
+    expect(store.listQueued('chat-2')).toHaveLength(1)
+    expect(store.findByClientMessageId('chat-1', OLLY, 'shared-id')?.entryId).toBe(
+      inChatOne.entryId
+    )
+    expect(store.findByClientMessageId('chat-2', OLLY, 'shared-id')?.entryId).toBe(
+      inChatTwo.entry?.entryId
+    )
+    // A real retry — same chat, same id — is still refused.
+    const retry = enqueue(store, { chatId: 'chat-1', clientMessageId: 'shared-id' })
+    expect(retry.denial).toBe('duplicate')
+    expect(retry.existing?.entryId).toBe(inChatOne.entryId)
+    expect(store.listForCollaborator(OLLY)).toHaveLength(2)
+  })
+
   // ------------------------------------------------------------- size gate --
 
   it('rejects an over-size body as `too_large` and stores NOTHING — enqueue is the first durable write', () => {
@@ -731,6 +762,41 @@ describe('ExternalContributionQueueStore', () => {
     store.lapseAll({ chatIds: ['chat-1'] }, 'chatGone', T0 + 504)
     expect(store.listQueued()).toEqual([])
     expect(enqueue(store, { clientMessageId: 'after-lapse', now: T0 + 505 }).ok).toBe(true)
+  })
+
+  it('queuedCountForCollaborator counts only QUEUED entries, for that collaborator, in that chat', () => {
+    const store = openStore()
+    // Exists so a caller can refuse BEFORE allocating a sequence number, which
+    // is only safe if the count agrees with what enqueue would have decided.
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(0)
+
+    mustEnqueue(store, { chatId: 'chat-1', clientMessageId: 'a', now: T0 })
+    mustEnqueue(store, { chatId: 'chat-1', clientMessageId: 'b', now: T0 + 1 })
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(2)
+
+    // Another chat, another collaborator: neither is this collaborator's
+    // pending load in this chat.
+    mustEnqueue(store, { chatId: 'chat-2', clientMessageId: 'c', now: T0 + 2 })
+    mustEnqueue(store, {
+      chatId: 'chat-1',
+      collaboratorId: BEA,
+      displayName: 'Bea',
+      clientMessageId: 'd',
+      now: T0 + 3
+    })
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(2)
+    expect(store.queuedCountForCollaborator('chat-2', OLLY)).toBe(1)
+    expect(store.queuedCountForCollaborator('chat-1', BEA)).toBe(1)
+
+    // Resolution frees the slot, exactly as the quota does: a denied, approved
+    // or lapsed entry is a receipt, not pending work.
+    const denied = mustEnqueue(store, { chatId: 'chat-1', clientMessageId: 'e', now: T0 + 4 })
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(3)
+    store.deny(denied.entryId, 'no', T0 + 5)
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(2)
+    store.lapseAll({ chatIds: ['chat-1'], collaboratorId: OLLY }, 'chatGone', T0 + 6)
+    expect(store.queuedCountForCollaborator('chat-1', OLLY)).toBe(0)
+    expect(store.queuedCountForCollaborator('chat-2', OLLY)).toBe(1)
   })
 
   // ------------------------------------------------------------ compaction --
