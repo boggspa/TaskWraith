@@ -39356,6 +39356,23 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             return { ok: false, error: 'Ensemble mode is disabled on your Mac.' }
           }
+          // Same refusal as the desktop `set-chat-kind` handler: a SHARED chat
+          // cannot leave panel mode. This path does not go through that handler
+          // — it calls chatService.setChatKind directly and re-implements the
+          // linked-child, workspace and ensemble-mode checks — so without this
+          // the phone could do what the Mac is refused, and the collapse would
+          // strip a roster containing external seats into a stash that a later
+          // preset-apply can resurrect.
+          if (
+            action.targetKind !== 'ensemble' &&
+            chat.chatKind === 'ensemble' &&
+            chatService.listHumanCollaborationShares(action.threadId).some((share) => share.enabled)
+          ) {
+            return {
+              ok: false,
+              error: 'This chat is shared. Stop sharing before switching it out of panel mode.'
+            }
+          }
           try {
             const updated = chatService.setChatKind({
               chatId: action.threadId,

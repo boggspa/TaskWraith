@@ -271,6 +271,18 @@ describe('HumanCollaborationStore', () => {
     // Legitimate names that merely contain a reserved token are untouched.
     expect(admit('Claudia', 'k5')).toBe('Claudia')
     expect(admit('Yousef', 'k6')).toBe('Yousef')
+    // The two trust labels the UI itself renders. "External" is the static
+    // badge the transcript paints beside a collaborator's name, and it is also
+    // the DEFAULT a nameless joiner arrives with — so it has to be unclaimable
+    // in both directions, or a collaborator can present as the badge and an
+    // unnamed one renders as "External [External]". "Guest" was the old default
+    // and was reserved; this test never covered it, which is how the rename to
+    // "External" quietly opened the hole.
+    expect(admit('External', 'k7')).toBe('External (collaborator)')
+    expect(admit('guest', 'k8')).toBe('guest (collaborator)')
+    expect(admit('Collaborator', 'k9')).toBe('Collaborator (collaborator)')
+    // …and the badge word inside a real name is still fine.
+    expect(admit('Externals Ltd', 'k10')).toBe('Externals Ltd')
   })
 
   it('hasShareForChat is a cheap existence check', () => {

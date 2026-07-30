@@ -617,6 +617,14 @@ const RESERVED_DISPLAY_NAMES = new Set([
   'thehost',
   'system',
   'guest',
+  // The transcript renders a static "External" badge beside a collaborator's
+  // name, so it is the single strongest trust label in this feature — and it is
+  // also the default a nameless joiner arrives with. Reserving it stops a
+  // collaborator presenting AS the badge (and stops the default rendering as
+  // the tautological "External [External]"); an unnamed joiner becomes
+  // "External (collaborator)", the same shape "Guest" produced before it.
+  'external',
+  'collaborator',
   'remote',
   'you',
   'user',
