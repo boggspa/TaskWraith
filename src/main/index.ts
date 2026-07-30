@@ -4856,6 +4856,36 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
  * `createThreadMessageAccessResolver`, which owns the approval-ledger row for
  * every allow no human saw. This block is wiring only.
  */
+/**
+ * Does this chat have an approval authority that is NOT an external human?
+ *
+ * Boss is primary and Captain is the fallback, so either alone is enough — but
+ * an authority held by an external is no authority at all for permission
+ * purposes. If the only assigned leadership is external, consent recorded on
+ * the ensemble must stop elevating anything.
+ *
+ * Fails OPEN when the collaboration store is unreachable, matching the
+ * behaviour before externals existed: the gate is only reachable during a live
+ * run, and an external id cannot satisfy any live-roster check anyway, so a
+ * missing answer here cannot manufacture an external authority. If that ever
+ * stops being true this must be revisited — it is the one place in this pair
+ * that is not fail-closed, and it is deliberate.
+ */
+function hasNonExternalApprovalAuthority(
+  chatId: string | undefined,
+  chat: {
+    ensemble?: { bossmanParticipantId?: string; secondInCommandParticipantId?: string }
+  } | null
+): boolean {
+  const boss = chat?.ensemble?.bossmanParticipantId
+  const captain = chat?.ensemble?.secondInCommandParticipantId
+  const assigned = [boss, captain].filter((id): id is string => Boolean(id))
+  if (assigned.length === 0) return false
+  if (!chatId || !resolveExternalCollaboratorSeatIds) return true
+  const externals = new Set(resolveExternalCollaboratorSeatIds(chatId))
+  return assigned.some((id) => !externals.has(id))
+}
+
 const threadMessageAccessResolver = createThreadMessageAccessResolver({
   resolveServicePolicy: ({ context }) => {
     const ctx = context as { effectivePermissions?: EffectiveRunPermissions }
@@ -4887,11 +4917,22 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
             workspacePath: context.workspacePath
           })
       ),
-      // The recorded user consent is the signal here. Which participant holds the
-      // approval authority is `evaluateBossmanAutoApproval`'s question, and that
-      // gate deliberately never covers non-shell/file services — see
+      // The recorded user consent is the signal here. WHICH model participant
+      // holds the authority is `evaluateBossmanAutoApproval`'s question, and
+      // that gate deliberately never covers non-shell/file services — see
       // ThreadMessagePermission for why elevation lives in our own gate.
-      bossAutoApproval: consent?.enabled === true && consent.mode === 'permission_preset_once'
+      //
+      // One identity question this gate MUST answer for itself, though: an
+      // authority held by an EXTERNAL human collaborator elevates nothing.
+      // Externals never receive approval prompts, so treating their authority as
+      // consent would let a thread-wide flag carry an unattended wake — a turn
+      // started in another thread with nobody watching — on the strength of
+      // someone who is never asked. `evaluateBossmanAutoApproval` cannot cover
+      // it: this path never reaches that gate.
+      bossAutoApproval:
+        consent?.enabled === true &&
+        consent.mode === 'permission_preset_once' &&
+        hasNonExternalApprovalAuthority(context.appChatId, chat)
     }
   },
   requestApproval: async ({ context, parentProvider, crossWorkspace, requestedDelivery }) => {
@@ -9826,6 +9867,29 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
  */
 let markHumanCollaborationProjectionDirty: ((chatId: string) => void) | null = null
 
+/**
+ * Seat ids held by EXTERNAL human collaborators on a chat, or `undefined` when
+ * the collaboration store does not exist yet.
+ *
+ * A module-level hook because the permission gates that need this are top-level
+ * functions while the store is built far down inside app setup.
+ *
+ * The id IS the `collaboratorId`: externals are never written into
+ * `chat.ensemble.participants` (see `src/shared/effectiveEnsembleRoster.ts` for
+ * why the roster is derived rather than merged), so the share participant is the
+ * only source, and its `collaboratorId` is the seat id every authority field
+ * stores.
+ *
+ * `undefined` rather than `[]` when unresolvable, deliberately: it means "no
+ * answer", which the consumers treat as today's behaviour. That is safe only
+ * because the gate is reachable exclusively during a live run, by which point
+ * the store exists — and because externals are absent from the roster anyway,
+ * so an external id cannot satisfy a live-membership check. An empty array
+ * would assert "there are no externals", which is a different and unearned
+ * claim.
+ */
+let resolveExternalCollaboratorSeatIds: ((chatId: string) => readonly string[]) | null = null
+
 function broadcastChatUpdated(chat: ChatRecord): void {
   enqueueChatUpdated(mainWindow, chat)
   broadcastChatPopoutUpdate(chat)
@@ -12888,6 +12952,13 @@ function bossmanAutoApprovalMetadata(input: {
     primaryBossUnavailableReason: primary.reason,
     autoApprovals: ensemble.bossmanAutoApprovals,
     participantIds: ensemble.participants.map((participant) => participant.id),
+    // An authority held by an external approves nothing for anybody. Passed
+    // explicitly rather than relying on externals being absent from
+    // `participantIds` — that is safety by representation, and this gate must
+    // hold as a rule once a caller ever passes an effective roster.
+    ...(chatId && resolveExternalCollaboratorSeatIds
+      ? { externalParticipantIds: resolveExternalCollaboratorSeatIds(chatId) }
+      : {}),
     targetParticipantId: ensembleRun.participantId,
     targetProvider: ensembleRun.provider,
     targetRole: ensembleRun.role,
@@ -39878,17 +39949,31 @@ if (isGeminiMcpBridgeProcess) {
           // the leadership precondition. Disabling always clears; enabling
           // preserves an existing confirmedAt (re-toggles aren't re-consent).
           const shouldUpdateAutoApprovals = typeof action.bossmanAutoApprovals === 'boolean'
-          const hasLeadershipForAutoApprovals = Boolean(
-            chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
+          // An external human holding Boss/Captain is not leadership for this
+          // purpose: they never receive approval prompts, so consent recorded
+          // against them would auto-allow other seats on the strength of
+          // somebody who is never asked. Refuse at the ENABLE door as well as
+          // in the gates, so the flag cannot be switched on in that state at
+          // all rather than being switched on and then ignored.
+          const hasLeadershipForAutoApprovals = hasNonExternalApprovalAuthority(
+            chat.appChatId,
+            chat
           )
           if (
             shouldUpdateAutoApprovals &&
             action.bossmanAutoApprovals === true &&
             !hasLeadershipForAutoApprovals
           ) {
+            // Two different reasons reach this refusal and telling a host to
+            // "assign a Boss" when they plainly have one is worse than useless.
+            const hasAnyLeadership = Boolean(
+              chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
+            )
             return {
               ok: false,
-              error: 'Assign a Boss or Captain before enabling Auto Approvals.'
+              error: hasAnyLeadership
+                ? 'Auto Approvals needs a Boss or Captain who can answer prompts. An external collaborator cannot hold it.'
+                : 'Assign a Boss or Captain before enabling Auto Approvals.'
             }
           }
           const nextBossmanAutoApprovals =
@@ -44380,6 +44465,16 @@ if (isGeminiMcpBridgeProcess) {
     const humanCollaborationStore = new HumanCollaborationStore(
       join(app.getPath('userData'), 'human-collaboration.json')
     )
+    // Active externals only. A revoked participant holds no seat, and a pending
+    // one has not completed SAS — neither may carry an authority.
+    resolveExternalCollaboratorSeatIds = (chatId: string): readonly string[] => {
+      if (!chatId) return []
+      const share = humanCollaborationStore.getShareForChat(chatId)
+      if (!share) return []
+      return share.participants
+        .filter((participant) => participant.status === 'active')
+        .map((participant) => participant.collaboratorId)
+    }
     // P2a — bounded, durable audit of host-visible collaboration events
     // (rules changes, invites, admission, contributions, drafts, revocations).
     const humanCollaborationAuditLog = new HumanCollaborationAuditLog(

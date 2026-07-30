@@ -50,8 +50,19 @@ export interface ThreadMessageElevationGrounds {
   /** A live, task-scoped Trusted Session grant matching this chat/provider/
    * workspace — not merely a write-capable posture. */
   trustedSession: boolean
-  /** Boss/Captain Auto Approvals consent recorded on the ensemble, with a live
-   * approval authority. */
+  /**
+   * Boss/Captain Auto Approvals consent recorded on the ensemble, with an
+   * approval authority that is ASSIGNED and not an external human collaborator.
+   *
+   * Read that precisely, because this comment previously claimed "with a live
+   * approval authority" and the producer checked neither liveness nor identity —
+   * a stale contract nobody could act on. What is actually enforced: consent is
+   * enabled and mode-correct, at least one of Boss/Captain is assigned, and the
+   * assigned authority is not an external (who never receives prompts, so their
+   * authority cannot stand in for consent). Roster LIVENESS is still not checked
+   * here — an authority seat that has since been removed from the roster will
+   * still satisfy this flag. Say so rather than imply otherwise.
+   */
   bossAutoApproval: boolean
 }
 
