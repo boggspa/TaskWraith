@@ -1474,3 +1474,128 @@ describe('a refused contribution reaches the collaborator', () => {
     })
   })
 })
+
+describe('loadOlder over the wire', () => {
+  async function connected(buildPage?: unknown) {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({ chatId: 'chat-1', mode: 'comments', now: 1000, inviteTtlMs: 10_000 })
+    const collaborator = makeCollaborationIdentity()
+    const published: HumanCollaborationEncryptedFrame[] = []
+    let now = 1000
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      ...(buildPage ? { buildPage: buildPage as never } : {}),
+      publishEncryptedProjection: (_sessionId, frame) => {
+        published.push(frame)
+      },
+      now: () => now
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId, chatId: 'chat-1', displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId, chatId: 'chat-1', inviteId: begin.inviteId,
+      inviteToken: share.inviteToken, inviteExpiresAt: begin.expiresAt, shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64, hostCollaborator: collaborator
+    })
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId, confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(collaborator.identity.privateKey, computeHumanCollaborationTranscriptHash(context))
+      )
+    })
+    const keys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: collaborator.ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: b64.decode(collaborator.nonceB64)
+    })
+    let seq = 0
+    const ask = (beforeRowId?: string) =>
+      runtime.routeEncryptedAction(
+        sealHumanCollaborationMessage({
+          keys, direction: 'collaboratorToHost', sessionId: session.sessionId, seq: ++seq,
+          message: {
+            msgId: seq,
+            method: HUMAN_COLLABORATION_METHODS.loadOlder,
+            params: { sessionId: session.sessionId, ...(beforeRowId ? { beforeRowId } : {}) }
+          }
+        })
+      )
+    const open = (frame: HumanCollaborationEncryptedFrame) =>
+      openHumanCollaborationFrame({ keys, expectedDirection: 'hostToCollaborator', frame })
+    return { runtime, session, published, ask, open, advance: (ms: number) => { now += ms } }
+  }
+
+  it('seals one page back, stamped with the session that may hold it', async () => {
+    const buildPage = vi.fn().mockReturnValue({
+      rows: [{ id: 'old-1' }], hasMore: true, oldestRowId: 'old-1'
+    })
+    const { published, ask, open } = await connected(buildPage)
+
+    await ask('cursor-row')
+
+    expect(buildPage).toHaveBeenCalledWith(expect.objectContaining({ beforeRowId: 'cursor-row' }))
+    expect(published).toHaveLength(1)
+    const opened = open(published[0])
+    expect(opened.method).toBe(HUMAN_COLLABORATION_EVENTS.olderPage)
+    const params = opened.params as Record<string, unknown>
+    expect(params.rows).toEqual([{ id: 'old-1' }])
+    expect(params.hasMore).toBe(true)
+    expect(params.oldestRowId).toBe('old-1')
+    // Echoed so a client can correlate concurrent pages…
+    expect(params.beforeRowId).toBe('cursor-row')
+    // …and stamped, which is what lets a client cache discard on re-handshake.
+    expect(typeof params.sessionId).toBe('string')
+    expect(params.sessionId).toBeTruthy()
+  })
+
+  it('ANSWERS a throttled page instead of dropping it', async () => {
+    // Silence would read as "there is nothing older" to the person who just
+    // clicked, which is paging lying about where the conversation began. The
+    // refusal has to be legible and it must not claim the top of the thread.
+    const buildPage = vi.fn().mockReturnValue({ rows: [{ id: 'old-1' }], hasMore: true })
+    const { published, ask, open } = await connected(buildPage)
+
+    await ask('cursor-row')
+    await ask('cursor-row')
+
+    expect(buildPage).toHaveBeenCalledTimes(1)
+    expect(published).toHaveLength(2)
+    const second = open(published[1]).params as Record<string, unknown>
+    expect(second.throttled).toBe(true)
+    expect(second.rows).toEqual([])
+    // NOT false — no rows were read, so this says nothing about the thread.
+    expect(second.hasMore).toBe(true)
+  })
+
+  it('serves again once the window passes', async () => {
+    const buildPage = vi.fn().mockReturnValue({ rows: [], hasMore: false })
+    const { ask, advance } = await connected(buildPage)
+    await ask()
+    await ask()
+    advance(500)
+    await ask()
+    expect(buildPage).toHaveBeenCalledTimes(2)
+  })
+
+  it('serves nothing rather than erroring when the host cannot page', async () => {
+    // A host with no page builder simply does not offer history; the
+    // collaborator sees no older rows rather than a failure.
+    const { published, ask, open } = await connected(undefined)
+    await ask()
+    expect(published).toHaveLength(1)
+    const params = open(published[0]).params as Record<string, unknown>
+    expect(params.rows).toEqual([])
+    expect(params.hasMore).toBe(false)
+  })
+})

@@ -119,6 +119,20 @@
   color: var(--text-secondary);
 }
 
+/* Paging affordances, pinned above the transcript rows. */
+.join-load-older-row {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 6px;
+}
+
+.join-projection-top {
+  text-align: center;
+  font-size: 11.5px;
+  opacity: 0.6;
+  padding: 2px 0 8px;
+}
+
 .join-projection-placeholder {
   opacity: 0.62;
   font-style: italic;

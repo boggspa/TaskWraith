@@ -191,6 +191,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'human-collaboration-collaborator:last-session': [],
   'human-collaboration-collaborator:reconnect': [],
   'human-collaboration-collaborator:append-comment': ['object'],
+  'human-collaboration-collaborator:load-older': ['object'],
   'human-collaboration-collaborator:leave': [],
   'reap-abandoned-chats': ['optionalObject'],
   'clear-chats': ['optionalString'],

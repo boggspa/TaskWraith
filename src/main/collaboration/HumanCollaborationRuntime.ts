@@ -32,6 +32,7 @@ import {
   type HumanCollaborationHandshakeContext,
   type HumanCollaborationHandshakeMode,
   type HumanCollaborationPlainMessage,
+  type HumanCollaborationLoadOlderInput,
   type HumanCollaborationSubscribeProjectionInput,
   HUMAN_COLLABORATION_PROTOCOL,
   type HumanCollaborationMethod
@@ -101,6 +102,13 @@ const MAX_HANDSHAKE_RATE_KEYS = 256
 // calls `subscribeProjection` internally, and a limiter inside it would starve
 // the host's own already-throttled flush loop.
 const SUBSCRIBE_MIN_INTERVAL_MS = 200
+// Same shape and the same reason as the subscribe throttle: a page build is a
+// full pass over the projectable rows plus a per-row project + measure, driven
+// entirely by the collaborator. Unlike a subscribe, a dropped page is VISIBLE —
+// the person clicked "load older" — so a refused one is answered with an
+// explicitly `throttled` empty page rather than silence. A human scrolling
+// never reaches this; a loop does.
+const LOAD_OLDER_MIN_INTERVAL_MS = 200
 
 export interface HumanCollaborationProjectionRequest {
   sessionId: string
@@ -129,6 +137,15 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
   store: HumanCollaborationStore
   buildProjection: (input: HumanCollaborationProjectionRequest) => ProjectionType | Promise<ProjectionType>
   appendComment: (input: HumanCollaborationAppendRequest & HumanCollaborationAppendCommentInput) => AppendType | Promise<AppendType>
+  /**
+   * One backwards page for `loadOlder`. Optional: a host without it simply does
+   * not serve paging, and the collaborator sees no older rows rather than an
+   * error. Returns the page shape verbatim — the runtime never inspects it, it
+   * only seals it, so the disclosure rules stay entirely in the builder.
+   */
+  buildPage?: (
+    input: HumanCollaborationProjectionRequest & { beforeRowId?: string }
+  ) => { rows: unknown[]; hasMore: boolean; oldestRowId?: string } | Promise<{ rows: unknown[]; hasMore: boolean; oldestRowId?: string }>
   publishProjection?: (sessionId: string, projection: ProjectionType) => void | Promise<void>
   publishEncryptedProjection?: (
     sessionId: string,
@@ -268,6 +285,8 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
   // Per sessionId, last WIRE-driven projection rebuild (see
   // SUBSCRIBE_MIN_INTERVAL_MS). Host-driven publishes do not consult it.
   private readonly subscribeRate = new Map<string, number>()
+  /** Per sessionId, last wire-driven page build (see LOAD_OLDER_MIN_INTERVAL_MS). */
+  private readonly loadOlderRate = new Map<string, number>()
 
   constructor(options: HumanCollaborationRuntimeDeps<ProjectionType, AppendType>) {
     this.opts = options
@@ -299,6 +318,9 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     if (method === HUMAN_COLLABORATION_METHODS.appendComment) {
       return this.appendComment(params as HumanCollaborationAppendCommentInput & { sessionId: string }) as unknown as Promise<ReturnType>
+    }
+    if (method === HUMAN_COLLABORATION_METHODS.loadOlder) {
+      return this.loadOlder(params as HumanCollaborationLoadOlderInput) as unknown as Promise<ReturnType>
     }
     if (method === HUMAN_COLLABORATION_METHODS.disconnect) {
       return this.disconnect(params as HumanCollaborationDisconnectInput) as unknown as Promise<ReturnType>
@@ -664,6 +686,30 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     })
   }
 
+  /**
+   * One backwards page of older rows.
+   *
+   * Counts as real collaborator activity for presence — unlike a host-driven
+   * publish, this IS the person doing something.
+   */
+  async loadOlder(
+    input: HumanCollaborationLoadOlderInput
+  ): Promise<{ rows: unknown[]; hasMore: boolean; oldestRowId?: string }> {
+    const session = this.requireActiveSession(input.sessionId)
+    this.notePresenceActivity(session)
+    if (!this.opts.buildPage) return { rows: [], hasMore: false }
+    const share = this.getActiveShare(session.shareId)
+    return this.opts.buildPage({
+      sessionId: session.sessionId,
+      share,
+      collaboratorId: session.collaboratorId,
+      collaboratorIdentityPubKeyB64: session.collaboratorIdentityPubKeyB64,
+      displayName: session.displayName,
+      establishedAt: session.establishedAt,
+      ...(input.beforeRowId ? { beforeRowId: input.beforeRowId } : {})
+    })
+  }
+
   async appendComment(
     input: HumanCollaborationAppendCommentInput & { sessionId: string }
   ): Promise<AppendType> {
@@ -703,6 +749,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     // Safe to clear, unlike `handshakeRate`: this map is keyed by sessionId and
     // a reconnect always mints a new one, so there is no window to reset.
     this.subscribeRate.delete(input.sessionId)
+    this.loadOlderRate.delete(input.sessionId)
     if (!removed) return false
     // The SESSION goes — its keys die with it, which is the whole point of
     // saying goodbye — but the SEAT does not. Presence records `grace` so a tab
@@ -855,6 +902,34 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
   }
 
+  /**
+   * Seal one backwards page back to the collaborator who asked for it.
+   *
+   * `sessionId` is stamped on the payload deliberately, and it is the whole of
+   * the L-3 control: a page is CLIENT-HELD, so a host-side truncation cannot
+   * reach it. A truncation drops the room, a re-handshake mints a NEW session,
+   * and a client keying its cache on this value therefore CANNOT merge
+   * pre-truncation rows into the post-truncation session. The frame's own
+   * session binding already stops a page crossing sessions on the wire; this
+   * makes the same guarantee legible to the code that stores the rows, so
+   * discarding is structural rather than something a caller must remember.
+   */
+  private publishOlderPage(
+    sessionId: string,
+    page: { rows: unknown[]; hasMore: boolean; oldestRowId?: string; beforeRowId?: string; throttled?: boolean }
+  ): void {
+    if (!this.opts.publishEncryptedProjection) return
+    try {
+      const frame = this.sealForCollaborator(sessionId, {
+        method: HUMAN_COLLABORATION_EVENTS.olderPage,
+        params: { sessionId, ...page }
+      })
+      void Promise.resolve(this.opts.publishEncryptedProjection(sessionId, frame)).catch(() => {})
+    } catch {
+      // Session gone mid-page — nothing to deliver it to.
+    }
+  }
+
   openFromCollaborator(frame: HumanCollaborationEncryptedFrame): HumanCollaborationPlainMessage {
     const session = this.requireActiveSession(frame.sessionId)
     if (frame.seq <= session.lastInboundSeq) {
@@ -914,6 +989,34 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
         this.notifyContributionRejected(frame.sessionId, clientMessageId, err)
         throw err
       }
+    }
+    if (message.method === HUMAN_COLLABORATION_METHODS.loadOlder) {
+      const input = params as Partial<HumanCollaborationLoadOlderInput>
+      const beforeRowId = typeof input.beforeRowId === 'string' ? input.beforeRowId : undefined
+      const now = this.now()
+      const last = this.loadOlderRate.get(frame.sessionId) ?? 0
+      if (now - last < LOAD_OLDER_MIN_INTERVAL_MS) {
+        // Answered, not dropped. An empty page with no explanation reads as
+        // "you have reached the top of the thread"; saying `throttled` lets the
+        // client keep the affordance and ask again.
+        this.publishOlderPage(frame.sessionId, {
+          rows: [],
+          hasMore: true,
+          throttled: true,
+          ...(beforeRowId ? { beforeRowId } : {})
+        })
+        return undefined
+      }
+      this.loadOlderRate.set(frame.sessionId, now)
+      const page = await this.loadOlder({
+        sessionId: frame.sessionId,
+        ...(beforeRowId ? { beforeRowId } : {})
+      })
+      this.publishOlderPage(frame.sessionId, {
+        ...page,
+        ...(beforeRowId ? { beforeRowId } : {})
+      })
+      return undefined
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.disconnect) {
       return this.disconnect({ sessionId: frame.sessionId })
@@ -1148,6 +1251,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
       this.subscribeRate.delete(sessionId)
+      this.loadOlderRate.delete(sessionId)
       throw new HumanCollaborationDenialError('revoked', 'Collaboration share is no longer active.')
     }
     const participant = share.participants.find((candidate) => candidate.collaboratorId === session.collaboratorId)
@@ -1159,6 +1263,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
       this.subscribeRate.delete(sessionId)
+      this.loadOlderRate.delete(sessionId)
       throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
     }
     return session

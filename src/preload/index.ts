@@ -1953,6 +1953,8 @@ const api = {
   }) => ipcRenderer.invoke('human-collaboration-collaborator:join', input),
   humanCollaborationCollaboratorConfirm: () =>
     ipcRenderer.invoke('human-collaboration-collaborator:confirm'),
+  humanCollaborationCollaboratorLoadOlder: (input: { beforeRowId?: string } = {}) =>
+    ipcRenderer.invoke('human-collaboration-collaborator:load-older', input),
   humanCollaborationCollaboratorAppendComment: (input: {
     content: string
     clientMessageId?: string
@@ -2499,6 +2501,32 @@ const api = {
     ): void => callback(payload)
     ipcRenderer.on('human-collaboration-collaborator-status', wrapped)
     return () => ipcRenderer.removeListener('human-collaboration-collaborator-status', wrapped)
+  },
+  // One backwards page of older transcript rows, answering a loadOlder.
+  onHumanCollaborationCollaboratorOlderPage: (
+    callback: (payload: {
+      sessionId: string
+      beforeRowId?: string
+      rows: unknown[]
+      hasMore: boolean
+      oldestRowId?: string
+      throttled?: boolean
+    }) => void
+  ) => {
+    const wrapped = (
+      _event: unknown,
+      payload: {
+        sessionId: string
+        beforeRowId?: string
+        rows: unknown[]
+        hasMore: boolean
+        oldestRowId?: string
+        throttled?: boolean
+      }
+    ): void => callback(payload)
+    ipcRenderer.on('human-collaboration-collaborator-older-page', wrapped)
+    return () =>
+      ipcRenderer.removeListener('human-collaboration-collaborator-older-page', wrapped)
   },
   // Trusted audio/video media refs for a foreground solo run. Main constructs
   // these refs itself and pushes them on this dedicated main-only channel, so
