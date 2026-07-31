@@ -369,6 +369,11 @@ const ENSEMBLE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|
 // roughly two per second lets each roll finish, while keeping the event lane
 // ephemeral and far below the transcript's streaming cadence.
 const PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS = 450
+// 1.0.7 — hard upper bound on how long a Boss/Captain foreground turn waits
+// for its owned fan-out lanes to settle. Prevents a stalled lane from pinning
+// the serial queue indefinitely; the caller synthesizes with partial results
+// after timeout. Measured in milliseconds; default 75s.
+const DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS = 75 * 1000
 
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
@@ -493,6 +498,12 @@ export interface EnsembleOrchestratorDeps {
   createRunId: (provider: ProviderId) => string
   now: () => number
   nowIso: () => string
+  /**
+   * 1.0.7 — Optional override for the maximum time a foreground turn waits
+   * for its owned fan-out lanes to settle. Primarily for tests; omitted uses
+   * DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS.
+   */
+  ownedFanoutSettlementTimeoutMs?: number
   /**
    * S16 — external seat turns. Both optional: an orchestrator with neither
    * behaves exactly as it did before, which is what every existing test
@@ -710,6 +721,23 @@ interface ActiveParticipantRun {
   fanoutDispatchCancelled?: boolean
   /** Per-owner tail that serializes explicit fan-out dispatch windows. */
   fanoutDispatchQueue?: Promise<void>
+  /**
+   * Set when a caller's owned fan-out lanes do not settle within the enforced
+   * timeout. The caller must synthesize with partial results; routing proceeds
+   * only after the synthesis hold is released.
+   */
+  fanoutTimedOut?: boolean
+  /**
+   * Set after owned fan-out lanes settle if the caller has produced no post-
+   * fan-out timeline content. The turn remains force-persisted until the
+   * caller emits synthesis prose or the hold is explicitly released.
+   */
+  fanoutSynthesisRequired?: boolean
+  /**
+   * Reentrancy guard so a synthesis-triggered release can call flushRun
+   * without recursing back into releaseOwnedFanoutHold.
+   */
+  releasingOwnedFanoutHold?: boolean
   /**
    * Timeline length when the first owned fan-out was accepted. Entries before
    * this boundary (the caller's setup/tool invocation) may remain visible;
@@ -3591,14 +3619,16 @@ export class EnsembleOrchestrator {
     chat: ChatRecord | null | undefined
   ): void {
     runtime.cancelled = true
+    const pendingParticipantSeatChanges = runtime.pendingParticipantSeatChanges
+    runtime.pendingParticipantSeatChanges = undefined
     this.deferredLaneDrainByChatId.delete(runtime.chatId)
     runtime.queuedPrompts = []
     runtime.remainingParticipants = []
     runtime.fanoutReservedParticipantIds = undefined
-    runtime.pendingParticipantSeatChanges = undefined
     runtime.yieldRouting = undefined
     runtime.yieldReturnStack = []
     this.cancelHistoryTimerHandles(runtime.chatId, runtime, chat)
+    this.applyPendingParticipantSeatChanges(runtime, pendingParticipantSeatChanges)
 
     // Lanes first: their completion promises may release retained owners.
     const orderedRuns = [...trackedRuns].sort(
@@ -4512,6 +4542,7 @@ export class EnsembleOrchestrator {
     this.deferredLaneDrainByChatId.delete(chatId)
     runtime.queuedPrompts = []
     this.clearYieldReturnStack(runtime)
+    const pendingParticipantSeatChanges = runtime.pendingParticipantSeatChanges
     runtime.pendingParticipantSeatChanges = undefined
     this.cancelWakeupsForRuntime(runtime, reason)
     const roundId = runtime.roundId
@@ -4567,6 +4598,7 @@ export class EnsembleOrchestrator {
         : round
     )
     this.completeCheckpoint(chatId, roundId, 'cancelled')
+    this.applyPendingParticipantSeatChanges(runtime, pendingParticipantSeatChanges)
     this.clearRuntimeIfCurrent(runtime)
     for (const active of activeRuns) {
       try {
@@ -6609,6 +6641,17 @@ export class EnsembleOrchestrator {
       return true
     }
     return this.participantFanoutDispatchState(runtime, participantId) === 'active'
+  }
+
+  private applyPendingParticipantSeatChanges(
+    runtime: ActiveRoundRuntime,
+    pendingSeatChanges: PendingParticipantSeatChange[] = runtime.pendingParticipantSeatChanges || []
+  ): void {
+    if (pendingSeatChanges.length === 0) return
+    runtime.pendingParticipantSeatChanges = [...pendingSeatChanges]
+    for (const change of pendingSeatChanges) {
+      this.applyPendingParticipantSeatChangeFor(runtime, change.participantId)
+    }
   }
 
   private applyPendingParticipantSeatChangeFor(
@@ -13716,6 +13759,50 @@ export class EnsembleOrchestrator {
         await this.waitForOwnedFanoutSettlements(runtime, run)
         if (runtime.cancelled) break
       }
+      // 1.0.7 — Option B enforcement: a Boss/Captain turn that launched owned
+      // fan-out lanes must synthesize the results before the turn ends. If no
+      // post-fan-out timeline content exists after settlements settle, mark a
+      // non-terminal turn as requiring synthesis (the hold releases once the
+      // caller produces prose). Terminal turns get a status note but release
+      // immediately so the queue is never pinned. Timed-out turns are already
+      // announced as proceeding with partial results.
+      if (
+        run.ownedFanoutTranscriptBoundary !== undefined &&
+        (run.timeline?.length || 0) <= run.ownedFanoutTranscriptBoundary &&
+        !run.fanoutTimedOut
+      ) {
+        if (run.terminalFinalized === true) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participantDisplayName(run.participant)} ended the turn without synthesizing fan-out results.`
+          )
+        } else {
+          run.fanoutSynthesisRequired = true
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participantDisplayName(run.participant)} must synthesize fan-out results before the turn can advance.`
+          )
+        }
+      }
+      // 1.0.7 — Defensive writer-lane conflict guard. The serial queue should
+      // already be blocked while owned writer lanes are in flight; if another
+      // serial writer somehow started during the hold, abort routing rather
+      // than allow overlapping write intents.
+      if (
+        this.ownedFanoutHadWriteIntent(run) &&
+        runtime.activeRunId !== undefined &&
+        runtime.activeRunId !== run.runId
+      ) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `Lane conflict: a serial writer started while ${participantDisplayName(run.participant)}'s writer lane(s) were still in flight. Routing paused for this round.`
+        )
+        remaining.length = 0
+        break
+      }
       this.noteUnresolvedAuthorityRoutingCheckpoint(run)
       const bossYieldedToUser =
         runtime.returnedControlToUser &&
@@ -14186,6 +14273,10 @@ export class EnsembleOrchestrator {
     run: ActiveParticipantRun
   ): Promise<void> {
     let noted = false
+    const timeoutMs =
+      this.deps.ownedFanoutSettlementTimeoutMs ??
+      DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS
+    const deadline = Date.now() + timeoutMs
     while (!runtime.cancelled) {
       const settlements = [
         ...(run.pendingFanoutDispatches || []),
@@ -14200,15 +14291,54 @@ export class EnsembleOrchestrator {
           `${participantDisplayName(run.participant)} is waiting for its fan-out lane(s) to return before foreground handoff.`
         )
       }
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        run.fanoutTimedOut = true
+        const pendingLabels = this.pendingOwnedFanoutLaneLabels(run)
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(run.participant)}'s fan-out lane(s) did not settle within ${timeoutMs / 1000}s; proceeding with partial results. Pending: ${pendingLabels}.`
+        )
+        return
+      }
       // Re-read after every wave. A dispatch reservation can resolve only after
       // it has attached the accepted lane settlement, and concurrent fan-out
       // calls can add another reservation while this owner is still live.
-      await Promise.all(settlements)
+      await Promise.race([
+        Promise.all(settlements),
+        new Promise<void>((resolve) => setTimeout(resolve, remainingMs))
+      ])
     }
+  }
+
+  private pendingOwnedFanoutLaneLabels(run: ActiveParticipantRun): string {
+    const runIds = run.ownedFanoutRunIds
+    if (!runIds || runIds.size === 0) return 'unknown'
+    const labels: string[] = []
+    for (const runId of runIds) {
+      const laneRun = this.runsByRunId.get(runId)
+      labels.push(
+        laneRun
+          ? `${participantDisplayName(laneRun.participant)} (${laneRun.laneId || runId})`
+          : runId
+      )
+    }
+    return labels.join(', ') || 'unknown'
   }
 
   private hasOwnedFanoutWork(run: ActiveParticipantRun): boolean {
     return Boolean(run.pendingFanoutDispatches?.size || run.ownedFanoutSettlements?.size)
+  }
+
+  private ownedFanoutHadWriteIntent(run: ActiveParticipantRun): boolean {
+    const runIds = run.ownedFanoutRunIds
+    if (!runIds || runIds.size === 0) return false
+    for (const runId of runIds) {
+      const laneRun = this.runsByRunId.get(runId)
+      if (laneRun && laneRun.laneIntent === 'write') return true
+    }
+    return false
   }
 
   /**
@@ -14217,10 +14347,15 @@ export class EnsembleOrchestrator {
    */
   private releaseOwnedFanoutHold(sourceRun: ActiveParticipantRun): void {
     if (this.hasOwnedFanoutWork(sourceRun)) return
+    if (sourceRun.releasingOwnedFanoutHold) return
     try {
+      sourceRun.releasingOwnedFanoutHold = true
       const round = this.deps.getChat(sourceRun.chatId)?.ensemble?.activeRound
       const runtime = this.roundsByChatId.get(sourceRun.chatId)
-      const suppressRelease =
+      const boundary = sourceRun.ownedFanoutTranscriptBoundary
+      const hasPostFanoutTimeline =
+        boundary !== undefined && (sourceRun.timeline?.length || 0) > boundary
+      const permanentSuppress =
         !runtime ||
         runtime.roundId !== sourceRun.roundId ||
         runtime.cancelled ||
@@ -14228,12 +14363,25 @@ export class EnsembleOrchestrator {
         !round ||
         round.roundId !== sourceRun.roundId ||
         round.status !== 'running'
-      if (suppressRelease) {
-        sourceRun.suppressOwnedFanoutTranscriptRelease = true
-        sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
-      } else if (sourceRun.ownedFanoutTranscriptBoundary !== undefined) {
-        const boundary = sourceRun.ownedFanoutTranscriptBoundary
-        const hasPostFanoutTimeline = (sourceRun.timeline?.length || 0) > boundary
+      // 1.0.7 — Option B enforcement: keep the hold until the caller emits
+      // post-fan-out synthesis prose. This applies even before the serial loop
+      // has stamped fanoutSynthesisRequired, because lane settlement callbacks
+      // can reach releaseOwnedFanoutHold first. A terminal turn is released
+      // anyway so the serial queue is never pinned by a silent provider; a
+      // timed-out turn has already been announced as proceeding with partial
+      // results.
+      const awaitingSynthesis =
+        boundary !== undefined &&
+        !hasPostFanoutTimeline &&
+        sourceRun.terminalFinalized !== true &&
+        sourceRun.fanoutTimedOut !== true
+      if (permanentSuppress || awaitingSynthesis) {
+        if (permanentSuppress) {
+          sourceRun.suppressOwnedFanoutTranscriptRelease = true
+          sourceRun.releaseOwnedFanoutTranscriptAtTail = undefined
+        }
+      } else if (boundary !== undefined) {
+        sourceRun.fanoutSynthesisRequired = false
         sourceRun.ownedFanoutTranscriptBoundary = undefined
         sourceRun.forceNextTimelineContentEntry = !hasPostFanoutTimeline
         sourceRun.releaseOwnedFanoutTranscriptAtTail = true
@@ -14247,6 +14395,7 @@ export class EnsembleOrchestrator {
         this.applyTerminalRunSideEffects(sourceRun)
       }
     } finally {
+      sourceRun.releasingOwnedFanoutHold = false
       if (
         sourceRun.terminalFinalized &&
         this.runsByRunId.get(sourceRun.runId) === sourceRun
@@ -16252,6 +16401,24 @@ export class EnsembleOrchestrator {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
     }
+    // 1.0.7 — If a synthesis-required owner has now produced post-fan-out
+    // content (or ended its turn without doing so), release the transcript
+    // hold. The reentrancy guard prevents a recursive loop because
+    // releaseOwnedFanoutHold calls flushRun internally.
+    if (
+      !run.releasingOwnedFanoutHold &&
+      run.fanoutSynthesisRequired === true &&
+      run.ownedFanoutTranscriptBoundary !== undefined &&
+      !this.hasOwnedFanoutWork(run)
+    ) {
+      const hasPostFanoutTimeline =
+        (run.timeline?.length || 0) > run.ownedFanoutTranscriptBoundary
+      if (hasPostFanoutTimeline || final) {
+        run.fanoutSynthesisRequired = false
+        this.releaseOwnedFanoutHold(run)
+        return
+      }
+    }
     const chat = this.deps.getChat(run.chatId)
     if (!chat?.ensemble) return
     const timestamp = this.deps.nowIso()
@@ -16730,7 +16897,9 @@ export class EnsembleOrchestrator {
     const runtime = this.roundsByChatId.get(chatId)
     if (runtime?.roundId === roundId) {
       this.clearYieldReturnStack(runtime)
+      const pendingParticipantSeatChanges = runtime.pendingParticipantSeatChanges
       runtime.pendingParticipantSeatChanges = undefined
+      this.applyPendingParticipantSeatChanges(runtime, pendingParticipantSeatChanges)
     }
     const chat = this.deps.getChat(chatId)
     if (!chat?.ensemble) return
