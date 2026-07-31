@@ -30,6 +30,7 @@ import {
 } from '../canvas/CanvasEvalAudit'
 import { redactCanvasFillValueForDurableStorage } from '../canvas/CanvasFillAudit'
 import { toolPermissionRetryApprovalPayloadForDurableStorage } from '../mcp/ToolPermissionRetry'
+import { redactAcpApprovalPreviewForDurableStorage } from '../AcpToolApprovalPreview'
 
 export interface ApprovalPromptReceipt {
   approvalId: string
@@ -281,7 +282,12 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
         actions
       }
       const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
-        toolPermissionRetryApprovalPayloadForDurableStorage(approvalPayload)
+        toolPermissionRetryApprovalPayloadForDurableStorage({
+          ...approvalPayload,
+          preview:
+            redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
+            approvalPayload.preview
+        })
       )
       deps.appendDurableRunEventForRoute(
         provider,
@@ -357,7 +363,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         ? request.preview.toolName
         : undefined
     const previewParams = isRecord(request.preview)
-      ? request.preview.params ?? request.preview.arguments
+      ? (request.preview.params ?? request.preview.arguments)
       : undefined
     // The exact surface this request targets, read out of the preview the human
     // is shown — so the grant can only ever mean the window they actually saw.
@@ -720,6 +726,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       })
       const approvalPayload = {
         provider,
+        service,
         appRunId: session?.runId,
         appChatId: session?.appChatId,
         id: approvalId,
@@ -740,10 +747,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           ...(requestOnly
             ? {
                 requestOnly: true,
-                requestOnlyReason:
-                  postureApprovalOnly
-                    ? 'run-posture-approval-only'
-                    : 'This approval is per-call only; session/workspace grants are disabled for this request.'
+                requestOnlyReason: postureApprovalOnly
+                  ? 'run-posture-approval-only'
+                  : 'This approval is per-call only; session/workspace grants are disabled for this request.'
               }
             : {}),
           ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}),
@@ -758,7 +764,14 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
         canvasEvalApprovalPayloadForDurableStorage(
           service,
-          approvalPayload,
+          {
+            ...approvalPayload,
+            preview:
+              service === 'canvasEval'
+                ? approvalPayload.preview
+                : (redactAcpApprovalPreviewForDurableStorage(approvalPayload.preview) ??
+                  approvalPayload.preview)
+          },
           approvalId,
           canvasEvalApproval || undefined
         )

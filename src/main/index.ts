@@ -589,6 +589,7 @@ import {
   type RequestAgenticServiceApprovalDeps,
   type RequestMainApprovalDeps
 } from './run/ApprovalOrchestration'
+import { buildAcpToolApprovalPreview } from './AcpToolApprovalPreview'
 import { redactCanvasFillValueForDurableStorage } from './canvas/CanvasFillAudit'
 import {
   createProviderTerminalProjectionOperation,
@@ -19318,6 +19319,12 @@ async function canUseClaudeSdkTool(
             ? 'Approve Claude shell command'
             : 'Approve Claude file change',
         body: toolName,
+        preview: buildAcpToolApprovalPreview({
+          toolName,
+          rawToolCall: updatedInput,
+          service: nativeDecision.service,
+          cwd: payload.scope === 'global' ? undefined : payload.workspace
+        }),
         runId: route.appRunId
       }
     )
@@ -21538,6 +21545,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         method: `grok/${request.toolKind || 'tool'}`,
         title: `Grok wants to run: ${request.toolName}`,
         body: `Grok requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        preview: buildAcpToolApprovalPreview({
+          toolName: request.toolName,
+          rawToolCall: request.rawToolCall,
+          service,
+          cwd: payload.scope === 'global' ? undefined : payload.workspace
+        }),
         runId: route.appRunId
       }
     )
@@ -22503,6 +22516,12 @@ async function runMistralAcpProvider(
         method: `mistral/${request.toolKind || 'tool'}`,
         title: `Mistral wants to run: ${request.toolName}`,
         body: `Mistral requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        preview: buildAcpToolApprovalPreview({
+          toolName: request.toolName,
+          rawToolCall: request.rawToolCall,
+          service,
+          cwd: payload.scope === 'global' ? undefined : payload.workspace
+        }),
         runId: route.appRunId
       }
     )
@@ -23150,6 +23169,12 @@ async function runKimiAcpProvider(
         method: `kimi/${request.toolKind || 'tool'}`,
         title: `Kimi wants to run: ${request.toolName}`,
         body: `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        preview: buildAcpToolApprovalPreview({
+          toolName: request.toolName,
+          rawToolCall: request.rawToolCall,
+          service,
+          cwd: payload.scope === 'global' ? undefined : payload.workspace
+        }),
         runId: route.appRunId
       }
     )
