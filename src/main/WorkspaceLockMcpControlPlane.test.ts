@@ -72,7 +72,13 @@ describe('WorkspaceLockMcpControlPlane', () => {
     controlPlane.lifecycle.terminal('run-1')
 
     await vi.waitFor(() => expect(releaseRun).toHaveBeenCalledWith('run-1'))
-    await vi.waitFor(() => expect(controlPlane.lifecycle.snapshot('run-1')).toBeNull())
+    // The tracker RETAINS a released run rather than forgetting it, and that
+    // retention is load-bearing: WorkspaceLockRunLifecycle pins double-`terminal()`
+    // idempotency (two calls, one release), which only holds while the released
+    // state is still remembered. Assert the recorded state, not absence.
+    await vi.waitFor(() =>
+      expect(controlPlane.lifecycle.snapshot('run-1')?.releaseState).toBe('released')
+    )
   })
 
   it('projects startup recovery failure through admission without a runtime', async () => {
