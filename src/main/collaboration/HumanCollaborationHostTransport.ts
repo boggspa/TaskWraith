@@ -46,11 +46,18 @@ export interface HumanCollaborationHostTransportOptions {
   log?: (line: string) => void
 }
 
-// Coalesce projection flushes: an admitted collaborator can stream inbound
-// frames (subscribe is not itself rate-limited), each of which would otherwise
-// force a full projection rebuild + reseal + send. A leading-edge flush with a
-// trailing coalesce caps that work to ~once per interval regardless of inbound
-// rate, while still delivering the first subscribe promptly.
+// Coalesce projection flushes: a leading-edge flush with a trailing coalesce
+// caps the reseal + send to ~once per interval regardless of inbound rate,
+// while still delivering the first subscribe promptly.
+//
+// This covers the OUTBOUND half only. `handleInbound` awaits
+// `routeEncryptedAction` before it ever reaches `scheduleFlush`, so by the time
+// this throttle is consulted the projection has already been rebuilt — an
+// earlier version of this comment claimed the coalesce capped the rebuild too,
+// which it never did. The rebuild is throttled at its own door, on the runtime's
+// wire-driven subscribe branch (SUBSCRIBE_MIN_INTERVAL_MS); it cannot be
+// throttled here, and it must not be throttled inside `subscribeProjection`,
+// which the host's own publish loop calls.
 const FLUSH_MIN_INTERVAL_MS = 200
 // Hard ceiling on a single outbound frame. The dumb relay closes the CONNECTION
 // (ws 1009) on a frame over its 1 MiB cap, so we skip + log an oversized frame

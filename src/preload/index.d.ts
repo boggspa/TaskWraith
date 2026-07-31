@@ -2386,7 +2386,12 @@ declare global {
         callback: (payload: { projection: HumanShareProjection }) => void
       ) => () => void
       onHumanCollaborationCollaboratorStatus: (
-        callback: (payload: { connected?: boolean; error?: string }) => void
+        callback: (payload: {
+          connected?: boolean
+          error?: string
+          /** A refused contribution — NOT a connection failure. */
+          contributionRejected?: { code: string; message: string; clientMessageId?: string }
+        }) => void
       ) => () => void
       onRunTrustedMediaRefs: (
         callback: (payload: { appChatId: string; appRunId: string; mediaRefs: unknown[] }) => void

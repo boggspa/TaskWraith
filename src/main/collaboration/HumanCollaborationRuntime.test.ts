@@ -19,6 +19,8 @@ import {
   sealHumanCollaborationMessage
 } from '../../shared/collaboration/HumanCollaborationCipher'
 import { hashInviteToken, HumanCollaborationStore } from './HumanCollaborationStore'
+import { HumanCollaborationDenialError } from './HumanContributionRules'
+import { HumanCollaborationAuditLog } from './HumanCollaborationAuditLog'
 import {
   HUMAN_COLLABORATION_EVENTS,
   HUMAN_COLLABORATION_METHODS,
@@ -26,6 +28,7 @@ import {
   type HumanCollaborationBeginHandshakeInput,
   type HumanCollaborationBeginHandshakeResult,
   type HumanCollaborationConfirmSasResult,
+  type HumanCollaborationEncryptedFrame,
   type HumanCollaborationHandshakeContext
 } from '../../shared/collaboration/HumanCollaborationProtocol'
 import { HumanCollaborationRuntime, type HumanCollaborationAppendRequest, type HumanCollaborationProjectionRequest } from './HumanCollaborationRuntime'
@@ -1074,5 +1077,381 @@ describe('HumanCollaborationRuntime presence signals', () => {
     expect(without.runtime.collaboratorPresenceState(without.session.collaboratorId)).toBe(
       'unknown'
     )
+  })
+})
+
+describe('HumanCollaborationRuntime handshake lane is bounded', () => {
+  /** Admit a collaborator for real, returning the ids a reconnect needs. */
+  async function admit(args: {
+    runtime: HumanCollaborationRuntime<unknown, unknown>
+    shareId: string
+    inviteToken: string
+    collaborator: ReturnType<typeof makeCollaborationIdentity>
+    displayName?: string
+  }): Promise<HumanCollaborationConfirmSasResult> {
+    const begin = await args.runtime.beginAdmission({
+      shareId: args.shareId,
+      chatId: 'chat-1',
+      displayName: args.displayName ?? 'Alex',
+      inviteToken: args.inviteToken,
+      collaboratorIdentityPubKeyB64: args.collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: args.collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: args.collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: args.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: args.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: args.collaborator
+    })
+    return args.runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(
+          args.collaborator.identity.privateKey,
+          computeHumanCollaborationTranscriptHash(context)
+        )
+      )
+    })
+  }
+
+  it('an admitted collaborator cannot erase the host’s audit history by re-handshaking', async () => {
+    // The reconnect lane needs no invite token (mode is 'reconnect' whenever a
+    // collaboratorId arrives without one), and a wrong confirm code frees the
+    // pending slot BEFORE it throws — so begin → confirm(wrong) → begin never
+    // trips MAX_PENDING_*. The attacker needs no crypto either: the code is
+    // checked before the transcript signature, so a junk signature still
+    // reaches the audit write. Each leg costs them one frame and costs the host
+    // a synchronous full-file rewrite of a log that keeps only the newest 2000
+    // rows, globally, across every chat and share.
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 10_000
+    })
+    const collaborator = makeCollaborationIdentity()
+    // The REAL log, not a spy. The harm is that the HOST'S OWN HISTORY is gone;
+    // an `expect(append).toHaveBeenCalledTimes(n)` would pass while the log was
+    // being emptied. No storagePath, so persist() early-returns — no disk.
+    const audit = new HumanCollaborationAuditLog()
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      audit,
+      now: () => 1000
+    })
+    const admitted = await admit({
+      runtime,
+      shareId: share.share.shareId,
+      inviteToken: share.inviteToken,
+      collaborator
+    })
+
+    // The row the host actually cares about, written before the flood.
+    audit.append({
+      kind: 'contribution.approved',
+      chatId: 'chat-1',
+      shareId: share.share.shareId,
+      collaboratorId: admitted.collaboratorId
+    })
+
+    for (let attempt = 0; attempt < 1100; attempt += 1) {
+      const peer = makeCollaborationIdentity()
+      let handshakeId: string
+      try {
+        const begun = await runtime.beginAdmission({
+          shareId: share.share.shareId,
+          chatId: 'chat-1',
+          displayName: 'Alex',
+          collaboratorId: admitted.collaboratorId,
+          collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+          collaboratorEphemeralPubKeyB64: peer.ephemeralPubKeyB64,
+          collaboratorNonceB64: peer.nonceB64
+        })
+        handshakeId = begun.handshakeId
+      } catch {
+        continue // Refused — which is the point.
+      }
+      await expect(
+        runtime.confirmSas({
+          handshakeId,
+          confirmCode: '000000',
+          collaboratorTranscriptSigB64: 'AAAA'
+        })
+      ).rejects.toThrow()
+    }
+
+    const events = audit.list({ limit: 1000 })
+    // THE assertion: the host's record of what this person did survives.
+    expect(events.some((event) => event.kind === 'contribution.approved')).toBe(true)
+    // And pin the mechanism, so merely raising the 2000-row cap cannot pass:
+    // 1100 hostile cycles must not be able to write 1100 durable rows.
+    expect(events.length).toBeLessThan(50)
+  })
+
+  it('never hands the host banner a raw collaborator-supplied name', async () => {
+    // The banner is the one surface where the host makes the admit/reject call,
+    // so a name that impersonates the app or a trust label belongs nowhere near
+    // it un-normalized. `validateParticipantSession` never reads displayName and
+    // `consumeInvite` is not on the reconnect path, so nothing else normalizes.
+    const store = new HumanCollaborationStore()
+    const onAdmissionBegan = vi.fn()
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      onAdmissionBegan,
+      now: () => 1000
+    })
+    const begin = async (
+      shareMode: 'readOnly' | 'comments',
+      displayName: unknown
+    ): Promise<void> => {
+      const share = store.createShare({
+        chatId: 'chat-1',
+        mode: shareMode,
+        now: 1000,
+        inviteTtlMs: 10_000
+      })
+      const peer = makeCollaborationIdentity()
+      await runtime.beginAdmission({
+        shareId: share.share.shareId,
+        chatId: 'chat-1',
+        displayName: displayName as string,
+        inviteToken: share.inviteToken,
+        collaboratorIdentityPubKeyB64: peer.identityPubKeyB64,
+        collaboratorEphemeralPubKeyB64: peer.ephemeralPubKeyB64,
+        collaboratorNonceB64: peer.nonceB64
+      })
+    }
+
+    // A FIRST admission on a normal comments share — the common case, and the
+    // one the "read-only reconnect" framing of this bug would have missed.
+    await begin('comments', 'TaskWraith')
+    expect(onAdmissionBegan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ displayName: 'TaskWraith (collaborator)' })
+    )
+
+    // A read-only share, where the client value wins outright.
+    await begin('readOnly', 'External')
+    expect(onAdmissionBegan).toHaveBeenLastCalledWith(
+      expect.objectContaining({ displayName: 'External (collaborator)' })
+    )
+
+    // Not a string at all. Untreated this reaches `<strong>{displayName}</strong>`,
+    // and React throwing on an object child takes the host's whole window with it.
+    await begin('comments', { evil: true })
+    expect(typeof onAdmissionBegan.mock.lastCall?.[0].displayName).toBe('string')
+
+    // Unbounded length blows out the banner layout.
+    await begin('comments', 'A'.repeat(80_000))
+    expect(onAdmissionBegan.mock.lastCall?.[0].displayName.length).toBeLessThanOrEqual(80)
+  })
+
+  it('throttles collaborator-driven subscribes without starving the host’s own flush', async () => {
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 10_000
+    })
+    const collaborator = makeCollaborationIdentity()
+    const buildProjection = vi.fn().mockResolvedValue({ ok: true })
+    const published: string[] = []
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection,
+      appendComment: vi.fn().mockResolvedValue({ ok: true }),
+      publishProjection: (sessionId: string) => {
+        published.push(sessionId)
+      },
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(
+          collaborator.identity.privateKey,
+          computeHumanCollaborationTranscriptHash(context)
+        )
+      )
+    })
+    const collaboratorKeys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: collaborator.ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: b64.decode(collaborator.nonceB64)
+    })
+
+    buildProjection.mockClear()
+    // Driven over the WIRE, which is where the abuse lives. Calling
+    // subscribeProjection directly would pass even with the limiter in the
+    // wrong place, and would prove nothing.
+    for (let seq = 1; seq <= 50; seq += 1) {
+      await runtime.routeEncryptedAction(
+        sealHumanCollaborationMessage({
+          keys: collaboratorKeys,
+          direction: 'collaboratorToHost',
+          sessionId: session.sessionId,
+          seq,
+          message: { msgId: seq, method: HUMAN_COLLABORATION_METHODS.subscribeProjection }
+        })
+      )
+    }
+    // 50 cheap frames used to buy 50 synchronous main-thread rebuilds — each one
+    // a full chat read, a roster resolve, up to 120 redacted rows and a
+    // whole-projection stringify per row the byte budget drops.
+    expect(buildProjection).toHaveBeenCalledTimes(1)
+
+    // And the half that must NOT change: the host's own publish loop calls the
+    // same method, so a limiter placed inside subscribeProjection would freeze
+    // the collaborator's transcript instead of protecting the host.
+    const beforeHostFlush = buildProjection.mock.calls.length
+    await runtime.publishProjectionUpdates()
+    expect(published).toEqual([session.sessionId])
+    expect(buildProjection).toHaveBeenCalledTimes(beforeHostFlush + 1)
+    await runtime.publishProjectionUpdates()
+    expect(buildProjection).toHaveBeenCalledTimes(beforeHostFlush + 2)
+  })
+})
+
+describe('a refused contribution reaches the collaborator', () => {
+  it('seals a rejection back to the sender instead of failing in silence', async () => {
+    // An append is a fire-and-forget NOTIFICATION — no reqId, no reply frame —
+    // and the transport catches a route failure into a host-only log line. So
+    // every refusal (too long, too fast, too many awaiting review) reached
+    // nobody: the collaborator's UI still read "Connected", no row appeared
+    // under "Your contributions" because the entry never reached the queue, and
+    // their text had already been cleared from the box. The runtime even writes
+    // these strings in the collaborator's own voice.
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 10_000
+    })
+    const collaborator = makeCollaborationIdentity()
+    const published: HumanCollaborationEncryptedFrame[] = []
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn(() => {
+        throw new HumanCollaborationDenialError(
+          'quota_exceeded',
+          'Comment rate limit exceeded, slow down.'
+        )
+      }),
+      publishEncryptedProjection: (_sessionId, frame) => {
+        published.push(frame)
+      },
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(
+          collaborator.identity.privateKey,
+          computeHumanCollaborationTranscriptHash(context)
+        )
+      )
+    })
+    const collaboratorKeys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: collaborator.ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: b64.decode(collaborator.nonceB64)
+    })
+
+    await expect(
+      runtime.routeEncryptedAction(
+        sealHumanCollaborationMessage({
+          keys: collaboratorKeys,
+          direction: 'collaboratorToHost',
+          sessionId: session.sessionId,
+          seq: 1,
+          message: {
+            msgId: 1,
+            method: HUMAN_COLLABORATION_METHODS.appendComment,
+            params: { clientMessageId: 'cm-refused', content: 'too fast' }
+          }
+        })
+      )
+    ).rejects.toThrow(/slow down/)
+
+    // The refusal went OUT, sealed to the sender's session.
+    expect(published).toHaveLength(1)
+    const opened = openHumanCollaborationFrame({
+      keys: collaboratorKeys,
+      expectedDirection: 'hostToCollaborator',
+      frame: published[0]
+    })
+    expect(opened.method).toBe(HUMAN_COLLABORATION_EVENTS.contributionRejected)
+    expect(opened.params).toMatchObject({
+      code: 'quota_exceeded',
+      // The words the collaborator actually needs to read.
+      message: 'Comment rate limit exceeded, slow down.',
+      // Which of their messages it was, so the client can give it back.
+      clientMessageId: 'cm-refused'
+    })
   })
 })

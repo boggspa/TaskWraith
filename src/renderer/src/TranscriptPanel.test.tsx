@@ -4,6 +4,7 @@ import { createRef } from 'react'
 import { TranscriptPanel } from './App'
 import { setSessionRoundExpanded } from './lib/ensembleRoundCards'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../shared/taskWraithCloseout'
+import { makeDeliveredExternalContribution } from '../../main/collaboration/HumanCollaboratorMessages'
 import type {
   ChatKind,
   ChatMessage,
@@ -2027,5 +2028,97 @@ describe('settled ask_user_question tombstone', () => {
     expect(html).toContain('Do Channels replace General chats?')
     // Nothing to hide when there is no reply row.
     expect(html).not.toContain('is-row-hidden')
+  })
+})
+
+describe('delivered external contribution rows', () => {
+  // The row `deliverExternalSeatTurns` writes when the host approves a
+  // contribution and the panel reaches that person's seat. It is `role:'system'`
+  // with its own metadata kind, and — before this was fixed — the desktop
+  // renderer had no branch for it, so an outsider's words were presented to the
+  // host as TaskWraith's own chrome. iOS already read `displayParticipantLabel`
+  // correctly, so this was a desktop parity gap, not a missing feature.
+  const delivered = makeDeliveredExternalContribution({
+    id: 'ext-1',
+    content: 'DELIVERED_EXTERNAL_MARKER please check the staging deploy.',
+    timestamp: '2026-01-01T00:00:02.000Z',
+    shareId: 'share-1',
+    collaboratorId: 'collab-1',
+    collaboratorDisplayName: 'Alex',
+    clientMessageId: 'cm-1',
+    sequence: 1
+  })
+
+  it('renders a delivered contribution under the author’s name, never as "System"', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      delivered
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('DELIVERED_EXTERNAL_MARKER')
+    // The three things the host actually reads. None can be satisfied by adding
+    // a predicate, a metadata field or a CSS class alone.
+    expect(html).toContain('Alex')
+    expect(html).not.toContain('<div class="message-meta">System</div>')
+    expect(html).toContain('External')
+    // Secondary: the untrusted tint that distinguishes a person's text from the
+    // app's own. Never a substitute for the assertions above.
+    expect(html).toContain('human-collaborator-comment')
+  })
+
+  it('never folds a contribution into the merged "N system notices" line', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      delivered,
+      {
+        id: 'sys-1',
+        role: 'system',
+        content: 'Blackboard updated.',
+        timestamp: '2026-01-01T00:00:03.000Z'
+      },
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    // The round-status line is itself a plain notice, so an adjacent pair used
+    // to merge and the contribution vanished behind a count.
+    expect(html).not.toContain('2 system notices')
+    expect(html).toContain('Alex')
+    expect(html).toContain('DELIVERED_EXTERNAL_MARKER')
+  })
+
+  it('says so when the sweep delivered it out of position', () => {
+    const swept = makeDeliveredExternalContribution({
+      id: 'ext-2',
+      content: 'SWEPT_MARKER late but landed.',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      shareId: 'share-1',
+      collaboratorId: 'collab-1',
+      collaboratorDisplayName: 'Alex',
+      clientMessageId: 'cm-2',
+      sequence: 2,
+      outOfPosition: true
+    })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          messages: [
+            { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+            swept
+          ],
+          virtualize: false
+        })}
+      />
+    )
+    // `outOfPosition` was written for this and read nowhere.
+    expect(html).toContain('Out of position')
   })
 })

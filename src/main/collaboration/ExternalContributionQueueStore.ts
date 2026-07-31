@@ -581,13 +581,34 @@ export class ExternalContributionQueueStore {
       .map(clone)
   }
 
-  /** Host declined it. The body is KEPT so it can be edited and requeued. */
+  /**
+   * Host declined it. The body is KEPT so it can be edited and requeued.
+   *
+   * Accepts an APPROVED entry too, as long as it has not reached the transcript
+   * yet. Approval is a release, not a delivery, and the gap between them is
+   * real — a muted seat holds an approved contribution indefinitely, and the
+   * host is offered Decline on exactly those rows. Requiring `queued` here made
+   * that button a silent no-op: the click did nothing, no audit row was
+   * written, the row stayed put, and unmuting later delivered the message the
+   * host believed they had refused.
+   *
+   * `materialised !== true` is the line that must not move. Once the row is in
+   * the transcript it has been seen and quoted into prompts, and unsaying it is
+   * not something this store can offer.
+   */
   deny(entryId: string, reason?: string, now = this.now()): ExternalContributionEntry | null {
     const entry = this.entries.find(
-      (candidate) => candidate.entryId === entryId && candidate.state === 'queued'
+      (candidate) =>
+        candidate.entryId === entryId &&
+        (candidate.state === 'queued' ||
+          (candidate.state === 'approved' && candidate.materialised !== true))
     )
     if (!entry) return null
     entry.state = 'denied'
+    // An approval that was withdrawn must not leave a materialisation flag
+    // behind — `listAwaitingMaterialisation` filters on state, but a stale
+    // `false` here would read as "still owed delivery" to anything that looks.
+    delete entry.materialised
     entry.resolvedAt = now
     if (reason && reason.trim()) entry.hostReason = reason.trim().slice(0, MAX_HOST_REASON_CHARS)
     this.persist()
@@ -623,7 +644,21 @@ export class ExternalContributionQueueStore {
     const chatIds = filter.chatIds?.length ? new Set(filter.chatIds) : null
     const affected: ExternalContributionEntry[] = []
     for (const entry of this.entries) {
-      if (entry.state !== 'queued') continue
+      // An approval that never reached the transcript dies with the trust that
+      // released it. Both callers are trust withdrawals — the share ended, or
+      // this person was revoked — and in either case the seat that would have
+      // delivered this can never resolve again: `externalSeatsForShare` stops
+      // emitting it, and a revoked pubkey cannot re-admit.
+      //
+      // Skipping it here strands it permanently. `approved` + unmaterialised is
+      // a state with exactly one exit (`markMaterialised`, reachable only
+      // through the seat filter that just refused it), `deny`/`sweep` skip it,
+      // `listQueued` hides it, and `isReapable` exempts it from every eviction
+      // path — so it sits there forever holding the plaintext body that the
+      // `delete entry.body` below exists to drop. That is the precise inverse
+      // of why revoke lapses at all.
+      const approvedButUndelivered = entry.state === 'approved' && entry.materialised !== true
+      if (entry.state !== 'queued' && !approvedButUndelivered) continue
       if (filter.shareId && entry.shareId !== filter.shareId) continue
       if (filter.collaboratorId && entry.collaboratorId !== filter.collaboratorId) continue
       if (chatIds && !chatIds.has(entry.chatId)) continue

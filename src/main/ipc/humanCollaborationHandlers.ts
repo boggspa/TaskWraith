@@ -740,6 +740,13 @@ export function registerHumanCollaborationHandlers(
             deps.sendToMainWindow('human-collaboration-collaborator-status', { connected }),
           onError: (err) =>
             deps.sendToMainWindow('human-collaboration-collaborator-status', { error: err.message }),
+          // A DISTINCT field, not `error`: the renderer forces the connection
+          // state to 'disconnected' on any `error`, and a refused contribution
+          // is not a dropped connection.
+          onContributionRejected: (info) =>
+            deps.sendToMainWindow('human-collaboration-collaborator-status', {
+              contributionRejected: info
+            }),
           log: (line) => console.warn(line)
         })
         humanCollaborationCollaboratorClient = client
@@ -828,6 +835,10 @@ export function registerHumanCollaborationHandlers(
           deps.sendToMainWindow('human-collaboration-collaborator-status', { connected }),
         onError: (err) =>
           deps.sendToMainWindow('human-collaboration-collaborator-status', { error: err.message }),
+        onContributionRejected: (info) =>
+          deps.sendToMainWindow('human-collaboration-collaborator-status', {
+            contributionRejected: info
+          }),
         log: (line) => console.warn(line)
       })
       humanCollaborationCollaboratorClient = client

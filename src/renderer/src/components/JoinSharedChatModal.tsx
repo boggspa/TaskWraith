@@ -12,6 +12,10 @@ import { PillButton } from './PillButton'
  * All transport/crypto lives in main (HumanCollaborationCollaboratorClient via
  * the human-collaboration-collaborator:* IPC); this is purely UI + orchestration.
  */
+/** Matches `requireBoundedText`'s bound on the host side, so a collaborator
+ *  never types text that is silently refused on arrival. */
+const MAX_CONTRIBUTION_CHARS = 8000
+
 type Step = 'paste' | 'connecting' | 'sas' | 'viewing'
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected'
 
@@ -26,6 +30,18 @@ export interface ParsedHumanCollaborationInvite {
   hostIdentityPubKeyB64?: string
 }
 
+/** A tool call as an external may see it — DERIVED scalars only, never a body.
+ *  Mirrors `HumanShareProjectionToolRow`; kept as a local shape because this
+ *  component may be talking to an older host that does not send it. */
+interface ProjectionToolRow {
+  name: string
+  category?: 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
+  failed?: boolean
+  target?: string
+  additions?: number
+  deletions?: number
+}
+
 interface ProjectionRow {
   id: string
   role: 'host' | 'assistant' | 'collaborator' | 'placeholder'
@@ -34,6 +50,27 @@ interface ProjectionRow {
   truncated: boolean
   timestamp: string
   sequence?: number
+  /** v2, additive. Absent on rows an older host produced — every branch on it
+   *  must fall back to `preview`, which is the field every host populates. */
+  kind?: 'message' | 'toolActivity' | 'system' | 'placeholder'
+  tools?: ProjectionToolRow[]
+  /** Which SEAT authored this — a model participant id, or a collaboratorId for
+   *  an external. Compared against `youAre` to tell self from other. */
+  authorSeatId?: string
+  /** Index into the shared hue palette. An INDEX, never a CSS string: this
+   *  value comes off the wire and lands in a class name, and a free-form string
+   *  would be an injection surface. */
+  colorIndex?: number
+}
+
+/** One seat in the panel, as an external may see it. */
+interface ProjectionSeat {
+  seatId: string
+  kind: 'model' | 'external'
+  label: string
+  order: number
+  colorIndex?: number
+  present?: boolean
 }
 interface Projection {
   title: string
@@ -43,6 +80,11 @@ interface Projection {
   rows: ProjectionRow[]
   participants: Array<{ collaboratorId: string; displayName: string; status: string }>
   totalRows: number
+  /** Which collaborator is receiving this projection. Without it nobody can
+   *  tell their own words from anyone else's. */
+  youAre?: string
+  /** The effective panel, so the seat strip can be drawn. */
+  roster?: ProjectionSeat[]
   /**
    * What became of the contributions THIS collaborator sent while the host has
    * review switched on. Viewer-scoped by main — never anybody else's — and
@@ -83,11 +125,30 @@ function pendingStatusLabel(entry: {
   return 'No longer pending'
 }
 
-function bubbleClass(role: ProjectionRow['role']): string {
+export function bubbleClass(role: ProjectionRow['role'], isOwn: boolean): string {
+  // Your own words read as YOUR bubbles; everyone else — the host, the models,
+  // the other collaborator — reads as named transcript output. Without
+  // `youAre` this distinction is unimplementable, which is why every
+  // collaborator row used to look identical no matter who wrote it.
+  if (isOwn) return 'message-bubble user join-projection-own'
   if (role === 'host') return 'message-bubble user'
   if (role === 'assistant') return 'message-bubble assistant'
   if (role === 'collaborator') return 'message-bubble system human-collaborator-comment'
   return 'message-bubble system join-projection-placeholder'
+}
+
+/**
+ * Accent class for a seat.
+ *
+ * Keyed on the palette INDEX, never a colour name off the wire — the index is
+ * the whole reason the projection carries a number here. An index with no rule
+ * simply gets no accent, so a ninth hue added upstream degrades quietly instead
+ * of injecting anything. Order mirrors CONTACT_COLOR_PALETTE.
+ */
+export function seatAccentClass(colorIndex?: number): string {
+  return typeof colorIndex === 'number' && Number.isInteger(colorIndex) && colorIndex >= 0 && colorIndex < 8
+    ? ` join-seat-color-${colorIndex}`
+    : ''
 }
 
 function asNonEmptyString(value: unknown): string | null {
@@ -196,6 +257,14 @@ export function JoinSharedChatModal({
   const [mode, setMode] = useState<'readOnly' | 'comments'>('comments')
   const [projection, setProjection] = useState<Projection | null>(null)
   const [comment, setComment] = useState('')
+  // A refusal is NOT a connection failure, so it gets its own slot rather than
+  // riding `error` (which the status listener pairs with 'disconnected').
+  const [contributionError, setContributionError] = useState<string | null>(null)
+  // The text of contributions still awaiting a host verdict, by clientMessageId.
+  // An append is a fire-and-forget notification — the host's refusal arrives
+  // later, on its own frame — so the words have to be held somewhere until
+  // then or there is nothing left to put back.
+  const inFlightRef = useRef(new Map<string, string>())
   // P2b: whether the next contribution is a structured "request host action".
   const [sendAsActionRequest, setSendAsActionRequest] = useState(false)
   // Slice 5: whether a persisted, reconnectable previous session exists.
@@ -234,6 +303,20 @@ export function JoinSharedChatModal({
         setError(payload.error)
         setConnectionState('disconnected')
       }
+      const rejected = payload.contributionRejected
+      if (rejected) {
+        setContributionError(rejected.message)
+        // Give them their words back. Only if the box is empty — they may have
+        // started typing something else while waiting, and clobbering that
+        // would be a second, worse version of the same bug.
+        const held = rejected.clientMessageId
+          ? inFlightRef.current.get(rejected.clientMessageId)
+          : undefined
+        if (held) {
+          setComment((current) => (current.trim() ? current : held))
+          inFlightRef.current.delete(rejected.clientMessageId as string)
+        }
+      }
     })
     return () => {
       off?.()
@@ -252,6 +335,8 @@ export function JoinSharedChatModal({
     setSasCode('')
     setProjection(null)
     setComment('')
+    setContributionError(null)
+    inFlightRef.current.clear()
     setBusy(false)
   }, [open])
 
@@ -435,17 +520,28 @@ export function JoinSharedChatModal({
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
     if (!text) return
-    setComment('')
+    const clientMessageId = crypto.randomUUID()
+    setContributionError(null)
     try {
       await window.api.humanCollaborationCollaboratorAppendComment({
         content: text,
+        clientMessageId,
         // P2b: send as a structured host-action request only when the share's
         // rules allow it AND the collaborator ticked the box. Main re-validates.
         ...(sendAsActionRequest && actionRequestsAvailable
           ? { intent: 'requestHostAction' as const }
           : {})
       })
+      // Cleared only after the send resolves — and held, because resolving
+      // means the frame left this machine, NOT that the host accepted it. The
+      // verdict arrives later on its own frame; until then these are the only
+      // copy of the words.
+      inFlightRef.current.set(clientMessageId, text)
+      setComment('')
     } catch (e) {
+      // Left in the box on purpose. Clearing first meant a 9 KB paste, or any
+      // second message sent inside the 750 ms rate limit, was destroyed and
+      // reported as sent.
       setError(e instanceof Error ? e.message : 'Could not send the comment.')
     }
   }, [comment, sendAsActionRequest, actionRequestsAvailable])
@@ -579,24 +675,93 @@ export function JoinSharedChatModal({
                 ? 'You are following this chat live. You can leave comments — the host decides what, if anything, goes to the AI.'
                 : 'You are following this chat live (view only). The host stays in control of the AI.'}
             </p>
+            {projection?.roster && projection.roster.length > 0 && (
+              /* The panel, so an external can see who is in the room and in
+                 what order — the same information the host reads off the chip
+                 strip. `seatDisabled` is deliberately absent from the wire:
+                 the host's private mute state is not a collaborator's business. */
+              <div className="join-seat-strip" aria-label="Panel">
+                {projection.roster
+                  .slice()
+                  .sort((a, b) => a.order - b.order)
+                  .map((seat) => {
+                    const isYou = Boolean(projection.youAre && seat.seatId === projection.youAre)
+                    return (
+                      <div
+                        key={seat.seatId}
+                        className={`join-seat${seat.kind === 'external' ? ' is-external' : ''}${
+                          isYou ? ' is-you' : ''
+                        }${seat.present === false ? ' is-away' : ''}${seatAccentClass(seat.colorIndex)}`}
+                        title={
+                          seat.kind === 'external'
+                            ? `${seat.label} — external collaborator`
+                            : seat.label
+                        }
+                      >
+                        <span className="join-seat-order">{seat.order}</span>
+                        <span className="join-seat-label">{isYou ? 'You' : seat.label}</span>
+                        {seat.kind === 'external' && !isYou && (
+                          <span className="join-seat-badge">External</span>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
+            )}
             <div className="join-projection-rows" ref={rowsRef}>
               {!projection || projection.rows.length === 0 ? (
                 <div className="join-projection-empty">Waiting for the host’s transcript…</div>
               ) : (
-                projection.rows.map((row) => (
-                  <div key={row.id} className="join-projection-row">
-                    <div className="join-projection-speaker">
-                      {row.speaker}
-                      {row.role === 'collaborator' && (
+                projection.rows.map((row) => {
+                  const isOwn = Boolean(
+                    projection.youAre && row.authorSeatId && row.authorSeatId === projection.youAre
+                  )
+                  return (
+                  <div
+                    key={row.id}
+                    className={`join-projection-row${isOwn ? ' is-own' : ''}`}
+                  >
+                    <div className={`join-projection-speaker${seatAccentClass(row.colorIndex)}`}>
+                      {isOwn ? 'You' : row.speaker}
+                      {row.role === 'collaborator' && !isOwn && (
                         <span className="message-meta-model-badge human-collaborator-badge">External</span>
                       )}
                     </div>
-                    <div className={bubbleClass(row.role)}>
-                      <MarkdownMessage content={row.preview} />
+                    <div className={bubbleClass(row.role, isOwn)}>
+                      {row.kind === 'toolActivity' && row.tools?.length ? (
+                        /* The structured form when the host speaks v2. `preview`
+                         * carries the same facts as text and is what an older
+                         * client (and the no-activities case) falls back to. */
+                        <ul className="join-projection-tools">
+                          {row.tools.map((tool, index) => (
+                            <li
+                              key={`${row.id}-tool-${index}`}
+                              className={`join-projection-tool${tool.failed ? ' is-failed' : ''}`}
+                            >
+                              <span className="join-projection-tool-name">{tool.name}</span>
+                              {tool.target && (
+                                <span className="join-projection-tool-target">{tool.target}</span>
+                              )}
+                              {(typeof tool.additions === 'number' ||
+                                typeof tool.deletions === 'number') && (
+                                <span className="join-projection-tool-diff">
+                                  +{tool.additions ?? 0}/−{tool.deletions ?? 0}
+                                </span>
+                              )}
+                              {tool.failed && (
+                                <span className="join-projection-tool-failed">failed</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <MarkdownMessage content={row.preview} />
+                      )}
                       {row.truncated && <span className="join-projection-truncated"> …(truncated)</span>}
                     </div>
                   </div>
-                ))
+                  )
+                })
               )}
             </div>
             {projection?.yourPending && projection.yourPending.length > 0 && (
@@ -610,6 +775,11 @@ export function JoinSharedChatModal({
               </div>
             )}
             {error && <div className="join-error" role="alert">{error}</div>}
+            {contributionError && (
+              <div className="join-error join-contribution-error" role="alert">
+                {contributionError}
+              </div>
+            )}
             {mode === 'comments' && actionRequestsAvailable && (
               <label className="join-action-request-toggle">
                 <input
@@ -636,6 +806,9 @@ export function JoinSharedChatModal({
                   }}
                   placeholder="Leave a comment for the host to review…"
                   rows={2}
+                  /* The host's own bound. Refusing here, where the text still
+                     exists, beats refusing after it has been sent and cleared. */
+                  maxLength={MAX_CONTRIBUTION_CHARS}
                 />
                 <PillButton
                   variant="primary"

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord, ToolActivity } from './store/types'
+import { makeDeliveredExternalContribution } from './collaboration/HumanCollaboratorMessages'
 import {
   buildChatMessageTranscript,
   buildChatMarkdownTranscript,
@@ -287,5 +288,34 @@ describe('buildChatMessageTranscript', () => {
     expect(estimateChatMessageTranscriptChars(chat([message({ content: result.text })]))).toBe(
       result.charCount
     )
+  })
+})
+
+describe('exporting a delivered external contribution', () => {
+  it('attributes it to its author and keeps the untrusted marking', () => {
+    // It fell through every `speakerLabel` case to 'TaskWraith notice', and the
+    // untrusted note was gated on the COMMENT kind only — so the exported
+    // record presented an outsider's words as the app's own, with nothing
+    // saying otherwise. Both are one-predicate misses of the same shape as the
+    // renderer's.
+    const result = buildChatMarkdownTranscript(
+      chat([
+        message({ id: 'u1', role: 'user', content: 'go' }),
+        makeDeliveredExternalContribution({
+          id: 'ext-1',
+          content: 'DELIVERED_MARKER ship it on friday',
+          timestamp: '2026-06-16T10:00:01.000Z',
+          shareId: 'share-1',
+          collaboratorId: 'collab-1',
+          collaboratorDisplayName: 'Alex',
+          clientMessageId: 'cm-1',
+          sequence: 1
+        })
+      ])
+    )
+    expect(result.markdown).toContain('DELIVERED_MARKER ship it on friday')
+    expect(result.markdown).toContain('Collaborator: Alex')
+    expect(result.markdown).not.toContain('TaskWraith notice')
+    expect(result.markdown).toContain('Note: external untrusted collaborator input.')
   })
 })

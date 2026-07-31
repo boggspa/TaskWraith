@@ -1262,6 +1262,40 @@ describe('withdrawing trust settles what is already queued', () => {
     expect(entry.lapseReason).toBe('revoked')
   })
 
+  it('lapses an APPROVED but undelivered contribution when its author is revoked', () => {
+    // Approval is a release, not a delivery, and revoking inside that gap used
+    // to STRAND the entry: `lapseAll` skipped it for not being 'queued', and
+    // from there nothing could reach it — the seat that would deliver it stops
+    // resolving, deny/sweep/listQueued all skip it, and `isReapable` exempts it
+    // from every eviction path. It sat in the queue file indefinitely, holding
+    // the plaintext body of someone whose access had just been withdrawn — the
+    // exact thing lapsing exists to prevent.
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'approved, then the plug is pulled'
+    })
+    const queued = queue.listQueued('chat-1')[0]
+    expect(service.approveExternalContribution(queued.entryId)?.state).toBe('approved')
+    // The gap this test is about: released for the next seat turn, not yet
+    // written to the transcript.
+    expect(queue.listAwaitingMaterialisation()).toHaveLength(1)
+
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('revoked')
+    // The two consequences that made this more than untidy: the withdrawn
+    // person's words are off the disk, and the message can never now arrive.
+    expect(entry.body).toBeUndefined()
+    expect(queue.listAwaitingMaterialisation()).toEqual([])
+  })
+
   it('does not wipe the queue when the service has no queue configured', () => {
     // lapseAll refuses a predicate-free filter, but the optional-chaining guard
     // is what keeps a review-less ChatService from throwing here at all.
@@ -1350,6 +1384,33 @@ describe('an external join converts the thread to a panel', () => {
     expect(service.applyPendingExternalJoinConversion('chat-1')).toBe(true)
 
     expect(store.setChatKind).toHaveBeenCalled()
+    expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
+  })
+
+  it('does NOT apply a deferred conversion once the external has already left', () => {
+    // The marker is written while the chat is busy and drained at the next
+    // terminal run — of ANY run, surviving a restart — so the gap between the
+    // two can be long. Nothing clears the marker when the person leaves inside
+    // it: `reconcileChatKindForExternalDeparture` bails because the kind is
+    // still 'single'. Without a liveness re-check the host's solo thread
+    // silently became a panel they never asked for, minutes after the only
+    // collaborator was removed, and kept `externalJoinConverted` forever.
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId, collaboratorId } = admitted(service)
+    service.convertChatForExternalJoin({ chatId: 'chat-1', shareId, collaboratorId })
+
+    // Removed while the run was still streaming, then the run ends.
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+    chats.set('chat-1', { ...chats.get('chat-1')!, runs: [] })
+
+    expect(service.applyPendingExternalJoinConversion('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+    // The marker still clears unconditionally — a stale plan must not retry on
+    // every subsequent turn forever.
     expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
   })
 

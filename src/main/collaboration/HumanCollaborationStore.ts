@@ -809,7 +809,14 @@ const RESERVED_DISPLAY_NAMES = new Set([
   'pi'
 ])
 
-function normalizeDisplayName(value: string): string {
+/**
+ * The ONE normalizer for a collaborator-supplied name. Exported because the
+ * handshake needs it too: a reconnect never reaches `consumeInvite`, so without
+ * this the raw client string reached the host's admission banner — the single
+ * surface where the host makes the admit/reject call, and the one place a
+ * reserved name like "TaskWraith" must never be presentable.
+ */
+export function normalizeDisplayName(value: string): string {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   const safe = trimmed.replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').slice(0, 80)
   if (!safe) return 'Collaborator'

@@ -117,7 +117,7 @@ describe('buildHumanShareProjection', () => {
       expect.objectContaining({
         role: 'placeholder',
         kind: 'toolActivity',
-        preview: '',
+        preview: 'shell',
         tools: [{ name: 'shell', category: 'shell', failed: false }]
       }),
       expect.objectContaining({
@@ -427,6 +427,63 @@ describe('buildHumanShareProjection v2 vocabulary', () => {
       kind: 'toolActivity',
       tools: [{ name: 'run_shell', category: 'shell', failed: false }]
     })
+    // The ONLY collaborator surface renders `row.preview` (and a v2 client
+    // renders `tools`); an empty preview IS an empty bubble. Pinned together
+    // with the three `not.toContain` assertions above, which are what prove
+    // the row stayed a whitelist and did not become the body.
+    expect(projection.rows[0].preview.trim()).not.toBe('')
+    expect(projection.rows[0].preview).toContain('run_shell')
+  })
+
+  it('a tool row with no recorded activities is readable, not an empty bubble', () => {
+    // A real production shape, not a defensive edge case: a sub-thread return
+    // card is `role: 'tool'` with no `toolActivities`, and so is a tool message
+    // whose first activity has not landed yet. `tools` is omitted entirely for
+    // these, so a client that draws chips from `row.tools` draws NOTHING —
+    // which is why the fallback has to live here, main-side, and not in the
+    // renderer.
+    const projection = buildHumanShareProjection(
+      chatWith([
+        {
+          id: 'subthread-return-1',
+          role: 'tool',
+          content: 'Sub-thread returned with a summary the host can read.',
+          timestamp: '2026-06-25T00:00:00.000Z',
+          metadata: { kind: 'subThreadReturn' }
+        }
+      ]),
+      share as never
+    )
+    const row = projection.rows[0]
+    expect(row.preview.trim()).not.toBe('')
+    // No empty array on the wire — it is truthy, and would send a v2 client
+    // down the chip branch with nothing to draw.
+    expect('tools' in row).toBe(false)
+    // The host-side body still does not cross.
+    expect(JSON.stringify(projection)).not.toContain('Sub-thread returned with')
+  })
+
+  it('says how many tool calls it is not showing rather than truncating in silence', () => {
+    const projection = buildHumanShareProjection(
+      chatWith([
+        {
+          id: 'many-tools',
+          role: 'tool',
+          content: '',
+          timestamp: '2026-06-25T00:00:00.000Z',
+          toolActivities: Array.from({ length: 30 }, (_, i) => ({
+            id: `act-${i}`,
+            toolName: `tool_${i}`,
+            displayName: `tool_${i}`,
+            category: 'read' as const,
+            status: 'success' as const
+          }))
+        }
+      ]),
+      share as never
+    )
+    expect(projection.rows[0].tools).toHaveLength(24)
+    expect(projection.rows[0].preview).toContain('…and 6 more')
   })
 
   it('marks a failed tool row and suppresses its claimed counts', () => {

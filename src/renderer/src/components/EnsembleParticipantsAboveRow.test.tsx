@@ -1409,7 +1409,10 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
 
     it('yields index-aligned grid spans that fill each 60-track row exactly', () => {
-      for (let count = 6; count <= 30; count++) {
+      // Past 30 (MAX_ENSEMBLE_PARTICIPANTS) on purpose: the spans are keyed off
+      // models PLUS externals now, and external seats are not capped, so counts
+      // above the model limit reach this helper for the first time.
+      for (let count = 6; count <= 60; count++) {
         const spans = computeEnsembleChipGridSpans(count)
         expect(spans.length, `count ${count}`).toBe(count)
         // Every span divides the track count exactly (3→20, 4→15, 5→12)…
@@ -1453,6 +1456,67 @@ describe('EnsembleParticipantsAboveRow', () => {
     // 7 participants → 3 + 4: three span-20 chips then four span-15 chips.
     expect(html.match(/grid-column:span 20/g) || []).toHaveLength(3)
     expect(html.match(/grid-column:span 15/g) || []).toHaveLength(4)
+  })
+
+  it('spans every chip when an external seat is what pushed the strip into the grid', () => {
+    // Five models is the FLEX strip. One human joining makes six seats, which is
+    // the wrapped 60-track grid — so all six chips, the human's included, must
+    // carry a span. A span-less chip takes one track of sixty.
+    //
+    // At HEAD the mode was chosen on the merged count while the spans were
+    // computed on the model-only count, so this configuration wrapped with NO
+    // spans at all and every chip, models included, collapsed to a sliver.
+    const chat = makeChat(
+      ['claude', 'codex', 'kimi', 'grok', 'cursor'].map((provider, index) =>
+        makeParticipant({
+          id: `ensemble-${provider}`,
+          provider: provider as EnsembleParticipant['provider'],
+          role: `Seat ${index + 1}`,
+          order: index + 1
+        })
+      )
+    )
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        externalSeats={[{ shareId: 'share-1', collaboratorId: 'collab-1', displayName: 'Dana' }]}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    // The anti-cheat: making the strip stop wrapping would also green a naive
+    // span assertion. It must wrap AND span.
+    expect(html).toContain('is-wrapped')
+    // 6 seats → 3 + 3 → six span-20 chips, the external among them.
+    expect(html.match(/grid-column:span 20/g) || []).toHaveLength(6)
+    expect(html).toMatch(/ensemble-above-chip--external"[^>]*style="[^"]*grid-column:span 20/)
+  })
+
+  it('stacks the control rail on the same count that wraps the chips', () => {
+    // The rail exists to stop the columns jumping when the strip wraps, so it
+    // has to switch on the same number. Gated on models only, a 5-model panel
+    // plus one human wrapped the chips and left the rail in its single-row form.
+    const chat = makeChat(
+      ['claude', 'codex', 'kimi', 'grok', 'cursor'].map((provider, index) =>
+        makeParticipant({
+          id: `ensemble-${provider}`,
+          provider: provider as EnsembleParticipant['provider'],
+          role: `Seat ${index + 1}`,
+          order: index + 1
+        })
+      )
+    )
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        externalSeats={[{ shareId: 'share-1', collaboratorId: 'collab-1', displayName: 'Dana' }]}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    expect(html).toContain('ensemble-above-row-controls is-stacked')
   })
 
   it('keeps the content-width flex layout (no spans) below the wrap threshold', () => {
