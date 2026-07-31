@@ -1,19 +1,6 @@
 import type { AgenticServiceId, AgentApprovalAction } from './store/types'
-export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
-  shellCommands: 'Shell commands',
-  fileChanges: 'File changes',
-  externalPublish: 'External publishing',
-  mcpTools: 'Tool calls',
-  subThreadDelegation: 'Sub-thread delegation',
-  canvasInteraction: 'Canvas interaction',
-  sketchCanvas: 'Sketch Canvas',
-  meshCanvas: 'Mesh Canvas',
-  crossThreadRead: 'Cross-thread read',
-  threadMessage: 'Thread message',
-  mediaEditing: 'Media editing',
-  mediaRecording: 'Media recording',
-  canvasEval: 'Canvas eval'
-}
+import { AGENTIC_SERVICE_LABELS } from '../shared/agenticServiceLabels'
+export { AGENTIC_SERVICE_LABELS }
 
 export function agenticServiceBlockedMessage(service: AgenticServiceId): string {
   return `${AGENTIC_SERVICE_LABELS[service]} blocked by TaskWraith settings.`

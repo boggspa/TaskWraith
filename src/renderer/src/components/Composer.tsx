@@ -1,4 +1,5 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
 import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
@@ -5570,7 +5571,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           variant="secondary"
                           size="compact"
                           type="button"
-                          title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
+                          title={
+                            pendingAgentApproval.service
+                              ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for the rest of this app session. Restarting the app clears the grant.`
+                              : 'Allow matching requests for the rest of this app session. Restarting the app clears the grant.'
+                          }
                           onClick={() =>
                             void handleAgentApprovalAction(
                               pendingAgentApproval.id,
@@ -5578,7 +5583,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )
                           }
                         >
-                          Allow for session
+                          {pendingAgentApproval.service
+                            ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for session`
+                            : 'Allow for session'}
                         </PillButton>
                       )}
                       {(pendingAgentApproval.actions || []).includes(
@@ -5589,7 +5596,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           variant="secondary"
                           size="compact"
                           type="button"
-                          title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
+                          title={
+                            pendingAgentApproval.service
+                              ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} for this workspace. The grant persists until revoked in Approvals & Grants.`
+                              : 'Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants.'
+                          }
                           onClick={() =>
                             void handleAgentApprovalAction(
                               pendingAgentApproval.id,
@@ -5597,7 +5608,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )
                           }
                         >
-                          Allow in workspace
+                          {pendingAgentApproval.service
+                            ? `Allow ${AGENTIC_SERVICE_LABELS[pendingAgentApproval.service]} in workspace`
+                            : 'Allow in workspace'}
                         </PillButton>
                       )}
                     </div>
