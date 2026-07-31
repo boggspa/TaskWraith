@@ -176,6 +176,7 @@ import { ThinkingIndicator } from './AppChromeSymbols'
 import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
 import {
   humanCollaboratorMetadata,
+  isDeliveredExternalContribution,
   isHumanCollaboratorComment
 } from '../../../main/collaboration/HumanCollaboratorMessages'
 import { TranscriptUserMessageGutter } from './TranscriptUserMessageGutter'
@@ -957,6 +958,11 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     msg.role === 'system' &&
     !isEnsembleRoundHeaderMessage(msg) &&
     !isHumanCollaboratorComment(msg) &&
+    // A DELIVERED contribution is a person's words, not app chrome. Left in,
+    // it folds to an anonymous "System" one-liner and — next to any other
+    // plain notice, which the round-status line always is — disappears
+    // entirely behind "System · 2 system notices".
+    !isDeliveredExternalContribution(msg) &&
     !isSubThreadDelegationMessage(msg) &&
     !isSubThreadReturnMessage(msg) &&
     !isEnsembleFanoutResultMessage(msg) &&
@@ -3753,6 +3759,16 @@ export const TranscriptPanel = memo(
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
+            // Deliberately a SEPARATE const rather than widening the one above:
+            // `isCollaboratorComment` also gates the "Insert as draft" promote
+            // action, and offering that on a contribution that has ALREADY been
+            // delivered invites the host to re-inject it as their own prompt.
+            const isDeliveredExternal = isDeliveredExternalContribution(msg)
+            const deliveredExternalName =
+              (isDeliveredExternal &&
+                typeof msg.metadata?.collaboratorDisplayName === 'string' &&
+                msg.metadata.collaboratorDisplayName) ||
+              'Collaborator'
             const isToolActivityStack = msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0
             const hasToolActivitiesForActions = (msg.toolActivities?.length || 0) > 0
             const isParticipantHealth = msg.metadata?.kind === 'ensembleParticipantHealth'
@@ -3841,7 +3857,7 @@ export const TranscriptPanel = memo(
                   ? 'fan-out result'
                 : isGuestReply
                   ? 'guest participant message'
-                  : isCollaboratorComment
+                  : isCollaboratorComment || isDeliveredExternal
                     ? 'collaborator message'
                     : msg.role === 'tool'
                       ? 'tool message'
@@ -4443,7 +4459,11 @@ export const TranscriptPanel = memo(
                       isReturnCard ? 'subthread-return-message' : ''
                     } ${isDelegationCard ? 'subthread-delegation-message' : ''}${
                       isGuestReply ? ' guest-participant-reply-message' : ''
-                    }${isCollaboratorComment ? ' human-collaborator-comment-message' : ''}${
+                    }${
+                      isCollaboratorComment || isDeliveredExternal
+                        ? ' human-collaborator-comment-message'
+                        : ''
+                    }${
                       isTaskWraithCloseout ? ' taskwraith-closeout-message' : ''
                     }`}
                   >
@@ -4467,6 +4487,36 @@ export const TranscriptPanel = memo(
                       }
                       if (msg.role === 'error') {
                         return <div className="message-meta">Error</div>
+                      }
+                      if (isDeliveredExternal) {
+                        // `humanCollaboratorMetadata` returns null for this kind,
+                        // so the name is read off the message directly. Label +
+                        // badge as separate elements, not the flat
+                        // "Alex / External" string `displayParticipantLabel`
+                        // carries: the caution tint lives on the badge, and
+                        // flattening it loses exactly the signal it exists for.
+                        return (
+                          <div className="message-meta human-collaborator-meta">
+                            <span className="message-meta-label">{deliveredExternalName}</span>
+                            <span
+                              className="message-meta-model-badge human-collaborator-badge"
+                              title="External, untrusted collaborator contribution — you approved it, and it was delivered at this seat's turn"
+                            >
+                              External
+                            </span>
+                            {msg.metadata?.outOfPosition === true && (
+                              /* The round ended before this seat's position, so
+                               * the end-of-round sweep delivered it. Say so,
+                               * rather than implying the panel reached them. */
+                              <span
+                                className="message-meta-model-badge human-collaborator-badge"
+                                title="The round ended before this seat's turn; delivered by the end-of-round sweep."
+                              >
+                                Out of position
+                              </span>
+                            )}
+                          </div>
+                        )
                       }
                       if (isCollaboratorComment) {
                         return (
@@ -4761,7 +4811,7 @@ export const TranscriptPanel = memo(
                         return (
                           <div
                             className={`message-bubble ${
-                              isCollaboratorComment
+                              isCollaboratorComment || isDeliveredExternal
                                 ? 'system human-collaborator-comment'
                                 : isGuestReply
                                   ? 'assistant guest-participant-reply'
@@ -4775,7 +4825,13 @@ export const TranscriptPanel = memo(
                                       event,
                                       msg,
                                       msg.content || '',
-                                      `${isGuestReply ? 'guest participant' : msg.role} message`
+                                      `${
+                                        isGuestReply
+                                          ? 'guest participant'
+                                          : isDeliveredExternal
+                                            ? 'collaborator'
+                                            : msg.role
+                                      } message`
                                     )
                                 : undefined
                             }

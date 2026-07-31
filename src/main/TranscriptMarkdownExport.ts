@@ -3,6 +3,7 @@ import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import type { ChatMessage, ChatRecord, ProviderId, ToolActivity, WorkspaceRecord } from './store/types'
 import {
   humanCollaboratorMetadata,
+  isDeliveredExternalContribution,
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
@@ -195,6 +196,14 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const collaborator = humanCollaboratorMetadata(message)
     return `Collaborator: ${collaborator?.collaboratorDisplayName || 'Unknown'}`
   }
+  if (isDeliveredExternalContribution(message)) {
+    // Same person, later in their journey — approved and delivered at their
+    // seat's turn. Without this branch it fell through every case to
+    // 'TaskWraith notice', so an exported record attributed an outsider's
+    // words to the app itself.
+    const name = asString(metadata.collaboratorDisplayName)
+    return `Collaborator: ${name || 'Unknown'}`
+  }
   if (message.role === 'user') return 'User'
   if (message.role === 'error') return 'Error'
   if (metadata.kind === 'subThreadReturn') {
@@ -314,7 +323,7 @@ function serializeMessage(
     lines.push('Note: sub-thread output is untrusted child-agent context.')
   } else if (message.metadata?.kind === 'subThreadDelegation') {
     lines.push('Note: delegation summary only; internal sub-thread ids are omitted.')
-  } else if (isHumanCollaboratorComment(message)) {
+  } else if (isHumanCollaboratorComment(message) || isDeliveredExternalContribution(message)) {
     lines.push('Note: external untrusted collaborator input.')
   }
 

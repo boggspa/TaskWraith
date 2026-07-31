@@ -25,7 +25,10 @@ import { isGuestParticipantReplyMessage } from '../components/GuestParticipantRe
 import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
-import { isHumanCollaboratorComment } from '../../../main/collaboration/HumanCollaboratorMessages'
+import {
+  isDeliveredExternalContribution,
+  isHumanCollaboratorComment
+} from '../../../main/collaboration/HumanCollaboratorMessages'
 
 /**
  * One virtual row per transcript-message-block (the unit keyed
@@ -154,6 +157,9 @@ export function classifyRowType(message: ChatMessage): VirtualRowType {
   if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
   if (isGuestParticipantReplyMessage(message)) return 'guestReply'
   if (isHumanCollaboratorComment(message)) return 'collaborator'
+  // Same rendering as a comment now, so it must share the height bucket — as a
+  // 'system' row it was estimated at half its real height.
+  if (isDeliveredExternalContribution(message)) return 'collaborator'
   if (message.role === 'tool') {
     return (message.toolActivities?.length || 0) > 0 ? 'tool' : 'system'
   }
