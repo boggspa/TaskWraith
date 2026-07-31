@@ -19247,12 +19247,58 @@ async function canUseClaudeSdkTool(
   }
   if (nativeSubAgentDecision) return nativeSubAgentDecision
   if (approvalIdentity.kind === 'provider-native') {
-    return {
-      behavior: 'deny',
-      message:
-        `Claude native tool ${toolName || 'tool'} is not declared for this catalog-only seat. ` +
-        'Use the exact namespaced TaskWraith MCP tool instead.'
+    // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
+    // run the shared canonical workspace preflight. Native FS calls whose paths
+    // resolve INSIDE the active workspace are allowed again (reads directly;
+    // writes routed through the agentic-service ledger below); out-of-workspace
+    // paths are denied. The Claude Agent SDK runs tools with cwd=workspace but
+    // provides no hard filesystem/egress sandbox, so native shell stays fail-
+    // closed here (runtimeSandboxed:false) — the namespaced broker
+    // run_shell_command, which IS workspace-bounded, remains available.
+    //
+    // `provider` is REQUIRED by the 1.9.2 gate, which refuses to resolve a bare
+    // native alias without an adapter identity; the pre-1.9.2 call site omitted
+    // it. An unclassifiable native name still falls back to the broker-only
+    // containment message via the mapper's `not_applicable` arm.
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      provider: 'claude',
+      toolName,
+      rawToolCall: updatedInput,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      runtimeSandboxed: false
+    })
+    const nativeDecision = classifyNativeWorkspacePreflightDecision(
+      'Claude',
+      toolName,
+      nativeWorkspacePreflight
+    )
+    if (nativeDecision.action === 'deny') {
+      return { behavior: 'deny', message: nativeDecision.message }
     }
+    if (nativeDecision.action === 'allow') {
+      return { behavior: 'allow', updatedInput }
+    }
+    const nativeWorkspaceAllowed = await requestAgenticServiceApproval(
+      sender,
+      'claude',
+      nativeDecision.service,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      {
+        method: 'claude/canUseTool',
+        title:
+          nativeDecision.service === 'shellCommands'
+            ? 'Approve Claude shell command'
+            : 'Approve Claude file change',
+        body: toolName,
+        runId: route.appRunId
+      }
+    )
+    if (!claudeRunAcceptsTools()) {
+      return denyInactiveRun()
+    }
+    return nativeWorkspaceAllowed
+      ? { behavior: 'allow', updatedInput }
+      : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
   }
   // Auto-allow side-effect-free TaskWraith tools before the agentic-
   // service gate. The MCP dispatcher already skips approval for
