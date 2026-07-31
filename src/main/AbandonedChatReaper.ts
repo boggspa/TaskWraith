@@ -50,6 +50,14 @@ export interface AbandonedReapContext {
   parentChatIds?: ReadonlySet<string>
   /** The just-created chat in a create-time replace — never reap it. */
   keepChatId?: string
+  /**
+   * "One survivable New Chat" quota: after the predicate pass, keep the newest
+   * `survivorCount` reapable chats (createdAt desc) OUT of the reap list.
+   * 0/undefined = current behavior (no survivors). The quota is evaluated only
+   * on chats the predicate ALREADY deemed reapable, so the protection can
+   * never be wasted on a chat another guard would have kept anyway.
+   */
+  survivorCount?: number
   /** True iff the ensemble roster is an untouched default (safe to reap). When
    *  omitted, ensemble chats are NEVER reaped (conservative default). */
   isDefaultEnsemble?: (chat: ChatRecord) => boolean
@@ -183,7 +191,11 @@ export function reapAbandonedChats(
     workflowChatIds: deps.getWorkflowChatIds(),
     scheduledChatIds: deps.getScheduledChatIds(),
     sharedChatIds: deps.getSharedChatIds?.() ?? new Set(),
-    keepChatId: renderer.keepChatId
+    keepChatId: renderer.keepChatId,
+    // "One survivable New Chat": the just-created chat (keepChatId) plus the
+    // single newest older draft survive a create-time sweep; a 2nd+ older
+    // draft is reaped — extending the current replace behavior by exactly one.
+    survivorCount: 1
   })
   const toReap = limit >= 0 ? ids.slice(0, limit) : ids
   for (const id of toReap) deps.deleteChat(id)
@@ -210,9 +222,27 @@ export function reapableAbandonedChatIds(
 ): string[] {
   const parentChatIds = ctx.parentChatIds ?? deriveParentChatIds(chats)
   const merged: AbandonedReapContext = { ...ctx, parentChatIds }
-  const ids: string[] = []
+  const reapable: ChatRecord[] = []
   for (const chat of chats) {
-    if (isReapableAbandonedChat(chat, merged)) ids.push(chat.appChatId)
+    if (isReapableAbandonedChat(chat, merged)) reapable.push(chat)
   }
-  return ids
+  const survivorCount = Math.max(0, Math.floor(ctx.survivorCount ?? 0))
+  if (survivorCount > 0) {
+    // Keep the newest `survivorCount` reapable chats alive (createdAt desc,
+    // appChatId desc as a deterministic tie-break) — the "one survivable New
+    // Chat" quota. Everything older stays on the reap list.
+    const survivors = new Set(
+      [...reapable]
+        .sort(
+          (a, b) =>
+            (typeof b.createdAt === 'number' ? b.createdAt : 0) -
+              (typeof a.createdAt === 'number' ? a.createdAt : 0) ||
+            b.appChatId.localeCompare(a.appChatId)
+        )
+        .slice(0, survivorCount)
+        .map((chat) => chat.appChatId)
+    )
+    return reapable.filter((chat) => !survivors.has(chat.appChatId)).map((chat) => chat.appChatId)
+  }
+  return reapable.map((chat) => chat.appChatId)
 }

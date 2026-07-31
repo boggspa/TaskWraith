@@ -152,6 +152,54 @@ describe('isReapableAbandonedChat — archived + age gate', () => {
   })
 })
 
+describe('reapableAbandonedChatIds — survivorCount quota ("one survivable New Chat")', () => {
+  it('defaults to zero survivors (back-compat: every reapable chat is listed)', () => {
+    const a = chat({ appChatId: 'a', createdAt: 1000 })
+    const b = chat({ appChatId: 'b', createdAt: 2000 })
+    expect(reapableAbandonedChatIds([a, b])).toEqual(['a', 'b'])
+    expect(reapableAbandonedChatIds([a, b], { survivorCount: 0 })).toEqual(['a', 'b'])
+  })
+
+  it('keeps the newest reapable chat and reaps the older ones', () => {
+    const oldest = chat({ appChatId: 'oldest', createdAt: 1000 })
+    const middle = chat({ appChatId: 'middle', createdAt: 2000 })
+    const newest = chat({ appChatId: 'newest', createdAt: 3000 })
+    expect(reapableAbandonedChatIds([oldest, middle, newest], { survivorCount: 1 })).toEqual([
+      'oldest',
+      'middle'
+    ])
+  })
+
+  it('survives everything when reapable count <= survivorCount', () => {
+    const only = chat({ appChatId: 'only', createdAt: 1000 })
+    expect(reapableAbandonedChatIds([only], { survivorCount: 1 })).toEqual([])
+    expect(reapableAbandonedChatIds([], { survivorCount: 1 })).toEqual([])
+  })
+
+  it('coexists with keepChatId: the just-created chat plus one survivor stay', () => {
+    const a = chat({ appChatId: 'a', createdAt: 1000 }) // oldest ⇒ reaped
+    const b = chat({ appChatId: 'b', createdAt: 2000 }) // newest non-keep ⇒ survivor
+    const c = chat({ appChatId: 'c', createdAt: 3000 }) // just created ⇒ keep
+    expect(reapableAbandonedChatIds([a, b, c], { keepChatId: 'c', survivorCount: 1 })).toEqual(['a'])
+  })
+
+  it('breaks createdAt ties deterministically by appChatId (desc)', () => {
+    const a = chat({ appChatId: 'a', createdAt: 1000 })
+    const b = chat({ appChatId: 'b', createdAt: 1000 })
+    expect(reapableAbandonedChatIds([a, b], { survivorCount: 1 })).toEqual(['a'])
+    expect(reapableAbandonedChatIds([b, a], { survivorCount: 1 })).toEqual(['a'])
+  })
+
+  it('never spends the survivor slot on an already-protected chat', () => {
+    // The quota is evaluated on chats the predicate ALREADY deemed reapable,
+    // so a pinned (protected) newest chat cannot consume the slot.
+    const pinned = chat({ appChatId: 'pinned', createdAt: 3000, pinned: true })
+    const old = chat({ appChatId: 'old', createdAt: 1000 })
+    const mid = chat({ appChatId: 'mid', createdAt: 2000 })
+    expect(reapableAbandonedChatIds([pinned, old, mid], { survivorCount: 1 })).toEqual(['old'])
+  })
+})
+
 describe('reapableAbandonedChatIds + deriveParentChatIds', () => {
   it('derives parent ids and protects parents from reaping', () => {
     const parent = chat({ appChatId: 'parent', messages: [] })
@@ -169,7 +217,7 @@ describe('reapableAbandonedChatIds + deriveParentChatIds', () => {
 })
 
 describe('reapAbandonedChats (orchestration)', () => {
-  it('deletes exactly the reapable ids and protects everything else', () => {
+  it('deletes exactly the reapable ids, protects everything else, and keeps one survivable New Chat', () => {
     const kept = chat({ appChatId: 'kept' }) // the just-created chat
     const started = chat({ appChatId: 'started', messages: [{} as never] })
     const wf = chat({ appChatId: 'wf' }) // backs a workflow
@@ -177,8 +225,8 @@ describe('reapAbandonedChats (orchestration)', () => {
     const drafting = chat({ appChatId: 'drafting' }) // unsent composer text
     const active = chat({ appChatId: 'active' }) // open in a pane
     const ensemble = chat({ appChatId: 'ens', chatKind: 'ensemble', title: 'New Ensemble' })
-    const tombstone1 = chat({ appChatId: 't1' })
-    const tombstone2 = chat({ appChatId: 't2' })
+    const tombstone1 = chat({ appChatId: 't1', createdAt: 900 }) // older ⇒ reaped
+    const tombstone2 = chat({ appChatId: 't2', createdAt: 1100 }) // newest ⇒ the 1 survivor
 
     const deleted: string[] = []
     const reaped = reapAbandonedChats(
@@ -191,9 +239,10 @@ describe('reapAbandonedChats (orchestration)', () => {
       { keepChatId: 'kept', draftChatIds: ['drafting'], protectedChatIds: ['active'] }
     )
 
-    // Only the two genuine tombstones are reaped; ensemble is never reaped here.
-    expect(reaped.sort()).toEqual(['t1', 't2'])
-    expect(deleted.sort()).toEqual(['t1', 't2'])
+    // t1 (older) is reaped; t2 (newest) survives per the "one survivable New
+    // Chat" create-time quota; ensemble is never reaped here.
+    expect(reaped).toEqual(['t1'])
+    expect(deleted).toEqual(['t1'])
   })
 
   it('caps the burst at `limit`, leaving the rest for the next create', () => {
