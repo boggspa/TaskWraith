@@ -9542,6 +9542,48 @@ Next action:
       expect(queue.materialised).toEqual(['entry-1'])
     })
 
+    it('never appends a second row for a contribution already in the transcript', async () => {
+      // The crash-recovery case the code exists to handle. The chat store
+      // fsyncs and rethrows; the queue's persist neither fsyncs nor rethrows,
+      // so the only asymmetric outcome is row-on-disk with the queue still
+      // saying materialised:false. On relaunch the entry comes back for
+      // delivery — and without the id check a second row lands under the SAME
+      // id, scrambling the id-keyed transcript, showing the message twice to
+      // every collaborator, and burning two slots of the per-prompt budget.
+      const queue = queueStub([entry()])
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      // Stand in for "the row was written, the mark was lost".
+      initialChat.messages = [
+        {
+          id: 'external-row-1',
+          role: 'system',
+          content: 'please check the migration',
+          timestamp: '2026-07-31T00:00:00.000Z',
+          metadata: { kind: 'externalSeatTurn' }
+        } as never
+      ]
+      const harness = makeHarness({
+        initialChat,
+        externalContributionQueue: queue as never,
+        resolveExternalSeats: () => [
+          { shareId: 'share-1', collaboratorId: 'collab-1', displayName: 'Alex', seatOrder: 1 }
+        ]
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+      await vi.waitFor(() => expect(queue.materialised).toEqual(['entry-1']))
+
+      // Exactly one row with that id, and the queue is reconciled rather than
+      // left to retry the same entry at every future boundary.
+      const rows = harness.chat.messages.filter((m) => m.id === 'external-row-1')
+      expect(rows).toHaveLength(1)
+    })
+
     it('does nothing at all when the chat has no externals', async () => {
       // The overwhelmingly common case: both deps absent, behaviour identical
       // to before S16.

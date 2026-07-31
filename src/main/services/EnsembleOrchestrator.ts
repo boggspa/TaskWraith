@@ -16941,45 +16941,70 @@ export class EnsembleOrchestrator {
       .sort((a, b) => a.sequence - b.sequence)
     if (due.length === 0) return
 
+    // THE ID CHECK IS THE DUPLICATE GUARD, and it has to be real rather than
+    // asserted. An earlier version of this comment claimed the deterministic
+    // message id prevented double delivery; nothing implemented that, while the
+    // same guard sits 150 lines below for the compaction card.
+    //
+    // The window is narrow but one-directional, which is what makes it worth
+    // closing. The chat store fsyncs and RETHROWS, so a failed transcript write
+    // aborts before anything is marked. The queue's persist neither fsyncs nor
+    // rethrows — it logs and returns — so the only asymmetric outcome is
+    // precisely the bad one: the row lands durably, the queue file still says
+    // `materialised: false`, and on relaunch the entry is handed back for
+    // delivery with its body intact. A second row would then share one id,
+    // which scrambles the id-keyed virtualised transcript, shows the
+    // contribution twice to every collaborator, and burns two slots of the
+    // per-prompt external budget for one message.
     const timestamp = this.deps.nowIso()
-    const rows = due.map((entry) => {
+    const seenIds = new Set(chat.messages.map((message) => message.id))
+    const rows: ChatMessage[] = []
+    const settled: ExternalContributionEntry[] = []
+    for (const entry of due) {
+      const id = entry.messageId || `external-seat-turn-${entry.entryId}`
+      // Already in the transcript: the delivery happened, only the bookkeeping
+      // was lost. Mark it and move on — that reconciles the divergence rather
+      // than leaving it to be retried at every boundary forever.
+      settled.push(entry)
+      if (seenIds.has(id)) continue
+      seenIds.add(id)
       const seat = seatByCollaborator.get(entry.collaboratorId)
-      return makeDeliveredExternalContribution({
-        id: entry.messageId || `external-seat-turn-${entry.entryId}`,
-        content: entry.body ?? '',
-        timestamp,
-        shareId: entry.shareId,
-        collaboratorId: entry.collaboratorId,
-        collaboratorDisplayName: entry.displayName,
-        clientMessageId: entry.clientMessageId,
-        sequence: entry.sequence,
-        ...(seat ? { seatOrder: seat.order } : {}),
-        outOfPosition: beforeOrder === undefined
-      })
-    })
+      rows.push(
+        makeDeliveredExternalContribution({
+          id,
+          content: entry.body ?? '',
+          timestamp,
+          shareId: entry.shareId,
+          collaboratorId: entry.collaboratorId,
+          collaboratorDisplayName: entry.displayName,
+          clientMessageId: entry.clientMessageId,
+          sequence: entry.sequence,
+          ...(seat ? { seatOrder: seat.order } : {}),
+          outOfPosition: beforeOrder === undefined
+        })
+      )
+    }
 
-    this.saveChatWithCheckpoint(
-      {
-        ...chat,
-        messages: [...chat.messages, ...rows],
-        updatedAt: this.deps.now()
-      },
-      'participant-updated'
-    )
+    if (rows.length > 0) {
+      this.saveChatWithCheckpoint(
+        {
+          ...chat,
+          messages: [...chat.messages, ...rows],
+          updatedAt: this.deps.now()
+        },
+        'participant-updated'
+      )
+    }
 
     // Mark AFTER the transcript write, never before. The two writes cannot be
-    // made atomic — this store does not fsync and the chat store does — and a
-    // crash between them must leave the entry re-deliverable rather than
-    // silently consumed. Losing a message is recoverable; dropping one is not.
-    for (const entry of due) {
-      try {
-        queue.markMaterialised(entry.entryId)
-      } catch {
-        // A failed mark leaves it in listAwaitingMaterialisation, which the
-        // next boundary retries. Duplicate delivery is prevented by the
-        // deterministic message id, not by this call succeeding.
-      }
-    }
+    // made atomic, and a crash between them must leave the entry re-deliverable
+    // rather than silently consumed — losing a message is recoverable, dropping
+    // one is not. The id check above is what makes that retry safe.
+    //
+    // No try/catch: markMaterialised's only write is the queue's persist, which
+    // swallows its own errors, so it cannot throw. A catch here would be
+    // unreachable code implying a failure mode that does not exist.
+    for (const entry of settled) queue.markMaterialised(entry.entryId)
   }
 
   private appendRoundStatus(chatId: string, roundId: string, content: string): void {
