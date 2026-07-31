@@ -37,6 +37,7 @@ import {
   resolveProviderActionStrict,
   resolveProviderNativeActionForDisplay,
   resolveProviderNativeActionStrict,
+  resolveToolDispatchContractForServerStrict,
   resolveToolDispatchContractStrict
 } from './providerActionTaxonomy'
 import { TASKWRAITH_MCP_TOOLS } from './taskWraithMcpCatalog'
@@ -744,5 +745,28 @@ describe('provider action taxonomy', () => {
       code: 'native_surface_closed',
       provider: 'claude'
     })
+  })
+
+  // A Codex seat may report the MCP server and tool as SEPARATE fields. That
+  // path must accept exactly what the single-string path accepts: its guard
+  // delegates to the folding resolver, so leaving the guard case-exact made it
+  // stricter than the function it guards and silently dropped identities.
+  it('resolves a split server/tool identity exactly as the single string does', () => {
+    const parity: Array<[string, string]> = [
+      ['TaskWraith', 'READ_FILE'],
+      ['taskwraith', 'AskUserQuestion'],
+      ['taskwraith', 'ENSEMBLE_CONTROL'],
+      ['taskwraith', 'read_file']
+    ]
+    for (const [server, tool] of parity) {
+      const single = resolveToolDispatchContractStrict(`mcp__${server}__${tool}`)
+      const split = resolveToolDispatchContractForServerStrict(server, tool)
+      expect(single.ok).toBe(true)
+      expect(split.ok).toBe(true)
+      expect(split.ok && single.ok && split.toolName).toBe(single.ok && single.toolName)
+    }
+    // Still fails closed for a server the catalog does not own, on both paths.
+    expect(resolveToolDispatchContractForServerStrict('evilserver', 'read_file').ok).toBe(false)
+    expect(resolveToolDispatchContractStrict('mcp__evilserver__read_file').ok).toBe(false)
   })
 })

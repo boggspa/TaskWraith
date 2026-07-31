@@ -2816,7 +2816,13 @@ export function resolveToolDispatchContractForServerStrict(
   const normalizedAction = String(rawAction || '').trim()
   if (
     !STRICT_TASKWRAITH_MCP_SERVER_NAMES.has(normalizedServer) ||
-    !strictUnqualifiedCatalogCanonicalName(normalizedAction)
+    // 'folded' is required, not cosmetic: this guard delegates to
+    // `resolveToolDispatchContractStrict`, which folds case. Left at the default
+    // 'exact' the guard is STRICTER than the function it guards, so a Codex seat
+    // reporting server and tool as separate fields lost identities that resolve
+    // fine as a single string — `AskUserQuestion` among them, the exact spelling
+    // the case-folding fix exists to accept.
+    !strictUnqualifiedCatalogCanonicalName(normalizedAction, 'folded')
   ) {
     return unmapped(
       null,
