@@ -977,6 +977,16 @@ export class ChatService {
     // itself is already durable in the share store, so a lost conversion is
     // recoverable by the next join or by the host.
     this.saveChat({ ...clearPendingExternalJoinConversion(chat), updatedAt: Date.now() })
+    // Is anyone still here? The marker was written when an external joined a
+    // BUSY chat, and the drain can fire arbitrarily later — at the next terminal
+    // run of any kind, surviving a restart. If the host removed that person in
+    // the meantime, `reconcileChatKindForExternalDeparture` could not undo the
+    // conversion (it bails while the kind is still 'single') and nothing clears
+    // this marker on departure, so without this check the thread converts to a
+    // panel the host never asked for, minutes after the only collaborator left
+    // — and keeps `externalJoinConverted` forever, which arms the revert path
+    // against a roster the host has since built themselves.
+    if (this.activeExternalCountForChat(chat.appChatId) === 0) return false
     if (!chatNeedsExternalJoinConversion(chat)) return false
     try {
       const converted = this.setChatKind({

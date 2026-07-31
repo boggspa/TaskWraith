@@ -1387,6 +1387,33 @@ describe('an external join converts the thread to a panel', () => {
     expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
   })
 
+  it('does NOT apply a deferred conversion once the external has already left', () => {
+    // The marker is written while the chat is busy and drained at the next
+    // terminal run — of ANY run, surviving a restart — so the gap between the
+    // two can be long. Nothing clears the marker when the person leaves inside
+    // it: `reconcileChatKindForExternalDeparture` bails because the kind is
+    // still 'single'. Without a liveness re-check the host's solo thread
+    // silently became a panel they never asked for, minutes after the only
+    // collaborator was removed, and kept `externalJoinConverted` forever.
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId, collaboratorId } = admitted(service)
+    service.convertChatForExternalJoin({ chatId: 'chat-1', shareId, collaboratorId })
+
+    // Removed while the run was still streaming, then the run ends.
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+    chats.set('chat-1', { ...chats.get('chat-1')!, runs: [] })
+
+    expect(service.applyPendingExternalJoinConversion('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+    // The marker still clears unconditionally — a stale plan must not retry on
+    // every subsequent turn forever.
+    expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
+  })
+
   it('never throws, whatever the chat is', () => {
     // The contract the join path depends on. A retired provider, a rejected
     // seed, a concurrent mutation — none of them are the joiner's problem.
