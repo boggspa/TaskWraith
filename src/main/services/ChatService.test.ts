@@ -936,6 +936,42 @@ describe('ChatService', () => {
       expect(saved.chatKind).toBe('ensemble')
     })
 
+    it('allows single→ensemble when the STORED record carries a queued external-join conversion', () => {
+      // The other authorised transition. An external who joined during a live
+      // run leaves this marker; the boundary drain then converts, and that save
+      // must survive the fence or the conversion is silently undone and the
+      // person keeps a seat that can never take a turn.
+      const current = makeChat({
+        chatKind: 'single',
+        providerMetadata: {
+          pendingExternalJoinConversion: {
+            schemaVersion: 1,
+            collaboratorId: 'collab-1',
+            shareId: 'share-1',
+            queuedAt: '2026-07-31T00:00:00.000Z',
+            seedParticipant: {
+              id: 'seat-1',
+              provider: 'claude',
+              enabled: true,
+              role: 'Lead',
+              instructions: '',
+              order: 1
+            }
+          }
+        }
+      })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({
+        ...current,
+        chatKind: 'ensemble',
+        providerMetadata: undefined
+      })
+
+      expect(saved.chatKind).toBe('ensemble')
+    })
+
     it('does not let an INCOMING pending preset authorise its own promotion', () => {
       // The renderer writes the snapshot, so a plan that only appears on the
       // incoming record proves nothing.

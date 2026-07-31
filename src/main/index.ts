@@ -7763,8 +7763,11 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
   const chat = AppStore.getChat(session.appChatId)
   if (!chat) return
   const finalized = applyPendingEnsembleRosterPresetOnRunTerminal(chat, session.runId)
-  if (finalized === chat) return
-  saveAndBroadcastChat({ ...finalized, updatedAt: Date.now() })
+  if (finalized !== chat) saveAndBroadcastChat({ ...finalized, updatedAt: Date.now() })
+  // An external who joined while this run was streaming could not convert the
+  // thread then — AppStore.setChatKind refuses mid-turn. This is that boundary.
+  // A no-op without a marker, which is almost every run.
+  drainPendingExternalJoinConversion?.(session.appChatId)
 }
 
 runManager.onChange((event) => {
@@ -9873,6 +9876,12 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
  * used, nowhere near the relay's 1 MiB close.
  */
 let markHumanCollaborationProjectionDirty: ((chatId: string) => void) | null = null
+/**
+ * Apply a conversion an external join had to defer because a run was streaming.
+ * Late-bound for the same reason its neighbour is: the run-terminal helper is
+ * declared long before `chatService` exists.
+ */
+let drainPendingExternalJoinConversion: ((chatId: string) => void) | null = null
 
 /**
  * Seat ids held by EXTERNAL human collaborators on a chat, or `undefined` when
@@ -45890,6 +45899,17 @@ if (isGeminiMcpBridgeProcess) {
         onAdmissionBegan: (info) => {
           mainWindow?.webContents.send('human-collaboration-admission-began', info)
         },
+        onExternalSeatActive: (info) => {
+          const outcome = chatService.convertChatForExternalJoin(info).outcome
+          if (outcome === 'noop') return
+          // The transport lane does not notify the host renderer after a
+          // handshake — only the IPC lane does — so without these the kind
+          // flips on disk and the host's chip strip does not appear until some
+          // unrelated save or the 15s presence sweep happens to fire.
+          const converted = chatService.getChat(info.chatId)
+          if (converted) broadcastChatUpdated(converted)
+          broadcastHumanCollaborationUpdate(info.chatId)
+        },
         audit: humanCollaborationAuditLog,
         log: (line) => console.warn(line)
       })
@@ -46940,6 +46960,12 @@ if (isGeminiMcpBridgeProcess) {
     // slice; this one is only about the channel being pumped at all.
     const PROJECTION_DIRTY_DEBOUNCE_MS = 300
     const projectionDirtyTimers = new Map<string, NodeJS.Timeout>()
+    drainPendingExternalJoinConversion = (chatId: string): void => {
+      if (!chatService.applyPendingExternalJoinConversion(chatId)) return
+      const converted = chatService.getChat(chatId)
+      if (converted) broadcastChatUpdated(converted)
+      broadcastHumanCollaborationUpdate(chatId)
+    }
     markHumanCollaborationProjectionDirty = (chatId: string): void => {
       if (!chatId) return
       if (!humanCollaborationRuntime?.hasProjectionSubscriberForChat(chatId)) return

@@ -103,6 +103,22 @@ export interface HumanCollaborationRuntimeDeps<ProjectionType, AppendType> {
     confirmCode: string
     mode: HumanCollaborationHandshakeMode
   }) => void
+  /**
+   * An external is now active on this chat — make the thread a panel.
+   *
+   * Fires for EVERY completed handshake, admission and reconnect alike, and the
+   * implementation decides idempotently from chat state. Keying it on the
+   * handshake mode here would be wrong in both directions: a reconnect must not
+   * re-convert, and a first join whose conversion was DEFERRED for a live run
+   * arrives next AS a reconnect and must still convert.
+   *
+   * Must never throw — a failed conversion cannot be allowed to fail a join.
+   */
+  onExternalSeatActive?: (info: {
+    chatId: string
+    shareId: string
+    collaboratorId: string
+  }) => void
   /** P2a durable audit sink (admission, session, rejected-contribution events). */
   audit?: HumanCollaborationAuditLike
   /**
@@ -460,6 +476,21 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
       collaboratorId: participant.collaboratorId,
       detail: `${pending.mode} · ${participant.displayName}`
     })
+
+    // After the audit row, before the reply: the collaborator's own client
+    // learns it joined from this return value, and the thread should already be
+    // a panel by then. Guarded because a conversion failure must never surface
+    // as a failed join.
+    try {
+      this.opts.onExternalSeatActive?.({
+        chatId: pending.chatId,
+        shareId: admitted.share.shareId,
+        collaboratorId: participant.collaboratorId
+      })
+    } catch {
+      // Logged nowhere on purpose: the join succeeded, and the next join or the
+      // host's own toggle will convert.
+    }
 
     return {
       sessionId,

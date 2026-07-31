@@ -1271,3 +1271,99 @@ describe('withdrawing trust settles what is already queued', () => {
     expect(() => service.revokeHumanCollaborationShare(shareId)).not.toThrow()
   })
 })
+
+describe('an external join converts the thread to a panel', () => {
+  const solo = (overrides: Partial<ChatRecord> = {}): ChatRecord =>
+    chat({ chatKind: 'single', provider: 'claude', ...overrides })
+
+  it('converts an idle solo chat on join', () => {
+    const { service, chats, store } = harness()
+    chats.set('chat-1', solo())
+    const { shareId } = admitted(service)
+
+    service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(store.setChatKind).toHaveBeenCalledWith(
+      'chat-1',
+      'ensemble',
+      expect.objectContaining({ seedParticipant: expect.objectContaining({ provider: 'claude' }) })
+    )
+  })
+
+  it('is a no-op on a chat that is already a panel', () => {
+    // Idempotency is keyed on CHAT STATE, never the handshake: a reconnect
+    // fires on every tab reload, and a deferred first join arrives next AS a
+    // reconnect and must still convert.
+    const { service, chats, store } = harness()
+    chats.set('chat-1', solo({ chatKind: 'ensemble' }))
+    const { shareId } = admitted(service)
+
+    const result = service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(result.outcome).toBe('noop')
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('DEFERS instead of failing when a run is streaming', () => {
+    // AppStore.setChatKind throws mid-turn. That refusal is right for a host
+    // toggling the panel and wrong for a person arriving, so the join wins and
+    // the conversion waits.
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId } = admitted(service)
+
+    const result = service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(result.outcome).toBe('queued')
+    expect(store.setChatKind).not.toHaveBeenCalled()
+    expect(
+      chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion
+    ).toBeTruthy()
+  })
+
+  it('applies the deferred conversion at the next boundary, and clears the marker', () => {
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId } = admitted(service)
+    service.convertChatForExternalJoin({ chatId: 'chat-1', shareId, collaboratorId: 'collab-1' })
+
+    // The run has ended by the time the boundary fires.
+    chats.set('chat-1', { ...chats.get('chat-1')!, runs: [] })
+    expect(service.applyPendingExternalJoinConversion('chat-1')).toBe(true)
+
+    expect(store.setChatKind).toHaveBeenCalled()
+    expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
+  })
+
+  it('never throws, whatever the chat is', () => {
+    // The contract the join path depends on. A retired provider, a rejected
+    // seed, a concurrent mutation — none of them are the joiner's problem.
+    const { service, chats } = harness()
+    chats.set('chat-1', solo({ provider: 'gemini' }))
+    expect(() =>
+      service.convertChatForExternalJoin({
+        chatId: 'chat-1',
+        shareId: 'share-1',
+        collaboratorId: 'collab-1'
+      })
+    ).not.toThrow()
+  })
+})

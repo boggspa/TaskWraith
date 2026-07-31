@@ -53,6 +53,15 @@ import {
   type PendingWorkspaceRebind
 } from '../pendingWorkspaceRebind'
 import { hasPendingEnsembleRosterPresetApply } from '../../shared/ensembleRosterPresetApply'
+import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
+import {
+  chatNeedsExternalJoinConversion,
+  clearPendingExternalJoinConversion,
+  hasPendingExternalJoinConversion,
+  queuePendingExternalJoinConversion,
+  readPendingExternalJoinConversion,
+  type PendingExternalJoinConversion
+} from '../externalJoinConversion'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
@@ -835,6 +844,109 @@ export class ChatService {
     return updated
   }
 
+  /**
+   * An external joined — make the thread a panel, now or at the next boundary.
+   *
+   * Called from BOTH join doors: the runtime's `confirmSas` (every real remote
+   * join) and `consumeHumanCollaborationInvite` (a second, SAS-free door that
+   * has no renderer callers today but still mints an active participant). A
+   * hook on only one leaves the other producing an external on a solo chat,
+   * where they would hold a seat that can never take a turn.
+   *
+   * NEVER THROWS AND NEVER FAILS THE JOIN. `AppStore.setChatKind` refuses while
+   * a run streams or a round is live; that refusal is right for a host toggling
+   * the panel and wrong for a person arriving, who did nothing and cannot
+   * usefully retry. So a busy chat gets the marker and the next turn boundary
+   * converts.
+   *
+   * Returns whether a conversion was applied, queued, or was already unnecessary
+   * — the caller uses it to decide whether to broadcast, because the transport
+   * lane does not notify the host renderer by itself.
+   */
+  convertChatForExternalJoin(args: {
+    chatId: string
+    shareId: string
+    collaboratorId: string
+  }): { outcome: 'converted' | 'queued' | 'noop' } {
+    const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const chat = this.deps.appStore.getChat(chatId)
+    // Idempotent on CHAT STATE, never on the handshake. A reconnect fires on
+    // every tab reload, and a first join whose conversion was deferred arrives
+    // next AS a reconnect and must still convert.
+    if (!chat || !chatNeedsExternalJoinConversion(chat)) return { outcome: 'noop' }
+
+    const seedParticipant = buildExternalJoinSeedParticipant(chat)
+    if (!seedParticipant) return { outcome: 'noop' }
+
+    // The same two conditions AppStore.setChatKind throws on, asked before it
+    // is called rather than catching the throw — a caught throw cannot tell
+    // "busy" apart from "genuinely broken".
+    const busy =
+      (chat.runs ?? []).some((run) => run.status === 'running') ||
+      isEnsembleRoundDispatchLive(chat.ensemble?.activeRound)
+
+    try {
+      return this.applyOrQueueExternalJoinConversion(chat, args, seedParticipant, busy)
+    } catch {
+      // The header promises this never fails a join, so it must actually not.
+      // A chat on a retired provider, a seed the admission path rejects, a
+      // concurrent mutation — none of them are the joiner's problem, and none
+      // is worth refusing an admission that already succeeded.
+      return { outcome: 'noop' }
+    }
+  }
+
+  private applyOrQueueExternalJoinConversion(
+    chat: ChatRecord,
+    args: { chatId: string; shareId: string; collaboratorId: string },
+    seedParticipant: EnsembleParticipant,
+    busy: boolean
+  ): { outcome: 'converted' | 'queued' | 'noop' } {
+    if (busy) {
+      if (hasPendingExternalJoinConversion(chat)) return { outcome: 'queued' }
+      const plan: PendingExternalJoinConversion = {
+        schemaVersion: 1,
+        collaboratorId: args.collaboratorId,
+        shareId: args.shareId,
+        queuedAt: new Date().toISOString(),
+        seedParticipant
+      }
+      this.saveChat({ ...queuePendingExternalJoinConversion(chat, plan), updatedAt: Date.now() })
+      return { outcome: 'queued' }
+    }
+
+    this.setChatKind({ chatId: chat.appChatId, targetKind: 'ensemble', seedParticipant })
+    return { outcome: 'converted' }
+  }
+
+  /**
+   * Drain a queued conversion at a turn boundary. Safe to call on every
+   * terminal run — it is a no-op without a marker, which is the overwhelming
+   * majority of runs.
+   */
+  applyPendingExternalJoinConversion(chatId: string): boolean {
+    const chat = this.deps.appStore.getChat(requireSafeChatId(chatId, 'Chat id'))
+    const plan = readPendingExternalJoinConversion(chat)
+    if (!chat || !plan) return false
+    // Clear the marker FIRST and unconditionally. A marker that survives a
+    // failed conversion would retry on every subsequent turn forever; the join
+    // itself is already durable in the share store, so a lost conversion is
+    // recoverable by the next join or by the host.
+    this.saveChat({ ...clearPendingExternalJoinConversion(chat), updatedAt: Date.now() })
+    if (!chatNeedsExternalJoinConversion(chat)) return false
+    try {
+      this.setChatKind({
+        chatId: chat.appChatId,
+        targetKind: 'ensemble',
+        seedParticipant: plan.seedParticipant
+      })
+      return true
+    } catch {
+      // Still busy, or the chat changed underneath. Not fatal and not retried.
+      return false
+    }
+  }
+
   listHumanCollaborationShares(chatId?: string): HumanCollaborationShare[] {
     const store = this.requireHumanCollaborationStore()
     const normalizedChatId = chatId ? requireSafeChatId(chatId, 'Chat id') : undefined
@@ -906,6 +1018,13 @@ export class ChatService {
       shareId: result.share.shareId,
       collaboratorId: result.participant.collaboratorId,
       detail: result.participant.displayName
+    })
+    // An active external on a solo chat would hold a seat that can never take a
+    // turn. This door mints one without SAS, so it converts too.
+    this.convertChatForExternalJoin({
+      chatId: result.share.chatId,
+      shareId: result.share.shareId,
+      collaboratorId: result.participant.collaboratorId
     })
     return result
   }
@@ -1757,6 +1876,29 @@ function assertLiveProviderId(value: unknown): ProviderId {
 }
 
 /**
+ * A roster seat to convert a solo chat from, built main-side.
+ *
+ * Honestly lower fidelity than the renderer's equivalent: it carries the chat's
+ * provider and model and nothing else, because a relay join has no renderer and
+ * no composer selection to read. `AppStore.setChatKind` tops the roster up to
+ * the floor from here.
+ */
+function buildExternalJoinSeedParticipant(chat: ChatRecord): EnsembleParticipant | null {
+  if (!chat.provider) return null
+  return {
+    id: 'seat-1',
+    provider: chat.provider,
+    enabled: true,
+    role: 'Lead',
+    instructions: '',
+    order: 1,
+    ...(typeof chat.providerMetadata?.selectedModelType === 'string'
+      ? { model: chat.providerMetadata.selectedModelType }
+      : {})
+  }
+}
+
+/**
  * `chatKind` is main-owned. `setChatKind` is the door for changing it: it
  * enforces the idle-only running guard, seeds or strips the roster, and refuses
  * to collapse a SHARED chat out of panel mode. `save-chat` accepts a whole
@@ -1767,9 +1909,10 @@ function assertLiveProviderId(value: unknown): ProviderId {
  *
  *   - NO STORED RECORD. This is a creation (fork, side chat, sub-thread) and the
  *     incoming kind is the only one that exists.
- *   - A PENDING ROSTER-PRESET PLAN on the STORED record authorises exactly one
- *     transition — single → ensemble — at the turn or round boundary that
- *     consumes it. The plan is main-verifiable and was written by the
+ *   - A PENDING ROSTER-PRESET PLAN, or a PENDING EXTERNAL-JOIN CONVERSION, on
+ *     the STORED record authorises exactly one transition — single → ensemble —
+ *     at the turn or round boundary that consumes it. Both are written by main;
+ *     neither can be asserted by the incoming snapshot. The plan is main-verifiable and was written by the
  *     preset-apply path, so it is authority rather than renderer assertion, and
  *     it can only ever turn panel mode ON. It cannot launder a collapse.
  *
@@ -1790,7 +1933,7 @@ function preserveCanonicalChatKind(next: ChatRecord, current: ChatRecord | null)
   if (
     storedKind === 'single' &&
     incomingKind === 'ensemble' &&
-    hasPendingEnsembleRosterPresetApply(current)
+    (hasPendingEnsembleRosterPresetApply(current) || hasPendingExternalJoinConversion(current))
   ) {
     return next
   }
