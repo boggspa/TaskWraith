@@ -193,6 +193,14 @@ function makeProviderDeps(
           JSON.stringify({ done: true, prompt_eval_count: 3, eval_count: 1 })
         ])
       }
+      if (String(url).endsWith('/api/generate')) {
+        // Best-effort unload after transport/OOM failure; tolerate in default stub.
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
+      }
       throw new Error(`unexpected fetch ${url}`)
     })
   vi.stubGlobal('fetch', fetchMock)
@@ -421,7 +429,8 @@ describe('runOllamaProvider streaming', () => {
   it('does not launch the first chat request when Stop claims the run after show', async () => {
     let admitted = true
     let chatCalls = 0
-    const fetchMock = vi.fn(async (url: string) => {
+    let unloadCalls = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
           models: [
@@ -441,6 +450,19 @@ describe('runOllamaProvider streaming', () => {
         chatCalls += 1
         return ollamaStreamResponse([])
       }
+      if (String(url).endsWith('/api/generate')) {
+        unloadCalls += 1
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'stream-model:latest',
+          keep_alive: 0
+        })
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
+      }
       throw new Error(`unexpected fetch ${url}`)
     })
     const { deps, exits, finishes } = makeProviderDeps({
@@ -454,6 +476,7 @@ describe('runOllamaProvider streaming', () => {
     await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
 
     expect(chatCalls).toBe(0)
+    expect(unloadCalls).toBe(1)
     expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
     expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
   })
@@ -494,6 +517,14 @@ describe('runOllamaProvider streaming', () => {
           }),
           JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
         ])
+      }
+      if (String(url).endsWith('/api/generate')) {
+        // Cancel-after-launch best-effort unload.
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
       }
       throw new Error(`unexpected fetch ${url}`)
     })
@@ -571,6 +602,13 @@ describe('runOllamaProvider streaming', () => {
           }
         }
       }
+      if (String(url).endsWith('/api/generate')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
+      }
       throw new Error(`unexpected fetch ${url}`)
     })
     const { deps, lines, exits, finishes } = makeProviderDeps({
@@ -625,6 +663,13 @@ describe('runOllamaProvider streaming', () => {
           }),
           JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
         ])
+      }
+      if (String(url).endsWith('/api/generate')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
       }
       throw new Error(`unexpected fetch ${url}`)
     })
@@ -1460,7 +1505,8 @@ describe('runOllamaProvider streaming', () => {
 
   it('explains repeated Ollama transport failures instead of surfacing raw fetch failed', async () => {
     let chatCalls = 0
-    const fetchMock = vi.fn(async (url: string) => {
+    let unloadCalls = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (String(url).endsWith('/api/tags')) {
         return jsonResponse({
           models: [
@@ -1480,6 +1526,19 @@ describe('runOllamaProvider streaming', () => {
         chatCalls += 1
         throw new TypeError('fetch failed')
       }
+      if (String(url).endsWith('/api/generate')) {
+        unloadCalls += 1
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'stream-model:latest',
+          keep_alive: 0
+        })
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
+      }
       throw new Error(`unexpected fetch ${url}`)
     })
     const { deps, lines, errors, exits, finishes } = makeProviderDeps({ fetchMock })
@@ -1487,13 +1546,68 @@ describe('runOllamaProvider streaming', () => {
     await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
 
     expect(chatCalls).toBe(3)
+    expect(unloadCalls).toBe(1)
     expect(lines.filter((line) => line.payload.id === 'ollama-chat-transport-retry')).toHaveLength(2)
     expect(errors).toHaveLength(1)
     expect(errors[0].error).toContain('Ollama connection dropped')
+    expect(errors[0].error).toContain('memory pressure')
+    expect(errors[0].error).toContain('requested an unload')
     expect(errors[0].error).toContain('Original error: fetch failed')
     expect(errors[0].error).not.toBe('fetch failed')
     expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
     expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'failed' })
+  })
+
+  it('unloads the launched model when a claimed-cancelled run fails transport launch', async () => {
+    let chatCalls = 0
+    let unloadCalls = 0
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        throw new TypeError('fetch failed')
+      }
+      if (String(url).endsWith('/api/generate')) {
+        unloadCalls += 1
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'stream-model:latest',
+          keep_alive: 0
+        })
+        return {
+          ok: true,
+          status: 200,
+          text: async () => ''
+        }
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      claimedTerminalStatus: () => 'cancelled'
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(3)
+    expect(unloadCalls).toBe(1)
+    expect(errors).toEqual([{ provider: 'ollama', error: 'Ollama run cancelled.', route: baseRoute }])
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
   })
 
   it('does not stream a degenerate stub that is rejected and retried', async () => {

@@ -63,6 +63,11 @@ import {
   ollamaToolCallFormatSchema,
   resolveOllamaFinalLaunchPlan
 } from './OllamaLaunchPlan'
+import {
+  describeOllamaTransportFailure,
+  isLikelyOllamaMemoryPressureFailure,
+  unloadOllamaModel
+} from './OllamaUnload'
 
 export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
 export {
@@ -622,25 +627,21 @@ function assertOllamaTransportLaunchAuthorized(
 
 function isOllamaTransportError(error: unknown): boolean {
   if (isAbortLikeError(error)) return false
-  const message = unknownErrorMessage(error).toLowerCase()
-  const causeCode = errorCauseCode(error)
-  return (
-    message.includes('fetch failed') ||
-    message.includes('terminated') ||
-    message.includes('socket') ||
-    message.includes('network') ||
-    ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_SOCKET'].includes(causeCode)
-  )
+  // Shared classifier also covers OOM/runner-kill transport drops.
+  return isLikelyOllamaMemoryPressureFailure(error)
 }
 
-export function ollamaRunFailureMessage(error: unknown, baseUrl: string): string {
+export function ollamaRunFailureMessage(
+  error: unknown,
+  baseUrl: string,
+  options: { unloadAttempted?: boolean } = {}
+): string {
   if (isOllamaTransportError(error)) {
-    return [
-      `Ollama connection dropped while talking to ${normalizeOllamaBaseUrl(baseUrl)}.`,
-      'TaskWraith retried the local chat request, but Ollama still closed or refused the connection.',
-      'Make sure the Ollama app/service is running, the model is pulled, and the model runner is not being killed by memory pressure.',
-      `Original error: ${unknownErrorMessage(error)}`
-    ].join(' ')
+    return describeOllamaTransportFailure(
+      normalizeOllamaBaseUrl(baseUrl),
+      unknownErrorMessage(error),
+      { unloadAttempted: options.unloadAttempted }
+    )
   }
   return unknownErrorMessage(error)
 }
@@ -2580,6 +2581,8 @@ export async function runOllamaProvider(
   let memoryMonitor: ReturnType<typeof createOllamaMemoryMonitor> | null = null
   let terminalStatus: RunSessionStatus = 'failed'
   let terminalProjectionStarted = false
+  // Captured after launch so the catch path can unload on transport/OOM failure.
+  let launchedModel: string | null = null
   deps.runManager.attachAbortController(route.appRunId!, controller)
   const launchAuthorized = (): boolean =>
     !controller.signal.aborted &&
@@ -2661,6 +2664,7 @@ export async function runOllamaProvider(
       thinkingLevel,
       harnessEnabled
     } = launchPlan
+    launchedModel = model
     const modelInfo = launchPlan.modelManifest.merged
     const ensembleRun = Boolean(payload.ensembleRun)
     const chatId = route.appChatId || payload.appChatId
@@ -3342,9 +3346,16 @@ export async function runOllamaProvider(
     terminalStatus = claimedTerminalStatus ?? (aborted ? 'cancelled' : 'failed')
     terminalProjectionStarted = true
     const cancelled = terminalStatus === 'cancelled'
+    let unloadAttempted = false
+    // After a launch, best-effort unload helps avoid stuck memory-pressure
+    // states after transport drops and user-cancelled runs.
+    if (launchedModel && (isOllamaTransportError(error) || cancelled)) {
+      unloadAttempted = true
+      await unloadOllamaModel({ baseUrl, model: launchedModel }).catch(() => {})
+    }
     const message = cancelled
       ? 'Ollama run cancelled.'
-      : ollamaRunFailureMessage(error, baseUrl)
+      : ollamaRunFailureMessage(error, baseUrl, { unloadAttempted })
     deps.sendAgentCompatError(event.sender, 'ollama', message, route)
     deps.sendAgentCompatExit(event.sender, 'ollama', cancelled ? 130 : 1, route)
   } finally {
