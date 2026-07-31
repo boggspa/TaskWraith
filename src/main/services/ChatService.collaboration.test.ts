@@ -1204,3 +1204,70 @@ describe('HumanCollaborationStore.setRequiresHostApproval', () => {
     expect(store.getShare('share-true')?.requiresHostApproval).toBe(true)
   })
 })
+
+describe('withdrawing trust settles what is already queued', () => {
+  // `reviewed` lives inside another describe; this block needs the same setup.
+  const reviewedShare = (service: ChatService, collaboration: HumanCollaborationStore) => {
+    const ids = admitted(service)
+    expect(
+      collaboration.setRequiresHostApproval({
+        shareId: ids.shareId,
+        requiresHostApproval: true
+      })?.requiresHostApproval
+    ).toBe(true)
+    return ids
+  }
+
+  it('lapses a share’s queued contributions BEFORE the revoke lands', () => {
+    // Left behind, a queued contribution stays APPROVABLE after trust was
+    // withdrawn — the host would be releasing a message from someone they had
+    // just removed. Lapsing before the revoke is also the last moment the
+    // person is still connected and can be told.
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'still pending when the plug is pulled'
+    })
+    expect(queue.listQueued('chat-1')).toHaveLength(1)
+
+    service.revokeHumanCollaborationShare(shareId)
+
+    expect(queue.listQueued('chat-1')).toEqual([])
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('shareEnded')
+    // The body goes with it — nothing to approve means nothing to retain.
+    expect(entry.body).toBeUndefined()
+  })
+
+  it('lapses only the removed participant’s contributions, not the whole share', () => {
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'from the collaborator being removed'
+    })
+
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('revoked')
+  })
+
+  it('does not wipe the queue when the service has no queue configured', () => {
+    // lapseAll refuses a predicate-free filter, but the optional-chaining guard
+    // is what keeps a review-less ChatService from throwing here at all.
+    const { service, collaboration } = harness()
+    const { shareId } = admitted(service)
+    collaboration.setRequiresHostApproval({ shareId, requiresHostApproval: true })
+    expect(() => service.revokeHumanCollaborationShare(shareId)).not.toThrow()
+  })
+})

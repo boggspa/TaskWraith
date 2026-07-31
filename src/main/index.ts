@@ -46867,6 +46867,17 @@ if (isGeminiMcpBridgeProcess) {
             .map((t) => t.chatId)
             .filter((id): id is string => typeof id === 'string')
         ),
+      // A shared chat is attached-to from outside this machine, and a chat
+      // holding contributions under review has content that never appears in
+      // `chat.messages` — both look abandoned to every other check.
+      getSharedChatIds: () => {
+        const chatIds = new Set<string>()
+        for (const share of humanCollaborationStore.listShares()) {
+          if (share.enabled) chatIds.add(share.chatId)
+        }
+        for (const chatId of externalContributionQueue.chatIdsWithQueued()) chatIds.add(chatId)
+        return chatIds
+      },
       getOpenChatPopoutIds: () => {
         const chatIds = new Set<string>()
         for (const [key, win] of workspacePopoutWindows) {

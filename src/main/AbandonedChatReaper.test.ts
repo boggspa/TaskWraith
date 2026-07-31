@@ -225,3 +225,22 @@ describe('reapAbandonedChats (orchestration)', () => {
     expect(deleted).toEqual([])
   })
 })
+
+describe('shared chats are never abandoned', () => {
+  it('protects a chat with a live share even at zero messages and zero runs', () => {
+    // The host invites someone and waits. Every other "started" check reads
+    // that as abandoned, because a share lives in its own store.
+    expect(reapableAbandonedChatIds([chat({ appChatId: 'shared-1' })], {})).toEqual(['shared-1'])
+    expect(
+      reapableAbandonedChatIds([chat({ appChatId: 'shared-1' })], { sharedChatIds: new Set(['shared-1']) })
+    ).toEqual([])
+  })
+
+  it('protects a chat whose only content is a contribution awaiting review', () => {
+    // A held contribution is not in chat.messages — it is in the queue — so the
+    // message-count guard cannot see it.
+    expect(
+      reapableAbandonedChatIds([chat({ appChatId: 'queued-1' })], { sharedChatIds: new Set(['queued-1']) })
+    ).toEqual([])
+  })
+})

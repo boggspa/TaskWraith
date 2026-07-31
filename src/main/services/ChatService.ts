@@ -842,9 +842,14 @@ export class ChatService {
   }
 
   revokeHumanCollaborationShare(shareId: string): HumanCollaborationShare | null {
-    const revoked = this.requireHumanCollaborationStore().revokeShare(
-      requireNonEmptyString(shareId, 'Share id')
-    )
+    const id = requireNonEmptyString(shareId, 'Share id')
+    // Lapse BEFORE the revoke lands. Two reasons, and the order matters for
+    // both: a queued contribution left behind stays APPROVABLE after trust was
+    // withdrawn — the host would be releasing a message from someone they had
+    // just removed — and this is the last moment the person is still connected
+    // and can be told what happened to what they sent.
+    this.deps.externalContributionQueue?.lapseAll({ shareId: id }, 'shareEnded')
+    const revoked = this.requireHumanCollaborationStore().revokeShare(id)
     if (revoked) {
       this.deps.humanCollaborationAudit?.append({
         kind: 'share.revoked',
@@ -859,9 +864,18 @@ export class ChatService {
     shareId: string,
     collaboratorId: string
   ): HumanCollaborationShare | null {
+    const id = requireNonEmptyString(shareId, 'Share id')
+    const collaborator = requireNonEmptyString(collaboratorId, 'Collaborator id')
+    // Same rule, scoped to the one person: removing them must not leave their
+    // pending messages sitting in the host's approval stack. Other
+    // collaborators on the same share are untouched, hence both predicates.
+    this.deps.externalContributionQueue?.lapseAll(
+      { shareId: id, collaboratorId: collaborator },
+      'revoked'
+    )
     const updated = this.requireHumanCollaborationStore().revokeParticipant({
-      shareId: requireNonEmptyString(shareId, 'Share id'),
-      collaboratorId: requireNonEmptyString(collaboratorId, 'Collaborator id')
+      shareId: id,
+      collaboratorId: collaborator
     })
     if (updated) {
       this.deps.humanCollaborationAudit?.append({

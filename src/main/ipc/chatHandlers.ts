@@ -95,6 +95,8 @@ export interface ChatHandlerDeps {
   ) => string[]
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
+  /** Chat ids with a live share or a contribution awaiting host review. */
+  getSharedChatIds: () => Set<string>
   /**
    * Main-owned chat popout windows that are currently alive. The renderer's
    * one-shot handoff payload is consumed on mount, so it cannot be the durable
@@ -593,6 +595,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
               getChats: () => deps.chatService.getChats(),
               getWorkflowChatIds: deps.getWorkflowChatIds,
               getScheduledChatIds: deps.getScheduledChatIds,
+              getSharedChatIds: deps.getSharedChatIds,
               deleteChat: (id) => collected.push(id)
             },
             effectiveRenderer

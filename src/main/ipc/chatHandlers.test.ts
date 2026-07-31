@@ -134,6 +134,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     reapAbandonedChats: vi.fn(() => []),
     getWorkflowChatIds: vi.fn(() => new Set(['workflow-chat'])),
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
+    getSharedChatIds: vi.fn(() => new Set(['shared-chat'])),
     getOpenChatPopoutIds: vi.fn(() => new Set<string>()),
     getOpenCanvasChatIds: vi.fn(() => new Set<string>()),
     isHistoryErasureInFlight: vi.fn(() => false),
@@ -1008,6 +1009,7 @@ describe('registerChatHandlers', () => {
         getChats: expect.any(Function),
         getWorkflowChatIds: deps.getWorkflowChatIds,
         getScheduledChatIds: deps.getScheduledChatIds,
+        getSharedChatIds: deps.getSharedChatIds,
         deleteChat: expect.any(Function)
       }),
       {
