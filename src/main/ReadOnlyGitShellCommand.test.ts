@@ -173,6 +173,22 @@ describe('isReadOnlyGitShellCommand — shared fail-closed shape', () => {
     expect(isReadOnlyGitShellCommand('git log HEAD^')).toBe(true)
     expect(isReadOnlyGitShellCommand('git diff ~/x')).toBe(false)
   })
+
+  it('rejects Object.prototype keys used as the git subcommand', () => {
+    for (const key of [
+      'constructor',
+      '__proto__',
+      'valueOf',
+      'toString',
+      'hasOwnProperty',
+      'isPrototypeOf',
+      'propertyIsEnumerable',
+      'toLocaleString'
+    ]) {
+      expect(isReadOnlyGitShellCommand(`git ${key}`), key).toBe(false)
+      expect(isReadOnlyGitShellCommand(`git ${key} --oneline`), key).toBe(false)
+    }
+  })
 })
 
 describe('shellCommandFromRawCommand', () => {

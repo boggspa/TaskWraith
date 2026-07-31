@@ -221,7 +221,10 @@ export function isReadOnlyGitShellCommand(command: unknown): boolean {
     if (!GIT_GLOBAL_SAFE_FLAGS.has(tokens[index])) return false
     index += 1
   }
-  const spec = GIT_READ_SUBCOMMANDS[tokens[index] ?? '']
+  const subcommand = tokens[index] ?? ''
+  const spec = Object.prototype.hasOwnProperty.call(GIT_READ_SUBCOMMANDS, subcommand)
+    ? GIT_READ_SUBCOMMANDS[subcommand]
+    : undefined
   if (!spec) return false
   index += 1
 
