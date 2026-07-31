@@ -14190,6 +14190,24 @@ button.diff-file-row {
   gap: 6px;
 }
 
+.pending-contribution-decline {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pending-contribution-reason {
+  width: 200px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.pending-contribution-decline button,
 .pending-contribution-actions button {
   font-size: 12px;
   padding: 4px 10px;
@@ -14200,6 +14218,7 @@ button.diff-file-row {
   cursor: pointer;
 }
 
+.pending-contribution-decline button:disabled,
 .pending-contribution-actions button:disabled {
   opacity: 0.5;
   cursor: default;

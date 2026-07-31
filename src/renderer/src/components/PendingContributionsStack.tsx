@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { MAX_HOST_REASON_CHARS } from '../../../main/collaboration/ExternalContributionQueueStore'
 
 /**
  * Contributions an external has sent that are waiting for the host to release
@@ -43,6 +44,14 @@ export function PendingContributionsStack({
 }) {
   const [pending, setPending] = useState<PendingContribution[]>([])
   const [busyEntryId, setBusyEntryId] = useState<string | null>(null)
+  /**
+   * The row currently being declined, and the note being written for it.
+   * Declining is two-step on purpose: the note is optional, but a one-click
+   * deny gives a real collaborator nothing to act on, and a note typed into the
+   * wrong row would be worse than none.
+   */
+  const [decliningEntryId, setDecliningEntryId] = useState<string | null>(null)
+  const [declineReason, setDeclineReason] = useState('')
   /**
    * The chat this surface currently belongs to, assigned during RENDER rather
    * than in an effect so it is already current when an awaited IPC reply is
@@ -97,19 +106,25 @@ export function PendingContributionsStack({
   }, [refresh])
 
   const resolve = useCallback(
-    async (entryId: string, action: 'approve' | 'deny') => {
+    async (entryId: string, action: 'approve' | 'deny', reason?: string) => {
       setBusyEntryId(entryId)
       try {
         if (action === 'approve') {
           await window.api.humanCollaborationApproveContribution(entryId)
         } else {
-          await window.api.humanCollaborationDenyContribution({ entryId })
+          const note = reason?.trim()
+          await window.api.humanCollaborationDenyContribution({
+            entryId,
+            ...(note ? { reason: note } : {})
+          })
         }
       } catch {
         // Fall through to the refresh: main is the authority on what actually
         // happened, and a failed call must not leave the row optimistically gone.
       } finally {
         setBusyEntryId(null)
+        setDecliningEntryId(null)
+        setDeclineReason('')
         void refresh()
       }
     },
@@ -126,26 +141,67 @@ export function PendingContributionsStack({
             <div className="pending-contribution-author">{entry.displayName} · external</div>
             <div className="pending-contribution-text">{entry.body ?? ''}</div>
           </div>
-          <div className="pending-contribution-actions">
-            <button
-              type="button"
-              className="pending-contribution-approve"
-              aria-label={`Approve the contribution from ${entry.displayName}`}
-              disabled={busyEntryId === entry.entryId}
-              onClick={() => void resolve(entry.entryId, 'approve')}
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              className="pending-contribution-deny"
-              aria-label={`Deny the contribution from ${entry.displayName}`}
-              disabled={busyEntryId === entry.entryId}
-              onClick={() => void resolve(entry.entryId, 'deny')}
-            >
-              Deny
-            </button>
-          </div>
+          {decliningEntryId === entry.entryId ? (
+            <div className="pending-contribution-decline">
+              <input
+                type="text"
+                className="pending-contribution-reason"
+                aria-label={`Why you are declining ${entry.displayName}'s contribution (optional)`}
+                placeholder="Optional note back to them"
+                maxLength={MAX_HOST_REASON_CHARS}
+                value={declineReason}
+                autoFocus
+                onChange={(event) => setDeclineReason(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void resolve(entry.entryId, 'deny', declineReason)
+                  if (event.key === 'Escape') {
+                    setDecliningEntryId(null)
+                    setDeclineReason('')
+                  }
+                }}
+              />
+              <button
+                type="button"
+                disabled={busyEntryId === entry.entryId}
+                onClick={() => void resolve(entry.entryId, 'deny', declineReason)}
+              >
+                Decline
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDecliningEntryId(null)
+                  setDeclineReason('')
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="pending-contribution-actions">
+              <button
+                type="button"
+                className="pending-contribution-approve"
+                aria-label={`Approve the contribution from ${entry.displayName}`}
+                disabled={busyEntryId === entry.entryId}
+                onClick={() => void resolve(entry.entryId, 'approve')}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                className="pending-contribution-deny"
+                aria-label={`Decline the contribution from ${entry.displayName}`}
+                disabled={busyEntryId === entry.entryId}
+                onClick={() => {
+                  setDecliningEntryId(entry.entryId)
+                  setDeclineReason('')
+                }}
+              >
+                Decline
+              </button>
+            </div>
+          )}
         </div>
       ))}
     </div>

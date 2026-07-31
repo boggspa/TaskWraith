@@ -121,6 +121,30 @@
   font-size: 11px;
 }
 
+/* What became of the contributions this collaborator sent, when the host has
+   review switched on. Quiet by design: it is a status line, not a transcript
+   row, and it must never read as though their message reached the AI. */
+.join-your-pending {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.join-your-pending-title {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.join-your-pending-row {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+.join-your-pending-row[data-state='denied'] {
+  color: var(--text-primary);
+}
+
 .join-projection-empty {
   margin: auto;
   color: var(--text-secondary);
