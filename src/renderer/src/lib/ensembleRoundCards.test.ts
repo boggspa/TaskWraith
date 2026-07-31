@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleRoundCardRows,
   buildEnsembleRoundCardRowsWithRanges,
+  buildRoundTranscriptCopyText,
   captureSessionRoundExpansionForChat,
   ensembleRoundHeaderId,
   getSessionRoundExpansionSnapshot,
@@ -475,5 +476,68 @@ describe('per-chat round expansion memory', () => {
     expect(hydrateSessionRoundExpansionForChat(targetChat, [])).toBe(false)
     expect(notifications).toBe(2)
     unsubscribe()
+  })
+})
+
+describe('buildRoundTranscriptCopyText', () => {
+  it('joins non-empty round bodies and skips the synthetic Round N header', () => {
+    const roundId = 'r1'
+    const prompt = userPrompt('u1', roundId, 'Do the thing')
+    const replyA = message('a1', {
+      roundId,
+      role: 'assistant',
+      content: 'First reply',
+      ensembleProvider: 'codex',
+      ensembleRole: 'Worker'
+    })
+    const replyB = message('a2', {
+      roundId,
+      role: 'assistant',
+      content: 'Second reply',
+      ensembleProvider: 'claude',
+      ensembleRole: 'Reviewer'
+    })
+    const empty = message('a3', { roundId, role: 'assistant', content: '' })
+    const otherRound = message('a4', {
+      roundId: 'r2',
+      role: 'assistant',
+      content: 'Other round'
+    })
+    const header = {
+      id: ensembleRoundHeaderId(roundId),
+      role: 'system' as const,
+      content: '',
+      timestamp: '2026-05-27T12:00:00.000Z',
+      metadata: {
+        kind: 'ensembleRoundHeader',
+        ensembleRoundId: roundId,
+        ensembleRoundHeader: {
+          roundId,
+          roundIndex: 1,
+          roundCount: 2,
+          expanded: false,
+          providers: ['codex', 'claude'],
+          roles: ['Worker', 'Reviewer'],
+          attributions: [],
+          bodyMessageCount: 2,
+          summary: null,
+          promptPreview: 'Do the thing'
+        }
+      }
+    } as ChatMessage
+
+    expect(
+      buildRoundTranscriptCopyText([header, prompt, replyA, empty, replyB, otherRound], roundId)
+    ).toBe('Do the thing\n\nFirst reply\n\nSecond reply')
+  })
+
+  it('returns an empty string when the round has no copyable bodies', () => {
+    expect(buildRoundTranscriptCopyText([], 'missing')).toBe('')
+    expect(
+      buildRoundTranscriptCopyText(
+        [message('a1', { roundId: 'r1', content: '' })],
+        'r1'
+      )
+    ).toBe('')
   })
 })

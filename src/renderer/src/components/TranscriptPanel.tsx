@@ -106,6 +106,7 @@ import {
 } from '../lib/transcriptToolMessageGrouping'
 import {
   buildEnsembleRoundCardRowsWithRanges,
+  buildRoundTranscriptCopyText,
   getSessionRoundExpansionSnapshot,
   isEnsembleRoundHeaderMessage,
   readEnsembleRoundHeader,
@@ -3840,18 +3841,27 @@ export const TranscriptPanel = memo(
                     : undefined
                 }
               : undefined
-            const footerCopyContent =
-              !isDelegationCard &&
-              !isReturnCard &&
-              !isToolActivityStack &&
-              !isParticipantHealth &&
-              !isProviderRunFailure &&
-              !isContextCompaction &&
-              typeof msg.content === 'string'
+            const roundHeaderData = isRoundHeader ? readEnsembleRoundHeader(msg) : null
+            const footerCopyContent = isRoundHeader
+              ? buildRoundTranscriptCopyText(
+                  groupedMessages,
+                  roundHeaderData?.roundId ||
+                    (typeof msg.metadata?.ensembleRoundId === 'string'
+                      ? msg.metadata.ensembleRoundId
+                      : '')
+                )
+              : !isDelegationCard &&
+                  !isReturnCard &&
+                  !isToolActivityStack &&
+                  !isParticipantHealth &&
+                  !isProviderRunFailure &&
+                  !isContextCompaction &&
+                  typeof msg.content === 'string'
                 ? msg.content
                 : undefined
-            const footerLabel =
-              msg.role === 'user'
+            const footerLabel = isRoundHeader
+              ? 'round transcript'
+              : msg.role === 'user'
                 ? 'user message'
                 : isFanoutResultCard
                   ? 'fan-out result'

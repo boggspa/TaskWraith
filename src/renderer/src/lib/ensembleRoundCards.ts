@@ -175,6 +175,31 @@ export function readEnsembleRoundHeader(
   return data && typeof data === 'object' ? (data as EnsembleRoundHeaderData) : null
 }
 
+/**
+ * Plain-text payload for the Round N footer Copy action. Concatenates every
+ * non-empty string body in the round (prompt + participant replies), skipping
+ * the synthetic empty header itself. Collapsed cards keep only the header in
+ * the visible list, so callers must pass the full pre-collapse message list.
+ */
+export function buildRoundTranscriptCopyText(
+  messages: readonly ChatMessage[],
+  roundId: string
+): string {
+  if (!roundId) return ''
+  const parts: string[] = []
+  for (const message of messages) {
+    if (isEnsembleRoundHeaderMessage(message)) continue
+    const messageRoundId =
+      typeof message.metadata?.ensembleRoundId === 'string'
+        ? message.metadata.ensembleRoundId
+        : null
+    if (messageRoundId !== roundId) continue
+    if (typeof message.content !== 'string' || message.content.length === 0) continue
+    parts.push(message.content)
+  }
+  return parts.join('\n\n')
+}
+
 function metaString(message: ChatMessage, key: string): string | null {
   const value = message.metadata?.[key]
   return typeof value === 'string' && value.length > 0 ? value : null
