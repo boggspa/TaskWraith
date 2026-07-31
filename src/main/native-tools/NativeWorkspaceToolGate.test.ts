@@ -497,4 +497,72 @@ describe('preflightNativeWorkspaceTool', () => {
       errorCode: 'native_action_not_declared'
     })
   })
+  // Search and listing tools carry their target in a per-tool SCOPE field. Before
+  // this, `Grep {include:'/etc/**'}` and `Glob {pattern:'../../**'}` reached the
+  // optional-path branch and were ALLOWED with checkedPaths empty — and because
+  // they are reads, that meant no approval card and no audit row either. Shipped
+  // in 1.9.1; confirmed identical on master before fixing.
+  const searchCall = (root: string, rawInput: Record<string, unknown>) =>
+    preflightNativeWorkspaceTool({
+      provider: 'grok',
+      toolName: 'tool',
+      toolKind: 'search',
+      rawToolCall: { kind: 'search', rawInput },
+      workspacePath: root,
+      runtimeSandboxed: false
+    })
+
+  it('contains a search scope that reaches outside the workspace', () => {
+    const root = workspace()
+    expect(
+      searchCall(root, { tool_name: 'Grep', pattern: 'x', path: 'src', include: '/etc/**' })
+    ).toMatchObject({
+      kind: 'deny'
+    })
+    expect(searchCall(root, { tool_name: 'Glob', pattern: '../../*.pem' })).toMatchObject({
+      kind: 'deny'
+    })
+  })
+
+  // The reason these fields cannot simply join PATH_FIELDS: `pattern` is the path
+  // expression for Glob but the SEARCH REGEX for Grep. Treating it as a path
+  // everywhere would refuse every grep whose regex happens to contain slashes.
+  it('treats pattern as a scope for Glob and as a regex for Grep', () => {
+    const root = workspace()
+    expect(searchCall(root, { tool_name: 'Glob', pattern: 'src/**/*.txt' })).toMatchObject({
+      kind: 'allow',
+      canonicalTool: 'find_files'
+    })
+    expect(
+      searchCall(root, { tool_name: 'Grep', pattern: '../../etc/passwd', path: 'src' })
+    ).toMatchObject({ kind: 'allow', canonicalTool: 'workspace_search' })
+    expect(
+      searchCall(root, { tool_name: 'Grep', pattern: 'foo/bar/../baz', path: 'src' })
+    ).toMatchObject({ kind: 'allow', canonicalTool: 'workspace_search' })
+  })
+
+  // The gate validates the caller's argument but never rewrites it, so a path the
+  // executor may tilde-expand cannot be contained: `~/.ssh/id_rsa` used to resolve
+  // as a literal in-workspace `<ws>/~/.ssh/id_rsa` and pass.
+  it('refuses a home-relative path rather than resolving it literally', () => {
+    const root = workspace()
+    expect(
+      preflightNativeWorkspaceTool({
+        provider: 'grok',
+        toolName: 'tool',
+        toolKind: 'read',
+        rawToolCall: { kind: 'read', rawInput: { path: '~/.ssh/id_rsa' } },
+        workspacePath: root,
+        runtimeSandboxed: false
+      })
+    ).toMatchObject({ kind: 'deny' })
+  })
+
+  it('scopes an optional-path tool to the workspace root instead of checking nothing', () => {
+    const root = workspace()
+    const result = searchCall(root, { tool_name: 'Grep', pattern: 'hello', path: 'src' })
+    expect(result).toMatchObject({ kind: 'allow' })
+    // Never an empty list: checkedPaths is the only thing an approval card can show.
+    expect('checkedPaths' in result && result.checkedPaths.length).toBeGreaterThan(0)
+  })
 })

@@ -84,6 +84,38 @@ const OPTIONAL_PATH_TOOLS = new Set([
 
 const MULTI_PATH_TOOLS = new Set(['move_path', 'rename_path'])
 
+/**
+ * Argument fields carrying a SCOPE for the optional-path tools — the search and
+ * listing tools whose target is a pattern or a directory rather than one file.
+ *
+ * Deliberately per-tool rather than one flat set, because the same key means
+ * different things: `pattern` IS the path expression for Glob (`find_files`),
+ * but for Grep (`workspace_search`) it is the SEARCH REGEX. Treating it as a
+ * path there would try to resolve `BEGIN RSA` against the workspace and refuse
+ * every legitimate grep — which is why these cannot simply join PATH_FIELDS.
+ */
+const SCOPE_FIELDS_BY_TOOL: Record<string, readonly string[]> = {
+  find_files: ['pattern', 'glob', 'globPattern', 'include'],
+  workspace_search: [
+    'glob',
+    'include',
+    'includePattern',
+    'exclude',
+    'target_directories',
+    'targetDirectories'
+  ],
+  workspace_symbols: ['glob', 'include']
+}
+
+/**
+ * A home-relative path. Refused rather than resolved: this gate validates the
+ * caller's argument but NEVER rewrites it — the provider receives back exactly
+ * what it sent — so `~/.ssh/id_rsa` would be checked as a literal, non-existent
+ * in-workspace `<ws>/~/.ssh/id_rsa`, pass, and then be tilde-expanded by whatever
+ * executes it and read the real home directory.
+ */
+const HOME_RELATIVE_PATH = /^~($|[/\\])/
+
 const PATH_FIELDS = new Set([
   'path',
   'file',
@@ -269,6 +301,29 @@ function resolveNativeCanonicalTool(
       reason: `Native action "${input.toolName || input.toolKind || 'unknown'}" is not declared by a closed provider adapter.`
     }
   )
+}
+
+/**
+ * Scope arguments for a search or listing tool, resolved as ordinary paths.
+ *
+ * Glob metacharacters survive this deliberately: containment only cares about
+ * where the expression is ROOTED, so `src/**` resolves inside and
+ * `../../../**` resolves outside, which is exactly the decision being made.
+ */
+function collectScopeArguments(canonicalTool: string, rawToolCall: unknown): string[] {
+  const fields = SCOPE_FIELDS_BY_TOOL[canonicalTool]
+  if (!fields || fields.length === 0) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const root of argumentRoots(rawToolCall)) {
+    for (const field of fields) {
+      const value = nonEmptyString(root[field])
+      if (!value || seen.has(value)) continue
+      seen.add(value)
+      out.push(value)
+    }
+  }
+  return out
 }
 
 function collectPathArguments(rawToolCall: unknown): string[] {
@@ -469,6 +524,12 @@ export function preflightNativeWorkspaceTool(
 
   const rawPaths = collectPathArguments(input.rawToolCall)
   if (canonicalTool === 'apply_patch') rawPaths.push(...patchPaths(input.rawToolCall))
+  // A search or listing tool carries its target in a per-tool SCOPE field, not a
+  // path field. Without this, `Glob {pattern:'../../../**/*.pem'}` and
+  // `Grep {include:'/etc/**'}` fell through to the optional-path branch below and
+  // were ALLOWED with checkedPaths empty — nothing contained, and for a read that
+  // means no approval card and no audit row either.
+  rawPaths.push(...collectScopeArguments(canonicalTool, input.rawToolCall))
   const uniqueRawPaths = [...new Set(rawPaths)]
   if (uniqueRawPaths.length === 0 && !OPTIONAL_PATH_TOOLS.has(canonicalTool)) {
     return deny(
@@ -480,6 +541,13 @@ export function preflightNativeWorkspaceTool(
     return deny(
       canonicalTool,
       `Native ${canonicalTool} did not expose both source and destination paths.`
+    )
+  }
+  const homeRelative = uniqueRawPaths.find((path) => HOME_RELATIVE_PATH.test(path))
+  if (homeRelative) {
+    return deny(
+      canonicalTool,
+      `Native ${canonicalTool} requested the home-relative path "${homeRelative}"; this gate validates arguments but never rewrites them, so tilde expansion cannot be contained.`
     )
   }
 
@@ -494,6 +562,13 @@ export function preflightNativeWorkspaceTool(
       `Native ${canonicalTool} requested a path outside the active workspace.`,
       checkedPaths
     )
+  }
+  // An optional-path tool with nothing verifiable is scoped to the workspace root
+  // EXPLICITLY rather than allowed with an empty list. The result then states what
+  // was actually contained, instead of implying a check that never ran — and
+  // `checkedPaths` is the only thing the approval card has to show a human.
+  if (checkedPaths.length === 0) {
+    checkedPaths.push(resolveCanonicalWorkspaceTarget(workspacePath, '.'))
   }
 
   const access: NativeWorkspaceToolAccess = WRITE_TOOLS.has(canonicalTool) ? 'write' : 'read'
