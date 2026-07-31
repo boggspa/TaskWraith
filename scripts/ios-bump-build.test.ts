@@ -18,6 +18,10 @@ function fixture(projectYml: string) {
   fs.copyFileSync(sourceScript, path.join(scriptsDir, 'bump-build.sh'))
   fs.writeFileSync(path.join(appDir, 'project.yml'), projectYml)
   const xcodegenPath = path.join(binDir, 'xcodegen')
+  // @portability-ok — this suite exercises the iOS build script, which is
+  // macOS-only by construction: it shells out to `xcodegen` and Xcode, and every
+  // case here already spawns `bash` to run bump-build.sh. A Windows launcher
+  // would not make the test runnable there, only make the fixture lie about it.
   fs.writeFileSync(xcodegenPath, '#!/usr/bin/env bash\nexit 0\n', { mode: 0o755 })
 
   return {

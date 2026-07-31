@@ -346,6 +346,10 @@ describe('launchd interpreter path', () => {
     const real = '/opt/homebrew/Cellar/node/25.9.0_3/bin/node'
     const probe = (p: string): string | null =>
       p === cellar || p === '/opt/homebrew/bin/node' ? real : null
+    // @portability-ok — launchd is macOS-only, and this function's candidate list
+    // is a pair of literal POSIX Homebrew paths declared in work-guard.cjs itself.
+    // Building the expectation with path.join would assert nothing about the
+    // behaviour under test, which is precisely "recognise THESE absolute paths".
     expect(stableNodePath(cellar, probe)).toBe('/opt/homebrew/bin/node')
   })
 

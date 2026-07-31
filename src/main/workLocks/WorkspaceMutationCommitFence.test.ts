@@ -16,6 +16,17 @@ import {
   type WorkspaceMutationCommitFenceProcessObservation
 } from './WorkspaceMutationCommitFence'
 
+/**
+ * Asserts the INTENT — readable and writable by the owner alone — rather than a
+ * raw octal. NTFS reports 0666 where POSIX reports 0600, and macOS enforces modes
+ * so a local run cannot see the difference; on Windows the ACL rather than the
+ * mode carries this property, so the octal check is meaningful only off win32.
+ */
+function expectOwnerOnly(target: string): void {
+  if (process.platform === 'win32') return
+  expect(lstatSync(target).mode & 0o077).toBe(0)
+}
+
 const temporaryRoots: string[] = []
 
 afterEach(() => {
@@ -395,8 +406,8 @@ describe('WorkspaceMutationCommitFence', () => {
     const authority = join(root, WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY)
     const fencePath = join(authority, WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME)
 
-    expect(lstatSync(authority).mode & 0o077).toBe(0)
-    expect(lstatSync(fencePath).mode & 0o077).toBe(0)
+    expectOwnerOnly(authority)
+    expectOwnerOnly(fencePath)
     expect(JSON.parse(readFileSync(fencePath, 'utf8'))).toEqual(acquired)
     expect(store.release(acquired)).toBe(true)
 

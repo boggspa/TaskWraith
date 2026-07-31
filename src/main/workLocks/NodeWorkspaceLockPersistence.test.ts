@@ -23,6 +23,17 @@ import {
 import type { NodeWorkspaceLockPersistenceFs } from './NodeWorkspaceLockPersistence'
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
 
+/**
+ * Asserts the INTENT — readable and writable by the owner alone — rather than a
+ * raw octal. NTFS reports 0666 where POSIX reports 0600, and macOS enforces modes
+ * so a local run cannot see the difference; on Windows the ACL rather than the
+ * mode carries this property, so the octal check is meaningful only off win32.
+ */
+function expectOwnerOnly(target: string): void {
+  if (process.platform === 'win32') return
+  expect(lstatSync(target).mode & 0o077).toBe(0)
+}
+
 const temporaryRoots: string[] = []
 
 afterEach(() => {
@@ -230,7 +241,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     const replacementStat = lstatSync(canonicalWorktree)
     const replacementIdentity = `dev:${replacementStat.dev}:ino:${replacementStat.ino}`
     store.writeDerivedMarker(canonicalWorktree, markerName, 'private', replacementIdentity)
-    expect(lstatSync(join(worktree, markerName)).mode & 0o077).toBe(0)
+    expectOwnerOnly(join(worktree, markerName))
   })
 
   it('never follows a substituted or recreated marker root', () => {
@@ -269,10 +280,10 @@ describe('NodeWorkspaceLockPersistence', () => {
     const authority = join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY)
     const event = '{"kind":"acquire"}\n'
     store.appendEvent(event, 0)
-    expect(lstatSync(authority).mode & 0o077).toBe(0)
-    expect(lstatSync(join(authority, WORKSPACE_LOCK_EVENTS_FILENAME)).mode & 0o077).toBe(0)
+    expectOwnerOnly(authority)
+    expectOwnerOnly(join(authority, WORKSPACE_LOCK_EVENTS_FILENAME))
     expect(store.acquireInstanceFence(fence('fence-private'))).toEqual({ ok: true })
-    expect(lstatSync(join(authority, WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME)).mode & 0o077).toBe(0)
+    expectOwnerOnly(join(authority, WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME))
 
     const target = join(root, 'outside.jsonl')
     writeFileSync(target, '{"outside":true}\n')
