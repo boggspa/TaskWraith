@@ -20,7 +20,11 @@ describe('main capability gateway dispatch contract', () => {
     expect(gatewayDispatchSource).toContain('resolveGatewayInvocation({')
     expect(gatewayDispatchSource).not.toContain('previewForGeminiMcpTool(')
     expect(gatewayDispatchSource).not.toContain('requestAgenticServiceApproval(')
-    expect(gatewayDispatchSource).not.toContain('acquireMcpWorkspaceMutation({')
+    expect(gatewayDispatchSource).not.toContain('workspaceLockMcpAdmissionCoordinator.admit({')
+    // Guards the assertion above against going vacuous: the workspace-lock
+    // admission seam must exist somewhere in the executor, just never ahead of
+    // the gateway unwrap.
+    expect(executorSource).toContain('workspaceLockMcpAdmissionCoordinator.admit({')
   })
 
   it('hands the exact target route and caller context to the executable dispatch seam', () => {
@@ -37,23 +41,36 @@ describe('main capability gateway dispatch contract', () => {
       'previewForGeminiMcpTool(toolName, args, cwd, context, parentProvider)',
       'applyMcpWriteLockApprovalContext(approvalPreview, context, toolName, args, cwd)',
       'requestAgenticServiceApproval(',
-      'networkAccessBlockedToolName(toolName, context.effectivePermissions)',
-      'acquireMcpWorkspaceMutation({',
+      'networkAccessBlockedToolName(',
+      'workspaceLockMcpAdmissionCoordinator.admit({',
       'imageToolCallBudget.tryConsume(',
       'finalRichResult?.trustedMediaRefs'
     ]) {
       expect(canonicalDispatchSource, seam).toContain(seam)
     }
+    // The pinned literal used to carry the argument ordering too. The call now
+    // takes a third argument across several lines, so the ordering is asserted
+    // on its own: the tool name first, the caller's effective permissions
+    // second — never the reverse, which would silently evaluate the block
+    // against the wrong posture.
+    const networkBlockCalls =
+      canonicalDispatchSource.match(/networkAccessBlockedToolName\([^)]*\)/gs) ?? []
+    expect(networkBlockCalls.length).toBeGreaterThan(0)
+    for (const call of networkBlockCalls) {
+      expect(call, 'networkAccessBlockedToolName argument ordering').toMatch(
+        /^networkAccessBlockedToolName\(\s*[A-Za-z_$][\w.$]*,\s*context\.effectivePermissions\b/s
+      )
+    }
     expect(canonicalDispatchSource.indexOf('validateMcpToolArgumentsBeforeApproval(')).toBeLessThan(
       canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')
     )
     expect(canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')).toBeLessThan(
-      canonicalDispatchSource.indexOf('acquireMcpWorkspaceMutation({')
+      canonicalDispatchSource.indexOf('workspaceLockMcpAdmissionCoordinator.admit({')
     )
   })
 
   it('resolves every brokered shell cwd through the workspace scope before execution', () => {
-    const scopeResolution = canonicalDispatchSource.indexOf('const cwd = resolveScopedDirectory(')
+    const scopeResolution = canonicalDispatchSource.indexOf('cwd = resolveScopedDirectory(')
     const shellExecution = canonicalDispatchSource.indexOf("if (toolName === 'run_shell_command')")
     const hostCommand = canonicalDispatchSource.indexOf('runHostCommand(command, cwd)')
 

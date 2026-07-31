@@ -2414,10 +2414,52 @@ export function hasMcpToolNamespace(rawAction: string): boolean {
   return /^mcp__[A-Za-z0-9_-]+__.+$/.test(normalized) || claimsTaskWraithMcpNamespace(normalized)
 }
 
-function strictUnqualifiedCatalogCanonicalName(value: string): string | null {
-  const normalized = String(value || '').trim()
+/**
+ * How much spelling variance the TOOL half of an identity may carry. The two
+ * modes answer different questions, so they cannot share one strictness:
+ *
+ * - `exact` (default) — PROVENANCE. The string is an untrusted provider report
+ *   and the question is whether it CLAIMS TaskWraith broker authority. An ACP
+ *   human title ("Ask User Question") or a display-cased echo ("READ_FILE") must
+ *   NOT be readable as an authority claim, so only the declared spelling
+ *   resolves. Pinned by providerActionTaxonomy.test.ts ('fails explicit catalog
+ *   resolution instead of inventing generic policy') and relied on by
+ *   NativeWorkspaceToolGate's broker-provenance split.
+ * - `folded` — DISPATCH. The call already arrived on TaskWraith's own MCP
+ *   transport under a declared server/prefix identity; the only open question
+ *   is which declared tool it names. Providers echo the catalogue's snake_case
+ *   names back in their own casing (`ASkUserQuestion`, `RUN_SHELL_COMMAND`),
+ *   exactly as the pre-strict canonicalizer this resolver replaced
+ *   (`canonicalTaskWraithToolName` in taskWraithMcpCatalog.ts) always tolerated.
+ *   Dropping the fold rejected live mixed-case calls outright.
+ */
+type CatalogNamePresentation = 'exact' | 'folded'
+
+function strictUnqualifiedCatalogCanonicalName(
+  value: string,
+  presentation: CatalogNamePresentation = 'exact'
+): string | null {
+  const trimmed = String(value || '').trim()
+  // Fold BEFORE the double-namespace guard, never after: folding first keeps
+  // `MCP_TaskWraith_...` / `TASKWRAITH_BROKER_...` caught as double-namespaced
+  // instead of walking past a case-sensitive startsWith into the lookup.
+  //
+  // Folding cannot widen the accepted tool SET, only its accepted SPELLING:
+  // every key of TASKWRAITH_OWNED_MCP_ACTIONS is already lowercase and no two
+  // keys collide when lowercased, so the fold is 1:1 onto the same catalogue.
+  const normalized = presentation === 'folded' ? trimmed.toLowerCase() : trimmed
   if (!normalized || normalized.startsWith('mcp_') || normalized.startsWith('taskwraith')) {
     return null
+  }
+  // AskUserQuestion is the other alias the pre-strict canonicalizer carried:
+  // Claude and Ollama emit the tool under its provider-facing CamelCase
+  // spelling (plus `Ask_User_Question` / `ask-user-question` variants) while
+  // the executor is registered as `ask_user_question`. The separator-stripping
+  // comparison is copied from `canonicalTaskWraithToolName` so the two
+  // resolvers cannot drift. It is presentation-gated because a bare human title
+  // is precisely what the provenance caller must keep rejecting.
+  if (presentation === 'folded' && normalized.replace(/[\s_-]+/g, '') === 'askuserquestion') {
+    return 'ask_user_question'
   }
   // Aliases resolve BEFORE the ownership check. `ensemble_control` is the
   // provider-portable invocation shape for the `ensemble_bossman_control`
@@ -2450,21 +2492,32 @@ function strictUnqualifiedCatalogCanonicalName(value: string): string | null {
  * Execution-only namespace parser. The shared display canonicalizer accepts a
  * generic `mcp__<server>__<tool>` shape for historical transcripts; dispatch
  * authority accepts only TaskWraith's exact declared server identifiers.
+ *
+ * `presentation` reaches the TOOL half ONLY. The server name and the flat
+ * prefixes below stay case-EXACT in both modes because that half is the
+ * OWNERSHIP CLAIM ("this is TaskWraith's MCP server"), not a tool name — the
+ * declared sets already enumerate every casing real transports emit
+ * (`TaskWraith` and `taskwraith`, `TaskWraith__` and `mcp_TaskWraith_`), and
+ * folding them would let an undeclared `mcp__TASKWRAITH-BROKER__…` spelling
+ * claim broker identity.
  */
-function strictTaskWraithCatalogCanonicalName(rawAction: string): string | null {
+function strictTaskWraithCatalogCanonicalName(
+  rawAction: string,
+  presentation: CatalogNamePresentation = 'exact'
+): string | null {
   const normalized = String(rawAction || '').trim()
   if (!normalized) return null
 
   if (normalized.startsWith('mcp__')) {
     const match = normalized.match(/^mcp__([A-Za-z0-9_-]+)__(.+)$/)
     if (!match || !STRICT_TASKWRAITH_MCP_SERVER_NAMES.has(match[1])) return null
-    return strictUnqualifiedCatalogCanonicalName(match[2])
+    return strictUnqualifiedCatalogCanonicalName(match[2], presentation)
   }
 
   for (const prefix of STRICT_TASKWRAITH_FLAT_PREFIXES) {
     if (normalized.startsWith(prefix)) {
       const unqualified = normalized.slice(prefix.length)
-      return strictUnqualifiedCatalogCanonicalName(unqualified)
+      return strictUnqualifiedCatalogCanonicalName(unqualified, presentation)
     }
   }
 
@@ -2475,7 +2528,7 @@ function strictTaskWraithCatalogCanonicalName(rawAction: string): string | null 
   ) {
     return null
   }
-  return strictUnqualifiedCatalogCanonicalName(normalized)
+  return strictUnqualifiedCatalogCanonicalName(normalized, presentation)
 }
 
 /**
@@ -2641,7 +2694,14 @@ export function resolveToolDispatchContractStrict(
   rawAction: string,
   args?: unknown
 ): StrictToolDispatchContract {
-  const canonical = strictTaskWraithCatalogCanonicalName(rawAction)
+  // DISPATCH presentation: this identity reached us over TaskWraith's own MCP
+  // transport (both bridge entry points — `tools/call` and the broker request
+  // handler — resolve through here), so its server/prefix half has already been
+  // matched exactly and only the tool half is in question. Folding restores what
+  // `canonicalTaskWraithToolName` did before the strict resolver replaced it.
+  // `resolveCatalogActionStrict` deliberately does NOT fold — it answers the
+  // provenance question about untrusted provider-reported strings.
+  const canonical = strictTaskWraithCatalogCanonicalName(rawAction, 'folded')
   if (
     !canonical ||
     !Object.prototype.hasOwnProperty.call(TASKWRAITH_OWNED_MCP_ACTIONS, canonical)
@@ -2687,6 +2747,14 @@ export function resolveToolDispatchContractStrict(
         )
       }
     }
+    // Deliberately EXACT, not `'folded'`. This branch is the gateway's
+    // permission-target resolution: the target must come from the argument ROOT
+    // only, and the nested `rawInput/input/parameters/args` `.name` values above
+    // stay pure conflict cross-checks compared byte-for-byte. Folding here would
+    // also desync this from McpBridgeRuntime's
+    // `resolveBridgeGatewayInvocationTarget`, which resolves the same target
+    // through the exact `resolveCatalogActionStrict`; an unfolded target is
+    // fail-closed against that helper, a folded one would not be.
     const target = strictTaskWraithCatalogCanonicalName(rawTarget)
     if (!target || !isTaskWraithCatalogAction(target)) {
       return unmapped(

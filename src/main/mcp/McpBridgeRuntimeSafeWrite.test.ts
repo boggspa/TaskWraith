@@ -875,6 +875,89 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  // The AskUserQuestion alias is only half of what the strict resolver has to
+  // carry: providers also echo ordinary catalogue names back in their own
+  // casing. Pin the plain fold separately so a future "the alias test still
+  // passes" reading cannot hide a dropped case-fold.
+  it('case-folds an ordinary catalog tool name before brokered tool calls', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'ok' }))
+    const stream = {
+      write: vi.fn((_chunk: string, callback?: (error?: Error | null) => void) => callback?.())
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => SOCKET_PATH,
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_SAFE_SUBSET: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'claude'
+        },
+        cwd: () => '/repo',
+        stdout: stream as never
+      },
+      SOCKET_PATH,
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 9,
+        method: 'tools/call',
+        params: { name: 'mcp__TaskWraith__READ_FILE', arguments: { path: 'README.md' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({
+        tool: 'read_file',
+        parentProvider: 'claude'
+      })
+    )
+  })
+
+  // Folding is scoped to the TOOL half. The server/prefix half is the ownership
+  // claim, so an undeclared casing of a TaskWraith server name must NOT buy
+  // broker identity — this is the boundary the restored fold must not cross.
+  it('does not let a case-variant server name claim TaskWraith broker identity', async () => {
+    const brokerRequest = vi.fn(async () => ({ ok: true, text: 'ok' }))
+    const stream = {
+      write: vi.fn((_chunk: string, callback?: (error?: Error | null) => void) => callback?.())
+    }
+
+    handleMcpJsonRpcMessage(
+      {
+        getDefaultSocketPath: () => SOCKET_PATH,
+        getAppVersion: () => '1.0.0',
+        getMcpToolDefinitions: () => [],
+        brokerRequest,
+        env: {
+          TASKWRAITH_MCP_SAFE_SUBSET: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'claude'
+        },
+        cwd: () => '/repo',
+        stdout: stream as never
+      },
+      SOCKET_PATH,
+      'token-1',
+      {
+        jsonrpc: '2.0',
+        id: 10,
+        method: 'tools/call',
+        params: { name: 'mcp__TASKWRAITH-BROKER__read_file', arguments: { path: 'README.md' } }
+      },
+      'line'
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(brokerRequest).not.toHaveBeenCalled()
+    expect(stream.write).toHaveBeenCalled()
+    expect(String(stream.write.mock.calls[0]?.[0] || '')).toContain('Unknown TaskWraith MCP tool')
+  })
+
   it('passes broker caller context into the main MCP executor', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
     const runtime = new McpBridgeRuntime({

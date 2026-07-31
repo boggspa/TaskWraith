@@ -3,6 +3,35 @@ import { describe, expect, it } from 'vitest'
 
 const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 
+// The startup recovery gates are a moving target: the 1.9.2 arc widened every
+// one of them from `if (!historyDeletionStartupRecoveryBlockedReason)` to a
+// conjunction that also demands `!workspaceLockStartupRecoveryBlockedReason`
+// (and, at some sites, `!scheduledOccurrenceRecoveryBlockedReason`). Each added
+// conjunct is a strict NARROWING of when recovery runs, so the deletion fence
+// this tripwire exists to protect (TW-SEC-014) can never be weakened by one.
+// Pin the fence clause and tolerate any number of further `&& !<name>`
+// conjuncts — a longer literal has now broken this class twice.
+const STARTUP_RECOVERY_GATE =
+  /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*\)\s*\{/
+
+// The same gate, additionally required to carry the scheduled-occurrence fence
+// somewhere in its conjunct list.
+const SCHEDULED_OCCURRENCE_GATE =
+  /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason\s*&&(\s*![A-Za-z]+\s*&&)*\s*!scheduledOccurrenceRecoveryBlockedReason\s*\)/
+
+/** `lastIndexOf(gate, limit)` for a regex: last match starting at or before `limit`. */
+function lastGateIndexAtOrBefore(source: string, limit: number): number {
+  const scanner = new RegExp(STARTUP_RECOVERY_GATE.source, 'g')
+  let found = -1
+  let match: RegExpExecArray | null
+  while ((match = scanner.exec(source)) !== null) {
+    if (match.index > limit) break
+    found = match.index
+    scanner.lastIndex = match.index + 1
+  }
+  return found
+}
+
 describe('history deletion startup integration', () => {
   it('recovers pending deletion and lifecycle-reaps orphans before run-queue revival', () => {
     const projectReferenceNeedCheck = indexSource.indexOf(
@@ -79,23 +108,18 @@ describe('history deletion startup integration', () => {
     expect(source).toContain('recoverPendingUsageHistoryMutationBeforeOuterDeletion()')
     expect(source).toContain('await recoverPendingHistoryDeletionBeforeRunQueue()')
     expect(source).toContain("code: 'history_deletion_recovery_required'")
-    expect(source).toContain('if (!historyDeletionStartupRecoveryBlockedReason) {')
-    expect(source.indexOf('if (!historyDeletionStartupRecoveryBlockedReason) {')).toBeLessThan(
+    expect(source).toMatch(STARTUP_RECOVERY_GATE)
+    expect(source.search(STARTUP_RECOVERY_GATE)).toBeLessThan(
       source.indexOf('AppStore.recoverRunQueueAfterStartup()')
     )
-    expect(source).toMatch(
-      /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason\s*&&\s*!scheduledOccurrenceRecoveryBlockedReason\s*\)/
-    )
+    expect(source).toMatch(SCHEDULED_OCCURRENCE_GATE)
     const wakeupRecovery = indexSource.lastIndexOf('recoverPersistedEnsembleWakeups()')
     const wakeupGuard = indexSource.lastIndexOf(
       '!historyDeletionStartupRecoveryBlockedReason',
       wakeupRecovery
     )
     const mailboxRecovery = indexSource.indexOf('recoverPendingSubThreadMailboxes()', wakeupRecovery)
-    const mailboxGuard = indexSource.lastIndexOf(
-      'if (!historyDeletionStartupRecoveryBlockedReason)',
-      mailboxRecovery
-    )
+    const mailboxGuard = lastGateIndexAtOrBefore(indexSource, mailboxRecovery)
     expect(wakeupGuard).toBeGreaterThan(end)
     expect(wakeupGuard).toBeLessThan(wakeupRecovery)
     expect(mailboxGuard).toBeGreaterThan(wakeupRecovery)

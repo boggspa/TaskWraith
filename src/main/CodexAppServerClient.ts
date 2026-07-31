@@ -26,6 +26,7 @@ import {
   requireAbsoluteCodexHome
 } from './codex/CodexHome'
 import { isCodexAppServerThreadId } from './CodexSessionIdentity'
+import { waitForProviderOperationSettlement } from './run/ProviderOperationRegistry'
 export { isCodexAppServerThreadId }
 export {
   CodexAppServerRequestTimeoutError,
@@ -281,6 +282,32 @@ export interface CodexAppServerSpawnedProcess {
 type CodexAppServerSpawnedProcessBinder = (
   process: CodexAppServerSpawnedProcess
 ) => Promise<void>
+
+/**
+ * How long a failed child binding waits for the app-server's real `close`
+ * after asking it to stop. SIGTERM is a request, not close evidence: a child
+ * that ignores it — or whose own grandchildren keep the inherited stdio pipes
+ * open — never emits `close`, and `close` is the only thing that resolves the
+ * lifecycle join. Matches the 4s kill grace the other CLI transports use
+ * (`DEFAULT_HOST_COMMAND_KILL_GRACE_MS`, `CURSOR_MCP_ENABLE_KILL_GRACE_MS`).
+ */
+const CODEX_APP_SERVER_BINDING_CLOSE_JOIN_MS = 4_000
+
+/**
+ * Positive evidence that a spawned child has already left the process table.
+ *
+ * Node initialises both fields to `null` for a live child and only ever
+ * replaces them with a real exit code / signal name once it has exited, so
+ * "exited" must be read from the value that is PRESENT, never from the
+ * absence of `null`. A strict `!== null` also classifies `undefined` — any
+ * child object that simply does not carry these fields yet — as exited, which
+ * fences a perfectly healthy app-server and then blocks on a close that is
+ * never coming. Mirrors `ProviderProcessTerminationBackstop`, which likewise
+ * treats a missing exit code as still-running.
+ */
+function codexAppServerChildHasExited(proc: ChildProcessWithoutNullStreams): boolean {
+  return typeof proc.exitCode === 'number' || typeof proc.signalCode === 'string'
+}
 
 /**
  * Per-caller authority for starting the shared Codex daemon. At least one
@@ -1039,7 +1066,7 @@ export class CodexAppServerClient {
         // hands the credential back.
         await lease.noteProviderProcess(proc.pid)
       }
-      if (this.proc !== proc || proc.exitCode !== null || proc.signalCode !== null) {
+      if (this.proc !== proc || codexAppServerChildHasExited(proc)) {
         throw new Error('Codex app-server exited during exact child binding.')
       }
     } catch (error) {
@@ -1050,7 +1077,16 @@ export class CodexAppServerClient {
           // The real close event remains the only release boundary.
         }
       }
-      await processClosed
+      // Join the exact close so a bound child is really gone before this
+      // startup unwinds — but bounded. An unbounded await here never settles
+      // for a child that ignores SIGTERM, and because it is awaited inside the
+      // `startPromise` this whole client wedges: every later `ensureStarted`
+      // joins a shared startup that can never resolve. The close handler stays
+      // authoritative for credential release whenever the close does land.
+      await waitForProviderOperationSettlement(
+        processClosed,
+        CODEX_APP_SERVER_BINDING_CLOSE_JOIN_MS
+      )
       throw error
     }
 

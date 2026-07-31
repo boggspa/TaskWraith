@@ -115,10 +115,20 @@ describe('execution graph main integration', () => {
     expect(initialization).toContain('executionGraphRepositoryRef?.listRepositoryDiagnostics()')
     expect(initialization).toContain("code: 'initialization_failed'")
 
-    const recovery = between(
-      'if (!historyDeletionStartupRecoveryBlockedReason) {\n      const startupRecoveryRecords',
-      'AppStore.recoverInterruptedScheduledTasksAfterStartup()'
+    // Anchored on a form tolerant of extra `&& !<name>` conjuncts. The 1.9.2 arc
+    // widened this gate to also demand `!workspaceLockStartupRecoveryBlockedReason`;
+    // an added conjunct strictly narrows when recovery runs, so it cannot weaken
+    // what this test protects, and a literal has broken here twice already.
+    const recoveryGate =
+      /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*\)\s*\{\s*const startupRecoveryRecords/
+    const recoveryStart = source.search(recoveryGate)
+    expect(recoveryStart).toBeGreaterThanOrEqual(0)
+    const recoveryEnd = source.indexOf(
+      'AppStore.recoverInterruptedScheduledTasksAfterStartup()',
+      recoveryStart
     )
+    expect(recoveryEnd).toBeGreaterThan(recoveryStart)
+    const recovery = source.slice(recoveryStart, recoveryEnd)
     expect(recovery).toContain(
       'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
     )

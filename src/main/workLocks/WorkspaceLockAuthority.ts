@@ -1719,7 +1719,7 @@ export class WorkspaceLockAuthority {
 
   private snapshotFromState(): WorkspaceLockSnapshot {
     if (!this.bootFence) throw new Error('Workspace-lock authority has not booted.')
-    const recoveredCutoff = Date.now() - this.recoveredVisibilityMs
+    const recoveredCutoff = Date.parse(this.nowIso()) - this.recoveredVisibilityMs
     return {
       authority: { ...this.bootFence },
       sequence: this.state.sequence,

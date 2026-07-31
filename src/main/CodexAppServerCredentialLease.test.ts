@@ -200,6 +200,39 @@ describe('Codex app-server credential lease', () => {
     expect(setup.client.hasStaleCredentialLeaseConsent()).toBe(false)
   })
 
+  it('gives up the post-kill close join when the child never emits close', async () => {
+    // `proc.kill()` sends a request, not close evidence. A child that ignores
+    // SIGTERM — or whose grandchildren keep the inherited stdio pipes open —
+    // never emits `close`, and this join runs inside `startPromise`: awaiting
+    // it unbounded strands that promise, so every later ensureStarted joins a
+    // shared startup that can never settle and the whole client is wedged.
+    // The fake child here never emits `close`, exactly like that process.
+    vi.useFakeTimers()
+    try {
+      const setup = harness({
+        lease: {
+          seedIntoIsolatedHome: vi.fn(async () => {}),
+          noteProviderProcess: vi.fn(async () => {
+            throw new Error('durable birth receipt failed')
+          }),
+          commitAndRelease: vi.fn(async () => 'unchanged')
+        }
+      })
+      const settled = setup.client.ensureStarted('test').then(
+        () => 'resolved',
+        (error: unknown) => (error instanceof Error ? error.message : String(error))
+      )
+
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      expect(await settled).toBe('durable birth receipt failed')
+      expect(setup.proc.kill).toHaveBeenCalledTimes(1)
+      expect(setup.client.isRunning()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not borrow at all unless the caller supplies an acquirer', async () => {
     // The bare client must stay inert: the default dependency borrows nothing,
     // so anything constructing a client without opting in is unaffected.

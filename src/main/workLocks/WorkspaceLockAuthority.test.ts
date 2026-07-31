@@ -1044,11 +1044,63 @@ describe('WorkspaceLockAuthority', () => {
         targetPath: path.join(h.workspace, 'src', 'a.ts')
       })
     ).rejects.toThrow(/marker projection/i)
-    expect(authority.snapshot().leases.filter((lease) => lease.status !== 'recovered')).toEqual([])
+    // Strict: a rolled-back acquire leaves no lease of ANY status behind. The previous
+    // `.filter((lease) => lease.status !== 'recovered')` was dead code here — this scenario
+    // never produces a recovered lease — and it would have hidden a stray one.
+    expect(authority.snapshot().leases).toEqual([])
     const state = decodeWorkspaceLockWal(h.persistence.readEvents().raw)
     expect(state.events.some((event) => event.kind === 'prepare')).toBe(true)
     expect(state.events.some((event) => event.kind === 'acquire')).toBe(false)
     authority.dispose()
+  })
+
+  it('measures the recovered-lease visibility window against the injected clock', async () => {
+    const h = harness('instance-a')
+    const first = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    await first.acquire(owner({ lockOwnerId: 'owner-a', runId: 'run-a' }), {
+      workspacePath: h.workspace,
+      kind: 'file',
+      targetPath: path.join(h.workspace, 'src', 'a.ts')
+    })
+    first.dispose()
+
+    h.observations.set(201, { state: 'dead' })
+    const recoveredVisibilityMs = 1_000
+    // Bracket the whole restart recovery: the recovered stamp is written during `open()`.
+    const recoveredFloor = globalTime
+    const second = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        instance: { ...h.dependencies.instance, instanceId: 'instance-b' }
+      },
+      recoveredVisibilityMs
+    })
+    await second.recoverStaleClaims()
+    const recoveredCeiling = globalTime
+
+    // Inside the window under the injected clock: the recovered lease is PRESENT and correct.
+    // The fixture clock sits at 2026-07-29T18:00Z and only advances 1ms per read, so under a
+    // real `Date.now()` cutoff this lease is always aged out and `leases` would be empty.
+    const visible = second.snapshot().leases
+    expect(visible).toHaveLength(1)
+    expect(visible[0]).toMatchObject({
+      status: 'recovered',
+      recoveryReason: 'owner_dead'
+    })
+    expect(visible[0].claim.relativeTargetPath).toBe('src/a.ts')
+    const statusChangedAt = Date.parse(visible[0].statusChangedAt)
+    expect(statusChangedAt).toBeGreaterThanOrEqual(recoveredFloor)
+    expect(statusChangedAt).toBeLessThanOrEqual(recoveredCeiling)
+
+    // Advancing only the INJECTED clock past the window must age the same lease out, which
+    // proves the cutoff is derived from the injected clock rather than wall time.
+    globalTime += recoveredVisibilityMs * 5
+    expect(second.snapshot().leases).toEqual([])
+    second.dispose()
   })
 
   it('keeps both owner incarnations barred until a failed exact transfer projection is retried', async () => {

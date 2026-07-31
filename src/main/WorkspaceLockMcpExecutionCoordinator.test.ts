@@ -10,7 +10,10 @@ import {
   type WorkspaceLockMcpExecutionCoordinatorDependencies,
   type WorkspaceLockMcpExecutionRuntime
 } from './WorkspaceLockMcpExecutionCoordinator'
-import type { WorkspaceLockMcpAdmission } from './WorkspaceLockMcpAdmissionCoordinator'
+import type {
+  WorkspaceLockMcpAdmission,
+  WorkspaceLockMcpAdmissionInput
+} from './WorkspaceLockMcpAdmissionCoordinator'
 import {
   createWorkspaceExternalMutationAuthorityReceipt,
   type WorkspaceLockRuntimeAcquireInput
@@ -207,7 +210,7 @@ function harness(
     finish: lifecycleFinish
   }))
   const admitted = overrides.admitted || admission()
-  const admissionCall = vi.fn(async () => admitted)
+  const admissionCall = vi.fn(async (_input: WorkspaceLockMcpAdmissionInput) => admitted)
   const verify = vi.fn(async () => ({
     ok: true as const,
     acquiredTransitionId: 'transition-2',

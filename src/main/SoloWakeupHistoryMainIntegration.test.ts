@@ -4,6 +4,38 @@ import { describe, expect, it } from 'vitest'
 
 const indexSource = readFileSync(join(__dirname, 'index.ts'), 'utf8')
 
+// The startup recovery gates keep gaining conjuncts (the 1.9.2 arc added
+// `!workspaceLockStartupRecoveryBlockedReason` to every one of them). Each
+// addition strictly NARROWS when recovery runs, so it can never weaken the
+// deletion fence this tripwire protects. Match the fence clause and tolerate
+// any number of further `&& !<name>` conjuncts instead of pinning a literal
+// that has already broken this class twice.
+const STARTUP_RECOVERY_GATE =
+  /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*\)\s*\{/
+
+// The same gate, additionally required to carry the ensemble-wakeups flag.
+const ENSEMBLE_WAKEUP_GATE =
+  /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*&&\s*ensembleWakeupsEnabled\(\)\s*\)\s*\{/
+
+function lastMatchIndexAtOrBefore(pattern: RegExp, limit: number): number {
+  const scanner = new RegExp(pattern.source, 'g')
+  let found = -1
+  let match: RegExpExecArray | null
+  while ((match = scanner.exec(indexSource)) !== null) {
+    if (match.index > limit) break
+    found = match.index
+    scanner.lastIndex = match.index + 1
+  }
+  return found
+}
+
+function firstMatchIndexAfter(pattern: RegExp, from: number): number {
+  const scanner = new RegExp(pattern.source, 'g')
+  scanner.lastIndex = from
+  const match = scanner.exec(indexSource)
+  return match ? match.index : -1
+}
+
 function between(start: string, end: string): string {
   const from = indexSource.indexOf(start)
   const to = indexSource.indexOf(end, from)
@@ -15,14 +47,8 @@ function between(start: string, end: string): string {
 describe('solo wakeup destructive-history main integration', () => {
   it('keeps solo timer recovery behind the startup deletion-recovery gate', () => {
     const soloRecovery = indexSource.lastIndexOf('recoverPersistedSoloChatWakeups()')
-    const guardedBlock = indexSource.lastIndexOf(
-      'if (!historyDeletionStartupRecoveryBlockedReason && ensembleWakeupsEnabled())',
-      soloRecovery
-    )
-    const nextBlock = indexSource.indexOf(
-      'if (!historyDeletionStartupRecoveryBlockedReason) {',
-      guardedBlock + 1
-    )
+    const guardedBlock = lastMatchIndexAtOrBefore(ENSEMBLE_WAKEUP_GATE, soloRecovery)
+    const nextBlock = firstMatchIndexAfter(STARTUP_RECOVERY_GATE, guardedBlock + 1)
 
     expect(guardedBlock).toBeGreaterThanOrEqual(0)
     expect(soloRecovery).toBeGreaterThan(guardedBlock)

@@ -12,6 +12,11 @@ function section(start: string, end: string): string {
   return source.slice(startIndex, endIndex)
 }
 
+// Line breaks inside a wired-up callback are formatting, not meaning.
+function collapse(text: string): string {
+  return text.replace(/\s+/g, ' ')
+}
+
 describe('Codex production workspace-lock lifecycle wiring', () => {
   it('serializes the one shared client and private home around the whole provider run', () => {
     const provider = section(
@@ -63,6 +68,10 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       'async function runCodexAppServerWithClient(',
       'async function runCodexExecFallback('
     )
+    const dispatch = section(
+      'function dispatchCodexMessageFromClient(',
+      'function getCodexClient('
+    )
     const notifications = section(
       'function handleCodexNotification(',
       'function formatCodexApprovalRequest('
@@ -72,17 +81,55 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       'function maybeRequestCodexHostRerun('
     )
 
-    expect(provider).toContain(
-      'client.setNotificationHandler((message) => handleCodexNotification(message, client))'
+    // Each run wires its OWN client into both callbacks, so the frame carries
+    // the identity of the connection that delivered it.
+    expect(collapse(provider)).toContain(
+      'client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client)'
     )
-    expect(provider).toContain(
-      'client.setRequestHandler((message) => handleCodexServerRequest(message, client))'
+    expect(collapse(provider)).toContain(
+      'client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client)'
+    )
+    // A bare handler reference would erase that identity and re-open the
+    // ambient-client route these guards exist to close.
+    expect(provider).not.toContain('setNotificationHandler(handleCodexNotification)')
+    expect(provider).not.toContain('setRequestHandler(handleCodexServerRequest)')
+
+    // The origin stamp lives only for the duration of the dispatch, and a frame
+    // two client lifecycles both claim poisons instead of picking one.
+    expect(dispatch).toContain('codexMessageOriginClients.get(message)')
+    expect(dispatch).toContain('poisonWorkspaceLockMutationAdmission(')
+    expect(dispatch).toContain('codexMessageOriginClients.set(message, client)')
+    expect(dispatch).toContain('codexMessageOriginClients.delete(message)')
+
+    // Callbacks, interrupts and goals read the originating client off the frame
+    // and refuse any run state bound to a different one.
+    expect(collapse(notifications)).toMatch(
+      /^function handleCodexNotification\(message: any\) \{ const originatingClient = [^{}]*codexMessageOriginClients\.get\(message\)[^{}]*if \(!originatingClient\) return\b/
     )
     expect(notifications).toContain('codexClientForRunState(state) !== originatingClient')
     expect(notifications).toContain(
       'syncCodexNativeGoalNotification(state, message, originatingClient)'
     )
+    // EVERY interrupt this handler fires — not merely one of them — is aimed at
+    // the connection the notification arrived on.
+    const notificationInterrupts =
+      notifications.replace(/\s+/g, '').match(/issueCodexTurnInterrupt\([^,)]*/g) ?? []
+    expect(notificationInterrupts.length).toBeGreaterThan(0)
+    for (const interrupt of notificationInterrupts) {
+      expect(interrupt).toBe('issueCodexTurnInterrupt(originatingClient')
+    }
+
+    // Approvals are answered on the client that asked for them.
+    expect(collapse(approvals)).toMatch(
+      /^function handleCodexServerRequest\(message: any\) \{ const respondingClient = [^{}]*codexMessageOriginClients\.get\(message\)[^{}]*if \(!respondingClient\) return\b/
+    )
     expect(approvals).toContain('codexClientForRunState(state) !== respondingClient')
+    const approvalReplies =
+      approvals.replace(/\s+/g, '').match(/[A-Za-z0-9_.!]*\.(?:respond|reject)\(/g) ?? []
+    expect(approvalReplies.length).toBeGreaterThan(0)
+    for (const reply of approvalReplies) {
+      expect(reply).toMatch(/^respondingClient\.(?:respond|reject)\($/)
+    }
     expect(source).toContain('getCodexClient: onlyBoundCodexRunClient')
   })
 

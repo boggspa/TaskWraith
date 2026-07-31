@@ -134,6 +134,19 @@ function harness() {
       released: []
       })
     ),
+    forceReleaseRecoveryBlockedAcquisition: vi.fn(
+      async (
+        _ownerRunId: string,
+        _acquiredTransitionId: string,
+        _leaseIds: readonly string[],
+        _approvalReceiptId: string,
+        _options?: { transitionId?: string }
+      ) => ({
+        ok: true as const,
+        transitionId: 'force-release-recovery',
+        released: []
+      })
+    ),
     snapshot: vi.fn(() => emptySnapshot()),
     onChange: vi.fn((next) => {
       listener = next
