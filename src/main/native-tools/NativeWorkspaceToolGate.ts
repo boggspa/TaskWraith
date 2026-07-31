@@ -161,6 +161,31 @@ function argumentRoots(rawToolCall: unknown): Record<string, unknown>[] {
   return roots
 }
 
+/**
+ * The single declared argument record a dispatch contract may be resolved from.
+ *
+ * ACP seats hand us the verbatim `session/request_permission` envelope, whose
+ * machine payload lives under `rawInput`; MCP callers hand us the argument object
+ * itself. `resolveToolDispatchContractStrict` reads a `capability_invoke` target
+ * from the ROOT of whatever it is given, so the envelope has to be unwrapped
+ * first — exactly as the two sibling ACP classifiers already do
+ * (`GrokMcpAdvertise.ts` and `KimiToolPolicy.ts` both resolve against
+ * `rawToolCall.rawInput`).
+ *
+ * This deliberately unwraps ONE declared field instead of reusing
+ * `argumentRoots`. That scan is correct for collecting paths, but it also
+ * descends into `arguments` — which for `capability_invoke` is the *target
+ * tool's own* parameter bag, and a catalog target may legitimately declare its
+ * own `name` parameter (`start_background_process` does). Resolving a permission
+ * target from there would give the decision a second source of truth and let a
+ * caller name one tool while the executor dispatches another.
+ */
+function dispatchArgumentRecord(rawToolCall: unknown): unknown {
+  const root = asRecord(rawToolCall)
+  if (!root) return rawToolCall
+  return asRecord(root.rawInput) ?? asRecord(root.input) ?? root
+}
+
 function embeddedToolNameCandidates(rawToolCall: unknown): string[] {
   const roots = argumentRoots(rawToolCall)
   const candidates: unknown[] = []
@@ -369,7 +394,10 @@ export function preflightNativeWorkspaceTool(
       code: ProviderActionResolutionErrorCode
     } | null = null
     for (const candidate of brokerCandidates) {
-      const contract = resolveToolDispatchContractStrict(candidate, input.rawToolCall)
+      const contract = resolveToolDispatchContractStrict(
+        candidate,
+        dispatchArgumentRecord(input.rawToolCall)
+      )
       if (contract.ok) {
         return {
           kind: 'not_applicable',
