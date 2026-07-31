@@ -62,13 +62,25 @@ describe('pre-approval validation integration contracts', () => {
     const start = indexSource.indexOf('async function canUseClaudeSdkTool(')
     const end = indexSource.indexOf('\nasync function tryRunClaudeSdk(', start)
     const source = indexSource.slice(start, end)
-    const preflight = source.indexOf('validateMcpToolArgumentsBeforeApproval(')
+
+    // Anchor inside the TaskWraith-MCP identity region rather than at the top of the
+    // function. The WS-B provider-native branch sits above this and raises its own
+    // approval card, which is correct: a BARE native tool (Read/Write/Bash) carries
+    // no MCP schema to validate against, and that branch returns without ever
+    // reaching the MCP path. Anchoring on the first approval anywhere in the
+    // function fails on that legitimate ordering while proving nothing extra — what
+    // this test exists to guarantee is that no TASKWRAITH MCP call reaches an
+    // approval decision before its arguments have been validated.
+    const mcpRegion = source.indexOf("approvalIdentity.kind === 'taskwraith-mcp'")
+    const mcpSource = source.slice(mcpRegion)
+    const preflight = mcpSource.indexOf('validateMcpToolArgumentsBeforeApproval(')
 
     expect(start).toBeGreaterThanOrEqual(0)
     expect(end).toBeGreaterThan(start)
+    expect(mcpRegion).toBeGreaterThanOrEqual(0)
     expect(preflight).toBeGreaterThanOrEqual(0)
-    expect(preflight).toBeLessThan(source.indexOf('nativeProviderApprovalPriority('))
-    expect(preflight).toBeLessThan(source.indexOf('requestAgenticServiceApproval('))
+    expect(preflight).toBeLessThan(mcpSource.indexOf('nativeProviderApprovalPriority('))
+    expect(preflight).toBeLessThan(mcpSource.indexOf('requestAgenticServiceApproval('))
   })
 
   it('proves Claude raw identity conflicts and undeclared native tools deny before auto-allow', () => {
