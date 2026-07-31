@@ -30,6 +30,43 @@ describe('unqualifyKimiMcpToolName', () => {
 })
 
 describe('isKimiSafeMcpTool', () => {
+  // The ensemble soak caught this once already; the 1.9.2 rescue snapshot narrowed
+  // the candidate list back to rawInput-only and reintroduced it. Kimi carries its
+  // machine tool name in the ACP `toolCall.title`, which reaches us as
+  // `request.toolName` — an identity that lives ONLY there must still be
+  // recognised, or every TaskWraith read is denied on a read-only/plan seat.
+  it('recognises the identity when it arrives only as the ACP title', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'mcp__taskwraith__capability_search',
+        rawToolCall: { rawInput: { query: 'release gates' } }
+      })
+    ).toBe(true)
+  })
+  it('recognises a bare, already-unqualified identity', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'capability_search',
+        rawToolCall: { rawInput: { query: 'release gates' } }
+      })
+    ).toBe(true)
+  })
+  it('ignores an unresolvable prose title rather than letting it veto a real rawInput', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'Search the workspace',
+        rawToolCall: { rawInput: { tool_name: 'mcp__taskwraith__capability_search' } }
+      })
+    ).toBe(true)
+  })
+  it('still refuses a title naming a FOREIGN mcp server, even beside a valid identity', () => {
+    expect(
+      isKimiSafeMcpTool({
+        toolName: 'mcp__evil__read_file',
+        rawToolCall: { rawInput: { tool_name: 'mcp__taskwraith__read_file', path: 'inside.ts' } }
+      })
+    ).toBe(false)
+  })
   it('recognises a namespaced capability gateway tool as safe (the ensemble-soak bug)', () => {
     expect(
       isKimiSafeMcpTool({

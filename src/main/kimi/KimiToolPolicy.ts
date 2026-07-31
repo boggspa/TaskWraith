@@ -77,20 +77,40 @@ export function isKimiSafeMcpTool(request: {
     return false
   }
 
-  const candidates = [rawInput?.tool_name, rawInput?.name].filter(
+  // Identity candidates MUST include `request.toolName`. For an ACP seat that is
+  // `toolCall.title` (GrokAcpProtocol.parseAcpPermissionRequest), and Kimi puts its
+  // machine tool name there — a request carrying the identity only in the title has
+  // no rawInput candidate at all. Dropping it, and requiring a literal
+  // `mcp__taskwraith__` prefix, is exactly the mis-classification the header comment
+  // above records the ensemble soak catching: capability_search denied on a
+  // read-only seat. `unqualifyKimiMcpToolName` accepts any `mcp__<server>__`
+  // namespace (the isolated home guarantees the only server is ours) and passes an
+  // already-unqualified bare name through unchanged.
+  const rawCandidates = [request.toolName, rawInput?.tool_name, rawInput?.name].filter(
     (candidate): candidate is string => typeof candidate === 'string' && candidate.trim().length > 0
   )
-  if (candidates.length === 0) return false
-  const resolvedTools = candidates.map((candidate) => {
-    if (!/^mcp__taskwraith__/i.test(candidate)) return null
-    const resolution = resolveToolDispatchContractStrict(candidate, rawInput)
-    if (!resolution.ok) return null
-    return resolution.toolName
-  })
-  if (resolvedTools.some((tool) => tool === null)) return false
+  if (rawCandidates.length === 0) return false
+  const resolvedTools: string[] = []
+  for (const candidate of rawCandidates) {
+    const namespaced = candidate.match(/^mcp__([A-Za-z0-9_-]+?)__(.+)$/)
+    // A candidate that explicitly names ANOTHER MCP server is a spoof, not noise:
+    // refuse the whole request rather than letting a sibling identity carry it.
+    // (The isolated Kimi home means only TaskWraith is attached, so a foreign
+    // namespace can only be an attempt to launder one tool as another.)
+    if (namespaced && !/^taskwraith([-_]|$)/i.test(namespaced[1])) return false
+    const unqualified = unqualifyKimiMcpToolName(candidate)
+    if (!unqualified) continue
+    const resolution = resolveToolDispatchContractStrict(unqualified, rawInput)
+    // An UNRESOLVABLE identity is skipped rather than poisoning the request: an ACP
+    // title that is prose ("Search the workspace") must not veto a rawInput that
+    // names a real tool. Contradiction between two RESOLVED identities is still
+    // fatal below — that is the spoof this check exists to stop.
+    if (resolution.ok) resolvedTools.push(resolution.toolName)
+  }
+  if (resolvedTools.length === 0) return false
   if (new Set(resolvedTools).size !== 1) return false
   const tool = resolvedTools[0]
-  return Boolean(tool && (isReadOnlyAdvertisedTool(tool) || isCapabilityGatewayToolName(tool)))
+  return Boolean(isReadOnlyAdvertisedTool(tool) || isCapabilityGatewayToolName(tool))
 }
 
 export type KimiToolDecision = 'allow' | 'gate' | 'deny'
