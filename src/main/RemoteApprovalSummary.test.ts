@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  REMOTE_APPROVAL_BODY_BUDGET,
-  buildRemoteApprovalSummary
-} from './RemoteApprovalSummary'
+import { REMOTE_APPROVAL_BODY_BUDGET, buildRemoteApprovalSummary } from './RemoteApprovalSummary'
 
 const draft = (to: string[], cc: string[] = [], subject = 'Weekly update') => ({
   kind: 'tool',
@@ -56,9 +53,22 @@ describe('buildRemoteApprovalSummary', () => {
     expect(summary.text).toContain('no invitations are sent')
   })
 
+  it('renders shell commands for remote review and fails closed when they do not fit', () => {
+    expect(buildRemoteApprovalSummary({ kind: 'command', command: 'git status' })).toEqual({
+      text: 'git status',
+      complete: true
+    })
+    const longCommand = 'git log --oneline ' + 'a'.repeat(REMOTE_APPROVAL_BODY_BUDGET)
+    const summary = buildRemoteApprovalSummary({ kind: 'command', command: longCommand })
+    expect(summary.complete).toBe(false)
+    expect(summary.text!.length).toBeLessThanOrEqual(REMOTE_APPROVAL_BODY_BUDGET)
+    expect(buildRemoteApprovalSummary({ kind: 'command', command: '' })).toEqual({
+      complete: false
+    })
+  })
+
   it('leaves every other tool to the caller body', () => {
     for (const preview of [
-      { kind: 'command', command: 'rm -rf dist' },
       { kind: 'tool', toolName: 'write_file', params: { path: 'a.ts' } },
       null,
       'not-an-object'

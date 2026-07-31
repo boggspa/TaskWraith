@@ -13,6 +13,7 @@ import type { ApprovalTimeoutScheduler, ApprovalTimeoutReason } from '../Approva
 import type { BridgeApnsPusher } from '../BridgeApnsPusher'
 import type { BridgeApnsTokenStore } from '../BridgeApnsTokenStore'
 import { buildMobileApprovalCard, type MobileApprovalCard } from '../RemoteTaskProjection'
+import { AGENTIC_SERVICE_LABELS } from '../AgenticServiceMessages'
 import { RemoteAttentionApnsFanout } from '../RemoteAttentionApnsFanout'
 
 /**
@@ -540,7 +541,8 @@ export class ApprovalService {
           runId: info.runId,
           title: requiresDesktopExactReview
             ? 'Canvas eval requires desktop review'
-            : info.title || `${info.service} approval requested`,
+            : info.title ||
+              `${AGENTIC_SERVICE_LABELS[info.service] ?? info.service} approval requested`,
           body: requiresDesktopExactReview
             ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
             : info.remoteIncomplete

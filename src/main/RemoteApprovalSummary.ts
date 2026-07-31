@@ -39,7 +39,8 @@ export interface RemoteApprovalSummary {
 const RECIPIENT_BEARING_TOOLS = new Set(['outlook_create_draft', 'outlook_create_event'])
 
 function asList(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string')
+  if (Array.isArray(value))
+    return value.filter((entry): entry is string => typeof entry === 'string')
   return typeof value === 'string' && value.trim() ? [value] : []
 }
 
@@ -52,6 +53,20 @@ export function buildRemoteApprovalSummary(preview: unknown): RemoteApprovalSumm
     return { complete: true }
   }
   const record = preview as Record<string, unknown>
+
+  // Shell commands are self-describing: the command itself must be visible on
+  // a paired device because there is no transcript row to lean on. If it does
+  // not fit, the device may decline but not approve blind.
+  if (record.kind === 'command') {
+    const command = typeof record.command === 'string' ? record.command : ''
+    if (!command) return { complete: false }
+    if (command.length <= REMOTE_APPROVAL_BODY_BUDGET) return { text: command, complete: true }
+    return {
+      text: `${command.slice(0, REMOTE_APPROVAL_BODY_BUDGET - 1)}…`,
+      complete: false
+    }
+  }
+
   const toolName = typeof record.toolName === 'string' ? record.toolName : ''
   if (!RECIPIENT_BEARING_TOOLS.has(toolName)) {
     return { complete: true }

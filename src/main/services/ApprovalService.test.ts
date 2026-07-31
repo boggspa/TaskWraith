@@ -1617,7 +1617,7 @@ describe('paired-device approval projection', () => {
       resolve: () => {}
     })
     const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-2')
-    expect(card?.title).toBe('fileChanges approval requested')
+    expect(card?.title).toBe('File changes approval requested')
     expect(card?.body).toContain('waiting for a decision')
   })
 })
