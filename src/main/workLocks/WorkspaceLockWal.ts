@@ -6,6 +6,7 @@ import type {
   WorkspaceLockLease
 } from './WorkspaceLockTypes'
 import { workspaceLockRuntimeMarkerFilename } from './WorkspaceLockMarkerProjection'
+import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
 
 /** The schema is deliberately a literal rather than a permissive version range. */
 export const WORKSPACE_LOCK_WAL_SCHEMA = 'taskwraith.workspace-lock.wal.v1'
@@ -190,8 +191,6 @@ interface WorkspaceLockWalUnsignedRecord {
 }
 
 const DIGEST_LENGTH = 64
-const runtimeMarkerPattern =
-  /^\.WORK-IN-PROGRESS-taskwraith-runtime-[A-Za-z0-9_-]+-[a-f0-9]{64}\.md$/
 const leaseStatuses: readonly WorkspaceLockClaimStatus[] = [
   'held',
   'orphan_live',
@@ -1038,7 +1037,7 @@ function validateMarkers(value: unknown): WorkspaceLockWalMarker[] {
     exactKeys(parsed, ['worktreeIdentity', 'worktreeObjectIdentity', 'markerName'])
     opaqueId(parsed.worktreeIdentity, 'marker worktree identity')
     identityString(parsed.worktreeObjectIdentity, 'marker worktree object identity')
-    if (typeof parsed.markerName !== 'string' || !runtimeMarkerPattern.test(parsed.markerName)) {
+    if (typeof parsed.markerName !== 'string' || !isRuntimeMarkerName(parsed.markerName)) {
       throw new Error('invalid derived marker name')
     }
     return {

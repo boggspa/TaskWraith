@@ -3,6 +3,7 @@ import * as nodeFs from 'node:fs'
 import { join, resolve } from 'node:path'
 
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
+import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
 
 /**
  * The authority state is deliberately separate from a checkout. A checkout is
@@ -874,10 +875,6 @@ function decodeWalUtf8(bytes: Buffer, path: string): string {
 
 function isSinglePathSegment(value: string): boolean {
   return Boolean(value) && value !== '.' && value !== '..' && !/[\\/\u0000]/.test(value)
-}
-
-function isRuntimeMarkerName(value: string): boolean {
-  return /^\.WORK-IN-PROGRESS-taskwraith-runtime-[A-Za-z0-9_-]+-[a-f0-9]{64}\.md$/.test(value)
 }
 
 function isOpaqueId(value: unknown): value is string {
