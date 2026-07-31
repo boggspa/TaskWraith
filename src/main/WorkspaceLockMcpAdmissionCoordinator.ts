@@ -159,8 +159,26 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       }
     }
     if (input.context.scope === 'global') {
-      const reason = `Workspace mutation ${input.toolName} requires an active workspace.`
-      return this.denied(input.toolName, reason)
+      // A global chat is host-scoped BY DESIGN, not a broken workspace one:
+      // `resolveGeminiMcpScopedPath` resolves absolute host paths for this scope
+      // and its own error text asks for "a host path". There is therefore no
+      // workspace for this authority to protect, and refusing here removed a
+      // capability that shipped in 1.9.1 — a global chat could not run
+      // `run_shell_command` at all.
+      //
+      // Admit with NO claims rather than denying. The mutation is still gated:
+      // `mcpToolAlwaysPrompts` returns true for every global-scope tool
+      // (McpRouteGuards.ts:64), so the approval at the gateway is raised with
+      // `forcePrompt`, which is precisely the flag that suppresses session-YOLO,
+      // standing workspace/session grants and bossman auto-approval. The human
+      // sees every one of these, which is the trade for their being unlocked.
+      return {
+        ok: true,
+        claims: [],
+        canonicalClaims: [],
+        claimsHeld: false,
+        releaseAfterOperation: false
+      }
     }
 
     const runtime = this.deps.getRuntime()

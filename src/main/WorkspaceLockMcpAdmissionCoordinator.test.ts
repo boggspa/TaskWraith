@@ -10,6 +10,7 @@ import {
   type WorkspaceLockMcpAdmissionCoordinatorDependencies,
   type WorkspaceLockMcpAdmissionInput
 } from './WorkspaceLockMcpAdmissionCoordinator'
+import { mcpToolAlwaysPrompts } from './mcp/McpRouteGuards'
 import type {
   CanonicalWorkspaceLockClaim,
   WorkspaceLockClaimRequest,
@@ -166,17 +167,34 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     })
   })
 
-  it('denies workspace mutations from global scope before runtime lookup', async () => {
+  it('admits global-scope mutations without claims and never reaches the runtime', async () => {
     const getRuntime = vi.fn(() => null)
     const coordinator = new WorkspaceLockMcpAdmissionCoordinator(dependencies({ getRuntime }))
 
     const result = await coordinator.admit(input({ context: { scope: 'global', cwd: '/host' } }))
 
+    // A global chat is host-scoped by design and has no workspace for this
+    // authority to protect, so it admits with NO claims rather than denying —
+    // denying removed `run_shell_command` from global chats entirely.
     expect(result).toMatchObject({
-      ok: false,
-      reason: 'Workspace mutation write_file requires an active workspace.'
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
     })
     expect(getRuntime).not.toHaveBeenCalled()
+  })
+
+  // The safety half of the decision above: these mutations are unlocked, so the
+  // human must see every one. `forcePrompt` is the flag that suppresses
+  // session-YOLO, standing grants and bossman auto-approval, and the gateway
+  // passes `mcpToolAlwaysPrompts(toolName, context.scope)` into it.
+  it('global scope forces an approval prompt for the mutations it now admits', () => {
+    expect(mcpToolAlwaysPrompts('write_file', 'global')).toBe(true)
+    expect(mcpToolAlwaysPrompts('run_shell_command', 'global')).toBe(true)
+    // ...and is not blanket-true, so the assertions above mean something.
+    expect(mcpToolAlwaysPrompts('read_file', 'workspace')).toBe(false)
   })
 
   it('uses the injected runtime-unavailable reason', async () => {
