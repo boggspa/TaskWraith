@@ -186,6 +186,42 @@ const DEFAULT_MAX_PREVIEW_CHARS = 1200
 // the serialized projection fits.
 const DEFAULT_MAX_BYTES = 600_000
 
+/**
+ * Rows a collaborator may see at all, floored at the share's own lifetime.
+ *
+ * SHARED by the live projection and by `buildHumanSharePage` on purpose: a floor
+ * that lived in only one of them would let paging reach behind a boundary the
+ * live view respects, and that divergence would be invisible until somebody
+ * paged.
+ *
+ * Rows written before this share existed were written by someone with no reason
+ * to expect they would ever leave the machine — a different consent posture from
+ * anything written after the invite went out. Anchored on the SHARE's
+ * `createdAt`, deliberately not the participant's join time, so a reconnect or a
+ * re-admission cannot shift the window under somebody mid-read.
+ *
+ * `fullHistory` is the explicit per-share opt-in, and it must stay explicit:
+ * granting the whole thread is a decision, never a side effect of changing a
+ * limit.
+ *
+ * An undated row is treated as OUTSIDE the window. Fail closed — an absent
+ * timestamp is not evidence that a row postdates the share, and guessing in the
+ * collaborator's favour is the wrong direction for a disclosure boundary.
+ */
+function buildProjectableRows(
+  chat: ChatRecord,
+  share: HumanCollaborationShare
+): ChatMessage[] {
+  const historyFloor =
+    share.fullHistory === true ? 0 : typeof share.createdAt === 'number' ? share.createdAt : 0
+  return (chat.messages || []).filter((message) => {
+    if (!message?.id || isRetiredExternalChannelInboundMessage(message)) return false
+    if (historyFloor <= 0) return true
+    const at = Date.parse(message.timestamp ?? '')
+    return Number.isFinite(at) && at >= historyFloor
+  })
+}
+
 export function buildHumanShareProjection(
   chat: ChatRecord,
   share: HumanCollaborationShare,
@@ -194,37 +230,7 @@ export function buildHumanShareProjection(
   const maxRows = clamp(opts.maxRows ?? DEFAULT_MAX_ROWS, 1, 300)
   const maxPreviewChars = clamp(opts.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS, 120, 4000)
   const maxBytes = clamp(opts.maxBytes ?? DEFAULT_MAX_BYTES, 8_000, 900_000)
-  // SHARE-LIFETIME FLOOR. Rows written before this share existed were written by
-  // someone with no reason to expect they would ever leave the machine — a
-  // different consent posture from anything written after the invite went out.
-  // Nothing scoped the projection to the share before this, so the row cap was
-  // doing double duty as the disclosure boundary: raising it, or adding paging,
-  // would silently have granted pre-share history when only scroll depth was
-  // being asked for.
-  //
-  // Anchored on the SHARE's createdAt, deliberately not the participant's join
-  // time, so a reconnect or a re-admission cannot shift the window under
-  // somebody mid-read.
-  //
-  // `fullHistory` is the explicit per-share opt-in. It must stay explicit: the
-  // whole point is that granting the whole thread is a decision, never a side
-  // effect of changing a limit.
-  const historyFloor =
-    share.fullHistory === true
-      ? 0
-      : typeof share.createdAt === 'number'
-        ? share.createdAt
-        : 0
-  const projectable = (chat.messages || []).filter((message) => {
-    if (!message?.id || isRetiredExternalChannelInboundMessage(message)) return false
-    if (historyFloor <= 0) return true
-    // A row with no parseable timestamp is treated as OUTSIDE the window. Fail
-    // closed: an undated row is not evidence that it postdates the share, and
-    // guessing in the collaborator's favour is the wrong direction for a
-    // disclosure boundary.
-    const at = Date.parse(message.timestamp ?? '')
-    return Number.isFinite(at) && at >= historyFloor
-  })
+  const projectable = buildProjectableRows(chat, share)
   // One lookup table for the whole build rather than a scan per row.
   const seatById = new Map<string, { label?: string; colorIndex?: number }>()
   for (const seat of opts.roster || []) {
@@ -291,6 +297,106 @@ export function buildHumanShareProjection(
     projection.rows.shift()
   }
   return projection
+}
+
+/**
+ * One backwards page of older rows, for `loadOlder`.
+ *
+ * DELIBERATELY NOT `buildHumanShareProjection` WITH A DIFFERENT SLICE. The live
+ * build ends in a byte-budget trim that drops the OLDEST rows — correct when
+ * you are keeping recent context, and exactly wrong here, because a backwards
+ * page is ENTIRELY old rows. Reusing it would shift until one row remained and
+ * return the newest row of the requested page, which to the collaborator is
+ * indistinguishable from "there is nothing older": paging would appear to hit
+ * the top of the thread when it had not.
+ *
+ * So the page is sized by MEASURING to the budget instead, oldest-first from the
+ * cursor, and a row that would overflow ends the page rather than evicting its
+ * neighbours. `hasMore` then says honestly whether the floor was reached or the
+ * budget was.
+ *
+ * A single row larger than the whole budget is CLIPPED, never dropped. A row
+ * that vanishes is worse than one that is visibly shortened, because only one of
+ * those is legible to the person reading it — and the relay closes the
+ * connection on an over-cap frame (ws 1009) rather than rejecting it, so an
+ * unbounded page is a dropped collaborator, not a failed request.
+ *
+ * The floor still applies: `buildProjectableRows` is shared with the live build,
+ * so a page can never reach behind the share's own lifetime.
+ */
+export interface HumanSharePage {
+  rows: HumanShareProjectionRow[]
+  /** More rows exist above this page — either budget-bound or floor-bound. */
+  hasMore: boolean
+  /** Cursor for the next call: the id of the OLDEST row returned. */
+  oldestRowId?: string
+}
+
+export function buildHumanSharePage(
+  chat: ChatRecord,
+  share: HumanCollaborationShare,
+  opts: HumanShareProjectionOptions & { beforeRowId?: string } = {}
+): HumanSharePage {
+  const maxPreviewChars = clamp(opts.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS, 120, 4000)
+  const maxBytes = clamp(opts.maxBytes ?? DEFAULT_MAX_BYTES, 8_000, 900_000)
+  const projectable = buildProjectableRows(chat, share)
+
+  // Everything strictly older than the cursor. An unknown cursor yields nothing
+  // rather than silently restarting from the newest row — a client that pages
+  // with a stale id must not be handed the live window as though it were older
+  // history.
+  const cursorIndex = opts.beforeRowId
+    ? projectable.findIndex((message) => message.id === opts.beforeRowId)
+    : projectable.length
+  if (cursorIndex < 0) return { rows: [], hasMore: false }
+  const older = projectable.slice(0, cursorIndex)
+  if (older.length === 0) return { rows: [], hasMore: false }
+
+  const seatById = new Map<string, { label?: string; colorIndex?: number }>()
+  for (const seat of opts.roster || []) {
+    seatById.set(seat.seatId, {
+      label: seat.label,
+      ...(typeof seat.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {})
+    })
+  }
+  const resolveSeat = opts.resolveSeat ?? ((seatId: string) => seatById.get(seatId))
+
+  // Walk NEWEST-first from the cursor so the page is the rows adjacent to what
+  // the collaborator already has, then reverse for transcript order.
+  const collected: HumanShareProjectionRow[] = []
+  let used = 0
+  let index = older.length - 1
+  for (; index >= 0; index -= 1) {
+    const row = projectRow(older[index], {
+      maxPreviewChars,
+      hostLabel: opts.hostLabel || 'Host',
+      resolveSeat
+    })
+    const cost = byteLength(row)
+    if (cost > maxBytes) {
+      // Bigger than the entire budget on its own. Clip rather than drop, and
+      // only when it would otherwise be the first row of an empty page —
+      // otherwise it belongs to the next page intact.
+      if (collected.length > 0) break
+      collected.push({
+        ...row,
+        preview: row.preview.slice(0, Math.max(0, maxPreviewChars)),
+        truncated: true
+      })
+      index -= 1
+      break
+    }
+    if (used + cost > maxBytes) break
+    used += cost
+    collected.push(row)
+  }
+
+  collected.reverse()
+  return {
+    rows: collected,
+    hasMore: index >= 0,
+    ...(collected.length > 0 ? { oldestRowId: collected[0].id } : {})
+  }
 }
 
 function byteLength(value: unknown): number {

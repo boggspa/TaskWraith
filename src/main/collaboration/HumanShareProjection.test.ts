@@ -6,7 +6,11 @@ import {
   makeHumanCollaboratorComment
 } from './HumanCollaboratorMessages'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
-import { buildHumanShareProjection, MAX_PROJECTED_PENDING_ENTRIES } from './HumanShareProjection'
+import {
+  buildHumanSharePage,
+  buildHumanShareProjection,
+  MAX_PROJECTED_PENDING_ENTRIES
+} from './HumanShareProjection'
 
 function chat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -781,4 +785,95 @@ describe('the share-lifetime history floor', () => {
     expect(projection.rows.map((r) => r.id)).toEqual(['before', 'after'])
   })
 
+})
+
+describe('buildHumanSharePage — backwards paging', () => {
+  const SHARE_CREATED = Date.parse('2026-07-31T00:00:00.000Z')
+  const share = () =>
+    ({
+      shareId: 'share-1',
+      chatId: 'chat-1',
+      enabled: true,
+      mode: 'comments',
+      participants: [],
+      invites: [],
+      createdAt: SHARE_CREATED,
+      updatedAt: SHARE_CREATED
+    }) as never
+
+  const chatOf = (n: number, contentFor?: (i: number) => string) =>
+    ({
+      appChatId: 'chat-1',
+      title: 'Shared',
+      messages: Array.from({ length: n }, (_, i) => ({
+        id: `m${i}`,
+        role: 'user',
+        content: contentFor ? contentFor(i) : `message ${i}`,
+        timestamp: new Date(SHARE_CREATED + (i + 1) * 1000).toISOString()
+      })),
+      runs: []
+    }) as never
+
+  it('returns the rows immediately older than the cursor, in transcript order', () => {
+    const page = buildHumanSharePage(chatOf(10), share(), { beforeRowId: 'm5' })
+    expect(page.rows.map((r) => r.id)).toEqual(['m0', 'm1', 'm2', 'm3', 'm4'])
+    expect(page.oldestRowId).toBe('m0')
+    expect(page.hasMore).toBe(false)
+  })
+
+  it('never reuses the live trim, which would look like "nothing older"', () => {
+    // The live build drops OLDEST rows to fit. A backwards page is ENTIRELY old
+    // rows, so that trim would shift until one remained and return the NEWEST
+    // row of the page — indistinguishable to the collaborator from having
+    // reached the top of the thread.
+    const page = buildHumanSharePage(chatOf(60, () => 'x'.repeat(400)), share(), {
+      maxBytes: 8_000
+    })
+    expect(page.rows.length).toBeGreaterThan(1)
+    expect(page.hasMore).toBe(true)
+    // Budget-bound pages keep the rows ADJACENT to the cursor — the newest of
+    // the older rows — not a single survivor.
+    expect(page.rows[page.rows.length - 1].id).toBe('m59')
+  })
+
+  it('clips a row bigger than the whole budget rather than dropping it', () => {
+    // A vanished row is worse than a visibly shortened one: only one of them is
+    // legible to the person reading it.
+    //
+    // Making a row genuinely oversized takes care: projectRow already truncates
+    // the preview, so long ASCII content can never exceed the 8_000-byte budget
+    // floor. It takes MULTIBYTE content at the maximum preview length — 4000
+    // four-byte characters is ~16KB. A first attempt used repeated 'y' and
+    // passed while the row was being DROPPED rather than clipped, because the
+    // oversized branch was never reached at all.
+    const page = buildHumanSharePage(chatOf(1, () => '𝔘'.repeat(20_000)), share(), {
+      maxBytes: 8_000,
+      maxPreviewChars: 4000
+    })
+    expect(page.rows).toHaveLength(1)
+    expect(page.rows[0].truncated).toBe(true)
+  })
+
+  it('respects the share-lifetime floor, so paging cannot reach behind it', () => {
+    // The floor is shared with the live build precisely so it cannot diverge —
+    // a page that outran it would be invisible until somebody paged.
+    const chat = {
+      appChatId: 'chat-1',
+      title: 'Shared',
+      messages: [
+        { id: 'before', role: 'user', content: 'pre-share', timestamp: '2026-07-30T00:00:00.000Z' },
+        { id: 'after', role: 'user', content: 'post-share', timestamp: '2026-07-31T01:00:00.000Z' }
+      ],
+      runs: []
+    } as never
+    const page = buildHumanSharePage(chat, share(), { beforeRowId: 'after' })
+    expect(page.rows).toEqual([])
+  })
+
+  it('yields nothing for an unknown cursor rather than restarting from newest', () => {
+    // A stale cursor must not hand back the live window dressed as old history.
+    const page = buildHumanSharePage(chatOf(10), share(), { beforeRowId: 'nope' })
+    expect(page.rows).toEqual([])
+    expect(page.hasMore).toBe(false)
+  })
 })
