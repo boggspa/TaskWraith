@@ -84,6 +84,7 @@ type HumanCollaborationChatService = Pick<
   | 'approveExternalContribution'
   | 'denyExternalContribution'
   | 'setHumanCollaborationHostReview'
+  | 'setHumanCollaborationFullHistory'
 >
 
 interface HumanCollaborationStoreLike {
@@ -617,6 +618,22 @@ export function registerHumanCollaborationHandlers(
         shareId: input.shareId,
         requiresHostApproval: input?.requiresHostApproval === true
       })
+      if (result) deps.broadcastHumanCollaborationUpdate(result.chatId)
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'human-collaboration:set-full-history',
+    (event, input: { shareId: string; fullHistory: boolean }) => {
+      assertSenderOwnsPersistedShare(event, input?.shareId)
+      const result = deps.chatService.setHumanCollaborationFullHistory({
+        shareId: input.shareId,
+        fullHistory: input?.fullHistory === true
+      })
+      // Republish so a connected collaborator re-floors immediately: the change
+      // is retroactive in both directions, and a view that only caught up on
+      // reconnect would keep showing rows the host had just withdrawn.
       if (result) deps.broadcastHumanCollaborationUpdate(result.chatId)
       return result
     }

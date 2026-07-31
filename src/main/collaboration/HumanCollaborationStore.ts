@@ -392,6 +392,39 @@ export class HumanCollaborationStore {
   }
 
   /**
+   * The per-share full-history opt-in.
+   *
+   * Off by default and deliberately its own verb, not part of the contribution
+   * rules: those describe what a collaborator may DO, this describes what they
+   * may SEE, and it is the only switch in the feature that changes disclosure
+   * RETROACTIVELY. Turning it on hands over rows written before the share
+   * existed — written by someone with no reason to expect they would ever leave
+   * the machine — so it must always be a decision somebody took, never a side
+   * effect of changing a limit.
+   *
+   * Deleting rather than storing `false` keeps the in-memory record clean, so
+   * `share.fullHistory === true` reads the same everywhere. It is NOT what
+   * guarantees the on-disk shape — `normalizeSnapshot` emits the key only when
+   * the value is exactly `true`, and that normalizer is what a hand-edited or
+   * legacy file passes through. Do not remove one on the strength of the other.
+   */
+  setFullHistory(args: {
+    shareId: string
+    fullHistory: boolean
+    now?: number
+  }): HumanCollaborationShare | null {
+    const share = this.memory.shares.find((candidate) => candidate.shareId === args.shareId)
+    if (!share || !share.enabled) return null
+    const next = args.fullHistory === true
+    if ((share.fullHistory === true) === next) return cloneShare(share)
+    if (next) share.fullHistory = true
+    else delete share.fullHistory
+    share.updatedAt = args.now ?? Date.now()
+    this.persist()
+    return cloneShare(share)
+  }
+
+  /**
    * Host-only seat presentation: roster position, name-chip colour, muted.
    *
    * Deliberately separate from `revokeParticipant`. Muting a seat is reversible

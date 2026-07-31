@@ -167,6 +167,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'human-collaboration:revoke-share',
   'human-collaboration:session-status',
   'human-collaboration:set-host-review',
+  'human-collaboration:set-full-history',
   'human-collaboration:update-share-rules',
   'image-generation:get-status',
   'launch-attempts-snapshot',

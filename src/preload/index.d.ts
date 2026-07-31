@@ -1908,6 +1908,10 @@ declare global {
         shareId: string
         requiresHostApproval: boolean
       }) => Promise<HumanCollaborationShare | null>
+      humanCollaborationSetFullHistory: (input: {
+        shareId: string
+        fullHistory: boolean
+      }) => Promise<HumanCollaborationShare | null>
       humanCollaborationListPendingContributions: (
         chatId: string
       ) => Promise<ExternalContributionEntry[]>

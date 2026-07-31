@@ -145,6 +145,7 @@ export function SharesPanelView({
   onRevokeParticipant,
   onChangeRules,
   onChangeHostReview,
+  onChangeFullHistory,
   liveSessionKeys,
   auditEvents,
   auditError,
@@ -161,6 +162,7 @@ export function SharesPanelView({
   /** P2a: host-only contribution-rules preset change. */
   onChangeRules?: (shareId: string, preset: string) => void
   onChangeHostReview?: (shareId: string, requiresHostApproval: boolean) => void
+  onChangeFullHistory?: (shareId: string, fullHistory: boolean) => void
   /** P2a presence clarity: `${shareId}:${collaboratorId}` keys with a LIVE session. */
   liveSessionKeys?: Set<string>
   /** Newest-first audit timeline. Omitted entirely when the bridge lacks it. */
@@ -280,6 +282,27 @@ export function SharesPanelView({
                       />
                       <span title="Contributions wait for you to approve them before they reach the panel.">
                         Review before delivery
+                      </span>
+                    </label>
+                  )}
+                  {/* The only control here that changes disclosure RETROACTIVELY.
+                      A share otherwise floors at its own createdAt, because rows
+                      written before it existed were written by someone with no
+                      reason to expect they would ever leave the machine. The
+                      label says so in full deliberately — this is a consent
+                      decision, and it must never read as a display preference. */}
+                  {onChangeFullHistory && (
+                    <label className="shares-panel-host-review shares-panel-full-history">
+                      <input
+                        type="checkbox"
+                        checked={share.fullHistory === true}
+                        onChange={(event) =>
+                          onChangeFullHistory(share.shareId, event.target.checked)
+                        }
+                      />
+                      <span title="Off, this share starts at the moment you created it. On, it also hands over everything already in the thread.">
+                        Share the full history of this thread, including messages
+                        from before you invited anyone
                       </span>
                     </label>
                   )}
@@ -577,6 +600,19 @@ export function SharesPanel() {
     [refresh]
   )
 
+  const handleChangeFullHistory = useCallback(
+    (shareId: string, fullHistory: boolean) => {
+      if (typeof window.api.humanCollaborationSetFullHistory !== 'function') return
+      void window.api
+        .humanCollaborationSetFullHistory({ shareId, fullHistory })
+        .then(() => refresh())
+        .catch(() => {
+          setError('Could not change history sharing for this share.')
+        })
+    },
+    [refresh]
+  )
+
   const handleChangeHostReview = useCallback(
     (shareId: string, requiresHostApproval: boolean) => {
       if (typeof window.api.humanCollaborationSetHostReview !== 'function') return
@@ -646,6 +682,7 @@ export function SharesPanel() {
       onRevokeParticipant={handleRevokeParticipant}
       onChangeRules={handleChangeRules}
       onChangeHostReview={handleChangeHostReview}
+      onChangeFullHistory={handleChangeFullHistory}
       connectedChatIds={connectedChatIds}
       liveSessionKeys={liveSessionKeys}
       auditEvents={auditEvents}

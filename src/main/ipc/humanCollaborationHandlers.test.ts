@@ -159,7 +159,8 @@ function createDeps(overrides: Partial<HumanCollaborationHandlersDeps> = {}) {
       denyExternalContribution: vi.fn((entryId: string) =>
         contributionEntry(entryId, 'chat-1', 'denied')
       ),
-      setHumanCollaborationHostReview: vi.fn(() => baseShare)
+      setHumanCollaborationHostReview: vi.fn(() => baseShare),
+      setHumanCollaborationFullHistory: vi.fn(() => baseShare)
     },
     humanCollaborationStore: {
       getShare: vi.fn(() => baseShare),
@@ -243,6 +244,7 @@ describe('registerHumanCollaborationHandlers', () => {
       'human-collaboration:approve-contribution',
       'human-collaboration:deny-contribution',
       'human-collaboration:set-host-review',
+      'human-collaboration:set-full-history',
       'human-collaboration:audit-log',
       'human-collaboration-collaborator:join',
       'human-collaboration-collaborator:confirm',

@@ -857,6 +857,35 @@ export class ChatService {
    * not. Keeping them separate keeps a host-only fact out of a
    * collaborator-displayable field.
    */
+  /**
+   * Turn the full-history opt-in on or off for one share.
+   *
+   * Audited unconditionally, and that is not bookkeeping: this is the only
+   * control that changes what an outsider can see RETROACTIVELY, so "who opened
+   * this thread's history, and when" has to be answerable afterwards. The
+   * caller republishes, so a connected collaborator's view re-floors
+   * immediately rather than at their next reconnect.
+   */
+  setHumanCollaborationFullHistory(args: {
+    shareId: string
+    fullHistory: boolean
+  }): HumanCollaborationShare | null {
+    const store = this.requireHumanCollaborationStore()
+    const updated = store.setFullHistory({
+      shareId: requireNonEmptyString(args.shareId, 'Share id'),
+      fullHistory: args.fullHistory === true
+    })
+    if (updated) {
+      this.deps.humanCollaborationAudit?.append({
+        kind: 'share.rules_changed',
+        chatId: updated.chatId,
+        shareId: updated.shareId,
+        detail: `full history ${updated.fullHistory === true ? 'SHARED' : 'restricted to the share'}`
+      })
+    }
+    return updated
+  }
+
   setHumanCollaborationHostReview(args: {
     shareId: string
     requiresHostApproval: boolean

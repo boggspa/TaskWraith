@@ -1868,6 +1868,8 @@ const api = {
     ipcRenderer.invoke('human-collaboration:revoke-share', shareId),
   humanCollaborationSetHostReview: (input: { shareId: string; requiresHostApproval: boolean }) =>
     ipcRenderer.invoke('human-collaboration:set-host-review', input),
+  humanCollaborationSetFullHistory: (input: { shareId: string; fullHistory: boolean }) =>
+    ipcRenderer.invoke('human-collaboration:set-full-history', input),
   humanCollaborationListPendingContributions: (chatId: string) =>
     ipcRenderer.invoke('human-collaboration:list-pending-contributions', chatId),
   humanCollaborationApproveContribution: (entryId: string) =>

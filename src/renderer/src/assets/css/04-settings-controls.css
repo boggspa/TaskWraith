@@ -7601,3 +7601,18 @@ input:disabled, select:disabled, textarea:disabled {
   flex-direction: column;
   gap: 2px;
 }
+
+/* The full-history opt-in. Deliberately NOT styled like its neighbour: the
+   label runs to two lines because the sentence is the consent, and shortening
+   it to fit would be the whole risk of this control. */
+.shares-panel-full-history {
+  align-items: flex-start;
+}
+
+.shares-panel-full-history input {
+  margin-top: 2px;
+}
+
+.shares-panel-full-history span {
+  line-height: 1.35;
+}

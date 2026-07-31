@@ -174,6 +174,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'human-collaboration:promote-comment': ['object'],
   'human-collaboration:update-share-rules': ['object'],
   'human-collaboration:set-host-review': ['object'],
+  'human-collaboration:set-full-history': ['object'],
   'human-collaboration:list-pending-contributions': ['nonEmptyString'],
   'human-collaboration:approve-contribution': ['nonEmptyString'],
   'human-collaboration:deny-contribution': ['object'],

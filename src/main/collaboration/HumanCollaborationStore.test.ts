@@ -6,6 +6,7 @@ import {
   HumanCollaborationStore,
   type HumanCollaboratorParticipant
 } from './HumanCollaborationStore'
+import { buildHumanShareProjection } from './HumanShareProjection'
 
 describe('HumanCollaborationStore', () => {
   it('creates single-use high-entropy invites and pins collaborator identity', () => {
@@ -979,5 +980,120 @@ describe('HumanCollaborationStore participant seats — tightened guards', () =>
     const { store, shareId, collaboratorId } = admitted()
     expect(store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 7 })).not.toBeNull()
     expect(store.updateParticipantSeat({ shareId, collaboratorId, colorIndex: 8 })).toBeNull()
+  })
+})
+
+describe('the full-history opt-in', () => {
+  const SHARE_CREATED = Date.parse('2026-07-31T12:00:00.000Z')
+  const chatWith = (messages: unknown[]) =>
+    ({ appChatId: 'chat-1', title: 'Shared', messages, runs: [] }) as never
+  const msg = (id: string, iso: string) =>
+    ({ id, role: 'user', content: `content ${id}`, timestamp: iso }) as never
+
+  function sharedStore() {
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: SHARE_CREATED,
+      inviteTtlMs: 60_000
+    })
+    return { store, shareId: created.share.shareId }
+  }
+
+  it('moves the ACTUAL history floor, in both directions', () => {
+    // The test that matters. A setter that writes a field nothing reads is the
+    // defect this feature keeps shipping, so this asserts the user-visible
+    // consequence — whether a row written BEFORE the share existed reaches a
+    // collaborator — using the real projection builder and the real share the
+    // store returns, not a hand-built object.
+    const { store, shareId } = sharedStore()
+    const messages = [
+      msg('before-the-share', '2026-07-31T11:00:00.000Z'),
+      msg('after-the-share', '2026-07-31T13:00:00.000Z')
+    ]
+
+    const floored = store.getShare(shareId)!
+    expect(floored.fullHistory).toBeUndefined()
+    expect(
+      buildHumanShareProjection(chatWith(messages), floored, {}).rows.map((r) => r.id)
+    ).toEqual(['after-the-share'])
+
+    const opened = store.setFullHistory({ shareId, fullHistory: true, now: SHARE_CREATED + 1 })!
+    expect(opened.fullHistory).toBe(true)
+    expect(
+      buildHumanShareProjection(chatWith(messages), opened, {}).rows.map((r) => r.id)
+    ).toEqual(['before-the-share', 'after-the-share'])
+
+    // And it re-floors. A consent decision has to be revocable, and the row
+    // must stop crossing the moment it is.
+    const closed = store.setFullHistory({ shareId, fullHistory: false, now: SHARE_CREATED + 2 })!
+    expect(
+      buildHumanShareProjection(chatWith(messages), closed, {}).rows.map((r) => r.id)
+    ).toEqual(['after-the-share'])
+  })
+
+  it('never reports a share as opted-in from anything but a literal true', () => {
+    // Absent and explicitly-off must be indistinguishable, or a share reads as
+    // opted-in because of a stale key surviving a format change or a hand edit.
+    //
+    // Asserted against a RAW FILE rather than the setter's return value: the
+    // guarantee lives in `normalizeSnapshot`, which emits the key only for a
+    // literal `true`, and a test that went through the setter would pass even
+    // if the setter stored `false` — the clone strips it on the way out. That
+    // is exactly the shape of test this project keeps being bitten by.
+    const dir = mkdtempSync(join(tmpdir(), 'tw-fullhistory-raw-'))
+    try {
+      const path = join(dir, 'collab.json')
+      const base = {
+        shareId: 'share-raw',
+        chatId: 'chat-1',
+        mode: 'comments',
+        enabled: true,
+        createdAt: SHARE_CREATED,
+        updatedAt: SHARE_CREATED,
+        nextSequence: 1,
+        participants: [],
+        invites: [],
+        idempotency: {}
+      }
+      for (const value of [false, 'true', 1, null]) {
+        writeFileSync(
+          path,
+          JSON.stringify({ shares: [{ ...base, fullHistory: value }] }),
+          'utf8'
+        )
+        expect(
+          new HumanCollaborationStore(path).getShare('share-raw')?.fullHistory,
+          `fullHistory: ${JSON.stringify(value)} must not read as opted-in`
+        ).toBeUndefined()
+      }
+      writeFileSync(path, JSON.stringify({ shares: [{ ...base, fullHistory: true }] }), 'utf8')
+      expect(new HumanCollaborationStore(path).getShare('share-raw')?.fullHistory).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('survives a reload, because an opt-in that forgets is worse than none', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tw-fullhistory-'))
+    try {
+      const path = join(dir, 'collab.json')
+      const store = new HumanCollaborationStore(path)
+      const created = store.createShare({ chatId: 'chat-1', mode: 'comments', now: SHARE_CREATED })
+      store.setFullHistory({ shareId: created.share.shareId, fullHistory: true })
+      expect(new HumanCollaborationStore(path).getShare(created.share.shareId)?.fullHistory).toBe(
+        true
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a revoked share and an unknown one', () => {
+    const { store, shareId } = sharedStore()
+    store.revokeShare(shareId)
+    expect(store.setFullHistory({ shareId, fullHistory: true })).toBeNull()
+    expect(store.setFullHistory({ shareId: 'no-such-share', fullHistory: true })).toBeNull()
   })
 })

@@ -426,3 +426,50 @@ describe('SharesPanelView presence states (P2a)', () => {
     expect(html).not.toContain('No collaboration activity yet.')
   })
 })
+
+describe('the full-history opt-in', () => {
+  const render = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare()]}
+        chatTitles={{ 'chat-1': 'Shared thread' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        now={NOW}
+        {...props}
+      />
+    )
+
+  it('states in full what turning it on hands over', () => {
+    // The sentence IS the consent. A shortened label ("Full history", "Share
+    // everything") would make a retroactive disclosure decision read as a
+    // display preference, so the wording is pinned, not just the control.
+    const html = render({ onChangeFullHistory: () => {} })
+    expect(html).toContain('Share the full history of this thread, including messages')
+    expect(html).toContain('from before you invited anyone')
+  })
+
+  it('is absent, not merely disabled, when the host cannot set it', () => {
+    // No handler means no affordance at all — a dead checkbox on a consent
+    // control is worse than none, because it looks like a setting that failed.
+    expect(render()).not.toContain('from before you invited anyone')
+  })
+
+  it('reflects the share it is given, in both states', () => {
+    const off = render({ onChangeFullHistory: () => {} })
+    expect(off).not.toContain('checked=""')
+    const on = renderToStaticMarkup(
+      <SharesPanelView
+        shares={[makeShare({ fullHistory: true })]}
+        chatTitles={{ 'chat-1': 'Shared thread' }}
+        loading={false}
+        error={null}
+        onRevoke={() => {}}
+        onChangeFullHistory={() => {}}
+        now={NOW}
+      />
+    )
+    expect(on).toContain('checked=""')
+  })
+})
