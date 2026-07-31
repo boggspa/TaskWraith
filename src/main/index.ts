@@ -175,7 +175,6 @@ import {
   resolveCodexMcpApprovalIdentity,
   resolveCodexStructuralApproval,
   resolveNativeApprovalPreflightDecision,
-  taskWraithToolServiceIfKnown,
   type NativeApprovalPreflight
 } from './NativeApprovalPolicy'
 import { normalizeRunRoute, createFallbackRunId, routeWithRunId } from './run/RunRoute'
