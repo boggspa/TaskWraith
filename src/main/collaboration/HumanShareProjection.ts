@@ -298,6 +298,40 @@ function projectToolActivities(
   })
 }
 
+/**
+ * The whitelisted tool scalars as one readable block.
+ *
+ * `totalActivities` is the count BEFORE `projectToolActivities` caps at 24, so a
+ * long burst says how much it is not showing rather than silently under-
+ * reporting.
+ *
+ * The zero-activity case is not defensive padding — it is a real production
+ * shape. A sub-thread return card and a tool message whose first activity has
+ * not landed yet are both `role: 'tool'` with no `toolActivities`, and `tools`
+ * is omitted entirely for them, so without a fallback string those rows are
+ * exactly the blank box this function exists to prevent. Their `content` is
+ * deliberately NOT used: it never crossed to a collaborator before and this is
+ * not the change that should start.
+ */
+function describeToolActivities(
+  tools: HumanShareProjectionToolRow[],
+  totalActivities: number
+): string {
+  if (!tools.length) return '[Tool activity]'
+  const lines = tools.map((tool) => {
+    const parts = [tool.name]
+    if (tool.target) parts.push(tool.target)
+    if (typeof tool.additions === 'number' || typeof tool.deletions === 'number') {
+      parts.push(`+${tool.additions ?? 0}/−${tool.deletions ?? 0}`)
+    }
+    if (tool.failed) parts.push('— failed')
+    return parts.join(' ')
+  })
+  const hidden = totalActivities - tools.length
+  if (hidden > 0) lines.push(`…and ${hidden} more`)
+  return lines.join('\n')
+}
+
 function projectRow(
   message: ChatMessage,
   opts: {
@@ -387,15 +421,30 @@ function projectRow(
     // Tool rows CROSS now, as a derived one-liner — never a body. Per-tool-call
     // expansion was removed app-wide, so there is no expanded view to withhold:
     // what the host sees on the collapsed row is what an external sees.
+    //
+    // `preview` MUST stay populated. It is the only field every reader has —
+    // the v1 contract older collaborator builds rely on, and the field the
+    // current client renders — so emitting '' here showed the external a
+    // faded, italic, EMPTY box per tool call, which reads as a broken or
+    // censored row. `tools` is the structured form for a client that knows the
+    // v2 vocabulary; this is the same facts as text, for everyone else.
+    const activities = Array.isArray(message.toolActivities) ? message.toolActivities : []
     const tools = projectToolActivities(message, opts.workspacePath)
     return {
       id: message.id,
       role: 'placeholder',
       speaker: 'TaskWraith',
-      preview: '',
+      // Deliberately NOT routed through `preview()`: every scalar here has
+      // already been whitelisted and path-redacted by `projectToolActivities`,
+      // and re-running redaction would imply these inputs are untrusted body
+      // text. If this string ever starts carrying anything beyond those
+      // scalars, that stops being true — redact it then.
+      preview: describeToolActivities(tools, activities.length),
       truncated: false,
       timestamp: message.timestamp,
       kind: 'toolActivity',
+      // Never `tools: []` — an empty array is truthy, so a client branching on
+      // `row.tools` would render an empty chip list instead of the preview.
       ...(tools.length ? { tools } : {})
     }
   }
@@ -429,7 +478,10 @@ function preview(
 }
 
 function placeholderFor(message: ChatMessage): string {
-  if (message.role === 'tool') return '[Tool activity hidden from collaborators]'
+  // No `role === 'tool'` arm: tool rows are intercepted above and described by
+  // `describeToolActivities`. The old '[Tool activity hidden from
+  // collaborators]' line became unreachable when tool rows started crossing,
+  // and it would now be untrue — the activity is not hidden, it is summarised.
   if (message.role === 'error') return '[Error details hidden from collaborators]'
   return '[Internal TaskWraith message hidden from collaborators]'
 }

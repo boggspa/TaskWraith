@@ -116,6 +116,57 @@
   font-style: italic;
 }
 
+/* Tool activity as an external sees it: derived scalars, never a body. Not
+   italicised like the placeholder above — these are facts, not an apology for
+   withheld content. */
+.join-projection-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-style: normal;
+}
+
+.join-projection-tool {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.join-projection-tool-name {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.join-projection-tool-target {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.join-projection-tool-diff {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.join-projection-tool.is-failed .join-projection-tool-name {
+  color: var(--warning, var(--text-primary));
+}
+
+.join-projection-tool-failed {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warning, var(--text-secondary));
+}
+
 .join-projection-truncated {
   opacity: 0.6;
   font-size: 11px;

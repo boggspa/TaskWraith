@@ -26,6 +26,18 @@ export interface ParsedHumanCollaborationInvite {
   hostIdentityPubKeyB64?: string
 }
 
+/** A tool call as an external may see it — DERIVED scalars only, never a body.
+ *  Mirrors `HumanShareProjectionToolRow`; kept as a local shape because this
+ *  component may be talking to an older host that does not send it. */
+interface ProjectionToolRow {
+  name: string
+  category?: 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
+  failed?: boolean
+  target?: string
+  additions?: number
+  deletions?: number
+}
+
 interface ProjectionRow {
   id: string
   role: 'host' | 'assistant' | 'collaborator' | 'placeholder'
@@ -34,6 +46,10 @@ interface ProjectionRow {
   truncated: boolean
   timestamp: string
   sequence?: number
+  /** v2, additive. Absent on rows an older host produced — every branch on it
+   *  must fall back to `preview`, which is the field every host populates. */
+  kind?: 'message' | 'toolActivity' | 'system' | 'placeholder'
+  tools?: ProjectionToolRow[]
 }
 interface Projection {
   title: string
@@ -592,7 +608,35 @@ export function JoinSharedChatModal({
                       )}
                     </div>
                     <div className={bubbleClass(row.role)}>
-                      <MarkdownMessage content={row.preview} />
+                      {row.kind === 'toolActivity' && row.tools?.length ? (
+                        /* The structured form when the host speaks v2. `preview`
+                         * carries the same facts as text and is what an older
+                         * client (and the no-activities case) falls back to. */
+                        <ul className="join-projection-tools">
+                          {row.tools.map((tool, index) => (
+                            <li
+                              key={`${row.id}-tool-${index}`}
+                              className={`join-projection-tool${tool.failed ? ' is-failed' : ''}`}
+                            >
+                              <span className="join-projection-tool-name">{tool.name}</span>
+                              {tool.target && (
+                                <span className="join-projection-tool-target">{tool.target}</span>
+                              )}
+                              {(typeof tool.additions === 'number' ||
+                                typeof tool.deletions === 'number') && (
+                                <span className="join-projection-tool-diff">
+                                  +{tool.additions ?? 0}/−{tool.deletions ?? 0}
+                                </span>
+                              )}
+                              {tool.failed && (
+                                <span className="join-projection-tool-failed">failed</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <MarkdownMessage content={row.preview} />
+                      )}
                       {row.truncated && <span className="join-projection-truncated"> …(truncated)</span>}
                     </div>
                   </div>
