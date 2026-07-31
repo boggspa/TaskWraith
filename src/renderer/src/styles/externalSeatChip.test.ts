@@ -15,9 +15,9 @@ const STRIP = 'src/renderer/src/components/EnsembleParticipantsAboveRow.tsx'
 /** The whole external chip element, from its map opening to its close. */
 function externalChipBlock(): string {
   const source = readSource(STRIP)
-  const start = source.indexOf('externalSeatChips.map((seat) => (')
+  const start = source.indexOf('externalSeatChips.map((seat) => {')
   expect(start).toBeGreaterThanOrEqual(0)
-  const end = source.indexOf('))}', start)
+  const end = source.indexOf('\n        })}', start)
   expect(end).toBeGreaterThan(start)
   return source.slice(start, end)
 }
@@ -53,10 +53,33 @@ describe('external seat chips', () => {
     // collapse to 0 and the external floats to the front of the strip.
     const source = readSource(STRIP)
     expect(source).toContain('style={{ order: turnOrder,')
-    expect(source).toContain('style={{ order: seatPositionById.get(seat.seatId) }}')
+    expect(source).toContain('const seatPosition = seatPositionById.get(seat.seatId)')
+    expect(externalChipBlock()).toContain('order: seatPosition,')
     // Turn numbers come from the merged roster too, or a panel with an external
     // second would number its model seats 1, 2, 3 instead of 1, 3, 4.
     expect(source).toContain('turnOrder={seatPositionById.get(participant.id) ?? participantIndex + 1}')
+  })
+
+  it('spans both kinds from the merged seat count, or the strip collapses', () => {
+    // The wrapped grid is 60 tracks and a chip with no `grid-column` takes ONE
+    // of them. The class that turns the grid on is chosen from the MERGED seat
+    // count, so the spans have to be too — computing them from `participants`
+    // meant 5 models + 1 human wrapped with no spans at all and every chip,
+    // models included, became a sliver.
+    const source = readSource(STRIP)
+    expect(source).toContain('computeEnsembleChipGridSpans(totalSeatCount)')
+    // Indexed by merged seat POSITION — an interleaved external shifts every
+    // later model's placement slot.
+    expect(source).toContain(
+      'gridSpan={chipGridSpans?.[(seatPositionById.get(participant.id) ?? participantIndex + 1) - 1]}'
+    )
+    // …and the external chip carries one of its own.
+    expect(externalChipBlock()).toContain('gridColumn: `span ${chipGridSpans[seatPosition - 1]}`')
+    // The control rail stacks on the same count, or it falls out of step with
+    // the strip it exists to stay aligned with.
+    expect(source).toContain(
+      "totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''"
+    )
   })
 
   it('counts externals toward the collapse floor', () => {
