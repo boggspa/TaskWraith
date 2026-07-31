@@ -79,8 +79,6 @@ marker_scalar() {
 is_own_claim() {
   local claim_pid="$1" cur=$$ depth=0
   [ -n "$claim_pid" ] || return 1
-  [ "$claim_pid" = "$cur" ] && return 0
-  [ -n "${PPID:-}" ] && [ "$claim_pid" = "$PPID" ] && return 0
   while [ -n "$cur" ] && [ "$cur" -gt 1 ] 2>/dev/null && [ "$depth" -lt 25 ]; do
     [ "$cur" = "$claim_pid" ] && return 0
     cur="$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d '[:space:]')"
@@ -113,13 +111,6 @@ is_own_marker_claim() {
     return
   fi
   is_own_claim "$claim_pid"
-}
-
-is_runtime_marker_filename() {
-  case "$1" in
-    .WORK-IN-PROGRESS-taskwraith-runtime-*.md) return 0 ;;
-    *) return 1 ;;
-  esac
 }
 
 marker_list() {
@@ -247,10 +238,11 @@ now="$(date -u +%s)"
 # live runtime fails closed until the runtime removes it or its pid is dead.
 # This prevents a marker-write outage from making a durable lease invisible.
 shopt -s nullglob
-for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
+for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
+
   derived_marker=0
-  is_runtime_marker_filename "$marker" && derived_marker=1
+  is_derived_marker "$marker" && derived_marker=1
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_exp="$(marker_scalar "$marker" expires)"
@@ -372,41 +364,6 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
   # the checkout. Their paired digests above are the hook's byte-exact
   # authority; hunk targets are repeated in both `paths` and `pathDigests`.
 done
-
-for marker in .WORK-IN-PROGRESS-*.md; do
-  [ -f "$marker" ] || continue
-  is_runtime_marker_filename "$marker" && continue
-  derived_marker=0
-  m_pid="$(marker_scalar "$marker" pid)"
-  [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
-  m_exp="$(marker_scalar "$marker" expires)"
-  m_agent="$(marker_scalar "$marker" agent)"
-
-  # Human markers use the historical pid-ancestry rule.
-  is_own_marker_claim "$marker" "$m_pid" && continue
-  # A manual marker with no pid predates the format; advise, never block.
-  if [ -z "$m_pid" ]; then
-    printf '  note: %s has no pid — treating as advisory (see AGENTS.md).\n' "$marker"
-    warn=1
-    continue
-  fi
-  kill -0 "$m_pid" 2>/dev/null || continue
-    if [ -n "$m_exp" ]; then
-      exp_epoch="$(to_epoch "$m_exp")"
-      if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
-        continue
-      fi
-    fi
-  claimed="$(marker_list "$marker" paths)"
-  [ -z "$claimed" ] && continue
-  while IFS= read -r path; do
-    [ -z "$path" ] && continue
-    for staged_path in "${staged_paths[@]}"; do
-      [ "$staged_path" = "$path" ] &&
-        report_live_overlap "$path" "$marker" "$m_pid" "$m_agent"
-    done
-  done <<< "$claimed"
-done
 shopt -u nullglob
 
 # ── 2. ADVISE: whole-file staging of a monolith ─────────────────────────────
@@ -440,16 +397,8 @@ fi
 
 # ── 4. ADVISE: your own claim is expiring ───────────────────────────────────
 shopt -s nullglob
-for marker in SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
-  [ -f "$marker" ] || continue
-  m_pid="$(marker_scalar "$marker" pid)"
-  [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
-  is_own_marker_claim "$marker" "$m_pid" || continue
-  printf '  note: your claim %s is still up — drop it when this work is done.\n' "$marker"
-done
 for marker in .WORK-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
-  is_runtime_marker_filename "$marker" && continue
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   is_own_marker_claim "$marker" "$m_pid" || continue
@@ -464,10 +413,10 @@ shopt -u nullglob
 # cleanup. A conclusively dead runtime is reported for authority reconciliation,
 # without telling a human to delete the projection out from under its WAL.
 shopt -s nullglob
-for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
+for marker in .WORK-IN-PROGRESS-*.md SHIP-HOLD-*.md SESSION-IN-PROGRESS-*.md; do
   [ -f "$marker" ] || continue
-  derived_marker=1
-  is_runtime_marker_filename "$marker" || derived_marker=0
+  derived_marker=0
+  is_derived_marker "$marker" && derived_marker=1
   m_pid="$(marker_scalar "$marker" pid)"
   [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
   m_exp="$(marker_scalar "$marker" expires)"
@@ -492,32 +441,6 @@ for marker in .WORK-IN-PROGRESS-taskwraith-runtime-*.md SHIP-HOLD-*.md SESSION-I
       printf '  note: %s is decayed (expired or owner dead) — adoptable. Harvest its\n' "$marker"
       printf '        paths/worktree, then delete it (AGENTS.md: Adopting a decayed claim).\n'
     fi
-    warn=1
-  fi
-done
-for marker in .WORK-IN-PROGRESS-*.md; do
-  [ -f "$marker" ] || continue
-  is_runtime_marker_filename "$marker" && continue
-  derived_marker=0
-  m_pid="$(marker_scalar "$marker" pid)"
-  [[ "$m_pid" =~ ^[0-9]+$ ]] || m_pid=""
-  m_exp="$(marker_scalar "$marker" expires)"
-  # Your own decayed marker gets the personal nag from section 4, not the
-  # adoption nag.
-  is_own_marker_claim "$marker" "$m_pid" && continue
-  decayed=0
-  if [ -n "$m_pid" ] && ! kill -0 "$m_pid" 2>/dev/null; then
-    decayed=1
-  fi
-  if [ "$decayed" -eq 0 ] && [ -n "$m_exp" ]; then
-    exp_epoch="$(to_epoch "$m_exp")"
-    if [ -n "$exp_epoch" ] && [ "$now" -gt "$exp_epoch" ]; then
-      decayed=1
-    fi
-  fi
-  if [ "$decayed" -eq 1 ]; then
-    printf '  note: %s is decayed (expired or owner dead) — adoptable. Harvest its\n' "$marker"
-    printf '        paths/worktree, then delete it (AGENTS.md: Adopting a decayed claim).\n'
     warn=1
   fi
 done

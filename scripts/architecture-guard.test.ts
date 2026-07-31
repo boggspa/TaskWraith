@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -170,6 +170,33 @@ describe('architecture guard import classification', () => {
       'computed import.meta.glob()',
       'indirect Function runtime loader'
     ])
+  })
+
+  it('deduplicates runtime marker shape matching in lock persistence', () => {
+    const repoRoot = process.cwd()
+    const markerShape = 'WORK-IN-PROGRESS-taskwraith-runtime-'
+    const runtimePattern = readFileSync(
+      path.join(repoRoot, 'src/main/workLocks/RuntimeMarkerPattern.ts'),
+      'utf8'
+    )
+    const nodeSource = readFileSync(
+      path.join(repoRoot, 'src/main/workLocks/NodeWorkspaceLockPersistence.ts'),
+      'utf8'
+    )
+    const walSource = readFileSync(
+      path.join(repoRoot, 'src/main/workLocks/WorkspaceLockWal.ts'),
+      'utf8'
+    )
+
+    expect(runtimePattern).toContain('RUNTIME_MARKER_NAME_RE')
+    expect(runtimePattern).toContain('export function isRuntimeMarkerName')
+    expect(runtimePattern).toContain(markerShape)
+    expect(nodeSource).toContain("from './RuntimeMarkerPattern'")
+    expect(nodeSource).toContain('isRuntimeMarkerName(')
+    expect(nodeSource).not.toContain(markerShape)
+    expect(walSource).toContain("from './RuntimeMarkerPattern'")
+    expect(walSource).toContain('isRuntimeMarkerName(')
+    expect(walSource).not.toContain(markerShape)
   })
 
   it('collects only emitted production renderer -> main edges', () => {
