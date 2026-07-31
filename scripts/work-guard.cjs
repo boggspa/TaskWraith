@@ -180,7 +180,10 @@ function parseMarker(root, file) {
     // whose YAML scalar helper is JSON.stringify, so EVERY scalar arrives quoted
     // — and an unstripped `expires: "2026-…"` parses to NaN, which meant a runtime
     // marker could never decay by clock.
-    const value = m[1].trim().replace(/^(["'])([\s\S]*)\1$/, '$2').trim()
+    const value = m[1]
+      .trim()
+      .replace(/^(["'])([\s\S]*)\1$/, '$2')
+      .trim()
     return value || null
   }
   const lines = text.split(/\r?\n/)
