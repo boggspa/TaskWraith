@@ -1415,3 +1415,57 @@ describe('the last external leaving hands the thread back', () => {
     expect(store.setChatKind).not.toHaveBeenCalled()
   })
 })
+
+describe('muting holds an approved contribution instead of stranding it', () => {
+  function approvedForMutedSeat() {
+    const h = harness({ withQueue: true })
+    const { shareId, collaboratorId } = (() => {
+      const ids = admitted(h.service)
+      h.collaboration.setRequiresHostApproval({ shareId: ids.shareId, requiresHostApproval: true })
+      return ids
+    })()
+    h.service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'held while the seat is muted'
+    })
+    const entry = h.queue.listQueued('chat-1')[0]
+    h.service.approveExternalContribution(entry.entryId)
+    return { ...h, shareId, collaboratorId }
+  }
+
+  it('brings an approved-but-muted contribution BACK to the host stack', () => {
+    // Before this it vanished: approval removed it from the queued list, and the
+    // delivery rule refuses a muted seat forever. Neither delivered nor denied,
+    // and invisible to everyone.
+    const { service, collaboration, shareId, collaboratorId } = approvedForMutedSeat()
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+
+    const pending = service.listPendingExternalContributions('chat-1')
+    expect(pending).toHaveLength(1)
+    expect(pending[0].heldByMute).toBe(true)
+  })
+
+  it('drops the held flag again the moment the seat is unmuted', () => {
+    // Derived at read time, never stored — a persisted flag would go stale here.
+    const { service, collaboration, shareId, collaboratorId } = approvedForMutedSeat()
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+    expect(service.listPendingExternalContributions('chat-1')).toHaveLength(1)
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: false })
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+  })
+
+  it('does not resurrect a contribution that was already delivered', () => {
+    const { service, collaboration, queue, shareId, collaboratorId } = approvedForMutedSeat()
+    const entry = queue.listAwaitingMaterialisation()[0]
+    queue.markMaterialised(entry.entryId)
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+  })
+})

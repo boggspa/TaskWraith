@@ -35,6 +35,12 @@ export interface PendingContribution {
   displayName: string
   body?: string
   enqueuedAt: number
+  /**
+   * Approved, but the seat is muted so delivery is held. Approval is not final:
+   * the row comes back here so the host can deny it or unmute the seat. Without
+   * this it was invisible — gone from the stack, refused by delivery, forever.
+   */
+  heldByMute?: boolean
 }
 
 export function PendingContributionsStack({
@@ -138,7 +144,12 @@ export function PendingContributionsStack({
       {pending.map((entry) => (
         <div className="pending-contribution" key={entry.entryId}>
           <div className="pending-contribution-body">
-            <div className="pending-contribution-author">{entry.displayName} · external</div>
+            <div className="pending-contribution-author">
+              {entry.displayName} · external
+              {entry.heldByMute ? (
+                <span className="pending-contribution-held"> · approved, held (seat muted)</span>
+              ) : null}
+            </div>
             <div className="pending-contribution-text">{entry.body ?? ''}</div>
           </div>
           {decliningEntryId === entry.entryId ? (
@@ -181,6 +192,7 @@ export function PendingContributionsStack({
             <div className="pending-contribution-actions">
               <button
                 type="button"
+                hidden={entry.heldByMute === true}
                 className="pending-contribution-approve"
                 aria-label={`Approve the contribution from ${entry.displayName}`}
                 disabled={busyEntryId === entry.entryId}

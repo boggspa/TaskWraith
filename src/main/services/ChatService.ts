@@ -769,7 +769,35 @@ export class ChatService {
   listPendingExternalContributions(chatId: string): ExternalContributionEntry[] {
     const queue = this.deps.externalContributionQueue
     if (!queue) return []
-    return queue.listQueued(requireSafeChatId(chatId, 'Chat id'))
+    const id = requireSafeChatId(chatId, 'Chat id')
+    const queued = queue.listQueued(id)
+
+    // HELD BY MUTE. Muting a seat holds an already-approved contribution rather
+    // than delivering it — but approval had already removed it from this list,
+    // and the delivery rule then refuses it forever, so before this it was
+    // neither delivered nor denied and nobody could see it at all. Approval is
+    // therefore no longer final: a held contribution comes BACK here so the host
+    // can deny it or unmute the seat.
+    //
+    // Derived at read time from current seat state, never stored. A mute is a
+    // live property of the seat; persisting "held" would go stale the moment
+    // the host unmuted, and the entry would have to be rewritten to recover.
+    const mutedCollaborators = new Set<string>()
+    for (const share of this.deps.humanCollaborationStore?.listShares(id) ?? []) {
+      if (!share.enabled) continue
+      for (const participant of share.participants || []) {
+        if (participant.status === 'active' && participant.seatDisabled === true) {
+          mutedCollaborators.add(participant.collaboratorId)
+        }
+      }
+    }
+    if (mutedCollaborators.size === 0) return queued
+
+    const held = queue
+      .listAwaitingMaterialisation()
+      .filter((entry) => entry.chatId === id && mutedCollaborators.has(entry.collaboratorId))
+      .map((entry) => ({ ...entry, heldByMute: true }))
+    return [...queued, ...held]
   }
 
   /**

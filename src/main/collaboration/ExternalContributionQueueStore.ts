@@ -94,6 +94,12 @@ export interface ExternalContributionEntry {
    * and losing a message is recoverable where duplicating one is not.
    */
   materialised?: boolean
+  /**
+   * DERIVED at read time, never stored: this contribution is approved but its
+   * seat is muted, so delivery is held. A mute is live seat state — persisting
+   * the flag would go stale the instant the host unmuted.
+   */
+  heldByMute?: boolean
 }
 
 export interface ExternalContributionQueueSnapshot {
