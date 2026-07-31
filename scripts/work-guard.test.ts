@@ -507,3 +507,49 @@ describe('snapshots', () => {
     expect(listSnapshots(root)).toHaveLength(1)
   })
 })
+
+// TaskWraith's own runtime lock projector writes markers into the SAME namespace
+// this guard reads, but in a different dialect: every YAML scalar is quoted
+// (its helper is JSON.stringify), tree leases go to `trees:` and workspace
+// leases to `workspaceWide: true`. Reading only unquoted scalars and `paths:`
+// meant a LIVE runtime lock parsed as an expiry of NaN claiming nothing.
+describe('runtime marker dialect', () => {
+  function writeRuntimeMarker(root: string, body: string): string {
+    const file = '.WORK-IN-PROGRESS-taskwraith-runtime-probe.md'
+    writeFileSync(join(root, file), `---\n${body}---\nbody\n`)
+    return file
+  }
+
+  it('parses a quoted expires instead of yielding NaN', () => {
+    const root = makeRepo()
+    const when = '2026-07-30T23:17:41.346Z'
+    const file = writeRuntimeMarker(
+      root,
+      `session: "s"\nagent: "taskwraith-runtime"\npid: 1\nderived: true\nexpires: ${JSON.stringify(when)}\npaths:\n  - "src/app.ts"\n`
+    )
+    const marker = markerFor(root, file)
+    expect(marker.expiresMs).toBe(Date.parse(when))
+    expect(marker.expiresMs).not.toBeNaN()
+  })
+
+  it('claims tree leases, which never appear under paths:', () => {
+    const root = makeRepo()
+    const file = writeRuntimeMarker(
+      root,
+      `session: "s"\nagent: "taskwraith-runtime"\npid: 1\nderived: true\nexpires: "2099-01-01T00:00:00Z"\ntrees:\n  - "src"\n`
+    )
+    const marker = markerFor(root, file)
+    expect(marker.matchers.some((match) => match('src/app.ts'))).toBe(true)
+    expect(marker.matchers.some((match) => match('docs/readme.md'))).toBe(false)
+  })
+
+  it('treats a workspace-wide lease as claiming everything', () => {
+    const root = makeRepo()
+    const file = writeRuntimeMarker(
+      root,
+      `session: "s"\nagent: "taskwraith-runtime"\npid: 1\nderived: true\nworkspaceWide: true\nexpires: "2099-01-01T00:00:00Z"\n`
+    )
+    const marker = markerFor(root, file)
+    expect(marker.matchers.some((match) => match('anywhere/at/all.ts'))).toBe(true)
+  })
+})

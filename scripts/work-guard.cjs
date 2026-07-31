@@ -174,28 +174,48 @@ function parseMarker(root, file) {
   }
   const scalar = (key) => {
     const m = text.match(new RegExp(`^${key}:[ \\t]*(.+)$`, 'm'))
-    return m ? m[1].trim() : null
+    if (!m) return null
+    // Strip a matched surrounding quote pair, exactly as normaliseClaim already
+    // does for list items. TaskWraith's own runtime markers come from a projector
+    // whose YAML scalar helper is JSON.stringify, so EVERY scalar arrives quoted
+    // — and an unstripped `expires: "2026-…"` parses to NaN, which meant a runtime
+    // marker could never decay by clock.
+    const value = m[1].trim().replace(/^(["'])([\s\S]*)\1$/, '$2').trim()
+    return value || null
   }
-  const paths = []
   const lines = text.split(/\r?\n/)
-  let inPaths = false
-  for (const line of lines) {
-    if (/^paths:[ \t]*$/.test(line)) {
-      inPaths = true
-      continue
+  const collectList = (key) => {
+    const out = []
+    let inList = false
+    for (const line of lines) {
+      if (new RegExp(`^${key}:[ \\t]*$`).test(line)) {
+        inList = true
+        continue
+      }
+      if (!inList) continue
+      const item = line.match(/^[ \t]*-[ \t]+(.+)$/)
+      if (item) {
+        const claim = normaliseClaim(item[1])
+        if (claim) out.push(claim)
+        continue
+      }
+      if (line.trim() === '') continue
+      inList = false
     }
-    if (!inPaths) continue
-    const item = line.match(/^[ \t]*-[ \t]+(.+)$/)
-    if (item) {
-      const claim = normaliseClaim(item[1])
-      if (claim) paths.push(claim)
-      continue
-    }
-    if (line.trim() === '') continue
-    inPaths = false
+    return out
   }
+  const paths = collectList('paths')
+  // A runtime marker routes tree leases to `trees:` and workspace leases to
+  // `workspaceWide: true`; neither reaches `paths:`. Reading only `paths:` meant a
+  // LIVE tree-or-workspace lock claimed nothing, so `work-guard check` reported
+  // the app's own files as unclaimed orphans — and a gate that cries wolf is a
+  // gate that gets bypassed.
+  const trees = collectList('trees')
+  const workspaceWide = /^true$/i.test(String(scalar('workspaceWide') || ''))
+  const derived = /^true$/i.test(String(scalar('derived') || ''))
   const pidRaw = scalar('pid')
   const pid = pidRaw && /^\d+$/.test(pidRaw) ? Number(pidRaw) : null
+  const claims = [...paths, ...trees]
   return {
     file,
     session: scalar('session'),
@@ -203,8 +223,10 @@ function parseMarker(root, file) {
     pid,
     expires: scalar('expires'),
     expiresMs: parseIsoMs(scalar('expires')),
-    paths,
-    matchers: paths.map(claimToMatcher)
+    derived,
+    workspaceWide,
+    paths: claims,
+    matchers: workspaceWide ? [() => true] : claims.map(claimToMatcher)
   }
 }
 
