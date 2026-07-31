@@ -233,3 +233,49 @@ describe('history deletion startup integration', () => {
     }
   })
 })
+
+// A mid-session workspace-lock poison is a MUTATION posture, not a scheduling one.
+// It used to write into `workspaceLockStartupRecoveryBlockedReason`, which
+// `scheduleNextTaskTimer` also read — so one unproven lease release stopped every
+// scheduled task for the rest of the process, recoverable only by restarting.
+describe('workspace-lock mutation poison is scoped to mutation admission', () => {
+  const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+
+  it('poisons its own flag, not the startup one', () => {
+    const start = indexSource.indexOf('function poisonWorkspaceLockMutationAdmission(')
+    const end = indexSource.indexOf('\n}', start)
+    const body = indexSource.slice(start, end)
+
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(body).toContain('workspaceLockMutationAdmissionPoisonReason ||=')
+    expect(body).not.toContain('workspaceLockStartupRecoveryBlockedReason')
+  })
+
+  it('leaves the scheduled-task timer armed after a mid-session poison', () => {
+    const start = indexSource.indexOf('function scheduleNextTaskTimer()')
+    const end = indexSource.indexOf('\n  const nowMs = Date.now()', start)
+    const gate = indexSource.slice(start, end)
+
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    // The mid-session poison flag must not gate scheduling at all...
+    expect(gate).not.toContain('workspaceLockMutationAdmissionPoisonReason')
+    expect(gate).not.toContain('workspaceLockStartupRecoveryBlockedReason')
+    // ...while a workspace-lock STARTUP failure still stops it, because that catch
+    // sets scheduledOccurrenceRecoveryBlockedReason, which this gate does read.
+    expect(gate).toContain('scheduledOccurrenceRecoveryBlockedReason')
+  })
+
+  it('still reports the poison reason to mutation admission', () => {
+    expect(indexSource).toContain(
+      'workspaceLockStartupRecoveryBlockedReason ?? workspaceLockMutationAdmissionPoisonReason'
+    )
+  })
+
+  it('keeps the workspace-lock startup catch arming the scheduler latch', () => {
+    const start = indexSource.indexOf('workspaceLockStartupRecoveryBlockedReason =\n')
+    const body = indexSource.slice(start, start + 400)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(body).toContain('scheduledOccurrenceRecoveryBlockedReason ||=')
+  })
+})

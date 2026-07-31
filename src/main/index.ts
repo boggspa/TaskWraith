@@ -2138,13 +2138,25 @@ let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
 let scheduledOccurrenceRecoveryBlockedReason: string | null = null
 let historyDeletionStartupRecoveryBlockedReason: string | null = null
 let workspaceLockStartupRecoveryBlockedReason: string | null = null
+/**
+ * Mid-session fail-closed for workspace MUTATION ADMISSION only.
+ *
+ * Deliberately separate from `workspaceLockStartupRecoveryBlockedReason`. Both
+ * latch for the process lifetime, but they gate different things: the startup
+ * flag also suppresses startup recovery replay and the scheduled-task timer,
+ * which are unrelated to a mutation whose lease could not be proven. Folding a
+ * mid-session poison into the startup flag silently stopped the scheduler for
+ * the rest of the session, with no way back short of a restart.
+ */
+let workspaceLockMutationAdmissionPoisonReason: string | null = null
 let workspaceLockRuntimeRef: WorkspaceLockRuntime | null = null
 const workspaceLockProviderCoordinator = new WorkspaceLockProviderCoordinator({
   getRuntime: () => workspaceLockRuntimeRef
 })
 const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordinator({
   getRuntime: () => workspaceLockRuntimeRef,
-  getRuntimeUnavailableReason: () => workspaceLockStartupRecoveryBlockedReason,
+  getRuntimeUnavailableReason: () =>
+    workspaceLockStartupRecoveryBlockedReason ?? workspaceLockMutationAdmissionPoisonReason,
   getChat: (chatId) => AppStore.getChat(chatId),
   getOpaqueOwnerId: (query) =>
     workspaceLockProviderCoordinator.getOrCreateLogicalOwnerId(query),
@@ -2171,7 +2183,7 @@ const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordi
 function poisonWorkspaceLockMutationAdmission(reason: string): void {
   const message = `Workspace-lock mutation admission is fail-closed: ${reason}`
   workspaceLockRuntimeRef?.markUnhealthy(message)
-  workspaceLockStartupRecoveryBlockedReason ||= message
+  workspaceLockMutationAdmissionPoisonReason ||= message
 }
 
 const workspaceLockRunLifecycle = new WorkspaceLockRunLifecycleTracker({
@@ -15492,11 +15504,12 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
-  if (
-    scheduledOccurrenceRecoveryBlockedReason ||
-    historyDeletionStartupRecoveryBlockedReason ||
-    workspaceLockStartupRecoveryBlockedReason
-  ) {
+  // Workspace-lock STARTUP failure already sets `scheduledOccurrenceRecoveryBlockedReason`
+  // in the same catch, so that case is covered by the first disjunct. Reading the
+  // workspace-lock flag directly here additionally caught the MID-SESSION mutation
+  // poison, which has nothing to do with scheduling and would stop the timer for
+  // the rest of the process.
+  if (scheduledOccurrenceRecoveryBlockedReason || historyDeletionStartupRecoveryBlockedReason) {
     return
   }
   const nowMs = Date.now()
