@@ -23146,6 +23146,22 @@ function App(): React.JSX.Element {
               result?.error || 'the queued item could not be promoted safely'
             )
           } else {
+            // Optimistic queue splice mirrors handleBlackboardQueuedMessage /
+            // handleDeleteQueuedMessage so the above-row entry vanishes immediately
+            // instead of waiting for the main→renderer broadcast.
+            updateEnsembleQueuedPromptsForRound(
+              ensembleChatId,
+              queuedRoundId,
+              (latestQueue) => {
+                const latestIndex =
+                  latestQueue[idx] === prompt ? idx : latestQueue.indexOf(prompt)
+                if (latestIndex < 0) return latestQueue
+                return [
+                  ...latestQueue.slice(0, latestIndex),
+                  ...latestQueue.slice(latestIndex + 1)
+                ]
+              }
+            )
             // Optimistic feedback parity with the composer Steer: refresh
             // immediately rather than waiting for the main→renderer broadcast.
             //
