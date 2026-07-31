@@ -1262,6 +1262,40 @@ describe('withdrawing trust settles what is already queued', () => {
     expect(entry.lapseReason).toBe('revoked')
   })
 
+  it('lapses an APPROVED but undelivered contribution when its author is revoked', () => {
+    // Approval is a release, not a delivery, and revoking inside that gap used
+    // to STRAND the entry: `lapseAll` skipped it for not being 'queued', and
+    // from there nothing could reach it — the seat that would deliver it stops
+    // resolving, deny/sweep/listQueued all skip it, and `isReapable` exempts it
+    // from every eviction path. It sat in the queue file indefinitely, holding
+    // the plaintext body of someone whose access had just been withdrawn — the
+    // exact thing lapsing exists to prevent.
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'approved, then the plug is pulled'
+    })
+    const queued = queue.listQueued('chat-1')[0]
+    expect(service.approveExternalContribution(queued.entryId)?.state).toBe('approved')
+    // The gap this test is about: released for the next seat turn, not yet
+    // written to the transcript.
+    expect(queue.listAwaitingMaterialisation()).toHaveLength(1)
+
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('revoked')
+    // The two consequences that made this more than untidy: the withdrawn
+    // person's words are off the disk, and the message can never now arrive.
+    expect(entry.body).toBeUndefined()
+    expect(queue.listAwaitingMaterialisation()).toEqual([])
+  })
+
   it('does not wipe the queue when the service has no queue configured', () => {
     // lapseAll refuses a predicate-free filter, but the optional-chaining guard
     // is what keeps a review-less ChatService from throwing here at all.

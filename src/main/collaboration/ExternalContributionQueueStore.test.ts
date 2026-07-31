@@ -203,7 +203,14 @@ describe('ExternalContributionQueueStore', () => {
     expect(enqueued.expiresAt).toBe(FAKE + EXTERNAL_CONTRIBUTION_TTL_MS)
     expect(store.approve(enqueued.entryId, 'msg-1')?.resolvedAt).toBe(FAKE)
     expect(store.deny(toDeny.entryId, 'no')?.resolvedAt).toBe(FAKE)
-    expect(store.lapseAll({ chatIds: ['chat-1'] }, 'chatGone')[0]).toMatchObject({
+    // By id, not by position: `lapseAll` also settles the approved-but-
+    // undelivered entry enqueued above — a withdrawal it can never now
+    // materialise under — so the queued one is no longer first in the result.
+    expect(
+      store
+        .lapseAll({ chatIds: ['chat-1'] }, 'chatGone')
+        .find((entry) => entry.entryId === toLapse.entryId)
+    ).toMatchObject({
       entryId: toLapse.entryId,
       resolvedAt: FAKE
     })
@@ -1168,7 +1175,7 @@ describe('ExternalContributionQueueStore', () => {
 
   // -------------------------------------------------------------- lapseAll --
 
-  it('lapseAll by shareId, by collaboratorId and by chatIds each touches only its own filter and only QUEUED entries', () => {
+  it('lapseAll by shareId, by collaboratorId and by chatIds each touches only its own filter, leaving already-resolved entries alone', () => {
     const store = openStore()
     const place = (shareId: string, chatId: string, collaboratorId: string, id: string): void => {
       mustEnqueue(store, { shareId, chatId, collaboratorId, clientMessageId: id })
@@ -1214,6 +1221,42 @@ describe('ExternalContributionQueueStore', () => {
       []
     )
     expect(store.get(survivor.entryId)?.state).toBe('queued')
+  })
+
+  it('lapseAll settles an APPROVED entry that never reached the transcript, but never one that did', () => {
+    // Both callers are trust withdrawals. Once the seat is gone, an approved
+    // entry has no exit left — `markMaterialised` is reachable only through the
+    // seat filter that just refused it, deny/sweep/listQueued skip it, and
+    // `isReapable` exempts it from every eviction path. Left alone it holds a
+    // withdrawn collaborator's plaintext body forever, which is the precise
+    // inverse of why lapsing drops bodies at all.
+    //
+    // `materialised !== true` is the line that must not move, exactly as in
+    // `deny`: a row already in the transcript has been read and quoted into
+    // prompts, and no store write can unsay it.
+    const store = openStore()
+    const undelivered = mustEnqueue(store, { clientMessageId: 'released-not-sent' })
+    const delivered = mustEnqueue(store, { clientMessageId: 'already-in-transcript' })
+    store.approve(undelivered.entryId, 'msg-undelivered', T0)
+    store.approve(delivered.entryId, 'msg-delivered', T0)
+    store.markMaterialised(delivered.entryId)
+    expect(ids(store.listAwaitingMaterialisation())).toEqual(['released-not-sent'])
+
+    const lapsed = store.lapseAll({ collaboratorId: OLLY }, 'revoked', T0 + 1)
+
+    expect(ids(lapsed)).toEqual(['released-not-sent'])
+    expect(store.get(undelivered.entryId)).toMatchObject({
+      state: 'lapsed',
+      lapseReason: 'revoked'
+    })
+    // The body goes, and with it the reason the entry was un-evictable.
+    expect('body' in (store.get(undelivered.entryId) ?? {})).toBe(false)
+    expect(store.listAwaitingMaterialisation()).toEqual([])
+    // The delivered one is untouched — it is a receipt, not pending work.
+    expect(store.get(delivered.entryId)).toMatchObject({
+      state: 'approved',
+      materialised: true
+    })
   })
 
   it('REFUSES a lapseAll filter with no effective predicate — `lapseAll({ shareId: share?.id })` must never wipe the whole queue', () => {
