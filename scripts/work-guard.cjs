@@ -60,7 +60,20 @@ const TICK_FILE = 'tick.json'
  */
 const TICK_STALE_MS = 20 * 60 * 1000
 
+// Human / manual claim markers only. Runtime-derived projections use the
+// taskwraith-runtime filename shape and must not enter this set at glob time.
+const RUNTIME_MARKER_RE =
+  /^\.WORK-IN-PROGRESS-taskwraith-runtime-[A-Za-z0-9_-]+-[a-f0-9]{64}\.md$/
 const MARKER_RE = /^(?:\.WORK-IN-PROGRESS-.+\.md|SHIP-HOLD-.+\.md|SESSION-IN-PROGRESS-.+\.md)$/
+function isHumanClaimMarkerName(name) {
+  if (!MARKER_RE.test(name)) return false
+  if (name.startsWith('.WORK-IN-PROGRESS-') && RUNTIME_MARKER_RE.test(name)) return false
+  return true
+}
+
+function isRuntimeClaimMarkerName(name) {
+  return RUNTIME_MARKER_RE.test(name)
+}
 
 // ── git plumbing ────────────────────────────────────────────────────────────
 
@@ -126,7 +139,7 @@ function dirtyEntries(root) {
 // ── markers ─────────────────────────────────────────────────────────────────
 
 function isMarkerFile(file) {
-  return MARKER_RE.test(file)
+  return isHumanClaimMarkerName(file) || isRuntimeClaimMarkerName(file)
 }
 
 function parseIsoMs(value) {
@@ -771,5 +784,7 @@ module.exports = {
   timerHealth,
   writeTickRecord,
   stableNodePath,
-  isMarkerFile
+  isMarkerFile,
+  isHumanClaimMarkerName,
+  isRuntimeClaimMarkerName
 }
