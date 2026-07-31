@@ -40,6 +40,7 @@ import type { HumanCollaborationSessionKeys } from '../../shared/collaboration/H
 import {
   hashInviteToken,
   HumanCollaborationStore,
+  normalizeDisplayName,
   type HumanCollaborationShare
 } from './HumanCollaborationStore'
 import { HumanCollaborationDenialError } from './HumanContributionRules'
@@ -58,6 +59,48 @@ const APPEND_MAX_PER_WINDOW = 30
 // repeatedly calling beginAdmission within the invite TTL.
 const MAX_PENDING_PER_SHARE = 4
 const MAX_PENDING_TOTAL = 32
+// Handshake bound, and it is the AUDIT that makes it necessary rather than the
+// key work.
+//
+// An already-admitted collaborator can re-handshake with no invite token at all
+// (`mode` is 'reconnect' whenever a collaboratorId arrives without one), and a
+// wrong confirm code frees the pending slot BEFORE it throws — so the
+// MAX_PENDING_* caps above never engage against begin → confirm(wrong) → begin.
+// Each cycle is one cheap frame for the sender and two synchronous
+// pretty-printed full-file audit rewrites for the host. The log keeps the
+// NEWEST 2000 rows and is global across every chat and share, so roughly a
+// thousand cycles evict every pre-existing row: the collaborator erases the
+// record of their own conduct, which is the one thing an audit log exists to
+// prevent. It also fires an admission banner per begin.
+//
+// TWO separate bounds, because they defend different things and a single one
+// does neither job well:
+//   - the WINDOW CAP bounds the WORK (an X25519 derive, an Ed25519 sign and a
+//     banner IPC per begin);
+//   - COALESCING (see auditHandshakeEvent) bounds the DURABLE WRITE, which is
+//     the actual weapon. At most one row per key per window means the log
+//     cannot be rolled at any inbound rate, so the cap does not have to be
+//     tight enough to be the whole defence.
+// Deliberately NO minimum interval between attempts: a client that fails a
+// handshake and immediately retries is honest behaviour, and refusing it broke
+// exactly that case.
+const HANDSHAKE_WINDOW_MS = 60_000
+const HANDSHAKE_MAX_PER_WINDOW = 10
+/** When to sweep closed handshake buckets. A real host has a handful; this is
+ *  only reached by a client rotating its identity key per attempt. */
+const MAX_HANDSHAKE_RATE_KEYS = 256
+// Coalesce the collaborator-driven projection rebuild.
+//
+// The transport's FLUSH_MIN_INTERVAL_MS throttles the outbound reseal+send, but
+// it is consulted only AFTER `routeEncryptedAction` has already returned — and
+// a subscribe dispatches straight to a full inline rebuild (read + normalize the
+// whole chat record, resolve the roster, clone the queue, redact up to 120 rows,
+// then JSON.stringify the whole projection once per row the byte budget drops).
+// Nothing yields between frames, so an unthrottled stream stalls the main
+// process. This must sit on the WIRE path only — `publishProjectionUpdates`
+// calls `subscribeProjection` internally, and a limiter inside it would starve
+// the host's own already-throttled flush loop.
+const SUBSCRIBE_MIN_INTERVAL_MS = 200
 
 export interface HumanCollaborationProjectionRequest {
   sessionId: string
@@ -203,6 +246,28 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     string,
     { windowStart: number; count: number; last: number; rejectAuditAt?: number }
   >()
+  // Per shareId:collaboratorId handshake-rate state (see HANDSHAKE_* above).
+  // Deliberately NOT cleared on disconnect, revoke or a failed confirm — every
+  // one of those is reachable by the flooder, so clearing there would hand them
+  // a free reset and the limit would bound nothing.
+  private readonly handshakeRate = new Map<
+    string,
+    {
+      windowStart: number
+      count: number
+      last: number
+      /** Coalesce the two durable handshake rows independently, so a burst of
+       * failures cannot suppress the record of a real admission (see
+       * auditHandshakeEvent). */
+      beganAuditAt?: number
+      beganSuppressed?: number
+      failAuditAt?: number
+      failSuppressed?: number
+    }
+  >()
+  // Per sessionId, last WIRE-driven projection rebuild (see
+  // SUBSCRIBE_MIN_INTERVAL_MS). Host-driven publishes do not consult it.
+  private readonly subscribeRate = new Map<string, number>()
 
   constructor(options: HumanCollaborationRuntimeDeps<ProjectionType, AppendType>) {
     this.opts = options
@@ -252,6 +317,20 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     if (mode === 'admission' && !inviteToken) {
       throw new Error('Collaboration invite token is required.')
     }
+    // BEFORE the pending caps, the key derivation, the banner and the audit
+    // append — every one of those is a cost this throttle exists to deny, and
+    // the audit append is the one that is not merely expensive but destructive.
+    this.enforceHandshakeRateLimit(
+      this.handshakeKey(shareId, collaboratorId, collaboratorIdentityPubKeyB64)
+    )
+    // The client-supplied name becomes a host-facing label further down, and on
+    // a reconnect nothing else normalizes it: `validateParticipantSession` never
+    // reads displayName, so the reserved-name list and the 80-char cap that
+    // `consumeInvite` applies are both bypassed on this path. Untreated, a
+    // collaborator could present to the host's admission banner as "TaskWraith",
+    // and a non-string value would reach React as an object child and blank the
+    // host's whole window through the root error boundary.
+    const safeDisplayName = normalizeDisplayName(typeof displayName === 'string' ? displayName : '')
     // Bound un-consumed pending handshakes (each retains live session keys) so a
     // valid-token holder can't accumulate key material by spamming beginAdmission.
     if (this.pending.size >= MAX_PENDING_TOTAL) {
@@ -355,23 +434,33 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     })
 
     // Surface the SAS to the host so the human can compare it out of band (L6-2).
+    // The STORED name wins where there is one — it was normalized at
+    // `consumeInvite` and the collaborator does not get to restyle themselves on
+    // reconnect. Where there is none (a readOnly share, or a first admission),
+    // the normalized client value is what the host sees.
+    const bannerDisplayName =
+      share.mode === 'readOnly' ? safeDisplayName : existingParticipant?.displayName || safeDisplayName
     this.opts.onAdmissionBegan?.({
       handshakeId,
       chatId,
       shareId,
-      displayName: share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName,
+      displayName: bannerDisplayName,
       confirmCode,
       mode
     })
-    this.opts.audit?.append({
-      kind: 'admission.began',
-      chatId,
-      shareId,
-      ...(existingParticipant?.collaboratorId
-        ? { collaboratorId: existingParticipant.collaboratorId }
-        : {}),
-      detail: `${mode} · ${share.mode === 'readOnly' ? displayName : existingParticipant?.displayName || displayName}`
-    })
+    this.auditHandshakeEvent(
+      'began',
+      {
+        kind: 'admission.began',
+        chatId,
+        shareId,
+        ...(existingParticipant?.collaboratorId
+          ? { collaboratorId: existingParticipant.collaboratorId }
+          : {}),
+        detail: `${mode} · ${bannerDisplayName}`
+      },
+      this.handshakeKey(shareId, collaboratorId, collaboratorIdentityPubKeyB64)
+    )
 
     return {
       handshakeId,
@@ -403,13 +492,32 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     if (input.confirmCode !== pending.confirmCode) {
       // A failed admission attempt is terminal: drop the pending handshake (and
       // its derived keys) so it can't be retried and doesn't linger until TTL.
+      //
+      // Freeing the slot here is what lets begin → confirm(wrong) → begin evade
+      // the MAX_PENDING_* caps, so the attempt is charged to the handshake
+      // budget and its audit row is coalesced. Both matter: the charge bounds
+      // how fast the loop can turn, the coalesce bounds what one turn can
+      // durably cost.
       this.pending.delete(input.handshakeId)
-      this.opts.audit?.append({
-        kind: 'admission.sas_failed',
-        chatId: pending.chatId,
-        shareId: pending.shareId,
-        detail: 'confirm code mismatch'
-      })
+      const failKey = this.handshakeKey(
+        pending.shareId,
+        pending.context.collaboratorId,
+        pending.collaboratorIdentityPubKeyB64
+      )
+      this.chargeFailedConfirm(failKey)
+      this.auditHandshakeEvent(
+        'failed',
+        {
+          kind: 'admission.sas_failed',
+          chatId: pending.chatId,
+          shareId: pending.shareId,
+          ...(pending.context.collaboratorId
+            ? { collaboratorId: pending.context.collaboratorId }
+            : {}),
+          detail: 'confirm code mismatch'
+        },
+        failKey
+      )
       throw new Error('Confirmation code mismatch.')
     }
     const collaboratorPublic = importRawEd25519PublicKey(b64.decode(pending.collaboratorIdentityPubKeyB64))
@@ -418,12 +526,25 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const transcriptValid = verifyEd25519(collaboratorPublic, transcriptHash, collaboratorSig)
     if (!transcriptValid) {
       this.pending.delete(input.handshakeId)
-      this.opts.audit?.append({
-        kind: 'admission.sas_failed',
-        chatId: pending.chatId,
-        shareId: pending.shareId,
-        detail: 'collaborator transcript signature invalid'
-      })
+      const sigFailKey = this.handshakeKey(
+        pending.shareId,
+        pending.context.collaboratorId,
+        pending.collaboratorIdentityPubKeyB64
+      )
+      this.chargeFailedConfirm(sigFailKey)
+      this.auditHandshakeEvent(
+        'failed',
+        {
+          kind: 'admission.sas_failed',
+          chatId: pending.chatId,
+          shareId: pending.shareId,
+          ...(pending.context.collaboratorId
+            ? { collaboratorId: pending.context.collaboratorId }
+            : {}),
+          detail: 'collaborator transcript signature invalid'
+        },
+        sigFailKey
+      )
       throw new Error('Collaborator transcript signature invalid.')
     }
 
@@ -554,6 +675,9 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const session = this.sessions.get(input.sessionId)
     const removed = this.sessions.delete(input.sessionId)
     this.projectionSubscribers.delete(input.sessionId)
+    // Safe to clear, unlike `handshakeRate`: this map is keyed by sessionId and
+    // a reconnect always mints a new one, so there is no window to reset.
+    this.subscribeRate.delete(input.sessionId)
     if (!removed) return false
     // The SESSION goes — its keys die with it, which is the whole point of
     // saying goodbye — but the SEAT does not. Presence records `grace` so a tab
@@ -690,6 +814,20 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     const message = this.openFromCollaborator(frame)
     const params = message.params && typeof message.params === 'object' ? message.params : {}
     if (message.method === HUMAN_COLLABORATION_METHODS.subscribeProjection) {
+      const now = this.now()
+      const last = this.subscribeRate.get(frame.sessionId) ?? 0
+      if (now - last < SUBSCRIBE_MIN_INTERVAL_MS) {
+        // Still register the subscription and the liveness — both are cheap and
+        // both are load-bearing — but skip the rebuild. The transport discards
+        // this return value anyway, and its coalesced flush delivers the current
+        // projection within FLUSH_MIN_INTERVAL_MS regardless, so a throttled
+        // subscribe costs the collaborator nothing.
+        const session = this.requireActiveSession(frame.sessionId)
+        this.notePresenceActivity(session)
+        this.projectionSubscribers.add(session.sessionId)
+        return undefined
+      }
+      this.subscribeRate.set(frame.sessionId, now)
       return this.subscribeProjection({ sessionId: frame.sessionId })
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.appendComment) {
@@ -737,9 +875,10 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
         // Do NOT unsubscribe on a transient failure. A projection build reads
         // the chat through `buildProjection`, which can throw for reasons that
         // pass — a store read racing a write, a chat momentarily unresolvable
-        // mid-save. The subscription is established exactly ONCE, at admission
-        // (`:443`), and the collaborator never re-subscribes, so dropping it
-        // here is PERMANENT for the life of the session: the external's
+        // mid-save. The subscription is established in `subscribeProjection`,
+        // and an HONEST client calls it exactly once per session (the two IPC
+        // join paths each subscribe once), so dropping it here is PERMANENT for
+        // the life of the session: the external's
         // transcript freezes silently and neither side is told why. That is one
         // of the two independent causes of the "no live updates after joining"
         // report. Only give up when the session itself has gone (a concurrent
@@ -753,6 +892,132 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
         )
       }
     }
+  }
+
+  /**
+   * Who a handshake budget belongs to.
+   *
+   * The pinned `collaboratorId` where there is one — that is the reconnect lane,
+   * the one the attack uses, and it cannot be rotated because
+   * `validateParticipantSession` matches it against an active participant.
+   * Otherwise the client's own identity key, NOT a per-share constant: a share
+   * admits two people and they may well arrive within the same second, so a
+   * shared "first admission" bucket would have one honest joiner throttling the
+   * other. Rotating that key to buy a fresh budget gains nothing — an admission
+   * still has to pass `verifyInvite`, which throws before anything durable is
+   * written.
+   */
+  private handshakeKey(
+    shareId: string,
+    collaboratorId: string | undefined,
+    identityPubKeyB64: string
+  ): string {
+    return `${shareId}:${collaboratorId || identityPubKeyB64}`
+  }
+
+  /**
+   * Throttle the handshake lane. Throws WITHOUT writing an audit row — the
+   * whole point is that a refused handshake must cost the host nothing durable,
+   * because the durable write is the amplifier being defended against.
+   *
+   * A first admission legitimately involves one handshake, a reconnect one more;
+   * ten per minute is far above any honest client and far below what it takes to
+   * roll a 2000-row log.
+   */
+  private enforceHandshakeRateLimit(key: string): void {
+    const now = this.now()
+    const state = this.handshakeRate.get(key)
+    if (!state) {
+      // A first-admission key carries the client's own identity pubkey, which
+      // the client picks — so an attacker CAN mint a fresh bucket per attempt.
+      // That buys them nothing durable (an admission still has to pass
+      // `verifyInvite`, which throws before any audit append) but it would grow
+      // this map without bound, so retire buckets whose window has closed.
+      // Live buckets are never touched: dropping one is what would hand a
+      // flooder the reset this limiter exists to deny.
+      if (this.handshakeRate.size >= MAX_HANDSHAKE_RATE_KEYS) {
+        for (const [candidate, tracked] of this.handshakeRate) {
+          if (now - tracked.windowStart >= HANDSHAKE_WINDOW_MS) this.handshakeRate.delete(candidate)
+        }
+      }
+      this.handshakeRate.set(key, { windowStart: now, count: 1, last: now })
+      return
+    }
+    if (now - state.windowStart >= HANDSHAKE_WINDOW_MS) {
+      state.windowStart = now
+      state.count = 0
+    }
+    if (state.count >= HANDSHAKE_MAX_PER_WINDOW) {
+      throw new Error('Too many collaboration handshake attempts; try again shortly.')
+    }
+    state.count += 1
+    state.last = now
+  }
+
+  /**
+   * Charge a failed confirm to the handshake budget.
+   *
+   * `confirmSas` frees the pending slot before it throws, so a wrong code costs
+   * the attacker nothing and buys them an unmetered retry. Without this the
+   * begin → confirm(wrong) → begin loop stays unbounded even with the begin
+   * limiter in place, because each begin is separated by a confirm.
+   */
+  private chargeFailedConfirm(key: string): void {
+    const now = this.now()
+    const state = this.handshakeRate.get(key)
+    if (!state) {
+      this.handshakeRate.set(key, { windowStart: now, count: 1, last: now })
+      return
+    }
+    if (now - state.windowStart >= HANDSHAKE_WINDOW_MS) {
+      state.windowStart = now
+      state.count = 0
+    }
+    state.count += 1
+    state.last = now
+  }
+
+  /**
+   * Append a handshake-lane audit row, at most one per key per window, carrying
+   * a count of what it stands for.
+   *
+   * This is the bound that actually defeats log erasure. Every append is a
+   * synchronous pretty-printed rewrite of the whole file, and the log keeps only
+   * the newest 2000 rows across every chat and share — so an unbounded producer
+   * on this lane does not merely cost CPU, it evicts the host's real history,
+   * including the record of the erasing party's own conduct. Coalescing makes
+   * that impossible at any inbound rate rather than merely slow.
+   *
+   * The count is what keeps it honest: a suppressed row must still be visible as
+   * volume, or a sustained attack would read as one fat-fingered code. Same
+   * shape as `rateLimitDenial`, which coalesces the contribution-rejection row
+   * for exactly this reason.
+   */
+  private auditHandshakeEvent(
+    slot: 'began' | 'failed',
+    input: { kind: 'admission.began' | 'admission.sas_failed'; chatId: string; shareId: string; collaboratorId?: string; detail: string },
+    key: string
+  ): void {
+    const now = this.now()
+    const state = this.handshakeRate.get(key)
+    const atField = slot === 'began' ? 'beganAuditAt' : 'failAuditAt'
+    const countField = slot === 'began' ? 'beganSuppressed' : 'failSuppressed'
+    if (state && state[atField] !== undefined && now - (state[atField] as number) < HANDSHAKE_WINDOW_MS) {
+      state[countField] = (state[countField] ?? 0) + 1
+      return
+    }
+    const suppressed = state?.[countField] ?? 0
+    if (state) {
+      state[atField] = now
+      state[countField] = 0
+    }
+    this.opts.audit?.append({
+      kind: input.kind,
+      chatId: input.chatId,
+      shareId: input.shareId,
+      ...(input.collaboratorId ? { collaboratorId: input.collaboratorId } : {}),
+      detail: suppressed > 0 ? `${input.detail} (+${suppressed} more suppressed)` : input.detail
+    })
   }
 
   private enforceAppendRateLimit(session: RuntimeSession): void {
@@ -807,6 +1072,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     if (!share || !share.enabled) {
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
+      this.subscribeRate.delete(sessionId)
       throw new HumanCollaborationDenialError('revoked', 'Collaboration share is no longer active.')
     }
     const participant = share.participants.find((candidate) => candidate.collaboratorId === session.collaboratorId)
@@ -817,6 +1083,7 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     ) {
       this.sessions.delete(sessionId)
       this.projectionSubscribers.delete(sessionId)
+      this.subscribeRate.delete(sessionId)
       throw new HumanCollaborationDenialError('revoked', 'Collaborator is not active for this share.')
     }
     return session

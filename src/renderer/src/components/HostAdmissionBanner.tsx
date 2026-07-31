@@ -23,9 +23,67 @@ interface PendingAdmission {
 
 const ADMISSION_TTL_MS = 120_000
 const RECONNECT_NOTICE_TTL_MS = 20_000
+/** Newest-wins ceiling on simultaneous cards. A share admits two collaborators,
+ * so anything past a handful is a producer misbehaving, not a real queue. */
+const MAX_PENDING_CARDS = 5
 
 export function hostAdmissionRejectAriaLabel(displayName: string): string {
   return `Reject ${displayName}'s join attempt and stop sharing`
+}
+
+/**
+ * Turn an admission-began IPC payload into a card. Every field is derived from
+ * REMOTE input, so this is the last gate before it becomes a JSX child.
+ *
+ * `displayName` is type-checked, not merely defaulted: main normalizes it, but
+ * `payload.displayName || fallback` lets any truthy non-string through, and a
+ * plain object as a React child makes React throw. There is no boundary between
+ * this banner and the root one, so that blanks the host's entire window until
+ * they reload it.
+ *
+ * Exported and pure so it can be tested — this repo has no DOM environment, so
+ * the mounted stack cannot be driven from a test at all.
+ */
+export function toPendingAdmission(payload: {
+  handshakeId: string
+  shareId: string
+  displayName?: unknown
+  confirmCode: string
+  mode?: unknown
+}): PendingAdmission {
+  return {
+    handshakeId: payload.handshakeId,
+    shareId: payload.shareId,
+    displayName:
+      typeof payload.displayName === 'string' && payload.displayName
+        ? payload.displayName
+        : 'A collaborator',
+    confirmCode: payload.confirmCode,
+    // Missing mode (older main process) = first admission: fail toward the
+    // SAS-compare card, never toward the quieter reconnect notice.
+    mode: payload.mode === 'reconnect' ? 'reconnect' : 'admission'
+  }
+}
+
+/**
+ * Add a card, newest wins, bounded.
+ *
+ * `handshakeId` is a fresh uuid per begin, so the same-id filter never removes
+ * anything and the stack only grows — one unbounded producer upstream papers
+ * the host's screen in cards they cannot dismiss. Main throttles the handshake
+ * lane now; this is the backstop that does not depend on it.
+ *
+ * Returns the dropped entries too, so the caller can clear their timers rather
+ * than leaking one per evicted card.
+ */
+export function admitToPendingStack(
+  current: readonly PendingAdmission[],
+  entry: PendingAdmission,
+  max = MAX_PENDING_CARDS
+): { next: PendingAdmission[]; dropped: PendingAdmission[] } {
+  const merged = [...current.filter((p) => p.handshakeId !== entry.handshakeId), entry]
+  const overflow = Math.max(0, merged.length - max)
+  return { next: merged.slice(overflow), dropped: merged.slice(0, overflow) }
 }
 
 export function HostAdmissionBannerCard({
@@ -114,16 +172,16 @@ export function HostAdmissionBanner() {
 
   useEffect(() => {
     const off = window.api.onHumanCollaborationAdmissionBegan?.((payload) => {
-      const entry: PendingAdmission = {
-        handshakeId: payload.handshakeId,
-        shareId: payload.shareId,
-        displayName: payload.displayName || 'A collaborator',
-        confirmCode: payload.confirmCode,
-        // Missing mode (older main process) = first admission: fail toward the
-        // SAS-compare card, never toward the quieter reconnect notice.
-        mode: payload.mode === 'reconnect' ? 'reconnect' : 'admission'
-      }
-      setPending((current) => [...current.filter((p) => p.handshakeId !== entry.handshakeId), entry])
+      const entry = toPendingAdmission(payload)
+      setPending((current) => {
+        const { next, dropped } = admitToPendingStack(current, entry)
+        for (const stale of dropped) {
+          const timer = timersRef.current.get(stale.handshakeId)
+          if (timer) clearTimeout(timer)
+          timersRef.current.delete(stale.handshakeId)
+        }
+        return next
+      })
       const existing = timersRef.current.get(entry.handshakeId)
       if (existing) clearTimeout(existing)
       timersRef.current.set(
