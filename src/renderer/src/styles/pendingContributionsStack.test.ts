@@ -109,9 +109,14 @@ describe('pending contributions surface', () => {
     // host is never silently cut off mid-sentence on the way out.
     const source = readSource('src/renderer/src/components/PendingContributionsStack.tsx')
     expect(source).toContain('maxLength={MAX_HOST_REASON_CHARS}')
+    // From SHARED, not from main. A renderer importing a main-process module is
+    // the cross-process edge `guard:architecture` forbids — it caught this one
+    // and blocked another session's landing. Pinning the path keeps the number
+    // single-sourced without re-opening that edge.
     expect(source).toContain(
-      "import { MAX_HOST_REASON_CHARS } from '../../../main/collaboration/ExternalContributionQueueStore'"
+      "import { MAX_HOST_REASON_CHARS } from '../../../shared/collaboration/externalContributionLimits'"
     )
+    expect(source).not.toContain("from '../../../main/")
   })
 
   it('declining is two-step, and an empty note sends no reason at all', () => {

@@ -92,6 +92,10 @@ describe('external seat chips', () => {
     // lane is touched and each pane resolves its own chat's share.
     const composer = readSource('src/renderer/src/components/Composer.tsx')
     expect(composer).toContain('externalSeatsForShare(humanCollaborationShare)')
+    // Resolved from shared, never from main — see guard:architecture.
+    expect(composer).toContain(
+      "import { externalSeatsForShare } from '../../../shared/effectiveEnsembleRoster'"
+    )
     expect(composer).toContain('externalSeats={externalSeatsForChat}')
   })
 })

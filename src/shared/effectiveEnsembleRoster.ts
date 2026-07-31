@@ -117,6 +117,63 @@ function labelForModelSeat(participant: EnsembleParticipant): string {
  * turn queue built from the same inputs can never disagree — a mismatch there
  * would show one thing and dispatch another.
  */
+/**
+ * The share shape this module needs, structurally — deliberately NOT the
+ * concrete `HumanCollaborationShare`.
+ *
+ * That type lives in main, and importing it here would drag a main-process
+ * module into the renderer bundle (the architecture guard forbids exactly that
+ * edge, and it caught this). Structural typing gives the renderer the same
+ * contract with no cross-process import: main's real share satisfies it.
+ */
+export interface ExternalSeatShareInput {
+  shareId: string
+  enabled?: boolean
+  participants?: ReadonlyArray<{
+    collaboratorId: string
+    displayName: string
+    status: string
+    seatOrder?: number
+    seatDisabled?: boolean
+  }>
+}
+
+/**
+ * External seats for one share.
+ *
+ * A seat is contributed only for an ACTIVE participant. `present` follows
+ * presence: `live` and `grace` both count as present, because the whole point of
+ * the grace window is that a reconnecting collaborator does not vanish from the
+ * panel mid-reconnect. `expired` and `unknown` do not.
+ *
+ * A muted seat (`seatDisabled`) still appears and still holds its position — it
+ * is presentation, not removal. That is deliberately different from revocation,
+ * which withdraws trust and yields no seat at all.
+ *
+ * No presence resolver at all means "do not judge presence" — default present.
+ * A resolver that answers `expired`/`unknown` is a real negative.
+ */
+export function externalSeatsForShare(
+  share: ExternalSeatShareInput | null | undefined,
+  resolvePresence?: (collaboratorId: string) => string | undefined
+): ExternalSeatInput[] {
+  if (!share || share.enabled === false) return []
+  const seats: ExternalSeatInput[] = []
+  for (const participant of share.participants || []) {
+    if (!participant || participant.status !== 'active') continue
+    const presence = resolvePresence?.(participant.collaboratorId)
+    seats.push({
+      shareId: share.shareId,
+      collaboratorId: participant.collaboratorId,
+      displayName: participant.displayName,
+      present: resolvePresence ? presence === 'live' || presence === 'grace' : true,
+      ...(typeof participant.seatOrder === 'number' ? { seatOrder: participant.seatOrder } : {}),
+      ...(participant.seatDisabled === true ? { enabled: false } : {})
+    })
+  }
+  return seats
+}
+
 export function resolveEffectiveRoster(input: {
   participants?: readonly EnsembleParticipant[] | null
   externals?: readonly ExternalSeatInput[] | null
