@@ -38,6 +38,30 @@ import type { ChatRecord, EnsembleParticipant } from './store/types'
 
 export const PENDING_EXTERNAL_JOIN_CONVERSION_KEY = 'pendingExternalJoinConversion'
 
+/**
+ * Recorded on a chat this feature converted, so the revert can tell its own
+ * work apart from the host's.
+ *
+ * Without it, sharing a panel the host built themselves and then unsharing it
+ * would silently dismantle their roster — the thread would come back as a solo
+ * chat on one provider, with the rest of their seats stashed. A conversion we
+ * did not perform is not ours to undo.
+ */
+export const EXTERNAL_JOIN_CONVERTED_KEY = 'externalJoinConverted'
+
+export function markChatConvertedByExternalJoin(chat: ChatRecord): ChatRecord {
+  return {
+    ...chat,
+    providerMetadata: { ...(chat.providerMetadata || {}), [EXTERNAL_JOIN_CONVERTED_KEY]: true }
+  }
+}
+
+export function clearExternalJoinConvertedMark(chat: ChatRecord): ChatRecord {
+  if (!chat.providerMetadata || !(EXTERNAL_JOIN_CONVERTED_KEY in chat.providerMetadata)) return chat
+  const { [EXTERNAL_JOIN_CONVERTED_KEY]: _dropped, ...rest } = chat.providerMetadata
+  return { ...chat, providerMetadata: Object.keys(rest).length > 0 ? rest : undefined }
+}
+
 export interface PendingExternalJoinConversion {
   schemaVersion: 1
   /** Who caused it. Diagnostic only — never authority. */

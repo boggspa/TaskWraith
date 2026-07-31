@@ -701,7 +701,10 @@ describe('ChatService', () => {
    * now, which is the one thing every door has in common.
    */
   describe('a shared chat cannot be switched out of panel mode', () => {
-    function makeSharedDeps(chat: ChatRecord, shares: Array<{ enabled: boolean }>) {
+    function makeSharedDeps(
+      chat: ChatRecord,
+      shares: Array<{ enabled: boolean; participants?: Array<{ status: string }> }>
+    ) {
       const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
         makeChat({ appChatId: chatId, chatKind: targetKind })
       )
@@ -720,7 +723,7 @@ describe('ChatService', () => {
       // stash — so a seat removed by a collapse can RESURRECT. With externals in
       // seats that is a kicked person coming back.
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
-        { enabled: true }
+        { enabled: true, participants: [{ status: 'active' }] }
       ])
 
       expect(() =>
@@ -729,9 +732,23 @@ describe('ChatService', () => {
       expect(setChatKind).not.toHaveBeenCalled()
     })
 
-    it('allows the collapse once every share is disabled', () => {
+    it('allows the collapse when the share record survives but nobody is admitted', () => {
+      // The discriminating case, and the reason the predicate changed. Both
+      // revoke paths leave the share record behind, so "any enabled share"
+      // refused the very revert the guard exists to make safe.
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
-        { enabled: false }
+        { enabled: true, participants: [{ status: 'revoked' }] }
+      ])
+
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalled()
+    })
+
+    it('allows the collapse once every share is disabled', () => {
+      // A revoked share leaves the record behind with nobody admitted — the
+      // case the old "any enabled share" predicate got wrong.
+      const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
+        { enabled: false, participants: [{ status: 'revoked' }] }
       ])
 
       new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
@@ -740,7 +757,7 @@ describe('ChatService', () => {
 
     it('never blocks turning panel mode ON, shared or not', () => {
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'single' }), [
-        { enabled: true }
+        { enabled: true, participants: [{ status: 'active' }] }
       ])
 
       new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'ensemble' })

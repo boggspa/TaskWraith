@@ -39468,7 +39468,10 @@ if (isGeminiMcpBridgeProcess) {
           if (
             action.targetKind !== 'ensemble' &&
             chat.chatKind === 'ensemble' &&
-            chatService.listHumanCollaborationShares(action.threadId).some((share) => share.enabled)
+            chatService
+              .listHumanCollaborationShares(action.threadId)
+              .filter((share) => share.enabled)
+              .some((share) => (share.participants || []).some((p) => p.status === 'active'))
           ) {
             return {
               ok: false,

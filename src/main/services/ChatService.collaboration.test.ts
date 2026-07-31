@@ -1367,3 +1367,51 @@ describe('an external join converts the thread to a panel', () => {
     ).not.toThrow()
   })
 })
+
+describe('the last external leaving hands the thread back', () => {
+  it('reverts a thread this feature converted', () => {
+    const { service, chats, store, collaboration } = harness()
+    chats.set('chat-1', chat({ chatKind: 'single', provider: 'claude' }))
+    const { shareId, collaboratorId } = admitted(service)
+    // Stand in for the conversion having happened.
+    chats.set('chat-1', {
+      ...chats.get('chat-1')!,
+      chatKind: 'ensemble',
+      providerMetadata: { externalJoinConverted: true }
+    })
+    collaboration.revokeParticipant({ shareId, collaboratorId })
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(true)
+    expect(store.setChatKind).toHaveBeenCalledWith('chat-1', 'single', expect.anything())
+  })
+
+  it('never dismantles a panel the host built themselves', () => {
+    // Sharing a real Ensemble and then unsharing it must not silently collapse
+    // the host's roster onto one provider. No mark, no revert.
+    //
+    // The external must be GONE here, not merely present — otherwise the
+    // participant-count check short-circuits first and this passes without ever
+    // reaching the ownership rule it exists to pin. (It did, until a mutation
+    // run showed removing the rule broke nothing.)
+    const { service, chats, store, collaboration } = harness()
+    chats.set('chat-1', chat({ chatKind: 'ensemble', provider: 'claude' }))
+    const { shareId, collaboratorId } = admitted(service)
+    collaboration.revokeParticipant({ shareId, collaboratorId })
+    vi.mocked(store.setChatKind).mockClear()
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('does not revert while another external is still admitted', () => {
+    const { service, chats, store } = harness()
+    chats.set('chat-1', {
+      ...chat({ chatKind: 'ensemble', provider: 'claude' }),
+      providerMetadata: { externalJoinConverted: true }
+    })
+    admitted(service)
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+})

@@ -55,7 +55,10 @@ import {
 import { hasPendingEnsembleRosterPresetApply } from '../../shared/ensembleRosterPresetApply'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import {
+  EXTERNAL_JOIN_CONVERTED_KEY,
   chatNeedsExternalJoinConversion,
+  clearExternalJoinConvertedMark,
+  markChatConvertedByExternalJoin,
   clearPendingExternalJoinConversion,
   hasPendingExternalJoinConversion,
   queuePendingExternalJoinConversion,
@@ -467,13 +470,15 @@ export class ChatService {
     // desktop handler used to claim it was "the gate every surface goes
     // through". It was not. This is.
     if (targetKind !== 'ensemble') {
-      // Read the store directly rather than through the accessor that throws
-      // when it is unconfigured: no store means no shares can exist, so there is
-      // nothing here to protect and no reason to fail a plain solo conversion.
-      const shared = (this.deps.humanCollaborationStore?.listShares(chatId) ?? []).some(
-        (share) => share.enabled
-      )
-      if (shared && this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble') {
+      // ACTIVE PARTICIPANTS, not enabled shares. An enabled share with nobody
+      // admitted protects nothing — and keying on it made the guard refuse the
+      // very revert it exists to make safe, because both revoke paths leave the
+      // share record behind. What must never happen is collapsing a panel
+      // somebody is still admitted to.
+      if (
+        this.activeExternalCountForChat(chatId) > 0 &&
+        this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble'
+      ) {
         throw new Error(
           'This chat is shared. Stop sharing before switching it out of panel mode.'
         )
@@ -915,7 +920,18 @@ export class ChatService {
       return { outcome: 'queued' }
     }
 
-    this.setChatKind({ chatId: chat.appChatId, targetKind: 'ensemble', seedParticipant })
+    const converted = this.setChatKind({
+      chatId: chat.appChatId,
+      targetKind: 'ensemble',
+      seedParticipant
+    })
+    // Stamped AFTER, not before: the solo→ensemble branch rewrites
+    // providerMetadata (it consumes any stashed roster), so a mark set first
+    // would be discarded.
+    const record = converted ?? this.deps.appStore.getChat(chat.appChatId)
+    if (record) {
+      this.saveChat({ ...markChatConvertedByExternalJoin(record), updatedAt: Date.now() })
+    }
     return { outcome: 'converted' }
   }
 
@@ -935,14 +951,68 @@ export class ChatService {
     this.saveChat({ ...clearPendingExternalJoinConversion(chat), updatedAt: Date.now() })
     if (!chatNeedsExternalJoinConversion(chat)) return false
     try {
-      this.setChatKind({
+      const converted = this.setChatKind({
         chatId: chat.appChatId,
         targetKind: 'ensemble',
         seedParticipant: plan.seedParticipant
       })
+      const record = converted ?? this.deps.appStore.getChat(chat.appChatId)
+      if (record) {
+        this.saveChat({ ...markChatConvertedByExternalJoin(record), updatedAt: Date.now() })
+      }
       return true
     } catch {
       // Still busy, or the chat changed underneath. Not fatal and not retried.
+      return false
+    }
+  }
+
+  /**
+   * How many externals are ADMITTED to this chat right now.
+   *
+   * Store status, deliberately not presence. Both revoke paths mark a
+   * participant `revoked` synchronously, so a kick is reflected immediately;
+   * a closed tab or a sleeping laptop leaves them `active`, which is correct —
+   * they still hold their seat and can reconnect. Keying this on presence would
+   * collapse a panel on a network blip and would depend on expiry hooks that
+   * have no production caller.
+   */
+  private activeExternalCountForChat(chatId: string): number {
+    const shares = this.deps.humanCollaborationStore?.listShares(chatId) ?? []
+    let count = 0
+    for (const share of shares) {
+      if (!share.enabled) continue
+      for (const participant of share.participants || []) {
+        if (participant.status === 'active') count += 1
+      }
+    }
+    return count
+  }
+
+  /**
+   * The last external left — hand the thread back to solo.
+   *
+   * The mirror of `convertChatForExternalJoin`, and like it, never throws: a
+   * revoke must not fail because the chat happens to be mid-turn. A thread left
+   * as a panel it did not ask for is a cosmetic problem; a revoke that errors is
+   * not. `AppStore.setChatKind` derives the canonical provider from the Boss
+   * seat when none is passed, so this needs no renderer.
+   */
+  reconcileChatKindForExternalDeparture(chatId: string): boolean {
+    try {
+      const id = requireSafeChatId(chatId, 'Chat id')
+      if (this.activeExternalCountForChat(id) > 0) return false
+      const chat = this.deps.appStore.getChat(id)
+      if (chat?.chatKind !== 'ensemble') return false
+      // Only reverse a conversion this feature caused. A panel the host built
+      // themselves is theirs, and sharing it must not silently dismantle it.
+      if (!chat.providerMetadata?.[EXTERNAL_JOIN_CONVERTED_KEY]) return false
+      const reverted = this.setChatKind({ chatId: id, targetKind: 'single' }) ?? this.deps.appStore.getChat(id)
+      if (reverted) {
+        this.saveChat({ ...clearExternalJoinConvertedMark(reverted), updatedAt: Date.now() })
+      }
+      return true
+    } catch {
       return false
     }
   }
@@ -968,6 +1038,9 @@ export class ChatService {
         chatId: revoked.chatId,
         shareId: revoked.shareId
       })
+      // Both revoke paths mark participants `revoked` synchronously, so by here
+      // the count is already right and the panel-mode guard no longer refuses.
+      this.reconcileChatKindForExternalDeparture(revoked.chatId)
     }
     return revoked
   }
@@ -996,6 +1069,9 @@ export class ChatService {
         shareId: updated.shareId,
         collaboratorId
       })
+      // Removing the last person hands the thread back; removing one of two
+      // leaves the panel exactly as it was.
+      this.reconcileChatKindForExternalDeparture(updated.chatId)
     }
     return updated
   }
