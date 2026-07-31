@@ -4,6 +4,7 @@ import { redactSecrets } from '../../shared/secretRedaction'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import {
   humanCollaboratorMetadata,
+  isDeliveredExternalContribution,
   isHumanCollaboratorComment
 } from './HumanCollaboratorMessages'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
@@ -306,6 +307,39 @@ function projectRow(
     resolveSeat?: (seatId: string) => { label?: string; colorIndex?: number } | undefined
   }
 ): HumanShareProjectionRow {
+  // A DELIVERED contribution (S16) — approved, and materialised into the
+  // transcript at that external's seat turn. It carries `role: 'system'` and a
+  // distinct kind, so without this branch it matched none of the cases below
+  // and fell through to the internal-message placeholder: the person who WROTE
+  // it watched their own approved message arrive as
+  // "[Internal TaskWraith message hidden from collaborators]".
+  //
+  // Over-redaction rather than a leak, but the symptom is worse than it sounds —
+  // it makes approval look like it did nothing, which sends you hunting in the
+  // queue and the delivery path, where the bug is not.
+  //
+  // Rendered exactly like the collaborator-comment case it grew out of: it is
+  // the same person's words, at a later point in their journey.
+  if (isDeliveredExternalContribution(message)) {
+    const metadata = message.metadata || {}
+    const collaboratorId =
+      typeof metadata.collaboratorId === 'string' ? metadata.collaboratorId : undefined
+    const seat = collaboratorId ? opts.resolveSeat?.(collaboratorId) : undefined
+    return {
+      id: message.id,
+      role: 'collaborator',
+      speaker:
+        typeof metadata.collaboratorDisplayName === 'string' && metadata.collaboratorDisplayName
+          ? metadata.collaboratorDisplayName
+          : 'Collaborator',
+      ...preview(message.content, opts),
+      timestamp: message.timestamp,
+      kind: 'message',
+      ...(collaboratorId ? { authorSeatId: collaboratorId } : {}),
+      ...(typeof seat?.colorIndex === 'number' ? { colorIndex: seat.colorIndex } : {}),
+      ...(typeof metadata.sequence === 'number' ? { sequence: metadata.sequence } : {})
+    }
+  }
   if (isHumanCollaboratorComment(message)) {
     const metadata = humanCollaboratorMetadata(message)
     const seat = metadata?.collaboratorId ? opts.resolveSeat?.(metadata.collaboratorId) : undefined

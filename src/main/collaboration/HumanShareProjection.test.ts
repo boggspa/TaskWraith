@@ -1,7 +1,10 @@
 import os from 'os'
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from '../store/types'
-import { makeHumanCollaboratorComment } from './HumanCollaboratorMessages'
+import {
+  makeDeliveredExternalContribution,
+  makeHumanCollaboratorComment
+} from './HumanCollaboratorMessages'
 import type { HumanCollaborationShare } from './HumanCollaborationStore'
 import { buildHumanShareProjection, MAX_PROJECTED_PENDING_ENTRIES } from './HumanShareProjection'
 
@@ -588,5 +591,64 @@ describe('buildHumanShareProjection yourPending', () => {
       'state'
     ])
     expect(JSON.stringify(projection)).not.toContain('collaboratorId')
+  })
+})
+
+describe('a delivered contribution is visible to collaborators', () => {
+  const deliveredShare = {
+    shareId: 'share-1',
+    chatId: 'chat-1',
+    enabled: true,
+    mode: 'comments',
+    participants: [
+      {
+        collaboratorId: 'collab-1',
+        displayName: 'Alex',
+        status: 'active',
+        publicKeyId: 'pk-1',
+        joinedAt: 1
+      }
+    ],
+    invites: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+
+  const delivered = makeDeliveredExternalContribution({
+    id: 'msg-delivered',
+    content: 'please re-run the migration test',
+    timestamp: '2026-07-31T00:00:00.000Z',
+    shareId: 'share-1',
+    collaboratorId: 'collab-1',
+    collaboratorDisplayName: 'Alex',
+    clientMessageId: 'client-1',
+    sequence: 3
+  })
+
+  const projectDelivered = () =>
+    buildHumanShareProjection(
+      { appChatId: 'chat-1', title: 'Shared chat', messages: [delivered], runs: [] } as never,
+      deliveredShare as never,
+      { viewerCollaboratorId: 'collab-1' }
+    )
+
+  it('renders as the collaborator who wrote it, not as a hidden internal row', () => {
+    // It carries role 'system' and a distinct kind, so before this it matched
+    // none of the projectRow branches and fell through to the placeholder — the
+    // author watched their own approved message arrive as
+    // "[Internal TaskWraith message hidden from collaborators]". Over-redaction
+    // rather than a leak, but it makes approval look like it did nothing.
+    const row = projectDelivered().rows.find((candidate) => candidate.id === 'msg-delivered')
+    expect(row).toBeDefined()
+    expect(row?.role).toBe('collaborator')
+    expect(row?.speaker).toBe('Alex')
+    expect(row?.preview).toContain('re-run the migration test')
+    expect(row?.preview).not.toContain('hidden from collaborators')
+  })
+
+  it('attributes it to the author’s seat so it colours like their other rows', () => {
+    expect(projectDelivered().rows.find((r) => r.id === 'msg-delivered')?.authorSeatId).toBe(
+      'collab-1'
+    )
   })
 })
