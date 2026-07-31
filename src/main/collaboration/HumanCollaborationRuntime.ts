@@ -293,7 +293,8 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     if (method === HUMAN_COLLABORATION_METHODS.subscribeProjection) {
       return this.subscribeProjection(
-        params as HumanCollaborationSubscribeProjectionInput
+        params as HumanCollaborationSubscribeProjectionInput,
+        { observedFromCollaborator: true }
       ) as unknown as Promise<ReturnType>
     }
     if (method === HUMAN_COLLABORATION_METHODS.appendComment) {
@@ -624,9 +625,33 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
   }
 
-  async subscribeProjection(input: HumanCollaborationSubscribeProjectionInput): Promise<ProjectionType> {
+  /**
+   * `observedFromCollaborator` defaults to FALSE, and the default is the point.
+   *
+   * This method serves two callers that look identical and mean opposite
+   * things: a collaborator asking for the projection (real evidence they are
+   * there) and `publishProjectionUpdates` rebuilding it because the HOST
+   * changed something (no evidence about the collaborator at all). Noting
+   * presence unconditionally meant every host-side broadcast refreshed the
+   * collaborator's liveness as though they had acted.
+   *
+   * That was self-defeating rather than merely wrong: the 15s presence sweep
+   * broadcasts on each transition, which republishes the projection, which
+   * refreshed the very sessions the sweep had just tried to expire. Any
+   * streamed chat update did the same. So a collaborator whose laptop closed
+   * could never leave `live`, and fixing the relay's missing disconnect signal
+   * would NOT have fixed it — the host's own traffic kept resetting the clock.
+   *
+   * Defaulting to false means a new caller that forgets claims no liveness,
+   * which is honest. The opposite default fails silently and in the flattering
+   * direction.
+   */
+  async subscribeProjection(
+    input: HumanCollaborationSubscribeProjectionInput,
+    opts: { observedFromCollaborator?: boolean } = {}
+  ): Promise<ProjectionType> {
     const session = this.requireActiveSession(input.sessionId)
-    this.notePresenceActivity(session)
+    if (opts.observedFromCollaborator) this.notePresenceActivity(session)
     this.projectionSubscribers.add(session.sessionId)
     const share = this.getActiveShare(session.shareId)
     return this.opts.buildProjection({
@@ -862,7 +887,10 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
         return undefined
       }
       this.subscribeRate.set(frame.sessionId, now)
-      return this.subscribeProjection({ sessionId: frame.sessionId })
+      return this.subscribeProjection(
+        { sessionId: frame.sessionId },
+        { observedFromCollaborator: true }
+      )
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.appendComment) {
       const input = params as Partial<HumanCollaborationAppendCommentInput>

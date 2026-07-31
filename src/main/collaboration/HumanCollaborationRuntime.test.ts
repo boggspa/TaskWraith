@@ -1024,11 +1024,14 @@ describe('HumanCollaborationRuntime presence signals', () => {
     expect(presence.calls).toEqual([`activity:${session.sessionId}`])
   })
 
-  it('records activity on subscribe AND on append — a watcher sends nothing else', async () => {
+  it('records activity on an INBOUND subscribe and on append — a watcher sends nothing else', async () => {
     const presence = stubPresence()
     const { runtime, session } = await admit(presence)
     presence.calls.length = 0
-    await runtime.subscribeProjection({ sessionId: session.sessionId })
+    await runtime.subscribeProjection(
+      { sessionId: session.sessionId },
+      { observedFromCollaborator: true }
+    )
     await runtime.appendComment({
       sessionId: session.sessionId,
       clientMessageId: 'c1',
@@ -1038,6 +1041,22 @@ describe('HumanCollaborationRuntime presence signals', () => {
       `activity:${session.sessionId}`,
       `activity:${session.sessionId}`
     ])
+  })
+
+  it('does NOT record activity when the HOST republishes the projection', async () => {
+    // The same method serves two callers that mean opposite things. A
+    // host-driven rebuild is evidence about the host, not the collaborator —
+    // and treating it as liveness was self-defeating: the 15s presence sweep
+    // broadcasts per transition, which republishes, which refreshed the very
+    // sessions the sweep had just tried to expire. A closed laptop could never
+    // leave `live`, and fixing the relay's missing disconnect signal would not
+    // have fixed it.
+    const presence = stubPresence()
+    const { runtime, session } = await admit(presence)
+    presence.calls.length = 0
+    // No opts — the host lane's shape, and the default.
+    await runtime.subscribeProjection({ sessionId: session.sessionId })
+    expect(presence.calls).toEqual([])
   })
 
   /**

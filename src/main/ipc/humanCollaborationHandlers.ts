@@ -59,7 +59,10 @@ interface HumanCollaborationRuntimeLike {
   confirmSas: (
     input: HumanCollaborationConfirmSasInput
   ) => Promise<{ chatId: string }> | { chatId: string }
-  subscribeProjection: (input: HumanCollaborationSubscribeProjectionInput) => unknown
+  subscribeProjection: (
+    input: HumanCollaborationSubscribeProjectionInput,
+    opts?: { observedFromCollaborator?: boolean }
+  ) => unknown
   appendComment: (input: HumanCollaborationAppendCommentInput) => unknown
   routeEncryptedAction: (input: HumanCollaborationEncryptedFrame) => unknown
   disconnect: (input: HumanCollaborationDisconnectInput) => unknown
@@ -500,7 +503,11 @@ export function registerHumanCollaborationHandlers(
     'human-collaboration-runtime:subscribe-projection',
     (event, input: HumanCollaborationSubscribeProjectionInput) => {
       deps.assertMainRendererSender(event)
-      return deps.getHumanCollaborationRuntime().subscribeProjection(input)
+      // A collaborator client asking for its own projection — real evidence
+      // they are present, unlike a host-driven republish.
+      return deps
+        .getHumanCollaborationRuntime()
+        .subscribeProjection(input, { observedFromCollaborator: true })
     }
   )
 
