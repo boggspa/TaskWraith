@@ -43,7 +43,10 @@ import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { stripElectronInvokeErrorFraming } from './lib/electronInvokeError'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
-import { sealOrphanExitRun } from './lib/sealOrphanExitRun'
+import {
+  finalizeOrphanAgentExitChat,
+  shouldPruneRunningChatIdAfterOrphanExit
+} from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
 import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
 import {
@@ -11168,6 +11171,10 @@ function App(): React.JSX.Element {
         // "Running" badge, and usage totals don't hang open forever. No-ops when
         // the run is absent or already sealed; exact-id only, so a foreign
         // main-driven run can't be spliced onto the user's in-flight run.
+        // Also apply any queued solo provider/model change and prune
+        // runningChatIds when no other live activeRunsRef entry remains for
+        // this chat — otherwise OOM/orphan exits strand mid-run switches and
+        // leave the composer lock sticky even after sealOrphanExitRun.
         const orphanRunId = getRouteRunId(payload)
         const orphanChatId = getRouteChatId(payload)
         if (orphanRunId && orphanChatId) {
@@ -11175,13 +11182,39 @@ function App(): React.JSX.Element {
             payload && typeof payload === 'object'
               ? (payload as RunRouteEventPayload).stats
               : undefined
-          updateChatById(orphanChatId, (source) =>
-            sealOrphanExitRun(source, orphanRunId, {
+          let finalizedOrphanChat: ChatRecord | null = null
+          updateChatById(orphanChatId, (source) => {
+            const next = finalizeOrphanAgentExitChat(source, orphanRunId, {
               stats: orphanStats,
               exitCode: extractExitCode(payload) ?? 0,
               endedAt: new Date().toISOString()
             })
-          )
+            // Mirror live exit: when seal and/or pending solo model apply
+            // mutate the record, refresh composer selection for the open chat.
+            if (next !== source) {
+              finalizedOrphanChat = next
+            }
+            return next
+          })
+          if (finalizedOrphanChat && currentChatIdRef.current === orphanChatId) {
+            applyChatComposerSelection(
+              finalizedOrphanChat,
+              getChatProvider(finalizedOrphanChat)
+            )
+          }
+          if (
+            shouldPruneRunningChatIdAfterOrphanExit(
+              orphanChatId,
+              Array.from(activeRunsRef.current.values(), (run) => run.chatId)
+            )
+          ) {
+            setRunningChatIds((prev) => {
+              if (!prev.has(orphanChatId)) return prev
+              const next = new Set(prev)
+              next.delete(orphanChatId)
+              return next
+            })
+          }
         }
         syncRunningState()
         return
@@ -19846,7 +19879,11 @@ function App(): React.JSX.Element {
   const isCurrentEnsembleRoundDispatchLive = Boolean(currentEnsembleRound)
   const isCurrentChatRunning = Boolean(
     currentChat?.appChatId &&
-    (runningChatIds.has(currentChat.appChatId) ||
+    (visibleRunningChatIds(
+      runningChatIds,
+      pendingAgentApprovalByChatId,
+      chatsByAppChatIdForRunning
+    ).includes(currentChat.appChatId) ||
       hasCurrentChatActiveRunQueueJob ||
       isCurrentEnsembleRoundDispatchLive)
   )

@@ -1,4 +1,5 @@
 import type { ChatRecord, ChatRun } from '../../../main/store/types'
+import { applyPendingProviderChangeOnFinalize } from '../../../main/providerChangeQueue'
 
 /**
  * Defensive terminal-seal for a run whose LIVE context was lost, so the normal
@@ -57,4 +58,34 @@ export function sealOrphanExitRun(
   const nextRuns = [...runs]
   nextRuns[index] = sealed
   return { ...chat, runs: nextRuns }
+}
+
+/**
+ * Full orphan agent-exit finalize for the `!context` branch of
+ * `handleProviderExit`: seal by exact runId, then apply a queued solo model /
+ * provider switch the same way the live exit path does. Ensemble chats keep
+ * pending seat/roster handling on the orchestrator path and skip solo apply.
+ */
+export function finalizeOrphanAgentExitChat(
+  chat: ChatRecord,
+  runId: string | undefined,
+  exit: { stats?: unknown; exitCode: number; endedAt: string }
+): ChatRecord {
+  const sealed = sealOrphanExitRun(chat, runId, exit)
+  if (sealed.chatKind === 'ensemble') return sealed
+  return applyPendingProviderChangeOnFinalize(sealed)
+}
+
+/**
+ * Whether an orphan exit may drop `chatId` from `runningChatIds`. Only when no
+ * remaining `activeRunsRef` entry still claims that chat (exact id).
+ */
+export function shouldPruneRunningChatIdAfterOrphanExit(
+  chatId: string,
+  activeRunChatIds: Iterable<string>
+): boolean {
+  for (const activeChatId of activeRunChatIds) {
+    if (activeChatId === chatId) return false
+  }
+  return true
 }

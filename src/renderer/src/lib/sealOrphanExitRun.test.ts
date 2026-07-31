@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, ChatRun } from '../../../main/store/types'
-import { sealOrphanExitRun } from './sealOrphanExitRun'
+import {
+  PENDING_PROVIDER_CHANGE_KEY,
+  hasPendingProviderChange,
+  queueProviderChange
+} from '../../../main/providerChangeQueue'
+import {
+  finalizeOrphanAgentExitChat,
+  sealOrphanExitRun,
+  shouldPruneRunningChatIdAfterOrphanExit
+} from './sealOrphanExitRun'
 
 const NOW = '2026-07-12T14:00:00.000Z'
 
@@ -8,8 +17,14 @@ function run(overrides: Partial<ChatRun> = {}): ChatRun {
   return { runId: 'run-1', startedAt: '2026-07-12T13:59:00.000Z', ...overrides }
 }
 
-function chat(runs: ChatRun[]): ChatRecord {
-  return { appChatId: 'chat-1', chatKind: 'single', runs } as unknown as ChatRecord
+function chat(runs: ChatRun[], overrides: Partial<ChatRecord> = {}): ChatRecord {
+  return {
+    appChatId: 'chat-1',
+    chatKind: 'single',
+    provider: 'ollama',
+    runs,
+    ...overrides
+  } as unknown as ChatRecord
 }
 
 describe('sealOrphanExitRun', () => {
@@ -35,7 +50,9 @@ describe('sealOrphanExitRun', () => {
   })
 
   it('never clobbers a run that already sealed (endedAt present)', () => {
-    const c = chat([run({ endedAt: '2026-07-12T13:59:30.000Z', status: 'success', stats: { a: 1 } })])
+    const c = chat([
+      run({ endedAt: '2026-07-12T13:59:30.000Z', status: 'success', stats: { a: 1 } })
+    ])
     const next = sealOrphanExitRun(c, 'run-1', {
       stats: { input_tokens: 99 },
       exitCode: 1,
@@ -84,5 +101,66 @@ describe('sealOrphanExitRun', () => {
   it('no-ops without a runId', () => {
     const c = chat([run()])
     expect(sealOrphanExitRun(c, undefined, { exitCode: 0, endedAt: NOW })).toBe(c)
+  })
+})
+
+describe('finalizeOrphanAgentExitChat', () => {
+  it('seals the orphan run and applies a queued solo provider/model change', () => {
+    const queued = queueProviderChange(chat([run()], { linkedProviderSessionId: 'sess-ollama' }), {
+      provider: 'ollama',
+      providerMetadata: { selectedModelType: 'qwen3:4b-instruct' }
+    })
+    expect(hasPendingProviderChange(queued)).toBe(true)
+
+    const next = finalizeOrphanAgentExitChat(queued, 'run-1', {
+      exitCode: 1,
+      endedAt: NOW
+    })
+
+    expect(next.runs![0].endedAt).toBe(NOW)
+    expect(next.runs![0].status).toBe('failed')
+    expect(next.provider).toBe('ollama')
+    expect(next.providerMetadata?.selectedModelType).toBe('qwen3:4b-instruct')
+    expect(hasPendingProviderChange(next)).toBe(false)
+    expect(next.providerMetadata?.[PENDING_PROVIDER_CHANGE_KEY]).toBeUndefined()
+  })
+
+  it('does not apply pending provider changes for ensemble chats', () => {
+    const queued = queueProviderChange(
+      chat([run()], { chatKind: 'ensemble', linkedProviderSessionId: 'sess-ollama' }),
+      {
+        provider: 'claude',
+        providerMetadata: { selectedModelType: 'claude-sonnet' }
+      }
+    )
+
+    const next = finalizeOrphanAgentExitChat(queued, 'run-1', {
+      exitCode: 1,
+      endedAt: NOW
+    })
+
+    expect(next.runs![0].endedAt).toBe(NOW)
+    expect(next.provider).toBe('ollama')
+    expect(hasPendingProviderChange(next)).toBe(true)
+  })
+
+  it('keeps exact-id safety from sealOrphanExitRun', () => {
+    const c = chat([run({ runId: 'user-in-flight' })])
+    const next = finalizeOrphanAgentExitChat(c, 'foreign-audit-run', {
+      exitCode: 0,
+      endedAt: NOW
+    })
+    expect(next).toBe(c)
+  })
+})
+
+describe('shouldPruneRunningChatIdAfterOrphanExit', () => {
+  it('returns true when no active run still claims the chat', () => {
+    expect(shouldPruneRunningChatIdAfterOrphanExit('chat-1', [])).toBe(true)
+    expect(shouldPruneRunningChatIdAfterOrphanExit('chat-1', ['chat-other'])).toBe(true)
+  })
+
+  it('returns false when another live active run still claims the chat', () => {
+    expect(shouldPruneRunningChatIdAfterOrphanExit('chat-1', ['chat-other', 'chat-1'])).toBe(false)
   })
 })
