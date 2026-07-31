@@ -581,13 +581,34 @@ export class ExternalContributionQueueStore {
       .map(clone)
   }
 
-  /** Host declined it. The body is KEPT so it can be edited and requeued. */
+  /**
+   * Host declined it. The body is KEPT so it can be edited and requeued.
+   *
+   * Accepts an APPROVED entry too, as long as it has not reached the transcript
+   * yet. Approval is a release, not a delivery, and the gap between them is
+   * real — a muted seat holds an approved contribution indefinitely, and the
+   * host is offered Decline on exactly those rows. Requiring `queued` here made
+   * that button a silent no-op: the click did nothing, no audit row was
+   * written, the row stayed put, and unmuting later delivered the message the
+   * host believed they had refused.
+   *
+   * `materialised !== true` is the line that must not move. Once the row is in
+   * the transcript it has been seen and quoted into prompts, and unsaying it is
+   * not something this store can offer.
+   */
   deny(entryId: string, reason?: string, now = this.now()): ExternalContributionEntry | null {
     const entry = this.entries.find(
-      (candidate) => candidate.entryId === entryId && candidate.state === 'queued'
+      (candidate) =>
+        candidate.entryId === entryId &&
+        (candidate.state === 'queued' ||
+          (candidate.state === 'approved' && candidate.materialised !== true))
     )
     if (!entry) return null
     entry.state = 'denied'
+    // An approval that was withdrawn must not leave a materialisation flag
+    // behind — `listAwaitingMaterialisation` filters on state, but a stale
+    // `false` here would read as "still owed delivery" to anything that looks.
+    delete entry.materialised
     entry.resolvedAt = now
     if (reason && reason.trim()) entry.hostReason = reason.trim().slice(0, MAX_HOST_REASON_CHARS)
     this.persist()
