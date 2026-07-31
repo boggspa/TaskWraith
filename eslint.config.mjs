@@ -6,7 +6,23 @@ import eslintPluginReactHooks from 'eslint-plugin-react-hooks'
 import eslintPluginReactRefresh from 'eslint-plugin-react-refresh'
 
 export default defineConfig(
-  { ignores: ['**/node_modules', '**/dist', '**/out', '**/.build/**', 'ios/**/build/**', '**/.claude/**'] },
+  {
+    ignores: [
+      '**/node_modules',
+      '**/dist',
+      '**/out',
+      '**/.build/**',
+      'ios/**/build/**',
+      '**/.claude/**',
+      // Gitignored scratch: QA clones of the whole app, packaged .app canaries, and
+      // the Observatory's own nested repo. Flat config does NOT read .gitignore, so
+      // without this eslint grades build output and snapshots as if they were source
+      // — and it can only ever fail LOCALLY, since a fresh checkout has no
+      // .local-only at all. A gate that is red for things you cannot ship is a gate
+      // people stop reading.
+      '.local-only/**'
+    ]
+  },
   tseslint.configs.recommended,
   eslintPluginReact.configs.flat.recommended,
   eslintPluginReact.configs.flat['jsx-runtime'],
