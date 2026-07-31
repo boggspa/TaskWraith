@@ -64,6 +64,7 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { FileTypeIcon } from '../components/FileTypeIcon'
 import { GhostCompanion } from '../components/FxLayers'
+import { externalSeatsForShare } from '../../../main/collaboration/ExternalSeatResolution'
 import { PendingContributionsStack } from '../components/PendingContributionsStack'
 import { NotificationZone } from '../components/NotificationZone'
 import { GitCommitControls } from '../components/GitCommitControls'
@@ -854,6 +855,22 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
+
+  /**
+   * External human seats for this composer's chat, derived from the share the
+   * composer already holds. No new IPC and no App.tsx change — which also means
+   * neither Multiview pane-context lane is touched, and each pane resolves its
+   * own chat's share for free.
+   *
+   * No presence resolver: the renderer has no per-collaborator presence, and
+   * `externalSeatsForShare` treats an absent resolver as "do not judge" rather
+   * than as absent. Wiring the raw session map here would be worse than
+   * nothing — it is documented as wrong in both directions.
+   */
+  const externalSeatsForChat = useMemo(
+    () => externalSeatsForShare(humanCollaborationShare),
+    [humanCollaborationShare]
+  )
 
   // Per-chat workspace terminal open state. Each pane's <Composer> owns its
   // own terminal toggle; the state is keyed by THIS composer's chatId so
@@ -2561,6 +2578,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   <EnsembleParticipantsAboveRow
                     chat={currentChat}
                     participantProjection={currentComposerMentionParticipants}
+                    externalSeats={externalSeatsForChat}
                     animateEntrance={isWorkflowComposeChat}
                     selectedParticipantId={effectiveSelectedParticipantId}
                     onSelectParticipant={handleSelectParticipant}

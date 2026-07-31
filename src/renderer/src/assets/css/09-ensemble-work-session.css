@@ -1003,6 +1003,31 @@
   -webkit-backdrop-filter: blur(10px);
 }
 
+/* External human seat — a chip that holds a turn position but runs nothing.
+   Deliberately quieter than a model chip: no provider hue, no status pill, no
+   retry, and not selectable. Selection drives the composer's model and
+   permission pickers, and a null binding there does not disable them — it
+   silently retargets them at the chat — so an external must not hold it. */
+.ensemble-above-chip--external {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  cursor: default;
+}
+.ensemble-above-chip--external.is-muted {
+  opacity: 0.5;
+}
+.ensemble-above-chip--external.is-away .ensemble-above-chip-role {
+  opacity: 0.62;
+}
+.ensemble-above-chip-external-badge {
+  margin-left: 6px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  opacity: 0.72;
+}
+
 .ensemble-above-row-chips {
   display: flex;
   flex-direction: row;
