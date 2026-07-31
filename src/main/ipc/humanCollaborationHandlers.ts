@@ -59,7 +59,10 @@ interface HumanCollaborationRuntimeLike {
   confirmSas: (
     input: HumanCollaborationConfirmSasInput
   ) => Promise<{ chatId: string }> | { chatId: string }
-  subscribeProjection: (input: HumanCollaborationSubscribeProjectionInput) => unknown
+  subscribeProjection: (
+    input: HumanCollaborationSubscribeProjectionInput,
+    opts?: { observedFromCollaborator?: boolean }
+  ) => unknown
   appendComment: (input: HumanCollaborationAppendCommentInput) => unknown
   routeEncryptedAction: (input: HumanCollaborationEncryptedFrame) => unknown
   disconnect: (input: HumanCollaborationDisconnectInput) => unknown
@@ -500,7 +503,11 @@ export function registerHumanCollaborationHandlers(
     'human-collaboration-runtime:subscribe-projection',
     (event, input: HumanCollaborationSubscribeProjectionInput) => {
       deps.assertMainRendererSender(event)
-      return deps.getHumanCollaborationRuntime().subscribeProjection(input)
+      // A collaborator client asking for its own projection — real evidence
+      // they are present, unlike a host-driven republish.
+      return deps
+        .getHumanCollaborationRuntime()
+        .subscribeProjection(input, { observedFromCollaborator: true })
     }
   )
 
@@ -734,8 +741,13 @@ export function registerHumanCollaborationHandlers(
         const client = new HumanCollaborationCollaboratorClient({
           socketFactory: deps.socketFactory,
           ...(collaboratorIdentity ? { identity: collaboratorIdentity } : {}),
-          onProjection: (projection) =>
-            deps.sendToMainWindow('human-collaboration-collaborator-projection', { projection }),
+          onProjection: (projection, sessionId) =>
+            deps.sendToMainWindow('human-collaboration-collaborator-projection', {
+              projection,
+              sessionId
+            }),
+          onOlderPage: (page) =>
+            deps.sendToMainWindow('human-collaboration-collaborator-older-page', page),
           onConnectionChange: (connected) =>
             deps.sendToMainWindow('human-collaboration-collaborator-status', { connected }),
           onError: (err) =>
@@ -829,8 +841,13 @@ export function registerHumanCollaborationHandlers(
       const client = new HumanCollaborationCollaboratorClient({
         socketFactory: deps.socketFactory,
         identity: collaboratorIdentity,
-        onProjection: (projection) =>
-          deps.sendToMainWindow('human-collaboration-collaborator-projection', { projection }),
+        onProjection: (projection, sessionId) =>
+          deps.sendToMainWindow('human-collaboration-collaborator-projection', {
+            projection,
+            sessionId
+          }),
+        onOlderPage: (page) =>
+          deps.sendToMainWindow('human-collaboration-collaborator-older-page', page),
         onConnectionChange: (connected) =>
           deps.sendToMainWindow('human-collaboration-collaborator-status', { connected }),
         onError: (err) =>
@@ -879,6 +896,17 @@ export function registerHumanCollaborationHandlers(
         input.clientMessageId,
         input.intent === 'requestHostAction' ? 'requestHostAction' : undefined
       )
+      return { ok: true }
+    }
+  )
+
+  ipcMain.handle(
+    'human-collaboration-collaborator:load-older',
+    (event, input: { beforeRowId?: string } = {}) => {
+      deps.assertMainRendererSender(event)
+      const client = humanCollaborationCollaboratorClient
+      if (!client) throw new Error('No active collaboration session.')
+      client.loadOlder(typeof input?.beforeRowId === 'string' ? input.beforeRowId : undefined)
       return { ok: true }
     }
   )

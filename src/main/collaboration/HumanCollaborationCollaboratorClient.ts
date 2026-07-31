@@ -92,7 +92,12 @@ export interface HumanCollaborationCollaboratorClientOptions {
   identity?: KeyPair
   /** Surfaces the locally-computed 6-digit SAS for the out-of-band human compare. */
   onSasCode?: (code: string) => void
-  onProjection?: (projection: unknown) => void
+  /**
+   * `sessionId` rides along because the receiver CACHES rows. A cache keyed on
+   * it cannot outlive a re-handshake, which is what stops a host-side
+   * truncation from leaving erased rows alive on this machine (L-3).
+   */
+  onProjection?: (projection: unknown, sessionId: string) => void
   onEstablished?: (info: { sessionId: string; collaboratorId: string }) => void
   onConnectionChange?: (connected: boolean) => void
   onError?: (err: Error) => void
@@ -101,6 +106,15 @@ export interface HumanCollaborationCollaboratorClientOptions {
    * treats any error as a dropped connection, and a rate-limit refusal is not
    * one — the socket is fine and the person is still connected.
    */
+  /** One backwards page. Carries its own `sessionId` for the same reason. */
+  onOlderPage?: (page: {
+    sessionId: string
+    beforeRowId?: string
+    rows: unknown[]
+    hasMore: boolean
+    oldestRowId?: string
+    throttled?: boolean
+  }) => void
   onContributionRejected?: (info: {
     code: string
     message: string
@@ -388,6 +402,15 @@ export class HumanCollaborationCollaboratorClient {
     this.sendSealed(HUMAN_COLLABORATION_METHODS.subscribeProjection, { sessionId: this.sessionId })
   }
 
+  /** Ask for one page of older rows. Fire-and-forget; the page comes back as an
+   *  `olderPage` event bound to this session. */
+  loadOlder(beforeRowId?: string): void {
+    this.sendSealed(HUMAN_COLLABORATION_METHODS.loadOlder, {
+      sessionId: this.sessionId,
+      ...(beforeRowId ? { beforeRowId } : {})
+    })
+  }
+
   appendComment(
     content: string,
     clientMessageId: string = randomUUID(),
@@ -494,7 +517,24 @@ export class HumanCollaborationCollaboratorClient {
     this.lastInboundSeq = frame.seq
     if (opened.method === HUMAN_COLLABORATION_EVENTS.projectionUpdate) {
       const params = (opened.params || {}) as { projection?: unknown }
-      if (params.projection !== undefined) this.opts.onProjection?.(params.projection)
+      if (params.projection !== undefined) {
+        this.opts.onProjection?.(params.projection, frame.sessionId)
+      }
+      return
+    }
+    if (opened.method === HUMAN_COLLABORATION_EVENTS.olderPage) {
+      const params = (opened.params || {}) as Record<string, unknown>
+      // Stamped with the frame's session, never the payload's claimed one: the
+      // frame is what the cipher actually bound, and it is already refused
+      // above unless it matches this client's live session.
+      this.opts.onOlderPage?.({
+        sessionId: frame.sessionId,
+        rows: Array.isArray(params.rows) ? params.rows : [],
+        hasMore: params.hasMore === true,
+        ...(typeof params.beforeRowId === 'string' ? { beforeRowId: params.beforeRowId } : {}),
+        ...(typeof params.oldestRowId === 'string' ? { oldestRowId: params.oldestRowId } : {}),
+        ...(params.throttled === true ? { throttled: true as const } : {})
+      })
       return
     }
     if (opened.method === HUMAN_COLLABORATION_EVENTS.contributionRejected) {

@@ -125,6 +125,53 @@ function pendingStatusLabel(entry: {
   return 'No longer pending'
 }
 
+/** Older rows paged in behind the live window, and the session they belong to. */
+export interface OlderPageCache {
+  sessionId: string
+  rows: ProjectionRow[]
+  hasMore: boolean
+  oldestRowId?: string
+}
+
+/**
+ * Fold one backwards page into the cache — the L-3 control, as a pure function
+ * so it can be tested and mutated.
+ *
+ * The rule that matters: a page joins the cache ONLY when the session matches.
+ * A page is client-held, so a host-side truncation cannot reach rows already on
+ * this machine; what a truncation does is drop the room, forcing a re-handshake
+ * that mints a new sessionId. Comparing it here means pre-truncation rows
+ * cannot survive into the new session — they are discarded by construction
+ * rather than by a caller remembering to clear them, and "erased" has to mean
+ * erased everywhere it was served, not just at the source.
+ */
+export function mergeOlderPage(
+  current: OlderPageCache | null,
+  page: {
+    sessionId: string
+    rows: ProjectionRow[]
+    hasMore: boolean
+    oldestRowId?: string
+    throttled?: boolean
+  }
+): OlderPageCache {
+  // Session mismatch DROPS everything held. Never a merge, never a partial
+  // carry-over of the rows that happen to look the same.
+  const base = current && current.sessionId === page.sessionId ? current : null
+  if (page.throttled) {
+    // Refused for rate, not answered: no rows were read, so `hasMore` carries
+    // no information about the thread. Keep the cursor and the affordance.
+    return base ?? { sessionId: page.sessionId, rows: [], hasMore: true }
+  }
+  const seen = new Set(page.rows.map((row) => row.id))
+  return {
+    sessionId: page.sessionId,
+    rows: [...page.rows, ...(base?.rows || []).filter((row) => !seen.has(row.id))],
+    hasMore: page.hasMore,
+    ...(page.oldestRowId ? { oldestRowId: page.oldestRowId } : {})
+  }
+}
+
 export function bubbleClass(role: ProjectionRow['role'], isOwn: boolean): string {
   // Your own words read as YOUR bubbles; everyone else — the host, the models,
   // the other collaborator — reads as named transcript output. Without
@@ -256,6 +303,19 @@ export function JoinSharedChatModal({
   const [sasCode, setSasCode] = useState('')
   const [mode, setMode] = useState<'readOnly' | 'comments'>('comments')
   const [projection, setProjection] = useState<Projection | null>(null)
+  /**
+   * Older rows paged in behind the live window — and the L-3 control.
+   *
+   * The cache CARRIES the session it belongs to. A host-side truncation cannot
+   * reach rows already on this machine; what it does is drop the room, which
+   * forces a re-handshake, which mints a new sessionId. Because every read and
+   * every write below compares that id, pre-truncation rows cannot survive into
+   * the new session — they are discarded structurally rather than by anyone
+   * remembering to clear them. A cache that must be told to forget is a cache
+   * that will one day keep rows somebody asked to have erased.
+   */
+  const [olderPages, setOlderPages] = useState<OlderPageCache | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const [comment, setComment] = useState('')
   // A refusal is NOT a connection failure, so it gets its own slot rather than
   // riding `error` (which the status listener pairs with 'disconnected').
@@ -291,10 +351,25 @@ export function JoinSharedChatModal({
     const off = window.api.onHumanCollaborationCollaboratorProjection?.((payload) => {
       const next = payload.projection as Projection
       setProjection(next)
+      // A projection from a DIFFERENT session means the old one is gone — a
+      // revoke, a truncation, any re-handshake. Whatever we paged in belonged
+      // to that session and does not carry over.
+      setOlderPages((current) =>
+        current && current.sessionId !== payload.sessionId ? null : current
+      )
       // The host can flip the share's rules mid-session; without this the
       // composer keeps the stale mode until the next reconnect (main still
       // re-validates, so this is affordance-honesty, not enforcement).
       if (next?.mode === 'readOnly' || next?.mode === 'comments') setMode(next.mode)
+    })
+    const offPage = window.api.onHumanCollaborationCollaboratorOlderPage?.((page) => {
+      setLoadingOlder(false)
+      setOlderPages((current) =>
+        mergeOlderPage(current, {
+          ...page,
+          rows: (page.rows as ProjectionRow[]) || []
+        })
+      )
     })
     const offStatus = window.api.onHumanCollaborationCollaboratorStatus?.((payload) => {
       if (payload.connected === true) setConnectionState('connected')
@@ -320,6 +395,7 @@ export function JoinSharedChatModal({
     })
     return () => {
       off?.()
+      offPage?.()
       offStatus?.()
     }
   }, [open])
@@ -334,6 +410,8 @@ export function JoinSharedChatModal({
     setConnectionState('idle')
     setSasCode('')
     setProjection(null)
+    setOlderPages(null)
+    setLoadingOlder(false)
     setComment('')
     setContributionError(null)
     inFlightRef.current.clear()
@@ -516,6 +594,44 @@ export function JoinSharedChatModal({
       setBusy(false)
     }
   }, [])
+
+  // The rows the reader actually sees: paged-in history above the live window.
+  // Deduped preferring the LIVE row — redaction runs per build from the current
+  // record, so if a row appears in both, the live copy is the freshly-redacted
+  // one and a cached copy must never win.
+  const visibleRows = ((): ProjectionRow[] => {
+    const live = projection?.rows || []
+    if (!olderPages?.rows.length) return live
+    const liveIds = new Set(live.map((row) => row.id))
+    return [...olderPages.rows.filter((row) => !liveIds.has(row.id)), ...live]
+  })()
+
+  const oldestCursor = olderPages?.oldestRowId ?? projection?.rows[0]?.id
+  // With a cache, trust what the last page said. Without one, fall back to the
+  // count — which is already floored to the share's lifetime, so it never
+  // advertises history the collaborator is deliberately not being given.
+  const canLoadOlder = olderPages
+    ? olderPages.hasMore
+    : Boolean(projection && projection.totalRows > projection.rows.length)
+
+  const handleLoadOlder = useCallback(() => {
+    if (loadingOlder) return
+    if (typeof window.api.humanCollaborationCollaboratorLoadOlder !== 'function') return
+    setLoadingOlder(true)
+    void window.api
+      .humanCollaborationCollaboratorLoadOlder(
+        oldestCursor ? { beforeRowId: oldestCursor } : {}
+      )
+      .catch(() => setLoadingOlder(false))
+  }, [loadingOlder, oldestCursor])
+
+  // The page rides an event, not a reply, so a dropped frame would otherwise
+  // leave the control spinning forever with no way back.
+  useEffect(() => {
+    if (!loadingOlder) return
+    const timer = window.setTimeout(() => setLoadingOlder(false), 8000)
+    return () => window.clearTimeout(timer)
+  }, [loadingOlder])
 
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
@@ -709,10 +825,25 @@ export function JoinSharedChatModal({
               </div>
             )}
             <div className="join-projection-rows" ref={rowsRef}>
-              {!projection || projection.rows.length === 0 ? (
+              {projection && canLoadOlder && (
+                <div className="join-load-older-row">
+                  <PillButton size="compact" onClick={handleLoadOlder} disabled={loadingOlder}>
+                    {loadingOlder ? 'Loading…' : 'Load older messages'}
+                  </PillButton>
+                </div>
+              )}
+              {projection && !canLoadOlder && olderPages && (
+                /* Said only when a page actually reported the end. An empty
+                   page refused for rate never sets this, or paging would claim
+                   the conversation began somewhere it did not. */
+                <div className="join-projection-top" role="status">
+                  You have reached the start of what this share covers.
+                </div>
+              )}
+              {!projection || visibleRows.length === 0 ? (
                 <div className="join-projection-empty">Waiting for the host’s transcript…</div>
               ) : (
-                projection.rows.map((row) => {
+                visibleRows.map((row) => {
                   const isOwn = Boolean(
                     projection.youAre && row.authorSeatId && row.authorSeatId === projection.youAre
                   )

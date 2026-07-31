@@ -7,7 +7,11 @@ import type {
 } from '../remote/RemoteTransportClient'
 import { HumanCollaborationStore } from './HumanCollaborationStore'
 import { HumanCollaborationRuntime } from './HumanCollaborationRuntime'
-import { buildHumanShareProjection, type HumanShareProjection } from './HumanShareProjection'
+import {
+  buildHumanSharePage,
+  buildHumanShareProjection,
+  type HumanShareProjection
+} from './HumanShareProjection'
 import { makeHumanCollaboratorComment } from './HumanCollaboratorMessages'
 import { HumanCollaborationHostTransport } from './HumanCollaborationHostTransport'
 import { HumanCollaborationCollaboratorClient } from './HumanCollaborationCollaboratorClient'
@@ -448,3 +452,89 @@ describe('human collaboration transport (loopback)', () => {
   })
 })
 
+describe('loadOlder over a real relay', () => {
+  it('a page actually REACHES the collaborator, stamped with their session', async () => {
+    // The point of driving this end to end rather than unit-testing the merge:
+    // a cache-discard test passes just as green when the cache was never
+    // populated at all, because the page silently never arrived. So prove the
+    // page arrives first — host seals, transport delivers, relay forwards,
+    // client decrypts — and only then is discarding it meaningful.
+    const relay = makeInMemoryRelay()
+    const chat = makeChat()
+    // Twenty rows of history behind a live window of two.
+    chat.messages = [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        id: `old-${i}`,
+        role: 'user' as const,
+        content: `Older message ${i}`,
+        timestamp: `2026-06-25T00:00:${String(i).padStart(2, '0')}.000Z`
+      })),
+      ...chat.messages
+    ]
+    const store = new HumanCollaborationStore()
+    const created = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 60_000
+    })
+
+    const hostTransport = new HumanCollaborationHostTransport({ socketFactory: relay })
+    const runtime = new HumanCollaborationRuntime<HumanShareProjection, { ok: true }>({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      // A live window of two, so there is genuinely history behind it.
+      buildProjection: ({ share }) => buildHumanShareProjection(chat, share, { maxRows: 2 }),
+      buildPage: ({ share, beforeRowId }) =>
+        buildHumanSharePage(chat, share, {
+          ...(beforeRowId ? { beforeRowId } : {})
+        }),
+      appendComment: () => ({ ok: true }),
+      publishEncryptedProjection: (sessionId, frame) => hostTransport.deliver(sessionId, frame),
+      now: () => 1000
+    })
+    hostTransport.attachRuntime(runtime)
+    const relayUrl = 'ws://127.0.0.1:0'
+    const roomId = 'room-page'
+    hostTransport.openRoom(relayUrl, roomId)
+
+    const projections: HumanShareProjection[] = []
+    const pages: Array<{ sessionId: string; rows: unknown[]; hasMore: boolean; oldestRowId?: string }> = []
+    const client = new HumanCollaborationCollaboratorClient({
+      socketFactory: relay,
+      now: () => 1000,
+      onProjection: (p) => projections.push(p as HumanShareProjection),
+      onOlderPage: (page) => pages.push(page)
+    })
+    client.connect(relayUrl, roomId)
+    const admitted = await client.admit({
+      shareId: created.share.shareId,
+      chatId: 'chat-1',
+      inviteToken: created.inviteToken,
+      displayName: 'Alex',
+      shareMode: 'comments'
+    })
+    client.subscribe()
+    await waitFor(() => projections.length >= 1)
+    const live = projections[projections.length - 1]
+    expect(live.rows).toHaveLength(2)
+
+    // Page back from the oldest row the collaborator currently holds.
+    client.loadOlder(live.rows[0].id)
+    await waitFor(() => pages.length >= 1)
+
+    const page = pages[0]
+    // It arrived, it has real rows, and they are OLDER than the live window.
+    expect(page.rows.length).toBeGreaterThan(0)
+    const ids = (page.rows as Array<{ id: string }>).map((row) => row.id)
+    expect(ids).not.toContain(live.rows[0].id)
+    expect(ids.every((id) => id.startsWith('old-'))).toBe(true)
+    // Stamped with THIS collaborator's session — the whole basis for a cache
+    // that cannot outlive a re-handshake.
+    expect(page.sessionId).toBe(admitted.sessionId)
+    expect(page.oldestRowId).toBe(ids[0])
+
+    client.dispose()
+    hostTransport.dispose()
+  })
+})

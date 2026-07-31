@@ -249,6 +249,7 @@ describe('registerHumanCollaborationHandlers', () => {
       'human-collaboration-collaborator:last-session',
       'human-collaboration-collaborator:reconnect',
       'human-collaboration-collaborator:append-comment',
+      'human-collaboration-collaborator:load-older',
       'human-collaboration-collaborator:leave'
     ])
   })

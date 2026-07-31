@@ -5,6 +5,8 @@ export const HUMAN_COLLABORATION_METHODS = {
   confirmSas: 'humanCollaboration.handshake.confirmSas',
   subscribeProjection: 'humanCollaboration.projection.subscribe',
   appendComment: 'humanCollaboration.comment.append',
+  /** Page BACKWARDS through the thread, within the share's history floor. */
+  loadOlder: 'humanCollaboration.projection.loadOlder',
   disconnect: 'humanCollaboration.disconnect'
 } as const
 
@@ -23,7 +25,15 @@ export const HUMAN_COLLABORATION_EVENTS = {
    * it every refusal was a host-only console line while the collaborator's UI
    * still read "Connected" and their text was already gone.
    */
-  contributionRejected: 'humanCollaboration.comment.rejected'
+  contributionRejected: 'humanCollaboration.comment.rejected',
+  /**
+   * One backwards page, answering a `loadOlder`.
+   *
+   * An EVENT rather than a reply frame because the sealed lane has no
+   * request/response — only the plaintext handshake does, and the transport
+   * discards whatever `routeEncryptedAction` returns.
+   */
+  olderPage: 'humanCollaboration.projection.olderPage'
 } as const
 
 /** What a refusal tells the collaborator. Deliberately narrow: a code they can
@@ -119,6 +129,48 @@ export interface HumanCollaborationAppendCommentInput {
    * while a P2b host validates it against the share's contribution rules.
    */
   intent?: 'comment' | 'requestHostAction'
+}
+
+export interface HumanCollaborationLoadOlderInput {
+  sessionId: string
+  /**
+   * Page strictly OLDER than this row id; omit for the first page back from the
+   * live window. An id the host cannot place yields an EMPTY page, never the
+   * newest rows — a client paging with a stale cursor must not be handed the
+   * live window dressed as history.
+   */
+  beforeRowId?: string
+}
+
+export interface HumanCollaborationOlderPageEvent {
+  /**
+   * The session this page belongs to, and the whole of the L-3 control.
+   *
+   * A page is CLIENT-HELD, so a host-side truncation cannot reach it. The room
+   * drop forces a re-handshake, and a re-handshake mints a NEW sessionId — so a
+   * client that keys its page cache on this value cannot merge pre-truncation
+   * rows into a post-truncation session. Discarding has to be structural: a
+   * cache that must remember to call `clear()` is a cache that will one day
+   * forget, and the rows it keeps are rows somebody asked to have erased.
+   */
+  sessionId: string
+  /** Echoes the request, so a client can correlate concurrent pages. */
+  beforeRowId?: string
+  rows: unknown[]
+  /** More rows exist above this page — budget-bound OR floor-bound. */
+  hasMore: boolean
+  /** Cursor for the next call: the id of the OLDEST row in this page. */
+  oldestRowId?: string
+  /**
+   * This page was REFUSED for rate, not answered — no rows were read, and
+   * `hasMore` says nothing about the thread.
+   *
+   * Distinguishing this from a genuine empty page is the point. An empty page
+   * with no flag reads as "you have reached the top", and a client that showed
+   * that would be telling the collaborator the conversation began somewhere it
+   * did not. Silence would be the same lie with fewer words.
+   */
+  throttled?: boolean
 }
 
 export interface HumanCollaborationDisconnectInput {

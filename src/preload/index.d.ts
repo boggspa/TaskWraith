@@ -2006,6 +2006,9 @@ declare global {
         collaboratorId: string
         displayName: string
       }>
+      humanCollaborationCollaboratorLoadOlder: (input?: {
+        beforeRowId?: string
+      }) => Promise<{ ok: true }>
       humanCollaborationCollaboratorAppendComment: (input: {
         content: string
         clientMessageId?: string
@@ -2383,7 +2386,17 @@ declare global {
         }) => void
       ) => () => void
       onHumanCollaborationCollaboratorProjection: (
-        callback: (payload: { projection: HumanShareProjection }) => void
+        callback: (payload: { projection: HumanShareProjection; sessionId: string }) => void
+      ) => () => void
+      onHumanCollaborationCollaboratorOlderPage: (
+        callback: (payload: {
+          sessionId: string
+          beforeRowId?: string
+          rows: unknown[]
+          hasMore: boolean
+          oldestRowId?: string
+          throttled?: boolean
+        }) => void
       ) => () => void
       onHumanCollaborationCollaboratorStatus: (
         callback: (payload: {

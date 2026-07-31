@@ -125,6 +125,21 @@ export interface HumanCollaborationShare {
    * behaviour before the review surface exists to go with it.
    */
   requiresHostApproval?: boolean
+  /**
+   * Grant this share the FULL thread, including rows written before it existed.
+   *
+   * A share field for the same reason `requiresHostApproval` is one: the rules
+   * object is recomputed per preset and would erase it, and it answers a
+   * different question — the rules say what a collaborator may DO, this says
+   * how far back they may SEE.
+   *
+   * Absent ⇒ the projection floors at the share's `createdAt`. That default is
+   * the whole point. Rows written before a share existed were written by
+   * someone with no reason to expect they would ever leave the machine, and
+   * granting them is a decision the host takes explicitly rather than a side
+   * effect of raising a row limit or adding paging.
+   */
+  fullHistory?: boolean
 }
 
 export interface HumanCollaborationSnapshot {
@@ -908,7 +923,8 @@ function normalizeSnapshot(value: Partial<HumanCollaborationSnapshot>): HumanCol
             // rebuild applied on every read AND every write — a field missing
             // from it is silently dropped on load and permanently erased on the
             // next persist, with no error anywhere.
-            ...(share.requiresHostApproval === true ? { requiresHostApproval: true } : {})
+            ...(share.requiresHostApproval === true ? { requiresHostApproval: true } : {}),
+            ...(share.fullHistory === true ? { fullHistory: true } : {})
           }))
       : []
   }

@@ -569,7 +569,11 @@ import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAu
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
-import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
+import {
+  buildHumanSharePage,
+  buildHumanShareProjection,
+  type HumanShareProjectionSeat
+} from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import { createConfiguredProviderDetector } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
@@ -47172,6 +47176,41 @@ if (isGeminiMcpBridgeProcess) {
         safeStorage,
         (line) => console.warn(line)
       ).load()
+      /**
+       * The chat and the effective panel behind BOTH collaborator views.
+       *
+       * Shared by the live projection and by a backwards page for the same
+       * reason `buildProjectableRows` is: a boundary or an attribution that
+       * lived in only one of them would let the two disagree, and that
+       * divergence would be invisible until somebody scrolled far enough to
+       * hit it. Externals are never rows in `chat.ensemble.participants` — the
+       * roster is derived, not merged.
+       */
+      const resolveCollaborationViewContext = (
+        share: HumanCollaborationShare
+      ): { chat: ChatRecord; rosterSeats: HumanShareProjectionSeat[] } => {
+        const chat = chatService.getChat(share.chatId)
+        if (!chat) throw new Error('Chat not found.')
+        const roster = resolveChatEffectiveRoster({
+          participants: chat.ensemble?.participants,
+          share,
+          resolvePresence: (id) => humanCollaborationPresence.collaboratorState(id)
+        })
+        return {
+          chat,
+          rosterSeats: roster.seats.map((seat) => ({
+            seatId: seat.seatId,
+            kind: seat.kind,
+            label: seat.label,
+            order: seat.order,
+            ...(seat.kind === 'external' ? { present: seat.present } : {}),
+            ...(seat.kind === 'external'
+              ? resolveSeatColorIndex(share, seat.collaboratorId)
+              : {})
+          }))
+        }
+      }
+
       // Construct the transport BEFORE the runtime so the runtime's
       // publishEncryptedProjection can deliver through it; attach the runtime
       // back afterwards (deliver() doesn't need the runtime).
@@ -47183,17 +47222,19 @@ if (isGeminiMcpBridgeProcess) {
         identityKeyPair: identity,
         store: humanCollaborationStore,
         presence: humanCollaborationPresence,
-        buildProjection: ({ share, collaboratorId }) => {
-          const chat = chatService.getChat(share.chatId)
-          if (!chat) throw new Error('Chat not found.')
-          // The effective panel: model seats from the chat, external seats from
-          // the share, presence from the tracker. Externals are never rows in
-          // `chat.ensemble.participants` — the roster is derived, not merged.
-          const roster = resolveChatEffectiveRoster({
-            participants: chat.ensemble?.participants,
-            share,
-            resolvePresence: (id) => humanCollaborationPresence.collaboratorState(id)
+        buildPage: ({ share, beforeRowId }) => {
+          // The same chat and the same roster the live view uses. Sharing the
+          // derivation is the point: a page that resolved seats differently
+          // would attribute the same author two ways depending on how far the
+          // reader had scrolled, and nothing would surface the divergence.
+          const { chat, rosterSeats } = resolveCollaborationViewContext(share)
+          return buildHumanSharePage(chat, share, {
+            roster: rosterSeats,
+            ...(beforeRowId ? { beforeRowId } : {})
           })
+        },
+        buildProjection: ({ share, collaboratorId }) => {
+          const { chat, rosterSeats } = resolveCollaborationViewContext(share)
           // The viewer's OWN entries only. Scoped here rather than in the
           // builder, because "whose queue is this" is a collaboration question
           // and the builder is deliberately queue-agnostic. `toCollaboratorView`
@@ -47208,16 +47249,7 @@ if (isGeminiMcpBridgeProcess) {
             // Lets the receiver tell their own words from everyone else's, which
             // the whole presentation rule depends on.
             viewerCollaboratorId: collaboratorId,
-            roster: roster.seats.map((seat) => ({
-              seatId: seat.seatId,
-              kind: seat.kind,
-              label: seat.label,
-              order: seat.order,
-              ...(seat.kind === 'external' ? { present: seat.present } : {}),
-              ...(seat.kind === 'external'
-                ? resolveSeatColorIndex(share, seat.collaboratorId)
-                : {})
-            }))
+            roster: rosterSeats
           })
         },
         appendComment: ({ shareId, chatId, collaboratorId, clientMessageId, content, intent }) => {
