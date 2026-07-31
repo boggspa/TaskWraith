@@ -124,6 +124,85 @@
   font-style: italic;
 }
 
+/* The panel, as an external sees it. Mirrors the host's chip strip in intent:
+   who is in the room, and in what turn order. */
+.join-seat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.join-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border: 1px solid transparent;
+  border-inline-start: 2px solid var(--seat-accent, var(--text-secondary));
+}
+
+.join-seat-order {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+
+.join-seat-label {
+  font-weight: 600;
+}
+
+.join-seat.is-you {
+  border-color: var(--seat-accent, var(--accent));
+}
+
+/* Not connected. Presence is advisory here — never a claim the person left. */
+.join-seat.is-away {
+  opacity: 0.55;
+}
+
+.join-seat-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warning, var(--text-secondary));
+}
+
+/* Palette accents, keyed by INDEX to match the value the projection carries.
+   Order mirrors CONTACT_COLOR_PALETTE (blue, purple, pink, orange, green, red,
+   yellow, graphite). An index with no rule here simply gets no accent. */
+.join-seat-color-0, .join-projection-speaker.join-seat-color-0 { --seat-accent: #5a8cff; }
+.join-seat-color-1, .join-projection-speaker.join-seat-color-1 { --seat-accent: #bf7cff; }
+.join-seat-color-2, .join-projection-speaker.join-seat-color-2 { --seat-accent: #ff5fa2; }
+.join-seat-color-3, .join-projection-speaker.join-seat-color-3 { --seat-accent: #ff9b54; }
+.join-seat-color-4, .join-projection-speaker.join-seat-color-4 { --seat-accent: #4cc38a; }
+.join-seat-color-5, .join-projection-speaker.join-seat-color-5 { --seat-accent: #e65b62; }
+.join-seat-color-6, .join-projection-speaker.join-seat-color-6 { --seat-accent: #f2c94c; }
+.join-seat-color-7, .join-projection-speaker.join-seat-color-7 { --seat-accent: #9da6b8; }
+
+/* A named speaker carries their own accent, so the transcript stops reading as
+   one undifferentiated voice. */
+.join-projection-speaker[class*='join-seat-color-'] {
+  color: var(--seat-accent, var(--text-secondary));
+}
+
+/* Your own words, right-aligned like your own bubbles anywhere else. */
+.join-projection-row.is-own {
+  align-items: flex-end;
+}
+
+.join-projection-row.is-own .join-projection-speaker {
+  align-self: flex-end;
+}
+
+.message-bubble.join-projection-own {
+  align-self: flex-end;
+}
+
 /* Tool activity as an external sees it: derived scalars, never a body. Not
    italicised like the placeholder above — these are facts, not an apology for
    withheld content. */

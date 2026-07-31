@@ -54,6 +54,23 @@ interface ProjectionRow {
    *  must fall back to `preview`, which is the field every host populates. */
   kind?: 'message' | 'toolActivity' | 'system' | 'placeholder'
   tools?: ProjectionToolRow[]
+  /** Which SEAT authored this — a model participant id, or a collaboratorId for
+   *  an external. Compared against `youAre` to tell self from other. */
+  authorSeatId?: string
+  /** Index into the shared hue palette. An INDEX, never a CSS string: this
+   *  value comes off the wire and lands in a class name, and a free-form string
+   *  would be an injection surface. */
+  colorIndex?: number
+}
+
+/** One seat in the panel, as an external may see it. */
+interface ProjectionSeat {
+  seatId: string
+  kind: 'model' | 'external'
+  label: string
+  order: number
+  colorIndex?: number
+  present?: boolean
 }
 interface Projection {
   title: string
@@ -63,6 +80,11 @@ interface Projection {
   rows: ProjectionRow[]
   participants: Array<{ collaboratorId: string; displayName: string; status: string }>
   totalRows: number
+  /** Which collaborator is receiving this projection. Without it nobody can
+   *  tell their own words from anyone else's. */
+  youAre?: string
+  /** The effective panel, so the seat strip can be drawn. */
+  roster?: ProjectionSeat[]
   /**
    * What became of the contributions THIS collaborator sent while the host has
    * review switched on. Viewer-scoped by main — never anybody else's — and
@@ -103,11 +125,30 @@ function pendingStatusLabel(entry: {
   return 'No longer pending'
 }
 
-function bubbleClass(role: ProjectionRow['role']): string {
+export function bubbleClass(role: ProjectionRow['role'], isOwn: boolean): string {
+  // Your own words read as YOUR bubbles; everyone else — the host, the models,
+  // the other collaborator — reads as named transcript output. Without
+  // `youAre` this distinction is unimplementable, which is why every
+  // collaborator row used to look identical no matter who wrote it.
+  if (isOwn) return 'message-bubble user join-projection-own'
   if (role === 'host') return 'message-bubble user'
   if (role === 'assistant') return 'message-bubble assistant'
   if (role === 'collaborator') return 'message-bubble system human-collaborator-comment'
   return 'message-bubble system join-projection-placeholder'
+}
+
+/**
+ * Accent class for a seat.
+ *
+ * Keyed on the palette INDEX, never a colour name off the wire — the index is
+ * the whole reason the projection carries a number here. An index with no rule
+ * simply gets no accent, so a ninth hue added upstream degrades quietly instead
+ * of injecting anything. Order mirrors CONTACT_COLOR_PALETTE.
+ */
+export function seatAccentClass(colorIndex?: number): string {
+  return typeof colorIndex === 'number' && Number.isInteger(colorIndex) && colorIndex >= 0 && colorIndex < 8
+    ? ` join-seat-color-${colorIndex}`
+    : ''
 }
 
 function asNonEmptyString(value: unknown): string | null {
@@ -634,19 +675,59 @@ export function JoinSharedChatModal({
                 ? 'You are following this chat live. You can leave comments — the host decides what, if anything, goes to the AI.'
                 : 'You are following this chat live (view only). The host stays in control of the AI.'}
             </p>
+            {projection?.roster && projection.roster.length > 0 && (
+              /* The panel, so an external can see who is in the room and in
+                 what order — the same information the host reads off the chip
+                 strip. `seatDisabled` is deliberately absent from the wire:
+                 the host's private mute state is not a collaborator's business. */
+              <div className="join-seat-strip" aria-label="Panel">
+                {projection.roster
+                  .slice()
+                  .sort((a, b) => a.order - b.order)
+                  .map((seat) => {
+                    const isYou = Boolean(projection.youAre && seat.seatId === projection.youAre)
+                    return (
+                      <div
+                        key={seat.seatId}
+                        className={`join-seat${seat.kind === 'external' ? ' is-external' : ''}${
+                          isYou ? ' is-you' : ''
+                        }${seat.present === false ? ' is-away' : ''}${seatAccentClass(seat.colorIndex)}`}
+                        title={
+                          seat.kind === 'external'
+                            ? `${seat.label} — external collaborator`
+                            : seat.label
+                        }
+                      >
+                        <span className="join-seat-order">{seat.order}</span>
+                        <span className="join-seat-label">{isYou ? 'You' : seat.label}</span>
+                        {seat.kind === 'external' && !isYou && (
+                          <span className="join-seat-badge">External</span>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
+            )}
             <div className="join-projection-rows" ref={rowsRef}>
               {!projection || projection.rows.length === 0 ? (
                 <div className="join-projection-empty">Waiting for the host’s transcript…</div>
               ) : (
-                projection.rows.map((row) => (
-                  <div key={row.id} className="join-projection-row">
-                    <div className="join-projection-speaker">
-                      {row.speaker}
-                      {row.role === 'collaborator' && (
+                projection.rows.map((row) => {
+                  const isOwn = Boolean(
+                    projection.youAre && row.authorSeatId && row.authorSeatId === projection.youAre
+                  )
+                  return (
+                  <div
+                    key={row.id}
+                    className={`join-projection-row${isOwn ? ' is-own' : ''}`}
+                  >
+                    <div className={`join-projection-speaker${seatAccentClass(row.colorIndex)}`}>
+                      {isOwn ? 'You' : row.speaker}
+                      {row.role === 'collaborator' && !isOwn && (
                         <span className="message-meta-model-badge human-collaborator-badge">External</span>
                       )}
                     </div>
-                    <div className={bubbleClass(row.role)}>
+                    <div className={bubbleClass(row.role, isOwn)}>
                       {row.kind === 'toolActivity' && row.tools?.length ? (
                         /* The structured form when the host speaks v2. `preview`
                          * carries the same facts as text and is what an older
@@ -679,7 +760,8 @@ export function JoinSharedChatModal({
                       {row.truncated && <span className="join-projection-truncated"> …(truncated)</span>}
                     </div>
                   </div>
-                ))
+                  )
+                })
               )}
             </div>
             {projection?.yourPending && projection.yourPending.length > 0 && (
