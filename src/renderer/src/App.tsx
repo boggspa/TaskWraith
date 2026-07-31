@@ -2,7 +2,11 @@ import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef,
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
-import { invalidateRendererUsageRecords, loadRendererUsageRecords } from './lib/usageRecordsCache'
+import {
+  getCachedRendererUsageRecords,
+  invalidateRendererUsageRecords,
+  loadRendererUsageRecords
+} from './lib/usageRecordsCache'
 import { resolveWithinDeadline } from './lib/backgroundHydration'
 import {
   legacyToolEventProjectionKey,
@@ -8506,6 +8510,41 @@ function App(): React.JSX.Element {
         BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS,
         { onLateResolve: queueLateQuotaRefresh }
       )
+    const usageRecordsSignature = (records: UsageRecord[]) =>
+      JSON.stringify(
+        records.map((record) => [
+          record.id,
+          record.timestamp,
+          record.provider || '',
+          record.model,
+          record.inputTokens,
+          record.outputTokens,
+          record.totalTokens,
+          record.cacheReadInputTokens,
+          record.cacheCreationInputTokens,
+          record.chatId
+        ])
+      )
+
+    if (loadUsageRecords && !usageRecordsInitializedRef.current) {
+      const cachedUsageRecords = getCachedRendererUsageRecords('taskwraith')
+      const cachedUsageRecordsSignature = usageRecordsSignature(cachedUsageRecords)
+      if (usageRecordsSignatureRef.current !== cachedUsageRecordsSignature) {
+        usageRecordsSignatureRef.current = cachedUsageRecordsSignature
+        setUsageRecords(cachedUsageRecords)
+      }
+      usageRecordsInitializedRef.current = true
+      setUsageInitialized(true)
+    }
+    const loadUsageRecordsPromise = loadUsageRecords
+      ? resolveWithinDeadline(
+          loadRendererUsageRecords('taskwraith', {
+            force: options.force === true || options.forceUsageRecords === true
+          }).catch(() => []),
+          getCachedRendererUsageRecords('taskwraith'),
+          BACKGROUND_QUOTA_HYDRATION_DEADLINE_MS
+        ).catch(() => getCachedRendererUsageRecords('taskwraith'))
+      : Promise.resolve(null)
 
     // gemini retired — no live quota fetch, and omitted from the Model Usage
     // card's quota meters below (its historical token usage is still shown).
@@ -8523,11 +8562,7 @@ function App(): React.JSX.Element {
         loadQuotaInBackground(() =>
           window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
         ),
-        loadUsageRecords
-          ? loadRendererUsageRecords('taskwraith', {
-              force: options.force === true || options.forceUsageRecords === true
-            }).catch(() => [])
-          : Promise.resolve(null)
+        loadUsageRecordsPromise
       ])
 
     const normalizedUsageRecords = Array.isArray(allUsageRecords) ? allUsageRecords : []
@@ -8550,7 +8585,6 @@ function App(): React.JSX.Element {
         usageRecordsSignatureRef.current = nextUsageRecordsSignature
         setUsageRecords(normalizedUsageRecords)
       }
-      usageRecordsInitializedRef.current = true
       // First fetch resolved — the welcome dashboard's presence is now known,
       // so the welcome screen can stop reserving the dashboard's placeholder.
       setUsageInitialized(true)

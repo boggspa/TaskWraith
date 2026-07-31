@@ -30,6 +30,7 @@ import {
   type HeatmapCell,
   type HeatmapGrid
 } from '../lib/UsageHeatmap'
+import { resolveWithinDeadline } from '../lib/backgroundHydration'
 import {
   getCachedRendererUsageRecords,
   loadRendererUsageRecords,
@@ -38,6 +39,7 @@ import {
 } from '../lib/usageRecordsCache'
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20'] // hour-of-day ticks shown on the left rail
+const HEATMAP_LOAD_DEADLINE_MS = 1_000
 /** A single cell. Pulled out so React.memo can short-circuit
  * re-renders when the cell's bucket data hasn't changed. */
 function HeatmapCellTile({ cell }: { cell: HeatmapCell }) {
