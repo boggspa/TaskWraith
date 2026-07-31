@@ -73,6 +73,39 @@ export function isHideableUnstartedDraft(
   return true
 }
 
+/** The record slice the survivable-draft picker inspects (createdAt = recency). */
+export interface SurvivableDraftChatLike extends UnstartedDraftChatLike {
+  createdAt?: number
+}
+
+/**
+ * The "one survivable New Chat" sidebar rule: pick the NEWEST hideable draft
+ * (createdAt desc; appChatId tie-break for determinism) so exactly one pristine
+ * draft stays visible while the user is on another thread. Candidates already
+ * protected by the caller's context (active chat, composer drafts, …) are
+ * skipped so the slot isn't wasted on a chat that stays visible anyway.
+ * NON-DESTRUCTIVE: a visibility hint only — deletion stays owned by the
+ * DELETE-ONLY AbandonedChatReaper. Returns undefined when no candidate exists.
+ */
+export function findSurvivableUnstartedDraftId(
+  chats: ReadonlyArray<SurvivableDraftChatLike>,
+  ctx: UnstartedDraftFilterContext = {}
+): string | undefined {
+  let survivor: { id: string; createdAt: number } | undefined
+  for (const chat of chats) {
+    if (!isHideableUnstartedDraft(chat, ctx)) continue
+    const createdAt = typeof chat.createdAt === 'number' ? chat.createdAt : 0
+    if (
+      !survivor ||
+      createdAt > survivor.createdAt ||
+      (createdAt === survivor.createdAt && chat.appChatId > survivor.id)
+    ) {
+      survivor = { id: chat.appChatId, createdAt }
+    }
+  }
+  return survivor?.id
+}
+
 /**
  * The create target a "+ New" action is about to mint a record for. Reuse must
  * match BOTH scope and chatKind so a global create never adopts a workspace
