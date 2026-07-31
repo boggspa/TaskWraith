@@ -6,7 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## 1.9.2 - 2026-07-29
+## 1.9.2 - 2026-07-31
 
 1.9.1 opened a terminal hatch into the workshop; 1.9.2 gives every entrance the
 same rulebook and puts live ownership on the workbench. Provider tools now meet
