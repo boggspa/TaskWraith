@@ -43,6 +43,14 @@
   padding: 7px 10px;
 }
 
+/* A refused contribution is a caution, not a failure: the connection is fine
+   and the words are back in the box. Tinted away from the danger red that
+   `.join-error` uses for a dropped session. */
+.join-contribution-error {
+  color: var(--warning, #d98b2b);
+  background: color-mix(in srgb, var(--warning, #d98b2b) 12%, transparent);
+}
+
 .join-connection-status {
   font-size: 11.5px;
   font-weight: 600;

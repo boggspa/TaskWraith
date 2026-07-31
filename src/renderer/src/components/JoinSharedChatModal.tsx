@@ -12,6 +12,10 @@ import { PillButton } from './PillButton'
  * All transport/crypto lives in main (HumanCollaborationCollaboratorClient via
  * the human-collaboration-collaborator:* IPC); this is purely UI + orchestration.
  */
+/** Matches `requireBoundedText`'s bound on the host side, so a collaborator
+ *  never types text that is silently refused on arrival. */
+const MAX_CONTRIBUTION_CHARS = 8000
+
 type Step = 'paste' | 'connecting' | 'sas' | 'viewing'
 type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected'
 
@@ -212,6 +216,14 @@ export function JoinSharedChatModal({
   const [mode, setMode] = useState<'readOnly' | 'comments'>('comments')
   const [projection, setProjection] = useState<Projection | null>(null)
   const [comment, setComment] = useState('')
+  // A refusal is NOT a connection failure, so it gets its own slot rather than
+  // riding `error` (which the status listener pairs with 'disconnected').
+  const [contributionError, setContributionError] = useState<string | null>(null)
+  // The text of contributions still awaiting a host verdict, by clientMessageId.
+  // An append is a fire-and-forget notification — the host's refusal arrives
+  // later, on its own frame — so the words have to be held somewhere until
+  // then or there is nothing left to put back.
+  const inFlightRef = useRef(new Map<string, string>())
   // P2b: whether the next contribution is a structured "request host action".
   const [sendAsActionRequest, setSendAsActionRequest] = useState(false)
   // Slice 5: whether a persisted, reconnectable previous session exists.
@@ -250,6 +262,20 @@ export function JoinSharedChatModal({
         setError(payload.error)
         setConnectionState('disconnected')
       }
+      const rejected = payload.contributionRejected
+      if (rejected) {
+        setContributionError(rejected.message)
+        // Give them their words back. Only if the box is empty — they may have
+        // started typing something else while waiting, and clobbering that
+        // would be a second, worse version of the same bug.
+        const held = rejected.clientMessageId
+          ? inFlightRef.current.get(rejected.clientMessageId)
+          : undefined
+        if (held) {
+          setComment((current) => (current.trim() ? current : held))
+          inFlightRef.current.delete(rejected.clientMessageId as string)
+        }
+      }
     })
     return () => {
       off?.()
@@ -268,6 +294,8 @@ export function JoinSharedChatModal({
     setSasCode('')
     setProjection(null)
     setComment('')
+    setContributionError(null)
+    inFlightRef.current.clear()
     setBusy(false)
   }, [open])
 
@@ -451,17 +479,28 @@ export function JoinSharedChatModal({
   const handleSendComment = useCallback(async () => {
     const text = comment.trim()
     if (!text) return
-    setComment('')
+    const clientMessageId = crypto.randomUUID()
+    setContributionError(null)
     try {
       await window.api.humanCollaborationCollaboratorAppendComment({
         content: text,
+        clientMessageId,
         // P2b: send as a structured host-action request only when the share's
         // rules allow it AND the collaborator ticked the box. Main re-validates.
         ...(sendAsActionRequest && actionRequestsAvailable
           ? { intent: 'requestHostAction' as const }
           : {})
       })
+      // Cleared only after the send resolves — and held, because resolving
+      // means the frame left this machine, NOT that the host accepted it. The
+      // verdict arrives later on its own frame; until then these are the only
+      // copy of the words.
+      inFlightRef.current.set(clientMessageId, text)
+      setComment('')
     } catch (e) {
+      // Left in the box on purpose. Clearing first meant a 9 KB paste, or any
+      // second message sent inside the 750 ms rate limit, was destroyed and
+      // reported as sent.
       setError(e instanceof Error ? e.message : 'Could not send the comment.')
     }
   }, [comment, sendAsActionRequest, actionRequestsAvailable])
@@ -654,6 +693,11 @@ export function JoinSharedChatModal({
               </div>
             )}
             {error && <div className="join-error" role="alert">{error}</div>}
+            {contributionError && (
+              <div className="join-error join-contribution-error" role="alert">
+                {contributionError}
+              </div>
+            )}
             {mode === 'comments' && actionRequestsAvailable && (
               <label className="join-action-request-toggle">
                 <input
@@ -680,6 +724,9 @@ export function JoinSharedChatModal({
                   }}
                   placeholder="Leave a comment for the host to review…"
                   rows={2}
+                  /* The host's own bound. Refusing here, where the text still
+                     exists, beats refusing after it has been sent and cleared. */
+                  maxLength={MAX_CONTRIBUTION_CHARS}
                 />
                 <PillButton
                   variant="primary"

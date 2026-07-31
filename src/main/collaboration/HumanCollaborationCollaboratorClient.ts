@@ -96,6 +96,16 @@ export interface HumanCollaborationCollaboratorClientOptions {
   onEstablished?: (info: { sessionId: string; collaboratorId: string }) => void
   onConnectionChange?: (connected: boolean) => void
   onError?: (err: Error) => void
+  /**
+   * The host refused a contribution. NOT routed through `onError`: the renderer
+   * treats any error as a dropped connection, and a rate-limit refusal is not
+   * one — the socket is fine and the person is still connected.
+   */
+  onContributionRejected?: (info: {
+    code: string
+    message: string
+    clientMessageId?: string
+  }) => void
   log?: (line: string) => void
   now?: () => number
   requestTimeoutMs?: number
@@ -485,6 +495,24 @@ export class HumanCollaborationCollaboratorClient {
     if (opened.method === HUMAN_COLLABORATION_EVENTS.projectionUpdate) {
       const params = (opened.params || {}) as { projection?: unknown }
       if (params.projection !== undefined) this.opts.onProjection?.(params.projection)
+      return
+    }
+    if (opened.method === HUMAN_COLLABORATION_EVENTS.contributionRejected) {
+      const params = (opened.params || {}) as {
+        code?: unknown
+        message?: unknown
+        clientMessageId?: unknown
+      }
+      this.opts.onContributionRejected?.({
+        code: typeof params.code === 'string' ? params.code : 'rejected',
+        message:
+          typeof params.message === 'string' && params.message
+            ? params.message
+            : 'The host could not accept that message.',
+        ...(typeof params.clientMessageId === 'string'
+          ? { clientMessageId: params.clientMessageId }
+          : {})
+      })
     }
   }
 

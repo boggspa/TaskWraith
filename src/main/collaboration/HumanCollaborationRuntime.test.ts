@@ -19,6 +19,7 @@ import {
   sealHumanCollaborationMessage
 } from '../../shared/collaboration/HumanCollaborationCipher'
 import { hashInviteToken, HumanCollaborationStore } from './HumanCollaborationStore'
+import { HumanCollaborationDenialError } from './HumanContributionRules'
 import { HumanCollaborationAuditLog } from './HumanCollaborationAuditLog'
 import {
   HUMAN_COLLABORATION_EVENTS,
@@ -27,6 +28,7 @@ import {
   type HumanCollaborationBeginHandshakeInput,
   type HumanCollaborationBeginHandshakeResult,
   type HumanCollaborationConfirmSasResult,
+  type HumanCollaborationEncryptedFrame,
   type HumanCollaborationHandshakeContext
 } from '../../shared/collaboration/HumanCollaborationProtocol'
 import { HumanCollaborationRuntime, type HumanCollaborationAppendRequest, type HumanCollaborationProjectionRequest } from './HumanCollaborationRuntime'
@@ -1346,5 +1348,110 @@ describe('HumanCollaborationRuntime handshake lane is bounded', () => {
     expect(buildProjection).toHaveBeenCalledTimes(beforeHostFlush + 1)
     await runtime.publishProjectionUpdates()
     expect(buildProjection).toHaveBeenCalledTimes(beforeHostFlush + 2)
+  })
+})
+
+describe('a refused contribution reaches the collaborator', () => {
+  it('seals a rejection back to the sender instead of failing in silence', async () => {
+    // An append is a fire-and-forget NOTIFICATION — no reqId, no reply frame —
+    // and the transport catches a route failure into a host-only log line. So
+    // every refusal (too long, too fast, too many awaiting review) reached
+    // nobody: the collaborator's UI still read "Connected", no row appeared
+    // under "Your contributions" because the entry never reached the queue, and
+    // their text had already been cleared from the box. The runtime even writes
+    // these strings in the collaborator's own voice.
+    const store = new HumanCollaborationStore()
+    const share = store.createShare({
+      chatId: 'chat-1',
+      mode: 'comments',
+      now: 1000,
+      inviteTtlMs: 10_000
+    })
+    const collaborator = makeCollaborationIdentity()
+    const published: HumanCollaborationEncryptedFrame[] = []
+    const runtime = new HumanCollaborationRuntime({
+      identityKeyPair: generateIdentityKeyPair(),
+      store,
+      buildProjection: vi.fn().mockResolvedValue({ ok: true }),
+      appendComment: vi.fn(() => {
+        throw new HumanCollaborationDenialError(
+          'quota_exceeded',
+          'Comment rate limit exceeded, slow down.'
+        )
+      }),
+      publishEncryptedProjection: (_sessionId, frame) => {
+        published.push(frame)
+      },
+      now: () => 1000
+    })
+    const begin = await runtime.beginAdmission({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      displayName: 'Alex',
+      inviteToken: share.inviteToken,
+      collaboratorIdentityPubKeyB64: collaborator.identityPubKeyB64,
+      collaboratorEphemeralPubKeyB64: collaborator.ephemeralPubKeyB64,
+      collaboratorNonceB64: collaborator.nonceB64
+    })
+    const context = makeTranscriptContext({
+      shareId: share.share.shareId,
+      chatId: 'chat-1',
+      inviteId: begin.inviteId,
+      inviteToken: share.inviteToken,
+      inviteExpiresAt: begin.expiresAt,
+      shareMode: 'comments',
+      hostIdentityPubKeyB64: begin.hostIdentityPubKeyB64,
+      hostEphemeralPubKeyB64: begin.hostEphemeralPubKeyB64,
+      hostNonceB64: begin.hostNonceB64,
+      hostCollaborator: collaborator
+    })
+    const session = await runtime.confirmSas({
+      handshakeId: begin.handshakeId,
+      confirmCode: begin.confirmCode,
+      collaboratorTranscriptSigB64: b64.encode(
+        signEd25519(
+          collaborator.identity.privateKey,
+          computeHumanCollaborationTranscriptHash(context)
+        )
+      )
+    })
+    const collaboratorKeys = deriveHumanCollaborationSessionKeys({
+      hostEphemeralPrivate: collaborator.ephemeral.privateKey,
+      collaboratorEphemeralPublic: importRawX25519PublicKey(b64.decode(begin.hostEphemeralPubKeyB64)),
+      hostNonce: b64.decode(begin.hostNonceB64),
+      collaboratorNonce: b64.decode(collaborator.nonceB64)
+    })
+
+    await expect(
+      runtime.routeEncryptedAction(
+        sealHumanCollaborationMessage({
+          keys: collaboratorKeys,
+          direction: 'collaboratorToHost',
+          sessionId: session.sessionId,
+          seq: 1,
+          message: {
+            msgId: 1,
+            method: HUMAN_COLLABORATION_METHODS.appendComment,
+            params: { clientMessageId: 'cm-refused', content: 'too fast' }
+          }
+        })
+      )
+    ).rejects.toThrow(/slow down/)
+
+    // The refusal went OUT, sealed to the sender's session.
+    expect(published).toHaveLength(1)
+    const opened = openHumanCollaborationFrame({
+      keys: collaboratorKeys,
+      expectedDirection: 'hostToCollaborator',
+      frame: published[0]
+    })
+    expect(opened.method).toBe(HUMAN_COLLABORATION_EVENTS.contributionRejected)
+    expect(opened.params).toMatchObject({
+      code: 'quota_exceeded',
+      // The words the collaborator actually needs to read.
+      message: 'Comment rate limit exceeded, slow down.',
+      // Which of their messages it was, so the client can give it back.
+      clientMessageId: 'cm-refused'
+    })
   })
 })

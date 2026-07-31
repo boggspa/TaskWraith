@@ -2436,10 +2436,20 @@ const api = {
   },
   // Collaborator side: connection/error status for the active join.
   onHumanCollaborationCollaboratorStatus: (
-    callback: (payload: { connected?: boolean; error?: string }) => void
+    callback: (payload: {
+      connected?: boolean
+      error?: string
+      contributionRejected?: { code: string; message: string; clientMessageId?: string }
+    }) => void
   ) => {
-    const wrapped = (_event: unknown, payload: { connected?: boolean; error?: string }): void =>
-      callback(payload)
+    const wrapped = (
+      _event: unknown,
+      payload: {
+        connected?: boolean
+        error?: string
+        contributionRejected?: { code: string; message: string; clientMessageId?: string }
+      }
+    ): void => callback(payload)
     ipcRenderer.on('human-collaboration-collaborator-status', wrapped)
     return () => ipcRenderer.removeListener('human-collaboration-collaborator-status', wrapped)
   },

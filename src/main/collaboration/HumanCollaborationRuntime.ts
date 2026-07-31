@@ -796,6 +796,40 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     })
   }
 
+  /**
+   * Seal and push a refusal back to the collaborator who sent the contribution.
+   *
+   * Rides the existing encrypted-projection sink rather than a new transport
+   * path, so it reuses the session→room routing that is already proven.
+   *
+   * Every step is best-effort and swallowed: a refusal that cannot be delivered
+   * must not become a second failure on top of the first. Notably
+   * `sealForCollaborator` goes through `requireActiveSession`, so it THROWS for
+   * exactly the `stale_session` and `revoked` denials — unavoidable, since
+   * those sessions' keys are gone by definition.
+   */
+  private notifyContributionRejected(
+    sessionId: string,
+    clientMessageId: string,
+    err: unknown
+  ): void {
+    if (!this.opts.publishEncryptedProjection) return
+    try {
+      const code = err instanceof HumanCollaborationDenialError ? err.code : 'rejected'
+      const frame = this.sealForCollaborator(sessionId, {
+        method: HUMAN_COLLABORATION_EVENTS.contributionRejected,
+        params: {
+          code,
+          message: err instanceof Error ? err.message : 'The host could not accept that message.',
+          clientMessageId
+        }
+      })
+      void Promise.resolve(this.opts.publishEncryptedProjection(sessionId, frame)).catch(() => {})
+    } catch {
+      // Session already gone — nothing to tell, and nobody to tell it to.
+    }
+  }
+
   openFromCollaborator(frame: HumanCollaborationEncryptedFrame): HumanCollaborationPlainMessage {
     const session = this.requireActiveSession(frame.sessionId)
     if (frame.seq <= session.lastInboundSeq) {
@@ -832,13 +866,26 @@ export class HumanCollaborationRuntime<ProjectionType = unknown, AppendType = un
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.appendComment) {
       const input = params as Partial<HumanCollaborationAppendCommentInput>
-      return this.appendComment({
-        sessionId: frame.sessionId,
-        clientMessageId: requireFrameString(input.clientMessageId, 'Client message id'),
-        content: requireFrameString(input.content, 'Comment'),
-        // Whitelist at the wire boundary too: only the exact P2b string passes.
-        ...(input.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
-      })
+      const clientMessageId = requireFrameString(input.clientMessageId, 'Client message id')
+      try {
+        return await this.appendComment({
+          sessionId: frame.sessionId,
+          clientMessageId,
+          content: requireFrameString(input.content, 'Comment'),
+          // Whitelist at the wire boundary too: only the exact P2b string passes.
+          ...(input.intent === 'requestHostAction' ? { intent: 'requestHostAction' as const } : {})
+        })
+      } catch (err) {
+        // Tell them. An append is a fire-and-forget notification with no reply
+        // frame, so before this every refusal — too long, too fast, too many
+        // awaiting review — was a host-only log line while the collaborator's
+        // UI still said "Connected" and their text was already discarded. The
+        // runtime authors these strings in the COLLABORATOR'S voice ("slow
+        // down", "you have too many messages awaiting review"); they were
+        // addressed to someone who never received them.
+        this.notifyContributionRejected(frame.sessionId, clientMessageId, err)
+        throw err
+      }
     }
     if (message.method === HUMAN_COLLABORATION_METHODS.disconnect) {
       return this.disconnect({ sessionId: frame.sessionId })

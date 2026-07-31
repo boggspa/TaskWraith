@@ -9,8 +9,31 @@ export const HUMAN_COLLABORATION_METHODS = {
 } as const
 
 export const HUMAN_COLLABORATION_EVENTS = {
-  projectionUpdate: 'humanCollaboration.projection.update'
+  projectionUpdate: 'humanCollaboration.projection.update',
+  /**
+   * The host refused a contribution — too long, too fast, too many awaiting
+   * review, or a session that is no longer valid.
+   *
+   * Additive, and safe for an older collaborator build: the cipher only
+   * dispatches methods it recognises, and an unknown one falls through
+   * `handleSealed` silently rather than erroring. Such a build degrades to
+   * today's behaviour (silence), which is what it already has.
+   *
+   * This is the ONLY host→collaborator channel besides the projection. Without
+   * it every refusal was a host-only console line while the collaborator's UI
+   * still read "Connected" and their text was already gone.
+   */
+  contributionRejected: 'humanCollaboration.comment.rejected'
 } as const
+
+/** What a refusal tells the collaborator. Deliberately narrow: a code they can
+ *  be shown, the host-authored reason string, and which of their messages it
+ *  was — never anything about the host's state. */
+export interface HumanCollaborationContributionRejectedEvent {
+  code: string
+  message: string
+  clientMessageId?: string
+}
 
 export type HumanCollaborationMethod =
   (typeof HUMAN_COLLABORATION_METHODS)[keyof typeof HUMAN_COLLABORATION_METHODS]
