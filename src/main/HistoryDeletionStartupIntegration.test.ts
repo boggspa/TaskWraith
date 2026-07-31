@@ -88,9 +88,7 @@ describe('history deletion startup integration', () => {
     )
     expect(startupSource).toContain('pendingDeletionForProjectReferenceReachability')
     expect(startupSource).toContain('DeferredProjectReferenceReconciler.prepare({')
-    expect(startupSource).toContain(
-      'projectReferenceArtifactStore.beginStartupReconciliation()'
-    )
+    expect(startupSource).toContain('projectReferenceArtifactStore.beginStartupReconciliation()')
     expect(startupSource).toContain('loadOwnership: async () =>')
     expect(startupSource).toContain('endCaptureHold: (hold) =>')
   })
@@ -118,7 +116,10 @@ describe('history deletion startup integration', () => {
       '!historyDeletionStartupRecoveryBlockedReason',
       wakeupRecovery
     )
-    const mailboxRecovery = indexSource.indexOf('recoverPendingSubThreadMailboxes()', wakeupRecovery)
+    const mailboxRecovery = indexSource.indexOf(
+      'recoverPendingSubThreadMailboxes()',
+      wakeupRecovery
+    )
     const mailboxGuard = lastGateIndexAtOrBefore(indexSource, mailboxRecovery)
     expect(wakeupGuard).toBeGreaterThan(end)
     expect(wakeupGuard).toBeLessThan(wakeupRecovery)
@@ -144,10 +145,7 @@ describe('history deletion startup integration', () => {
       'usageHistoryDeletionTarget.releaseAfterCommit(',
       release
     )
-    const nextCoordinatorSection = indexSource.indexOf(
-      'const clearBroadChatHistory =',
-      release
-    )
+    const nextCoordinatorSection = indexSource.indexOf('const clearBroadChatHistory =', release)
 
     expect(commit).toBeGreaterThanOrEqual(0)
     expect(checkpointPurge).toBeGreaterThan(commit)
