@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   bubbleClass,
@@ -193,5 +195,48 @@ describe('older-page cache discards across a re-handshake', () => {
     })
     expect(refreshed.rows).toHaveLength(1)
     expect((refreshed.rows[0] as { preview: string }).preview).toBe('FRESH')
+  })
+})
+
+/**
+ * The last hop the other tests cannot reach.
+ *
+ * `mergeOlderPage` is proven by unit test and the wire is proven end-to-end over
+ * a real relay — but the modal renders through `createPortal`, which has no
+ * server renderer and no DOM environment here, so nothing else can assert that
+ * the component actually CONNECTS the two. A lane that is correct at both ends
+ * and wired at neither is this repo's most repeated defect, so it gets a
+ * source-region pin, the same shape as `externalSeatChip.test.ts`.
+ */
+describe('the modal actually wires paging up', () => {
+  const source = readFileSync(
+    join(process.cwd(), 'src/renderer/src/components/JoinSharedChatModal.tsx'),
+    'utf8'
+  )
+
+  it('feeds arriving pages through mergeOlderPage, not into raw state', () => {
+    expect(source).toContain('onHumanCollaborationCollaboratorOlderPage')
+    expect(source).toContain('setOlderPages((current) =>')
+    expect(source).toContain('mergeOlderPage(current, {')
+  })
+
+  it('drops the cache when a projection arrives from a different session', () => {
+    // The second half of L-3: a re-handshake is observed here, not only on a
+    // page. Without it a truncated session that never pages again would keep
+    // showing rows from the session before it.
+    expect(source).toContain('current && current.sessionId !== payload.sessionId ? null : current')
+  })
+
+  it('asks with the oldest row it holds, so paging walks backwards', () => {
+    expect(source).toContain('humanCollaborationCollaboratorLoadOlder')
+    expect(source).toContain('olderPages?.oldestRowId ?? projection?.rows[0]?.id')
+  })
+
+  it('only claims the top of the thread when a page said so', () => {
+    // `canLoadOlder` must come from what a page reported, never from a bare
+    // empty-rows check — a page refused for rate has empty rows and says
+    // nothing about the thread.
+    expect(source).toContain('const canLoadOlder = olderPages')
+    expect(source).toContain('? olderPages.hasMore')
   })
 })
