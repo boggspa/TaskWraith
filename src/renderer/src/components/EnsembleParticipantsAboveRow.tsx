@@ -1081,12 +1081,18 @@ export function EnsembleParticipantsAboveRow({
   const canMutateLiveRoster = !isRoundRunning || onLiveRosterMutation !== undefined
   const canAddParticipant =
     canMutateLiveRoster && participants.length < MAX_ENSEMBLE_PARTICIPANTS
-  // Index-aligned `grid-column` spans for the wrapped balanced-rows
-  // layout; null in single-row flex mode (≤5 chips) where chips size
-  // to their content instead.
+  // Seat-position-aligned `grid-column` spans for the wrapped balanced-rows
+  // layout; null in single-row flex mode (≤5 chips) where chips size to their
+  // content instead.
+  //
+  // Keyed on `totalSeatCount` — models AND externals — because that is the
+  // count that decides the mode below. Keying it on `participants.length`
+  // meant a 5-model panel plus one human went into the 60-track grid with NO
+  // spans computed at all, so every chip, models included, collapsed to one
+  // track of sixty. The strip fell apart because somebody joined.
   const chipGridSpans =
-    participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD
-      ? computeEnsembleChipGridSpans(participants.length)
+    totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD
+      ? computeEnsembleChipGridSpans(totalSeatCount)
       : null
 
   const updateParticipant = (id: string, patch: Partial<EnsembleParticipant>): void => {
@@ -1398,8 +1404,8 @@ export function EnsembleParticipantsAboveRow({
       <div
         ref={chipsContainerRef}
         className={`ensemble-above-row-chips ${
-          // Switch to the balanced-rows grid at 6+ participants (the
-          // first count exceeding the 5-per-row ceiling) so the strip
+          // Switch to the balanced-rows grid at 6+ SEATS — models plus
+          // externals (the first count exceeding the 5-per-row ceiling) so the strip
           // never clips. Below the threshold we keep the centred
           // content-width flex layout — most ensembles live there.
           totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? 'is-wrapped' : ''
@@ -1462,7 +1468,9 @@ export function EnsembleParticipantsAboveRow({
               participant={participant}
               mentionParticipants={participants}
               turnOrder={seatPositionById.get(participant.id) ?? participantIndex + 1}
-              gridSpan={chipGridSpans?.[participantIndex]}
+              /* By merged seat position, not the model-only index: a human
+                 seated mid-panel shifts every later model's placement slot. */
+              gridSpan={chipGridSpans?.[(seatPositionById.get(participant.id) ?? participantIndex + 1) - 1]}
               statusLabel={statusLabel}
               statusTooltip={wakeupTooltip || statusTooltip}
               dimmed={!participant.enabled}
@@ -1564,7 +1572,9 @@ export function EnsembleParticipantsAboveRow({
             />
           )
         })}
-        {externalSeatChips.map((seat) => (
+        {externalSeatChips.map((seat) => {
+          const seatPosition = seatPositionById.get(seat.seatId)
+          return (
           <div
             key={seat.seatId}
             /**
@@ -1577,11 +1587,20 @@ export function EnsembleParticipantsAboveRow({
              */
             data-seat-id={seat.seatId}
             data-seat-kind="external"
-            data-turn-order={seatPositionById.get(seat.seatId)}
+            data-turn-order={seatPosition}
             className={`ensemble-above-chip ensemble-above-chip--external${
               seat.enabled ? '' : ' is-muted'
             }${seat.present ? '' : ' is-away'}`}
-            style={{ order: seatPositionById.get(seat.seatId) }}
+            style={{
+              order: seatPosition,
+              // An external is a chip like any other in grid mode. Without a
+              // span it took ONE of sixty tracks — a sliver with its name and
+              // badge clipped to a few pixels — while the model chips beside it
+              // spanned twenty.
+              ...(chipGridSpans && seatPosition !== undefined
+                ? { gridColumn: `span ${chipGridSpans[seatPosition - 1]}` }
+                : {})
+            }}
             title={
               seat.present
                 ? `${seat.label} — external collaborator`
@@ -1589,14 +1608,13 @@ export function EnsembleParticipantsAboveRow({
             }
           >
             <div className="ensemble-above-chip-body">
-              <span className="ensemble-above-chip-turn-order">
-                {seatPositionById.get(seat.seatId)}
-              </span>
+              <span className="ensemble-above-chip-turn-order">{seatPosition}</span>
               <span className="ensemble-above-chip-role">{seat.label}</span>
               <span className="ensemble-above-chip-external-badge">External</span>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
       {dragGhost
         ? (() => {
@@ -1604,7 +1622,12 @@ export function EnsembleParticipantsAboveRow({
               (participant) => participant.id === dragGhost.participantId
             )
             if (!ghostParticipant) return null
+            // Merged position, matching the chip under the cursor. The
+            // model-only index disagreed with it the moment an external was
+            // seated ahead of this model, so the floating ghost showed a
+            // different turn number than the chip it was dragged from.
             const ghostTurnOrder =
+              seatPositionById.get(ghostParticipant.id) ??
               participants.findIndex((participant) => participant.id === ghostParticipant.id) + 1
             return createPortal(
               <div
@@ -1639,7 +1662,7 @@ export function EnsembleParticipantsAboveRow({
       */}
       <div
         className={`ensemble-above-row-controls${
-          participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''
+          totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''
         }`}
       >
         <div className="ensemble-above-row-roster-actions">
