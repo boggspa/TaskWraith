@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MAX_HOST_REASON_CHARS } from '../../../main/collaboration/ExternalContributionQueueStore'
+import { MAX_HOST_REASON_CHARS } from '../../../shared/collaboration/externalContributionLimits'
 
 /**
  * Contributions an external has sent that are waiting for the host to release

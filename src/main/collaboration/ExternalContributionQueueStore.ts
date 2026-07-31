@@ -32,6 +32,7 @@
  */
 
 import { randomUUID } from 'crypto'
+import { MAX_HOST_REASON_CHARS } from '../../shared/collaboration/externalContributionLimits'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 
@@ -147,11 +148,12 @@ export const MAX_CONTRIBUTION_BYTES = 12_000
  * Older denials keep their record and lose their body.
  */
 /**
- * Host-authored decline note, bounded because it is the one string that travels
- * OUTWARD to an external. The renderer caps its input at the same number so a
- * host never types text that is silently truncated on the way out.
+ * Re-exported from `shared` so main-side callers keep one import path while the
+ * renderer can reach the same number without importing a main module — the
+ * cross-process edge the architecture guard forbids. One definition, two
+ * processes; a forked copy would let the input disagree with the truncation.
  */
-export const MAX_HOST_REASON_CHARS = 500
+export { MAX_HOST_REASON_CHARS } from '../../shared/collaboration/externalContributionLimits'
 
 export const MAX_DENIED_BODIES_RETAINED = 20
 /**

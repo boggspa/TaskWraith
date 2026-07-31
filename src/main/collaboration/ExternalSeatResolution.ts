@@ -16,6 +16,7 @@
  */
 
 import {
+  externalSeatsForShare as sharedExternalSeatsForShare,
   resolveEffectiveRoster,
   type EffectiveRoster,
   type ExternalSeatInput
@@ -47,24 +48,12 @@ export function externalSeatsForShare(
   share: HumanCollaborationShare | null | undefined,
   resolvePresence?: ResolveCollaboratorPresence
 ): ExternalSeatInput[] {
-  if (!share || share.enabled === false) return []
-  const seats: ExternalSeatInput[] = []
-  for (const participant of share.participants || []) {
-    if (!participant || participant.status !== 'active') continue
-    const presence = resolvePresence?.(participant.collaboratorId)
-    seats.push({
-      shareId: share.shareId,
-      collaboratorId: participant.collaboratorId,
-      displayName: participant.displayName,
-      // No presence resolver at all (a caller that only wants the seat list,
-      // e.g. an admin surface) means "don't judge presence" — default present.
-      // A resolver that answers `expired`/`unknown` is a real negative.
-      present: resolvePresence ? presence === 'live' || presence === 'grace' : true,
-      ...(typeof participant.seatOrder === 'number' ? { seatOrder: participant.seatOrder } : {}),
-      ...(participant.seatDisabled === true ? { enabled: false } : {})
-    })
-  }
-  return seats
+  // Delegates to the shared implementation. The mapping RULES documented above
+  // are unchanged and still belong with the store that defines them — but the
+  // renderer needs the same mapping for the chip strip, and a main-process
+  // import from the renderer is the exact edge the architecture guard forbids.
+  // One implementation, structurally typed, reachable from both processes.
+  return sharedExternalSeatsForShare(share, resolvePresence)
 }
 
 /**
