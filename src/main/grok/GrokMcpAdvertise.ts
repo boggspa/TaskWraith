@@ -101,9 +101,27 @@ export function structuredTaskWraithSafeToolRequested(
     return false
   }
 
-  const identities = [raw?.tool_name, raw?.toolName, raw?.name, rawInput?.tool_name, rawInput?.toolName, rawInput?.name].filter(
-    (value): value is string => typeof value === 'string' && value.trim().length > 0
-  )
+  // `rawInput.name` is ambiguous. For an ordinary tool it is a machine identity,
+  // but for the capability gateway it is the envelope's OWN ARGUMENT — the target
+  // being invoked. Counting it as a competing identity makes the agreement check
+  // below unsatisfiable for every `capability_invoke` call (the envelope resolves
+  // to `capability_invoke`, the argument to something else), so the gateway could
+  // never classify as safe and read-only seats denied it outright.
+  const envelopeIdentities = [
+    raw?.tool_name,
+    raw?.toolName,
+    raw?.name,
+    rawInput?.tool_name,
+    rawInput?.toolName
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+  const gatewayEnvelope = envelopeIdentities.some((candidate) => {
+    const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)
+    return Boolean(toolName && isCapabilityGatewayToolName(toolName))
+  })
+  const targetArgument =
+    typeof rawInput?.name === 'string' && rawInput.name.trim().length > 0 ? rawInput.name : null
+  const identities =
+    gatewayEnvelope || !targetArgument ? envelopeIdentities : [...envelopeIdentities, targetArgument]
   if (identities.length === 0) return false
   const resolved = identities.map((candidate) => {
     const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)

@@ -127,6 +127,50 @@ describe('grokTaskWraithSafeToolRequested', () => {
     ).toBe(false)
   })
 
+  // The gateway's own `name` argument is the TARGET being invoked, not a competing
+  // identity. The 1.9.2 snapshot counted it as one, which made the identity-
+  // agreement check unsatisfiable for every capability_invoke call and denied the
+  // gateway outright on read-only Grok/Mistral seats.
+  it('classifies capability_invoke as safe even though its target argument differs', () => {
+    expect(
+      structuredTaskWraithSafeToolRequested(
+        {
+          toolName: 'display title',
+          toolKind: 'read',
+          rawToolCall: {
+            kind: 'read',
+            rawInput: {
+              tool_name: 'taskwraith-broker__capability_invoke',
+              name: 'read_file',
+              arguments: { path: 'README.md' }
+            }
+          }
+        },
+        ['taskwraith', 'taskwraith-broker', 'TaskWraith']
+      )
+    ).toBe(true)
+  })
+
+  it('still refuses a NON-gateway envelope whose rawInput.name contradicts it', () => {
+    expect(
+      structuredTaskWraithSafeToolRequested(
+        {
+          toolName: 'display title',
+          toolKind: 'read',
+          rawToolCall: {
+            kind: 'read',
+            rawInput: {
+              tool_name: 'taskwraith-broker__read_file',
+              name: 'taskwraith-broker__write_file',
+              path: 'README.md'
+            }
+          }
+        },
+        ['taskwraith', 'taskwraith-broker', 'TaskWraith']
+      )
+    ).toBe(false)
+  })
+
   it('fails closed for mutating tools and unrecognized namespaces', () => {
     expect(
       grokTaskWraithSafeToolRequested({
