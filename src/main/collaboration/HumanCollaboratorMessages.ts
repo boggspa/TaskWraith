@@ -138,6 +138,12 @@ export function makeDeliveredExternalContribution(args: {
   sequence: number
   /** Seat order at delivery time — what puts the row in the right turn slot. */
   seatOrder?: number
+  /**
+   * True when the round ended before reaching this seat's position and the
+   * backstop sweep delivered it anyway. The transcript says so rather than
+   * implying the panel actually got that far.
+   */
+  outOfPosition?: boolean
 }): ChatMessage {
   return {
     id: args.id,
@@ -156,7 +162,8 @@ export function makeDeliveredExternalContribution(args: {
       // What the transcript header shows where an AI seat shows
       // "Claude / Reviewer  claude-model".
       displayParticipantLabel: `${args.collaboratorDisplayName} / External`,
-      ...(typeof args.seatOrder === 'number' ? { seatOrder: args.seatOrder } : {})
+      ...(typeof args.seatOrder === 'number' ? { seatOrder: args.seatOrder } : {}),
+      ...(args.outOfPosition === true ? { outOfPosition: true } : {})
     }
   }
 }
