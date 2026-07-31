@@ -362,7 +362,7 @@ describe('ChangelogSheet', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.9.2' }, null)
     expect(entry).toMatchObject({
       version: '1.9.2',
-      releaseDate: '2026-07-29'
+      releaseDate: '2026-07-31'
     })
     expect(entry.releaseNotes).toContain('same rulebook')
     expect(entry.releaseNotes).toContain('One action language')
