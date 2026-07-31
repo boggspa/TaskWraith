@@ -709,3 +709,76 @@ describe('a delivered contribution is visible to collaborators', () => {
     )
   })
 })
+
+describe('the share-lifetime history floor', () => {
+  const SHARE_CREATED = Date.parse('2026-07-31T12:00:00.000Z')
+  const flooredShare = (overrides: Record<string, unknown> = {}) =>
+    ({
+      shareId: 'share-1',
+      chatId: 'chat-1',
+      enabled: true,
+      mode: 'comments',
+      participants: [],
+      invites: [],
+      createdAt: SHARE_CREATED,
+      updatedAt: SHARE_CREATED,
+      ...overrides
+    }) as never
+
+  const msg = (id: string, iso: string | undefined) =>
+    ({ id, role: 'user', content: `content ${id}`, ...(iso ? { timestamp: iso } : {}) }) as never
+
+  const project = (messages: unknown[], share: unknown) =>
+    buildHumanShareProjection(
+      { appChatId: 'chat-1', title: 'Shared', messages, runs: [] } as never,
+      share as never,
+      {}
+    )
+
+  it('hides rows written before the share existed', () => {
+    // The consent point: those rows were written by someone with no reason to
+    // expect they would ever leave the machine.
+    const projection = project(
+      [
+        msg('before', '2026-07-31T11:00:00.000Z'),
+        msg('after', '2026-07-31T13:00:00.000Z')
+      ],
+      flooredShare()
+    )
+    expect(projection.rows.map((r) => r.id)).toEqual(['after'])
+  })
+
+  it('does not advertise the history it is withholding', () => {
+    // L-4: totalRows counts WITHIN the floor, or it tells the collaborator
+    // exactly how much they are not being shown.
+    const projection = project(
+      [
+        msg('a', '2026-07-31T09:00:00.000Z'),
+        msg('b', '2026-07-31T10:00:00.000Z'),
+        msg('after', '2026-07-31T13:00:00.000Z')
+      ],
+      flooredShare()
+    )
+    expect(projection.totalRows).toBe(1)
+  })
+
+  it('treats an undated row as OUTSIDE the window', () => {
+    // Fail closed. An undated row is not evidence that it postdates the share,
+    // and guessing in the collaborator's favour is the wrong direction for a
+    // disclosure boundary.
+    const projection = project([msg('undated', undefined)], flooredShare())
+    expect(projection.rows).toEqual([])
+  })
+
+  it('grants the whole thread only on the explicit per-share opt-in', () => {
+    const projection = project(
+      [
+        msg('before', '2026-07-31T11:00:00.000Z'),
+        msg('after', '2026-07-31T13:00:00.000Z')
+      ],
+      flooredShare({ fullHistory: true })
+    )
+    expect(projection.rows.map((r) => r.id)).toEqual(['before', 'after'])
+  })
+
+})

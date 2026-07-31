@@ -194,9 +194,37 @@ export function buildHumanShareProjection(
   const maxRows = clamp(opts.maxRows ?? DEFAULT_MAX_ROWS, 1, 300)
   const maxPreviewChars = clamp(opts.maxPreviewChars ?? DEFAULT_MAX_PREVIEW_CHARS, 120, 4000)
   const maxBytes = clamp(opts.maxBytes ?? DEFAULT_MAX_BYTES, 8_000, 900_000)
-  const projectable = (chat.messages || []).filter(
-    (message) => Boolean(message?.id) && !isRetiredExternalChannelInboundMessage(message)
-  )
+  // SHARE-LIFETIME FLOOR. Rows written before this share existed were written by
+  // someone with no reason to expect they would ever leave the machine — a
+  // different consent posture from anything written after the invite went out.
+  // Nothing scoped the projection to the share before this, so the row cap was
+  // doing double duty as the disclosure boundary: raising it, or adding paging,
+  // would silently have granted pre-share history when only scroll depth was
+  // being asked for.
+  //
+  // Anchored on the SHARE's createdAt, deliberately not the participant's join
+  // time, so a reconnect or a re-admission cannot shift the window under
+  // somebody mid-read.
+  //
+  // `fullHistory` is the explicit per-share opt-in. It must stay explicit: the
+  // whole point is that granting the whole thread is a decision, never a side
+  // effect of changing a limit.
+  const historyFloor =
+    share.fullHistory === true
+      ? 0
+      : typeof share.createdAt === 'number'
+        ? share.createdAt
+        : 0
+  const projectable = (chat.messages || []).filter((message) => {
+    if (!message?.id || isRetiredExternalChannelInboundMessage(message)) return false
+    if (historyFloor <= 0) return true
+    // A row with no parseable timestamp is treated as OUTSIDE the window. Fail
+    // closed: an undated row is not evidence that it postdates the share, and
+    // guessing in the collaborator's favour is the wrong direction for a
+    // disclosure boundary.
+    const at = Date.parse(message.timestamp ?? '')
+    return Number.isFinite(at) && at >= historyFloor
+  })
   // One lookup table for the whole build rather than a scan per row.
   const seatById = new Map<string, { label?: string; colorIndex?: number }>()
   for (const seat of opts.roster || []) {
