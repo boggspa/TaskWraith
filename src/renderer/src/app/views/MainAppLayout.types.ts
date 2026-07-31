@@ -58,6 +58,7 @@ type MainAppLayoutSidebarProps = {
   canOpenWorkspacePopout: SidebarProps['canOpenWorkspacePopout']
   chats: SidebarProps['chats']
   collaboratingChatIds: NonNullable<SidebarProps['collaboratingChatIds']>
+  composerDraftChatIds: NonNullable<SidebarProps['composerDraftChatIds']>
   connectedCollaborationChatIds: ReadonlySet<string>
   currentChat: SidebarProps['currentChat']
   currentWorkspace: SidebarProps['currentWorkspace']

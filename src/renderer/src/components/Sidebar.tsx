@@ -70,7 +70,10 @@ import {
   primarySurfaceForSidebarTabChange,
   type SidebarPrimarySurface
 } from '../lib/primarySurfaceToggle'
-import { isHideableUnstartedDraft } from '../lib/unstartedDraftFilter'
+import {
+  findSurvivableUnstartedDraftId,
+  isHideableUnstartedDraft
+} from '../lib/unstartedDraftFilter'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
@@ -181,6 +184,9 @@ interface SidebarProps {
   activeWorkspaceBoardId?: string | null
   scheduledTasks?: ScheduledTask[]
   collaboratingChatIds?: Set<string>
+  /** Chats with non-empty unsent composer text — user intent that must stay
+   *  visible across thread switches (mirrors the reaper's draftChatIds). */
+  composerDraftChatIds?: ReadonlySet<string>
   /** Optional initial branch expansions; runtime callers normally omit this so branches start closed. */
   initialExpandedSubThreadParentIds?: string[]
   /**
@@ -2957,6 +2963,7 @@ export function Sidebar({
   activeWorkspaceBoardId = null,
   scheduledTasks = [],
   collaboratingChatIds = new Set<string>(),
+  composerDraftChatIds,
   initialExpandedSubThreadParentIds = [],
   showOnboardingHint = false,
   onDismissOnboardingHint,
@@ -3227,15 +3234,28 @@ export function Sidebar({
   // Unstarted "New Chat" / "New Ensemble" drafts must never stack in the
   // sidebar until they are begun — they only litter it (esp. ensemble drafts,
   // which the DELETE-ONLY reaper deliberately never collects). Hide every
-  // pristine draft EXCEPT the ones the user is actively on or that are live:
-  // the selected chat, any chat with a running/queued run, and shared chats.
-  // A hidden draft is not deleted (the reaper owns that) and stays reachable
-  // through create-path draft reuse. Intent-bearing drafts (pinned / goal /
-  // renamed / todo'd) are kept by the predicate itself.
+  // pristine draft EXCEPT: the ones the user is actively on or that are live
+  // (the selected chat, any chat with a running/queued run, shared chats),
+  // chats holding unsent composer text (typed intent survives a thread
+  // switch), and the ONE survivable New Chat — the newest pristine draft,
+  // kept visible so preparing a prompt isn't lost when the user checks
+  // another thread for context (the create-time reaper sweeps any older
+  // drafts down to that single survivor). A hidden draft is not deleted (the
+  // reaper owns that) and stays reachable through create-path draft reuse.
+  // Intent-bearing drafts (pinned / goal / renamed / todo'd) are kept by the
+  // predicate itself.
   const draftVisibilityProtectedIds = new Set<string>(runningChatIds)
   if (activeChatId) draftVisibilityProtectedIds.add(activeChatId)
   if (currentChat?.appChatId) draftVisibilityProtectedIds.add(currentChat.appChatId)
   for (const id of collaboratingChatIds) draftVisibilityProtectedIds.add(id)
+  if (composerDraftChatIds) {
+    for (const id of composerDraftChatIds) draftVisibilityProtectedIds.add(id)
+  }
+  const survivableDraftId = findSurvivableUnstartedDraftId(
+    chats.filter((chat) => !isContentlessRemoteDraftChat(chat)),
+    { protectedChatIds: draftVisibilityProtectedIds }
+  )
+  if (survivableDraftId) draftVisibilityProtectedIds.add(survivableDraftId)
   const displayChats = chats.filter(
     (chat) =>
       !isContentlessRemoteDraftChat(chat) &&

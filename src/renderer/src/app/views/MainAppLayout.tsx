@@ -168,6 +168,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   codexThreads,
   collaboratingChatIds,
   composerCtx,
+  composerDraftChatIds,
   configuredProviderSnapshot,
   executionMapProjection,
   executionMapSelectedStepId,
@@ -1301,6 +1302,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 activeWorkspaceBoardId={workspaceBoardApiReady ? activeWorkspaceBoardId : null}
                 scheduledTasks={scheduledTasks}
                 collaboratingChatIds={collaboratingChatIds}
+                composerDraftChatIds={composerDraftChatIds}
                 showOnboardingHint={showOnboardingHint}
                 onDismissOnboardingHint={handleDismissOnboardingHint}
                 onSelectWorkspace={handleNavigateToWorkspace}

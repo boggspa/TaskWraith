@@ -29779,6 +29779,18 @@ function App(): React.JSX.Element {
       memberCount: project.memberChatIds.length
     }))
 
+  // Chats holding unsent composer text — kept visible in the sidebar across
+  // thread switches (mirrors the reaper's draftChatIds protection; the "one
+  // survivable New Chat" itself is derived inside the sidebar).
+  const composerDraftChatIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(composerDraftsByChatId)
+          .filter(([, text]) => typeof text === 'string' && text.trim().length > 0)
+          .map(([id]) => id)
+      ),
+    [composerDraftsByChatId]
+  )
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
@@ -29844,6 +29856,7 @@ function App(): React.JSX.Element {
     codexStatus,
     codexThreads,
     collaboratingChatIds,
+    composerDraftChatIds,
     composerCtx,
     configuredProviderSnapshot,
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
