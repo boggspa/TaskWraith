@@ -95,6 +95,8 @@ export interface ChatHandlerDeps {
   ) => string[]
   getWorkflowChatIds: () => Set<string>
   getScheduledChatIds: () => Set<string>
+  /** Chat ids with a live share or a contribution awaiting host review. */
+  getSharedChatIds: () => Set<string>
   /**
    * Main-owned chat popout windows that are currently alive. The renderer's
    * one-shot handoff payload is consumed on mount, so it cannot be the durable
@@ -382,10 +384,15 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       // first because it is cheap; only then do we pay for a chat read to
       // confirm this is actually a collapse and not a no-op.
       if (args?.targetKind !== 'ensemble') {
-        const shared = deps.chatService
+        // ACTIVE participants, not enabled shares — both revoke paths leave the
+        // share record behind, and an enabled share nobody is admitted to
+        // protects nothing. ChatService.setChatKind is the authority; this copy
+        // is the cheap early check.
+        const admitted = deps.chatService
           .listHumanCollaborationShares(args.chatId)
-          .some((share) => share.enabled)
-        if (shared && deps.chatService.getChat(args.chatId)?.chatKind === 'ensemble') {
+          .filter((share) => share.enabled)
+          .some((share) => (share.participants || []).some((p) => p.status === 'active'))
+        if (admitted && deps.chatService.getChat(args.chatId)?.chatKind === 'ensemble') {
           throw new Error(
             'This chat is shared. Stop sharing before switching it out of panel mode.'
           )
@@ -593,6 +600,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
               getChats: () => deps.chatService.getChats(),
               getWorkflowChatIds: deps.getWorkflowChatIds,
               getScheduledChatIds: deps.getScheduledChatIds,
+              getSharedChatIds: deps.getSharedChatIds,
               deleteChat: (id) => collected.push(id)
             },
             effectiveRenderer

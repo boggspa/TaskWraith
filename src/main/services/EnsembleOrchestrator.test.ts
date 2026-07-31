@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EnsembleOrchestrator,
@@ -250,6 +252,8 @@ function makeHarness(
     hasPendingProviderRunApprovals?: EnsembleOrchestratorDeps['hasPendingProviderRunApprovals']
     cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
     terminateRunForHistory?: EnsembleOrchestratorDeps['terminateRunForHistory']
+    resolveExternalSeats?: EnsembleOrchestratorDeps['resolveExternalSeats']
+    externalContributionQueue?: EnsembleOrchestratorDeps['externalContributionQueue']
     /**
      * 1.0.4-AD — optional probe injection. When set, the orchestrator
      * calls it BEFORE each participant's dispatch. Returning
@@ -353,6 +357,12 @@ function makeHarness(
       ? { hasPendingProviderRunApprovals: options.hasPendingProviderRunApprovals }
       : {}),
     ...(terminateRunForHistory ? { terminateRunForHistory } : {}),
+    ...(options.resolveExternalSeats
+      ? { resolveExternalSeats: options.resolveExternalSeats }
+      : {}),
+    ...(options.externalContributionQueue
+      ? { externalContributionQueue: options.externalContributionQueue }
+      : {}),
     ...(options.awaitPendingSeatCompaction
       ? { awaitPendingSeatCompaction: options.awaitPendingSeatCompaction }
       : {}),
@@ -9425,6 +9435,176 @@ Next action:
     // ...and the orchestrator advanced to the next participant immediately.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
+  /**
+   * S16 — an approved contribution is delivered at its seat's POSITION, not at
+   * whatever boundary happens to come next. The external is not a member of the
+   * round state machine (EnsembleRoundParticipantState.provider is a required
+   * ProviderId and a human has none); what it has is an order that sorts in the
+   * same space as the model seats.
+   */
+  /**
+   * An OPTIONAL dep that production never passes is indistinguishable from a
+   * working feature at the unit level: every test here injects both, so they
+   * all pass while the shipped app returns early and delivers nothing.
+   *
+   * That is exactly what happened — `deliverExternalSeatTurns` landed in
+   * b56d073eb and was never reachable in production until this assertion
+   * existed. A source-region check on the construction site is the only thing
+   * that can see the difference.
+   */
+  it('is actually wired at the production construction site', () => {
+    const indexSource = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const start = indexSource.indexOf('new EnsembleOrchestrator({')
+    expect(start).toBeGreaterThanOrEqual(0)
+    let depth = 0
+    let end = start
+    for (let i = indexSource.indexOf('{', start); i < indexSource.length; i += 1) {
+      if (indexSource[i] === '{') depth += 1
+      else if (indexSource[i] === '}') {
+        depth -= 1
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    const construction = indexSource.slice(start, end)
+    expect(construction).toContain('resolveExternalSeats:')
+    expect(construction).toContain('externalContributionQueue')
+  })
+
+  describe('external seat turns', () => {
+    function queueStub(entries: Array<Record<string, unknown>>) {
+      const materialised: string[] = []
+      return {
+        materialised,
+        listAwaitingMaterialisation: () => entries.filter((e) => !materialised.includes(e.entryId as string)),
+        markMaterialised: (entryId: string) => {
+          materialised.push(entryId)
+          return null
+        }
+      }
+    }
+
+    function entry(overrides: Record<string, unknown> = {}) {
+      return {
+        entryId: 'entry-1',
+        chatId: 'ensemble-chat',
+        shareId: 'share-1',
+        collaboratorId: 'collab-1',
+        displayName: 'Alex',
+        clientMessageId: 'client-1',
+        sequence: 1,
+        body: 'please check the migration',
+        bodyBytes: 24,
+        state: 'approved',
+        materialised: false,
+        enqueuedAt: 1,
+        expiresAt: 2,
+        messageId: 'external-row-1',
+        ...overrides
+      }
+    }
+
+    it('delivers at the seat’s position, before the seat it sorts ahead of', async () => {
+      const queue = queueStub([entry()])
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({
+        initialChat,
+        externalContributionQueue: queue as never,
+        // Seated at 1: ahead of codex (order 2), behind claude (order 1) on the
+        // model-wins-a-dead-heat rule.
+        resolveExternalSeats: () => [
+          { shareId: 'share-1', collaboratorId: 'collab-1', displayName: 'Alex', seatOrder: 1 }
+        ]
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+      await vi.waitFor(() =>
+        expect(
+          harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')
+        ).toBe(true)
+      )
+
+      const row = harness.chat.messages.find((m) => m.metadata?.kind === 'externalSeatTurn')!
+      expect(row.role).toBe('system')
+      expect(row.metadata?.sourceTrust).toBe('external_untrusted')
+      expect(row.metadata?.displayParticipantLabel).toBe('Alex / External')
+      // Reached in position, so NOT flagged as arriving out of order.
+      expect(row.metadata?.outOfPosition).toBeUndefined()
+      expect(queue.materialised).toEqual(['entry-1'])
+    })
+
+    it('does nothing at all when the chat has no externals', async () => {
+      // The overwhelmingly common case: both deps absent, behaviour identical
+      // to before S16.
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({ initialChat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+      expect(harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')).toBe(false)
+    })
+
+    it('never delivers for a muted seat', async () => {
+      // Muting holds the position but declines the turn — deliberately unlike
+      // revocation, which yields no seat at all.
+      const queue = queueStub([entry()])
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({
+        initialChat,
+        externalContributionQueue: queue as never,
+        resolveExternalSeats: () => [
+          {
+            shareId: 'share-1',
+            collaboratorId: 'collab-1',
+            displayName: 'Alex',
+            seatOrder: 1,
+            enabled: false
+          }
+        ]
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+      expect(harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')).toBe(false)
+      expect(queue.materialised).toEqual([])
+    })
+
+    it('never delivers for a seat that no longer exists', async () => {
+      // Approved, then the person was revoked. Trust was withdrawn after the
+      // approval, so the approval does not survive it.
+      const queue = queueStub([entry()])
+      const initialChat = makeChat()
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      const harness = makeHarness({
+        initialChat,
+        externalContributionQueue: queue as never,
+        resolveExternalSeats: () => []
+      })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(0))
+      expect(harness.chat.messages.some((m) => m.metadata?.kind === 'externalSeatTurn')).toBe(false)
+    })
   })
 
   it('replaces a pending participant after a successful health check', async () => {

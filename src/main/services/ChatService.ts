@@ -53,6 +53,18 @@ import {
   type PendingWorkspaceRebind
 } from '../pendingWorkspaceRebind'
 import { hasPendingEnsembleRosterPresetApply } from '../../shared/ensembleRosterPresetApply'
+import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
+import {
+  EXTERNAL_JOIN_CONVERTED_KEY,
+  chatNeedsExternalJoinConversion,
+  clearExternalJoinConvertedMark,
+  markChatConvertedByExternalJoin,
+  clearPendingExternalJoinConversion,
+  hasPendingExternalJoinConversion,
+  queuePendingExternalJoinConversion,
+  readPendingExternalJoinConversion,
+  type PendingExternalJoinConversion
+} from '../externalJoinConversion'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
@@ -458,13 +470,15 @@ export class ChatService {
     // desktop handler used to claim it was "the gate every surface goes
     // through". It was not. This is.
     if (targetKind !== 'ensemble') {
-      // Read the store directly rather than through the accessor that throws
-      // when it is unconfigured: no store means no shares can exist, so there is
-      // nothing here to protect and no reason to fail a plain solo conversion.
-      const shared = (this.deps.humanCollaborationStore?.listShares(chatId) ?? []).some(
-        (share) => share.enabled
-      )
-      if (shared && this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble') {
+      // ACTIVE PARTICIPANTS, not enabled shares. An enabled share with nobody
+      // admitted protects nothing — and keying on it made the guard refuse the
+      // very revert it exists to make safe, because both revoke paths leave the
+      // share record behind. What must never happen is collapsing a panel
+      // somebody is still admitted to.
+      if (
+        this.activeExternalCountForChat(chatId) > 0 &&
+        this.deps.appStore.getChat(chatId)?.chatKind === 'ensemble'
+      ) {
         throw new Error(
           'This chat is shared. Stop sharing before switching it out of panel mode.'
         )
@@ -755,7 +769,35 @@ export class ChatService {
   listPendingExternalContributions(chatId: string): ExternalContributionEntry[] {
     const queue = this.deps.externalContributionQueue
     if (!queue) return []
-    return queue.listQueued(requireSafeChatId(chatId, 'Chat id'))
+    const id = requireSafeChatId(chatId, 'Chat id')
+    const queued = queue.listQueued(id)
+
+    // HELD BY MUTE. Muting a seat holds an already-approved contribution rather
+    // than delivering it — but approval had already removed it from this list,
+    // and the delivery rule then refuses it forever, so before this it was
+    // neither delivered nor denied and nobody could see it at all. Approval is
+    // therefore no longer final: a held contribution comes BACK here so the host
+    // can deny it or unmute the seat.
+    //
+    // Derived at read time from current seat state, never stored. A mute is a
+    // live property of the seat; persisting "held" would go stale the moment
+    // the host unmuted, and the entry would have to be rewritten to recover.
+    const mutedCollaborators = new Set<string>()
+    for (const share of this.deps.humanCollaborationStore?.listShares(id) ?? []) {
+      if (!share.enabled) continue
+      for (const participant of share.participants || []) {
+        if (participant.status === 'active' && participant.seatDisabled === true) {
+          mutedCollaborators.add(participant.collaboratorId)
+        }
+      }
+    }
+    if (mutedCollaborators.size === 0) return queued
+
+    const held = queue
+      .listAwaitingMaterialisation()
+      .filter((entry) => entry.chatId === id && mutedCollaborators.has(entry.collaboratorId))
+      .map((entry) => ({ ...entry, heldByMute: true }))
+    return [...queued, ...held]
   }
 
   /**
@@ -835,6 +877,174 @@ export class ChatService {
     return updated
   }
 
+  /**
+   * An external joined — make the thread a panel, now or at the next boundary.
+   *
+   * Called from BOTH join doors: the runtime's `confirmSas` (every real remote
+   * join) and `consumeHumanCollaborationInvite` (a second, SAS-free door that
+   * has no renderer callers today but still mints an active participant). A
+   * hook on only one leaves the other producing an external on a solo chat,
+   * where they would hold a seat that can never take a turn.
+   *
+   * NEVER THROWS AND NEVER FAILS THE JOIN. `AppStore.setChatKind` refuses while
+   * a run streams or a round is live; that refusal is right for a host toggling
+   * the panel and wrong for a person arriving, who did nothing and cannot
+   * usefully retry. So a busy chat gets the marker and the next turn boundary
+   * converts.
+   *
+   * Returns whether a conversion was applied, queued, or was already unnecessary
+   * — the caller uses it to decide whether to broadcast, because the transport
+   * lane does not notify the host renderer by itself.
+   */
+  convertChatForExternalJoin(args: {
+    chatId: string
+    shareId: string
+    collaboratorId: string
+  }): { outcome: 'converted' | 'queued' | 'noop' } {
+    const chatId = requireSafeChatId(args.chatId, 'Chat id')
+    const chat = this.deps.appStore.getChat(chatId)
+    // Idempotent on CHAT STATE, never on the handshake. A reconnect fires on
+    // every tab reload, and a first join whose conversion was deferred arrives
+    // next AS a reconnect and must still convert.
+    if (!chat || !chatNeedsExternalJoinConversion(chat)) return { outcome: 'noop' }
+
+    const seedParticipant = buildExternalJoinSeedParticipant(chat)
+    if (!seedParticipant) return { outcome: 'noop' }
+
+    // The same two conditions AppStore.setChatKind throws on, asked before it
+    // is called rather than catching the throw — a caught throw cannot tell
+    // "busy" apart from "genuinely broken".
+    const busy =
+      (chat.runs ?? []).some((run) => run.status === 'running') ||
+      isEnsembleRoundDispatchLive(chat.ensemble?.activeRound)
+
+    try {
+      return this.applyOrQueueExternalJoinConversion(chat, args, seedParticipant, busy)
+    } catch {
+      // The header promises this never fails a join, so it must actually not.
+      // A chat on a retired provider, a seed the admission path rejects, a
+      // concurrent mutation — none of them are the joiner's problem, and none
+      // is worth refusing an admission that already succeeded.
+      return { outcome: 'noop' }
+    }
+  }
+
+  private applyOrQueueExternalJoinConversion(
+    chat: ChatRecord,
+    args: { chatId: string; shareId: string; collaboratorId: string },
+    seedParticipant: EnsembleParticipant,
+    busy: boolean
+  ): { outcome: 'converted' | 'queued' | 'noop' } {
+    if (busy) {
+      if (hasPendingExternalJoinConversion(chat)) return { outcome: 'queued' }
+      const plan: PendingExternalJoinConversion = {
+        schemaVersion: 1,
+        collaboratorId: args.collaboratorId,
+        shareId: args.shareId,
+        queuedAt: new Date().toISOString(),
+        seedParticipant
+      }
+      this.saveChat({ ...queuePendingExternalJoinConversion(chat, plan), updatedAt: Date.now() })
+      return { outcome: 'queued' }
+    }
+
+    const converted = this.setChatKind({
+      chatId: chat.appChatId,
+      targetKind: 'ensemble',
+      seedParticipant
+    })
+    // Stamped AFTER, not before: the solo→ensemble branch rewrites
+    // providerMetadata (it consumes any stashed roster), so a mark set first
+    // would be discarded.
+    const record = converted ?? this.deps.appStore.getChat(chat.appChatId)
+    if (record) {
+      this.saveChat({ ...markChatConvertedByExternalJoin(record), updatedAt: Date.now() })
+    }
+    return { outcome: 'converted' }
+  }
+
+  /**
+   * Drain a queued conversion at a turn boundary. Safe to call on every
+   * terminal run — it is a no-op without a marker, which is the overwhelming
+   * majority of runs.
+   */
+  applyPendingExternalJoinConversion(chatId: string): boolean {
+    const chat = this.deps.appStore.getChat(requireSafeChatId(chatId, 'Chat id'))
+    const plan = readPendingExternalJoinConversion(chat)
+    if (!chat || !plan) return false
+    // Clear the marker FIRST and unconditionally. A marker that survives a
+    // failed conversion would retry on every subsequent turn forever; the join
+    // itself is already durable in the share store, so a lost conversion is
+    // recoverable by the next join or by the host.
+    this.saveChat({ ...clearPendingExternalJoinConversion(chat), updatedAt: Date.now() })
+    if (!chatNeedsExternalJoinConversion(chat)) return false
+    try {
+      const converted = this.setChatKind({
+        chatId: chat.appChatId,
+        targetKind: 'ensemble',
+        seedParticipant: plan.seedParticipant
+      })
+      const record = converted ?? this.deps.appStore.getChat(chat.appChatId)
+      if (record) {
+        this.saveChat({ ...markChatConvertedByExternalJoin(record), updatedAt: Date.now() })
+      }
+      return true
+    } catch {
+      // Still busy, or the chat changed underneath. Not fatal and not retried.
+      return false
+    }
+  }
+
+  /**
+   * How many externals are ADMITTED to this chat right now.
+   *
+   * Store status, deliberately not presence. Both revoke paths mark a
+   * participant `revoked` synchronously, so a kick is reflected immediately;
+   * a closed tab or a sleeping laptop leaves them `active`, which is correct —
+   * they still hold their seat and can reconnect. Keying this on presence would
+   * collapse a panel on a network blip and would depend on expiry hooks that
+   * have no production caller.
+   */
+  private activeExternalCountForChat(chatId: string): number {
+    const shares = this.deps.humanCollaborationStore?.listShares(chatId) ?? []
+    let count = 0
+    for (const share of shares) {
+      if (!share.enabled) continue
+      for (const participant of share.participants || []) {
+        if (participant.status === 'active') count += 1
+      }
+    }
+    return count
+  }
+
+  /**
+   * The last external left — hand the thread back to solo.
+   *
+   * The mirror of `convertChatForExternalJoin`, and like it, never throws: a
+   * revoke must not fail because the chat happens to be mid-turn. A thread left
+   * as a panel it did not ask for is a cosmetic problem; a revoke that errors is
+   * not. `AppStore.setChatKind` derives the canonical provider from the Boss
+   * seat when none is passed, so this needs no renderer.
+   */
+  reconcileChatKindForExternalDeparture(chatId: string): boolean {
+    try {
+      const id = requireSafeChatId(chatId, 'Chat id')
+      if (this.activeExternalCountForChat(id) > 0) return false
+      const chat = this.deps.appStore.getChat(id)
+      if (chat?.chatKind !== 'ensemble') return false
+      // Only reverse a conversion this feature caused. A panel the host built
+      // themselves is theirs, and sharing it must not silently dismantle it.
+      if (!chat.providerMetadata?.[EXTERNAL_JOIN_CONVERTED_KEY]) return false
+      const reverted = this.setChatKind({ chatId: id, targetKind: 'single' }) ?? this.deps.appStore.getChat(id)
+      if (reverted) {
+        this.saveChat({ ...clearExternalJoinConvertedMark(reverted), updatedAt: Date.now() })
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   listHumanCollaborationShares(chatId?: string): HumanCollaborationShare[] {
     const store = this.requireHumanCollaborationStore()
     const normalizedChatId = chatId ? requireSafeChatId(chatId, 'Chat id') : undefined
@@ -842,15 +1052,23 @@ export class ChatService {
   }
 
   revokeHumanCollaborationShare(shareId: string): HumanCollaborationShare | null {
-    const revoked = this.requireHumanCollaborationStore().revokeShare(
-      requireNonEmptyString(shareId, 'Share id')
-    )
+    const id = requireNonEmptyString(shareId, 'Share id')
+    // Lapse BEFORE the revoke lands. Two reasons, and the order matters for
+    // both: a queued contribution left behind stays APPROVABLE after trust was
+    // withdrawn — the host would be releasing a message from someone they had
+    // just removed — and this is the last moment the person is still connected
+    // and can be told what happened to what they sent.
+    this.deps.externalContributionQueue?.lapseAll({ shareId: id }, 'shareEnded')
+    const revoked = this.requireHumanCollaborationStore().revokeShare(id)
     if (revoked) {
       this.deps.humanCollaborationAudit?.append({
         kind: 'share.revoked',
         chatId: revoked.chatId,
         shareId: revoked.shareId
       })
+      // Both revoke paths mark participants `revoked` synchronously, so by here
+      // the count is already right and the panel-mode guard no longer refuses.
+      this.reconcileChatKindForExternalDeparture(revoked.chatId)
     }
     return revoked
   }
@@ -859,9 +1077,18 @@ export class ChatService {
     shareId: string,
     collaboratorId: string
   ): HumanCollaborationShare | null {
+    const id = requireNonEmptyString(shareId, 'Share id')
+    const collaborator = requireNonEmptyString(collaboratorId, 'Collaborator id')
+    // Same rule, scoped to the one person: removing them must not leave their
+    // pending messages sitting in the host's approval stack. Other
+    // collaborators on the same share are untouched, hence both predicates.
+    this.deps.externalContributionQueue?.lapseAll(
+      { shareId: id, collaboratorId: collaborator },
+      'revoked'
+    )
     const updated = this.requireHumanCollaborationStore().revokeParticipant({
-      shareId: requireNonEmptyString(shareId, 'Share id'),
-      collaboratorId: requireNonEmptyString(collaboratorId, 'Collaborator id')
+      shareId: id,
+      collaboratorId: collaborator
     })
     if (updated) {
       this.deps.humanCollaborationAudit?.append({
@@ -870,6 +1097,9 @@ export class ChatService {
         shareId: updated.shareId,
         collaboratorId
       })
+      // Removing the last person hands the thread back; removing one of two
+      // leaves the panel exactly as it was.
+      this.reconcileChatKindForExternalDeparture(updated.chatId)
     }
     return updated
   }
@@ -892,6 +1122,13 @@ export class ChatService {
       shareId: result.share.shareId,
       collaboratorId: result.participant.collaboratorId,
       detail: result.participant.displayName
+    })
+    // An active external on a solo chat would hold a seat that can never take a
+    // turn. This door mints one without SAS, so it converts too.
+    this.convertChatForExternalJoin({
+      chatId: result.share.chatId,
+      shareId: result.share.shareId,
+      collaboratorId: result.participant.collaboratorId
     })
     return result
   }
@@ -1743,6 +1980,29 @@ function assertLiveProviderId(value: unknown): ProviderId {
 }
 
 /**
+ * A roster seat to convert a solo chat from, built main-side.
+ *
+ * Honestly lower fidelity than the renderer's equivalent: it carries the chat's
+ * provider and model and nothing else, because a relay join has no renderer and
+ * no composer selection to read. `AppStore.setChatKind` tops the roster up to
+ * the floor from here.
+ */
+function buildExternalJoinSeedParticipant(chat: ChatRecord): EnsembleParticipant | null {
+  if (!chat.provider) return null
+  return {
+    id: 'seat-1',
+    provider: chat.provider,
+    enabled: true,
+    role: 'Lead',
+    instructions: '',
+    order: 1,
+    ...(typeof chat.providerMetadata?.selectedModelType === 'string'
+      ? { model: chat.providerMetadata.selectedModelType }
+      : {})
+  }
+}
+
+/**
  * `chatKind` is main-owned. `setChatKind` is the door for changing it: it
  * enforces the idle-only running guard, seeds or strips the roster, and refuses
  * to collapse a SHARED chat out of panel mode. `save-chat` accepts a whole
@@ -1753,9 +2013,10 @@ function assertLiveProviderId(value: unknown): ProviderId {
  *
  *   - NO STORED RECORD. This is a creation (fork, side chat, sub-thread) and the
  *     incoming kind is the only one that exists.
- *   - A PENDING ROSTER-PRESET PLAN on the STORED record authorises exactly one
- *     transition — single → ensemble — at the turn or round boundary that
- *     consumes it. The plan is main-verifiable and was written by the
+ *   - A PENDING ROSTER-PRESET PLAN, or a PENDING EXTERNAL-JOIN CONVERSION, on
+ *     the STORED record authorises exactly one transition — single → ensemble —
+ *     at the turn or round boundary that consumes it. Both are written by main;
+ *     neither can be asserted by the incoming snapshot. The plan is main-verifiable and was written by the
  *     preset-apply path, so it is authority rather than renderer assertion, and
  *     it can only ever turn panel mode ON. It cannot launder a collapse.
  *
@@ -1776,7 +2037,7 @@ function preserveCanonicalChatKind(next: ChatRecord, current: ChatRecord | null)
   if (
     storedKind === 'single' &&
     incomingKind === 'ensemble' &&
-    hasPendingEnsembleRosterPresetApply(current)
+    (hasPendingEnsembleRosterPresetApply(current) || hasPendingExternalJoinConversion(current))
   ) {
     return next
   }

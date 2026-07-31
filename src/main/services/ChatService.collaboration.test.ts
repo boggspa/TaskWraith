@@ -1204,3 +1204,268 @@ describe('HumanCollaborationStore.setRequiresHostApproval', () => {
     expect(store.getShare('share-true')?.requiresHostApproval).toBe(true)
   })
 })
+
+describe('withdrawing trust settles what is already queued', () => {
+  // `reviewed` lives inside another describe; this block needs the same setup.
+  const reviewedShare = (service: ChatService, collaboration: HumanCollaborationStore) => {
+    const ids = admitted(service)
+    expect(
+      collaboration.setRequiresHostApproval({
+        shareId: ids.shareId,
+        requiresHostApproval: true
+      })?.requiresHostApproval
+    ).toBe(true)
+    return ids
+  }
+
+  it('lapses a share’s queued contributions BEFORE the revoke lands', () => {
+    // Left behind, a queued contribution stays APPROVABLE after trust was
+    // withdrawn — the host would be releasing a message from someone they had
+    // just removed. Lapsing before the revoke is also the last moment the
+    // person is still connected and can be told.
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'still pending when the plug is pulled'
+    })
+    expect(queue.listQueued('chat-1')).toHaveLength(1)
+
+    service.revokeHumanCollaborationShare(shareId)
+
+    expect(queue.listQueued('chat-1')).toEqual([])
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('shareEnded')
+    // The body goes with it — nothing to approve means nothing to retain.
+    expect(entry.body).toBeUndefined()
+  })
+
+  it('lapses only the removed participant’s contributions, not the whole share', () => {
+    const { service, collaboration, queue } = harness({ withQueue: true })
+    const { shareId, collaboratorId } = reviewedShare(service, collaboration)
+    service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'from the collaborator being removed'
+    })
+
+    service.revokeHumanCollaborationParticipant(shareId, collaboratorId)
+
+    const entry = queue.listForCollaborator(collaboratorId)[0]
+    expect(entry.state).toBe('lapsed')
+    expect(entry.lapseReason).toBe('revoked')
+  })
+
+  it('does not wipe the queue when the service has no queue configured', () => {
+    // lapseAll refuses a predicate-free filter, but the optional-chaining guard
+    // is what keeps a review-less ChatService from throwing here at all.
+    const { service, collaboration } = harness()
+    const { shareId } = admitted(service)
+    collaboration.setRequiresHostApproval({ shareId, requiresHostApproval: true })
+    expect(() => service.revokeHumanCollaborationShare(shareId)).not.toThrow()
+  })
+})
+
+describe('an external join converts the thread to a panel', () => {
+  const solo = (overrides: Partial<ChatRecord> = {}): ChatRecord =>
+    chat({ chatKind: 'single', provider: 'claude', ...overrides })
+
+  it('converts an idle solo chat on join', () => {
+    const { service, chats, store } = harness()
+    chats.set('chat-1', solo())
+    const { shareId } = admitted(service)
+
+    service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(store.setChatKind).toHaveBeenCalledWith(
+      'chat-1',
+      'ensemble',
+      expect.objectContaining({ seedParticipant: expect.objectContaining({ provider: 'claude' }) })
+    )
+  })
+
+  it('is a no-op on a chat that is already a panel', () => {
+    // Idempotency is keyed on CHAT STATE, never the handshake: a reconnect
+    // fires on every tab reload, and a deferred first join arrives next AS a
+    // reconnect and must still convert.
+    const { service, chats, store } = harness()
+    chats.set('chat-1', solo({ chatKind: 'ensemble' }))
+    const { shareId } = admitted(service)
+
+    const result = service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(result.outcome).toBe('noop')
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('DEFERS instead of failing when a run is streaming', () => {
+    // AppStore.setChatKind throws mid-turn. That refusal is right for a host
+    // toggling the panel and wrong for a person arriving, so the join wins and
+    // the conversion waits.
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId } = admitted(service)
+
+    const result = service.convertChatForExternalJoin({
+      chatId: 'chat-1',
+      shareId,
+      collaboratorId: 'collab-1'
+    })
+
+    expect(result.outcome).toBe('queued')
+    expect(store.setChatKind).not.toHaveBeenCalled()
+    expect(
+      chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion
+    ).toBeTruthy()
+  })
+
+  it('applies the deferred conversion at the next boundary, and clears the marker', () => {
+    const { service, chats, store } = harness()
+    chats.set(
+      'chat-1',
+      solo({ runs: [{ runId: 'r1', provider: 'claude', status: 'running' }] as never })
+    )
+    const { shareId } = admitted(service)
+    service.convertChatForExternalJoin({ chatId: 'chat-1', shareId, collaboratorId: 'collab-1' })
+
+    // The run has ended by the time the boundary fires.
+    chats.set('chat-1', { ...chats.get('chat-1')!, runs: [] })
+    expect(service.applyPendingExternalJoinConversion('chat-1')).toBe(true)
+
+    expect(store.setChatKind).toHaveBeenCalled()
+    expect(chats.get('chat-1')?.providerMetadata?.pendingExternalJoinConversion).toBeUndefined()
+  })
+
+  it('never throws, whatever the chat is', () => {
+    // The contract the join path depends on. A retired provider, a rejected
+    // seed, a concurrent mutation — none of them are the joiner's problem.
+    const { service, chats } = harness()
+    chats.set('chat-1', solo({ provider: 'gemini' }))
+    expect(() =>
+      service.convertChatForExternalJoin({
+        chatId: 'chat-1',
+        shareId: 'share-1',
+        collaboratorId: 'collab-1'
+      })
+    ).not.toThrow()
+  })
+})
+
+describe('the last external leaving hands the thread back', () => {
+  it('reverts a thread this feature converted', () => {
+    const { service, chats, store, collaboration } = harness()
+    chats.set('chat-1', chat({ chatKind: 'single', provider: 'claude' }))
+    const { shareId, collaboratorId } = admitted(service)
+    // Stand in for the conversion having happened.
+    chats.set('chat-1', {
+      ...chats.get('chat-1')!,
+      chatKind: 'ensemble',
+      providerMetadata: { externalJoinConverted: true }
+    })
+    collaboration.revokeParticipant({ shareId, collaboratorId })
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(true)
+    expect(store.setChatKind).toHaveBeenCalledWith('chat-1', 'single', expect.anything())
+  })
+
+  it('never dismantles a panel the host built themselves', () => {
+    // Sharing a real Ensemble and then unsharing it must not silently collapse
+    // the host's roster onto one provider. No mark, no revert.
+    //
+    // The external must be GONE here, not merely present — otherwise the
+    // participant-count check short-circuits first and this passes without ever
+    // reaching the ownership rule it exists to pin. (It did, until a mutation
+    // run showed removing the rule broke nothing.)
+    const { service, chats, store, collaboration } = harness()
+    chats.set('chat-1', chat({ chatKind: 'ensemble', provider: 'claude' }))
+    const { shareId, collaboratorId } = admitted(service)
+    collaboration.revokeParticipant({ shareId, collaboratorId })
+    vi.mocked(store.setChatKind).mockClear()
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+
+  it('does not revert while another external is still admitted', () => {
+    const { service, chats, store } = harness()
+    chats.set('chat-1', {
+      ...chat({ chatKind: 'ensemble', provider: 'claude' }),
+      providerMetadata: { externalJoinConverted: true }
+    })
+    admitted(service)
+
+    expect(service.reconcileChatKindForExternalDeparture('chat-1')).toBe(false)
+    expect(store.setChatKind).not.toHaveBeenCalled()
+  })
+})
+
+describe('muting holds an approved contribution instead of stranding it', () => {
+  function approvedForMutedSeat() {
+    const h = harness({ withQueue: true })
+    const { shareId, collaboratorId } = (() => {
+      const ids = admitted(h.service)
+      h.collaboration.setRequiresHostApproval({ shareId: ids.shareId, requiresHostApproval: true })
+      return ids
+    })()
+    h.service.appendCollaboratorComment({
+      shareId,
+      chatId: 'chat-1',
+      collaboratorId,
+      clientMessageId: 'client-1',
+      content: 'held while the seat is muted'
+    })
+    const entry = h.queue.listQueued('chat-1')[0]
+    h.service.approveExternalContribution(entry.entryId)
+    return { ...h, shareId, collaboratorId }
+  }
+
+  it('brings an approved-but-muted contribution BACK to the host stack', () => {
+    // Before this it vanished: approval removed it from the queued list, and the
+    // delivery rule refuses a muted seat forever. Neither delivered nor denied,
+    // and invisible to everyone.
+    const { service, collaboration, shareId, collaboratorId } = approvedForMutedSeat()
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+
+    const pending = service.listPendingExternalContributions('chat-1')
+    expect(pending).toHaveLength(1)
+    expect(pending[0].heldByMute).toBe(true)
+  })
+
+  it('drops the held flag again the moment the seat is unmuted', () => {
+    // Derived at read time, never stored — a persisted flag would go stale here.
+    const { service, collaboration, shareId, collaboratorId } = approvedForMutedSeat()
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+    expect(service.listPendingExternalContributions('chat-1')).toHaveLength(1)
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: false })
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+  })
+
+  it('does not resurrect a contribution that was already delivered', () => {
+    const { service, collaboration, queue, shareId, collaboratorId } = approvedForMutedSeat()
+    const entry = queue.listAwaitingMaterialisation()[0]
+    queue.markMaterialised(entry.entryId)
+
+    collaboration.updateParticipantSeat({ shareId, collaboratorId, seatDisabled: true })
+    expect(service.listPendingExternalContributions('chat-1')).toEqual([])
+  })
+})

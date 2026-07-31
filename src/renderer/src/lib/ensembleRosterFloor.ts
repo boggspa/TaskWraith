@@ -41,10 +41,24 @@ export const MIN_LIVE_ENSEMBLE_PARTICIPANTS = 2
  */
 export function resolveEnsembleCollapseTarget(
   participants: readonly EnsembleParticipant[],
-  removedId: string
+  removedId: string,
+  /**
+   * External human seats in the panel. They hold positions and take turns, so
+   * they count toward the floor — one agent plus one person is a panel, and
+   * refusing that would collapse a thread somebody is actively sitting in.
+   *
+   * They do NOT count anywhere a roster is SEEDED or topped up: the same number
+   * gets the opposite answer on that side, because a human standing in for an
+   * AI seat there would seed too few agents. The dividing line is which side of
+   * `setChatKind` the call sits on.
+   */
+  externalSeatCount = 0
 ): EnsembleParticipant | null {
   if (!participants.some((participant) => participant.id === removedId)) return null
-  if (participants.length > MIN_LIVE_ENSEMBLE_PARTICIPANTS) return null
+  // Deliberately asks about the roster AFTER the removal. The original `>` form
+  // encoded the same question implicitly at externalSeatCount 0; spelling it
+  // out is what lets externals join the count without an off-by-one.
+  if (participants.length - 1 + externalSeatCount >= MIN_LIVE_ENSEMBLE_PARTICIPANTS) return null
   return (
     participants.find((participant) => participant.id !== removedId) ||
     participants.find((participant) => participant.id === removedId) ||

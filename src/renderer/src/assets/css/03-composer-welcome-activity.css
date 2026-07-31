@@ -14152,9 +14152,10 @@ button.diff-file-row {
   align-items: flex-start;
   gap: 10px;
   padding: 10px 12px;
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  border: 1px solid var(--panel-border);
   border-radius: 12px;
-  background: var(--surface-raised, rgba(20, 22, 28, 0.92));
+  background: var(--panel-elevated-bg);
+  color: var(--text-primary);
 }
 
 .pending-contribution-body {
@@ -14169,9 +14170,18 @@ button.diff-file-row {
   margin-bottom: 3px;
 }
 
+.pending-contribution-held {
+  opacity: 0.72;
+}
+
 .pending-contribution-text {
   font-size: 13px;
   line-height: 1.45;
+  /* Bound the ROW, not just the stack. `38vh` is viewport-relative and a
+     Multiview pane is a fraction of the viewport, so one long contribution
+     could otherwise push its own Approve/Deny past the top of the cell. */
+  max-height: 120px;
+  overflow-y: auto;
   /* Untrusted text: wrap it rather than let a single unbroken token stretch
      the row and shove the actions off the edge. */
   overflow-wrap: anywhere;
@@ -14184,15 +14194,35 @@ button.diff-file-row {
   gap: 6px;
 }
 
+.pending-contribution-decline {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pending-contribution-reason {
+  width: 200px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.pending-contribution-decline button,
 .pending-contribution-actions button {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.16));
+  border: 1px solid var(--panel-border);
   background: transparent;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
+.pending-contribution-decline button:disabled,
 .pending-contribution-actions button:disabled {
   opacity: 0.5;
   cursor: default;

@@ -62,6 +62,11 @@ import { buildParticipantTokenChipTooltipLine } from '../lib/participantTokenChi
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
 import {
+  resolveEffectiveRoster,
+  isExternalSeat,
+  type ExternalSeatInput
+} from '../../../shared/effectiveEnsembleRoster'
+import {
   MIN_LIVE_ENSEMBLE_PARTICIPANTS,
   resolveEnsembleCollapseTarget
 } from '../lib/ensembleRosterFloor'
@@ -826,6 +831,11 @@ interface EnsembleParticipantsAboveRowProps {
   chat: ChatRecord
   /** Visible roster projection, including accepted changes waiting on an active seat boundary. */
   participantProjection?: EnsembleParticipant[]
+  /**
+   * External human seats, derived from the chat's share. Absent or empty means
+   * the strip behaves exactly as it did before externals existed.
+   */
+  externalSeats?: readonly ExternalSeatInput[]
   selectedParticipantId: string | null
   onSelectParticipant: (id: string) => void
   onChatChange: (next: ChatRecord) => void
@@ -980,6 +990,7 @@ export function resolveParticipantSelectionAfterRemoval(
 export function EnsembleParticipantsAboveRow({
   chat,
   participantProjection,
+  externalSeats,
   selectedParticipantId,
   onSelectParticipant,
   onChatChange,
@@ -1011,6 +1022,31 @@ export function EnsembleParticipantsAboveRow({
         )
       : []
   const participantIdsKey = participants.map((participant) => participant.id).join('\u001f')
+
+  /**
+   * The panel as it is SEEN: model seats plus external human seats, in one
+   * shared order. Externals are never rows in `chat.ensemble.participants` —
+   * see effectiveEnsembleRoster.ts for why deriving won — so this is the only
+   * place the two halves meet for display.
+   *
+   * The model chips below are NOT restructured to iterate this. They keep their
+   * own map, and both kinds are positioned with CSS `order` instead; the strip
+   * is a flex row (and a grid when wrapped), so both honour it. That keeps a
+   * thousand lines of chip internals untouched, and it means an empty
+   * `externalSeats` produces byte-identical output to before.
+   */
+  const effectiveRoster = useMemo(
+    () => resolveEffectiveRoster({ participants, externals: externalSeats ?? [] }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [participantIdsKey, externalSeats]
+  )
+  const seatPositionById = useMemo(() => {
+    const positions = new Map<string, number>()
+    effectiveRoster.seats.forEach((seat, index) => positions.set(seat.seatId, index + 1))
+    return positions
+  }, [effectiveRoster])
+  const externalSeatChips = effectiveRoster.seats.filter(isExternalSeat)
+  const totalSeatCount = effectiveRoster.seats.length
 
   useEffect(() => {
     const pendingParticipantId = pendingFocusParticipantIdRef.current
@@ -1303,7 +1339,14 @@ export function EnsembleParticipantsAboveRow({
     // Ensemble, so the removal becomes a mode change instead: hand the thread
     // to the seat that survives and switch Ensemble off. Same transcript, same
     // thread — see `handleCollapseEnsembleToSolo` in App.tsx.
-    const collapseTarget = resolveEnsembleCollapseTarget(participants, id)
+    // Externals count toward the floor: one agent plus one person IS a panel,
+    // and collapsing it would switch Ensemble off under somebody who is sitting
+    // in the thread. Muted seats still count — they hold their position.
+    const collapseTarget = resolveEnsembleCollapseTarget(
+      participants,
+      id,
+      externalSeatChips.length
+    )
     if (collapseTarget) {
       // Hand over the post-removal roster too. Ensemble-off stashes whatever
       // roster it finds so a later Ensemble-on can restore it, so collapsing
@@ -1359,9 +1402,9 @@ export function EnsembleParticipantsAboveRow({
           // first count exceeding the 5-per-row ceiling) so the strip
           // never clips. Below the threshold we keep the centred
           // content-width flex layout — most ensembles live there.
-          participants.length >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? 'is-wrapped' : ''
+          totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? 'is-wrapped' : ''
         } ${dragGhost ? 'is-chip-dragging' : ''}`}
-        data-participant-count={participants.length}
+        data-participant-count={totalSeatCount}
       >
         {participants.map((participant, participantIndex) => {
           const state = activeRound?.participants.find(
@@ -1418,7 +1461,7 @@ export function EnsembleParticipantsAboveRow({
               key={participant.id}
               participant={participant}
               mentionParticipants={participants}
-              turnOrder={participantIndex + 1}
+              turnOrder={seatPositionById.get(participant.id) ?? participantIndex + 1}
               gridSpan={chipGridSpans?.[participantIndex]}
               statusLabel={statusLabel}
               statusTooltip={wakeupTooltip || statusTooltip}
@@ -1521,6 +1564,39 @@ export function EnsembleParticipantsAboveRow({
             />
           )
         })}
+        {externalSeatChips.map((seat) => (
+          <div
+            key={seat.seatId}
+            /**
+             * DELIBERATELY NOT `data-participant-id`. That attribute is the
+             * drag-reorder hit-test selector, and `resolveReorderDropTarget`
+             * falls back to the NEAREST match by centre distance — so an
+             * external carrying it would swallow drops meant for the model seat
+             * beside it, and `handleReorder` would then silently do nothing
+             * because the id resolves to -1 in the participants array.
+             */
+            data-seat-id={seat.seatId}
+            data-seat-kind="external"
+            data-turn-order={seatPositionById.get(seat.seatId)}
+            className={`ensemble-above-chip ensemble-above-chip--external${
+              seat.enabled ? '' : ' is-muted'
+            }${seat.present ? '' : ' is-away'}`}
+            style={{ order: seatPositionById.get(seat.seatId) }}
+            title={
+              seat.present
+                ? `${seat.label} — external collaborator`
+                : `${seat.label} — external collaborator (not connected)`
+            }
+          >
+            <div className="ensemble-above-chip-body">
+              <span className="ensemble-above-chip-turn-order">
+                {seatPositionById.get(seat.seatId)}
+              </span>
+              <span className="ensemble-above-chip-role">{seat.label}</span>
+              <span className="ensemble-above-chip-external-badge">External</span>
+            </div>
+          </div>
+        ))}
       </div>
       {dragGhost
         ? (() => {
@@ -2285,7 +2361,10 @@ function ParticipantChip({
       onPointerEnter={handleTooltipPointerEnter}
       onPointerLeave={dismissTooltip}
       className={`ensemble-above-chip provider-${providerClass} ${isSelected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''} ${isDragOver ? 'is-drag-over' : ''} ${isDragging ? 'is-dragging' : ''} ${isLiveGlow ? 'is-live-glow' : ''} ${isFailedGlow ? 'is-failed-glow' : ''}`}
-      style={gridSpan !== undefined ? { gridColumn: `span ${gridSpan}` } : undefined}
+      // `order` places the chip in the MERGED roster slot, so an external
+      // seated between two model seats pushes the later one along visually
+      // without the model map having to know it exists.
+      style={{ order: turnOrder, ...(gridSpan !== undefined ? { gridColumn: `span ${gridSpan}` } : {}) }}
       // 1.0.4-AT1 surfaced identity + linked-session via a native
       // `title` here. 2026-07 chip polish — that (and the role /
       // status-pill titles) folded into the single custom hover

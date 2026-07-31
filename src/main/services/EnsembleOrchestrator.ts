@@ -207,6 +207,16 @@ import {
   type CursorTransportLiveness
 } from './EnsembleCursorCompletionWatchdog'
 import {
+  resolveEffectiveRoster,
+  isExternalSeat,
+  type ExternalSeatInput
+} from '../../shared/effectiveEnsembleRoster'
+import { makeDeliveredExternalContribution } from '../collaboration/HumanCollaboratorMessages'
+import type {
+  ExternalContributionEntry,
+  ExternalContributionQueueStore
+} from '../collaboration/ExternalContributionQueueStore'
+import {
   ASSIGNABLE_PERMISSION_PRESETS,
   claudeRosterSessionRelinkError,
   evaluateRosterEdit,
@@ -483,6 +493,22 @@ export interface EnsembleOrchestratorDeps {
   createRunId: (provider: ProviderId) => string
   now: () => number
   nowIso: () => string
+  /**
+   * S16 — external seat turns. Both optional: an orchestrator with neither
+   * behaves exactly as it did before, which is what every existing test
+   * harness and every unshared chat relies on.
+   *
+   * The orchestrator PULLS from the queue. It is never pushed to, and
+   * ChatService must never gain a dispatcher — the source-region tripwire in
+   * ExternalContributionDispatchBoundary.test.ts pins that, because a
+   * contribution that can START work is a different security question from one
+   * that rides a round the host already started.
+   */
+  resolveExternalSeats?: (chatId: string) => readonly ExternalSeatInput[]
+  externalContributionQueue?: Pick<
+    ExternalContributionQueueStore,
+    'listAwaitingMaterialisation' | 'markMaterialised'
+  >
   /**
    * 1.0.4-AD — optional pre-flight reachability probe. Called BEFORE
    * each participant's dispatch in `runRound`. When omitted (e.g.
@@ -13209,6 +13235,8 @@ export class EnsembleOrchestrator {
       this.preemptRemainingForTerminalGoal(runtime, chat, remaining, stageGateExemptIds)
       if (remaining.length === 0) break
       const nextParticipant = remaining[0]
+      // Any external seated at or before this one takes its turn first.
+      this.deliverExternalSeatTurns(runtime, nextParticipant.order)
       const quarantine = this.activeBossmanQuarantine(chat, runtime.roundId, nextParticipant.id)
       if (quarantine) {
         remaining.shift()
@@ -14120,6 +14148,10 @@ export class EnsembleOrchestrator {
     // landing. Defer the drain tail; the last lane terminal in `finalizeRun`
     // (or the reservation release in `fanoutForRun`) replays it. Cancelled
     // rounds never defer: Stop must close the round immediately.
+    // Backstop: externals ordered after the last model seat, plus anything the
+    // round ended too early to reach. Skipped on cancel — a stopped round
+    // should not keep appending.
+    if (!runtime.cancelled) this.deliverExternalSeatTurns(runtime, undefined)
     if (!runtime.cancelled && this.deferDrainForActiveLanes(runtime)) return
     this.finalizeDrainedRound(runtime)
   }
@@ -16841,6 +16873,113 @@ export class EnsembleOrchestrator {
       }
     }
     this.maybeAutoCompactSeatsAfterRound(chatId, status)
+  }
+
+  /**
+   * S16 — deliver approved external contributions at their seat's turn.
+   *
+   * The external is NOT a member of the round state machine:
+   * `EnsembleRoundParticipantState.provider` is a required `ProviderId` and a
+   * human has none, so fabricating one would put a lie into persisted state and
+   * into every prompt that reads it. What the external has instead is a
+   * POSITION — `EffectiveSeat.order` sorts model and external seats in one
+   * shared space — and this method honours it: called at each seat boundary,
+   * it materialises every approved contribution whose seat sorts at or before
+   * the seat about to run.
+   *
+   * `beforeOrder` undefined means the round is over and this is the backstop
+   * sweep. A round can end before reaching position 7 — the goal completes,
+   * seats yield, a quarantine cuts it short — and without the sweep an approved
+   * message would silently wait for a whole further round. Anything delivered
+   * that way is stamped `outOfPosition` so the transcript can say so rather
+   * than implying the panel reached that seat.
+   *
+   * Nothing here dispatches: no run, no hop, no round-participant mutation.
+   */
+  private deliverExternalSeatTurns(
+    runtime: ActiveRoundRuntime,
+    beforeOrder: number | undefined
+  ): void {
+    const queue = this.deps.externalContributionQueue
+    const resolveSeats = this.deps.resolveExternalSeats
+    if (!queue || !resolveSeats) return
+
+    let awaiting: readonly ExternalContributionEntry[]
+    try {
+      awaiting = queue.listAwaitingMaterialisation()
+    } catch {
+      return
+    }
+    if (awaiting.length === 0) return
+    const forChat = awaiting.filter((entry) => entry.chatId === runtime.chatId)
+    if (forChat.length === 0) return
+
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return
+
+    const roster = resolveEffectiveRoster({
+      participants: chat.ensemble.participants,
+      externals: resolveSeats(runtime.chatId)
+    })
+    const seatByCollaborator = new Map(
+      roster.seats
+        .filter(isExternalSeat)
+        .map((seat) => [seat.collaboratorId, seat] as const)
+    )
+
+    // Oldest approval first within a seat, so a person's own messages keep the
+    // order they wrote them in.
+    const due = forChat
+      .filter((entry) => {
+        const seat = seatByCollaborator.get(entry.collaboratorId)
+        // A seat the host muted holds its position but does not take its turn.
+        // A seat that no longer exists (revoked between approve and now) never
+        // delivers — trust was withdrawn after the approval.
+        if (!seat || !seat.enabled) return false
+        return beforeOrder === undefined || seat.order <= beforeOrder
+      })
+      .sort((a, b) => a.sequence - b.sequence)
+    if (due.length === 0) return
+
+    const timestamp = this.deps.nowIso()
+    const rows = due.map((entry) => {
+      const seat = seatByCollaborator.get(entry.collaboratorId)
+      return makeDeliveredExternalContribution({
+        id: entry.messageId || `external-seat-turn-${entry.entryId}`,
+        content: entry.body ?? '',
+        timestamp,
+        shareId: entry.shareId,
+        collaboratorId: entry.collaboratorId,
+        collaboratorDisplayName: entry.displayName,
+        clientMessageId: entry.clientMessageId,
+        sequence: entry.sequence,
+        ...(seat ? { seatOrder: seat.order } : {}),
+        outOfPosition: beforeOrder === undefined
+      })
+    })
+
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        messages: [...chat.messages, ...rows],
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+
+    // Mark AFTER the transcript write, never before. The two writes cannot be
+    // made atomic — this store does not fsync and the chat store does — and a
+    // crash between them must leave the entry re-deliverable rather than
+    // silently consumed. Losing a message is recoverable; dropping one is not.
+    for (const entry of due) {
+      try {
+        queue.markMaterialised(entry.entryId)
+      } catch {
+        // A failed mark leaves it in listAwaitingMaterialisation, which the
+        // next boundary retries. Duplicate delivery is prevented by the
+        // deterministic message id, not by this call succeeding.
+      }
+    }
   }
 
   private appendRoundStatus(chatId: string, roundId: string, content: string): void {

@@ -96,6 +96,78 @@ export function isHumanCollaboratorActionRequest(
   )
 }
 
+/**
+ * S16 — a contribution the host approved, delivered at the external's seat turn.
+ *
+ * SAME STAMPING AS A QUEUED COMMENT, DIFFERENT KIND, and every part of that is
+ * load-bearing:
+ *
+ *  - `sourceTrust: 'external_untrusted'` is what earns the untrusted frame in
+ *    the ensemble serializer, and what keeps the two solo/replay filters
+ *    refusing this row outright (PromptComposition and GeminiApiHistoryAdapter
+ *    both key on it, deliberately not on the kind).
+ *  - The KIND differs because `isHumanCollaboratorComment` is the EXCLUSION
+ *    predicate: a queued comment must stay out of provider history entirely,
+ *    and a delivered one is meant to reach the panel. Reusing the comment kind
+ *    would keep it excluded and deliver nothing; keying the wrapper on the kind
+ *    instead of `sourceTrust` would deliver it unframed. The two predicates
+ *    have to disagree here, which is exactly why they were built to.
+ *  - `role: 'system'`, never `'user'`. A `user` row IS the host in every
+ *    renderer, serializer and export.
+ *
+ * Delivery is not endorsement. `review` is recorded as host-approved provenance
+ * INSIDE the frame and nowhere else, so a delivered contribution never reads as
+ * the host vouching for what it says.
+ */
+export const EXTERNAL_SEAT_TURN_KIND = 'externalSeatTurn'
+
+export function isDeliveredExternalContribution(
+  message: ChatMessage | null | undefined
+): boolean {
+  return message?.metadata?.kind === EXTERNAL_SEAT_TURN_KIND
+}
+
+export function makeDeliveredExternalContribution(args: {
+  id: string
+  content: string
+  timestamp: string
+  shareId: string
+  collaboratorId: string
+  collaboratorDisplayName: string
+  clientMessageId: string
+  sequence: number
+  /** Seat order at delivery time — what puts the row in the right turn slot. */
+  seatOrder?: number
+  /**
+   * True when the round ended before reaching this seat's position and the
+   * backstop sweep delivered it anyway. The transcript says so rather than
+   * implying the panel actually got that far.
+   */
+  outOfPosition?: boolean
+}): ChatMessage {
+  return {
+    id: args.id,
+    role: 'system',
+    content: args.content,
+    timestamp: args.timestamp,
+    metadata: {
+      kind: EXTERNAL_SEAT_TURN_KIND,
+      sourceTrust: 'external_untrusted',
+      shareId: args.shareId,
+      collaboratorId: args.collaboratorId,
+      collaboratorDisplayName: args.collaboratorDisplayName,
+      clientMessageId: args.clientMessageId,
+      sequence: args.sequence,
+      promotedBy: 'host' as const,
+      // What the transcript header shows where an AI seat shows
+      // "Claude / Reviewer  claude-model".
+      displayParticipantLabel: `${args.collaboratorDisplayName} / External`,
+      ...(typeof args.seatOrder === 'number' ? { seatOrder: args.seatOrder } : {}),
+      ...(args.outOfPosition === true ? { outOfPosition: true } : {})
+    }
+  }
+}
+
 export function makeHumanCollaboratorComment(args: {
   id: string
   content: string

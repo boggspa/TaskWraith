@@ -94,6 +94,12 @@ export interface ExternalContributionEntry {
    * and losing a message is recoverable where duplicating one is not.
    */
   materialised?: boolean
+  /**
+   * DERIVED at read time, never stored: this contribution is approved but its
+   * seat is muted, so delivery is held. A mute is live seat state — persisting
+   * the flag would go stale the instant the host unmuted.
+   */
+  heldByMute?: boolean
 }
 
 export interface ExternalContributionQueueSnapshot {
@@ -140,6 +146,13 @@ export const MAX_CONTRIBUTION_BYTES = 12_000
  * "hundreds of bodies" cost the drop-on-lapse rule avoids simply reappears here.
  * Older denials keep their record and lose their body.
  */
+/**
+ * Host-authored decline note, bounded because it is the one string that travels
+ * OUTWARD to an external. The renderer caps its input at the same number so a
+ * host never types text that is silently truncated on the way out.
+ */
+export const MAX_HOST_REASON_CHARS = 500
+
 export const MAX_DENIED_BODIES_RETAINED = 20
 /**
  * Dedupe keys of evicted terminal entries. Without these, a retry of an
@@ -576,7 +589,7 @@ export class ExternalContributionQueueStore {
     if (!entry) return null
     entry.state = 'denied'
     entry.resolvedAt = now
-    if (reason && reason.trim()) entry.hostReason = reason.trim().slice(0, 500)
+    if (reason && reason.trim()) entry.hostReason = reason.trim().slice(0, MAX_HOST_REASON_CHARS)
     this.persist()
     return clone(entry)
   }

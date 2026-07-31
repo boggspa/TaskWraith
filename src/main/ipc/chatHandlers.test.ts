@@ -134,6 +134,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     reapAbandonedChats: vi.fn(() => []),
     getWorkflowChatIds: vi.fn(() => new Set(['workflow-chat'])),
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
+    getSharedChatIds: vi.fn(() => new Set(['shared-chat'])),
     getOpenChatPopoutIds: vi.fn(() => new Set<string>()),
     getOpenCanvasChatIds: vi.fn(() => new Set<string>()),
     isHistoryErasureInFlight: vi.fn(() => false),
@@ -416,15 +417,18 @@ describe('registerChatHandlers', () => {
 
   /**
    * A shared panel must not be collapsible. The collapse path strips the roster
-   * and stashes it, and a later preset-apply consumes that stash — so a seat
-   * removed by a collapse can come back. With external collaborators holding
+   * and stashes it, and AppStore.setChatKind's solo→ensemble branch restores
+   * that stash — so a seat removed by a collapse can come back. With external collaborators holding
    * seats that means a removed person's seat could resurrect, which is why this
    * is refused at the main-side gate rather than made collapse-aware.
    */
   it('refuses to collapse a SHARED ensemble chat out of panel mode', () => {
     const deps = createDeps({})
+    // ACTIVE participants are the discriminator, not the share record: both
+    // revoke paths leave an enabled share behind with nobody admitted, and
+    // refusing on that basis blocked the revert this guard exists to make safe.
     deps.chatService.listHumanCollaborationShares = vi.fn(() => [
-      { shareId: 'share-1', enabled: true } as never
+      { shareId: 'share-1', enabled: true, participants: [{ status: 'active' }] } as never
     ])
     deps.chatService.getChat = vi.fn(() => chat('chat-1', { chatKind: 'ensemble' }))
     registerChatHandlers(deps)
@@ -1008,6 +1012,7 @@ describe('registerChatHandlers', () => {
         getChats: expect.any(Function),
         getWorkflowChatIds: deps.getWorkflowChatIds,
         getScheduledChatIds: deps.getScheduledChatIds,
+        getSharedChatIds: deps.getSharedChatIds,
         deleteChat: expect.any(Function)
       }),
       {

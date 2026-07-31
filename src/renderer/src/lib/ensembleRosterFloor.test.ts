@@ -94,3 +94,28 @@ describe('resolveSoleEnsembleSoloCandidate', () => {
     expect(resolveSoleEnsembleSoloCandidate(chat)).toBeNull()
   })
 })
+
+describe('external seats count toward the floor', () => {
+  const seat = (id: string): EnsembleParticipant =>
+    ({ id, provider: 'claude', enabled: true, role: id, instructions: '', order: 0 }) as EnsembleParticipant
+
+  it('is unchanged when there are no externals', () => {
+    // The rewrite from `length > MIN` to a post-removal comparison must be
+    // behaviour-identical for every roster that exists today.
+    expect(resolveEnsembleCollapseTarget([seat('a'), seat('b'), seat('c')], 'c')).toBeNull()
+    expect(resolveEnsembleCollapseTarget([seat('a'), seat('b')], 'b')?.id).toBe('a')
+  })
+
+  it('lets one agent plus one external survive a removal', () => {
+    // 2 models + 1 external, remove a model: 1 agent + 1 person is a panel, so
+    // this must ABSORB rather than switch Ensemble off under somebody sitting
+    // in the thread.
+    expect(resolveEnsembleCollapseTarget([seat('a'), seat('b')], 'b', 1)).toBeNull()
+  })
+
+  it('still collapses when the last agent goes', () => {
+    // 1 model + 1 external, remove the model: an all-human panel has nothing to
+    // dispatch, so it collapses onto the seat being removed.
+    expect(resolveEnsembleCollapseTarget([seat('a')], 'a', 1)?.id).toBe('a')
+  })
+})

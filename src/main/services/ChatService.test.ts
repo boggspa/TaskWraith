@@ -701,7 +701,10 @@ describe('ChatService', () => {
    * now, which is the one thing every door has in common.
    */
   describe('a shared chat cannot be switched out of panel mode', () => {
-    function makeSharedDeps(chat: ChatRecord, shares: Array<{ enabled: boolean }>) {
+    function makeSharedDeps(
+      chat: ChatRecord,
+      shares: Array<{ enabled: boolean; participants?: Array<{ status: string }> }>
+    ) {
       const setChatKind = vi.fn((chatId: string, targetKind: 'single' | 'ensemble') =>
         makeChat({ appChatId: chatId, chatKind: targetKind })
       )
@@ -720,7 +723,7 @@ describe('ChatService', () => {
       // stash — so a seat removed by a collapse can RESURRECT. With externals in
       // seats that is a kicked person coming back.
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
-        { enabled: true }
+        { enabled: true, participants: [{ status: 'active' }] }
       ])
 
       expect(() =>
@@ -729,9 +732,23 @@ describe('ChatService', () => {
       expect(setChatKind).not.toHaveBeenCalled()
     })
 
-    it('allows the collapse once every share is disabled', () => {
+    it('allows the collapse when the share record survives but nobody is admitted', () => {
+      // The discriminating case, and the reason the predicate changed. Both
+      // revoke paths leave the share record behind, so "any enabled share"
+      // refused the very revert the guard exists to make safe.
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
-        { enabled: false }
+        { enabled: true, participants: [{ status: 'revoked' }] }
+      ])
+
+      new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
+      expect(setChatKind).toHaveBeenCalled()
+    })
+
+    it('allows the collapse once every share is disabled', () => {
+      // A revoked share leaves the record behind with nobody admitted — the
+      // case the old "any enabled share" predicate got wrong.
+      const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'ensemble' }), [
+        { enabled: false, participants: [{ status: 'revoked' }] }
       ])
 
       new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'single' })
@@ -740,7 +757,7 @@ describe('ChatService', () => {
 
     it('never blocks turning panel mode ON, shared or not', () => {
       const { deps, setChatKind } = makeSharedDeps(makeChat({ chatKind: 'single' }), [
-        { enabled: true }
+        { enabled: true, participants: [{ status: 'active' }] }
       ])
 
       new ChatService(deps).setChatKind({ chatId: 'chat-1', targetKind: 'ensemble' })
@@ -922,6 +939,42 @@ describe('ChatService', () => {
         chatKind: 'single',
         providerMetadata: {
           pendingEnsembleRosterPresetApply: pendingPresetPlan('preset-1')
+        }
+      })
+      const store = makeStatefulStore(current)
+      const { deps } = makeDeps({ appStore: store })
+
+      const saved = new ChatService(deps).saveChat({
+        ...current,
+        chatKind: 'ensemble',
+        providerMetadata: undefined
+      })
+
+      expect(saved.chatKind).toBe('ensemble')
+    })
+
+    it('allows single→ensemble when the STORED record carries a queued external-join conversion', () => {
+      // The other authorised transition. An external who joined during a live
+      // run leaves this marker; the boundary drain then converts, and that save
+      // must survive the fence or the conversion is silently undone and the
+      // person keeps a seat that can never take a turn.
+      const current = makeChat({
+        chatKind: 'single',
+        providerMetadata: {
+          pendingExternalJoinConversion: {
+            schemaVersion: 1,
+            collaboratorId: 'collab-1',
+            shareId: 'share-1',
+            queuedAt: '2026-07-31T00:00:00.000Z',
+            seedParticipant: {
+              id: 'seat-1',
+              provider: 'claude',
+              enabled: true,
+              role: 'Lead',
+              instructions: '',
+              order: 1
+            }
+          }
         }
       })
       const store = makeStatefulStore(current)

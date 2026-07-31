@@ -561,7 +561,10 @@ import {
 } from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
 import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
-import { resolveChatEffectiveRoster } from './collaboration/ExternalSeatResolution'
+import {
+  externalSeatsForShare,
+  resolveChatEffectiveRoster
+} from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
@@ -7994,8 +7997,11 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
   const chat = AppStore.getChat(session.appChatId)
   if (!chat) return
   const finalized = applyPendingEnsembleRosterPresetOnRunTerminal(chat, session.runId)
-  if (finalized === chat) return
-  saveAndBroadcastChat({ ...finalized, updatedAt: Date.now() })
+  if (finalized !== chat) saveAndBroadcastChat({ ...finalized, updatedAt: Date.now() })
+  // An external who joined while this run was streaming could not convert the
+  // thread then — AppStore.setChatKind refuses mid-turn. This is that boundary.
+  // A no-op without a marker, which is almost every run.
+  drainPendingExternalJoinConversion?.(session.appChatId)
 }
 
 runManager.onChange((event) => {
@@ -10109,6 +10115,12 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
  * used, nowhere near the relay's 1 MiB close.
  */
 let markHumanCollaborationProjectionDirty: ((chatId: string) => void) | null = null
+/**
+ * Apply a conversion an external join had to defer because a run was streaming.
+ * Late-bound for the same reason its neighbour is: the run-terminal helper is
+ * declared long before `chatService` exists.
+ */
+let drainPendingExternalJoinConversion: ((chatId: string) => void) | null = null
 
 /**
  * Seat ids held by EXTERNAL human collaborators on a chat, or `undefined` when
@@ -40798,7 +40810,10 @@ if (isGeminiMcpBridgeProcess) {
           if (
             action.targetKind !== 'ensemble' &&
             chat.chatKind === 'ensemble' &&
-            chatService.listHumanCollaborationShares(action.threadId).some((share) => share.enabled)
+            chatService
+              .listHumanCollaborationShares(action.threadId)
+              .filter((share) => share.enabled)
+              .some((share) => (share.participants || []).some((p) => p.status === 'active'))
           ) {
             return {
               ok: false,
@@ -45908,6 +45923,11 @@ if (isGeminiMcpBridgeProcess) {
         closeRoomsForShares(humanCollaborationStore.listShares())
         humanCollaborationAuditLog.purgeAll()
         humanCollaborationStore.purgeAllShares()
+        // The queue is a SECOND store of erasable content and it is the one
+        // that still holds message bodies. purgeAll drops the tombstones too,
+        // which matters: a tombstone carries collaboratorId + clientMessageId
+        // for content that is supposed to be gone.
+        externalContributionQueue.purgeAll()
         return
       }
       const targets = new Set(chatIds)
@@ -45923,6 +45943,13 @@ if (isGeminiMcpBridgeProcess) {
         chatIds,
         shareIds: scopedShares.map((share) => share.shareId)
       })
+      // ABOVE the truncate early-return on purpose. A truncate keeps the share
+      // but erases the rows underneath it, and a queued contribution is exactly
+      // such a row — `purgeChats` was written for this hook ("Must run for
+      // truncate too") and had no caller until now. An approved-but-undelivered
+      // entry is deliberately exempt from every TTL and overflow path, so if
+      // erasure skips it nothing else will ever remove it.
+      externalContributionQueue.purgeChats(chatIds)
       if (kind !== 'truncate') {
         humanCollaborationStore.purgeChatShares(chatIds)
         return
@@ -47235,6 +47262,17 @@ if (isGeminiMcpBridgeProcess) {
         onAdmissionBegan: (info) => {
           mainWindow?.webContents.send('human-collaboration-admission-began', info)
         },
+        onExternalSeatActive: (info) => {
+          const outcome = chatService.convertChatForExternalJoin(info).outcome
+          if (outcome === 'noop') return
+          // The transport lane does not notify the host renderer after a
+          // handshake — only the IPC lane does — so without these the kind
+          // flips on disk and the host's chip strip does not appear until some
+          // unrelated save or the 15s presence sweep happens to fire.
+          const converted = chatService.getChat(info.chatId)
+          if (converted) broadcastChatUpdated(converted)
+          broadcastHumanCollaborationUpdate(info.chatId)
+        },
         audit: humanCollaborationAuditLog,
         log: (line) => console.warn(line)
       })
@@ -48212,6 +48250,17 @@ if (isGeminiMcpBridgeProcess) {
             .map((t) => t.chatId)
             .filter((id): id is string => typeof id === 'string')
         ),
+      // A shared chat is attached-to from outside this machine, and a chat
+      // holding contributions under review has content that never appears in
+      // `chat.messages` — both look abandoned to every other check.
+      getSharedChatIds: () => {
+        const chatIds = new Set<string>()
+        for (const share of humanCollaborationStore.listShares()) {
+          if (share.enabled) chatIds.add(share.chatId)
+        }
+        for (const chatId of externalContributionQueue.chatIdsWithQueued()) chatIds.add(chatId)
+        return chatIds
+      },
       getOpenChatPopoutIds: () => {
         const chatIds = new Set<string>()
         for (const [key, win] of workspacePopoutWindows) {
@@ -48274,6 +48323,12 @@ if (isGeminiMcpBridgeProcess) {
     // slice; this one is only about the channel being pumped at all.
     const PROJECTION_DIRTY_DEBOUNCE_MS = 300
     const projectionDirtyTimers = new Map<string, NodeJS.Timeout>()
+    drainPendingExternalJoinConversion = (chatId: string): void => {
+      if (!chatService.applyPendingExternalJoinConversion(chatId)) return
+      const converted = chatService.getChat(chatId)
+      if (converted) broadcastChatUpdated(converted)
+      broadcastHumanCollaborationUpdate(chatId)
+    }
     markHumanCollaborationProjectionDirty = (chatId: string): void => {
       if (!chatId) return
       if (!humanCollaborationRuntime?.hasProjectionSubscriberForChat(chatId)) return
@@ -50958,6 +51013,16 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       getSettings: () => AppStore.getSettings(),
+      // S16 — an approved external contribution is delivered at that person's
+      // seat turn. BOTH of these are required for that to happen at all: the
+      // orchestrator's delivery pass returns early when either is absent, so
+      // omitting them here makes the whole feature silently inert rather than
+      // failing. It shipped that way once.
+      resolveExternalSeats: (chatId) =>
+        externalSeatsForShare(humanCollaborationStore.getShareForChat(chatId), (id) =>
+          humanCollaborationPresence.collaboratorState(id)
+        ),
+      externalContributionQueue,
       signRunPermissionPosture: signRunPosture,
       allocateFanoutLaneWorktree: (input) => fanoutCandidateService.allocateForLane(input),
       settleFanoutLaneWorktree: (input) => {

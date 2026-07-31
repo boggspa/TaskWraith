@@ -43,6 +43,44 @@ interface Projection {
   rows: ProjectionRow[]
   participants: Array<{ collaboratorId: string; displayName: string; status: string }>
   totalRows: number
+  /**
+   * What became of the contributions THIS collaborator sent while the host has
+   * review switched on. Viewer-scoped by main — never anybody else's — and
+   * carries no body, because they wrote it.
+   */
+  yourPending?: Array<{
+    entryId: string
+    clientMessageId: string
+    state: 'queued' | 'approved' | 'denied' | 'lapsed'
+    enqueuedAt: number
+    expiresAt: number
+    resolvedAt?: number
+    hostReason?: string
+    lapseReason?: 'expired' | 'revoked' | 'shareEnded' | 'chatGone'
+  }>
+}
+
+/**
+ * Say what happened in the contributor's terms, not the store's.
+ *
+ * `approved` deliberately does NOT claim the message has been delivered —
+ * approval releases it for the host's next turn, and telling someone it landed
+ * when it has not is the one thing this notice must never do.
+ */
+function pendingStatusLabel(entry: {
+  state: string
+  hostReason?: string
+  lapseReason?: string
+}): string {
+  if (entry.state === 'queued') return 'Waiting for the host to review'
+  if (entry.state === 'approved') return 'Approved — it will appear on the host’s next turn'
+  if (entry.state === 'denied') {
+    return entry.hostReason ? `Declined — “${entry.hostReason}”` : 'Declined by the host'
+  }
+  if (entry.lapseReason === 'expired') return 'Expired before the host reviewed it'
+  if (entry.lapseReason === 'shareEnded') return 'Not reviewed — the host stopped sharing'
+  if (entry.lapseReason === 'revoked') return 'Not reviewed — your access was removed'
+  return 'No longer pending'
 }
 
 function bubbleClass(role: ProjectionRow['role']): string {
@@ -561,6 +599,16 @@ export function JoinSharedChatModal({
                 ))
               )}
             </div>
+            {projection?.yourPending && projection.yourPending.length > 0 && (
+              <div className="join-your-pending" aria-live="polite">
+                <div className="join-your-pending-title">Your contributions</div>
+                {projection.yourPending.map((entry) => (
+                  <div className="join-your-pending-row" key={entry.entryId} data-state={entry.state}>
+                    {pendingStatusLabel(entry)}
+                  </div>
+                ))}
+              </div>
+            )}
             {error && <div className="join-error" role="alert">{error}</div>}
             {mode === 'comments' && actionRequestsAvailable && (
               <label className="join-action-request-toggle">

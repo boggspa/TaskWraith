@@ -34,6 +34,17 @@ export interface AbandonedReapContext {
   workflowChatIds?: ReadonlySet<string>
   /** Chats targeted by a non-terminal scheduled task. */
   scheduledChatIds?: ReadonlySet<string>
+  /**
+   * Chats with a live collaboration share, or with external contributions
+   * waiting on host review.
+   *
+   * Both are invisible to the "started" checks below. A shared chat can sit at
+   * zero messages and zero runs — the host invited someone and is waiting for
+   * them — and a contribution held for review lives in its own queue, not in
+   * `chat.messages`. Reaping either deletes a conversation somebody outside
+   * this machine is actively attached to.
+   */
+  sharedChatIds?: ReadonlySet<string>
   /** Chats that are a parent of at least one other chat (sub-thread / side-chat
    *  / guest). Derived from the list when omitted. */
   parentChatIds?: ReadonlySet<string>
@@ -110,6 +121,7 @@ export function isReapableAbandonedChat(
   // ── Workflow / scheduled linkage — intentionally message-less, never reap. ──
   if (inSet(ctx.workflowChatIds, chat.appChatId)) return false
   if (inSet(ctx.scheduledChatIds, chat.appChatId)) return false
+  if (inSet(ctx.sharedChatIds, chat.appChatId)) return false
 
   // ── Unsent composer text (renderer-supplied). ──
   if (inSet(ctx.draftChatIds, chat.appChatId)) return false
@@ -149,6 +161,8 @@ export interface ReapAbandonedChatsDeps {
   getWorkflowChatIds: () => Set<string>
   /** Chat ids targeted by a non-terminal scheduled task. */
   getScheduledChatIds: () => Set<string>
+  /** Chat ids with a live share or a contribution awaiting host review. */
+  getSharedChatIds?: () => Set<string>
   deleteChat: (chatId: string) => void
 }
 
@@ -168,6 +182,7 @@ export function reapAbandonedChats(
     draftChatIds: new Set(renderer.draftChatIds ?? []),
     workflowChatIds: deps.getWorkflowChatIds(),
     scheduledChatIds: deps.getScheduledChatIds(),
+    sharedChatIds: deps.getSharedChatIds?.() ?? new Set(),
     keepChatId: renderer.keepChatId
   })
   const toReap = limit >= 0 ? ids.slice(0, limit) : ids
