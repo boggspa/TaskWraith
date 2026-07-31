@@ -5090,6 +5090,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-cerebras {
   color: var(--provider-cerebras-color) !important;
 }
+.message-meta.provider-antigravity {
+  color: var(--provider-antigravity-color) !important;
+}
 
 /* Working indicator (transcript tail) inherits provider hue from the
  * sibling `.message-meta.provider-*` row above the bubble. */
@@ -5173,6 +5176,9 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .message-group:has(.message-meta.provider-cerebras) {
   --message-working-accent: var(--provider-cerebras-color);
+}
+.message-group:has(.message-meta.provider-antigravity) {
+  --message-working-accent: var(--provider-antigravity-color);
 }
 
 .message-bubble {
