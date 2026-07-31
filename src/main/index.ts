@@ -556,7 +556,10 @@ import {
 } from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationPresence } from './collaboration/HumanCollaborationPresence'
 import { ExternalContributionQueueStore } from './collaboration/ExternalContributionQueueStore'
-import { resolveChatEffectiveRoster } from './collaboration/ExternalSeatResolution'
+import {
+  externalSeatsForShare,
+  resolveChatEffectiveRoster
+} from './collaboration/ExternalSeatResolution'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
 import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRuntime'
@@ -49584,6 +49587,16 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       getSettings: () => AppStore.getSettings(),
+      // S16 — an approved external contribution is delivered at that person's
+      // seat turn. BOTH of these are required for that to happen at all: the
+      // orchestrator's delivery pass returns early when either is absent, so
+      // omitting them here makes the whole feature silently inert rather than
+      // failing. It shipped that way once.
+      resolveExternalSeats: (chatId) =>
+        externalSeatsForShare(humanCollaborationStore.getShareForChat(chatId), (id) =>
+          humanCollaborationPresence.collaboratorState(id)
+        ),
+      externalContributionQueue,
       signRunPermissionPosture: signRunPosture,
       allocateFanoutLaneWorktree: (input) => fanoutCandidateService.allocateForLane(input),
       settleFanoutLaneWorktree: (input) => {

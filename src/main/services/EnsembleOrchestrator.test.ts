@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   EnsembleOrchestrator,
@@ -9442,6 +9444,37 @@ Next action:
    * ProviderId and a human has none); what it has is an order that sorts in the
    * same space as the model seats.
    */
+  /**
+   * An OPTIONAL dep that production never passes is indistinguishable from a
+   * working feature at the unit level: every test here injects both, so they
+   * all pass while the shipped app returns early and delivers nothing.
+   *
+   * That is exactly what happened — `deliverExternalSeatTurns` landed in
+   * b56d073eb and was never reachable in production until this assertion
+   * existed. A source-region check on the construction site is the only thing
+   * that can see the difference.
+   */
+  it('is actually wired at the production construction site', () => {
+    const indexSource = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+    const start = indexSource.indexOf('new EnsembleOrchestrator({')
+    expect(start).toBeGreaterThanOrEqual(0)
+    let depth = 0
+    let end = start
+    for (let i = indexSource.indexOf('{', start); i < indexSource.length; i += 1) {
+      if (indexSource[i] === '{') depth += 1
+      else if (indexSource[i] === '}') {
+        depth -= 1
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    const construction = indexSource.slice(start, end)
+    expect(construction).toContain('resolveExternalSeats:')
+    expect(construction).toContain('externalContributionQueue')
+  })
+
   describe('external seat turns', () => {
     function queueStub(entries: Array<Record<string, unknown>>) {
       const materialised: string[] = []
