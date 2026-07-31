@@ -155,7 +155,11 @@ export function UsageHeatmap({
     const frame = window.requestAnimationFrame(() => {
       if (cancelled) return
       setLoading(true)
-      loadRendererUsageRecords(usageSource)
+      resolveWithinDeadline(
+        loadRendererUsageRecords(usageSource),
+        getCachedRendererUsageRecords(usageSource),
+        HEATMAP_LOAD_DEADLINE_MS
+      )
         .then((latest) => {
           if (!cancelled) setFetched({ source: usageSource, records: latest })
         })
