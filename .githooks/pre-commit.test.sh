@@ -6,6 +6,7 @@ hook_source="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pre-commit"
 suite_root="$(mktemp -d "${TMPDIR:-/tmp}/taskwraith-pre-commit.XXXXXX")"
 foreign_pid=""
 assertions=0
+host_platform="$(node -p 'process.platform')"
 
 cleanup() {
   if [ -n "$foreign_pid" ]; then
@@ -340,23 +341,27 @@ stage_new_file "$repo" "$path"
 write_derived_marker "$repo" owner-leading-dash false '' "$path"
 expect_block 'path digests preserve leading-dash filenames' "$repo"
 
-repo="$(new_repo trailing-space-path)"
-path='src/trailing-space.ts '
-stage_new_file "$repo" "$path"
-write_derived_marker "$repo" owner-trailing-space false '' "$path"
-expect_block 'path digests preserve trailing-space filenames' "$repo"
+# Win32 cannot create these exact filename bytes, so the hook cannot receive
+# them from a real Windows worktree. POSIX hosts retain the digest coverage.
+if [ "$host_platform" != 'win32' ]; then
+  repo="$(new_repo trailing-space-path)"
+  path='src/trailing-space.ts '
+  stage_new_file "$repo" "$path"
+  write_derived_marker "$repo" owner-trailing-space false '' "$path"
+  expect_block 'path digests preserve trailing-space filenames' "$repo"
 
-repo="$(new_repo newline-path)"
-path=$'src/line\nbreak.ts'
-stage_new_file "$repo" "$path"
-write_derived_marker "$repo" owner-newline false '' "$path"
-expect_block 'path digests preserve newline filenames' "$repo"
+  repo="$(new_repo newline-path)"
+  path=$'src/line\nbreak.ts'
+  stage_new_file "$repo" "$path"
+  write_derived_marker "$repo" owner-newline false '' "$path"
+  expect_block 'path digests preserve newline filenames' "$repo"
 
-repo="$(new_repo tab-backslash-path)"
-path=$'src/tab\tand\\backslash.ts'
-stage_new_file "$repo" "$path"
-write_derived_marker "$repo" owner-controls false '' "$path"
-expect_block 'path digests preserve tab and backslash filenames' "$repo"
+  repo="$(new_repo tab-backslash-path)"
+  path=$'src/tab\tand\\backslash.ts'
+  stage_new_file "$repo" "$path"
+  write_derived_marker "$repo" owner-controls false '' "$path"
+  expect_block 'path digests preserve tab and backslash filenames' "$repo"
+fi
 
 repo="$(new_repo typechange)"
 rm -- "$repo/src/hunk.ts"
