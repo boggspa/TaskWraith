@@ -10,6 +10,55 @@ vi.mock('electron', () => ({
 }))
 
 describe('RunRepository', () => {
+  it('persists a spawned PID before requesting its ownership receipt', () => {
+    const captureProcessOwnership = vi.fn()
+    const repository = new RunRepository({
+      providerLabel: (provider) => provider,
+      captureProcessOwnership,
+      emitRunQueueChanged: vi.fn(),
+      emitRunEventsChanged: vi.fn()
+    })
+    const getExisting = vi.spyOn(AppStore, 'getRunQueueJob').mockReturnValue(null)
+    const saveQueue = vi.spyOn(AppStore, 'saveRunQueueJob').mockImplementation((input: any) => input)
+
+    try {
+      repository.persistSessionQueueState({
+        runId: 'run-owned-process',
+        provider: 'cursor',
+        appChatId: 'chat-1',
+        workspacePath: '/repo',
+        status: 'running',
+        startedAt: Date.parse('2026-08-01T10:00:00.000Z'),
+        updatedAt: Date.parse('2026-08-01T10:00:01.000Z'),
+        process: {
+          pid: 4242,
+          spawnfile: '/usr/local/bin/cursor-agent',
+          kill: vi.fn()
+        } as any,
+        approvalIds: new Set(),
+        sessionGrants: new Set()
+      })
+
+      expect(saveQueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: 'run-owned-process',
+          processPid: 4242,
+          processCommand: '/usr/local/bin/cursor-agent'
+        })
+      )
+      expect(captureProcessOwnership).toHaveBeenCalledWith({
+        runId: 'run-owned-process',
+        pid: 4242
+      })
+      expect(saveQueue.mock.invocationCallOrder[0]).toBeLessThan(
+        captureProcessOwnership.mock.invocationCallOrder[0]
+      )
+    } finally {
+      getExisting.mockRestore()
+      saveQueue.mockRestore()
+    }
+  })
+
   it('emits queue changes for explicit transitions', () => {
     const emitRunQueueChanged = vi.fn()
     const repository = new RunRepository({

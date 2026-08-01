@@ -1270,6 +1270,7 @@ import {
   releasePackageScriptBlockReason,
   type ReleaseCommandCheckOptions
 } from './ReleaseCommandPolicy'
+import { runningAppBundleMutationBlockReason } from './RunningAppBundleMutationGuard'
 import {
   createImageGenExecutor,
   isImageGenMcpToolName,
@@ -1367,6 +1368,7 @@ import {
   shouldRouteCodexRunSession
 } from './CodexRunRouting'
 import { mergeKimiWireTerminalEvidence } from './KimiWireExitDecision'
+import { RunOrphanProcessReaper } from './RunOrphanProcessReaper'
 import { RunRepository } from './RunRepository'
 import { PermissionService } from './PermissionService'
 import { ProviderPreflightService } from './ProviderPreflightService'
@@ -2128,6 +2130,7 @@ let workspaceLockStartupRecoveryBlockedReason: string | null = null
  */
 let workspaceLockMutationAdmissionPoisonReason: string | null = null
 let workspaceLockRuntimeRef: WorkspaceLockRuntime | null = null
+let runOrphanProcessReaperRef: RunOrphanProcessReaper | null = null
 const workspaceLockProviderCoordinator = new WorkspaceLockProviderCoordinator({
   getRuntime: () => workspaceLockRuntimeRef
 })
@@ -7748,6 +7751,9 @@ function getRunRepository(): RunRepository {
     runRepository = new RunRepository({
       providerLabel: providerDisplayName,
       permissionPostureForSession: permissionPostureSnapshotFromSession,
+      captureProcessOwnership: ({ runId, pid }) => {
+        void runOrphanProcessReaperRef?.capture(runId, pid)
+      },
       emitRunQueueChanged,
       emitRunEventsChanged
     })
@@ -13705,6 +13711,16 @@ function runHostCommand(
       releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), releaseApproval)
     if (blockedReleaseCommand) {
       resolveWithoutChild(blockedReleaseCommand)
+      return
+    }
+    const blockedRunningBundleMutation = runningAppBundleMutationBlockReason({
+      command,
+      cwd,
+      executablePath: process.execPath,
+      packageScripts: packageScriptsForCwd(cwd)
+    })
+    if (blockedRunningBundleMutation) {
+      resolveWithoutChild(blockedRunningBundleMutation)
       return
     }
     // When enabled (Settings → Local servers), run agent commands in their own
@@ -21391,6 +21407,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     const child = spawn(binaryPath, grokAcpArgs, {
       cwd: payload.workspace!,
       shell: false,
+      detached: process.platform !== 'win32',
       env: createCliEnv(
         {
           FORCE_COLOR: '0',
@@ -22365,6 +22382,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     const child = spawn(binaryPath, mistralAcpArgs, {
       cwd: payload.workspace!,
       shell: false,
+      detached: process.platform !== 'win32',
       // Already scrubbed unless the BYOK lane is explicitly on. Never re-derive
       // it here: a second createCliEnv call inside the closure would be a fresh
       // unscrubbed object, and the seat's whole credential story is that the
@@ -23188,6 +23206,7 @@ async function runKimiAcpProvider(
               const args = [...modelArgs, 'acp']
               return spawn(admittedBinaryPath, args, {
                 cwd: production.cwd,
+                detached: process.platform !== 'win32',
                 env: buildKimiContainedProcessEnv(
                   createCliEnv(
                     {
@@ -30285,6 +30304,7 @@ async function runCodexExecFallback(
     child = spawn(codexSpawnPlan.command, codexSpawnPlan.args, {
       cwd: payload.workspace!,
       shell: codexSpawnPlan.shell,
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: createCliEnv(
         withTaskWraithCodexHomeEnv(
@@ -31380,6 +31400,7 @@ async function runGeminiProvider(
     child = spawn(resolved.binaryPath, args, {
       cwd: spawnCwd,
       shell: false,
+      detached: process.platform !== 'win32',
       env
     })
   } catch (error) {
@@ -38190,6 +38211,14 @@ if (isGeminiMcpBridgeProcess) {
         userDataRoot: workspaceLockAuthorityRoot,
         instanceId: instanceResourceIdentity.scopeId,
         processIdentity
+      })
+      runOrphanProcessReaperRef = new RunOrphanProcessReaper({
+        processIdentity,
+        loadJob: (runId) => AppStore.getRunQueueJob(runId),
+        persistJob: (runId, partial) => {
+          if (AppStore.updateRunQueueJob(runId, partial)) emitRunQueueChanged()
+        },
+        onError: (message, error) => console.warn(`[run-orphan-reaper] ${message}`, error)
       })
     } catch (error) {
       workspaceLockStartupRecoveryBlockedReason =
@@ -45882,6 +45911,7 @@ if (isGeminiMcpBridgeProcess) {
       stopBridgeDaemon()
       workspaceLockRuntimeRef?.dispose()
       workspaceLockRuntimeRef = null
+      runOrphanProcessReaperRef = null
       activityReportingServiceRef?.stop()
       activityReportingServiceRef = null
       releaseRemotePowerAssertion()
@@ -46003,6 +46033,19 @@ if (isGeminiMcpBridgeProcess) {
         '[history-deletion] startup recovery is required; run and schedule recovery remain disabled:',
         error
       )
+    }
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
+      try {
+        await runOrphanProcessReaperRef?.reap(AppStore.getRunQueueJobs({ includeTerminal: true }))
+      } catch (error) {
+        console.warn(
+          '[run-orphan-reaper] Startup cleanup failed; queue recovery will retain the orphan warning.',
+          error
+        )
+      }
     }
     if (
       !historyDeletionStartupRecoveryBlockedReason &&

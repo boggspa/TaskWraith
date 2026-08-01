@@ -51,6 +51,7 @@ function lookupEnsembleQueueMetadata(
 export interface RunRepositoryOptions {
   providerLabel: (provider: RunSession['provider']) => string
   permissionPostureForSession?: (session: RunSession) => RunQueueJob['permissionPosture'] | undefined
+  captureProcessOwnership?: (input: { runId: string; pid: number }) => void
   emitRunQueueChanged: () => void
   emitRunEventsChanged: (record: {
     runId: string
@@ -125,6 +126,7 @@ export class RunRepository {
       : typeof processLike?.spawnfile === 'string'
         ? processLike.spawnfile
         : undefined
+    const sameTrackedProcess = Boolean(processPid && existing?.processPid === processPid)
     const partial: Partial<RunQueueJob> = {
       provider: session.provider,
       chatId: session.appChatId,
@@ -137,6 +139,8 @@ export class RunRepository {
       processStartedAt: processPid
         ? existing?.processStartedAt || new Date(session.startedAt).toISOString()
         : undefined,
+      processOwnership: sameTrackedProcess ? existing?.processOwnership : undefined,
+      orphanProcess: sameTrackedProcess ? existing?.orphanProcess : undefined,
       ...(permissionPosture ? { permissionPosture } : {}),
       status
     }
@@ -157,9 +161,16 @@ export class RunRepository {
         scope: partial.workspacePath ? 'workspace' : 'global',
         source: 'system',
         status,
+        processPid: partial.processPid,
+        processStartedAt: partial.processStartedAt,
+        processCommand: partial.processCommand,
+        processOwnership: partial.processOwnership,
         ...(permissionPosture ? { permissionPosture } : {}),
         promptPreview: `${this.options.providerLabel(session.provider)} run`
       })
+    }
+    if (processPid && (status === 'starting' || status === 'active')) {
+      this.options.captureProcessOwnership?.({ runId: session.runId, pid: processPid })
     }
     this.options.emitRunQueueChanged()
   }

@@ -5615,7 +5615,17 @@ export interface ExecutionGraphQueueBinding {
   permissionCeilingAuthorityDigest: string
 }
 
-export type RunRecoveryProcessAction = 'left_running' | 'not_found' | 'inaccessible' | 'unknown'
+export type RunRecoveryProcessAction =
+  | 'left_running'
+  | 'not_found'
+  | 'inaccessible'
+  | 'unknown'
+  | 'terminated'
+  | 'force_killed'
+  | 'identity_mismatch'
+  | 'identity_unavailable'
+  | 'containment_mismatch'
+  | 'termination_failed'
 
 export interface RunRecoveryProcessSnapshot {
   pid: number
@@ -5624,8 +5634,23 @@ export interface RunRecoveryProcessSnapshot {
   command?: string
   errorCode?: string
   errorMessage?: string
-  detection: 'pid_signal' | 'pid_signal_and_ps'
+  detection: 'pid_signal' | 'pid_signal_and_ps' | 'verified_process_identity'
   action: RunRecoveryProcessAction
+}
+
+export interface RunProcessOwnershipReceipt {
+  schemaVersion: 1
+  pid: number
+  processBirthIdentity: string
+  capturedAt: string
+  containment:
+    | {
+        kind: 'posix_process_group'
+        processGroupId: number
+      }
+    | {
+        kind: 'windows_process_tree'
+      }
 }
 
 export interface RunQueueJob {
@@ -5660,6 +5685,7 @@ export interface RunQueueJob {
   processPid?: number
   processStartedAt?: string
   processCommand?: string
+  processOwnership?: RunProcessOwnershipReceipt
   runtimeProfileId?: string
   handoffSourceRunId?: string
   orphanProcess?: RunRecoveryProcessSnapshot
@@ -5726,6 +5752,7 @@ export interface RunRecoveryRecord {
     processPid?: number
     processStartedAt?: string
     processCommand?: string
+    processOwnership?: RunProcessOwnershipReceipt
   }
 }
 

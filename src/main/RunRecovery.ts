@@ -1,5 +1,6 @@
 import { execFileSync } from 'child_process'
 import { ACTIVE_RUN_QUEUE_STATUSES, updateRunQueueJobRecord } from './RunQueue'
+import { isPersistedRunReapSnapshot } from './RunOrphanProcessReaper'
 import type {
   RunQueueJob,
   RunRecoveryFilter,
@@ -129,7 +130,8 @@ function recoveryRecordForJob(
       updatedAt: original.updatedAt,
       processPid: original.processPid,
       processStartedAt: original.processStartedAt,
-      processCommand: original.processCommand
+      processCommand: original.processCommand,
+      processOwnership: original.processOwnership
     }
   }
 }
@@ -156,6 +158,7 @@ function recoverStaleSteerPromotingJob(
         'Steer promotion state could not resume after app restart; rerunning from queued.',
       recoveryReason: 'stale_steer_promoting_recovered',
       processPid: undefined,
+      processOwnership: undefined,
       orphanProcess: processSnapshot,
       recoveredAt,
       resumeAvailable,
@@ -180,6 +183,7 @@ function recoverPausedRunWithStaleProcess(
     job,
     {
       processPid: undefined,
+      processOwnership: undefined,
       orphanProcess: processSnapshot,
       recoveredAt,
       recoveryReason: 'stale_process_for_paused_run_on_startup',
@@ -206,6 +210,7 @@ function recoverInterruptedJob(
       lastError: job.lastError || 'Run interrupted by app shutdown.',
       recoveryReason: orphan ? 'orphan_detected_on_startup' : 'marked_failed_on_startup',
       processPid: undefined,
+      processOwnership: undefined,
       orphanProcess: processSnapshot,
       interruptedAt: recoveredAt,
       recoveredAt,
@@ -230,6 +235,7 @@ function recoverStaleFailedProcess(
         ? 'orphan_detected_after_failure'
         : 'cleared_stale_failed_process_pid',
       processPid: undefined,
+      processOwnership: undefined,
       orphanProcess: processSnapshot,
       recoveredAt,
       resumeAvailable,
@@ -259,9 +265,11 @@ export function recoverRunQueueJobsAfterStartup(
       return job
     }
 
-    const processSnapshot = isValidPid(job.processPid)
-      ? inspectProcess(job.processPid, recoveredAt)
-      : undefined
+    const processSnapshot = isPersistedRunReapSnapshot(job)
+      ? job.orphanProcess
+      : isValidPid(job.processPid)
+        ? inspectProcess(job.processPid, recoveredAt)
+        : undefined
 
     if (hasExpiredSteerState) {
       const recovered = recoverStaleSteerPromotingJob(job, recoveredAt, processSnapshot)

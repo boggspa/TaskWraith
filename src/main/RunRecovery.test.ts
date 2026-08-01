@@ -116,6 +116,53 @@ describe('RunRecovery', () => {
     })
   })
 
+  it('uses persisted identity-verified reap evidence instead of probing the dead PID again', () => {
+    const active = job({
+      id: 'run-reaped',
+      runId: 'run-reaped',
+      status: 'active',
+      processPid: 4242,
+      processOwnership: {
+        schemaVersion: 1,
+        pid: 4242,
+        processBirthIdentity: 'birth-4242',
+        capturedAt: '2026-05-07T11:01:00.000Z',
+        containment: { kind: 'posix_process_group', processGroupId: 4242 }
+      },
+      orphanProcess: {
+        pid: 4242,
+        checkedAt: recoveredAt,
+        alive: false,
+        command: '/opt/homebrew/bin/cursor-agent',
+        detection: 'verified_process_identity',
+        action: 'terminated'
+      }
+    })
+    const inspectProcess: ProcessInspector = () => {
+      throw new Error('PID probe should not run after verified cleanup')
+    }
+
+    const recovered = recoverRunQueueJobsAfterStartup([active], recoveredAt, inspectProcess)
+
+    expect(recovered.jobs[0]).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'marked_failed_on_startup',
+      orphanProcess: { alive: false, action: 'terminated' }
+    })
+    expect(recovered.jobs[0].processPid).toBeUndefined()
+    expect(recovered.jobs[0].processOwnership).toBeUndefined()
+    expect(recovered.records[0]).toMatchObject({
+      action: 'marked_failed',
+      process: { alive: false, action: 'terminated' },
+      jobSnapshot: {
+        processPid: 4242,
+        processOwnership: {
+          processBirthIdentity: 'birth-4242'
+        }
+      }
+    })
+  })
+
   it('clears stale process ids from already failed jobs while preserving terminal status', () => {
     const failed = job({
       id: 'run-failed',
