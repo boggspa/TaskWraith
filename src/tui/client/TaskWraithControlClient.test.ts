@@ -324,4 +324,45 @@ describe('TaskWraithControlClient', () => {
     )
     await expect(pending).rejects.toThrow('boom')
   })
+
+  it('uses default connect timeout of 6250ms when not specified', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '0.1.0-test',
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    // Access the private options to verify the default value
+    const options = (client as any).options
+    expect(options.connectTimeoutMs).toBe(6_250)
+  })
+
+  it('uses default request timeout of 30000ms when not specified', async () => {
+    const host = await startFakeHost()
+    const client = new TaskWraithControlClient({
+      clientVersion: '0.1.0-test',
+      discoveryPath: host.discoveryPath
+    })
+    cleanup.push(() => client.close())
+    // Access the private options to verify the default value
+    const options = (client as any).options
+    expect(options.requestTimeoutMs).toBe(30_000)
+  })
+
+  it('allows custom timeout values to override defaults', async () => {
+    const host = await startFakeHost()
+    const customConnectTimeout = 10_000
+    const customRequestTimeout = 45_000
+    const client = new TaskWraithControlClient({
+      clientVersion: '0.1.0-test',
+      discoveryPath: host.discoveryPath,
+      connectTimeoutMs: customConnectTimeout,
+      requestTimeoutMs: customRequestTimeout
+    })
+    cleanup.push(() => client.close())
+    // Access the private options to verify the custom values
+    const options = (client as any).options
+    expect(options.connectTimeoutMs).toBe(customConnectTimeout)
+    expect(options.requestTimeoutMs).toBe(customRequestTimeout)
+  })
 })
