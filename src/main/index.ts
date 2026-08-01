@@ -937,10 +937,7 @@ import {
   type PdfRenderedPageAttachment
 } from './services/PdfAttachmentRenderService'
 // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots (pure store logic).
-import {
-  StickyAppWatchStoreController,
-  type StickyAppWatchSnapshot
-} from './stickyAppWatch'
+import { StickyAppWatchStoreController, type StickyAppWatchSnapshot } from './stickyAppWatch'
 import {
   AppSettings,
   WorkspaceRecord,
@@ -1299,10 +1296,7 @@ import {
   isThreadMessageMcpToolName
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
-import {
-  createThreadMessageEvent,
-  summarizeThreadMessageInbox
-} from '../shared/threadMessage'
+import { createThreadMessageEvent, summarizeThreadMessageInbox } from '../shared/threadMessage'
 import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
 import { createThreadMessageWakeDispatcher } from './ThreadMessageWakeDispatcher'
 import {
@@ -1397,10 +1391,7 @@ import {
   structuredTaskWraithSafeToolRequested
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
-import {
-  isReadOnlyGitShellCommand,
-  shellCommandFromRawCommand
-} from './ReadOnlyGitShellCommand'
+import { isReadOnlyGitShellCommand, shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 // ── Mistral Vibe ACP seat ─────────────────────────────────────────────────
@@ -1442,10 +1433,7 @@ import {
   setMistralQuotaReport,
   type MistralQuotaSnapshot
 } from './mistral/MistralQuotaStore'
-import {
-  configureMistralAdminKeyStore,
-  mistralAdminKeyStore
-} from './mistral/MistralAdminKeyStore'
+import { configureMistralAdminKeyStore, mistralAdminKeyStore } from './mistral/MistralAdminKeyStore'
 import {
   convertVendorAmountToUsd,
   fetchMistralAdminUsage,
@@ -1464,11 +1452,7 @@ import {
   piUsageToStats,
   type NormalizedPiRunEvent
 } from './pi/PiRpc'
-import {
-  PiLiveSteerTracker,
-  parsePiQueueUpdate,
-  piLiveSteerEnabled
-} from './pi/PiSteerDelivery'
+import { PiLiveSteerTracker, parsePiQueueUpdate, piLiveSteerEnabled } from './pi/PiSteerDelivery'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
@@ -1487,10 +1471,7 @@ import {
   normalizePiCerebrasMaxCompletionTokens,
   writePiCerebrasCompletionCapOverride
 } from './pi/PiCerebrasCompletionCap'
-import {
-  PI_CEREBRAS_429_BACKOFF_MS,
-  PiCerebrasRateGovernor
-} from './pi/PiCerebrasRateGovernor'
+import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
 import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
 import {
@@ -1699,10 +1680,7 @@ import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
-import {
-  createOutlookToolExecutors,
-  isOutlookMcpToolName
-} from './mcp/OutlookToolExecutors'
+import { createOutlookToolExecutors, isOutlookMcpToolName } from './mcp/OutlookToolExecutors'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
@@ -1844,10 +1822,7 @@ import {
   claudeDispatchPrompt,
   normalizeClaudeEffortFlagForModel
 } from './ClaudeCliArgs'
-import {
-  getSubThreadResumeSessionId,
-  resolveSubThreadRecall
-} from './SubThreadRecall'
+import { getSubThreadResumeSessionId, resolveSubThreadRecall } from './SubThreadRecall'
 import {
   bridgeTranscriptActivityIsLive,
   bridgeTranscriptIsOwnedByFinalizer,
@@ -1929,10 +1904,7 @@ import {
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
-import {
-  WorkspaceLockRuntime,
-  workspaceLockAuthorityRootForHome
-} from './WorkspaceLockRuntime'
+import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
 import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
 import { WorkspaceExternalMutationAuthorityIssuer } from './WorkspaceExternalMutationAuthority'
 import { WorkspaceLockProcessIdentityService } from './WorkspaceLockProcessIdentity'
@@ -1972,9 +1944,7 @@ import { OutlookConnectorService } from './outlook/OutlookConnectorService'
 import { systemTimeZone } from '../shared/office/zonedTime'
 import { createAntigravityGeminiApiMutationSuccessHandler } from './antigravity/AntigravityGeminiApiMutationLifecycle'
 import { mapAntigravityGeminiApiTurnStatusToMessage } from './antigravity/AntigravityGeminiApiMainRuntime'
-import {
-  discoverAuthenticatedAntigravityCombinedModels
-} from './antigravity/AntigravityCombinedModelCatalog'
+import { discoverAuthenticatedAntigravityCombinedModels } from './antigravity/AntigravityCombinedModelCatalog'
 import {
   createAntigravityRateLimitHandler,
   registerAntigravityRateLimitHandler
@@ -2166,8 +2136,7 @@ const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordi
   getRuntimeUnavailableReason: () =>
     workspaceLockStartupRecoveryBlockedReason ?? workspaceLockMutationAdmissionPoisonReason,
   getChat: (chatId) => AppStore.getChat(chatId),
-  getOpaqueOwnerId: (query) =>
-    workspaceLockProviderCoordinator.getOrCreateLogicalOwnerId(query),
+  getOpaqueOwnerId: (query) => workspaceLockProviderCoordinator.getOrCreateLogicalOwnerId(query),
   getProviderScopeAdmission: ({ runId, laneId, participantId }) =>
     workspaceLockProviderCoordinator.get({ runId, laneId, participantId }),
   acquireProviderScopeSublease: ({ admission, runtimeInput }) =>
@@ -2182,8 +2151,7 @@ const workspaceLockMcpAdmissionCoordinator = new WorkspaceLockMcpAdmissionCoordi
     ),
   validateLaneWriteScope: (runId, query) =>
     ensembleOrchestratorRef?.validateLaneWriteScopeForRun(runId, query),
-  markLaneBlocked: (runId, reason) =>
-    ensembleOrchestratorRef?.markLaneBlockedForRun(runId, reason),
+  markLaneBlocked: (runId, reason) => ensembleOrchestratorRef?.markLaneBlockedForRun(runId, reason),
   encode: mcpJson,
   providerDisplayName
 })
@@ -2225,9 +2193,7 @@ const workspaceExternalMutationAuthorityIssuer =
       chatId ? AppStore.getChat(chatId)?.workspacePath : undefined,
     findValidatedSignedWriteGrant: ({ context, provider, targetPath }) => {
       const grant = externalPathGrantForTarget(context, provider, targetPath, 'write')
-      return grant?.id && grant.signature
-        ? { id: grant.id, signature: grant.signature }
-        : undefined
+      return grant?.id && grant.signature ? { id: grant.id, signature: grant.signature } : undefined
     },
     isTrustedSessionWriteAuthorized: (query) =>
       canAutoApproveTrustedSessionExternalWrite({
@@ -2293,9 +2259,7 @@ async function admitOpaqueProviderWorkspaceMutation(payload: AgentRunPayload): P
   )
   const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
   const baseWorkspacePath = resolve(
-    payload.runtimeWorktree?.baseWorkspacePath ||
-      chat?.workspacePath ||
-      effectiveWorkspacePath
+    payload.runtimeWorktree?.baseWorkspacePath || chat?.workspacePath || effectiveWorkspacePath
   )
   const operation = workspaceLockRunLifecycle.begin(runId)
   try {
@@ -2307,8 +2271,7 @@ async function admitOpaqueProviderWorkspaceMutation(payload: AgentRunPayload): P
       ...(payload.ensembleRun?.participantId
         ? { participantId: payload.ensembleRun.participantId }
         : {}),
-      displayName:
-        payload.ensembleRun?.role || providerDisplayName(payload.provider),
+      displayName: payload.ensembleRun?.role || providerDisplayName(payload.provider),
       ...(chat?.title ? { chatTitle: chat.title } : {}),
       workspacePath: baseWorkspacePath,
       worktreePath: effectiveWorkspacePath
@@ -3055,8 +3018,8 @@ const liveActivityPushFanout = new LiveActivityPushFanout({
   // APNs credentials, and a captured reference would go on using the old key.
   sender: () => {
     const pusher = bridgeApnsPusherRef
-    return pusher && typeof (pusher as Partial<Http2ApnsPusher>).pushLiveActivityToToken ===
-      'function'
+    return pusher &&
+      typeof (pusher as Partial<Http2ApnsPusher>).pushLiveActivityToToken === 'function'
       ? (pusher as Http2ApnsPusher)
       : null
   },
@@ -3690,11 +3653,7 @@ interface HostCommandRunOptions {
 type HostCommandRunArgument = number | HostCommandRunOptions
 
 interface HostCommandProjectionScope {
-  readonly source:
-    | 'codex-host-rerun'
-    | 'brokered-mcp'
-    | 'ollama-local-tool'
-    | 'audit-gate'
+  readonly source: 'codex-host-rerun' | 'brokered-mcp' | 'ollama-local-tool' | 'audit-gate'
   readonly appRunId?: string
   readonly appChatId?: string
   readonly workspaceId?: string
@@ -3753,8 +3712,7 @@ function hostCommandProjectionHandle(
 ): HostCommandProjectionHandle | null {
   if (!scope) return null
   return {
-    run: <T>(operation: () => Promise<T>) =>
-      runWithHostCommandProjectionScope(scope, operation),
+    run: <T>(operation: () => Promise<T>) => runWithHostCommandProjectionScope(scope, operation),
     complete: () => completeHostCommandTerminalProjection(scope)
   }
 }
@@ -4075,9 +4033,7 @@ const canvasService = new CanvasService({
       return new CanvasSketchDriver(sessionId, {
         initialDocument: opts?.initialSketchDocument,
         onDocumentChange: opts?.onSketchDocumentChange,
-        ...(opts?.embedded
-          ? { createSurface: canvasEmbedController.surfaceFor(sessionId) }
-          : {})
+        ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {})
       })
     }
     if (kind === 'web') {
@@ -4411,8 +4367,7 @@ async function readDescriptorAnchoredMediaFile(
   }
   return completeRegenerableHistoryByteOperation({
     cleanup: () => handle.close().catch(() => undefined),
-    isCurrent: () =>
-      !reservation || regenerableHistoryByteStore.isCurrent(reservation),
+    isCurrent: () => !reservation || regenerableHistoryByteStore.isCurrent(reservation),
     onCurrent: () => {
       if (failure) throw failure
       if (!output) throw new Error('Produced-media output read completed without bytes.')
@@ -5153,12 +5108,12 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
       // merely write-capable posture.
       trustedSession: Boolean(
         context.appChatId &&
-          context.workspacePath &&
-          trustedSessionGrants.isGranted({
-            chatId: context.appChatId,
-            provider: parentProvider as ProviderId,
-            workspacePath: context.workspacePath
-          })
+        context.workspacePath &&
+        trustedSessionGrants.isGranted({
+          chatId: context.appChatId,
+          provider: parentProvider as ProviderId,
+          workspacePath: context.workspacePath
+        })
       ),
       // The recorded user consent is the signal here. WHICH model participant
       // holds the authority is `evaluateBossmanAutoApproval`'s question, and
@@ -5223,9 +5178,8 @@ const threadMessageAccessResolver = createThreadMessageAccessResolver({
  *
  * Deliberately NOT given `signRunPermissionPosture` — see ThreadMessageWakeDispatcher.
  */
-let threadMessageWakeDispatcherRef: ReturnType<
-  typeof createThreadMessageWakeDispatcher
-> | null = null
+let threadMessageWakeDispatcherRef: ReturnType<typeof createThreadMessageWakeDispatcher> | null =
+  null
 
 function sweepThreadMessageWakes(): void {
   // Fire-and-forget with an explicit catch: a wake sweep must never fail the send
@@ -6156,8 +6110,12 @@ function prepareIosComposerPromptChat(args: {
   const timestamp = new Date(now).toISOString()
   const prompt = action.text.trim()
   let chat = AppStore.getChat(action.threadId)
-  if (chat && prompt.length > 0 && (chat.messages || []).length === 0 &&
-      isPlaceholderThreadTitle(chat.title)) {
+  if (
+    chat &&
+    prompt.length > 0 &&
+    (chat.messages || []).length === 0 &&
+    isPlaceholderThreadTitle(chat.title)
+  ) {
     // First prompt into a pre-created phone draft adopts the derived title.
     // The desktop applies exactly this messages.length === 0 rule in its
     // renderer submit path, which the phone's two-step createThread →
@@ -6612,12 +6570,12 @@ async function renderPdfPagesForAttachments(
       const chat = AppStore.getChat(ownerChatId)
       return Boolean(
         chat &&
-          regenerableHistoryByteStore.isCurrent(reservation) &&
-          !historyClearAdmissionGate.isAuthorityBlocked({
-            chatId: ownerChatId,
-            chatWorkspaceId: chat.workspaceId,
-            pathWorkspaceId: chat.workspaceId
-          })
+        regenerableHistoryByteStore.isCurrent(reservation) &&
+        !historyClearAdmissionGate.isAuthorityBlocked({
+          chatId: ownerChatId,
+          chatWorkspaceId: chat.workspaceId,
+          pathWorkspaceId: chat.workspaceId
+        })
       )
     }
     try {
@@ -7226,10 +7184,7 @@ function sealSoloCodexRunOnCompletion(args: {
  * Pushes the remote surfaces the flush would have pushed — the whole point is
  * that the phone sees the running→terminal flip.
  */
-function sealBridgeChatRunRecord(
-  state: BridgeRunTranscriptState,
-  seal: ChatRunTerminalSeal
-): void {
+function sealBridgeChatRunRecord(state: BridgeRunTranscriptState, seal: ChatRunTerminalSeal): void {
   if (historyClearAdmissionBlocked(state.runId, undefined, state.chatId)) return
   if (
     !providerRunPersistenceAuthorized(
@@ -7612,7 +7567,8 @@ const permissionService = new PermissionService({
 // write takes the same sanitiser + managed-policy path as any other settings
 // patch — the allowlist in shared/agentThemeTokens is enforced on BOTH sides.
 const themeTokenToolExecutor = createThemeTokenToolExecutor({
-  getOverrides: () => (settingsServiceRef?.getSettings() ?? AppStore.getSettings()).agentThemeTokens,
+  getOverrides: () =>
+    (settingsServiceRef?.getSettings() ?? AppStore.getSettings()).agentThemeTokens,
   setOverrides: async (next) => {
     const patch = { agentThemeTokens: next }
     if (settingsServiceRef) await settingsServiceRef.updateSettings(patch)
@@ -8782,9 +8738,7 @@ async function maybeDrainEnsembleSubThreadMailbox(parentChatId: string): Promise
     bossSoftUnavailable: evaluateBossQuotaSoftUnavailable(
       parent,
       ensemble.activeRound?.roundId,
-      bossParticipant
-        ? { id: bossParticipant.id, provider: bossParticipant.provider }
-        : null
+      bossParticipant ? { id: bossParticipant.id, provider: bossParticipant.provider } : null
     ),
     roundParticipantStates: ensemble.activeRound?.participants?.map((state) => ({
       participantId: state.participantId,
@@ -8799,9 +8753,7 @@ async function maybeDrainEnsembleSubThreadMailbox(parentChatId: string): Promise
     ensembleRoundDispatchLive: roundLive
   })
   const sender = mainWindow?.webContents
-  const deliveryRuntimeReady = Boolean(
-    sender && !sender.isDestroyed() && ensembleOrchestratorRef
-  )
+  const deliveryRuntimeReady = Boolean(sender && !sender.isDestroyed() && ensembleOrchestratorRef)
   const decision = shouldDrainEnsembleMailbox({
     autoResumeSetting: settings.autoResumeParentOnSubThreadCompletion,
     parentChatExists: true,
@@ -9117,11 +9069,7 @@ function isChatRunLive(runId: string | undefined | null): boolean {
     return true
   }
   if (backgroundSubThreadTranscripts.has(id)) return true
-  if (
-    [...backgroundSubThreadTranscripts.values()].some(
-      (state) => state.runId === id
-    )
-  ) {
+  if ([...backgroundSubThreadTranscripts.values()].some((state) => state.runId === id)) {
     return true
   }
   const job = AppStore.getRunQueueJob(id)
@@ -11061,9 +11009,7 @@ function recoverSubThreadWorkerQueues(): void {
             (state) => state.chatId === chat.appChatId && state.runId === run.runId
           )
         )
-      return !live && isActiveChatRunStatus(run.status)
-        ? settleStaleChatRun(run, recoveredAt)
-        : run
+      return !live && isActiveChatRunStatus(run.status) ? settleStaleChatRun(run, recoveredAt) : run
     })
     const runSnapshots = recoveredRuns.flatMap((run) =>
       typeof run.runId === 'string' && typeof run.status === 'string'
@@ -12898,12 +12844,7 @@ function networkAccessBlockedToolName(
       ? raw
       : null
   }
-  return isNetworkAccessBlockedTool(
-    raw,
-    effectivePermissions,
-    settings,
-    toolArgs
-  )
+  return isNetworkAccessBlockedTool(raw, effectivePermissions, settings, toolArgs)
     ? contract.effectiveToolName
     : null
 }
@@ -12929,12 +12870,8 @@ function isMcpAutoAllowedForRun(
   // path below, so no other Bossman action is ever auto-allowed.
   if (isExactReviewerVerdictInvocation(canonical, toolArgs)) return true
   if (
-    resolveExplicitUserRequestedRosterImport(
-      raw,
-      toolArgs,
-      effectivePermissions,
-      requestContext
-    ).allowed
+    resolveExplicitUserRequestedRosterImport(raw, toolArgs, effectivePermissions, requestContext)
+      .allowed
   ) {
     return true
   }
@@ -13688,9 +13625,7 @@ const previewForGeminiMcpTool = createMcpToolApprovalPreviewer({
   previewPath: previewGeminiMcpPath,
   readApprovalPreviewFileContent,
   getAttachedWindowMeta: (chatId) =>
-    chatId
-      ? nativeWindowCoordinatorRef?.statusForChat(chatId).observation?.window ?? null
-      : null
+    chatId ? (nativeWindowCoordinatorRef?.statusForChat(chatId).observation?.window ?? null) : null
 })
 
 function runHostCommand(
@@ -15018,8 +14953,7 @@ function seedScheduledSoloTranscript(
   const existingSteeringMessage =
     (steeringEntry
       ? (chat.messages || []).find((message) => message.id === steeringEntry.messageId)
-      : null) ||
-    findScheduledSteeringMessage(chat.messages || [], task.id, task.firedAt)
+      : null) || findScheduledSteeringMessage(chat.messages || [], task.id, task.firedAt)
   const promptMessageId =
     steeringEntry?.messageId || existingSteeringMessage?.id || `scheduled-user-${randomUUID()}`
   const userMessage: ChatMessage | null = existingSteeringMessage
@@ -15139,10 +15073,7 @@ async function dispatchDueScheduledTaskHeadless(
     // composition injects host transcript would read the content twice — once
     // as history, once as the request — so exclude the pre-appended message.
     // Session-native lanes inject no history and take no exclusion.
-    const dispatchSteeringEntry = midRunSteeringRegistry.entryForScheduledTask(
-      task.chatId,
-      task.id
-    )
+    const dispatchSteeringEntry = midRunSteeringRegistry.entryForScheduledTask(task.chatId, task.id)
     const dispatchSteeringMessage =
       (dispatchSteeringEntry
         ? (AppStore.getChat(task.chatId)?.messages || []).find(
@@ -15672,10 +15603,7 @@ async function getKimiRosterConfigurationStatus(): Promise<{
   if (!resolved.binaryPath) return { available: false, authState: 'unknown' }
   return {
     available: true,
-    authState: await detectKimiManagedAuthState(
-      join(os.homedir(), '.kimi-code'),
-      kimiHomeFsAdapter
-    )
+    authState: await detectKimiManagedAuthState(join(os.homedir(), '.kimi-code'), kimiHomeFsAdapter)
   }
 }
 
@@ -16042,9 +15970,7 @@ function storedSeatSessionObservationForPayload(args: {
   return {
     provider: payload.provider,
     transport: args.transport,
-    model: recordedModel
-      ? normalizeCliProviderModel(payload.provider, recordedModel)
-      : undefined,
+    model: recordedModel ? normalizeCliProviderModel(payload.provider, recordedModel) : undefined,
     toolsFingerprint: fingerprintProviderSeatPrefix('tools', [
       args.taskWraithMcpProfileId,
       args.taskWraithMcpAdvertised,
@@ -16401,18 +16327,19 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     applied.provider === 'pi'
       ? false
       : applied.provider === 'grok'
-      ? shouldAdvertiseTaskWraithMcpToGrok({
-          acpEnabled: grokAcpEnabled(),
-          approvalMode: applied.approvalMode,
-          bridgeEnabled: Boolean(AppStore.getSettings().geminiMcpBridgeEnabled),
-          readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
-        })
-      : applied.provider === 'claude'
-        ? Boolean(
-            claudePinnedMcpReceipt ||
-            (AppStore.getSettings().geminiMcpBridgeEnabled && claudeBridgeCommandStatus?.available)
-          )
-        : true
+        ? shouldAdvertiseTaskWraithMcpToGrok({
+            acpEnabled: grokAcpEnabled(),
+            approvalMode: applied.approvalMode,
+            bridgeEnabled: Boolean(AppStore.getSettings().geminiMcpBridgeEnabled),
+            readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+          })
+        : applied.provider === 'claude'
+          ? Boolean(
+              claudePinnedMcpReceipt ||
+              (AppStore.getSettings().geminiMcpBridgeEnabled &&
+                claudeBridgeCommandStatus?.available)
+            )
+          : true
   const desiredFreshTaskWraithMcpAdvertised =
     applied.provider === 'claude'
       ? Boolean(
@@ -16445,7 +16372,8 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.provider !== 'claude' ||
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
-    grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
+    grokMcpAdvertised:
+      applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined,
     meshCanvasParticipantCanRequest: meshCanvasParticipantCanRequestAccess(
       applied.effectivePermissions
     )
@@ -18157,9 +18085,7 @@ function projectVisibleProviderSetupFailure(input: {
       }
     }
   }
-  project(() =>
-    sendAgentCompatError(input.sender, input.provider, input.message, input.route)
-  )
+  project(() => sendAgentCompatError(input.sender, input.provider, input.message, input.route))
   project(() =>
     sendAgentCompatLine(
       input.sender,
@@ -18176,9 +18102,7 @@ function projectVisibleProviderSetupFailure(input: {
       input.route
     )
   )
-  project(() =>
-    sendAgentCompatExit(input.sender, input.provider, input.exitCode ?? 1, input.route)
-  )
+  project(() => sendAgentCompatExit(input.sender, input.provider, input.exitCode ?? 1, input.route))
 }
 
 /** Best-effort rescue for attachments Claude's API won't take as-is (HEIC
@@ -18413,10 +18337,7 @@ async function runCliProviderProcess(
     return transportClose.operation
   }
   if (workspaceLockRequired) {
-    if (
-      !workspaceLockAdmission ||
-      workspaceLockAdmission.owner.lifecycle !== 'launching-child'
-    ) {
+    if (!workspaceLockAdmission || workspaceLockAdmission.owner.lifecycle !== 'launching-child') {
       const reason = workspaceLockAdmission
         ? 'Write-capable provider launch reused a workspace lock that is not a pre-spawn guardian.'
         : 'Write-capable provider launch has no exact workspace-lock admission.'
@@ -18527,7 +18448,9 @@ async function runCliProviderProcess(
       provider === 'antigravity'
         ? (() => {
             if (!options.resolvedEnv) {
-              throw new Error('AntiGravity launches require the sanitized official agy environment.')
+              throw new Error(
+                'AntiGravity launches require the sanitized official agy environment.'
+              )
             }
             return withExactWorkspaceLockOwnerEnv(
               options.resolvedEnv,
@@ -18627,8 +18550,7 @@ async function runCliProviderProcess(
   let providerSetupFailed = false
   let providerSpawnErrored = false
   let setupFailureProjected = false
-  let workspaceLockBinding: Promise<WorkspaceLockProviderAdmission | null> =
-    Promise.resolve(null)
+  let workspaceLockBinding: Promise<WorkspaceLockProviderAdmission | null> = Promise.resolve(null)
 
   const writeStdinPlan = (lines: readonly string[]): void => {
     if (stdinPlanWritten) return
@@ -18790,12 +18712,11 @@ async function runCliProviderProcess(
       releasePiLiveSteerBinding(route.appRunId)
       providerProcessTerminationBackstop.clear(route.appRunId)
     }
-    const effectiveExitCode =
-      providerSetupFailed
-        ? 1
-        : provider === 'cursor'
-          ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
-          : code
+    const effectiveExitCode = providerSetupFailed
+      ? 1
+      : provider === 'cursor'
+        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
+        : code
     try {
       try {
         emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
@@ -19003,32 +18924,35 @@ async function runCliProviderProcess(
         })
       }
       if (stdinReadiness && !stdinReadinessSettled) {
-        stdinReadinessTimer = setTimeout(() => {
-          try {
-            settleStdinReadiness('timeout')
-            emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
-          } catch (error) {
-            providerSetupFailed = true
-            setupFailureProjected = true
-            state.completed = true
-            projectVisibleProviderSetupFailure({
-              sender: event.sender,
-              provider,
-              route,
-              message: `${providerDisplayName(provider)} coordination readiness setup failed: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-              setupRequired: true,
-              fallback: options.fallback
-            })
+        stdinReadinessTimer = setTimeout(
+          () => {
             try {
-              child.kill()
-            } catch {
-              // The process termination backstop below still owns containment.
+              settleStdinReadiness('timeout')
+              emitCliProviderStderr(cliProviderStderrSanitizer.push(flushStdinReadinessStderr()))
+            } catch (error) {
+              providerSetupFailed = true
+              setupFailureProjected = true
+              state.completed = true
+              projectVisibleProviderSetupFailure({
+                sender: event.sender,
+                provider,
+                route,
+                message: `${providerDisplayName(provider)} coordination readiness setup failed: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+                setupRequired: true,
+                fallback: options.fallback
+              })
+              try {
+                child.kill()
+              } catch {
+                // The process termination backstop below still owns containment.
+              }
+              providerProcessTerminationBackstop.arm(route.appRunId!, child)
             }
-            providerProcessTerminationBackstop.arm(route.appRunId!, child)
-          }
-        }, Math.max(1, stdinReadiness.timeoutMs))
+          },
+          Math.max(1, stdinReadiness.timeoutMs)
+        )
       } else {
         writeStdinPlan(stdinPlan.initialLines)
       }
@@ -19343,9 +19267,7 @@ async function canUseClaudeSdkTool(
   // full prefix; retain that raw identity until the strict resolver proves the
   // exact TaskWraith server and catalog route.
   const canonicalToolName =
-    approvalIdentity.kind === 'taskwraith-mcp'
-      ? approvalIdentity.contract.effectiveToolName
-      : ''
+    approvalIdentity.kind === 'taskwraith-mcp' ? approvalIdentity.contract.effectiveToolName : ''
   if (approvalIdentity.kind === 'taskwraith-mcp') {
     primeNativeCanvasCompatCorrelation({
       provider: 'claude',
@@ -19378,8 +19300,7 @@ async function canUseClaudeSdkTool(
   if (approvalPriority === 'deny-native') {
     return {
       behavior: 'deny',
-      message:
-        `Claude tool ${toolName || 'tool'} did not resolve to an exact TaskWraith broker route.`
+      message: `Claude tool ${toolName || 'tool'} did not resolve to an exact TaskWraith broker route.`
     }
   }
   if (approvalPriority === 'allow-auto') {
@@ -19551,347 +19472,223 @@ async function tryRunClaudeSdk(
   }
   try {
     runManager.attachAbortController(route.appRunId!, controller)
-  void emitProviderCapabilityWarnings(
-    event.sender,
-    'claude',
-    payload.workspace,
-    payload.approvalMode,
-    state
-  )
-  sendAgentCompatLine(
-    event.sender,
-    'claude',
-    {
-      type: 'init',
-      session_id: state.providerSessionId || '',
-      model,
-      timestamp: new Date().toISOString(),
-      provider: 'claude',
-      fallback: false
-    },
-    state
-  )
-  const claudeUsageWarning = claudeProgrammaticUsageWarning(
-    'sdk',
-    environmentAuthority.hasAnthropicApiKey
-  )
-  if (claudeUsageWarning) {
+    void emitProviderCapabilityWarnings(
+      event.sender,
+      'claude',
+      payload.workspace,
+      payload.approvalMode,
+      state
+    )
     sendAgentCompatLine(
       event.sender,
       'claude',
       {
-        type: 'provider_warning',
+        type: 'init',
+        session_id: state.providerSessionId || '',
+        model,
+        timestamp: new Date().toISOString(),
         provider: 'claude',
-        message: claudeUsageWarning,
-        runtime: 'agent-sdk',
-        billingMode: 'api-key-payg',
         fallback: false
       },
       state
     )
-  }
-
-  const claudeSdkEffort = normalizeClaudeEffortFlagForModel(payload.claudeReasoningEffort, model)
-  const claudeSdkThinking = claudeSdkThinkingConfigForEffort(claudeSdkEffort)
-  // Phase I3 (Claude initiator): register the TaskWraith MCP server so
-  // the Claude agent sees delegate_to_subthread etc. in its tool list.
-  // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
-  // toggle Gemini/Codex use; user-managed MCP servers attach from
-  // the dedicated MCP Servers settings page.
-  //
-  // Phase J3: ALSO pass `allowedTools` here. Previously only the CLI
-  // fallback got the pre-approved list via `--allowedTools <names>`;
-  // the SDK path passed `mcpServers` but no `allowedTools`, so every
-  // MCP call went through the per-tool `canUseTool` approval gate and
-  // Claude's reasoning often skipped them entirely. Empirically: 7
-  // Claude-parented bridge subprocesses had spawned and zero of them
-  // had ever logged a `tools/call` (vs. Gemini-parented bridges which
-  // accounted for every tool call in the log). Mirroring the CLI's
-  // pre-approval list closes the gap. Only TaskWraith's own bridge
-  // tools are pre-approved; arbitrary user MCP server tools still flow
-  // through Claude's normal tool-permission path.
-  let claudeMcpInput = claudeTaskWraithMcpInput(
-    route,
-    payload.workspace,
-    payload.taskWraithMcpProfileId,
-    payload.taskWraithMcpAdvertised === true
-  )
-  let claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
-  let claudeSdkAllowedTools = claudeMcpInput.enabled
-    ? buildClaudeTaskWraithAllowedToolNames(claudeMcpInput.profileId)
-    : null
-  const claudeSdkSettings =
-    typeof payload.claudeFastMode === 'boolean' ? { fastMode: payload.claudeFastMode } : undefined
-  // 1.0.71 dogfood fix: make sure the TaskWraith MCP broker socket is actually
-  // listening before the SDK spawns Claude's bridge subprocess. Otherwise the
-  // subprocess connects to a dead socket and Claude reports "MCP socket is
-  // down", then silently degrades to its native read tools. startGeminiMcpBroker
-  // is idempotent (no-op once listening), so this is cheap on every run.
-  if (claudeMcpInput.enabled) {
-    await startGeminiMcpBroker().catch((error) => {
-      console.error('[mcp-bridge] broker ensure failed before Claude run', error)
-      if (claudeRunRequiresPinnedTaskWraithMcp(payload)) {
-        throw new Error(
-          `The pinned TaskWraith MCP surface could not be reattached: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-      }
-      // The run may continue with Claude's native/user-managed tools, but it
-      // must not mint a receipt or retain prompt claims for a TaskWraith server
-      // that failed to attach.
-      payload.taskWraithMcpAdvertised = false
-      state.taskWraithMcpAdvertised = false
-      payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-        advertised: false,
-        coreProfile: false
-      })
-      claudeMcpInput = claudeTaskWraithMcpInput(
-        route,
-        payload.workspace,
-        payload.taskWraithMcpProfileId,
-        false
-      )
-      claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
-      claudeSdkAllowedTools = null
-    })
-  }
-  if (!providerTransportLaunchAuthorized('claude', payload, route)) {
-    controller.abort()
-    settleDeniedProviderTransportLaunch(route)
-    return true
-  }
-  let sdkTransportAdopted = false
-  try {
-    // Image attachments ride the SDK's STREAMING INPUT as base64 content
-    // blocks on the one user message. The options bag has no `images` field
-    // (the old `images:` line was silently ignored — the model never saw a
-    // byte) and the CLI fallback has no image transport at all, so a load
-    // failure must settle the run rather than degrade to a lane that would
-    // drop the attachment. Loaded BEFORE the transport boundary so a bad
-    // attachment never spawns a provider.
-    let claudePromptInput: string | AsyncIterable<SDKUserMessage> = claudeDispatchPrompt(payload)
-    if (payload.imagePaths?.length) {
-      const imageContents = await loadClaudeImageAttachmentContents(payload.imagePaths, {
-        readFile: (imagePath) => fs.readFile(imagePath),
-        convertToSupported: convertImageBufferForClaudeAttachment
-      })
-      claudePromptInput = claudeImageUserMessageStream(
-        claudeDispatchPrompt(payload),
-        imageContents
-      )
-      console.log(
-        `[claude-sdk] delivering ${imageContents.length} image attachment(s) as content blocks for run=${route.appRunId}`
-      )
-    }
-    // From this point the SDK may synchronously construct/spawn provider
-    // transport before returning its iterator. Never replay the turn through
-    // the CLI after crossing this boundary, even when query() itself throws.
-    sdkTransportAdopted = true
-    const stream = query({
-      // Sessionless dispatch (incl. a seat rotation that nulled the session
-      // after composition) sends the full-context recovery prompt.
-      prompt: claudePromptInput,
-      options: {
-        cwd: payload.workspace!,
-        model: model === 'default' ? undefined : model,
-        // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
-        // Read-Only/Recon seats run in DEFAULT permission mode instead of
-        // Claude Code's native plan mode: plan mode installs a plan-shaped
-        // system prompt (+ ExitPlanMode) that turns review/recon turns into
-        // plan artifacts. Write containment does not change: every tool call
-        // (native Edit/Write/Bash included) routes through canUseClaudeSdkTool
-        // below, where the run's signed read_only effectivePermissions deny
-        // fileChanges/shellCommands hard — and the plan-artifact write
-        // carve-out requires workflowMode 'plan', which a recon run never
-        // carries. isReconRunPosture reads only post-clamp HMAC-covered
-        // fields. The CLI fallback (tryRunClaudeCli) has NO canUseTool and
-        // deliberately keeps native plan mode for recon seats.
-        permissionMode: isReconRunPosture(payload)
-          ? 'default'
-          : claudePermissionModeForApproval(payload.approvalMode),
-        // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
-        // MCP servers are configured separately and remain available.
-        tools: [],
-        resume: payload.providerSessionId || undefined,
-        abortController: controller,
-        canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
-          canUseClaudeSdkTool(event.sender, route, payload, toolNameOrRequest, input),
-        // 1.0.5-S1 — Streaming parity with Codex. Without this flag the
-        // SDK only yields a single cumulative `SDKAssistantMessage` per
-        // turn carrying the entire response — Claude appears to "think
-        // silently then dump the answer" while Codex scrolls past
-        // token-by-token. With it, the SDK also yields incremental
-        // `stream_event` frames (SDKPartialAssistantMessage) whose
-        // content_block_delta / text_delta events carry per-chunk text.
-        // extractProviderText reads those chunks; the existing dedup at
-        // the call site in handleCliProviderJsonEvent harmlessly slices
-        // the trailing cumulative `assistant` envelope to empty so we
-        // don't double-emit the final response.
-        includePartialMessages: true,
-        ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-        ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
-        ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
-        ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
-        ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
-          ? { allowedTools: claudeSdkAllowedTools }
-          : {}),
-        ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
-        env: environmentAuthority.env
-      }
-    })
-
-    for await (const message of stream) {
-      handleCliProviderJsonEvent(state, message)
-    }
-
-    const sdkTerminalStatus = controller.signal.aborted
-      ? 'cancelled'
-      : (state.terminalResultStatus ?? 'completed')
-    settleClaudeSdkTerminal({
-      runManager,
-      runId: route.appRunId,
-      status: sdkTerminalStatus,
-      project: (effectiveStatus) => {
-        if (!state.completed && effectiveStatus !== 'cancelled') {
-          sendAgentCompatLine(
-            event.sender,
-            'claude',
-            {
-              type: 'result',
-              status: effectiveStatus === 'completed' ? 'success' : 'failed',
-              subtype: effectiveStatus === 'completed' ? 'success' : 'error',
-              stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-              provider: 'claude',
-              providerThreadId: state.providerSessionId || undefined,
-              fallback: false
-            },
-            state
-          )
-        }
-        sendAgentCompatExit(
-          event.sender,
-          'claude',
-          effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
-          state
-        )
-      },
-      onError: (phase, error) => {
-        console.error(`[claude-sdk] terminal ${phase} failed:`, error)
-      }
-    })
-    return true
-  } catch (error) {
-    // An attachment that cannot be delivered is a terminal, non-fallback
-    // failure: the CLI lane has no image transport, so replaying there
-    // would dispatch with the image silently omitted — the exact lie this
-    // path exists to prevent. Settle with the loader's honest copy.
-    if (error instanceof ClaudeImageAttachmentError) {
-      settleClaudeSdkTerminal({
-        runManager,
-        runId: route.appRunId,
-        status: 'failed',
-        project: () => {
-          sendAgentCompatError(event.sender, 'claude', error.message, state)
-          sendAgentCompatLine(
-            event.sender,
-            'claude',
-            {
-              type: 'result',
-              status: 'failed',
-              subtype: 'error',
-              stats: {},
-              provider: 'claude',
-              fallback: false
-            },
-            state
-          )
-          sendAgentCompatExit(event.sender, 'claude', 1, state)
+    const claudeUsageWarning = claudeProgrammaticUsageWarning(
+      'sdk',
+      environmentAuthority.hasAnthropicApiKey
+    )
+    if (claudeUsageWarning) {
+      sendAgentCompatLine(
+        event.sender,
+        'claude',
+        {
+          type: 'provider_warning',
+          provider: 'claude',
+          message: claudeUsageWarning,
+          runtime: 'agent-sdk',
+          billingMode: 'api-key-payg',
+          fallback: false
         },
-        onError: (phase, settleError) => {
-          console.error(`[claude-sdk] image-refusal ${phase} failed:`, settleError)
+        state
+      )
+    }
+
+    const claudeSdkEffort = normalizeClaudeEffortFlagForModel(payload.claudeReasoningEffort, model)
+    const claudeSdkThinking = claudeSdkThinkingConfigForEffort(claudeSdkEffort)
+    // Phase I3 (Claude initiator): register the TaskWraith MCP server so
+    // the Claude agent sees delegate_to_subthread etc. in its tool list.
+    // The TaskWraith bridge is gated on the same `geminiMcpBridgeEnabled`
+    // toggle Gemini/Codex use; user-managed MCP servers attach from
+    // the dedicated MCP Servers settings page.
+    //
+    // Phase J3: ALSO pass `allowedTools` here. Previously only the CLI
+    // fallback got the pre-approved list via `--allowedTools <names>`;
+    // the SDK path passed `mcpServers` but no `allowedTools`, so every
+    // MCP call went through the per-tool `canUseTool` approval gate and
+    // Claude's reasoning often skipped them entirely. Empirically: 7
+    // Claude-parented bridge subprocesses had spawned and zero of them
+    // had ever logged a `tools/call` (vs. Gemini-parented bridges which
+    // accounted for every tool call in the log). Mirroring the CLI's
+    // pre-approval list closes the gap. Only TaskWraith's own bridge
+    // tools are pre-approved; arbitrary user MCP server tools still flow
+    // through Claude's normal tool-permission path.
+    let claudeMcpInput = claudeTaskWraithMcpInput(
+      route,
+      payload.workspace,
+      payload.taskWraithMcpProfileId,
+      payload.taskWraithMcpAdvertised === true
+    )
+    let claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
+    let claudeSdkAllowedTools = claudeMcpInput.enabled
+      ? buildClaudeTaskWraithAllowedToolNames(claudeMcpInput.profileId)
+      : null
+    const claudeSdkSettings =
+      typeof payload.claudeFastMode === 'boolean' ? { fastMode: payload.claudeFastMode } : undefined
+    // 1.0.71 dogfood fix: make sure the TaskWraith MCP broker socket is actually
+    // listening before the SDK spawns Claude's bridge subprocess. Otherwise the
+    // subprocess connects to a dead socket and Claude reports "MCP socket is
+    // down", then silently degrades to its native read tools. startGeminiMcpBroker
+    // is idempotent (no-op once listening), so this is cheap on every run.
+    if (claudeMcpInput.enabled) {
+      await startGeminiMcpBroker().catch((error) => {
+        console.error('[mcp-bridge] broker ensure failed before Claude run', error)
+        if (claudeRunRequiresPinnedTaskWraithMcp(payload)) {
+          throw new Error(
+            `The pinned TaskWraith MCP surface could not be reattached: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+        }
+        // The run may continue with Claude's native/user-managed tools, but it
+        // must not mint a receipt or retain prompt claims for a TaskWraith server
+        // that failed to attach.
+        payload.taskWraithMcpAdvertised = false
+        state.taskWraithMcpAdvertised = false
+        payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+          advertised: false,
+          coreProfile: false
+        })
+        claudeMcpInput = claudeTaskWraithMcpInput(
+          route,
+          payload.workspace,
+          payload.taskWraithMcpProfileId,
+          false
+        )
+        claudeSdkMcpServers = buildClaudeTaskWraithMcpServers(claudeMcpInput)
+        claudeSdkAllowedTools = null
+      })
+    }
+    if (!providerTransportLaunchAuthorized('claude', payload, route)) {
+      controller.abort()
+      settleDeniedProviderTransportLaunch(route)
+      return true
+    }
+    let sdkTransportAdopted = false
+    try {
+      // Image attachments ride the SDK's STREAMING INPUT as base64 content
+      // blocks on the one user message. The options bag has no `images` field
+      // (the old `images:` line was silently ignored — the model never saw a
+      // byte) and the CLI fallback has no image transport at all, so a load
+      // failure must settle the run rather than degrade to a lane that would
+      // drop the attachment. Loaded BEFORE the transport boundary so a bad
+      // attachment never spawns a provider.
+      let claudePromptInput: string | AsyncIterable<SDKUserMessage> = claudeDispatchPrompt(payload)
+      if (payload.imagePaths?.length) {
+        const imageContents = await loadClaudeImageAttachmentContents(payload.imagePaths, {
+          readFile: (imagePath) => fs.readFile(imagePath),
+          convertToSupported: convertImageBufferForClaudeAttachment
+        })
+        claudePromptInput = claudeImageUserMessageStream(
+          claudeDispatchPrompt(payload),
+          imageContents
+        )
+        console.log(
+          `[claude-sdk] delivering ${imageContents.length} image attachment(s) as content blocks for run=${route.appRunId}`
+        )
+      }
+      // From this point the SDK may synchronously construct/spawn provider
+      // transport before returning its iterator. Never replay the turn through
+      // the CLI after crossing this boundary, even when query() itself throws.
+      sdkTransportAdopted = true
+      const stream = query({
+        // Sessionless dispatch (incl. a seat rotation that nulled the session
+        // after composition) sends the full-context recovery prompt.
+        prompt: claudePromptInput,
+        options: {
+          cwd: payload.workspace!,
+          model: model === 'default' ? undefined : model,
+          // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
+          // Read-Only/Recon seats run in DEFAULT permission mode instead of
+          // Claude Code's native plan mode: plan mode installs a plan-shaped
+          // system prompt (+ ExitPlanMode) that turns review/recon turns into
+          // plan artifacts. Write containment does not change: every tool call
+          // (native Edit/Write/Bash included) routes through canUseClaudeSdkTool
+          // below, where the run's signed read_only effectivePermissions deny
+          // fileChanges/shellCommands hard — and the plan-artifact write
+          // carve-out requires workflowMode 'plan', which a recon run never
+          // carries. isReconRunPosture reads only post-clamp HMAC-covered
+          // fields. The CLI fallback (tryRunClaudeCli) has NO canUseTool and
+          // deliberately keeps native plan mode for recon seats.
+          permissionMode: isReconRunPosture(payload)
+            ? 'default'
+            : claudePermissionModeForApproval(payload.approvalMode),
+          // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
+          // MCP servers are configured separately and remain available.
+          tools: [],
+          resume: payload.providerSessionId || undefined,
+          abortController: controller,
+          canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
+            canUseClaudeSdkTool(event.sender, route, payload, toolNameOrRequest, input),
+          // 1.0.5-S1 — Streaming parity with Codex. Without this flag the
+          // SDK only yields a single cumulative `SDKAssistantMessage` per
+          // turn carrying the entire response — Claude appears to "think
+          // silently then dump the answer" while Codex scrolls past
+          // token-by-token. With it, the SDK also yields incremental
+          // `stream_event` frames (SDKPartialAssistantMessage) whose
+          // content_block_delta / text_delta events carry per-chunk text.
+          // extractProviderText reads those chunks; the existing dedup at
+          // the call site in handleCliProviderJsonEvent harmlessly slices
+          // the trailing cumulative `assistant` envelope to empty so we
+          // don't double-emit the final response.
+          includePartialMessages: true,
+          ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+          ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
+          ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
+          ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
+          ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
+            ? { allowedTools: claudeSdkAllowedTools }
+            : {}),
+          ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
+          env: environmentAuthority.env
         }
       })
-      return true
-    }
-    const runStatus = runManager.get(route.appRunId)?.status
-    const decision = decideClaudeSdkFailure({
-      error,
-      signalAborted: controller.signal.aborted,
-      runStatus,
-      abortErrorConstructor: sdk?.AbortError || sdk?.default?.AbortError
-    })
-    if (decision === 'cancelled') {
-      const terminalStatus =
-        runManager.getClaimedTerminalStatus(route.appRunId) ?? 'cancelled'
+
+      for await (const message of stream) {
+        handleCliProviderJsonEvent(state, message)
+      }
+
+      const sdkTerminalStatus = controller.signal.aborted
+        ? 'cancelled'
+        : (state.terminalResultStatus ?? 'completed')
       settleClaudeSdkTerminal({
         runManager,
         runId: route.appRunId,
-        status: terminalStatus,
-        // Preserve the claimed RunManager status, but still publish the provider
-        // exit so scheduled-run, audit, bridge-transcript, and budget cleanup all
-        // settle through the shared terminal path.
-        project: (effectiveStatus) =>
-          sendAgentCompatExit(
-            event.sender,
-            'claude',
-            effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
-            state
-          ),
-        onError: (phase, error) => {
-          console.error(`[claude-sdk] cancellation ${phase} failed:`, error)
-        }
-      })
-      return true
-    }
-    if (decision === 'terminal') {
-      const terminalStatus =
-        runManager.getClaimedTerminalStatus(route.appRunId) ??
-        (runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled'
-          ? runStatus
-          : 'failed')
-      settleClaudeSdkTerminal({
-        runManager,
-        runId: route.appRunId,
-        status: terminalStatus,
-        project: () => undefined
-      })
-      return true
-    }
-    if (sdkTransportAdopted) {
-      settleClaudeSdkTerminal({
-        runManager,
-        runId: route.appRunId,
-        status: 'failed',
+        status: sdkTerminalStatus,
         project: (effectiveStatus) => {
-          if (effectiveStatus === 'failed') {
-            sendAgentCompatError(
+          if (!state.completed && effectiveStatus !== 'cancelled') {
+            sendAgentCompatLine(
               event.sender,
               'claude',
-              `Claude Agent SDK failed after its provider transport started; TaskWraith did not replay the turn through the CLI fallback. Reason: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
+              {
+                type: 'result',
+                status: effectiveStatus === 'completed' ? 'success' : 'failed',
+                subtype: effectiveStatus === 'completed' ? 'success' : 'error',
+                stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+                provider: 'claude',
+                providerThreadId: state.providerSessionId || undefined,
+                fallback: false
+              },
               state
             )
-            if (!state.completed) {
-              sendAgentCompatLine(
-                event.sender,
-                'claude',
-                {
-                  type: 'result',
-                  status: 'failed',
-                  subtype: 'error',
-                  stats: {
-                    ...(state.tokenUsage || {}),
-                    duration_ms: Date.now() - state.startedAt
-                  },
-                  provider: 'claude',
-                  providerThreadId: state.providerSessionId || undefined,
-                  fallback: false
-                },
-                state
-              )
-            }
           }
           sendAgentCompatExit(
             event.sender,
@@ -19900,14 +19697,137 @@ async function tryRunClaudeSdk(
             state
           )
         },
-        onError: (phase, settlementError) => {
-          console.error(`[claude-sdk] post-launch failure ${phase} failed:`, settlementError)
+        onError: (phase, error) => {
+          console.error(`[claude-sdk] terminal ${phase} failed:`, error)
         }
       })
       return true
+    } catch (error) {
+      // An attachment that cannot be delivered is a terminal, non-fallback
+      // failure: the CLI lane has no image transport, so replaying there
+      // would dispatch with the image silently omitted — the exact lie this
+      // path exists to prevent. Settle with the loader's honest copy.
+      if (error instanceof ClaudeImageAttachmentError) {
+        settleClaudeSdkTerminal({
+          runManager,
+          runId: route.appRunId,
+          status: 'failed',
+          project: () => {
+            sendAgentCompatError(event.sender, 'claude', error.message, state)
+            sendAgentCompatLine(
+              event.sender,
+              'claude',
+              {
+                type: 'result',
+                status: 'failed',
+                subtype: 'error',
+                stats: {},
+                provider: 'claude',
+                fallback: false
+              },
+              state
+            )
+            sendAgentCompatExit(event.sender, 'claude', 1, state)
+          },
+          onError: (phase, settleError) => {
+            console.error(`[claude-sdk] image-refusal ${phase} failed:`, settleError)
+          }
+        })
+        return true
+      }
+      const runStatus = runManager.get(route.appRunId)?.status
+      const decision = decideClaudeSdkFailure({
+        error,
+        signalAborted: controller.signal.aborted,
+        runStatus,
+        abortErrorConstructor: sdk?.AbortError || sdk?.default?.AbortError
+      })
+      if (decision === 'cancelled') {
+        const terminalStatus = runManager.getClaimedTerminalStatus(route.appRunId) ?? 'cancelled'
+        settleClaudeSdkTerminal({
+          runManager,
+          runId: route.appRunId,
+          status: terminalStatus,
+          // Preserve the claimed RunManager status, but still publish the provider
+          // exit so scheduled-run, audit, bridge-transcript, and budget cleanup all
+          // settle through the shared terminal path.
+          project: (effectiveStatus) =>
+            sendAgentCompatExit(
+              event.sender,
+              'claude',
+              effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
+              state
+            ),
+          onError: (phase, error) => {
+            console.error(`[claude-sdk] cancellation ${phase} failed:`, error)
+          }
+        })
+        return true
+      }
+      if (decision === 'terminal') {
+        const terminalStatus =
+          runManager.getClaimedTerminalStatus(route.appRunId) ??
+          (runStatus === 'completed' || runStatus === 'failed' || runStatus === 'cancelled'
+            ? runStatus
+            : 'failed')
+        settleClaudeSdkTerminal({
+          runManager,
+          runId: route.appRunId,
+          status: terminalStatus,
+          project: () => undefined
+        })
+        return true
+      }
+      if (sdkTransportAdopted) {
+        settleClaudeSdkTerminal({
+          runManager,
+          runId: route.appRunId,
+          status: 'failed',
+          project: (effectiveStatus) => {
+            if (effectiveStatus === 'failed') {
+              sendAgentCompatError(
+                event.sender,
+                'claude',
+                `Claude Agent SDK failed after its provider transport started; TaskWraith did not replay the turn through the CLI fallback. Reason: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+                state
+              )
+              if (!state.completed) {
+                sendAgentCompatLine(
+                  event.sender,
+                  'claude',
+                  {
+                    type: 'result',
+                    status: 'failed',
+                    subtype: 'error',
+                    stats: {
+                      ...(state.tokenUsage || {}),
+                      duration_ms: Date.now() - state.startedAt
+                    },
+                    provider: 'claude',
+                    providerThreadId: state.providerSessionId || undefined,
+                    fallback: false
+                  },
+                  state
+                )
+              }
+            }
+            sendAgentCompatExit(
+              event.sender,
+              'claude',
+              effectiveStatus === 'completed' ? 0 : effectiveStatus === 'cancelled' ? 130 : 1,
+              state
+            )
+          },
+          onError: (phase, settlementError) => {
+            console.error(`[claude-sdk] post-launch failure ${phase} failed:`, settlementError)
+          }
+        })
+        return true
+      }
+      throw error
     }
-    throw error
-  }
   } finally {
     // The exact SDK operation owns all cleanup above; this outer boundary only
     // exists so pre-query setup/projection failures cannot leak that ownership.
@@ -20320,8 +20240,7 @@ function globalCursorMcpPath(): string {
 }
 
 function cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath: string): boolean {
-  const workspaceRegistryPath =
-    canonicalExternalGrantPath(mcpPath) || canonicalPath(mcpPath)
+  const workspaceRegistryPath = canonicalExternalGrantPath(mcpPath) || canonicalPath(mcpPath)
   const globalRegistryPath =
     canonicalExternalGrantPath(globalCursorMcpPath()) || canonicalPath(globalCursorMcpPath())
   return workspaceRegistryPath === globalRegistryPath
@@ -20362,8 +20281,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   const cursorAdvertiseTaskWraithMcp =
     payload.taskWraithMcpAdvertised === true && !mcpToolsDenied && Boolean(payload.workspace)
-  const cursorPlanSeat =
-    !writeCapable && payload.effectivePermissions?.presetId === 'plan'
+  const cursorPlanSeat = !writeCapable && payload.effectivePermissions?.presetId === 'plan'
   const cursorBrokerPolicy = resolveCursorPathBBrokerPolicy({
     writeCapable,
     planSeat: cursorPlanSeat,
@@ -20479,12 +20397,11 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // cannot overwrite one another's broker route in ~/.cursor/mcp.json.
       const globalMcpPath = globalCursorMcpPath()
       const globalBrokerEntries = buildCursorBrokerMcpServerEntry(brokerInvocation)
-      const globalBrokerRegistrationTransaction =
-        createCursorGlobalBrokerRegistrationTransaction({
-          fs: fsSync,
-          registryPath: globalMcpPath,
-          registryDirectory: globalCursorMcpDir()
-        })
+      const globalBrokerRegistrationTransaction = createCursorGlobalBrokerRegistrationTransaction({
+        fs: fsSync,
+        registryPath: globalMcpPath,
+        registryDirectory: globalCursorMcpDir()
+      })
       cursorGlobalBrokerRegistryLease = await cursorGlobalBrokerRegistryLeases.acquire({
         registryPath: globalMcpPath,
         canonicalRegistryResourcePath:
@@ -20522,9 +20439,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           allowRules: cursorBrokerPolicy.allowRules,
           mcpConfigPath: mcpPath,
           serverEntry: {},
-          ...(workspaceMcpAliasesGlobalRegistry
-            ? { preserveExistingMcpServers: true }
-            : {})
+          ...(workspaceMcpAliasesGlobalRegistry ? { preserveExistingMcpServers: true } : {})
         },
         {
           denyRules: cursorBrokerPolicy.denyRules,
@@ -20562,9 +20477,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
             payload.taskWraithMcpProfileId
           ),
           meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
-            payload.taskWraithMcpProfileId
-          ),
+          sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
           auditSubset: Boolean(payload.auditRun)
         },
         isolatedInstanceId:
@@ -20691,7 +20604,11 @@ const piCerebrasRetriedRunIds = new Set<string>()
 /** Visible, idempotent transcript row for the scheduled Cerebras retry —
  * plain system message (the seat-rotation notice pattern): no new card
  * vocabulary on either platform. */
-function appendPiCerebrasRetryNotice(appChatId: string, failedRunId: string, delayMs: number): void {
+function appendPiCerebrasRetryNotice(
+  appChatId: string,
+  failedRunId: string,
+  delayMs: number
+): void {
   const chat = AppStore.getChat(appChatId)
   if (!chat) return
   const messageId = `pi-cerebras-retry-${failedRunId}`
@@ -20870,9 +20787,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
 
   const cerebrasMaxCompletionTokens =
     upstream === 'cerebras'
-      ? normalizePiCerebrasMaxCompletionTokens(
-          AppStore.getSettings().piCerebrasMaxCompletionTokens
-        )
+      ? normalizePiCerebrasMaxCompletionTokens(AppStore.getSettings().piCerebrasMaxCompletionTokens)
       : undefined
 
   if (upstream === 'cerebras') {
@@ -21032,7 +20947,8 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   }
 
   const piCoordinationFallbackPrompt = `${payload.prompt}\n\n${piEnsembleCoordinationUnavailablePromptAppendix(
-    ensembleCoordinationPreparationFailure || 'extension readiness was not verified before this turn began'
+    ensembleCoordinationPreparationFailure ||
+      'extension readiness was not verified before this turn began'
   )}`
   if (ephemeralSession && !preparedEnsembleCoordination) {
     appendDurableRunEventForRoute(
@@ -21134,7 +21050,11 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
             }
           }
         }
-      : { initialLines: [piPromptCommand(ephemeralSession ? piCoordinationFallbackPrompt : payload.prompt)] },
+      : {
+          initialLines: [
+            piPromptCommand(ephemeralSession ? piCoordinationFallbackPrompt : payload.prompt)
+          ]
+        },
     onComplete: () => {
       mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)
       const cleanup = isolatedHomeLease.cleanup()
@@ -21398,9 +21318,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        )
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       grokMcpServers = [
         {
@@ -21521,10 +21439,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
     if (!grokWriteCapable(payload.approvalMode)) {
       if (networkRead) return 'allow'
-      if (
-        nativeWorkspacePreflight.kind === 'allow' &&
-        nativeWorkspacePreflight.access === 'read'
-      ) {
+      if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
         return 'allow'
       }
       // Native shell has already failed closed above because this runtime has
@@ -21938,7 +21853,8 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       state
     )
   } else if (evt.type === 'tool_result') {
-    const toolId = evt.toolId || `mistral-tool-${mistralFallbackToolSeq || ++mistralFallbackToolSeq}`
+    const toolId =
+      evt.toolId || `mistral-tool-${mistralFallbackToolSeq || ++mistralFallbackToolSeq}`
     accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
     reportGenericLiveEstimate(state)
     const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
@@ -22092,10 +22008,7 @@ async function runMistralProvider(event: Electron.IpcMainInvokeEvent, payload: A
   await runMistralAcpProvider(event, payload)
 }
 
-async function runMistralAcpProvider(
-  event: Electron.IpcMainInvokeEvent,
-  payload: AgentRunPayload
-) {
+async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('mistral', payload)
   const resolved = await resolveCliProviderBinary('mistral', payload.runtimeProfile)
   if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
@@ -22287,9 +22200,7 @@ async function runMistralAcpProvider(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        )
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       })
       mistralMcpServers = [
         {
@@ -22934,560 +22845,555 @@ async function runKimiAcpProvider(
   }
 
   try {
-  const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
+    const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
 
-  const model = normalizeCliProviderModel('kimi', payload.model)
-  const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
-  const kimiModelConfig = kimiAcpModelConfigValue(model, payload.serviceTier)
+    const model = normalizeCliProviderModel('kimi', payload.model)
+    const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
+    const kimiModelConfig = kimiAcpModelConfigValue(model, payload.serviceTier)
 
-  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
-    settleDeniedProviderTransportLaunch(route)
-    return
-  }
-
-  // Build the isolated home BEFORE registering the run so a fail-closed
-  // not-authenticated / build error surfaces as setup-required without a
-  // half-started run.
-  const preserveKimiSessionState = !graphContextIsolated && Boolean(payload.appChatId)
-  const kimiHomeDir = kimiAcpSeatHomeDir(payload)
-  const home = await prepareKimiIsolatedHome({
-    runId: route.appRunId || 'unknown',
-    homeDir: kimiHomeDir,
-    boundaryRoot: preserveKimiSessionState
-      ? kimiAcpSeatStateRoot(app.getPath('userData'))
-      : kimiHomeDir,
-    sourceHome: join(os.homedir(), '.kimi-code'),
-    // Both current models advertise always_thinking. K3 additionally accepts
-    // Low/High/Max, applied to fresh sessions through the isolated config and
-    // re-asserted below when resuming a native session.
-    thinkingEnabled: true,
-    ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
-    selectedModelAlias: kimiModelConfig,
-    preserveSessionState: preserveKimiSessionState,
-    strictCleanup: preserveKimiSessionState,
-    fs: kimiHomeFsAdapter
-  })
-  if (!home.ok) {
-    settleVisibleProviderSetupFailure({
-      sender: event.sender,
-      provider: 'kimi',
-      route,
-      message: home.message,
-      setupRequired: home.reason === 'not-authenticated',
-      fallback: false
-    })
-    return
-  }
-  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
-    await home.cleanup().catch(() => undefined)
-    settleDeniedProviderTransportLaunch(route)
-    return
-  }
-
-  let privateCwd: KimiPrivateRunCwd
-  try {
-    privateCwd = await prepareKimiPrivateRunCwd({
-      isolatedHome: home.home,
-      fs: kimiPrivateCwdFsAdapter
-    })
-  } catch (error) {
-    await home.cleanup()
     if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
       settleDeniedProviderTransportLaunch(route)
       return
     }
-    const message = `Kimi's private runtime cwd could not be created; the provider was not started. ${
-      error instanceof Error ? error.message : String(error)
-    }`
-    settleVisibleProviderSetupFailure({
-      sender: event.sender,
-      provider: 'kimi',
-      route,
-      message,
-      fallback: false
-    })
-    return
-  }
-  if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
-    await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
-    settleDeniedProviderTransportLaunch(route)
-    return
-  }
 
-  const persistedSeat = providerSeatStoreTarget(
-    payload.appChatId,
-    'kimi',
-    payload.ensembleRun?.participantId
-  )
-  const persistedPostureVersion = (() => {
-    if (!persistedSeat || persistedSeat.linkedProviderSessionId !== payload.providerSessionId) {
-      return undefined
-    }
-    if (persistedSeat.participantId) {
-      return persistedSeat.chat.ensemble?.participants.find(
-        (participant) => participant.id === persistedSeat.participantId
-      )?.kimiAcpPostureVersion
-    }
-    return persistedSeat.chat.providerMetadata?.kimiAcpPostureVersion
-  })()
-  const productionSession = buildKimiProductionSessionPlan({
-    prompt: payload.prompt,
-    resumeFallbackPrompt: payload.resumeFallbackPrompt,
-    requestedResumeSessionId: payload.providerSessionId,
-    persistedPostureVersion
-  })
-  if (productionSession.legacyResumeRejected && payload.prompt.trim() === '/compact') {
-    await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
-    const message =
-      'This Kimi session predates the synthetic-cwd containment boundary and cannot be resumed for native compaction. Start a new Kimi turn first.'
-    settleVisibleProviderSetupFailure({
-      sender: event.sender,
-      provider: 'kimi',
-      route,
-      message,
-      fallback: false
+    // Build the isolated home BEFORE registering the run so a fail-closed
+    // not-authenticated / build error surfaces as setup-required without a
+    // half-started run.
+    const preserveKimiSessionState = !graphContextIsolated && Boolean(payload.appChatId)
+    const kimiHomeDir = kimiAcpSeatHomeDir(payload)
+    const home = await prepareKimiIsolatedHome({
+      runId: route.appRunId || 'unknown',
+      homeDir: kimiHomeDir,
+      boundaryRoot: preserveKimiSessionState
+        ? kimiAcpSeatStateRoot(app.getPath('userData'))
+        : kimiHomeDir,
+      sourceHome: join(os.homedir(), '.kimi-code'),
+      // Both current models advertise always_thinking. K3 additionally accepts
+      // Low/High/Max, applied to fresh sessions through the isolated config and
+      // re-asserted below when resuming a native session.
+      thinkingEnabled: true,
+      ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
+      selectedModelAlias: kimiModelConfig,
+      preserveSessionState: preserveKimiSessionState,
+      strictCleanup: preserveKimiSessionState,
+      fs: kimiHomeFsAdapter
     })
-    return
-  }
+    if (!home.ok) {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message: home.message,
+        setupRequired: home.reason === 'not-authenticated',
+        fallback: false
+      })
+      return
+    }
+    if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+      await home.cleanup().catch(() => undefined)
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
 
-  const state: CliProviderStreamState = {
-    provider: 'kimi',
-    sender: event.sender,
-    startedAt: Date.now(),
-    model,
-    fallback: false,
-    completed: false,
-    assistantText: '',
-    kimiUsageInputChars: productionSession.prompt.length,
-    kimiUsageOutputChars: 0,
-    providerSessionId: productionSession.resumeSessionId,
-    approvalMode: payload.approvalMode,
-    workflowMode: payload.workflowMode,
-    sessionTrust: Boolean(payload.sessionTrust),
-    externalPathGrants: payload.externalPathGrants,
-    runtimeProfileId: payload.runtimeProfileId,
-    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
-    effectivePermissions: payload.effectivePermissions,
-    effectivePermissionsSignature: payload.effectivePermissionsSignature,
-    ensembleRun: payload.ensembleRun,
-    ...route
-  }
-  const registeredSession = registerRunSession(
-    'kimi',
-    event.sender,
-    route,
-    payload.scope === 'global' ? undefined : payload.workspace,
-    state,
-    productionSession.resumeSessionId
-  )
-  if (!registeredSession) {
-    // History clear or an exact terminal claim can land after the outer Kimi
-    // dispatch reservation but before contained transport admission. Keep this
-    // second registration load-bearing and release credentials/cwd without
-    // starting the gateway or provider.
-    const cleanup = createJoinedKimiCleanup(
-      () => privateCwd.cleanup(),
-      () => home.cleanup()
-    )
+    let privateCwd: KimiPrivateRunCwd
     try {
-      await cleanup()
-    } catch {
-      await cleanup().catch(() => undefined)
-    }
-    settleDeniedProviderTransportLaunch(route)
-    return
-  }
-  const kimiNativeCompactionStartedAt =
-    productionSession.prompt.trim() === '/compact' && productionSession.resumeSessionId
-      ? Date.now()
-      : null
-  try {
-    if (kimiNativeCompactionStartedAt !== null) {
-      emitContextCompactionCompatLine(
-        event.sender,
-        'kimi',
-        { kind: 'started', telemetry: { provider: 'kimi', trigger: 'manual' } },
-        state
-      )
-    }
-
-    if (productionSession.legacyResumeRejected) {
-      sendAgentCompatLine(
-        event.sender,
-        'kimi',
-        {
-          type: 'provider_diagnostic',
-          provider: 'kimi',
-          message:
-            'The linked Kimi session was born before the synthetic-cwd containment boundary. TaskWraith started a new safe session with full authorized context instead of resuming it.'
-        },
-        state
-      )
-    }
-  } catch (error) {
-    const cleanup = createJoinedKimiCleanup(
-      () => privateCwd.cleanup(),
-      () => home.cleanup()
-    )
-    try {
-      await cleanup()
-    } catch {
-      await cleanup().catch(() => undefined)
-    }
-    settleVisibleProviderSetupFailure({
-      sender: event.sender,
-      provider: 'kimi',
-      route,
-      message: `Kimi initialization projection failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-      setupRequired: true,
-      fallback: false
-    })
-    return
-  }
-
-  // Per-tool approval policy for the gateway MCP surface. Every native Kimi
-  // fs/exec/egress/fan-out tool is denied statically by the isolated profile;
-  // any mutating gateway request still crosses the signed host ledger.
-  const kimiWriteCapable = payload.approvalMode !== 'plan'
-  const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
-    const decision = classifyKimiToolPermission(request, {
-      writeCapable: kimiWriteCapable,
-      isSafeMcpTool: isKimiSafeMcpTool,
-      isReadOnlyShell: grokReadOnlyShellRequestAllowed
-    })
-    if (decision === 'allow') return 'allow'
-    if (decision === 'deny') return 'deny'
-    const service = grokToolKindToService(request.toolKind)
-    const allowed = await requestAgenticServiceApproval(
-      event.sender,
-      'kimi',
-      service,
-      payload.scope === 'global' ? undefined : payload.workspace,
-      {
-        method: `kimi/${request.toolKind || 'tool'}`,
-        title: `Kimi wants to run: ${request.toolName}`,
-        body: `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
-        preview: buildAcpToolApprovalPreview({
-          toolName: request.toolName,
-          rawToolCall: request.rawToolCall,
-          service,
-          cwd: payload.scope === 'global' ? undefined : payload.workspace
-        }),
-        runId: route.appRunId
+      privateCwd = await prepareKimiPrivateRunCwd({
+        isolatedHome: home.home,
+        fs: kimiPrivateCwdFsAdapter
+      })
+    } catch (error) {
+      await home.cleanup()
+      if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+        settleDeniedProviderTransportLaunch(route)
+        return
       }
-    )
-    return allowed ? 'allow' : 'deny'
-  }
+      const message = `Kimi's private runtime cwd could not be created; the provider was not started. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message,
+        fallback: false
+      })
+      return
+    }
+    if (!providerTransportLaunchAuthorized('kimi', payload, route)) {
+      await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
 
-  let handle: ReturnType<typeof runKimiAcpTurn>
-  let providerTransportLaunchAttempted = false
-  try {
-    const launched = await launchKimiProductionAcp({
-      taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised !== false,
-      privateCwd,
-      assertRuntimeReadyForSpawn: async () => {
-        const binaryPath = await admittedRuntime.assertReadyForSpawn()
-        // Gateway/cwd/runtime admission all await. A destructive-history
-        // transaction can terminalize this exact run during those awaits, so
-        // re-check its promoted persistence authority after attestation. The
-        // synchronous launch callback repeats this check after the await
-        // continuation and owns the final no-spawn boundary.
-        assertKimiSpawnAuthority(() =>
-          providerTransportLaunchAuthorized('kimi', payload, route)
+    const persistedSeat = providerSeatStoreTarget(
+      payload.appChatId,
+      'kimi',
+      payload.ensembleRun?.participantId
+    )
+    const persistedPostureVersion = (() => {
+      if (!persistedSeat || persistedSeat.linkedProviderSessionId !== payload.providerSessionId) {
+        return undefined
+      }
+      if (persistedSeat.participantId) {
+        return persistedSeat.chat.ensemble?.participants.find(
+          (participant) => participant.id === persistedSeat.participantId
+        )?.kimiAcpPostureVersion
+      }
+      return persistedSeat.chat.providerMetadata?.kimiAcpPostureVersion
+    })()
+    const productionSession = buildKimiProductionSessionPlan({
+      prompt: payload.prompt,
+      resumeFallbackPrompt: payload.resumeFallbackPrompt,
+      requestedResumeSessionId: payload.providerSessionId,
+      persistedPostureVersion
+    })
+    if (productionSession.legacyResumeRejected && payload.prompt.trim() === '/compact') {
+      await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
+      const message =
+        'This Kimi session predates the synthetic-cwd containment boundary and cannot be resumed for native compaction. Start a new Kimi turn first.'
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message,
+        fallback: false
+      })
+      return
+    }
+
+    const state: CliProviderStreamState = {
+      provider: 'kimi',
+      sender: event.sender,
+      startedAt: Date.now(),
+      model,
+      fallback: false,
+      completed: false,
+      assistantText: '',
+      kimiUsageInputChars: productionSession.prompt.length,
+      kimiUsageOutputChars: 0,
+      providerSessionId: productionSession.resumeSessionId,
+      approvalMode: payload.approvalMode,
+      workflowMode: payload.workflowMode,
+      sessionTrust: Boolean(payload.sessionTrust),
+      externalPathGrants: payload.externalPathGrants,
+      runtimeProfileId: payload.runtimeProfileId,
+      taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+      effectivePermissions: payload.effectivePermissions,
+      effectivePermissionsSignature: payload.effectivePermissionsSignature,
+      ensembleRun: payload.ensembleRun,
+      ...route
+    }
+    const registeredSession = registerRunSession(
+      'kimi',
+      event.sender,
+      route,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      state,
+      productionSession.resumeSessionId
+    )
+    if (!registeredSession) {
+      // History clear or an exact terminal claim can land after the outer Kimi
+      // dispatch reservation but before contained transport admission. Keep this
+      // second registration load-bearing and release credentials/cwd without
+      // starting the gateway or provider.
+      const cleanup = createJoinedKimiCleanup(
+        () => privateCwd.cleanup(),
+        () => home.cleanup()
+      )
+      try {
+        await cleanup()
+      } catch {
+        await cleanup().catch(() => undefined)
+      }
+      settleDeniedProviderTransportLaunch(route)
+      return
+    }
+    const kimiNativeCompactionStartedAt =
+      productionSession.prompt.trim() === '/compact' && productionSession.resumeSessionId
+        ? Date.now()
+        : null
+    try {
+      if (kimiNativeCompactionStartedAt !== null) {
+        emitContextCompactionCompatLine(
+          event.sender,
+          'kimi',
+          { kind: 'started', telemetry: { provider: 'kimi', trigger: 'manual' } },
+          state
         )
-        return binaryPath
-      },
-      startGateway: async () => {
-        assertKimiSpawnAuthority(() =>
-          providerTransportLaunchAuthorized('kimi', payload, route)
+      }
+
+      if (productionSession.legacyResumeRejected) {
+        sendAgentCompatLine(
+          event.sender,
+          'kimi',
+          {
+            type: 'provider_diagnostic',
+            provider: 'kimi',
+            message:
+              'The linked Kimi session was born before the synthetic-cwd containment boundary. TaskWraith started a new safe session with full authorized context instead of resuming it.'
+          },
+          state
         )
-        const bridge = await startKimiHttpMcpBridge({
-          dispatch: createKimiMcpDispatch({
-            route,
-            taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
-            workspace: payload.scope === 'global' ? undefined : payload.workspace,
-            appVersion: app.getVersion(),
-            brokerToken: geminiMcpBrokerToken,
-            auditSubset: Boolean(payload.auditRun),
-            instanceEpoch,
-            getMcpToolDefinitions: () => mcpToolDefinitions(),
-            dispatchBrokerRequest: (request) =>
-              mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
-          })
-        })
-        try {
-          assertKimiSpawnAuthority(() =>
-            providerTransportLaunchAuthorized('kimi', payload, route)
-          )
-          return {
-            server: {
-              name: 'taskwraith',
-              type: 'http',
-              url: bridge.url,
-              headers: [{ name: bridge.headerName, value: bridge.headerValue }]
-            },
-            close: () => bridge.close()
-          }
-        } catch (error) {
-          await bridge.close()
-          throw error
+      }
+    } catch (error) {
+      const cleanup = createJoinedKimiCleanup(
+        () => privateCwd.cleanup(),
+        () => home.cleanup()
+      )
+      try {
+        await cleanup()
+      } catch {
+        await cleanup().catch(() => undefined)
+      }
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message: `Kimi initialization projection failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        setupRequired: true,
+        fallback: false
+      })
+      return
+    }
+
+    // Per-tool approval policy for the gateway MCP surface. Every native Kimi
+    // fs/exec/egress/fan-out tool is denied statically by the isolated profile;
+    // any mutating gateway request still crosses the signed host ledger.
+    const kimiWriteCapable = payload.approvalMode !== 'plan'
+    const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
+      const decision = classifyKimiToolPermission(request, {
+        writeCapable: kimiWriteCapable,
+        isSafeMcpTool: isKimiSafeMcpTool,
+        isReadOnlyShell: grokReadOnlyShellRequestAllowed
+      })
+      if (decision === 'allow') return 'allow'
+      if (decision === 'deny') return 'deny'
+      const service = grokToolKindToService(request.toolKind)
+      const allowed = await requestAgenticServiceApproval(
+        event.sender,
+        'kimi',
+        service,
+        payload.scope === 'global' ? undefined : payload.workspace,
+        {
+          method: `kimi/${request.toolKind || 'tool'}`,
+          title: `Kimi wants to run: ${request.toolName}`,
+          body: `Kimi requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+          preview: buildAcpToolApprovalPreview({
+            toolName: request.toolName,
+            rawToolCall: request.rawToolCall,
+            service,
+            cwd: payload.scope === 'global' ? undefined : payload.workspace
+          }),
+          runId: route.appRunId
         }
-      },
-      snapshot: {
-        appVersion: app.getVersion(),
-        prompt: payload.prompt,
-        resumeFallbackPrompt: payload.resumeFallbackPrompt,
-        requestedResumeSessionId: payload.providerSessionId,
-        persistedPostureVersion
-      },
-      launch: (production, transportCleanup, admittedBinaryPath) => {
-        // `launchKimiProductionAcp` resumes from an await before invoking this
-        // callback. Repeat the exact check as its first synchronous statement;
-        // no microtask can invalidate authority between here and child spawn.
-        assertKimiSpawnAuthority(() =>
-          providerTransportLaunchAuthorized('kimi', payload, route)
-        )
-        const teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
-        providerTransportLaunchAttempted = true
-        return runKimiAcpTurn({
-          prompt: production.session.prompt,
-          resumeSessionId: production.session.resumeSessionId,
+      )
+      return allowed ? 'allow' : 'deny'
+    }
+
+    let handle: ReturnType<typeof runKimiAcpTurn>
+    let providerTransportLaunchAttempted = false
+    try {
+      const launched = await launchKimiProductionAcp({
+        taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised !== false,
+        privateCwd,
+        assertRuntimeReadyForSpawn: async () => {
+          const binaryPath = await admittedRuntime.assertReadyForSpawn()
+          // Gateway/cwd/runtime admission all await. A destructive-history
+          // transaction can terminalize this exact run during those awaits, so
+          // re-check its promoted persistence authority after attestation. The
+          // synchronous launch callback repeats this check after the await
+          // continuation and owns the final no-spawn boundary.
+          assertKimiSpawnAuthority(() => providerTransportLaunchAuthorized('kimi', payload, route))
+          return binaryPath
+        },
+        startGateway: async () => {
+          assertKimiSpawnAuthority(() => providerTransportLaunchAuthorized('kimi', payload, route))
+          const bridge = await startKimiHttpMcpBridge({
+            dispatch: createKimiMcpDispatch({
+              route,
+              taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+              workspace: payload.scope === 'global' ? undefined : payload.workspace,
+              appVersion: app.getVersion(),
+              brokerToken: geminiMcpBrokerToken,
+              auditSubset: Boolean(payload.auditRun),
+              instanceEpoch,
+              getMcpToolDefinitions: () => mcpToolDefinitions(),
+              dispatchBrokerRequest: (request) =>
+                mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
+            })
+          })
+          try {
+            assertKimiSpawnAuthority(() =>
+              providerTransportLaunchAuthorized('kimi', payload, route)
+            )
+            return {
+              server: {
+                name: 'taskwraith',
+                type: 'http',
+                url: bridge.url,
+                headers: [{ name: bridge.headerName, value: bridge.headerValue }]
+              },
+              close: () => bridge.close()
+            }
+          } catch (error) {
+            await bridge.close()
+            throw error
+          }
+        },
+        snapshot: {
+          appVersion: app.getVersion(),
+          prompt: payload.prompt,
           resumeFallbackPrompt: payload.resumeFallbackPrompt,
-          // `/compact` only makes sense against the linked native history. Never
-          // turn a stale compaction target into a new empty session.
-          allowResumeFallback: production.session.prompt.trim() !== '/compact',
-          resumeConfigOptions: [
-            {
-              configId: 'model',
-              value: kimiModelConfig
-            },
-            {
-              configId: 'thinking',
-              value: kimiThinkingConfig
-            }
-          ],
-          cwd: production.cwd,
-          initializeParams: production.initializeParams,
-          mcpServers: production.mcpServers,
-          spawnProcess: () => {
-            // Build the CLI model arg the same way every other Kimi path does:
-            // kimiCliModelArg omits `--model` for the default (kimi-code uses its
-            // config default_model) and maps the Fast/standard service tier to the
-            // real kimi-for-coding[-highspeed] alias. Passing the display id directly
-            // would send a non-existent CLI alias and never engage Fast mode. The
-            // root `--model` flag precedes the `acp` subcommand.
-            const modelArgs: string[] = []
-            appendKimiModelArgs(modelArgs, model, payload.serviceTier)
-            const args = [...modelArgs, 'acp']
-            return spawn(admittedBinaryPath, args, {
-              cwd: production.cwd,
-              env: buildKimiContainedProcessEnv(
-                createCliEnv(
-                  {
-                    ...home.env,
-                    HOME: home.home,
-                    USERPROFILE: home.home,
-                    TASKWRAITH_PARENT_PROVIDER: 'kimi',
-                    TASKWRAITH_RUN_ID: route.appRunId || '',
-                    TASKWRAITH_CHAT_ID: route.appChatId || ''
-                  },
-                  admittedBinaryPath
-                ),
-                production.cwd
-              )
-            }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
-          },
-          onProcess: (child) => {
-            const proc = child as unknown as ChildProcess
-            runManager.attachProcess(route.appRunId!, proc)
-            cliProviderProcesses.set('kimi', proc)
-          },
-          beforeInitialize: async (child) => {
-            const proc = child as unknown as ChildProcess
-            await home.noteProviderProcess(proc.pid || 0)
-          },
-          onPermissionRequest: kimiPermissionHandler,
-          onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
-          onRawFrame: (direction, message) => {
-            const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
-            if (flag === '1' || flag === 'true' || flag === 'yes') {
-              try {
-                process.stderr.write(formatKimiProductionAcpDebugFrame(direction, message))
-              } catch {
-                /* ignore */
+          requestedResumeSessionId: payload.providerSessionId,
+          persistedPostureVersion
+        },
+        launch: (production, transportCleanup, admittedBinaryPath) => {
+          // `launchKimiProductionAcp` resumes from an await before invoking this
+          // callback. Repeat the exact check as its first synchronous statement;
+          // no microtask can invalidate authority between here and child spawn.
+          assertKimiSpawnAuthority(() => providerTransportLaunchAuthorized('kimi', payload, route))
+          const teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
+          providerTransportLaunchAttempted = true
+          return runKimiAcpTurn({
+            prompt: production.session.prompt,
+            resumeSessionId: production.session.resumeSessionId,
+            resumeFallbackPrompt: payload.resumeFallbackPrompt,
+            // `/compact` only makes sense against the linked native history. Never
+            // turn a stale compaction target into a new empty session.
+            allowResumeFallback: production.session.prompt.trim() !== '/compact',
+            resumeConfigOptions: [
+              {
+                configId: 'model',
+                value: kimiModelConfig
+              },
+              {
+                configId: 'thinking',
+                value: kimiThinkingConfig
               }
-            }
-          },
-          onClose: async (code, turnComplete, terminalStatus) => {
-            // The provider slot must remain live until credential/config/cwd cleanup
-            // finishes. Releasing it earlier lets a back-to-back turn materialize a
-            // new durable seat while the old teardown is still deleting that home.
-            if (state.completed) return
-            state.completed = true
-            let finishStatus: 'failed' | 'completed' = 'failed'
-            try {
-              await finalizeKimiRunAfterCleanup({
-                cleanup: teardown,
-                projectTerminal: (cleanupError) => {
-                  flushKimiAcpThinking(state)
-                  const status = turnComplete ? terminalStatus || 'success' : 'failed'
-                  const transportFailed = typeof code === 'number' && code !== 0
-                  const failed =
-                    Boolean(cleanupError) ||
-                    transportFailed ||
-                    !turnComplete ||
-                    (status !== 'success' && status !== 'end_turn')
-                  finishStatus = failed ? 'failed' : 'completed'
-                  if (cleanupError) {
-                    sendAgentCompatError(
-                      event.sender,
-                      'kimi',
-                      `Kimi terminal cleanup failed after retry: ${
-                        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-                      }`,
-                      state
-                    )
-                  }
-                  const stats = estimateKimiAcpTokenUsage({
-                    inputChars: state.kimiUsageInputChars || 0,
-                    outputChars: state.kimiUsageOutputChars || 0,
-                    model,
-                    serviceTier: payload.serviceTier,
-                    durationMs: Date.now() - state.startedAt,
-                    totalTokenLimit: home.modelContextWindow
-                  })
-                  state.tokenUsage = stats
-                  let usageRecorded = false
-                  if (!state.ensembleRun && route.appChatId && route.appRunId) {
-                    const chat = AppStore.getChat(route.appChatId)
-                    if (chat) {
-                      try {
-                        AppStore.recordUsage({
-                          provider: 'kimi',
-                          workspaceId:
-                            chat.workspaceId ||
-                            (chat.scope === 'global' ? '__taskwraith_global_chats__' : ''),
-                          chatId: route.appChatId,
-                          runId: route.appRunId,
-                          usageKind: 'run',
-                          model,
-                          inputTokens: stats.input_tokens,
-                          outputTokens: stats.output_tokens,
-                          totalTokens: stats.total_tokens,
-                          tokenCountConfidence: 'estimated',
-                          costRateModel: stats._taskwraith_cost_rate_model,
-                          durationMs: stats.duration_ms,
-                          promptText: production.session.prompt,
-                          responseText: state.assistantText
-                        })
-                        usageRecorded = true
-                      } catch {
-                        // Renderer recording remains the fallback when persistence fails.
+            ],
+            cwd: production.cwd,
+            initializeParams: production.initializeParams,
+            mcpServers: production.mcpServers,
+            spawnProcess: () => {
+              // Build the CLI model arg the same way every other Kimi path does:
+              // kimiCliModelArg omits `--model` for the default (kimi-code uses its
+              // config default_model) and maps the Fast/standard service tier to the
+              // real kimi-for-coding[-highspeed] alias. Passing the display id directly
+              // would send a non-existent CLI alias and never engage Fast mode. The
+              // root `--model` flag precedes the `acp` subcommand.
+              const modelArgs: string[] = []
+              appendKimiModelArgs(modelArgs, model, payload.serviceTier)
+              const args = [...modelArgs, 'acp']
+              return spawn(admittedBinaryPath, args, {
+                cwd: production.cwd,
+                env: buildKimiContainedProcessEnv(
+                  createCliEnv(
+                    {
+                      ...home.env,
+                      HOME: home.home,
+                      USERPROFILE: home.home,
+                      TASKWRAITH_PARENT_PROVIDER: 'kimi',
+                      TASKWRAITH_RUN_ID: route.appRunId || '',
+                      TASKWRAITH_CHAT_ID: route.appChatId || ''
+                    },
+                    admittedBinaryPath
+                  ),
+                  production.cwd
+                )
+              }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+            },
+            onProcess: (child) => {
+              const proc = child as unknown as ChildProcess
+              runManager.attachProcess(route.appRunId!, proc)
+              cliProviderProcesses.set('kimi', proc)
+            },
+            beforeInitialize: async (child) => {
+              const proc = child as unknown as ChildProcess
+              await home.noteProviderProcess(proc.pid || 0)
+            },
+            onPermissionRequest: kimiPermissionHandler,
+            onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+            onRawFrame: (direction, message) => {
+              const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
+              if (flag === '1' || flag === 'true' || flag === 'yes') {
+                try {
+                  process.stderr.write(formatKimiProductionAcpDebugFrame(direction, message))
+                } catch {
+                  /* ignore */
+                }
+              }
+            },
+            onClose: async (code, turnComplete, terminalStatus) => {
+              // The provider slot must remain live until credential/config/cwd cleanup
+              // finishes. Releasing it earlier lets a back-to-back turn materialize a
+              // new durable seat while the old teardown is still deleting that home.
+              if (state.completed) return
+              state.completed = true
+              let finishStatus: 'failed' | 'completed' = 'failed'
+              try {
+                await finalizeKimiRunAfterCleanup({
+                  cleanup: teardown,
+                  projectTerminal: (cleanupError) => {
+                    flushKimiAcpThinking(state)
+                    const status = turnComplete ? terminalStatus || 'success' : 'failed'
+                    const transportFailed = typeof code === 'number' && code !== 0
+                    const failed =
+                      Boolean(cleanupError) ||
+                      transportFailed ||
+                      !turnComplete ||
+                      (status !== 'success' && status !== 'end_turn')
+                    finishStatus = failed ? 'failed' : 'completed'
+                    if (cleanupError) {
+                      sendAgentCompatError(
+                        event.sender,
+                        'kimi',
+                        `Kimi terminal cleanup failed after retry: ${
+                          cleanupError instanceof Error
+                            ? cleanupError.message
+                            : String(cleanupError)
+                        }`,
+                        state
+                      )
+                    }
+                    const stats = estimateKimiAcpTokenUsage({
+                      inputChars: state.kimiUsageInputChars || 0,
+                      outputChars: state.kimiUsageOutputChars || 0,
+                      model,
+                      serviceTier: payload.serviceTier,
+                      durationMs: Date.now() - state.startedAt,
+                      totalTokenLimit: home.modelContextWindow
+                    })
+                    state.tokenUsage = stats
+                    let usageRecorded = false
+                    if (!state.ensembleRun && route.appChatId && route.appRunId) {
+                      const chat = AppStore.getChat(route.appChatId)
+                      if (chat) {
+                        try {
+                          AppStore.recordUsage({
+                            provider: 'kimi',
+                            workspaceId:
+                              chat.workspaceId ||
+                              (chat.scope === 'global' ? '__taskwraith_global_chats__' : ''),
+                            chatId: route.appChatId,
+                            runId: route.appRunId,
+                            usageKind: 'run',
+                            model,
+                            inputTokens: stats.input_tokens,
+                            outputTokens: stats.output_tokens,
+                            totalTokens: stats.total_tokens,
+                            tokenCountConfidence: 'estimated',
+                            costRateModel: stats._taskwraith_cost_rate_model,
+                            durationMs: stats.duration_ms,
+                            promptText: production.session.prompt,
+                            responseText: state.assistantText
+                          })
+                          usageRecorded = true
+                        } catch {
+                          // Renderer recording remains the fallback when persistence fails.
+                        }
                       }
                     }
-                  }
-                  if (usageRecorded) {
-                    stats._taskwraith_usage_recorded = true
-                  }
-                  if (kimiNativeCompactionStartedAt !== null) {
-                    emitContextCompactionCompatLine(
+                    if (usageRecorded) {
+                      stats._taskwraith_usage_recorded = true
+                    }
+                    if (kimiNativeCompactionStartedAt !== null) {
+                      emitContextCompactionCompatLine(
+                        event.sender,
+                        'kimi',
+                        {
+                          kind: failed ? 'failed' : 'completed',
+                          telemetry: {
+                            provider: 'kimi',
+                            trigger: 'manual',
+                            durationMs: Date.now() - kimiNativeCompactionStartedAt,
+                            ...(failed
+                              ? { error: 'Kimi Code did not complete native compaction.' }
+                              : {})
+                          }
+                        },
+                        state
+                      )
+                    }
+                    sendAgentCompatLine(
                       event.sender,
                       'kimi',
                       {
-                        kind: failed ? 'failed' : 'completed',
-                        telemetry: {
-                          provider: 'kimi',
-                          trigger: 'manual',
-                          durationMs: Date.now() - kimiNativeCompactionStartedAt,
-                          ...(failed
-                            ? { error: 'Kimi Code did not complete native compaction.' }
-                            : {})
-                        }
+                        type: 'result',
+                        status: failed ? 'failed' : 'completed',
+                        stats,
+                        provider: 'kimi',
+                        session_id: state.providerSessionId || ''
                       },
                       state
                     )
+                    sendAgentCompatExit(
+                      event.sender,
+                      'kimi',
+                      failed ? (transportFailed ? code : 1) : 0,
+                      state
+                    )
+                  },
+                  finish: () => {
+                    const terminalStatus =
+                      runManager.getClaimedTerminalStatus(route.appRunId) ?? finishStatus
+                    try {
+                      runManager.finish(route.appRunId, terminalStatus)
+                    } finally {
+                      runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
+                    }
                   }
-                  sendAgentCompatLine(
+                })
+              } catch (error) {
+                try {
+                  sendAgentCompatError(
                     event.sender,
                     'kimi',
-                    {
-                      type: 'result',
-                      status: failed ? 'failed' : 'completed',
-                      stats,
-                      provider: 'kimi',
-                      session_id: state.providerSessionId || ''
-                    },
+                    `Kimi terminal cleanup/projection failed: ${
+                      error instanceof Error ? error.message : String(error)
+                    }`,
                     state
                   )
-                  sendAgentCompatExit(
-                    event.sender,
-                    'kimi',
-                    failed ? (transportFailed ? code : 1) : 0,
-                    state
-                  )
-                },
-                finish: () => {
-                  const terminalStatus =
-                    runManager.getClaimedTerminalStatus(route.appRunId) ?? finishStatus
-                  try {
-                    runManager.finish(route.appRunId, terminalStatus)
-                  } finally {
-                    runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
-                  }
+                } catch {
+                  /* terminal finish already ran in finally */
                 }
-              })
-            } catch (error) {
-              try {
-                sendAgentCompatError(
-                  event.sender,
-                  'kimi',
-                  `Kimi terminal cleanup/projection failed: ${
-                    error instanceof Error ? error.message : String(error)
-                  }`,
-                  state
-                )
-              } catch {
-                /* terminal finish already ran in finally */
               }
             }
-          }
-        })
+          })
+        }
+      })
+      handle = launched.handle
+      runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
+      // This adapter invocation and the registered transport operation remain
+      // live through child close, gateway/private-cwd/home/OAuth cleanup, usage
+      // projection, terminal transcript publication, and RunManager finish.
+      await handle.closed
+    } catch (error) {
+      // A synchronous throw before the turn's onClose is wired (e.g. spawnProcess
+      // throwing RuntimeProfileEnvironmentResolutionError inside runAcpTurn) would
+      // otherwise leak the isolated home — a 0600 copy of the real OAuth token.
+      // Tear it down and surface the failure.
+      await home.cleanup().catch(() => undefined)
+      projectVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider: 'kimi',
+        route,
+        message: error instanceof Error ? error.message : String(error),
+        fallback: false
+      })
+      if (providerTransportLaunchAttempted) {
+        const terminalStatus = runManager.getClaimedTerminalStatus(route.appRunId) ?? 'failed'
+        try {
+          runManager.finish(route.appRunId, terminalStatus)
+        } finally {
+          runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
+        }
+      } else {
+        settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
       }
-    })
-    handle = launched.handle
-    runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
-    // This adapter invocation and the registered transport operation remain
-    // live through child close, gateway/private-cwd/home/OAuth cleanup, usage
-    // projection, terminal transcript publication, and RunManager finish.
-    await handle.closed
-  } catch (error) {
-    // A synchronous throw before the turn's onClose is wired (e.g. spawnProcess
-    // throwing RuntimeProfileEnvironmentResolutionError inside runAcpTurn) would
-    // otherwise leak the isolated home — a 0600 copy of the real OAuth token.
-    // Tear it down and surface the failure.
-    await home.cleanup().catch(() => undefined)
-    projectVisibleProviderSetupFailure({
-      sender: event.sender,
-      provider: 'kimi',
-      route,
-      message: error instanceof Error ? error.message : String(error),
-      fallback: false
-    })
-    if (providerTransportLaunchAttempted) {
-      const terminalStatus =
-        runManager.getClaimedTerminalStatus(route.appRunId) ?? 'failed'
-      try {
-        runManager.finish(route.appRunId, terminalStatus)
-      } finally {
-        runManager.confirmTerminalStatus(route.appRunId, terminalStatus)
-      }
-    } else {
-      settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+      return
     }
-    return
-  }
   } finally {
     // Normal flow reaches this point only after handle.closed; pre-spawn
     // failures reach it after launchKimiProductionAcp and home cleanup. Either
@@ -23635,9 +23541,7 @@ async function acquireCodexCredentialLeaseIfConsented(
       userDataPath: app.getPath('userData')
     })
     if (result.ok) return result.lease
-    console.warn(
-      `[codex] not borrowing the existing sign-in (${result.reason}): ${result.message}`
-    )
+    console.warn(`[codex] not borrowing the existing sign-in (${result.reason}): ${result.message}`)
   } catch (error) {
     console.warn('[codex] credential lease acquisition failed', error)
   }
@@ -23727,11 +23631,7 @@ async function withUnownedCodexClientLifecycle<T>(
   let client: CodexAppServerClient | null = null
   try {
     await disposeCodexClientForOwnerTransition(lease)
-    client = getCodexClient(
-      options.runtimeProfile,
-      options.taskWraithMcpProfileId,
-      lease
-    )
+    client = getCodexClient(options.runtimeProfile, options.taskWraithMcpProfileId, lease)
     client.setWorkspaceLockOwnerId(null)
     return await operation(client)
   } finally {
@@ -23816,7 +23716,9 @@ function unbindCodexRunClient(
   }
 }
 
-function codexClientForRunState(state: CodexRunState | null | undefined): CodexAppServerClient | null {
+function codexClientForRunState(
+  state: CodexRunState | null | undefined
+): CodexAppServerClient | null {
   const runId = state?.appRunId?.trim()
   if (!runId) return null
   return codexRunClientBindings.get(runId)?.client ?? null
@@ -23828,7 +23730,7 @@ function onlyBoundCodexRunClient(): CodexAppServerClient | null {
       .filter((binding) => activeCodexClientLifecycleLease === binding.lease)
       .map((binding) => binding.client)
   )
-  return clients.size === 1 ? clients.values().next().value ?? null : null
+  return clients.size === 1 ? (clients.values().next().value ?? null) : null
 }
 
 function dispatchCodexMessageFromClient(
@@ -23852,17 +23754,11 @@ function dispatchCodexMessageFromClient(
   }
 }
 
-function handleCodexNotificationFromClient(
-  message: any,
-  client: CodexAppServerClient
-): void {
+function handleCodexNotificationFromClient(message: any, client: CodexAppServerClient): void {
   dispatchCodexMessageFromClient(message, client, handleCodexNotification)
 }
 
-function handleCodexServerRequestFromClient(
-  message: any,
-  client: CodexAppServerClient
-): void {
+function handleCodexServerRequestFromClient(message: any, client: CodexAppServerClient): void {
   dispatchCodexMessageFromClient(message, client, handleCodexServerRequest)
 }
 
@@ -23871,10 +23767,7 @@ function getCodexClient(
   taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null,
   lifecycleLease?: CodexClientLifecycleLease
 ): CodexAppServerClient {
-  if (
-    activeCodexClientLifecycleLease &&
-    activeCodexClientLifecycleLease !== lifecycleLease
-  ) {
+  if (activeCodexClientLifecycleLease && activeCodexClientLifecycleLease !== lifecycleLease) {
     throw new Error(
       `Codex app-server is reserved by ${activeCodexClientLifecycleLease.label}; an unowned helper cannot restart or retarget it.`
     )
@@ -24414,21 +24307,21 @@ function findCodexRunStateForMessage(message: any): CodexRunState | null {
     const byThread = getCodexStateFromSession(session)
     const terminalProjectionRoutable = Boolean(
       byThread?.terminalProjectionOperation &&
-        session &&
-        isTerminalRunSessionStatus(session.status) &&
-        providerTransportOperations.get(session.runId) &&
-        isCodexTerminalProjectionNotification(message?.method)
+      session &&
+      isTerminalRunSessionStatus(session.status) &&
+      providerTransportOperations.get(session.runId) &&
+      isCodexTerminalProjectionNotification(message?.method)
     )
     const exactSessionRoutable = Boolean(
       terminalProjectionRoutable ||
-        (byThread &&
-          session &&
-          shouldRouteCodexRunSession({
-            ensemble: isEnsembleCodexRunSession(session),
-            status: session.status,
-            stateCompleted: byThread.completed,
-            allowTerminalNativeGoal: allowsTerminalCodexNativeGoalSession(session)
-          }))
+      (byThread &&
+        session &&
+        shouldRouteCodexRunSession({
+          ensemble: isEnsembleCodexRunSession(session),
+          status: session.status,
+          stateCompleted: byThread.completed,
+          allowTerminalNativeGoal: allowsTerminalCodexNativeGoalSession(session)
+        }))
     )
     const childOwner = !session ? findCodexMultiAgentOwnerState(String(threadId)) : null
     const explicitRoute = resolveCodexExplicitThreadRoute({
@@ -24448,13 +24341,10 @@ function findCodexRunStateForMessage(message: any): CodexRunState | null {
     .getByProvider('codex')
     .filter(
       (session) =>
-        isTerminalRunSessionStatus(session.status) &&
-        providerTransportOperations.get(session.runId)
+        isTerminalRunSessionStatus(session.status) && providerTransportOperations.get(session.runId)
     )
     .map((session) => getCodexStateFromSession(session))
-    .filter(
-      (state): state is CodexRunState => Boolean(state?.terminalProjectionOperation)
-    )
+    .filter((state): state is CodexRunState => Boolean(state?.terminalProjectionOperation))
   return terminalProjectionStates.length === 1 ? terminalProjectionStates[0] : null
 }
 
@@ -24617,7 +24507,11 @@ function sendAgentCompatLine(
   // half is dropped rather than prepended to them.
   if (routed.appRunId && (payload?.type === 'content' || payload?.type === 'token')) {
     const textKey =
-      typeof payload.text === 'string' ? 'text' : typeof payload.content === 'string' ? 'content' : null
+      typeof payload.text === 'string'
+        ? 'text'
+        : typeof payload.content === 'string'
+          ? 'content'
+          : null
     if (textKey) {
       if (payload.cumulative === true || isTaggedCumulativeRestatement(payload)) {
         pendingCompatLoneSurrogateByRun.delete(routed.appRunId)
@@ -25685,14 +25579,8 @@ function codexNotificationBelongsToManualCompaction(
   if (method === 'turn/started') {
     return Boolean(operationId && bindCodexManualCompactionOperationId(pending, operationId))
   }
-  if (
-    method === 'turn/completed' ||
-    method === 'turn/failed' ||
-    method === 'error'
-  ) {
-    return Boolean(
-      operationId && pending.admissionReservation.matchesExactOperationId(operationId)
-    )
+  if (method === 'turn/completed' || method === 'turn/failed' || method === 'error') {
+    return Boolean(operationId && pending.admissionReservation.matchesExactOperationId(operationId))
   }
   // App-server item/token frames carry turnId. Refuse thread-only attribution:
   // another accepted user/review operation may use the same long-lived thread.
@@ -25910,9 +25798,7 @@ async function compactCodexProviderContext(payload: {
     await disposeCodexClientForOwnerTransition(lifecycleLease)
     client = getCodexClient(undefined, undefined, lifecycleLease)
     client.setWorkspaceLockOwnerId(null)
-    client.setNotificationHandler((message) =>
-      handleCodexNotificationFromClient(message, client!)
-    )
+    client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client!))
     client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client!))
     return await compactCodexProviderContextWithClient(payload, client)
   } finally {
@@ -25926,15 +25812,15 @@ async function compactCodexProviderContext(payload: {
 
 async function compactCodexProviderContextWithClient(
   payload: {
-  chatId: string
-  providerSessionId?: string
-  participantId?: string
-  model?: string
-  reasoningEffort?: string | null
-  /** Frozen ensemble-participant presentation for the card (see
-   * resolveEnsembleCompactionTarget); absent on solo chats. */
-  cardMetadata?: Record<string, unknown>
-  reservation: MaintenanceCompactionReservation
+    chatId: string
+    providerSessionId?: string
+    participantId?: string
+    model?: string
+    reasoningEffort?: string | null
+    /** Frozen ensemble-participant presentation for the card (see
+     * resolveEnsembleCompactionTarget); absent on solo chats. */
+    cardMetadata?: Record<string, unknown>
+    reservation: MaintenanceCompactionReservation
   },
   client: CodexAppServerClient
 ): Promise<{ ok: boolean; error?: string }> {
@@ -26011,198 +25897,198 @@ async function compactCodexProviderContextWithClient(
       admissionReservation.releaseBeforeAdmission()
       return { ok: false, error: 'Compaction was cancelled for history deletion.' }
     }
-  const startedAtMs = Date.now()
-  broadcastContextCompactionSignalProgress({
-    chatId: payload.chatId,
-    provider: 'codex',
-    signal: { kind: 'started', telemetry: { provider: 'codex', trigger: 'manual' } },
-    cardMetadata: payload.cardMetadata
-  })
-  let settled = false
-  const completion = new Promise<{ ok: boolean; error?: string }>((resolve) => {
-    const finish = (result: { ok: boolean; error?: string }) => {
-      if (settled) return
-      settled = true
-      if (pendingRecord) pendingRecord.settled = true
-      if (!pendingRecord?.nativeActivityStarted || pendingRecord.nativeActivityEnded) {
-        pendingCodexManualCompactions.delete(threadId)
-      }
-      resolve(result)
-    }
-    const timer = setTimeout(
-      () => finish({ ok: false, error: 'Timed out waiting for Codex to compact.' }),
-      180_000
-    )
-    pendingRecord = {
-      client,
+    const startedAtMs = Date.now()
+    broadcastContextCompactionSignalProgress({
       chatId: payload.chatId,
-      threadId,
-      model: payload.model || persistedSoloModel || 'cli-default',
-      startedAtMs,
-      reservation: payload.reservation,
-      admissionReservation,
-      settle: (result) => {
-        clearTimeout(timer)
-        finish(result)
-      }
-    }
-    pendingCodexManualCompactions.set(threadId, pendingRecord)
-  })
-  const pending = pendingCodexManualCompactions.get(threadId)!
-  pending.completion = completion
-  payload.reservation.signal.addEventListener(
-    'abort',
-    () => {
-      if (pending.turnId) void issueCodexTurnInterrupt(client, threadId, pending.turnId)
-    },
-    { once: true }
-  )
-  try {
-    await client.ensureStarted(app.getVersion())
-  } catch (error) {
-    pending.settle({
-      ok: false,
-      error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
+      provider: 'codex',
+      signal: { kind: 'started', telemetry: { provider: 'codex', trigger: 'manual' } },
+      cardMetadata: payload.cardMetadata
     })
-  }
-  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
-    pending.settle({ ok: false, error: 'Compaction was cancelled for history deletion.' })
-  }
-  let compactionLaunchMayBeLive = false
-  try {
-    if (maintenanceCompactionRegistry.canWrite(payload.reservation)) {
-      if (!maintenanceCompactionRegistry.beginNativeActivity(payload.reservation)) {
-        throw new Error('Compaction was cancelled before its provider turn started.')
-      }
-      pending.nativeActivityStarted = true
-      providerAdmissionMayBeLive = true
-    }
-    if (pending.nativeActivityStarted) {
-      try {
-        await client.request('thread/compact/start', { threadId }, 30_000)
-        compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
-          compactionLaunchMayBeLive,
-          'accepted'
-        )
-      } catch (firstError) {
-        // A timeout is ambiguous: the server may have accepted the turn before
-        // its response was lost. A JSON-RPC rejection is definitive pre-start
-        // evidence unless a turn/started notification independently arrived.
-        if (isCodexAppServerRequestTimeout(firstError, 'thread/compact/start')) {
-          compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
-            compactionLaunchMayBeLive,
-            'timeout'
-          )
-          // Timeout is admission-ambiguous. A retry could create a second
-          // compaction turn while the first is live, so retain the lane and
-          // await delayed start/terminal evidence instead.
-          throw firstError
-        } else {
-          compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
-            compactionLaunchMayBeLive,
-            'rejected'
-          )
+    let settled = false
+    const completion = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      const finish = (result: { ok: boolean; error?: string }) => {
+        if (settled) return
+        settled = true
+        if (pendingRecord) pendingRecord.settled = true
+        if (!pendingRecord?.nativeActivityStarted || pendingRecord.nativeActivityEnded) {
+          pendingCodexManualCompactions.delete(threadId)
         }
-        // A cold app-server may not have the thread loaded — resume, retry once.
-        if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
-        await client.request(
-          'thread/resume',
-          buildCodexThreadResumeRequest(threadId, codexReasoning),
-          30_000
-        )
-        if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
+        resolve(result)
+      }
+      const timer = setTimeout(
+        () => finish({ ok: false, error: 'Timed out waiting for Codex to compact.' }),
+        180_000
+      )
+      pendingRecord = {
+        client,
+        chatId: payload.chatId,
+        threadId,
+        model: payload.model || persistedSoloModel || 'cli-default',
+        startedAtMs,
+        reservation: payload.reservation,
+        admissionReservation,
+        settle: (result) => {
+          clearTimeout(timer)
+          finish(result)
+        }
+      }
+      pendingCodexManualCompactions.set(threadId, pendingRecord)
+    })
+    const pending = pendingCodexManualCompactions.get(threadId)!
+    pending.completion = completion
+    payload.reservation.signal.addEventListener(
+      'abort',
+      () => {
+        if (pending.turnId) void issueCodexTurnInterrupt(client, threadId, pending.turnId)
+      },
+      { once: true }
+    )
+    try {
+      await client.ensureStarted(app.getVersion())
+    } catch (error) {
+      pending.settle({
+        ok: false,
+        error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
+      })
+    }
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      pending.settle({ ok: false, error: 'Compaction was cancelled for history deletion.' })
+    }
+    let compactionLaunchMayBeLive = false
+    try {
+      if (maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        if (!maintenanceCompactionRegistry.beginNativeActivity(payload.reservation)) {
+          throw new Error('Compaction was cancelled before its provider turn started.')
+        }
+        pending.nativeActivityStarted = true
+        providerAdmissionMayBeLive = true
+      }
+      if (pending.nativeActivityStarted) {
         try {
           await client.request('thread/compact/start', { threadId }, 30_000)
           compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
             compactionLaunchMayBeLive,
             'accepted'
           )
-        } catch (secondError) {
-          if (isCodexAppServerRequestTimeout(secondError, 'thread/compact/start')) {
+        } catch (firstError) {
+          // A timeout is ambiguous: the server may have accepted the turn before
+          // its response was lost. A JSON-RPC rejection is definitive pre-start
+          // evidence unless a turn/started notification independently arrived.
+          if (isCodexAppServerRequestTimeout(firstError, 'thread/compact/start')) {
             compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
               compactionLaunchMayBeLive,
               'timeout'
             )
+            // Timeout is admission-ambiguous. A retry could create a second
+            // compaction turn while the first is live, so retain the lane and
+            // await delayed start/terminal evidence instead.
+            throw firstError
           } else {
             compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
               compactionLaunchMayBeLive,
               'rejected'
             )
           }
-          throw secondError
+          // A cold app-server may not have the thread loaded — resume, retry once.
+          if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
+          await client.request(
+            'thread/resume',
+            buildCodexThreadResumeRequest(threadId, codexReasoning),
+            30_000
+          )
+          if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
+          try {
+            await client.request('thread/compact/start', { threadId }, 30_000)
+            compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+              compactionLaunchMayBeLive,
+              'accepted'
+            )
+          } catch (secondError) {
+            if (isCodexAppServerRequestTimeout(secondError, 'thread/compact/start')) {
+              compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+                compactionLaunchMayBeLive,
+                'timeout'
+              )
+            } else {
+              compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+                compactionLaunchMayBeLive,
+                'rejected'
+              )
+            }
+            throw secondError
+          }
         }
       }
-    }
-  } catch (error) {
-    if (
-      pending.nativeActivityStarted &&
-      !pending.nativeActivityEnded &&
-      codexCompactionFailureProvesNoLiveTurn({
-        launchMayBeLive: compactionLaunchMayBeLive,
-        observedTurnId: pending.turnId
+    } catch (error) {
+      if (
+        pending.nativeActivityStarted &&
+        !pending.nativeActivityEnded &&
+        codexCompactionFailureProvesNoLiveTurn({
+          launchMayBeLive: compactionLaunchMayBeLive,
+          observedTurnId: pending.turnId
+        })
+      ) {
+        // Every compact/start attempt was synchronously rejected before a turn
+        // existed. Balance the reservation now; ambiguous timeouts deliberately
+        // remain active until a terminal notification (or recovery-required).
+        pending.nativeActivityEnded = true
+        providerAdmissionMayBeLive = false
+        maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+        admissionReservation.releaseBeforeAdmission()
+      }
+      pending.settle({
+        ok: false,
+        error: `Codex rejected the compaction request: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       })
-    ) {
-      // Every compact/start attempt was synchronously rejected before a turn
-      // existed. Balance the reservation now; ambiguous timeouts deliberately
-      // remain active until a terminal notification (or recovery-required).
-      pending.nativeActivityEnded = true
-      providerAdmissionMayBeLive = false
-      maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
-      admissionReservation.releaseBeforeAdmission()
     }
-    pending.settle({
-      ok: false,
-      error: `Codex rejected the compaction request: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    })
-  }
-  const result = await completion
-  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) return result
-  const telemetry: ContextCompactionTelemetry = {
-    provider: 'codex',
-    trigger: 'manual',
-    durationMs: Date.now() - startedAtMs
-  }
-  if (pending.itemId) telemetry.eventUuid = pending.itemId
-  if (pending.postTokens !== undefined) telemetry.postTokens = pending.postTokens
-  if (!result.ok && result.error) telemetry.error = result.error
-  const signal: ContextCompactionSignal = {
-    kind: result.ok ? 'completed' : 'failed',
-    telemetry
-  }
-  if (result.ok) {
-    invalidateEnsemblePromptReceiptsForSession({
-      chatId: payload.chatId,
-      participantId: payload.participantId,
+    const result = await completion
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) return result
+    const telemetry: ContextCompactionTelemetry = {
       provider: 'codex',
-      linkedProviderSessionId: threadId
-    })
-  }
-  appendContextCompactionMessageToChat(
-    payload.chatId,
-    signal,
-    `manual-${threadId}-${startedAtMs}`,
-    payload.cardMetadata
-  )
-  broadcastContextCompactionSignalProgress({
-    chatId: payload.chatId,
-    provider: 'codex',
-    signal,
-    cardMetadata: payload.cardMetadata
-  })
-  const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
-  if (lastRunId) {
-    appendDurableRunEventForRoute(
-      'codex',
-      { appRunId: lastRunId, appChatId: payload.chatId },
-      'context_compaction',
-      'control',
-      formatContextCompactionSummary(signal, providerLabel('codex')),
-      { compaction: signal, manual: true }
+      trigger: 'manual',
+      durationMs: Date.now() - startedAtMs
+    }
+    if (pending.itemId) telemetry.eventUuid = pending.itemId
+    if (pending.postTokens !== undefined) telemetry.postTokens = pending.postTokens
+    if (!result.ok && result.error) telemetry.error = result.error
+    const signal: ContextCompactionSignal = {
+      kind: result.ok ? 'completed' : 'failed',
+      telemetry
+    }
+    if (result.ok) {
+      invalidateEnsemblePromptReceiptsForSession({
+        chatId: payload.chatId,
+        participantId: payload.participantId,
+        provider: 'codex',
+        linkedProviderSessionId: threadId
+      })
+    }
+    appendContextCompactionMessageToChat(
+      payload.chatId,
+      signal,
+      `manual-${threadId}-${startedAtMs}`,
+      payload.cardMetadata
     )
-  }
-  return result
+    broadcastContextCompactionSignalProgress({
+      chatId: payload.chatId,
+      provider: 'codex',
+      signal,
+      cardMetadata: payload.cardMetadata
+    })
+    const lastRunId = [...(chat.runs || [])].reverse().find((run) => run?.runId)?.runId
+    if (lastRunId) {
+      appendDurableRunEventForRoute(
+        'codex',
+        { appRunId: lastRunId, appChatId: payload.chatId },
+        'context_compaction',
+        'control',
+        formatContextCompactionSummary(signal, providerLabel('codex')),
+        { compaction: signal, manual: true }
+      )
+    }
+    return result
   } finally {
     pendingCodexManualCompactionRequests.delete(threadId)
     if (!providerAdmissionMayBeLive) admissionReservation.releaseBeforeAdmission()
@@ -27441,9 +27327,7 @@ async function compactProviderContextForReservedRequest(
   let cardMetadata: Record<string, unknown> | undefined
   let kimiNativeSession = false
   const isHostSeatProvider =
-    payload.provider === 'kimi' ||
-    payload.provider === 'grok' ||
-    payload.provider === 'antigravity'
+    payload.provider === 'kimi' || payload.provider === 'grok' || payload.provider === 'antigravity'
   // Kimi/Grok host seats compact only as ENSEMBLE seats here. Cursor remains in
   // the request union for historical decoding but is rejected above. Solo Kimi
   // compacts through the renderer's summarize-run lane (wave 2);
@@ -27809,11 +27693,7 @@ function handleCodexNotification(message: any) {
       // Defense in depth: clearing the native goal before every ensemble turn
       // prevents this scheduler path. If a stale/racing goal still starts a
       // turn after the app run ended, interrupt it before any tool item lands.
-      void issueCodexTurnInterrupt(
-        originatingClient,
-        notificationThreadId,
-        fenceDecision.turnId
-      )
+      void issueCodexTurnInterrupt(originatingClient, notificationThreadId, fenceDecision.turnId)
     } else if (
       fenceDecision.action === 'clear_native_goal' &&
       notificationThreadId &&
@@ -28491,10 +28371,9 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
       serverName: typeof mcpServerName === 'string' ? mcpServerName : undefined,
       toolArgs: params?.arguments ?? params?.input ?? params?.item?.arguments
     })
-    const resolvedService: AgenticServiceId =
-      codexMcpIdentity.recognized
-        ? codexMcpIdentity.service
-        : ('mcpTools' as AgenticServiceId)
+    const resolvedService: AgenticServiceId = codexMcpIdentity.recognized
+      ? codexMcpIdentity.service
+      : ('mcpTools' as AgenticServiceId)
     return {
       service: resolvedService,
       title:
@@ -28577,9 +28456,7 @@ function handleCodexServerRequest(message: any) {
     return
   }
   const service =
-    structuralApproval.kind === 'resolved'
-      ? structuralApproval.service
-      : formatted.service
+    structuralApproval.kind === 'resolved' ? structuralApproval.service : formatted.service
   const isGlobalScope = state.scope === 'global'
   const workspacePathForCodexApproval = isGlobalScope ? undefined : state.workspacePath
 
@@ -28713,7 +28590,8 @@ function handleCodexServerRequest(message: any) {
       params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command,
     // Canvas tools carry their target surface in the args; a surface-scoped
     // grant is only allowed to match the window the user actually approved.
-    surfaceId: typeof params?.canvasId === 'string' ? params.canvasId.trim() || undefined : undefined
+    surfaceId:
+      typeof params?.canvasId === 'string' ? params.canvasId.trim() || undefined : undefined
   })
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
   const postureApprovalOnly = isPostureApprovalOnlyService(
@@ -29192,8 +29070,7 @@ async function continueCodexAfterHostRerun(
   })
 
   const model = approvalRunState?.state?.model || approval.model || runChat?.requestedModel
-  const reasoningEffort =
-    approvalRunState?.state?.reasoningEffort || approval.reasoningEffort
+  const reasoningEffort = approvalRunState?.state?.reasoningEffort || approval.reasoningEffort
   // Automatic host-rerun continuation is never Trusted Session.
   const sessionTrust = false
   const approvalMode = approvalRunState?.state?.approvalMode || 'default'
@@ -29491,17 +29368,13 @@ async function syncCodexNativeGoalForSavedChat(
   if (!threadId || threadId !== expectedThreadId || !isCodexAppServerThreadId(threadId)) return
   if (chat.providerMetadata?.codexGoalNativeAvailable !== true) return
 
-  const lifecycleLease = await acquireCodexClientLifecycleLease(
-    `native-goal-sync:${appChatId}`
-  )
+  const lifecycleLease = await acquireCodexClientLifecycleLease(`native-goal-sync:${appChatId}`)
   let client: CodexAppServerClient | null = null
   try {
     await disposeCodexClientForOwnerTransition(lifecycleLease)
     client = getCodexClient(undefined, undefined, lifecycleLease)
     client.setWorkspaceLockOwnerId(null)
-    client.setNotificationHandler((message) =>
-      handleCodexNotificationFromClient(message, client!)
-    )
+    client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client!))
     client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client!))
     await client.ensureStarted(app.getVersion())
     await syncCodexNativeGoalForRun(client, appChatId, threadId)
@@ -29570,7 +29443,9 @@ interface CodexWorkspaceLockStartupBinding {
   settleAfterClientClosed(clientDeathProven: boolean): Promise<void>
 }
 
-function codexWorkspaceLockAdmissionKey(payload: AgentRunPayload): WorkspaceLockProviderAdmissionKey {
+function codexWorkspaceLockAdmissionKey(
+  payload: AgentRunPayload
+): WorkspaceLockProviderAdmissionKey {
   const runId = payload.appRunId?.trim()
   if (!runId) throw new Error('Codex app-server requires an exact workspace-lock run identity.')
   return {
@@ -29702,12 +29577,7 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
         )
         client.setWorkspaceLockOwnerId(lockBinding.ownerId)
         bindCodexRunClient(runId, client, lifecycleLease)
-        await runCodexAppServerWithClient(
-          event,
-          payload,
-          client,
-          lockBinding.bindSpawnedProcess
-        )
+        await runCodexAppServerWithClient(event, payload, client, lockBinding.bindSpawnedProcess)
       } finally {
         try {
           if (client) {
@@ -29736,9 +29606,7 @@ async function runCodexAppServerWithClient(
 ) {
   const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
   const route = routeWithRunId('codex', payload)
-  client.setNotificationHandler((message) =>
-    handleCodexNotificationFromClient(message, client)
-  )
+  client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client))
   client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client))
   client.setStderrHandler((chunk) => {
     const state = getCodexStateFromSession(runManager.get(route.appRunId))
@@ -30112,13 +29980,10 @@ async function runCodexExecFallback(
     coreProfile: false
   })
   if (payload.resumeFallbackPrompt) {
-    payload.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(
-      payload.resumeFallbackPrompt,
-      {
-        advertised: false,
-        coreProfile: false
-      }
-    )
+    payload.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(payload.resumeFallbackPrompt, {
+      advertised: false,
+      coreProfile: false
+    })
   }
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   if (payload.scope === 'global') {
@@ -30250,8 +30115,7 @@ async function runCodexExecFallback(
     // existed), and the tracked operation remains live until it finishes.
     const exitCode = spawnFailure ? -1 : (terminalCode ?? -1)
     const requestedStatus = exitCode === 0 ? 'completed' : 'failed'
-    const terminalStatus =
-      runManager.getClaimedTerminalStatus(route.appRunId) ?? requestedStatus
+    const terminalStatus = runManager.getClaimedTerminalStatus(route.appRunId) ?? requestedStatus
     try {
       safelyProjectCodexExec(() => emitCodexExecStdout(codexExecStdoutSanitizer.flush()))
       safelyProjectCodexExec(() => emitCodexExecStderr(codexExecStderrSanitizer.flush()))
@@ -31088,12 +30952,7 @@ function geminiApiProviderDeps() {
           isError: true
         }
       }
-      const result = await executeGeminiMcpTool(
-        dispatchContract.toolName,
-        args,
-        route,
-        'gemini'
-      )
+      const result = await executeGeminiMcpTool(dispatchContract.toolName, args, route, 'gemini')
       return { text: result.text, isError: result.isError }
     },
     prepareToolContext: (
@@ -31369,9 +31228,7 @@ async function runGeminiProvider(
           payload.taskWraithMcpProfileId
         ),
         meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
+        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
         auditSubset: Boolean(payload.auditRun)
       },
       isolatedInstanceId:
@@ -31772,9 +31629,7 @@ async function runGeminiProvider(
       route,
       'provider_exit',
       'raw',
-      `Gemini exited with code ${
-        typeof effectiveCode === 'number' ? effectiveCode : 'unknown'
-      }`,
+      `Gemini exited with code ${typeof effectiveCode === 'number' ? effectiveCode : 'unknown'}`,
       { code: effectiveCode },
       'provider'
     )
@@ -32147,16 +32002,23 @@ async function runAntigravityAgyProvider(
   // abandoned, and every later turn would look resumed while starting fresh.
   // `normalizeAgyConversationId` already dropped any non-uuid.
   payload.providerSessionId = launch.resumedConversationId
-  await runCliProviderProcess(event, 'antigravity', launch.binary.binaryPath!, launch.args, payload, {
-    fallback: false,
-    requireExistingRun: true,
-    resolvedEnv: launch.env,
-    // Keyed by the run's own cwd, which is what agy records. Fan-out lanes get
-    // their own worktrees, so per-lane cwds do not collide; two concurrent runs
-    // sharing one cwd are last-writer-wins on the CLI's side, which is agy's
-    // behaviour and not something TaskWraith can arbitrate.
-    resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)
-  })
+  await runCliProviderProcess(
+    event,
+    'antigravity',
+    launch.binary.binaryPath!,
+    launch.args,
+    payload,
+    {
+      fallback: false,
+      requireExistingRun: true,
+      resolvedEnv: launch.env,
+      // Keyed by the run's own cwd, which is what agy records. Fan-out lanes get
+      // their own worktrees, so per-lane cwds do not collide; two concurrent runs
+      // sharing one cwd are last-writer-wins on the CLI's side, which is agy's
+      // behaviour and not something TaskWraith can arbitrate.
+      resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)
+    }
+  )
 }
 
 // Grok is a first-class provider — its adapter is always registered.
@@ -32331,77 +32193,80 @@ const antigravityAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvo
 const providerAdapters = createProviderAdapterRegistry<
   AgentRunPayload,
   Electron.IpcMainInvokeEvent
->([
-  {
-    ...defaultProviderDescriptor('gemini'),
-    run: ({ event, payload }) => runGeminiProvider(event, payload),
-    cancel: (runId) => cancelProviderRun('gemini', runId),
-    getStatus: () => getAgentStatusSnapshotDirect('gemini'),
-    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('gemini'),
-    getCapabilityContract: (request = {}) =>
-      getProviderCapabilityContractDirect('gemini', request.workspacePath, request.approvalMode)
-  },
-  {
-    ...defaultProviderDescriptor('codex'),
-    run: ({ event, payload }) => runCodexProvider(event, payload),
-    cancel: (runId) => cancelProviderRun('codex', runId),
-    getStatus: () => getAgentStatusSnapshotDirect('codex'),
-    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('codex'),
-    getCapabilityContract: (request = {}) =>
-      getProviderCapabilityContractDirect('codex', request.workspacePath, request.approvalMode)
-  },
-  {
-    ...defaultProviderDescriptor('claude'),
-    run: ({ event, payload }) => runClaudeProvider(event, payload),
-    cancel: (runId) => cancelProviderRun('claude', runId),
-    getStatus: () => getAgentStatusSnapshotDirect('claude'),
-    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('claude'),
-    getCapabilityContract: (request = {}) =>
-      getProviderCapabilityContractDirect('claude', request.workspacePath, request.approvalMode)
-  },
-  {
-    ...defaultProviderDescriptor('kimi'),
-    run: ({ event, payload }) => runKimiProvider(event, payload),
-    cancel: (runId) => cancelProviderRun('kimi', runId),
-    getStatus: () => getAgentStatusSnapshotDirect('kimi'),
-    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('kimi'),
-    getCapabilityContract: (request = {}) =>
-      getProviderCapabilityContractDirect('kimi', request.workspacePath, request.approvalMode)
-  },
-  {
-    ...defaultProviderDescriptor('ollama'),
-    run: ({ event, payload }) => runOllamaProviderAdapter(event, payload),
-    cancel: (runId) => cancelProviderRun('ollama', runId),
-    getStatus: () => getOllamaStatusSnapshot(AppStore.getSettings()),
-    getMcpStatus: async () => {
-      const settings = AppStore.getSettings()
-      const enabled = settings.agenticServices?.mcpTools !== 'deny'
-      return {
-        available: enabled,
-        enabled,
-        installed: true,
-        serverName: 'TaskWraith-local',
-        tools: enabled
-          ? [
-              ...OLLAMA_ADVERTISED_TOOL_NAMES,
-              ...CAPABILITY_GATEWAY_TOOL_NAMES,
-              OLLAMA_TOOL_HELP_NAME
-            ]
-          : [],
-        message: enabled
-          ? 'Ollama uses the compact TaskWraith gateway tool loop; hidden first-party capabilities are discoverable and invoked on demand.'
-          : 'Ollama tools are blocked by TaskWraith MCP/tool settings.'
-      }
+>(
+  [
+    {
+      ...defaultProviderDescriptor('gemini'),
+      run: ({ event, payload }) => runGeminiProvider(event, payload),
+      cancel: (runId) => cancelProviderRun('gemini', runId),
+      getStatus: () => getAgentStatusSnapshotDirect('gemini'),
+      getMcpStatus: () => getAgentMcpStatusSnapshotDirect('gemini'),
+      getCapabilityContract: (request = {}) =>
+        getProviderCapabilityContractDirect('gemini', request.workspacePath, request.approvalMode)
     },
-    getCapabilityContract: (request = {}) =>
-      getOllamaCapabilityContract({ getSettings: () => AppStore.getSettings() }, request)
-  },
-  ...antigravityAdapters,
-  ...grokAdapters,
-  ...cursorAdapters,
-  ...piAdapters,
-  ...mistralAdapters
-], { requireCompleteProviderSet: true })
+    {
+      ...defaultProviderDescriptor('codex'),
+      run: ({ event, payload }) => runCodexProvider(event, payload),
+      cancel: (runId) => cancelProviderRun('codex', runId),
+      getStatus: () => getAgentStatusSnapshotDirect('codex'),
+      getMcpStatus: () => getAgentMcpStatusSnapshotDirect('codex'),
+      getCapabilityContract: (request = {}) =>
+        getProviderCapabilityContractDirect('codex', request.workspacePath, request.approvalMode)
+    },
+    {
+      ...defaultProviderDescriptor('claude'),
+      run: ({ event, payload }) => runClaudeProvider(event, payload),
+      cancel: (runId) => cancelProviderRun('claude', runId),
+      getStatus: () => getAgentStatusSnapshotDirect('claude'),
+      getMcpStatus: () => getAgentMcpStatusSnapshotDirect('claude'),
+      getCapabilityContract: (request = {}) =>
+        getProviderCapabilityContractDirect('claude', request.workspacePath, request.approvalMode)
+    },
+    {
+      ...defaultProviderDescriptor('kimi'),
+      run: ({ event, payload }) => runKimiProvider(event, payload),
+      cancel: (runId) => cancelProviderRun('kimi', runId),
+      getStatus: () => getAgentStatusSnapshotDirect('kimi'),
+      getMcpStatus: () => getAgentMcpStatusSnapshotDirect('kimi'),
+      getCapabilityContract: (request = {}) =>
+        getProviderCapabilityContractDirect('kimi', request.workspacePath, request.approvalMode)
+    },
+    {
+      ...defaultProviderDescriptor('ollama'),
+      run: ({ event, payload }) => runOllamaProviderAdapter(event, payload),
+      cancel: (runId) => cancelProviderRun('ollama', runId),
+      getStatus: () => getOllamaStatusSnapshot(AppStore.getSettings()),
+      getMcpStatus: async () => {
+        const settings = AppStore.getSettings()
+        const enabled = settings.agenticServices?.mcpTools !== 'deny'
+        return {
+          available: enabled,
+          enabled,
+          installed: true,
+          serverName: 'TaskWraith-local',
+          tools: enabled
+            ? [
+                ...OLLAMA_ADVERTISED_TOOL_NAMES,
+                ...CAPABILITY_GATEWAY_TOOL_NAMES,
+                OLLAMA_TOOL_HELP_NAME
+              ]
+            : [],
+          message: enabled
+            ? 'Ollama uses the compact TaskWraith gateway tool loop; hidden first-party capabilities are discoverable and invoked on demand.'
+            : 'Ollama tools are blocked by TaskWraith MCP/tool settings.'
+        }
+      },
+      getCapabilityContract: (request = {}) =>
+        getOllamaCapabilityContract({ getSettings: () => AppStore.getSettings() }, request)
+    },
+    ...antigravityAdapters,
+    ...grokAdapters,
+    ...cursorAdapters,
+    ...piAdapters,
+    ...mistralAdapters
+  ],
+  { requireCompleteProviderSet: true }
+)
 
 async function readCliVersion(command: string): Promise<string> {
   const provider = availableProviderIds().includes(command as ProviderId)
@@ -34105,8 +33970,7 @@ async function executeGeminiMcpTool(
         ...mcpStructuredJsonResult({
           ok: false,
           tool: toolName,
-          error:
-            'Capability invocation target changed after strict dispatch-contract resolution.'
+          error: 'Capability invocation target changed after strict dispatch-contract resolution.'
         }),
         isError: true
       }
@@ -34218,8 +34082,7 @@ async function executeGeminiMcpTool(
       ...mcpStructuredJsonResult({
         ok: false,
         tool: toolName,
-        error:
-          'One-shot permission retry is unavailable to this immutable TaskWraith MCP profile.'
+        error: 'One-shot permission retry is unavailable to this immutable TaskWraith MCP profile.'
       }),
       isError: true
     }
@@ -34546,9 +34409,7 @@ async function executeGeminiMcpTool(
       tool: toolName,
       service: approvalPreview.service,
       error: deniedError,
-      ...(permissionRetryInstruction
-        ? { permissionRetry: permissionRetryInstruction }
-        : {})
+      ...(permissionRetryInstruction ? { permissionRetry: permissionRetryInstruction } : {})
     }
     const deniedResult = mcpStructuredJsonResult(deniedPayload)
     const durableDeniedResult = mcpStructuredJsonResult(
@@ -34627,10 +34488,7 @@ async function executeGeminiMcpTool(
   if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
     let workspaceLockLifecycleResolved = true
     try {
-      if (
-        workspaceMutationAdmission.acquiredTransitionId &&
-        workspaceMutationAdmission.owner
-      ) {
+      if (workspaceMutationAdmission.acquiredTransitionId && workspaceMutationAdmission.owner) {
         if (!workspaceLockRuntimeRef) {
           throw new Error(
             'Exact acquisition ownership became unresolved because the runtime disappeared.'
@@ -34644,9 +34502,7 @@ async function executeGeminiMcpTool(
       }
     } catch (error) {
       workspaceLockLifecycleResolved = false
-      poisonWorkspaceLockMutationAdmission(
-        error instanceof Error ? error.message : String(error)
-      )
+      poisonWorkspaceLockMutationAdmission(error instanceof Error ? error.message : String(error))
       console.error('[workspace-lock] stale-operation lease release failed:', error)
     } finally {
       if (workspaceLockLifecycleResolved) {
@@ -34707,8 +34563,7 @@ async function executeGeminiMcpTool(
         if (!verified.ok) {
           throw new Error(`Workspace mutation verification failed: ${verified.message}`)
         }
-        const externalAuthority =
-          workspaceMutationAdmission.runtimeInput.externalMutationAuthority
+        const externalAuthority = workspaceMutationAdmission.runtimeInput.externalMutationAuthority
         if (externalAuthority && (toolName === 'write_file' || toolName === 'replace')) {
           const workspaceCapability = verified.capabilities.find(
             (capability) => capability.kind === 'workspace'
@@ -34742,10 +34597,9 @@ async function executeGeminiMcpTool(
             if (!workspaceLockRuntimeRef || !workspaceMutationAdmission.runtimeInput) {
               throw new Error('External mutation authority disappeared before commit.')
             }
-            const current =
-              await workspaceLockRuntimeRef.revalidateExternalMutationAuthority(
-                workspaceMutationAdmission.runtimeInput
-              )
+            const current = await workspaceLockRuntimeRef.revalidateExternalMutationAuthority(
+              workspaceMutationAdmission.runtimeInput
+            )
             if (
               current.rootPath !== verifiedExternalAuthority.rootPath ||
               current.targetPath !== verifiedExternalAuthority.targetPath
@@ -34794,9 +34648,7 @@ async function executeGeminiMcpTool(
         const finalMutationTransitionId = workspaceMutationTransitionId
         const assertMutationStillLive = (): void => {
           if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
-            throw new Error(
-              'Workspace mutation authority expired at the executor commit boundary.'
-            )
+            throw new Error('Workspace mutation authority expired at the executor commit boundary.')
           }
           if (
             historyClearAdmissionBlocked(
@@ -34818,20 +34670,17 @@ async function executeGeminiMcpTool(
                 'Workspace-lock authority disappeared at the executor commit boundary.'
               )
             }
-            const finalVerification =
-              await workspaceLockRuntimeRef.verifyAcquisitionForMutation(
-                finalMutationOwner,
-                finalMutationTransitionId
-              )
+            const finalVerification = await workspaceLockRuntimeRef.verifyAcquisitionForMutation(
+              finalMutationOwner,
+              finalMutationTransitionId
+            )
             if (!finalVerification.ok) {
               throw new Error(
                 `Workspace mutation final verification failed: ${finalVerification.message}`
               )
             }
             if (verifiedMutationExecutionContext) {
-              await reverifyWorkspaceMutationExecutionCwd(
-                verifiedMutationExecutionContext
-              )
+              await reverifyWorkspaceMutationExecutionCwd(verifiedMutationExecutionContext)
             }
             await revalidateExternalMutationAtCommit?.()
             assertMutationStillLive()
@@ -34879,10 +34728,7 @@ async function executeGeminiMcpTool(
               error: targetArgumentPreflight.message
             }
           }
-          const targetRouteGuard = validateMutatingMcpRoute(
-            retryRequest.toolName,
-            effectiveRoute
-          )
+          const targetRouteGuard = validateMutatingMcpRoute(retryRequest.toolName, effectiveRoute)
           const targetWorkspaceGuard = validateMcpCallerWorkspace({
             toolName: retryRequest.toolName,
             caller: callerContext,
@@ -35122,15 +34968,13 @@ async function executeGeminiMcpTool(
         appChatId: workspaceExecutionContext.appChatId,
         workspacePath: workspaceExecutionContext.workspacePath
       })
-      const result = await runWithHostCommandProjectionScope(
-        hostCommandProjection,
-        () =>
-          workspaceToolExecutors.executeWorkspaceMcpTool(
-            toolName,
-            args,
-            workspaceExecutionContext,
-            cwd
-          )
+      const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
+        workspaceToolExecutors.executeWorkspaceMcpTool(
+          toolName,
+          args,
+          workspaceExecutionContext,
+          cwd
+        )
       )
       toolIsError = result.isError
       if (result.richResult) {
@@ -35368,10 +35212,13 @@ async function executeGeminiMcpTool(
       // to default ordering — see EnsembleOrchestrator.runRound.
       const reason = optionalString(args.reason)
       const target = optionalString(args.target)
-      const outcome =
-        ensembleOrchestratorRef?.markYielded(context.appRunId || '', reason, target) ?? {
-          kind: 'no_active_run' as const
-        }
+      const outcome = ensembleOrchestratorRef?.markYielded(
+        context.appRunId || '',
+        reason,
+        target
+      ) ?? {
+        kind: 'no_active_run' as const
+      }
       const result = buildEnsembleYieldToolResult({ outcome, reason, target })
       toolIsError = result.ok === false
       text = mcpJson(result)
@@ -35495,9 +35342,13 @@ async function executeGeminiMcpTool(
             ? args.participant_ids.filter((id: unknown): id is string => typeof id === 'string')
             : undefined,
         participantRoles: Array.isArray(args.participantRoles)
-          ? args.participantRoles.filter((role: unknown): role is string => typeof role === 'string')
+          ? args.participantRoles.filter(
+              (role: unknown): role is string => typeof role === 'string'
+            )
           : Array.isArray(args.participant_roles)
-            ? args.participant_roles.filter((role: unknown): role is string => typeof role === 'string')
+            ? args.participant_roles.filter(
+                (role: unknown): role is string => typeof role === 'string'
+              )
             : undefined,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
@@ -37072,10 +36923,7 @@ async function executeGeminiMcpTool(
         `Tool ${toolName} reached the end of the canonical dispatcher without an owning branch.`
       )
     }
-    if (
-      dispatchContract &&
-      String(handledDispatchOwner) !== dispatchContract.dispatchOwner
-    ) {
+    if (dispatchContract && String(handledDispatchOwner) !== dispatchContract.dispatchOwner) {
       throw new Error(
         `Tool ${toolName} was handled by ${handledDispatchOwner}, not declared owner ${dispatchContract.dispatchOwner}.`
       )
@@ -37364,7 +37212,14 @@ async function executeGeminiMcpTool(
             workspaceMutationAdmission.owner.runId,
             workspaceMutationTransitionId
           )
-          if (!released.ok) throw new Error(released.message)
+          if (!released.ok) {
+            workspaceLockLifecycleResolved = false
+            poisonWorkspaceLockMutationAdmission(released.message)
+            console.error(
+              '[workspace-lock] operation lease release failed:',
+              new Error(released.message)
+            )
+          }
         } catch (error) {
           workspaceLockLifecycleResolved = false
           poisonWorkspaceLockMutationAdmission(
@@ -38339,8 +38194,7 @@ if (isGeminiMcpBridgeProcess) {
     } catch (error) {
       workspaceLockStartupRecoveryBlockedReason =
         error instanceof Error ? error.message : String(error)
-      scheduledOccurrenceRecoveryBlockedReason ||=
-        `Workspace-lock recovery is required: ${workspaceLockStartupRecoveryBlockedReason}`
+      scheduledOccurrenceRecoveryBlockedReason ||= `Workspace-lock recovery is required: ${workspaceLockStartupRecoveryBlockedReason}`
       console.error(
         '[workspace-lock] startup recovery failed; run and schedule recovery remain disabled:',
         error
@@ -38367,8 +38221,7 @@ if (isGeminiMcpBridgeProcess) {
       list: (query) => {
         if (!workspaceLockRuntimeRef) {
           throw new Error(
-            workspaceLockStartupRecoveryBlockedReason ||
-              'Workspace-lock projection is unavailable.'
+            workspaceLockStartupRecoveryBlockedReason || 'Workspace-lock projection is unavailable.'
           )
         }
         return workspaceLockRuntimeRef.list(query)
@@ -38376,8 +38229,7 @@ if (isGeminiMcpBridgeProcess) {
       subscribe: (query, onUpdate) => {
         if (!workspaceLockRuntimeRef) {
           throw new Error(
-            workspaceLockStartupRecoveryBlockedReason ||
-              'Workspace-lock projection is unavailable.'
+            workspaceLockStartupRecoveryBlockedReason || 'Workspace-lock projection is unavailable.'
           )
         }
         return workspaceLockRuntimeRef.subscribe(query, onUpdate)
@@ -38422,11 +38274,12 @@ if (isGeminiMcpBridgeProcess) {
         }
       })
     } catch (error) {
-      scheduledOccurrenceRecoveryBlockedReason =
-        `Scheduled occurrence authority root is unavailable: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      console.error(`[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`)
+      scheduledOccurrenceRecoveryBlockedReason = `Scheduled occurrence authority root is unavailable: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      console.error(
+        `[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`
+      )
     }
     // Transcript metadata is presentation data, not migration provenance. Old
     // unowned assets remain fail-closed; only the durable main-owned ownership
@@ -39552,8 +39405,9 @@ if (isGeminiMcpBridgeProcess) {
      * agent-exit subscriber). Ref for the same reason as the pump ref (now
      * module-scoped, near pushBridgeRunTaskCardDelta): the queue closure is
      * constructed later than the subscribers that need it. */
-    let settleRemoteComposerQueueJobForExitRef: ((chatId: string, runId: string | null) => void) | null =
-      null
+    let settleRemoteComposerQueueJobForExitRef:
+      | ((chatId: string, runId: string | null) => void)
+      | null = null
     const remoteGitService = new GitService()
     const MAX_REMOTE_GIT_FILES = 200
     const REMOTE_GIT_SNAPSHOT_DEBOUNCE_MS = 250
@@ -40321,7 +40175,8 @@ if (isGeminiMcpBridgeProcess) {
           const from = AppStore.getChat(fromChatId)
           const to = AppStore.getChat(toChatId)
           if (!from) return { ok: false, error: 'The sending thread no longer exists.' }
-          if (!to) return { ok: false, outcome: 'unknown-target', error: 'That thread no longer exists.' }
+          if (!to)
+            return { ok: false, outcome: 'unknown-target', error: 'That thread no longer exists.' }
           const policy = AppStore.getSettings().agenticServices?.threadMessage ?? 'ask'
           if (policy === 'deny') {
             return { ok: false, error: 'Thread messages are turned off in settings.' }
@@ -40747,9 +40602,7 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             return { ok: false, error: 'Round id is no longer active' }
           }
-          const ok = Boolean(
-            ensembleOrchestratorRef?.enqueueFollowUpPrompt(action.threadId, text)
-          )
+          const ok = Boolean(ensembleOrchestratorRef?.enqueueFollowUpPrompt(action.threadId, text))
           if (ok) {
             broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
             // Queued prompts are embedded in the task-card ensemble state.
@@ -40987,8 +40840,7 @@ if (isGeminiMcpBridgeProcess) {
           if (!roundResolution.ok) {
             return { ok: false, reason: roundResolution.error || 'Blackboard post not allowed' }
           }
-          const value =
-            typeof action.value === 'string' ? action.value.trim() : ''
+          const value = typeof action.value === 'string' ? action.value.trim() : ''
           if (!value) return { ok: false, reason: 'Blackboard entry value is required' }
           const createdAt = new Date().toISOString()
           const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
@@ -42302,7 +42154,9 @@ if (isGeminiMcpBridgeProcess) {
           })
           if (!result.ok) {
             const dirty = /before checking out|commit, stash, or discard/i.test(result.error)
-            return dirty ? { ok: false, dirtyReason: result.error } : { ok: false, reason: result.error }
+            return dirty
+              ? { ok: false, dirtyReason: result.error }
+              : { ok: false, reason: result.error }
           }
           const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
           publishRemoteGitSnapshotCache(action.workspaceId)
@@ -43013,19 +42867,19 @@ if (isGeminiMcpBridgeProcess) {
             provider === 'pi'
               ? false
               : provider === 'grok'
-              ? shouldAdvertiseTaskWraithMcpToGrok({
-                  acpEnabled: grokAcpEnabled(),
-                  approvalMode: effectiveApprovalMode || 'default',
-                  bridgeEnabled: Boolean(bridgeSettings.geminiMcpBridgeEnabled),
-                  readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
-                })
-              : provider === 'claude'
-                ? Boolean(
-                    bridgeClaudePinnedMcpReceipt ||
-                    (bridgeSettings.geminiMcpBridgeEnabled &&
-                      taskwraithMcpBridgeCommandStatus().available)
-                  )
-                : true
+                ? shouldAdvertiseTaskWraithMcpToGrok({
+                    acpEnabled: grokAcpEnabled(),
+                    approvalMode: effectiveApprovalMode || 'default',
+                    bridgeEnabled: Boolean(bridgeSettings.geminiMcpBridgeEnabled),
+                    readOnlyAdvertiseEnabled: grokReadOnlyMcpAdvertiseEnabled()
+                  })
+                : provider === 'claude'
+                  ? Boolean(
+                      bridgeClaudePinnedMcpReceipt ||
+                      (bridgeSettings.geminiMcpBridgeEnabled &&
+                        taskwraithMcpBridgeCommandStatus().available)
+                    )
+                  : true
           const bridgeTaskWraithMcpProfile = resolveTaskWraithMcpProfile({
             provider,
             modelId: inheritedModel,
@@ -45057,9 +44911,7 @@ if (isGeminiMcpBridgeProcess) {
     const ensembleHistoryRuntimeCouldExist = (chatId: string): boolean =>
       Boolean(wakeupTimerServiceRef) ||
       RUN_MANAGER_PROVIDERS.some((provider) =>
-        runManager
-          .getActiveByProvider(provider)
-          .some((session) => session.appChatId === chatId)
+        runManager.getActiveByProvider(provider).some((session) => session.appChatId === chatId)
       )
 
     const beginBroadEnsembleHistoryClear = (chatId: string): Promise<void> => {
@@ -45074,7 +44926,9 @@ if (isGeminiMcpBridgeProcess) {
         // activity to join in that phase; the outer commit removes persistence.
         if (!ensembleHistoryRuntimeCouldExist(chatId)) return Promise.resolve()
         return Promise.reject(
-          new Error(`Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`)
+          new Error(
+            `Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`
+          )
         )
       }
       return orchestrator
@@ -45599,9 +45453,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           if (holds.bridgePurge?.status === 'rejected') {
             holds.bridgePurge = trackBroadHistoryStrictAttempt(
-              beginBridgeSubprocessLogHistoryClear(
-                mcpBridgeRuntime.getBridgeSubprocessLogPath()
-              )
+              beginBridgeSubprocessLogHistoryClear(mcpBridgeRuntime.getBridgeSubprocessLogPath())
             )
             holds.bridgeHoldCount += 1
           }
@@ -46152,7 +46004,10 @@ if (isGeminiMcpBridgeProcess) {
         error
       )
     }
-    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
       const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
       recordStartupRecoveryEvents(startupRecoveryRecords)
       try {
@@ -46197,7 +46052,10 @@ if (isGeminiMcpBridgeProcess) {
     // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
     // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
     // forever. Settles each to 'failed' with a restart-interruption note.
-    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
       AppStore.reconcileStaleAuditRuns()
     }
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
@@ -46216,7 +46074,10 @@ if (isGeminiMcpBridgeProcess) {
     // after a crash, missed terminal flush, or bridge drop. Startup already
     // settles with minAgeMs=0 via recoverPendingSubThreadMailboxes; the interval
     // uses a short grace window so mid-dispatch seeds are not false-failed.
-    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
       chatRunReconcilerInterval = setInterval(() => {
         try {
           reconcileStaleChatRunsProjection({
@@ -46623,8 +46484,8 @@ if (isGeminiMcpBridgeProcess) {
         const session = runManager.get(runId)
         return Boolean(
           session?.appChatId === chatId &&
-            isActiveRunSessionStatus(session.status) &&
-            runManager.canAdmitTransport(runId, true)
+          isActiveRunSessionStatus(session.status) &&
+          runManager.canAdmitTransport(runId, true)
         )
       },
       getHostProtectedPids: currentNativeWindowProtectedPids,
@@ -46646,8 +46507,7 @@ if (isGeminiMcpBridgeProcess) {
           )
       },
       clickAuditClaim: createNativeWindowClickAuditClaim({
-        appendRunEvent: (input, options) =>
-          getRunRepository().appendRunEvent(input, options)
+        appendRunEvent: (input, options) => getRunRepository().appendRunEvent(input, options)
       })
     })
     if (nativeWindowExpirySweepTimer) clearInterval(nativeWindowExpirySweepTimer)
@@ -46727,14 +46587,7 @@ if (isGeminiMcpBridgeProcess) {
         })
         return snapshot.targets
       },
-      start: ({
-        provider,
-        target,
-        chatId,
-        runId,
-        sender,
-        assertMutationAuthorized
-      }) =>
+      start: ({ provider, target, chatId, runId, sender, assertMutationAuthorized }) =>
         // The run's own provider (trusted, not agent-supplied); assert it's a live
         // provider id for the approval-route + audit attribution. The sender is the
         // run's approval surface (context.sender) — startTarget's shellCommands+
@@ -47229,9 +47082,7 @@ if (isGeminiMcpBridgeProcess) {
             label: seat.label,
             order: seat.order,
             ...(seat.kind === 'external' ? { present: seat.present } : {}),
-            ...(seat.kind === 'external'
-              ? resolveSeatColorIndex(share, seat.collaboratorId)
-              : {})
+            ...(seat.kind === 'external' ? resolveSeatColorIndex(share, seat.collaboratorId) : {})
           }))
         }
       }
@@ -47529,23 +47380,20 @@ if (isGeminiMcpBridgeProcess) {
       return coordinator.pick(canonicalChatId)
     })
 
-    ipcMain.handle(
-      'attach-window:detach',
-      async (event, chatId: string, generation: number) => {
-        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
-        assertRendererChatScope(event, canonicalChatId)
-        if (!Number.isSafeInteger(generation) || generation <= 0) {
-          throw new Error('Attachment generation must be a positive integer.')
-        }
-        const coordinator = nativeWindowCoordinatorRef
-        if (!coordinator) throw new Error('Native-window coordination is not ready.')
-        const detached = await coordinator.detach(canonicalChatId, generation)
-        return {
-          detached,
-          status: coordinator.statusForChat(canonicalChatId)
-        }
+    ipcMain.handle('attach-window:detach', async (event, chatId: string, generation: number) => {
+      const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+      assertRendererChatScope(event, canonicalChatId)
+      if (!Number.isSafeInteger(generation) || generation <= 0) {
+        throw new Error('Attachment generation must be a positive integer.')
       }
-    )
+      const coordinator = nativeWindowCoordinatorRef
+      if (!coordinator) throw new Error('Native-window coordination is not ready.')
+      const detached = await coordinator.detach(canonicalChatId, generation)
+      return {
+        detached,
+        status: coordinator.statusForChat(canonicalChatId)
+      }
+    })
 
     ipcMain.handle('attach-window:status', (event, chatId: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
@@ -47624,8 +47472,7 @@ if (isGeminiMcpBridgeProcess) {
       listChats: () => AppStore.getChats(),
       getThreadMessageInbox: (chatId) => AppStore.getThreadMessageInbox(chatId),
       enqueueThreadMessage: (event) => AppStore.enqueueThreadMessage(event),
-      resolveServicePolicy: () =>
-        AppStore.getSettings().agenticServices?.threadMessage ?? 'ask',
+      resolveServicePolicy: () => AppStore.getSettings().agenticServices?.threadMessage ?? 'ask',
       mintThreadMessageId: (fromChatId, toChatId, nonce) =>
         createThreadMessageId(fromChatId, toChatId, nonce),
       now: () => Date.now(),
@@ -47991,7 +47838,10 @@ if (isGeminiMcpBridgeProcess) {
         releaseErrors.push(error)
       }
       if (releaseErrors.length > 0) {
-        throw new AggregateError(releaseErrors, 'Chat history mutation holds could not be released.')
+        throw new AggregateError(
+          releaseErrors,
+          'Chat history mutation holds could not be released.'
+        )
       }
     }
     const beginEnsembleHistoryClear = (chatId: string): Promise<void> => {
@@ -48003,7 +47853,9 @@ if (isGeminiMcpBridgeProcess) {
       if (!orchestrator) {
         if (!ensembleHistoryRuntimeCouldExist(chatId)) return Promise.resolve()
         return Promise.reject(
-          new Error(`Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`)
+          new Error(
+            `Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`
+          )
         )
       }
       // The history-only path fences its exact runtime and cancels every
@@ -48433,9 +48285,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       } catch (err) {
         console.warn(
-          `[human-collaboration] sweep failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `[human-collaboration] sweep failed: ${err instanceof Error ? err.message : String(err)}`
         )
       }
     }, 15_000)
@@ -49042,10 +48892,7 @@ if (isGeminiMcpBridgeProcess) {
         const appChatId = requireNonEmptyString(rawAppChatId, 'Clipboard attachment chat id')
         assertRendererChatScope(event, appChatId)
         const chat = AppStore.getChat(appChatId)
-        if (
-          !chat ||
-          historyClearAdmissionBlocked(undefined, chat.workspacePath, chat.appChatId)
-        ) {
+        if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chat.appChatId)) {
           return []
         }
         return saveClipboardImageFromTrustedPaste({
@@ -49318,10 +49165,7 @@ if (isGeminiMcpBridgeProcess) {
           options?.refreshAuth === true &&
           isMainRendererSender(event)
         let codexAuthRuntimeRefreshed = refreshCodexAuth && !codexClient
-        if (
-          refreshCodexAuth &&
-          codexClient
-        ) {
+        if (refreshCodexAuth && codexClient) {
           const canRecycle = shouldRestartCodexAppServerForMcpConfig({
             stale: true,
             startupLeaseCount: codexAppServerStartupLeaseCount,
@@ -49416,7 +49260,8 @@ if (isGeminiMcpBridgeProcess) {
               })
               return {
                 onData: (listener) => term.onData(listener),
-                onExit: (listener) => term.onExit((event) => listener({ exitCode: event.exitCode })),
+                onExit: (listener) =>
+                  term.onExit((event) => listener({ exitCode: event.exitCode })),
                 write: (data) => term.write(data),
                 kill: () => {
                   try {
@@ -49491,7 +49336,8 @@ if (isGeminiMcpBridgeProcess) {
         // A non-positive allowance would divide the whole meter by zero, and a
         // negative spend is meaningless. Reject rather than clamp: a silently
         // corrected reading is worse than a rejected one the user can retype.
-        if (!Number.isFinite(allowanceUsd) || allowanceUsd <= 0) return currentMistralQuotaEstimate()
+        if (!Number.isFinite(allowanceUsd) || allowanceUsd <= 0)
+          return currentMistralQuotaEstimate()
         if (!Number.isFinite(spentUsd) || spentUsd < 0) return currentMistralQuotaEstimate()
         const declared = reading?.declared as
           | { allowance?: unknown; spent?: unknown; currency?: unknown }
@@ -49732,9 +49578,7 @@ if (isGeminiMcpBridgeProcess) {
             return {
               ok: false,
               error:
-                error instanceof Error
-                  ? error.message
-                  : "Couldn't update this thread's PR watch."
+                error instanceof Error ? error.message : "Couldn't update this thread's PR watch."
             }
           }
         },
@@ -50018,18 +49862,14 @@ if (isGeminiMcpBridgeProcess) {
         const reviewInvocationCompletion = new Promise<void>((resolve) => {
           resolveReviewInvocation = resolve
         })
-        let lifecycleOwnership: ReturnType<
-          typeof acquireProviderRunLifecycleOwnership
-        > | null = null
+        let lifecycleOwnership: ReturnType<typeof acquireProviderRunLifecycleOwnership> | null =
+          null
         let reviewAdmissionReservation: CodexThreadAdmissionReservation | null = null
         let reviewAdmissionMayBeLive = false
         let reviewClientLifecycleLease: CodexClientLifecycleLease | null = null
         let reviewClient: CodexAppServerClient | null = null
         try {
-          promoteProviderRunPersistenceAuthority(
-            reviewDispatchPayload,
-            reviewDispatchReservation
-          )
+          promoteProviderRunPersistenceAuthority(reviewDispatchPayload, reviewDispatchReservation)
           lifecycleOwnership = acquireProviderRunLifecycleOwnership(
             event.sender,
             reviewDispatchPayload,
@@ -50054,13 +49894,7 @@ if (isGeminiMcpBridgeProcess) {
             lifecycleOwnership.settleIfUnclaimed('cancelled')
             throw new Error('Native review admission was cancelled before setup.')
           }
-          if (
-            historyClearAdmissionBlocked(
-              route.appRunId,
-              reviewWorkspacePath,
-              route.appChatId
-            )
-          ) {
+          if (historyClearAdmissionBlocked(route.appRunId, reviewWorkspacePath, route.appChatId)) {
             reviewAdmissionReservation.releaseBeforeAdmission()
             lifecycleOwnership.settleIfUnclaimed('cancelled')
             throw new Error('Native review authority was revoked while awaiting admission.')
@@ -50319,11 +50153,7 @@ if (isGeminiMcpBridgeProcess) {
                   await finishCodexClientLifecycle(reviewClient, reviewClientLifecycleLease)
                 } finally {
                   if (reviewRunId) {
-                    unbindCodexRunClient(
-                      reviewRunId,
-                      reviewClient,
-                      reviewClientLifecycleLease
-                    )
+                    unbindCodexRunClient(reviewRunId, reviewClient, reviewClientLifecycleLease)
                   }
                 }
               }
@@ -50350,7 +50180,9 @@ if (isGeminiMcpBridgeProcess) {
       }
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()
-        return managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
+        return (
+          managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
+        )
       }
       if (provider === 'pi') {
         // Only models whose upstream has a stored key: an unkeyed row could
@@ -50359,7 +50191,8 @@ if (isGeminiMcpBridgeProcess) {
           piKeyStoreRef ? piKeyStoreRef.getStatus().configuredUpstreams : []
         )
         return getStaticProviderModels('pi').filter((row) => {
-          const wireId = typeof (row as { id?: unknown }).id === 'string' ? (row as { id: string }).id : ''
+          const wireId =
+            typeof (row as { id?: unknown }).id === 'string' ? (row as { id: string }).id : ''
           const split = splitPiWireModelId(wireId)
           return split ? configured.has(split.upstream) : false
         })
@@ -50500,22 +50333,21 @@ if (isGeminiMcpBridgeProcess) {
       artifactStore: projectReferenceArtifactStore
     })
     projectReferenceContextAuditServiceRef = projectReferenceContextAuditService
-    const providerRunLifecycleOwnershipDeps =
-      createProviderRunLifecycleOwnershipDependencies({
-        registerStartingSession: (input) =>
-          registerRunSession(
-            input.provider,
-            input.sender as Electron.WebContents,
-            input.route,
-            input.workspacePath,
-            input.state,
-            input.providerSessionId,
-            false,
-            'starting',
-            input.setupAbortController
-          ),
-        runManager
-      })
+    const providerRunLifecycleOwnershipDeps = createProviderRunLifecycleOwnershipDependencies({
+      registerStartingSession: (input) =>
+        registerRunSession(
+          input.provider,
+          input.sender as Electron.WebContents,
+          input.route,
+          input.workspacePath,
+          input.state,
+          input.providerSessionId,
+          false,
+          'starting',
+          input.setupAbortController
+        ),
+      runManager
+    })
     const authorizeProviderLifecycleStart = (
       payload: AgentRunPayload,
       reservation: object | undefined
@@ -50615,7 +50447,13 @@ if (isGeminiMcpBridgeProcess) {
       const durableClaim = executionGraphDurableClaimForRun(appRunId)
       if (!candidate?.executionGraph && !durableClaim) {
         await admitOpaqueProviderWorkspaceMutation(payload)
-        if (!providerTransportLaunchAuthorized(payload.provider, payload, routeWithRunId(payload.provider, payload))) {
+        if (
+          !providerTransportLaunchAuthorized(
+            payload.provider,
+            payload,
+            routeWithRunId(payload.provider, payload)
+          )
+        ) {
           throw new Error('Provider dispatch ended while workspace-lock admission was pending.')
         }
         return
@@ -51175,8 +51013,7 @@ if (isGeminiMcpBridgeProcess) {
         const session = runManager.get(runId)
         return Boolean(session && session.approvalIds.size > 0)
       },
-      terminateRunForHistory: (provider, runId) =>
-        terminateProviderRunForHistory(provider, runId),
+      terminateRunForHistory: (provider, runId) => terminateProviderRunForHistory(provider, runId),
       createRunId: createFallbackRunId,
       now: () => Date.now(),
       nowIso: () => new Date().toISOString(),
@@ -51195,12 +51032,9 @@ if (isGeminiMcpBridgeProcess) {
       cancelWakeupTimer: (wakeupId) => wakeupTimerServiceRef?.cancel(wakeupId),
       persistSessionCheckpoint: (chat, reason) =>
         sessionCheckpointStoreRef?.upsertFromChat(chat, reason),
-      appendMidRunSteering: ({ chatId, text }) =>
-        appendEnsembleSteerIntoLiveRound(chatId, text),
+      appendMidRunSteering: ({ chatId, text }) => appendEnsembleSteerIntoLiveRound(chatId, text),
       getPendingMidRunSteeringEntryIds: (chatId) =>
-        midRunSteeringRegistry
-          .undeliveredToAnyParticipant(chatId)
-          .map((entry) => entry.id),
+        midRunSteeringRegistry.undeliveredToAnyParticipant(chatId).map((entry) => entry.id),
       completeSessionCheckpoint: (chatId, roundId, status) => {
         try {
           sessionCheckpointStoreRef?.completeRound(chatId, roundId, status)
@@ -51545,7 +51379,10 @@ if (isGeminiMcpBridgeProcess) {
       createRunId: createFallbackRunId,
       log: (message) => console.log(message)
     })
-    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
       // A wake that arrived while the app was closed would otherwise wait for the
       // next send to trigger a sweep.
       sweepThreadMessageWakes()
@@ -51562,7 +51399,10 @@ if (isGeminiMcpBridgeProcess) {
       // together.
       recoverPersistedSoloChatWakeups()
     }
-    if (!historyDeletionStartupRecoveryBlockedReason && !workspaceLockStartupRecoveryBlockedReason) {
+    if (
+      !historyDeletionStartupRecoveryBlockedReason &&
+      !workspaceLockStartupRecoveryBlockedReason
+    ) {
       recoverPendingSubThreadMailboxes()
     }
     const dispatchAgentRun = async (
@@ -51631,8 +51471,7 @@ if (isGeminiMcpBridgeProcess) {
         const dispatchImageAttachments = await authorizeThenExpandAttachmentRecords(
           imageAttachments,
           (paths) => resolveRendererAttachmentPaths(event, paths),
-          (authorizedAttachments) =>
-            expandPdfAttachmentsForDispatch(authorizedAttachments, chatId)
+          (authorizedAttachments) => expandPdfAttachmentsForDispatch(authorizedAttachments, chatId)
         )
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries

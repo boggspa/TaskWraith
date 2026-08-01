@@ -464,6 +464,7 @@ export class WorkspaceMutationCommitFence {
       (this.fs.constants.O_NOFOLLOW || 0)
     let fd: number | null = null
     let published = false
+    let unlinkError: unknown = undefined
     try {
       fd = this.fs.openSync(temporaryPath, flags, PRIVATE_FILE_MODE)
       const opened = this.fs.fstatSync(fd)
@@ -487,9 +488,10 @@ export class WorkspaceMutationCommitFence {
       try {
         this.fs.unlinkSync(temporaryPath)
       } catch (error) {
-        if (!isErrno(error, 'ENOENT')) throw error
+        if (!isErrno(error, 'ENOENT')) unlinkError = error
       }
     }
+    if (unlinkError !== undefined) throw unlinkError
     this.fsyncDirectory()
     if (!published) return false
     const written = this.readRequiredRegularFile(path)

@@ -1231,7 +1231,7 @@ function isOpaqueId(value: unknown): value is string {
     typeof value === 'string' &&
     value.length > 0 &&
     value.length <= 512 &&
-    !/[\u0000\r\n]/.test(value)
+    !(value.includes('\0') || value.includes('\r') || value.includes('\n'))
   )
 }
 

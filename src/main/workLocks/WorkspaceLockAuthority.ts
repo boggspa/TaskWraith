@@ -1754,7 +1754,7 @@ export class WorkspaceLockAuthority {
 
   private nextId(kind: 'fence' | 'lease' | 'transition'): string {
     const id = this.dependencies.nextId(kind)
-    if (!id || /[\u0000\r\n]/.test(id)) {
+    if (!id || id.includes('\0') || id.includes('\r') || id.includes('\n')) {
       throw new Error(`Workspace-lock ${kind} id generator returned an invalid id.`)
     }
     return id

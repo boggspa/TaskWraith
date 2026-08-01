@@ -874,7 +874,12 @@ function decodeWalUtf8(bytes: Buffer, path: string): string {
 }
 
 function isSinglePathSegment(value: string): boolean {
-  return Boolean(value) && value !== '.' && value !== '..' && !/[\\/\u0000]/.test(value)
+  return (
+    Boolean(value) &&
+    value !== '.' &&
+    value !== '..' &&
+    !(value.includes('\\') || value.includes('/') || value.includes('\0'))
+  )
 }
 
 function isOpaqueId(value: unknown): value is string {
@@ -882,7 +887,7 @@ function isOpaqueId(value: unknown): value is string {
     typeof value === 'string' &&
     value.length > 0 &&
     value.length <= 512 &&
-    !/[\u0000\r\n]/.test(value)
+    !(value.includes('\0') || value.includes('\r') || value.includes('\n'))
   )
 }
 

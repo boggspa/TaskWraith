@@ -1,5 +1,5 @@
 import type { ChatRecord, ChatRun } from '../../../main/store/types'
-import { applyPendingProviderChangeOnFinalize } from '../../../main/providerChangeQueue'
+import { applyPendingProviderChangeOnFinalize } from '../../../shared/providerChangeQueue'
 
 /**
  * Defensive terminal-seal for a run whose LIVE context was lost, so the normal
