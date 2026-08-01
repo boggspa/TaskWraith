@@ -1,11 +1,27 @@
+import { readFileSync } from 'node:fs'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
+import { OLLAMA_DISPLAY_BRANDS } from '../lib/ollamaDisplayBrand'
 import {
   WELCOME_USAGE_PROVIDER_IDS,
   buildWelcomeUsageDashboardData
 } from '../lib/welcomeUsageDashboard'
+import { PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import { nextWelcomeUsageTab, WelcomeUsageDashboard } from './WelcomeUsageDashboard'
+
+const modelComparisonCss = readFileSync(
+  new URL('../assets/css/03-composer-welcome-activity.css', import.meta.url),
+  'utf8'
+)
+
+const modelComparisonHueClasses = [
+  'antigravity',
+  'pi',
+  'mistral',
+  ...OLLAMA_DISPLAY_BRANDS.map((brand) => brand.providerClass),
+  ...Object.values(PI_UPSTREAM_BRANDS).map((brand) => brand.hueClass)
+]
 
 describe('WelcomeUsageDashboard model comparisons', () => {
   it('keeps dashboard meter-card chrome isolated from the Settings table', () => {
@@ -38,6 +54,23 @@ describe('WelcomeUsageDashboard model comparisons', () => {
     expect(html).not.toContain('model-usage-table--comparisons')
     expect(html).not.toContain('settings-model-comparisons')
   })
+
+  it.each([...new Set(modelComparisonHueClasses)])(
+    '%s paints its model-comparison dot and meter fill with its provider hue',
+    (hueClass) => {
+      // Pi and Ollama model entries resolve to their upstream brand class in
+      // the dashboard data. Pin the CSS triplet too, so a new class cannot
+      // silently inherit the default blue dot / near-white fill.
+      expect(modelComparisonCss).toMatch(
+        new RegExp(
+          `\\.welcome-usage-model-dot\\.provider-${hueClass},\\s*` +
+            `\\.welcome-usage-model-meter-fill\\.provider-${hueClass},\\s*` +
+            `\\.welcome-usage-bar-segment\\.provider-${hueClass}\\s*` +
+            `\\{\\s*color: var\\(--provider-${hueClass}-color\\);\\s*\\}`
+        )
+      )
+    }
+  )
 
   it('advances locally through only the visible tabs', () => {
     const visible = ['overview', 'models', 'agents'] as const

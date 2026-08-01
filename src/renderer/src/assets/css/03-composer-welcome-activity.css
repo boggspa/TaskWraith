@@ -3039,6 +3039,12 @@
 .welcome-usage-model-dot.provider-ollama,
 .welcome-usage-model-meter-fill.provider-ollama,
 .welcome-usage-bar-segment.provider-ollama { color: var(--provider-ollama-color); }
+.welcome-usage-model-dot.provider-antigravity,
+.welcome-usage-model-meter-fill.provider-antigravity,
+.welcome-usage-bar-segment.provider-antigravity { color: var(--provider-antigravity-color); }
+.welcome-usage-model-dot.provider-pi,
+.welcome-usage-model-meter-fill.provider-pi,
+.welcome-usage-bar-segment.provider-pi { color: var(--provider-pi-color); }
 
 /* Ollama-backed display brands. Runtime provider stays `ollama`, but the
  * Model Comparisons rows wear their spoofed upstream brand hue (mirrors the
