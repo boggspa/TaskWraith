@@ -297,6 +297,25 @@ describe('ProjectsSidebarView', () => {
     expect(html).toContain('class="sidebar-project-create-large"')
   })
 
+  it('renders the Work Active Runs section ahead of Projects', () => {
+    seedStore([projectRecord('project-a', 'Alpha', ['chat-1'])], [])
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[chatRecord('chat-1', 'Project thread')]}
+        currentChat={null}
+        runningChatIds={['chat-1']}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+      />
+    )
+
+    const activeRunsIndex = html.indexOf('<h4 class="sidebar-section-title">Active Runs</h4>')
+    const projectsIndex = html.indexOf('<h4 class="sidebar-section-title">Projects</h4>')
+    expect(activeRunsIndex).toBeGreaterThanOrEqual(0)
+    expect(projectsIndex).toBeGreaterThan(activeRunsIndex)
+  })
+
   it('marks the home member and offers set/clear and Open Project Home actions', () => {
     seedStore(
       [projectRecord('project-a', 'Alpha', ['chat-home', 'chat-other'])],

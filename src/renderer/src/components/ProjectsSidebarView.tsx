@@ -13,6 +13,7 @@ import type {
   ChatRecord,
   PooledAgentIdentitySnapshot,
   ProviderId,
+  RunQueueJob,
   WorkspaceRecord
 } from '../../../main/store/types'
 import {
@@ -49,6 +50,7 @@ import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { IdentityIconPicker } from './IdentityIconPicker'
+import { ActiveRunsSection } from './ActiveRunsSection'
 
 const EXPANDED_PROJECTS_STORAGE_KEY = 'taskwraith-sidebar-expanded-project-ids'
 const PROJECT_CHAT_DRAG_MIME = 'application/x-taskwraith-chat-id'
@@ -70,6 +72,7 @@ interface ProjectsSidebarViewProps {
   /** Open the References dock panel for this project — the discoverable link
    * from the sidebar's compact library section to the full dock surface. */
   onOpenReferencesLibrary?: (projectId: string) => void
+  onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   /** Registered workspaces, for the profile's preferred-workspace picker. */
   workspaces?: readonly WorkspaceRecord[]
   onSearchResultCountChange?: (count: number) => void
@@ -236,6 +239,7 @@ export function ProjectsSidebarView({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  onAddRunQueueJobToWorkspaceBoard,
   workspaces = [],
   onSearchResultCountChange,
   initialSelectedProjectId = null
@@ -323,6 +327,10 @@ export function ProjectsSidebarView({
   // guarantees whole subtrees, so the tree never re-roots) and surface as
   // subtree roots in the collapsed section below it.
   const liveProjects = useMemo(() => projects.filter((project) => !project.archived), [projects])
+  const workChatIds = useMemo(
+    () => [...new Set(liveProjects.flatMap((project) => project.memberChatIds))],
+    [liveProjects]
+  )
   const archivedSubtreeRoots = useMemo(() => {
     const byId = new Map(projects.map((project) => [project.id, project]))
     return projects
@@ -1152,6 +1160,15 @@ export function ProjectsSidebarView({
 
   return (
     <section className="sidebar-projects-view" aria-label="Projects">
+      <ActiveRunsSection
+        chats={chats}
+        currentChat={currentChat}
+        runningChatIds={runningChatIds}
+        surface="work"
+        workChatIds={workChatIds}
+        onSelectChat={onSelectChat}
+        onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
+      />
       <div className="sidebar-section-header sidebar-projects-header">
         <button type="button" className="sidebar-section-header-toggle" disabled>
           <ProjectChevron isExpanded />

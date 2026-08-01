@@ -139,6 +139,23 @@ describe('isActiveRunVisibleOnSurface', () => {
       )
     ).toBe(true)
   })
+
+  it('shows both General and workspace runs in Work only when the thread is a project member', () => {
+    const workChatIds = new Set(['global-member', 'workspace-member'])
+    const globalMember = chat('claude', { appChatId: 'global-member', scope: 'global' })
+    const workspaceMember = chat('codex', {
+      appChatId: 'workspace-member',
+      scope: 'workspace'
+    })
+    const outsider = chat('codex', { appChatId: 'not-a-member', scope: 'workspace' })
+
+    expect(isActiveRunVisibleOnSurface(job(), globalMember, 'work', workChatIds)).toBe(true)
+    expect(isActiveRunVisibleOnSurface(job(), workspaceMember, 'work', workChatIds)).toBe(true)
+    expect(isActiveRunVisibleOnSurface(job(), outsider, 'work', workChatIds)).toBe(false)
+    expect(isActiveRunVisibleOnSurface(job({ chatId: 'missing' }), null, 'work', workChatIds)).toBe(
+      false
+    )
+  })
 })
 
 describe('resolveActiveRunProviderDisplay', () => {

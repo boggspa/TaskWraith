@@ -4951,6 +4951,7 @@ export function Sidebar({
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
+                onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
                 workspaces={workspaces}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
