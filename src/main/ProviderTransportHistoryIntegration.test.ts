@@ -560,7 +560,7 @@ describe('one-shot provider transport history join', () => {
     expect(awaited).toBeLessThan(settled)
     expect(provider).toContain('runManager.confirmTerminalStatus(route.appRunId, terminalStatus)')
     expect(provider).toContain(
-      "settleVisibleProviderSetupFailure({\n      sender: event.sender,\n      provider: 'kimi'"
+      "projectVisibleProviderSetupFailure({\n        sender: event.sender,\n        provider: 'kimi'"
     )
   })
 

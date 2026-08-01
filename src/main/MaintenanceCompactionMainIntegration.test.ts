@@ -51,7 +51,7 @@ describe('main maintenance compaction history-deletion integration', () => {
       "isCodexAppServerRequestTimeout(firstError, 'thread/compact/start')"
     )
     expect(lane).toContain(
-      "updateCodexCompactionLaunchEvidence(\n            compactionLaunchMayBeLive,\n            'timeout'"
+      "updateCodexCompactionLaunchEvidence(\n              compactionLaunchMayBeLive,\n              'timeout'"
     )
     expect(lane).toContain('codexCompactionFailureProvesNoLiveTurn({')
     expect(lane).toContain(
