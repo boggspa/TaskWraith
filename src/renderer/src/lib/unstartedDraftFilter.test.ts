@@ -77,9 +77,9 @@ describe('findSurvivableUnstartedDraftId — the "one survivable New Chat" rule'
       draft({ appChatId: 'active', createdAt: 3000 }),
       draft({ appChatId: 'mid', createdAt: 2000 })
     ]
-    expect(
-      findSurvivableUnstartedDraftId(chats, { protectedChatIds: new Set(['active']) })
-    ).toBe('mid')
+    expect(findSurvivableUnstartedDraftId(chats, { protectedChatIds: new Set(['active']) })).toBe(
+      'mid'
+    )
   })
 
   it('skips intent-bearing drafts (they stay visible on their own)', () => {
