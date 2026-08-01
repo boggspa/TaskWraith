@@ -3,6 +3,8 @@ import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/ty
 import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTable'
 import {
   getActiveRunChatLabel,
+  isActiveRunVisibleOnSurface,
+  resolveActiveRunChat,
   resolveActiveRunProviderDisplay
 } from './ActiveRunsSection'
 
@@ -58,6 +60,84 @@ describe('getActiveRunChatLabel', () => {
 
   it('falls back to Untitled chat when no title or preview exists', () => {
     expect(getActiveRunChatLabel(job(), null)).toBe('Untitled chat')
+  })
+})
+
+describe('active run chat attribution', () => {
+  it('recovers an Ensemble thread from the participant run id when chatId is absent', () => {
+    const ensemble = chat('codex', {
+      appChatId: 'ensemble-chat',
+      chatKind: 'ensemble',
+      title: 'Release review',
+      runs: [
+        {
+          runId: 'participant-run',
+          provider: 'claude',
+          startedAt: '2026-07-05T01:00:00.000Z',
+          ensembleParticipantId: 'participant-2'
+        }
+      ]
+    })
+    const participantJob = job({
+      id: 'participant-run',
+      runId: 'participant-run',
+      chatId: undefined,
+      promptPreview: 'First few lines of the latest prompt'
+    })
+
+    const resolved = resolveActiveRunChat(participantJob, [ensemble])
+
+    expect(resolved).toBe(ensemble)
+    expect(getActiveRunChatLabel(participantJob, resolved)).toBe('Release review')
+  })
+
+  it('uses the exact app chat id before the run-id fallback', () => {
+    const exact = chat('codex', { appChatId: 'exact-chat', title: 'Exact' })
+    const historical = chat('claude', {
+      appChatId: 'historical-chat',
+      title: 'Historical',
+      runs: [
+        {
+          runId: 'run-1',
+          startedAt: '2026-07-05T00:00:00.000Z'
+        }
+      ]
+    })
+
+    expect(resolveActiveRunChat(job({ chatId: exact.appChatId }), [historical, exact])).toBe(exact)
+  })
+})
+
+describe('isActiveRunVisibleOnSurface', () => {
+  it('partitions resolved General and workspace threads between Chat and Code', () => {
+    const globalChat = chat('claude', { appChatId: 'global-chat', scope: 'global' })
+    const workspaceChat = chat('codex', {
+      appChatId: 'workspace-chat',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    })
+
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'global' }), globalChat, 'chat')).toBe(true)
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'global' }), globalChat, 'code')).toBe(false)
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'workspace' }), workspaceChat, 'code')).toBe(
+      true
+    )
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'workspace' }), workspaceChat, 'chat')).toBe(
+      false
+    )
+  })
+
+  it('uses durable job scope when the chat record is temporarily unavailable', () => {
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'global' }), null, 'chat')).toBe(true)
+    expect(isActiveRunVisibleOnSurface(job({ scope: 'global' }), null, 'code')).toBe(false)
+    expect(
+      isActiveRunVisibleOnSurface(
+        job({ scope: undefined, workspaceId: 'workspace-1', workspacePath: '/repo' }),
+        null,
+        'code'
+      )
+    ).toBe(true)
   })
 })
 

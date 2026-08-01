@@ -38,6 +38,8 @@ interface ActiveRunProviderDisplay {
   style: ActiveRunProviderStyle
 }
 
+export type ActiveRunsSurface = 'chat' | 'code' | 'work'
+
 /** Right-chevron matching the other sidebar section headers (rotates when
  * expanded). Inlined to avoid a Sidebar ↔ ActiveRunsSection import cycle. */
 function ActiveRunsChevron({ isExpanded }: { isExpanded: boolean }): JSX.Element {
@@ -64,6 +66,8 @@ interface ActiveRunsSectionProps {
   chats: ChatRecord[]
   currentChat: ChatRecord | null
   runningChatIds?: string[]
+  surface?: ActiveRunsSurface
+  workChatIds?: readonly string[]
   onSelectChat: (chat: ChatRecord) => void
   onAddRunQueueJobToWorkspaceBoard?: (job: RunQueueJob) => void
   /** Reserved: a runId-targeted inspector deep-link. Not wired — clicking a
@@ -75,17 +79,15 @@ export function ActiveRunsSection({
   chats,
   currentChat,
   runningChatIds = [],
+  surface,
+  workChatIds = [],
   onSelectChat,
   onAddRunQueueJobToWorkspaceBoard
 }: ActiveRunsSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<RunQueueJob[]>([])
   const [, setNowTick] = useState(0)
   const [collapsed, setCollapsed] = useState(false)
-  const chatById = useMemo(() => {
-    const map = new Map<string, ChatRecord>()
-    for (const chat of chats) map.set(chat.appChatId, chat)
-    return map
-  }, [chats])
+  const workChatIdSet = useMemo(() => new Set(workChatIds), [workChatIds])
   const runningKey = runningChatIds.join('|')
 
   const refresh = useCallback(async () => {
@@ -126,10 +128,19 @@ export function ActiveRunsSection({
     return () => window.removeEventListener('focus', onFocus)
   }, [refresh])
 
-  const visibleJobs = jobs.filter(
-    (job): job is RunQueueJob & { status: ActiveRunQueueStatus } =>
-      isActiveQueueStatus(job.status) && isJobBackedByLiveChat(job, chatById.get(job.chatId || ''))
-  )
+  const visibleJobs = jobs
+    .map((job) => ({ job, chat: resolveActiveRunChat(job, chats) }))
+    .filter(
+      (
+        entry
+      ): entry is {
+        job: RunQueueJob & { status: ActiveRunQueueStatus }
+        chat: ChatRecord | null
+      } =>
+        isActiveQueueStatus(entry.job.status) &&
+        (!surface || isActiveRunVisibleOnSurface(entry.job, entry.chat, surface, workChatIdSet)) &&
+        isJobBackedByLiveChat(entry.job, entry.chat || undefined)
+    )
 
   // 1.0.6 — persistent section: always render (so it permanently occupies the
   // top slot under Search / above Pinned), collapsible like the other
@@ -159,8 +170,7 @@ export function ActiveRunsSection({
               <span>No active runs</span>
             </div>
           )}
-          {visibleJobs.map((job) => {
-            const chat = job.chatId ? chatById.get(job.chatId) || null : null
+          {visibleJobs.map(({ job, chat }) => {
             const isCurrent = Boolean(chat && currentChat?.appChatId === chat.appChatId)
             const providerDisplay = resolveActiveRunProviderDisplay(job, chat)
             return (
@@ -223,6 +233,40 @@ export function ActiveRunsSection({
 
 function isJobBackedByLiveChat(job: RunQueueJob, chat: ChatRecord | undefined): boolean {
   return isRunQueueJobVisibleForChat(job, chat)
+}
+
+export function resolveActiveRunChat(
+  job: Pick<RunQueueJob, 'chatId' | 'runId' | 'id'>,
+  chats: readonly ChatRecord[]
+): ChatRecord | null {
+  if (job.chatId) {
+    const exact = chats.find((chat) => chat.appChatId === job.chatId)
+    if (exact) return exact
+  }
+
+  return (
+    chats.find((chat) =>
+      (chat.runs || []).some((run) => run.runId === job.runId || run.runId === job.id)
+    ) || null
+  )
+}
+
+export function isActiveRunVisibleOnSurface(
+  job: Pick<RunQueueJob, 'scope' | 'workspaceId' | 'workspacePath'>,
+  chat: Pick<ChatRecord, 'appChatId' | 'scope'> | null,
+  surface: ActiveRunsSurface,
+  workChatIds: ReadonlySet<string> = new Set()
+): boolean {
+  if (surface === 'work') return Boolean(chat && workChatIds.has(chat.appChatId))
+
+  const isGlobal = chat
+    ? chat.scope === 'global'
+    : job.scope === 'global'
+      ? true
+      : job.scope === 'workspace' || Boolean(job.workspaceId || job.workspacePath)
+        ? false
+        : true
+  return surface === (isGlobal ? 'chat' : 'code')
 }
 
 function getWorkspaceShortName(job: RunQueueJob, chat: ChatRecord | null): string {

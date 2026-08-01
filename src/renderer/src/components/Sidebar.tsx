@@ -4998,9 +4998,10 @@ export function Sidebar({
           {wrapHierarchySection(
             'active-runs',
             <ActiveRunsSection
-              chats={activeSurfaceChats}
+              chats={chats}
               currentChat={currentChat}
               runningChatIds={runningChatIds}
+              surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
               onSelectChat={onSelectChat}
               onInspectRun={onInspectRun}
               onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
