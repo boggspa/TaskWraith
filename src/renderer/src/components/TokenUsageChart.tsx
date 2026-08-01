@@ -14,6 +14,7 @@ import {
   setCachedRendererUsageRecords,
   type RendererUsageSource
 } from '../lib/usageRecordsCache'
+import { buildExternalActivityPresentationRecords } from '../lib/externalActivityPresentation'
 import { usageRecordTotalTokens } from '../lib/providerRateEstimate'
 import './TokenUsageChart.css'
 
@@ -36,6 +37,9 @@ interface TokenUsageChartProps {
   title: string
   source?: TokenUsageSource
   records?: UsageRecord[]
+  /** TaskWraith-owned records to include for providers without an external
+   * scanner lane. This is a display projection, not an additional scan. */
+  supplementalTaskWraithRecords?: UsageRecord[]
   dayCount?: number
   refreshKey?: number
   showProviderFilter?: boolean
@@ -139,6 +143,7 @@ export function TokenUsageChart({
   title,
   source = 'taskwraith',
   records,
+  supplementalTaskWraithRecords,
   dayCount = 90,
   refreshKey = 0,
   showProviderFilter = false,
@@ -183,8 +188,18 @@ export function TokenUsageChart({
     }
   }, [records, refreshKey, source])
 
-  const chartRecords =
+  const rawChartRecords =
     records ?? (fetched.source === source ? fetched.records : getCachedRendererUsageRecords(source))
+  const chartRecords = useMemo(
+    () =>
+      source === 'external'
+        ? buildExternalActivityPresentationRecords(
+            rawChartRecords,
+            supplementalTaskWraithRecords ?? []
+          )
+        : rawChartRecords,
+    [rawChartRecords, source, supplementalTaskWraithRecords]
+  )
   const data = useMemo(
     () =>
       showProviderFilter

@@ -11325,6 +11325,7 @@ export function SettingsPanel({
                     <UsageHeatmap
                       dayCount={90}
                       usageSource="external"
+                      supplementalTaskWraithRecords={usageRecords}
                       title="External Activity"
                       showProviderFilter
                       className="usage-heatmap--settings-activity"
@@ -11339,6 +11340,7 @@ export function SettingsPanel({
                     <TokenUsageChart
                       title="External Tokens"
                       source="external"
+                      supplementalTaskWraithRecords={usageRecords}
                       dayCount={90}
                       showProviderFilter
                       className="token-usage-chart--settings"

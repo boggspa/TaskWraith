@@ -1061,6 +1061,7 @@ function buildWelcomeHeatmapSlots({
           dayCount={90}
           refreshKey={refreshKey}
           usageSource="external"
+          supplementalTaskWraithRecords={usageRecords}
           title="External Activity"
           showProviderFilter
           className="usage-heatmap--welcome-standalone"
@@ -1088,6 +1089,7 @@ function buildWelcomeHeatmapSlots({
         <TokenUsageChart
           title="External Tokens"
           source="external"
+          supplementalTaskWraithRecords={usageRecords}
           dayCount={90}
           refreshKey={refreshKey}
           showProviderFilter

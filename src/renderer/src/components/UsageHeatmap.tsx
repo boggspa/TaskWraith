@@ -37,6 +37,7 @@ import {
   setCachedRendererUsageRecords,
   type RendererUsageSource
 } from '../lib/usageRecordsCache'
+import { buildExternalActivityPresentationRecords } from '../lib/externalActivityPresentation'
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20'] // hour-of-day ticks shown on the left rail
 const HEATMAP_LOAD_DEADLINE_MS = 1_000
@@ -108,6 +109,10 @@ interface UsageHeatmapProps {
   usageSource?: RendererUsageSource
   /** Optional caller-owned records. When present no IPC fetch is performed. */
   records?: UsageRecord[]
+  /** TaskWraith-owned records to include for providers that the external
+   * scanner cannot observe. They are projected after the raw external fetch,
+   * so this does not change external hydration work. */
+  supplementalTaskWraithRecords?: UsageRecord[]
   /** Header title. Defaults to the original TaskWraith "Activity" label. */
   title?: string
   /** Optional accessible label override. */
@@ -125,6 +130,7 @@ export function UsageHeatmap({
   dayCount = HEATMAP_COLUMNS,
   usageSource = 'taskwraith',
   records: providedRecords,
+  supplementalTaskWraithRecords,
   title = 'Activity',
   ariaLabel,
   showProviderFilter = false,
@@ -181,9 +187,19 @@ export function UsageHeatmap({
     }
   }, [providedRecords, refreshKey, usageSource])
 
-  const displayRecords =
+  const rawDisplayRecords =
     providedRecords ??
     (fetched.source === usageSource ? fetched.records : getCachedRendererUsageRecords(usageSource))
+  const displayRecords = useMemo(
+    () =>
+      usageSource === 'external'
+        ? buildExternalActivityPresentationRecords(
+            rawDisplayRecords,
+            supplementalTaskWraithRecords ?? []
+          )
+        : rawDisplayRecords,
+    [rawDisplayRecords, supplementalTaskWraithRecords, usageSource]
+  )
   const grid: HeatmapGrid = useMemo(
     () =>
       showProviderFilter
