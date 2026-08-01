@@ -26,6 +26,12 @@ const temporaryRoots: string[] = []
 let globalId = 0
 let globalTime = Date.parse('2026-07-29T18:00:00.000Z')
 
+function canonicalRealpath(input: string): string {
+  const realpath =
+    typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native : fs.realpathSync
+  return realpath(input)
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true })
@@ -335,7 +341,7 @@ describe('WorkspaceLockAuthority', () => {
       ok: true,
       capabilities: [
         {
-          executableTargetPath: fs.realpathSync(path.join(first, 'target.ts'))
+          executableTargetPath: canonicalRealpath(path.join(first, 'target.ts'))
         }
       ]
     })

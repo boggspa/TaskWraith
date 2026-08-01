@@ -142,7 +142,7 @@ describe('CanonicalWorkspaceLockPath', () => {
     })
 
     expect(resolution.canonicalPath).toBe(canonicalRealpath(mixedFile))
-    expect(resolution.comparisonPath).toBe(resolution.canonicalPath)
+    expect(resolution.comparisonPath).toBe(resolution.canonicalPath.replace(/\\/g, '/'))
     expect(resolution.canonicalPath.replace(/\\/g, '/').endsWith('/MiXeD/TaRgEt.ts')).toBe(true)
   })
 

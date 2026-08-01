@@ -192,7 +192,7 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     })
     const firstClaims = vi.mocked(runtime.acquireClaims).mock.calls[0][1]
     expect(firstClaims).toEqual([
-      expect.objectContaining({ kind: 'workspace', worktreePath: resolve('/base') }),
+      expect.objectContaining({ kind: 'workspace', worktreePath: '/base' }),
       expect.objectContaining({ kind: 'file', targetPath: resolve('/base', 'src/a.ts') })
     ])
     expect(firstClaims.some((claim) => claim.kind === 'hunk')).toBe(false)
