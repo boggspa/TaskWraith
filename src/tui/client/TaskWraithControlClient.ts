@@ -104,8 +104,8 @@ export class TaskWraithControlClient extends EventEmitter<TaskWraithControlClien
     super()
     this.options = {
       ...options,
-      connectTimeoutMs: options.connectTimeoutMs ?? 2_500,
-      requestTimeoutMs: options.requestTimeoutMs ?? 12_000
+      connectTimeoutMs: options.connectTimeoutMs ?? 6_250,
+      requestTimeoutMs: options.requestTimeoutMs ?? 30_000
     }
   }
 
