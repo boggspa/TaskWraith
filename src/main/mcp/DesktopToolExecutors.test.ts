@@ -248,21 +248,24 @@ const missingChatContext: DesktopToolContext = { ...activeContext, appChatId: un
 
 describe('DesktopToolExecutors host application effects', () => {
   it('opens a workspace file through the host shell under application-mutation metadata', async () => {
-    const openPath = vi.fn(async () => '')
+    const openPath = vi.fn(async (_path: string) => '')
     const showItemInFolder = vi.fn()
     const { executor } = createExecutor({
       chats: [chat('chat-a', [])],
       shell: { openPath, showItemInFolder }
     })
 
-    await expect(
-      executor.executeOpenWorkspaceFile({ path: 'docs/report.html' }, activeContext)
-    ).resolves.toMatchObject({
+    const result = await executor.executeOpenWorkspaceFile(
+      { path: 'docs/report.html' },
+      activeContext
+    )
+    expect(result).toMatchObject({
       ok: true,
-      path: '/workspace/docs/report.html',
       action: 'open'
     })
-    expect(openPath).toHaveBeenCalledWith('/workspace/docs/report.html')
+    expect(result.path.replace(/\\/g, '/')).toBe('/workspace/docs/report.html')
+    expect(openPath).toHaveBeenCalledOnce()
+    expect(openPath.mock.calls[0]?.[0].replace(/\\/g, '/')).toBe('/workspace/docs/report.html')
     expect(showItemInFolder).not.toHaveBeenCalled()
     // `orchestration`, matching open_in_ide / open_in_ide_at_position /
     // reveal_in_finder, which share this exact operation/mutation/lock triple.

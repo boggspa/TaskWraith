@@ -106,8 +106,7 @@ describe('WorkspaceLockProcessIdentityService', () => {
     })
 
     expect(await service.initialize()).toMatch(/^[a-f0-9]{64}$/)
-    expect(execFile.mock.calls[0]?.[0]).toContain(
-      'C:\\Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
-    )
+    const invokedPath = execFile.mock.calls[0]?.[0]?.replace(/\\/g, '/')
+    expect(invokedPath).toContain('C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe')
   })
 })

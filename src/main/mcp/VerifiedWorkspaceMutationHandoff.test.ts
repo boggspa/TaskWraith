@@ -755,19 +755,22 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
 
         expect(result).toMatchObject({
           ok: true,
-          mode: 'verified-workspace',
-          executionContext: {
-            cwd: realpathSync(subcwd),
-            workspacePath: realpathSync(physicalRoot),
-            cwdPathEvidence: {
-              canonicalPath: realpathSync(subcwd),
-              containment: {
-                canonicalRootPath: realpathSync(physicalRoot),
-                relativeTargetPath: 'packages/app'
-              }
-            }
-          }
+          mode: 'verified-workspace'
         })
+        if (result.ok) {
+          const fwd = (p: string) => p.replace(/\\/g, '/')
+          expect(fwd(result.executionContext.cwd)).toBe(fwd(realpathSync(subcwd)))
+          expect(fwd(result.executionContext.workspacePath)).toBe(fwd(realpathSync(physicalRoot)))
+          expect(fwd(result.executionContext.cwdPathEvidence?.canonicalPath ?? '')).toBe(
+            fwd(realpathSync(subcwd))
+          )
+          expect(
+            fwd(result.executionContext.cwdPathEvidence?.containment?.canonicalRootPath ?? '')
+          ).toBe(fwd(realpathSync(physicalRoot)))
+          expect(result.executionContext.cwdPathEvidence?.containment?.relativeTargetPath).toBe(
+            'packages/app'
+          )
+        }
         if (result.ok && entry.toolName === 'run_shell_command') {
           expect(result.args.cwd).toBe(realpathSync(subcwd))
           expect(result.args).not.toHaveProperty('workdir')

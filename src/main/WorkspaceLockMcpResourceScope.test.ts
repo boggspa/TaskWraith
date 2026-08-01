@@ -4,9 +4,12 @@ import { workspaceLockMcpResourcePath } from './WorkspaceLockMcpResourceScope'
 
 describe('workspaceLockMcpResourcePath', () => {
   it('resolves a single path role against the effective checkout', () => {
-    expect(
-      workspaceLockMcpResourcePath('write_file', { path: 'src/file.ts' }, '/workspace-lane')
-    ).toBe('/workspace-lane/src/file.ts')
+    const result = workspaceLockMcpResourcePath(
+      'write_file',
+      { path: 'src/file.ts' },
+      '/workspace-lane'
+    )
+    expect(result?.replace(/\\/g, '/')).toBe('/workspace-lane/src/file.ts')
   })
 
   it('requires workspace scope for multi-path and repository mutations', () => {
@@ -26,14 +29,20 @@ describe('workspaceLockMcpResourcePath', () => {
   })
 
   it('preserves absolute external targets so lane scope rejects them', () => {
-    expect(
-      workspaceLockMcpResourcePath('replace', { file_path: '/outside/file.ts' }, '/workspace')
-    ).toBe('/outside/file.ts')
+    const result = workspaceLockMcpResourcePath(
+      'replace',
+      { file_path: '/outside/file.ts' },
+      '/workspace'
+    )
+    expect(result?.replace(/\\/g, '/')).toBe('/outside/file.ts')
   })
 
   it('preserves exact non-empty path bytes during lane validation', () => {
-    expect(workspaceLockMcpResourcePath('write_file', { path: 'src/file.ts ' }, '/workspace')).toBe(
-      '/workspace/src/file.ts '
+    const result = workspaceLockMcpResourcePath(
+      'write_file',
+      { path: 'src/file.ts ' },
+      '/workspace'
     )
+    expect(result?.replace(/\\/g, '/')).toBe('/workspace/src/file.ts ')
   })
 })

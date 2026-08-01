@@ -181,11 +181,10 @@ describe('WorkspaceLockRuntime', () => {
     const releaseUserData = '/Users/example/Library/Application Support/TaskWraith'
     const devUserData = '/Users/example/Library/Application Support/TaskWraith Dev'
 
-    expect(workspaceLockAuthorityRootForHome(homePath)).toBe(
-      '/Users/example/.taskwraith/workspace-lock-authority-v1'
-    )
-    expect(workspaceLockAuthorityRootForHome(homePath)).not.toBe(releaseUserData)
-    expect(workspaceLockAuthorityRootForHome(homePath)).not.toBe(devUserData)
+    const root = workspaceLockAuthorityRootForHome(homePath).replace(/\\/g, '/')
+    expect(root).toBe('/Users/example/.taskwraith/workspace-lock-authority-v1')
+    expect(root).not.toBe(releaseUserData)
+    expect(root).not.toBe(devUserData)
   })
 
   it('derives and atomically acquires catalog workspace claims for every run', async () => {
@@ -205,21 +204,17 @@ describe('WorkspaceLockRuntime', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(authority.acquireMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        lockOwnerId: 'run-1',
-        runId: 'run-1',
-        pid: 10,
-        processBirthIdentity: 'main-birth'
-      }),
-      [
-        expect.objectContaining({
-          kind: 'file',
-          targetPath: '/workspace/src/new.ts'
-        })
-      ],
-      { transitionId: expect.any(String) }
-    )
+    expect(authority.acquireMany).toHaveBeenCalledTimes(1)
+    const [ownerArg, claimsArg, optionsArg] = authority.acquireMany.mock.calls[0]!
+    expect(ownerArg).toMatchObject({
+      lockOwnerId: 'run-1',
+      runId: 'run-1',
+      pid: 10,
+      processBirthIdentity: 'main-birth'
+    })
+    expect(claimsArg[0]).toMatchObject({ kind: 'file' })
+    expect(claimsArg[0].targetPath.replace(/\\/g, '/')).toBe('/workspace/src/new.ts')
+    expect(optionsArg).toMatchObject({ transitionId: expect.any(String) })
   })
 
   it('atomically acquires and replaces an explicit combined claim set', async () => {
@@ -324,11 +319,12 @@ describe('WorkspaceLockRuntime', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(authority.acquireMany).toHaveBeenCalledWith(
-      expect.anything(),
-      [expect.objectContaining({ kind: 'workspace', workspacePath: '/workspace' })],
-      { transitionId: expect.any(String) }
-    )
+    expect(authority.acquireMany).toHaveBeenCalledTimes(1)
+    const [ownerArg2, claimsArg2, optionsArg2] = authority.acquireMany.mock.calls[0]!
+    expect(ownerArg2).toEqual(expect.anything())
+    expect(claimsArg2[0]).toMatchObject({ kind: 'workspace' })
+    expect(claimsArg2[0].workspacePath.replace(/\\/g, '/')).toBe('/workspace')
+    expect(optionsArg2).toMatchObject({ transitionId: expect.any(String) })
   })
 
   it('conservatively serializes an exact signed external-path mutation', async () => {

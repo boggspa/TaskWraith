@@ -50,7 +50,9 @@ describe('guard-no-bundled-secrets: release artifact targets', () => {
     )
 
     try {
-      const targets = bundleScanTargets(repoRoot).map((target) => path.relative(repoRoot, target))
+      const targets = bundleScanTargets(repoRoot).map((target) =>
+        path.relative(repoRoot, target).replace(/\\/g, '/')
+      )
       expect(targets).toEqual(
         expect.arrayContaining([
           'dist/linux-unpacked/resources/app.asar',
