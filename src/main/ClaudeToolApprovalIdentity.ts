@@ -39,7 +39,11 @@ export function normalizeClaudeCanUseToolArgs(
   if (typeof toolNameOrRequest === 'string') {
     return { ok: true, toolName: toolNameOrRequest, input }
   }
-  if (!toolNameOrRequest || typeof toolNameOrRequest !== 'object' || Array.isArray(toolNameOrRequest)) {
+  if (
+    !toolNameOrRequest ||
+    typeof toolNameOrRequest !== 'object' ||
+    Array.isArray(toolNameOrRequest)
+  ) {
     return { ok: true, toolName: 'tool', input }
   }
   const request = toolNameOrRequest as Record<string, unknown>
@@ -64,12 +68,7 @@ export function normalizeClaudeCanUseToolArgs(
   return {
     ok: true,
     toolName: identities[0] || 'tool',
-    input:
-      input ??
-      request.input ??
-      request.parameters ??
-      request.params ??
-      {}
+    input: input ?? request.input ?? request.parameters ?? request.params ?? {}
   }
 }
 

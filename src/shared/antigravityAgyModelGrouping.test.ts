@@ -89,9 +89,7 @@ describe('antigravityModelGrouping', () => {
     // The agy families still group after the api rows.
     expect(rows.map((row) => row.label)).toContain('Gemini 3.6 Flash')
     // An api id never joins a variant group even hypothetically.
-    expect(
-      antigravityVariantGroupForModel(mixed, 'gemini-api:gemini-3.5-flash')
-    ).toBeNull()
+    expect(antigravityVariantGroupForModel(mixed, 'gemini-api:gemini-3.5-flash')).toBeNull()
   })
 
   it('keeps a curated label on a suffix-less agy row', () => {

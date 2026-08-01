@@ -109,9 +109,7 @@ export class ToolChurnObserver {
    * claim. The estimate already on the activity then stands, which is the
    * correct outcome rather than a fallback.
    */
-  async measureSettledWrite(
-    input: MeasureSettledWriteInput
-  ): Promise<ToolDiffSummary | undefined> {
+  async measureSettledWrite(input: MeasureSettledWriteInput): Promise<ToolDiffSummary | undefined> {
     const workspacePath = input.workspacePath
     if (!workspacePath) return undefined
     const state = this.stateFor(workspacePath)

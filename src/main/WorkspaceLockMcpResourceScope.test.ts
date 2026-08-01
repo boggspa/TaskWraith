@@ -5,11 +5,7 @@ import { workspaceLockMcpResourcePath } from './WorkspaceLockMcpResourceScope'
 describe('workspaceLockMcpResourcePath', () => {
   it('resolves a single path role against the effective checkout', () => {
     expect(
-      workspaceLockMcpResourcePath(
-        'write_file',
-        { path: 'src/file.ts' },
-        '/workspace-lane'
-      )
+      workspaceLockMcpResourcePath('write_file', { path: 'src/file.ts' }, '/workspace-lane')
     ).toBe('/workspace-lane/src/file.ts')
   })
 
@@ -22,11 +18,7 @@ describe('workspaceLockMcpResourcePath', () => {
       )
     ).toBeUndefined()
     expect(
-      workspaceLockMcpResourcePath(
-        'apply_patch',
-        { patch: '*** Begin Patch' },
-        '/workspace'
-      )
+      workspaceLockMcpResourcePath('apply_patch', { patch: '*** Begin Patch' }, '/workspace')
     ).toBeUndefined()
     expect(
       workspaceLockMcpResourcePath('git_stage', { paths: ['src/a.ts'] }, '/workspace')
@@ -35,17 +27,13 @@ describe('workspaceLockMcpResourcePath', () => {
 
   it('preserves absolute external targets so lane scope rejects them', () => {
     expect(
-      workspaceLockMcpResourcePath(
-        'replace',
-        { file_path: '/outside/file.ts' },
-        '/workspace'
-      )
+      workspaceLockMcpResourcePath('replace', { file_path: '/outside/file.ts' }, '/workspace')
     ).toBe('/outside/file.ts')
   })
 
   it('preserves exact non-empty path bytes during lane validation', () => {
-    expect(
-      workspaceLockMcpResourcePath('write_file', { path: 'src/file.ts ' }, '/workspace')
-    ).toBe('/workspace/src/file.ts ')
+    expect(workspaceLockMcpResourcePath('write_file', { path: 'src/file.ts ' }, '/workspace')).toBe(
+      '/workspace/src/file.ts '
+    )
   })
 })

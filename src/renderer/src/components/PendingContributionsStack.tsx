@@ -43,11 +43,7 @@ export interface PendingContribution {
   heldByMute?: boolean
 }
 
-export function PendingContributionsStack({
-  chatId
-}: {
-  chatId: string | null | undefined
-}) {
+export function PendingContributionsStack({ chatId }: { chatId: string | null | undefined }) {
   const [pending, setPending] = useState<PendingContribution[]>([])
   const [busyEntryId, setBusyEntryId] = useState<string | null>(null)
   /**

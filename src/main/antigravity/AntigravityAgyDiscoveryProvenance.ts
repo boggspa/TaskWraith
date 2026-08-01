@@ -46,9 +46,10 @@ let current: AgyDiscoveryProvenance = UNKNOWN_PROVENANCE
 export function recordAgyDiscoveryProvenance(next: AgyDiscoveryProvenance): void {
   current = {
     source: next.source,
-    cachedAtMs: next.source === 'cached' && Number.isFinite(next.cachedAtMs ?? NaN)
-      ? (next.cachedAtMs as number)
-      : null
+    cachedAtMs:
+      next.source === 'cached' && Number.isFinite(next.cachedAtMs ?? NaN)
+        ? (next.cachedAtMs as number)
+        : null
   }
 }
 

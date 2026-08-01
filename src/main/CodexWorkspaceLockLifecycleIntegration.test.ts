@@ -47,9 +47,7 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
 
     expect(binding).toContain('workspaceLockProviderCoordinator.get(key)')
     expect(binding).toContain('ownerId: admission.owner.lockOwnerId')
-    expect(binding).toContain(
-      'workspaceLockProviderCoordinator.transferToChild(key, process.pid)'
-    )
+    expect(binding).toContain('workspaceLockProviderCoordinator.transferToChild(key, process.pid)')
     expect(binding).toContain('void process.closed.then(() => {')
     expect(binding).toContain('retaining workspace-lock acquisition')
     expect(binding).not.toContain('releaseChild(')
@@ -68,10 +66,7 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       'async function runCodexAppServerWithClient(',
       'async function runCodexExecFallback('
     )
-    const dispatch = section(
-      'function dispatchCodexMessageFromClient(',
-      'function getCodexClient('
-    )
+    const dispatch = section('function dispatchCodexMessageFromClient(', 'function getCodexClient(')
     const notifications = section(
       'function handleCodexNotification(',
       'function formatCodexApprovalRequest('

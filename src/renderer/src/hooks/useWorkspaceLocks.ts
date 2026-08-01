@@ -39,10 +39,7 @@ export function useWorkspaceLocks(query: WorkLockProjectionQuery): WorkspaceLock
     const apply = (update: WorkLockProjectionUpdate): void => {
       if (
         !active ||
-        workLockProjectionUpdateIsStale(
-          latestGenerationRef.current,
-          update.snapshot.generation
-        )
+        workLockProjectionUpdateIsStale(latestGenerationRef.current, update.snapshot.generation)
       ) {
         return
       }

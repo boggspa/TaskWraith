@@ -2,10 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import {
-  isRuntimeMarkerName,
-  RUNTIME_MARKER_NAME_RE
-} from './RuntimeMarkerPattern'
+import { isRuntimeMarkerName, RUNTIME_MARKER_NAME_RE } from './RuntimeMarkerPattern'
 
 const WORK_LOCKS_DIR = join(__dirname)
 
@@ -26,12 +23,12 @@ describe('RuntimeMarkerPattern lockstep', () => {
 
   it('rejects human WIP markers and malformed runtime names', () => {
     expect(isRuntimeMarkerName('.WORK-IN-PROGRESS-my-feature.md')).toBe(false)
-    expect(
-      isRuntimeMarkerName(`.WORK-IN-PROGRESS-taskwraith-runtime-x-${'a'.repeat(63)}.md`)
-    ).toBe(false)
-    expect(
-      isRuntimeMarkerName(`.WORK-IN-PROGRESS-taskwraith-runtime-x-${'g'.repeat(64)}.md`)
-    ).toBe(false)
+    expect(isRuntimeMarkerName(`.WORK-IN-PROGRESS-taskwraith-runtime-x-${'a'.repeat(63)}.md`)).toBe(
+      false
+    )
+    expect(isRuntimeMarkerName(`.WORK-IN-PROGRESS-taskwraith-runtime-x-${'g'.repeat(64)}.md`)).toBe(
+      false
+    )
   })
 
   it('pins both consumers to the shared module (fails if only one site is updated)', () => {

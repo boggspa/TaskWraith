@@ -54,8 +54,14 @@ describe('agyProvenanceProvesAuthenticatedConnection', () => {
   })
 
   it('accepts a cache inside the evidence window and rejects one outside it', () => {
-    const inside = { source: 'cached' as const, cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS + 1 }
-    const outside = { source: 'cached' as const, cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS }
+    const inside = {
+      source: 'cached' as const,
+      cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS + 1
+    }
+    const outside = {
+      source: 'cached' as const,
+      cachedAtMs: NOW_MS - AGY_CACHED_AUTH_EVIDENCE_TTL_MS
+    }
     expect(agyProvenanceProvesAuthenticatedConnection(inside, NOW_MS)).toBe(true)
     // Exactly at the boundary is already too old — the window is exclusive.
     expect(agyProvenanceProvesAuthenticatedConnection(outside, NOW_MS)).toBe(false)

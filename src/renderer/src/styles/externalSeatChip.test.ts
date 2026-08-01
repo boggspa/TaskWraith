@@ -57,7 +57,9 @@ describe('external seat chips', () => {
     expect(externalChipBlock()).toContain('order: seatPosition,')
     // Turn numbers come from the merged roster too, or a panel with an external
     // second would number its model seats 1, 2, 3 instead of 1, 3, 4.
-    expect(source).toContain('turnOrder={seatPositionById.get(participant.id) ?? participantIndex + 1}')
+    expect(source).toContain(
+      'turnOrder={seatPositionById.get(participant.id) ?? participantIndex + 1}'
+    )
   })
 
   it('spans both kinds from the merged seat count, or the strip collapses', () => {
@@ -77,9 +79,7 @@ describe('external seat chips', () => {
     expect(externalChipBlock()).toContain('gridColumn: `span ${chipGridSpans[seatPosition - 1]}`')
     // The control rail stacks on the same count, or it falls out of step with
     // the strip it exists to stay aligned with.
-    expect(source).toContain(
-      "totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''"
-    )
+    expect(source).toContain("totalSeatCount >= ENSEMBLE_CHIPS_WRAP_THRESHOLD ? ' is-stacked' : ''")
   })
 
   it('counts externals toward the collapse floor', () => {

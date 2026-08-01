@@ -158,16 +158,14 @@ describe('registerWorkLockHandlers', () => {
       { subscriptionId: 'sub-exact', workspacePath: '/repo ', chatId: ' chat-1 ' }
     )
 
-    expect(resolveAuthorizedQuery).toHaveBeenNthCalledWith(
-      1,
-      expect.anything(),
-      { workspacePath: '/repo ', chatId: 'chat-1' }
-    )
-    expect(resolveAuthorizedQuery).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      { workspacePath: '/repo ', chatId: 'chat-1' }
-    )
+    expect(resolveAuthorizedQuery).toHaveBeenNthCalledWith(1, expect.anything(), {
+      workspacePath: '/repo ',
+      chatId: 'chat-1'
+    })
+    expect(resolveAuthorizedQuery).toHaveBeenNthCalledWith(2, expect.anything(), {
+      workspacePath: '/repo ',
+      chatId: 'chat-1'
+    })
     expect(list).toHaveBeenCalledWith({ workspacePath: '/repo ', chatId: 'chat-1' })
     expect(subscribe).toHaveBeenCalledWith(
       { workspacePath: '/repo ', chatId: 'chat-1' },

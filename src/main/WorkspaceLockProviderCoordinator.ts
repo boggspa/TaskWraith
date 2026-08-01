@@ -164,10 +164,7 @@ export class WorkspaceLockProviderCoordinator {
     ) {
       throw new Error('Nested provider mutation does not match its coarse admission scope.')
     }
-    return this.requireRuntime().acquireMutationSubleaseForExactOwner(
-      runtimeInput,
-      current.owner
-    )
+    return this.requireRuntime().acquireMutationSubleaseForExactOwner(runtimeInput, current.owner)
   }
 
   async transferToChild(

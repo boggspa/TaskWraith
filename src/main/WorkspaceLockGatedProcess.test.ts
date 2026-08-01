@@ -9,40 +9,43 @@ import { spawnWorkspaceLockGatedProcess } from './WorkspaceLockGatedProcess'
 const itPosix = process.platform === 'win32' ? it.skip : it
 
 describe('spawnWorkspaceLockGatedProcess', () => {
-  itPosix('does not execute until released and preserves the exact owner in the target', async () => {
-    const cwd = await mkdtemp(join(tmpdir(), 'taskwraith-lock-gate-'))
-    const gated = spawnWorkspaceLockGatedProcess(
-      {
-        command: process.execPath,
-        args: [
-          '-e',
-          'process.stdout.write(JSON.stringify({ owner: process.env.TASKWRAITH_LOCK_OWNER_ID || "missing", pid: process.pid }))'
-        ],
-        cwd,
-        env: {
-          PATH: process.env.PATH,
-          TASKWRAITH_LOCK_OWNER_ID: 'ambient-owner'
-        }
-      },
-      'exact-admitted-owner'
-    )
-    const gatePid = gated.child.pid
-    let stdout = ''
-    gated.child.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-    })
+  itPosix(
+    'does not execute until released and preserves the exact owner in the target',
+    async () => {
+      const cwd = await mkdtemp(join(tmpdir(), 'taskwraith-lock-gate-'))
+      const gated = spawnWorkspaceLockGatedProcess(
+        {
+          command: process.execPath,
+          args: [
+            '-e',
+            'process.stdout.write(JSON.stringify({ owner: process.env.TASKWRAITH_LOCK_OWNER_ID || "missing", pid: process.pid }))'
+          ],
+          cwd,
+          env: {
+            PATH: process.env.PATH,
+            TASKWRAITH_LOCK_OWNER_ID: 'ambient-owner'
+          }
+        },
+        'exact-admitted-owner'
+      )
+      const gatePid = gated.child.pid
+      let stdout = ''
+      gated.child.stdout?.on('data', (chunk) => {
+        stdout += chunk.toString()
+      })
 
-    await new Promise((resolve) => setTimeout(resolve, 30))
-    expect(stdout).toBe('')
+      await new Promise((resolve) => setTimeout(resolve, 30))
+      expect(stdout).toBe('')
 
-    gated.start()
-    await once(gated.child, 'close')
+      gated.start()
+      await once(gated.child, 'close')
 
-    expect(JSON.parse(stdout)).toEqual({
-      owner: 'exact-admitted-owner',
-      pid: gatePid
-    })
-  })
+      expect(JSON.parse(stdout)).toEqual({
+        owner: 'exact-admitted-owner',
+        pid: gatePid
+      })
+    }
+  )
 
   itPosix('exits without executing when its parent disconnects before release', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'taskwraith-lock-gate-disconnect-'))

@@ -71,7 +71,10 @@ describe('ToolChurnObserver', () => {
     const sampler = scriptedSampler([
       sampleOf({}),
       sampleOf({ 'src/a.ts': { additions: 6, deletions: 0 } }),
-      sampleOf({ 'src/a.ts': { additions: 6, deletions: 0 }, 'src/b.ts': { additions: 4, deletions: 0 } })
+      sampleOf({
+        'src/a.ts': { additions: 6, deletions: 0 },
+        'src/b.ts': { additions: 4, deletions: 0 }
+      })
     ])
     const observer = new ToolChurnObserver({ sample: sampler.sample })
 

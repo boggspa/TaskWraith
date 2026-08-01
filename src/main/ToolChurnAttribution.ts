@@ -85,9 +85,7 @@ function isBinaryEntry(entry: WorkspaceChurnEntry): boolean {
  *     `+0/-0` for the second would be a measured-looking lie that outranks a
  *     correct estimate. The estimate stands instead.
  */
-export function attributeToolChurn(
-  input: ToolChurnAttributionInput
-): ToolDiffSummary | undefined {
+export function attributeToolChurn(input: ToolChurnAttributionInput): ToolDiffSummary | undefined {
   const touched = new Set(
     input.touchedPaths
       .map((entry) => normaliseChurnPath(entry, input.workspacePath))

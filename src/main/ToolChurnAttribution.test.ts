@@ -142,7 +142,10 @@ describe('attributeToolChurn', () => {
 
   it('counts a newly created untracked file as additions', () => {
     const summary = attributeToolChurn({
-      delta: deltaBetween(sample({}, {}), sample({}, { 'src/new.ts': { additions: 12, deletions: 0 } })),
+      delta: deltaBetween(
+        sample({}, {}),
+        sample({}, { 'src/new.ts': { additions: 12, deletions: 0 } })
+      ),
       touchedPaths: ['src/new.ts'],
       exclusive: true
     })
@@ -153,7 +156,10 @@ describe('attributeToolChurn', () => {
 
   it('names a binary file without inventing line counts', () => {
     const summary = attributeToolChurn({
-      delta: deltaBetween(sample({}), sample({ 'assets/logo.png': { additions: 0, deletions: 0, binary: true } })),
+      delta: deltaBetween(
+        sample({}),
+        sample({ 'assets/logo.png': { additions: 0, deletions: 0, binary: true } })
+      ),
       touchedPaths: ['assets/logo.png'],
       exclusive: true
     })

@@ -114,8 +114,7 @@ function collectGroups(options: ReadonlyArray<CatalogueOptionLike>): {
     const effort = antigravityEffortForModelId(id)
     if (!effort) {
       // A curated label (differing from the id) is authored — keep it.
-      const curated =
-        option.label && option.label !== id ? option.label : undefined
+      const curated = option.label && option.label !== id ? option.label : undefined
       orderedEntries.push({ kind: 'single', id, label: curated })
       continue
     }
