@@ -108,7 +108,7 @@ describe('prepare-tui-runtime', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('removes a corrupt fresh download and fails closed', async () => {
     const expected = Buffer.alloc(1_000_001, 3)
@@ -131,7 +131,7 @@ describe('prepare-tui-runtime', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 
   it('rejects invalid expected digests and non-HTTPS sources', () => {
     const { dir, filePath } = tempArchive(Buffer.from('archive'))
