@@ -205,9 +205,7 @@ function createExecutor(input: {
   shell?: DesktopToolExecutorDeps['shell']
 }) {
   const chats = new Map(input.chats.map((item) => [item.appChatId, item]))
-  const getRunEventReplay = vi.fn(
-    (runId: string) => input.replays?.[runId] || replay(runId)
-  )
+  const getRunEventReplay = vi.fn((runId: string) => input.replays?.[runId] || replay(runId))
   const getRunEvents = vi.fn((_filter?: RunEventFilter) => input.rawEvents || [])
   const deps: DesktopToolExecutorDeps = {
     getBridgeDaemon: () => input.daemon ?? null,
@@ -223,12 +221,10 @@ function createExecutor(input: {
       saveHandoffCard: (handoff) => handoff as HandoffCard
     },
     runRepository: { getRunEventReplay, getRunEvents },
-    shell:
-      input.shell ??
-      {
-        showItemInFolder: () => undefined,
-        openPath: async () => ''
-      },
+    shell: input.shell ?? {
+      showItemInFolder: () => undefined,
+      openPath: async () => ''
+    },
     ...(input.providerAuth ? { providerAuth: input.providerAuth } : {}),
     ...(input.notifyRenderer ? { notifyRenderer: input.notifyRenderer } : {})
   }
@@ -427,7 +423,10 @@ describe('DesktopToolExecutors run history scope', () => {
 
     const result = executor.executeRawProviderEvents({ runId: 'run-history' }, activeContext)
     expect(getRunEvents).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: 'run-history', kinds: ['provider_raw', 'provider_error', 'provider_exit'] })
+      expect.objectContaining({
+        runId: 'run-history',
+        kinds: ['provider_raw', 'provider_error', 'provider_exit']
+      })
     )
     expect(result.events[0]?.artifacts).toEqual([
       {
@@ -801,40 +800,43 @@ describe('DesktopToolExecutors scoped attached-window access', () => {
       invoke: (executor: ReturnType<typeof createDesktopToolExecutors>) =>
         executor.executeAppwatchFrames({}, activeContext)
     }
-  ])('discards successful stale $tool results before returning pixels or metadata', async (testCase) => {
-    const original = attachedWindowSnapshot('chat-a')
-    const replacement = attachedWindowSnapshot('chat-a', {
-      handleID: 'handle-b',
-      scopeID: 'scope-b',
-      consentEpoch: 8,
-      generation: 4
-    })
-    const attachedWindow = createAttachedWindowState(original)
-    let resolveResult: ((value: unknown) => void) | undefined
-    const result = new Promise<unknown>((resolve) => {
-      resolveResult = resolve
-    })
-    const { daemon } = createRunningDaemon((method) => {
-      if (method === testCase.method) return result
-      throw new Error(`Unexpected method ${method}`)
-    })
-    const { executor } = createExecutor({
-      chats: [],
-      daemon,
-      attachedWindow: attachedWindow.state
-    })
+  ])(
+    'discards successful stale $tool results before returning pixels or metadata',
+    async (testCase) => {
+      const original = attachedWindowSnapshot('chat-a')
+      const replacement = attachedWindowSnapshot('chat-a', {
+        handleID: 'handle-b',
+        scopeID: 'scope-b',
+        consentEpoch: 8,
+        generation: 4
+      })
+      const attachedWindow = createAttachedWindowState(original)
+      let resolveResult: ((value: unknown) => void) | undefined
+      const result = new Promise<unknown>((resolve) => {
+        resolveResult = resolve
+      })
+      const { daemon } = createRunningDaemon((method) => {
+        if (method === testCase.method) return result
+        throw new Error(`Unexpected method ${method}`)
+      })
+      const { executor } = createExecutor({
+        chats: [],
+        daemon,
+        attachedWindow: attachedWindow.state
+      })
 
-    const pending = testCase.invoke(executor)
-    await Promise.resolve()
-    attachedWindow.replace(replacement)
-    resolveResult!(testCase.response)
+      const pending = testCase.invoke(executor)
+      await Promise.resolve()
+      attachedWindow.replace(replacement)
+      resolveResult!(testCase.response)
 
-    const completed = await pending
-    expect(completed.structuredContent).toMatchObject({ ok: false, tool: testCase.tool })
-    expect(completed.content?.some((block) => block.type === 'image')).toBe(false)
-    expect(JSON.stringify(completed)).not.toContain('stale-')
-    expect(attachedWindow.active()).toBe(replacement)
-  })
+      const completed = await pending
+      expect(completed.structuredContent).toMatchObject({ ok: false, tool: testCase.tool })
+      expect(completed.content?.some((block) => block.type === 'image')).toBe(false)
+      expect(JSON.stringify(completed)).not.toContain('stale-')
+      expect(attachedWindow.active()).toBe(replacement)
+    }
+  )
 
   it('discards a successful capture result when the daemon stops before it returns', async () => {
     const snapshot = attachedWindowSnapshot('chat-a')
@@ -864,7 +866,13 @@ describe('DesktopToolExecutors scoped attached-window access', () => {
     const pending = executor.executeAttachedWindowCapture({}, activeContext)
     await Promise.resolve()
     running = false
-    resolveCapture!({ ok: true, pngBase64: 'stale-daemon-pixel', byteLength: 18, width: 2, height: 2 })
+    resolveCapture!({
+      ok: true,
+      pngBase64: 'stale-daemon-pixel',
+      byteLength: 18,
+      width: 2,
+      height: 2
+    })
 
     const result = await pending
     expect(result.structuredContent).toMatchObject({
@@ -901,17 +909,17 @@ describe('DesktopToolExecutors Kimi auth projection', () => {
       chats: [],
       providerAuth: providerAuth({ available: true, authState: 'oauth' })
     })
-    await expect(oauth.executor.executeProviderAuthStatus({ provider: 'kimi' })).resolves.toMatchObject(
-      {
-        providers: {
-          kimi: {
-            authState: 'authenticated',
-            apiKeyConfigured: false,
-            mcpStatusSupport: true
-          }
+    await expect(
+      oauth.executor.executeProviderAuthStatus({ provider: 'kimi' })
+    ).resolves.toMatchObject({
+      providers: {
+        kimi: {
+          authState: 'authenticated',
+          apiKeyConfigured: false,
+          mcpStatusSupport: true
         }
       }
-    )
+    })
 
     const managedProviderKey = createExecutor({
       chats: [],
@@ -987,9 +995,7 @@ describe('DesktopToolExecutors Codex auth projection', () => {
       }
     })
 
-    await expect(
-      executor.executeProviderAuthStatus({ provider: 'codex' })
-    ).resolves.toMatchObject({
+    await expect(executor.executeProviderAuthStatus({ provider: 'codex' })).resolves.toMatchObject({
       providers: {
         codex: {
           authState: 'missing',

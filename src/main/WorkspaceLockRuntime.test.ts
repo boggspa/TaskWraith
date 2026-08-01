@@ -75,11 +75,11 @@ function harness() {
     })),
     replaceAcquisition: vi.fn(
       async (_owner, _previous, claims, _options?: { transitionId?: string }) => ({
-      ok: true as const,
-      transitionId: 'replace',
-      tokens: [],
-      leases: [],
-      claims
+        ok: true as const,
+        transitionId: 'replace',
+        tokens: [],
+        leases: [],
+        claims
       })
     ),
     verifyAcquisitionForMutation: vi.fn(async (_owner, acquiredTransitionId) => ({
@@ -89,33 +89,33 @@ function harness() {
     })),
     transferAcquisition: vi.fn(
       async (_previousOwner, _transitionId, nextOwner, _options?: { transitionId?: string }) => ({
-      ok: true as const,
-      transitionId: 'transfer',
-      tokens: [],
-      leases: [
-        {
-          leaseId: 'lease-transferred',
-          acquiredTransitionId: 'transfer',
-          authorityInstanceId: 'instance',
-          authorityGeneration: 1,
-          owner: { ...nextOwner, lifecycle: 'child' as const },
-          claim: {
-            workspaceIdentity: '/workspace',
-            worktreeCanonicalPath: '/workspace',
-            worktreeIdentity: '/workspace',
-            targetCanonicalPath: '/workspace',
-            comparisonTargetPath: '/workspace',
-            physicalTargetIdentity: '/workspace',
-            displayWorkspacePath: '/workspace',
-            displayWorktreePath: '/workspace',
-            kind: 'workspace' as const,
-            mode: 'write' as const
-          },
-          acquiredAt: '2026-07-29T00:00:00.000Z',
-          status: 'held' as const,
-          statusChangedAt: '2026-07-29T00:00:00.000Z'
-        }
-      ]
+        ok: true as const,
+        transitionId: 'transfer',
+        tokens: [],
+        leases: [
+          {
+            leaseId: 'lease-transferred',
+            acquiredTransitionId: 'transfer',
+            authorityInstanceId: 'instance',
+            authorityGeneration: 1,
+            owner: { ...nextOwner, lifecycle: 'child' as const },
+            claim: {
+              workspaceIdentity: '/workspace',
+              worktreeCanonicalPath: '/workspace',
+              worktreeIdentity: '/workspace',
+              targetCanonicalPath: '/workspace',
+              comparisonTargetPath: '/workspace',
+              physicalTargetIdentity: '/workspace',
+              displayWorkspacePath: '/workspace',
+              displayWorktreePath: '/workspace',
+              kind: 'workspace' as const,
+              mode: 'write' as const
+            },
+            acquiredAt: '2026-07-29T00:00:00.000Z',
+            status: 'held' as const,
+            statusChangedAt: '2026-07-29T00:00:00.000Z'
+          }
+        ]
       })
     ),
     releaseAllForRun: vi.fn(async (_runId?: string, _options?: { transitionId?: string }) => ({
@@ -129,9 +129,9 @@ function harness() {
         _acquiredTransitionId?: string,
         _options?: { transitionId?: string }
       ) => ({
-      ok: true as const,
-      transitionId: 'release-acquisition',
-      released: []
+        ok: true as const,
+        transitionId: 'release-acquisition',
+        released: []
       })
     ),
     forceReleaseRecoveryBlockedAcquisition: vi.fn(
@@ -411,11 +411,7 @@ describe('WorkspaceLockRuntime', () => {
     const workspacePath = join(root, 'workspace')
     const grantedPath = join(root, 'granted')
     const attackerPath = join(root, 'attacker')
-    await Promise.all([
-      mkdir(workspacePath),
-      mkdir(grantedPath),
-      mkdir(attackerPath)
-    ])
+    await Promise.all([mkdir(workspacePath), mkdir(grantedPath), mkdir(attackerPath)])
     const canonicalGrantedPath = await realpath(grantedPath)
     const lexicalTargetPath = join(grantedPath, 'nested', 'file.txt ')
     const targetPath = join(canonicalGrantedPath, 'nested', 'file.txt ')
@@ -450,9 +446,9 @@ describe('WorkspaceLockRuntime', () => {
       await writeFile(join(attackerPath, 'file.txt '), 'attacker')
       await rename(grantedPath, `${grantedPath}-original`)
       await symlink(attackerPath, grantedPath, process.platform === 'win32' ? 'junction' : 'dir')
-      await expect(
-        runtime.revalidateExternalMutationAuthority(runtimeInput)
-      ).rejects.toThrow(/no longer matches/)
+      await expect(runtime.revalidateExternalMutationAuthority(runtimeInput)).rejects.toThrow(
+        /no longer matches/
+      )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -486,10 +482,9 @@ describe('WorkspaceLockRuntime', () => {
       new Error('projection failed after WAL commit')
     )
     await expect(
-      acquireHarness.runtime.acquireClaims(
-        { lockOwnerId: 'owner-a', runId: 'run-a' },
-        [{ workspacePath: '/workspace', kind: 'workspace' }]
-      )
+      acquireHarness.runtime.acquireClaims({ lockOwnerId: 'owner-a', runId: 'run-a' }, [
+        { workspacePath: '/workspace', kind: 'workspace' }
+      ])
     ).resolves.toMatchObject({ ok: true })
     expect(acquireHarness.authority.acquireMany).toHaveBeenCalledTimes(2)
     expect(acquireHarness.authority.acquireMany.mock.calls[0]?.[2]?.transitionId).toBe(
@@ -513,9 +508,9 @@ describe('WorkspaceLockRuntime', () => {
       ])
     ).resolves.toMatchObject({ ok: true })
     expect(replaceHarness.authority.replaceAcquisition).toHaveBeenCalledTimes(2)
-    expect(
-      replaceHarness.authority.replaceAcquisition.mock.calls[0]?.[3]?.transitionId
-    ).toBe(replaceHarness.authority.replaceAcquisition.mock.calls[1]?.[3]?.transitionId)
+    expect(replaceHarness.authority.replaceAcquisition.mock.calls[0]?.[3]?.transitionId).toBe(
+      replaceHarness.authority.replaceAcquisition.mock.calls[1]?.[3]?.transitionId
+    )
     expect(replaceHarness.runtime.getUnhealthyReason()).toBeNull()
 
     const transferHarness = harness()
@@ -534,9 +529,9 @@ describe('WorkspaceLockRuntime', () => {
       })
     ).resolves.toMatchObject({ ok: true })
     expect(transferHarness.authority.transferAcquisition).toHaveBeenCalledTimes(2)
-    expect(
-      transferHarness.authority.transferAcquisition.mock.calls[0]?.[3]?.transitionId
-    ).toBe(transferHarness.authority.transferAcquisition.mock.calls[1]?.[3]?.transitionId)
+    expect(transferHarness.authority.transferAcquisition.mock.calls[0]?.[3]?.transitionId).toBe(
+      transferHarness.authority.transferAcquisition.mock.calls[1]?.[3]?.transitionId
+    )
     expect(transferHarness.runtime.getUnhealthyReason()).toBeNull()
   })
 
@@ -602,9 +597,7 @@ describe('WorkspaceLockRuntime', () => {
       acquisitionHarness.runtime.releaseAcquisition('run', 'acquired-transition')
     ).resolves.toMatchObject({ ok: true })
     expect(acquisitionHarness.authority.releaseAcquisition).toHaveBeenCalledTimes(2)
-    expect(
-      acquisitionHarness.authority.releaseAcquisition.mock.calls[0]?.[2]?.transitionId
-    ).toBe(
+    expect(acquisitionHarness.authority.releaseAcquisition.mock.calls[0]?.[2]?.transitionId).toBe(
       acquisitionHarness.authority.releaseAcquisition.mock.calls[1]?.[2]?.transitionId
     )
     expect(acquisitionHarness.runtime.getUnhealthyReason()).toBeNull()

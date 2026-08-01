@@ -180,7 +180,10 @@ describe('guard-no-bundled-secrets: forbidden-import boundary', () => {
     // the impl can't bundle it. No violation.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-guard-'))
     fs.writeFileSync(path.join(dir, 'apnsGateway.ts'), 'export const x = 1\n')
-    fs.writeFileSync(path.join(dir, 'mid.ts'), "import { x } from './apnsGateway'\nexport type M = typeof x\n")
+    fs.writeFileSync(
+      path.join(dir, 'mid.ts'),
+      "import { x } from './apnsGateway'\nexport type M = typeof x\n"
+    )
     const entry = path.join(dir, 'server.ts')
     fs.writeFileSync(entry, "import type { M } from './mid'\n")
     expect(collectImportViolations(entry, [/\/apnsGateway\.ts$/])).toEqual([])
@@ -197,8 +200,8 @@ describe('guard-no-bundled-secrets: matcher scoping (keyless send-core)', () => 
   it('passes the real src/main tree under the main rules (Tier-1 imports the send-core)', () => {
     // Http2ApnsPusher (src/main) legitimately imports apnsSendCore; the main
     // flat scan must flag only the gateway impl / .p8, never the keyless core.
-    expect(collectDirectForbiddenImports(['src/main', 'src/preload'], MAIN_DIRECT_FORBIDDEN)).toEqual(
-      []
-    )
+    expect(
+      collectDirectForbiddenImports(['src/main', 'src/preload'], MAIN_DIRECT_FORBIDDEN)
+    ).toEqual([])
   })
 })
