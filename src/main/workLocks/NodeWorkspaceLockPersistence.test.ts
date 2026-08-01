@@ -34,6 +34,14 @@ function expectOwnerOnly(target: string): void {
   expect(lstatSync(target).mode & 0o077).toBe(0)
 }
 
+function canonicalRealpath(path: string): string {
+  const realpath =
+    typeof nodeFs.realpathSync.native === 'function'
+      ? nodeFs.realpathSync.native
+      : nodeFs.realpathSync
+  return realpath(path)
+}
+
 const temporaryRoots: string[] = []
 
 afterEach(() => {
@@ -260,7 +268,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     const { root, store } = createStore()
     const worktree = join(root, 'checkout')
     mkdirSync(worktree)
-    const canonicalWorktree = nodeFs.realpathSync(worktree)
+    const canonicalWorktree = canonicalRealpath(worktree)
     const initialStat = lstatSync(canonicalWorktree)
     const worktreeIdentity = `dev:${initialStat.dev}:ino:${initialStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'a'.repeat(64)}.md`
@@ -290,7 +298,7 @@ describe('NodeWorkspaceLockPersistence', () => {
     const outside = join(root, 'outside')
     mkdirSync(worktree)
     mkdirSync(outside)
-    const canonicalWorktree = nodeFs.realpathSync(worktree)
+    const canonicalWorktree = canonicalRealpath(worktree)
     const originalStat = lstatSync(canonicalWorktree)
     const originalIdentity = `dev:${originalStat.dev}:ino:${originalStat.ino}`
     const markerName = `.WORK-IN-PROGRESS-taskwraith-runtime-desktop-${'b'.repeat(64)}.md`
