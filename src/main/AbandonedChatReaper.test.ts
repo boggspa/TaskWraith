@@ -32,7 +32,9 @@ describe('isReapableAbandonedChat — the baseline reaps', () => {
   })
   it('reaps a bare empty global New Chat', () => {
     expect(
-      isReapableAbandonedChat(chat({ scope: 'global', workspaceId: undefined, workspacePath: undefined }))
+      isReapableAbandonedChat(
+        chat({ scope: 'global', workspaceId: undefined, workspacePath: undefined })
+      )
     ).toBe(true)
   })
   it('protects null/undefined', () => {
@@ -76,9 +78,11 @@ describe('isReapableAbandonedChat — explicit-intent exclusions', () => {
   })
   it('protects a chat renamed from the default title', () => {
     expect(isReapableAbandonedChat(chat({ title: 'My notes' }))).toBe(false)
-    expect(isReapableAbandonedChat(chat({ chatKind: 'ensemble', title: 'New Ensemble' }), {
-      isDefaultEnsemble: () => true
-    })).toBe(true)
+    expect(
+      isReapableAbandonedChat(chat({ chatKind: 'ensemble', title: 'New Ensemble' }), {
+        isDefaultEnsemble: () => true
+      })
+    ).toBe(true)
   })
 })
 
@@ -92,9 +96,9 @@ describe('isReapableAbandonedChat — relationship exclusions', () => {
     expect(isReapableAbandonedChat(chat({ delegationContext: {} as never }))).toBe(false)
   })
   it('protects a chat that HAS children', () => {
-    expect(isReapableAbandonedChat(chat({ appChatId: 'parent' }), { parentChatIds: new Set(['parent']) })).toBe(
-      false
-    )
+    expect(
+      isReapableAbandonedChat(chat({ appChatId: 'parent' }), { parentChatIds: new Set(['parent']) })
+    ).toBe(false)
   })
 })
 
@@ -118,7 +122,9 @@ describe('isReapableAbandonedChat — workflow / scheduled / draft / active', ()
 
 describe('isReapableAbandonedChat — ensemble safety', () => {
   it('NEVER reaps an ensemble when no isDefaultEnsemble is supplied', () => {
-    expect(isReapableAbandonedChat(chat({ chatKind: 'ensemble', title: 'New Ensemble' }))).toBe(false)
+    expect(isReapableAbandonedChat(chat({ chatKind: 'ensemble', title: 'New Ensemble' }))).toBe(
+      false
+    )
   })
   it('reaps a default-roster ensemble, protects an edited one', () => {
     const ens = chat({ chatKind: 'ensemble', title: 'New Ensemble', ensemble: {} as never })
@@ -129,9 +135,9 @@ describe('isReapableAbandonedChat — ensemble safety', () => {
 
 describe('isReapableAbandonedChat — iOS remote drafts are off-limits', () => {
   it('never reaps a chat with the remoteDraft provider metadata', () => {
-    expect(isReapableAbandonedChat(chat({ providerMetadata: { remoteDraft: { source: 'ios' } } }))).toBe(
-      false
-    )
+    expect(
+      isReapableAbandonedChat(chat({ providerMetadata: { remoteDraft: { source: 'ios' } } }))
+    ).toBe(false)
   })
   it('never reaps a legacy ios- prefixed draft', () => {
     expect(isReapableAbandonedChat(chat({ appChatId: 'ios-abc' }))).toBe(false)
@@ -180,7 +186,9 @@ describe('reapableAbandonedChatIds — survivorCount quota ("one survivable New 
     const a = chat({ appChatId: 'a', createdAt: 1000 }) // oldest ⇒ reaped
     const b = chat({ appChatId: 'b', createdAt: 2000 }) // newest non-keep ⇒ survivor
     const c = chat({ appChatId: 'c', createdAt: 3000 }) // just created ⇒ keep
-    expect(reapableAbandonedChatIds([a, b, c], { keepChatId: 'c', survivorCount: 1 })).toEqual(['a'])
+    expect(reapableAbandonedChatIds([a, b, c], { keepChatId: 'c', survivorCount: 1 })).toEqual([
+      'a'
+    ])
   })
 
   it('breaks createdAt ties deterministically by appChatId (desc)', () => {
@@ -231,7 +239,17 @@ describe('reapAbandonedChats (orchestration)', () => {
     const deleted: string[] = []
     const reaped = reapAbandonedChats(
       {
-        getChats: () => [kept, started, wf, sched, drafting, active, ensemble, tombstone1, tombstone2],
+        getChats: () => [
+          kept,
+          started,
+          wf,
+          sched,
+          drafting,
+          active,
+          ensemble,
+          tombstone1,
+          tombstone2
+        ],
         getWorkflowChatIds: () => new Set(['wf']),
         getScheduledChatIds: () => new Set(['sched']),
         deleteChat: (id) => deleted.push(id)
@@ -281,7 +299,9 @@ describe('shared chats are never abandoned', () => {
     // that as abandoned, because a share lives in its own store.
     expect(reapableAbandonedChatIds([chat({ appChatId: 'shared-1' })], {})).toEqual(['shared-1'])
     expect(
-      reapableAbandonedChatIds([chat({ appChatId: 'shared-1' })], { sharedChatIds: new Set(['shared-1']) })
+      reapableAbandonedChatIds([chat({ appChatId: 'shared-1' })], {
+        sharedChatIds: new Set(['shared-1'])
+      })
     ).toEqual([])
   })
 
@@ -289,7 +309,9 @@ describe('shared chats are never abandoned', () => {
     // A held contribution is not in chat.messages — it is in the queue — so the
     // message-count guard cannot see it.
     expect(
-      reapableAbandonedChatIds([chat({ appChatId: 'queued-1' })], { sharedChatIds: new Set(['queued-1']) })
+      reapableAbandonedChatIds([chat({ appChatId: 'queued-1' })], {
+        sharedChatIds: new Set(['queued-1'])
+      })
     ).toEqual([])
   })
 })
