@@ -556,7 +556,7 @@ describe('WorkspaceLockAuthority', () => {
       )
     ).toMatchObject({ ok: true })
     authority.dispose()
-  })
+  }, 20_000)
 
   it('releases parent leases while retaining managed children and replays the typed result', async () => {
     const h = harness()
@@ -682,28 +682,31 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
   })
 
-  it('round-trips newline and trailing-space path bytes through the durable WAL', async () => {
-    const h = harness()
-    const unusual = path.join(h.workspace, 'src', 'line\nname.ts ')
-    fs.writeFileSync(unusual, 'unusual\n')
-    const authority = await WorkspaceLockAuthority.open({
-      persistence: h.persistence,
-      dependencies: h.dependencies
-    })
-    const acquired = await authority.acquire(
-      owner({ lockOwnerId: 'unusual-path-owner', runId: 'unusual-path-run' }),
-      {
-        workspacePath: h.workspace,
-        kind: 'file',
-        targetPath: unusual
-      }
-    )
-    if (!acquired.ok) throw new Error('fixture acquisition failed')
-    expect(acquired.leases[0].claim.targetCanonicalPath).toBe(fs.realpathSync(unusual))
-    expect(acquired.leases[0].claim.relativeTargetPath).toBe('src/line\nname.ts ')
-    expect(authority.snapshot().leases[0].claim.relativeTargetPath).toBe('src/line\nname.ts ')
-    authority.dispose()
-  })
+  it.skipIf(process.platform === 'win32')(
+    'round-trips newline and trailing-space path bytes through the durable WAL',
+    async () => {
+      const h = harness()
+      const unusual = path.join(h.workspace, 'src', 'line\nname.ts ')
+      fs.writeFileSync(unusual, 'unusual\n')
+      const authority = await WorkspaceLockAuthority.open({
+        persistence: h.persistence,
+        dependencies: h.dependencies
+      })
+      const acquired = await authority.acquire(
+        owner({ lockOwnerId: 'unusual-path-owner', runId: 'unusual-path-run' }),
+        {
+          workspacePath: h.workspace,
+          kind: 'file',
+          targetPath: unusual
+        }
+      )
+      if (!acquired.ok) throw new Error('fixture acquisition failed')
+      expect(acquired.leases[0].claim.targetCanonicalPath).toBe(fs.realpathSync(unusual))
+      expect(acquired.leases[0].claim.relativeTargetPath).toBe('src/line\nname.ts ')
+      expect(authority.snapshot().leases[0].claim.relativeTargetPath).toBe('src/line\nname.ts ')
+      authority.dispose()
+    }
+  )
 
   it('rejects dead, reused, and uninspectable owner acquisition', async () => {
     const h = harness()

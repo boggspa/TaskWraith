@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as nodePath from 'node:path'
 
@@ -728,6 +728,8 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
       mkdirSync(subcwd, { recursive: true })
       directoryAlias(physicalRoot, rootAlias)
       const locked = realWorkspaceCapability(rootAlias)
+      const canonicalPhysicalRoot = locked.executableTargetPath
+      const canonicalSubcwd = nodePath.join(canonicalPhysicalRoot, 'packages', 'app')
       const cases = [
         {
           toolName: 'run_shell_command',
@@ -758,21 +760,18 @@ describe('prepareVerifiedWorkspaceMutationHandoff', () => {
           mode: 'verified-workspace'
         })
         if (result.ok) {
-          const fwd = (p: string) => p.replace(/\\/g, '/')
-          expect(fwd(result.executionContext.cwd)).toBe(fwd(realpathSync(subcwd)))
-          expect(fwd(result.executionContext.workspacePath)).toBe(fwd(realpathSync(physicalRoot)))
-          expect(fwd(result.executionContext.cwdPathEvidence?.canonicalPath ?? '')).toBe(
-            fwd(realpathSync(subcwd))
+          expect(result.executionContext.cwd).toBe(canonicalSubcwd)
+          expect(result.executionContext.workspacePath).toBe(canonicalPhysicalRoot)
+          expect(result.executionContext.cwdPathEvidence?.canonicalPath).toBe(canonicalSubcwd)
+          expect(result.executionContext.cwdPathEvidence?.containment?.canonicalRootPath).toBe(
+            canonicalPhysicalRoot
           )
-          expect(
-            fwd(result.executionContext.cwdPathEvidence?.containment?.canonicalRootPath ?? '')
-          ).toBe(fwd(realpathSync(physicalRoot)))
           expect(result.executionContext.cwdPathEvidence?.containment?.relativeTargetPath).toBe(
             'packages/app'
           )
         }
         if (result.ok && entry.toolName === 'run_shell_command') {
-          expect(result.args.cwd).toBe(realpathSync(subcwd))
+          expect(result.args.cwd).toBe(canonicalSubcwd)
           expect(result.args).not.toHaveProperty('workdir')
           expect(JSON.stringify(result.args)).not.toContain('ignored-alias')
         }

@@ -13,6 +13,12 @@ import {
 
 const temporaryPaths: string[] = []
 
+function canonicalRealpath(path: string): string {
+  const realpath =
+    typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native : fs.realpathSync
+  return realpath(path)
+}
+
 function temporaryDirectory(label: string): string {
   const path = mkdtempSync(join(tmpdir(), `taskwraith-lock-path-${label}-`))
   temporaryPaths.push(path)
@@ -122,7 +128,7 @@ describe('CanonicalWorkspaceLockPath', () => {
     ).not.toBe(upper.comparisonPath)
   })
 
-  it('preserves executable path case on an injected case-sensitive macOS filesystem', () => {
+  it('preserves executable path case on an injected case-sensitive filesystem', () => {
     const root = temporaryDirectory('case-sensitive-macos')
     const mixedDirectory = join(root, 'MiXeD')
     const mixedFile = join(mixedDirectory, 'TaRgEt.ts')
@@ -132,13 +138,12 @@ describe('CanonicalWorkspaceLockPath', () => {
     const resolution = resolveCanonicalWorkspaceLockPath({
       rootPath: root,
       targetPath: mixedFile,
-      platform: 'darwin',
       caseSensitive: true
     })
 
-    expect(resolution.canonicalPath).toBe(fs.realpathSync(mixedFile))
+    expect(resolution.canonicalPath).toBe(canonicalRealpath(mixedFile))
     expect(resolution.comparisonPath).toBe(resolution.canonicalPath)
-    expect(resolution.canonicalPath.endsWith('/MiXeD/TaRgEt.ts')).toBe(true)
+    expect(resolution.canonicalPath.replace(/\\/g, '/').endsWith('/MiXeD/TaRgEt.ts')).toBe(true)
   })
 
   it('derives a planned identity from the deepest existing physical ancestor', () => {
@@ -158,10 +163,10 @@ describe('CanonicalWorkspaceLockPath', () => {
       normalizedSuffix: 'nested/future.ts'
     })
     expect(resolution.containment.existingAncestorCanonicalPath).toBe(
-      fs.realpathSync(existingDirectory)
+      canonicalRealpath(existingDirectory)
     )
     expect(resolution.canonicalPath).toBe(
-      join(fs.realpathSync(existingDirectory), 'nested', 'future.ts')
+      join(canonicalRealpath(existingDirectory), 'nested', 'future.ts')
     )
   })
 

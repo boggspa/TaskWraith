@@ -74,6 +74,8 @@ export interface NodeWorkspaceLockPersistenceOptions {
   onReclaimGuardAcquired?: () => void
   /** Test-only seam after a stale guard has been atomically quarantined. */
   onStaleReclaimGuardQuarantined?: () => void | Promise<void>
+  /** Host platform, injectable only to prove platform-specific filesystem contracts. */
+  platform?: NodeJS.Platform
   fs?: NodeWorkspaceLockPersistenceFs
 }
 
@@ -110,6 +112,7 @@ interface WorkspaceLockReclaimGuard {
  */
 export class NodeWorkspaceLockPersistence {
   private readonly fs: NodeWorkspaceLockPersistenceFs
+  private readonly platform: NodeJS.Platform
   private readonly root: string
   private readonly authorityDirectory: string
   private readonly onReclaimGuardAcquired?: () => void
@@ -124,6 +127,7 @@ export class NodeWorkspaceLockPersistence {
       throw new Error('Workspace-lock authority directory name is unsafe.')
     }
     this.fs = options.fs || (nodeFs as unknown as NodeWorkspaceLockPersistenceFs)
+    this.platform = options.platform || process.platform
     this.root = resolve(options.userDataRoot)
     this.authorityDirectory = join(this.root, directoryName)
     this.onReclaimGuardAcquired = options.onReclaimGuardAcquired
@@ -203,7 +207,13 @@ export class NodeWorkspaceLockPersistence {
     validateExpectedByteLength(expectedByteLength)
     this.ensureAuthorityDirectory()
     const path = this.eventsPath()
-    const flags = this.fs.constants.O_RDONLY | (this.fs.constants.O_NOFOLLOW || 0)
+    // FlushFileBuffers requires a write-capable handle on Windows. Reopening
+    // without O_TRUNC/O_APPEND does not mutate the WAL; it only gives fsync the
+    // access Windows requires to confirm that the already-visible bytes reached
+    // stable storage. POSIX retains the narrower read-only handle.
+    const access =
+      this.platform === 'win32' ? this.fs.constants.O_WRONLY : this.fs.constants.O_RDONLY
+    const flags = access | (this.fs.constants.O_NOFOLLOW || 0)
     let fd: number | null = null
     try {
       fd = this.fs.openSync(path, flags)

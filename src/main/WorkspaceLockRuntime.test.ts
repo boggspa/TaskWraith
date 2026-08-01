@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -181,8 +181,8 @@ describe('WorkspaceLockRuntime', () => {
     const releaseUserData = '/Users/example/Library/Application Support/TaskWraith'
     const devUserData = '/Users/example/Library/Application Support/TaskWraith Dev'
 
-    const root = workspaceLockAuthorityRootForHome(homePath).replace(/\\/g, '/')
-    expect(root).toBe('/Users/example/.taskwraith/workspace-lock-authority-v1')
+    const root = workspaceLockAuthorityRootForHome(homePath)
+    expect(root).toBe(join(resolve(homePath), '.taskwraith', 'workspace-lock-authority-v1'))
     expect(root).not.toBe(releaseUserData)
     expect(root).not.toBe(devUserData)
   })
@@ -213,7 +213,7 @@ describe('WorkspaceLockRuntime', () => {
       processBirthIdentity: 'main-birth'
     })
     expect(claimsArg[0]).toMatchObject({ kind: 'file' })
-    expect(claimsArg[0].targetPath.replace(/\\/g, '/')).toBe('/workspace/src/new.ts')
+    expect(claimsArg[0].targetPath).toBe(resolve('/workspace', 'src/new.ts'))
     expect(optionsArg).toMatchObject({ transitionId: expect.any(String) })
   })
 
@@ -323,7 +323,7 @@ describe('WorkspaceLockRuntime', () => {
     const [ownerArg2, claimsArg2, optionsArg2] = authority.acquireMany.mock.calls[0]!
     expect(ownerArg2).toEqual(expect.anything())
     expect(claimsArg2[0]).toMatchObject({ kind: 'workspace' })
-    expect(claimsArg2[0].workspacePath.replace(/\\/g, '/')).toBe('/workspace')
+    expect(claimsArg2[0].workspacePath).toBe(resolve('/workspace'))
     expect(optionsArg2).toMatchObject({ transitionId: expect.any(String) })
   })
 

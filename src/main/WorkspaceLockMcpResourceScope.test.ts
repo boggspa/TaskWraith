@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
 import { workspaceLockMcpResourcePath } from './WorkspaceLockMcpResourceScope'
@@ -9,7 +11,7 @@ describe('workspaceLockMcpResourcePath', () => {
       { path: 'src/file.ts' },
       '/workspace-lane'
     )
-    expect(result?.replace(/\\/g, '/')).toBe('/workspace-lane/src/file.ts')
+    expect(result).toBe(resolve('/workspace-lane', 'src/file.ts'))
   })
 
   it('requires workspace scope for multi-path and repository mutations', () => {
@@ -34,7 +36,7 @@ describe('workspaceLockMcpResourcePath', () => {
       { file_path: '/outside/file.ts' },
       '/workspace'
     )
-    expect(result?.replace(/\\/g, '/')).toBe('/outside/file.ts')
+    expect(result).toBe(resolve('/outside/file.ts'))
   })
 
   it('preserves exact non-empty path bytes during lane validation', () => {
@@ -43,6 +45,6 @@ describe('workspaceLockMcpResourcePath', () => {
       { path: 'src/file.ts ' },
       '/workspace'
     )
-    expect(result?.replace(/\\/g, '/')).toBe('/workspace/src/file.ts ')
+    expect(result).toBe(resolve('/workspace', 'src/file.ts '))
   })
 })

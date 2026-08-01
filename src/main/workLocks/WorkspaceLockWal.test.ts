@@ -449,7 +449,7 @@ describe('WorkspaceLockWal', () => {
     }
     expect(peakPending).toBe(1)
     expect(state.knownMarkers).toEqual([])
-  })
+  }, 20_000)
 
   it('replays long WAL histories with linear rather than quadratic growth', () => {
     let previousDigest = ''

@@ -83,6 +83,45 @@ describe('NodeWorkspaceLockPersistence', () => {
     ).toBe(`${first}${second}`)
   })
 
+  it('uses a write-capable WAL handle for durable confirmation on Windows', () => {
+    const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-lock-windows-fsync-'))
+    temporaryRoots.push(root)
+    const baseFs = nodeFs as unknown as NodeWorkspaceLockPersistenceFs
+    const openFlags = new Map<number, number>()
+    const windowsFs: NodeWorkspaceLockPersistenceFs = {
+      ...baseFs,
+      openSync: (path, flags, mode) => {
+        const fd = baseFs.openSync(path, flags, mode)
+        openFlags.set(fd, flags)
+        return fd
+      },
+      fsyncSync: (fd) => {
+        const flags = openFlags.get(fd)
+        if (flags !== undefined && (flags & baseFs.constants.O_WRONLY) === 0) {
+          const error = new Error(
+            'injected Windows read-handle fsync refusal'
+          ) as NodeJS.ErrnoException
+          error.code = 'EPERM'
+          throw error
+        }
+        baseFs.fsyncSync(fd)
+      },
+      closeSync: (fd) => {
+        openFlags.delete(fd)
+        baseFs.closeSync(fd)
+      }
+    }
+    const store = new NodeWorkspaceLockPersistence({
+      userDataRoot: root,
+      platform: 'win32',
+      fs: windowsFs
+    })
+    const frame = '{"kind":"acquire","id":"windows"}\n'
+    const byteLength = store.appendEvent(frame, 0)
+
+    expect(() => store.confirmEventsDurable(byteLength)).not.toThrow()
+  })
+
   it('fails closed on a malformed WAL rather than returning a partial history', () => {
     const { root, store } = createStore()
     const authority = join(root, WORKSPACE_LOCK_AUTHORITY_DIRECTORY)

@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import { TASKWRAITH_TOOL_ACTIONS } from '../../shared/providerActionTaxonomy'
@@ -255,13 +257,14 @@ describe('DesktopToolExecutors host application effects', () => {
       { path: 'docs/report.html' },
       activeContext
     )
+    const expectedPath = resolve(activeContext.cwd, 'docs/report.html')
     expect(result).toMatchObject({
       ok: true,
       action: 'open'
     })
-    expect(result.path.replace(/\\/g, '/')).toBe('/workspace/docs/report.html')
+    expect(result.path).toBe(expectedPath)
     expect(openPath).toHaveBeenCalledOnce()
-    expect(openPath.mock.calls[0]?.[0].replace(/\\/g, '/')).toBe('/workspace/docs/report.html')
+    expect(openPath.mock.calls[0]?.[0]).toBe(expectedPath)
     expect(showItemInFolder).not.toHaveBeenCalled()
     // `orchestration`, matching open_in_ide / open_in_ide_at_position /
     // reveal_in_finder, which share this exact operation/mutation/lock triple.

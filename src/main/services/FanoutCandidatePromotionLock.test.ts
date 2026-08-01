@@ -1,3 +1,5 @@
+import { resolve } from 'node:path'
+
 import { describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -190,8 +192,8 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     })
     const firstClaims = vi.mocked(runtime.acquireClaims).mock.calls[0][1]
     expect(firstClaims).toEqual([
-      expect.objectContaining({ kind: 'workspace', worktreePath: '/base' }),
-      expect.objectContaining({ kind: 'file', targetPath: '/base/src/a.ts' })
+      expect.objectContaining({ kind: 'workspace', worktreePath: resolve('/base') }),
+      expect.objectContaining({ kind: 'file', targetPath: resolve('/base', 'src/a.ts') })
     ])
     expect(firstClaims.some((claim) => claim.kind === 'hunk')).toBe(false)
     expect(vi.mocked(runtime.acquireClaims).mock.calls[0][0]).toMatchObject({
