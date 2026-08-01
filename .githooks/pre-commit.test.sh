@@ -364,9 +364,10 @@ if [ "$host_platform" != 'win32' ]; then
 fi
 
 repo="$(new_repo typechange)"
-rm -- "$repo/src/hunk.ts"
-ln -s ../docs/readme.md "$repo/src/hunk.ts"
-git -C "$repo" add -- src/hunk.ts
+symlink_blob="$(
+  printf '%s' '../docs/readme.md' | git -C "$repo" hash-object -w --stdin
+)"
+git -C "$repo" update-index --cacheinfo 120000 "$symlink_blob" src/hunk.ts
 write_derived_marker "$repo" owner-typechange false '' src/hunk.ts
 expect_block 'file claims cover staged type changes' "$repo"
 
