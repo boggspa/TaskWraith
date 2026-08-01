@@ -11,6 +11,7 @@ import {
   type MistralPlanId
 } from '../../../main/mistral/MistralQuotaEstimate'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
+import { formatResetShort } from '../lib/UsageFormat'
 
 const T0 = new Date('2026-07-01T00:00:00.000Z')
 
@@ -183,6 +184,13 @@ describe('MistralQuotaMeterView — sibling shape', () => {
   })
 
   it('names the cycle reset so the band has a horizon', () => {
-    expect(render({ snapshot: snapshot(1) })).toContain('resets 1 Aug')
+    // cycleResetsAt is 1 Aug from a July start. formatResetShort switches to
+    // same-day HH:MM when the wall clock is on that day (Aug 1), so derive the
+    // expected label from the same formatter the view uses — never hardcode a
+    // month-boundary date string that flips overnight.
+    const snap = snapshot(1)
+    const reset = formatResetShort({ resetAt: snap.estimate.cycleResetsAt })
+    expect(reset).toBeTruthy()
+    expect(render({ snapshot: snap })).toContain(`resets ${reset}`)
   })
 })

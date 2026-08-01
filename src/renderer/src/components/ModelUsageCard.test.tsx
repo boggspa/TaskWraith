@@ -23,6 +23,7 @@ import {
   startCycle
 } from '../../../main/mistral/MistralQuotaEstimate'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
+import { formatResetShort } from '../lib/UsageFormat'
 
 const MISTRAL_CYCLE_START = new Date('2026-07-01T00:00:00.000Z')
 
@@ -452,7 +453,14 @@ describe('ModelUsageCard', () => {
     expect(html).not.toContain('NEAR</td>')
     expect(html).toContain('provider-mistral is-warning is-estimated')
     expect(html).toContain('~$8.00 of ~$9.25')
-    expect(html).toContain('resets 1 Aug')
+    // cycleResetsAt is 1 Aug from a July start. formatResetShort switches to
+    // same-day HH:MM when the wall clock is on that day (Aug 1), so derive the
+    // expected label from the same formatter the view uses — never hardcode a
+    // month-boundary date string that flips overnight.
+    const snap = mistralSnapshot(8)
+    const reset = formatResetShort({ resetAt: snap.estimate.cycleResetsAt })
+    expect(reset).toBeTruthy()
+    expect(html).toContain(`resets ${reset}`)
     expect(html).toContain('estimated locally')
     expect(html).not.toMatch(/>\d+%<\/td>/)
   })
