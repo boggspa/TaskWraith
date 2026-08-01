@@ -402,7 +402,8 @@ function spawnPackagedLauncherSync(launcher, args, packageTarget, options) {
   return spawnSync(invocation.command, invocation.arguments, {
     ...options,
     windowsHide: true,
-    shell: false
+    shell: false,
+    ...invocation.spawnOptions
   })
 }
 

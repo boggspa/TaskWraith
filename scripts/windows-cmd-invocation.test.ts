@@ -1,4 +1,8 @@
+import fs from 'node:fs'
 import { createRequire } from 'node:module'
+import os from 'node:os'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -11,14 +15,22 @@ const {
     scriptPath: string,
     args?: string[],
     env?: Record<string, string | undefined>
-  ) => { command: string; arguments: string[] }
+  ) => {
+    command: string
+    arguments: string[]
+    spawnOptions: { windowsVerbatimArguments?: boolean }
+  }
   quoteWindowsCmdToken: (value: string, label?: string) => string
   resolvePlatformCommandInvocation: (
     command: string,
     args?: string[],
     platform?: string,
     env?: Record<string, string | undefined>
-  ) => { command: string; arguments: string[] }
+  ) => {
+    command: string
+    arguments: string[]
+    spawnOptions: { windowsVerbatimArguments?: boolean }
+  }
 } = require('./windows-cmd-invocation.cjs')
 
 describe('Windows cmd launcher invocation', () => {
@@ -36,7 +48,8 @@ describe('Windows cmd launcher invocation', () => {
         '/s',
         '/c',
         'call "C:\\Program Files\\TaskWraith\\resources\\bin\\tw.cmd" "--snapshot" "--user-data" "C:\\Users\\Test User\\TaskWraith Data"'
-      ]
+      ],
+      spawnOptions: { windowsVerbatimArguments: true }
     })
   })
 
@@ -54,11 +67,34 @@ describe('Windows cmd launcher invocation', () => {
       })
     ).toEqual({
       command: 'C:\\Windows\\System32\\cmd.exe',
-      arguments: ['/d', '/s', '/c', 'call "npm.cmd" "run" "security:sbom"']
+      arguments: ['/d', '/s', '/c', 'call "npm.cmd" "run" "security:sbom"'],
+      spawnOptions: { windowsVerbatimArguments: true }
     })
     expect(resolvePlatformCommandInvocation('npm', ['run', 'test'], 'linux', {})).toEqual({
       command: 'npm',
-      arguments: ['run', 'test']
+      arguments: ['run', 'test'],
+      spawnOptions: {}
     })
+  })
+
+  it('executes a quoted batch path and argument on Windows', () => {
+    if (process.platform !== 'win32') return
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith cmd smoke '))
+    const launcher = path.join(root, 'launcher with spaces.cmd')
+    try {
+      fs.writeFileSync(launcher, '@echo off\r\necho launcher-ok:%~1\r\n')
+      const invocation = createWindowsCmdInvocation(launcher, ['value with spaces'])
+      const result = spawnSync(invocation.command, invocation.arguments, {
+        encoding: 'utf8',
+        ...invocation.spawnOptions
+      })
+
+      expect(result.status).toBe(0)
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toContain('launcher-ok:value with spaces')
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 })

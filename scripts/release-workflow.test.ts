@@ -16,6 +16,7 @@ type Step = {
 }
 
 type Job = {
+  if?: string | boolean
   needs?: string[] | string
   outputs?: Record<string, string>
   permissions?: Record<string, string>
@@ -37,19 +38,22 @@ function actionSteps(job: Job) {
 }
 
 describe('release workflow contract', () => {
-  it('keeps candidate jobs read-only and reserves release mutation for the final publisher', () => {
-    const candidates = [
+  it('keeps artifact builders read-only and reserves mutation for the disabled publisher', () => {
+    const builders = [
       'notarized-macos-release',
       'signed-windows-release',
       'windows-arm64-release-candidate',
-      'linux-release-candidate'
+      'unsigned-windows-build',
+      'unsigned-linux-build'
     ]
-    for (const name of candidates) {
+    for (const name of builders) {
       expect(jobs[name].permissions?.contents).toBe('read')
       expect(runText(jobs[name])).not.toContain('gh release')
     }
 
+    expect(jobs['linux-release-candidate']).toBeUndefined()
     expect(jobs['publish-coordinated-release'].permissions?.contents).toBe('write')
+    expect(jobs['publish-coordinated-release'].if).toBe('${{ false }}')
     expect(
       Object.entries(jobs)
         .filter(([, job]) => job.permissions?.contents === 'write')
@@ -57,13 +61,14 @@ describe('release workflow contract', () => {
     ).toEqual(['publish-coordinated-release'])
   })
 
-  it('publishes only after macOS, Windows x64, native ARM64, and Linux gates succeed', () => {
+  it('keeps the coordinated publisher inoperative without a tag-triggered Linux candidate', () => {
     expect(jobs['publish-coordinated-release'].needs).toEqual([
       'notarized-macos-release',
       'signed-windows-release',
-      'windows-arm64-release-candidate',
-      'linux-release-candidate'
+      'windows-arm64-release-candidate'
     ])
+    expect(jobs['notarized-macos-release'].needs).toEqual(['test', 'ios'])
+    expect(jobs['signed-windows-release'].needs).toEqual(['test', 'ios'])
     expect(jobs['windows-arm64-release-candidate']).toMatchObject({
       'runs-on': 'windows-11-arm',
       needs: ['signed-windows-release']
@@ -76,70 +81,38 @@ describe('release workflow contract', () => {
     expect(armText).toContain('smoke-win-installer.ps1')
   })
 
-  it('hands off attempt-scoped candidates and validates exact public release assets', () => {
-    const publisher = JSON.stringify(jobs['publish-coordinated-release'])
-    const producers = [
-      'notarized-macos-release',
-      'signed-windows-release',
-      'linux-release-candidate'
-    ]
-    for (const producer of producers) {
-      expect(jobs[producer].outputs?.['artifact-name']).toBe(
-        '${{ steps.release-artifact-name.outputs.name }}'
-      )
-      expect(JSON.stringify(jobs[producer])).toContain('GITHUB_RUN_ATTEMPT')
-      const outputStepIndex = (jobs[producer].steps || []).findIndex(
-        (step) => step.id === 'release-artifact-name'
-      )
-      const uploadStepIndex = (jobs[producer].steps || []).findIndex((step) =>
-        step.uses?.startsWith('actions/upload-artifact@')
-      )
-      expect(outputStepIndex).toBeGreaterThanOrEqual(0)
-      expect(outputStepIndex).toBeLessThan(uploadStepIndex)
-    }
-    expect(publisher).toContain('${{ needs.notarized-macos-release.outputs.artifact-name }}')
-    expect(publisher).toContain('${{ needs.signed-windows-release.outputs.artifact-name }}')
-    expect(publisher).toContain('${{ needs.linux-release-candidate.outputs.artifact-name }}')
+  it('labels manual unsigned artifacts with the selected source SHA', () => {
+    const windows = jobs['unsigned-windows-build']
+    const windowsText = JSON.stringify(windows)
+    const windowsSteps = windows.steps || []
+    const packageIndex = windowsSteps.findIndex((step) =>
+      step.run?.includes('npx electron-builder --win --x64 --arm64 --publish never')
+    )
+    const overlayIndex = windowsSteps.findIndex(
+      (step) => step.name === 'Overlay current Windows smoke harness after packaging'
+    )
+    const checksIndex = windowsSteps.findIndex((step) =>
+      step.run?.includes('npm run build:win:checks')
+    )
 
-    const publishRun = runText(jobs['publish-coordinated-release'])
-    expect(publishRun).toContain('channel="latest"')
-    expect(publishRun).toContain('channel="beta"')
-    expect(publishRun).toContain('release_title="TaskWraith v${version}"')
-    expect(publishRun).toContain('prepare-release-notes.cjs "$version" "$notes_path"')
-    expect(publishRun).toContain('--notes-file "$notes_path"')
-    expect(publishRun).toContain('cmp --silent "$notes_path" "$body_file"')
-    expect(publishRun).not.toContain('--notes "Verified TaskWraith')
-    expect(publishRun).toContain('TaskWraith-"$version"-universal-mac.dmg')
-    expect(publishRun).toContain('TaskWraith-"$version"-universal-mac.zip.blockmap')
-    expect(publishRun).not.toContain('release-assets/mac/*.blockmap')
-    expect(publishRun).toContain('TaskWraith-"$version"-win-arm64-setup.exe')
-    expect(publishRun).toContain('TaskWraith-"$version".AppImage')
-    expect(publishRun).toContain('taskwraith_"$version"_amd64.deb')
-    expect(publishRun).toContain('"$channel"-linux.yml')
-    expect(publishRun).toContain('validate-linux-update-feed.cjs release-assets/linux')
-    expect(publishRun).toContain('sbom-windows.cdx.json')
-    expect(publishRun).toContain('sbom-linux.cdx.json')
-    expect(publishRun).toContain('checksums_path="release-assets/SHA256SUMS-${version}.txt"')
-    expect(publishRun).toContain('write-release-checksums.cjs "$checksums_path" "${assets[@]}"')
-    expect(
-      publishRun.indexOf('write-release-checksums.cjs "$checksums_path" "${assets[@]}"')
-    ).toBeLessThan(publishRun.indexOf('assets+=("$checksums_path")'))
-    expect(publishRun.indexOf('assets+=("$checksums_path")')).toBeLessThan(
-      publishRun.indexOf('declare -A asset_paths=()')
+    expect(windowsText).toContain('${{ inputs.unsigned_build_ref || github.sha }}')
+    expect(windowsText).toContain(
+      'unsigned-windows-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
     )
-    expect(publishRun).toContain('gh release upload')
-    expect(publishRun).toContain('cmp --silent')
-    expect(publishRun).not.toContain('--clobber')
-    expect(publishRun).toContain('gh release edit "$release_tag" --draft=false')
-    expect(publishRun).toContain('if [ "$is_draft" = "false" ]; then')
-    expect(publishRun).toContain(
-      'Existing public release exactly matches the verified candidate; no mutation needed.'
+    expect(windowsText).toContain('.ci-release-harness')
+    expect(packageIndex).toBeGreaterThanOrEqual(0)
+    expect(packageIndex).toBeLessThan(overlayIndex)
+    expect(overlayIndex).toBeLessThan(checksIndex)
+    expect(runText(windows)).not.toContain('gh release')
+
+    const linux = jobs['unsigned-linux-build']
+    const linuxText = JSON.stringify(linux)
+    expect(linuxText).toContain('${{ inputs.unsigned_build_ref || github.sha }}')
+    expect(linuxText).toContain(
+      'unsigned-linux-testing-${{ steps.unsigned-source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}'
     )
-    expect(publishRun).toContain('"${fresh_public_assets[*]}" != "${expected_assets[*]}"')
-    expect(publishRun).toContain('mapfile -t fresh_public_assets')
-    expect(publishRun).not.toContain(
-      'Existing release must be a matching draft; refusing public mutation.'
-    )
+    expect(runText(linux)).toContain('xvfb-run -a npm run build:linux:nopublish')
+    expect(runText(linux)).not.toContain('gh release')
   })
 
   it('finalizes both local macOS build paths before validating update metadata', () => {
@@ -184,14 +157,14 @@ describe('release workflow contract', () => {
       'dist/*-universal-mac.zip.blockmap'
     )
     expect(JSON.stringify(jobs['notarized-macos-release'])).not.toContain('*.dmg.blockmap')
-    expect(runText(jobs['linux-release-candidate'])).toContain(
+    expect(runText(jobs['unsigned-linux-build'])).toContain(
       'xvfb-run -a npm run build:linux:nopublish'
     )
     expect(runText(jobs['signed-windows-release'])).toContain(
       'node scripts/guard-no-bundled-secrets.cjs --require-packaged'
     )
     expect(runText(jobs['signed-windows-release'])).toContain('npm run security:sbom')
-    expect(runText(jobs['linux-release-candidate'])).toContain('npm run security:sbom')
+    expect(runText(jobs['unsigned-linux-build'])).toContain('npm run security:deps')
   })
 
   it('pins every action and Node runtime used by the workflow', () => {

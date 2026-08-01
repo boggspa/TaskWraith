@@ -14,4 +14,13 @@ describe('packaged TUI disposable macOS host launch', () => {
     expect(source).toContain('command: resolvePackagedAppExecutable(packageRoot, packageTarget)')
     expect(source).not.toContain("command: '/usr/bin/open'")
   })
+
+  it('preserves cmd.exe quoting when launching a packaged Windows TUI', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('...invocation.spawnOptions')
+  })
 })

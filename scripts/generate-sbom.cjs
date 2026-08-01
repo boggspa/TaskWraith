@@ -21,7 +21,8 @@ function defaultNpmSbomRunner(
     cwd: repoRoot,
     encoding: 'utf8',
     maxBuffer: 100 * 1024 * 1024,
-    env
+    env,
+    ...invocation.spawnOptions
   })
 }
 

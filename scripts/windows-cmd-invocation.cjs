@@ -19,7 +19,12 @@ function createWindowsCmdInvocation(scriptPath, args = [], env = process.env) {
   ].join(' ')
   return {
     command,
-    arguments: ['/d', '/s', '/c', commandLine]
+    arguments: ['/d', '/s', '/c', commandLine],
+    // Node's default Windows argv quoting targets the C runtime. cmd.exe uses
+    // different parsing rules, so the embedded quotes otherwise arrive as
+    // literal backslash-quote sequences (\"path\") and the batch file cannot
+    // be found. Every caller must merge these options into spawn/spawnSync.
+    spawnOptions: { windowsVerbatimArguments: true }
   }
 }
 
@@ -32,7 +37,7 @@ function resolvePlatformCommandInvocation(
   if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)) {
     return createWindowsCmdInvocation(command, args, env)
   }
-  return { command, arguments: args }
+  return { command, arguments: args, spawnOptions: {} }
 }
 
 module.exports = {

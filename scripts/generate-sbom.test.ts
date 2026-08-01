@@ -111,7 +111,8 @@ describe('release SBOM generation', () => {
 
     expect(invocation).toMatchObject({
       command: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/d', '/s', '/c', 'call "npm.cmd" "sbom" "--sbom-format=cyclonedx" "--omit=dev"']
+      args: ['/d', '/s', '/c', 'call "npm.cmd" "sbom" "--sbom-format=cyclonedx" "--omit=dev"'],
+      options: { windowsVerbatimArguments: true }
     })
   })
 })

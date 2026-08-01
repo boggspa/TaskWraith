@@ -148,7 +148,8 @@ for (const stepSpec of steps) {
   const result = spawnSync(invocation.command, invocation.arguments, {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, ...stepSpec.env }
+    env: { ...process.env, ...stepSpec.env },
+    ...invocation.spawnOptions
   })
   const durationMs = Date.now() - startedAt
   if (result.error?.code === 'ENOENT') {
