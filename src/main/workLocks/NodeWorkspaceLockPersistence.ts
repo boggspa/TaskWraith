@@ -56,6 +56,19 @@ export interface NodeWorkspaceLockPersistenceFs {
   unlinkSync(path: string): void
 }
 
+const productionFs: NodeWorkspaceLockPersistenceFs = {
+  ...(nodeFs as unknown as NodeWorkspaceLockPersistenceFs),
+  realpathSync: (path) => {
+    // Keep persistence on the same canonical spelling as lock acquisition.
+    // Legacy realpathSync may emit Windows 8.3 aliases such as RUNNER~1.
+    const realpath =
+      typeof nodeFs.realpathSync.native === 'function'
+        ? nodeFs.realpathSync.native
+        : nodeFs.realpathSync
+    return realpath(path)
+  }
+}
+
 export interface NodeWorkspaceLockPersistenceOptions {
   /**
    * Machine-shared per-user authority root supplied by the composition root.
@@ -126,7 +139,7 @@ export class NodeWorkspaceLockPersistence {
     if (!isSinglePathSegment(directoryName)) {
       throw new Error('Workspace-lock authority directory name is unsafe.')
     }
-    this.fs = options.fs || (nodeFs as unknown as NodeWorkspaceLockPersistenceFs)
+    this.fs = options.fs || productionFs
     this.platform = options.platform || process.platform
     this.root = resolve(options.userDataRoot)
     this.authorityDirectory = join(this.root, directoryName)
