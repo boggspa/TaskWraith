@@ -4451,8 +4451,9 @@
 }
 
 /* The ensemble escalation-advisory chip strip that used to live inside the
- * run-complete card is gone. The signals it rendered (stuck / looping /
- * disagreement-unresolved / tool-error-cluster) now retitle the card itself —
+ * run-complete card is gone. The surfaced signals (stuck / looping /
+ * tool-error-cluster) now retitle the card itself; disagreement-unresolved is
+ * retained as advisory telemetry but deliberately excluded from this title —
  * see `resolveRunCompleteStatus` in lib/runCompleteSummary.ts and the
  * `.run-complete-metadata strong.tone-*` accents in shard 04. A banner that
  * named a blocker with no next step read as inactionable anxiety; the status

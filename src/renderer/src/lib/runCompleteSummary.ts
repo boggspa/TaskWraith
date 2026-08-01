@@ -638,15 +638,15 @@ export const buildEnsembleRoundSummaryRows = (
  *
  * The banners are gone. The signal itself was the useful part,
  * so it now REPLACES the card's title: the string that heads the
- * card is a dynamic status, and every retired warning is revived
- * as a member of this vocabulary rather than as its own box.
+ * card is a dynamic status, and the useful warnings live in this
+ * vocabulary rather than in their own boxes.
  *
  * Deliberately NOT ensemble-specific — `complete`, `cancelled`,
  * `awaiting-answer` and `exit-failure` all resolve for a solo
- * run; the four `ComplexityEscalationKind` members are the
- * ensemble-only additions. Folding that union in is a
- * choke-point: a new escalation kind fails to typecheck until it
- * has a label + a severity rank here.
+ * run; the surfaced escalation kinds are the ensemble-only
+ * additions. `disagreement-unresolved` remains an advisory signal
+ * but is deliberately excluded here: multiple answers without a
+ * synthesizer is not evidence that the task failed.
  * ============================================================ */
 
 /**
@@ -658,6 +658,11 @@ export const buildEnsembleRoundSummaryRows = (
  */
 export type RunCompleteStatusTone = 'neutral' | 'warning' | 'danger'
 
+export type RunCompleteBlockerKind = Exclude<
+  ComplexityEscalationKind,
+  'disagreement-unresolved'
+>
+
 export type RunCompleteStatusKind =
   /** Exit 0, nothing flagged. */
   | 'complete'
@@ -668,7 +673,7 @@ export type RunCompleteStatusKind =
   /** Any other non-zero exit. */
   | 'exit-failure'
   /** Ensemble round blockers (see ComplexityEscalation.ts). */
-  | ComplexityEscalationKind
+  | RunCompleteBlockerKind
 
 export type RunCompleteStatus = {
   kind: RunCompleteStatusKind
@@ -687,7 +692,7 @@ export type RunCompleteStatus = {
 
 /** One blocker flagged against the run/round, with its evidence line. */
 export type RunCompleteBlocker = {
-  kind: ComplexityEscalationKind
+  kind: RunCompleteBlockerKind
   detail: string
 }
 
@@ -701,7 +706,6 @@ const STATUS_LABEL: Record<RunCompleteStatusKind, string> = {
   // Sentence case: this string now sits in the card's title slot alongside
   // "Task complete", where Title Case read as a different typographic voice.
   looping: 'Handoff/turns exhausted',
-  'disagreement-unresolved': 'Unreconciled answers',
   'tool-error-cluster': 'Tool errors clustered'
 }
 
@@ -718,11 +722,10 @@ const GLOBAL_STATUS_LABEL: Partial<Record<RunCompleteStatusKind, string>> = {
  * `tool-error-cluster` and `stuck`), so the title shows the most severe and
  * the rest stay in the evidence tooltip.
  */
-const BLOCKER_SEVERITY: Record<ComplexityEscalationKind, number> = {
+const BLOCKER_SEVERITY: Record<RunCompleteBlockerKind, number> = {
   stuck: 4,
   'tool-error-cluster': 3,
-  looping: 2,
-  'disagreement-unresolved': 1
+  looping: 2
 }
 
 function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRound']): string {
@@ -745,10 +748,10 @@ function loopingLimitCopy(round: NonNullable<ChatRecord['ensemble']>['activeRoun
  * originating `roundId`), severity-ordered worst-first and de-duplicated by
  * kind. Returns [] when there's no active round or no signals.
  *
- * No kind is filtered any more: `disagreement-unresolved` and
- * `tool-error-cluster` used to be suppressed because a banner naming a failure
- * with no next step read as an accusation. As a title they are just the
- * round's status, so both are back in the vocabulary.
+ * `disagreement-unresolved` is intentionally filtered from this presentation:
+ * multiple answers without a synthesizer can be useful parallel work and is
+ * not reliable evidence that the task failed. The signal remains persisted for
+ * advisory/telemetry consumers. Other kinds remain eligible to title the card.
  *
  * Pure + side-effect-free so the mapping is unit-tested without a render
  * harness.
@@ -757,10 +760,11 @@ export const buildRunCompleteBlockers = (chat: ChatRecord | null): RunCompleteBl
   const round = chat?.ensemble?.activeRound
   const signals = chat?.ensemble?.escalationSignals
   if (!round || !signals || signals.length === 0) return []
-  const seenKinds = new Set<ComplexityEscalationKind>()
+  const seenKinds = new Set<RunCompleteBlockerKind>()
   const blockers: RunCompleteBlocker[] = []
   for (const signal of signals as ComplexityEscalationSignal[]) {
     if (signal.roundId !== round.roundId) continue
+    if (signal.kind === 'disagreement-unresolved') continue
     if (seenKinds.has(signal.kind)) continue
     seenKinds.add(signal.kind)
     blockers.push({

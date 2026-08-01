@@ -508,14 +508,12 @@ describe('buildRunCompleteBlockers', () => {
     expect(blockers).toEqual([{ kind: 'stuck', detail: 'first' }])
   })
 
-  // Both were suppressed while they rendered as accusatory banners. As a
-  // status string they are just the round's outcome, so both are back.
-  it('revives the previously hidden disagreement-unresolved and tool-error-cluster kinds', () => {
+  it('filters disagreement-unresolved from the title while keeping tool errors', () => {
     expect(
       buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'disagreement-unresolved' })])).map(
         (b) => b.kind
       )
-    ).toEqual(['disagreement-unresolved'])
+    ).toEqual([])
     expect(
       buildRunCompleteBlockers(chatWithSignals([sig({ kind: 'tool-error-cluster' })])).map(
         (b) => b.kind
@@ -535,8 +533,7 @@ describe('buildRunCompleteBlockers', () => {
     expect(blockers.map((b) => b.kind)).toEqual([
       'stuck',
       'tool-error-cluster',
-      'looping',
-      'disagreement-unresolved'
+      'looping'
     ])
   })
 
@@ -608,15 +605,15 @@ describe('resolveRunCompleteStatus', () => {
     ).toMatchObject({ kind: 'stuck', label: 'Round stalled', tone: 'danger' })
   })
 
-  it('labels every revived blocker kind', () => {
-    const labelFor = (kind: 'looping' | 'disagreement-unresolved' | 'tool-error-cluster'): string =>
+  it('labels every blocker kind that remains in the title pool', () => {
+    const labelFor = (kind: 'stuck' | 'looping' | 'tool-error-cluster'): string =>
       resolveRunCompleteStatus({
         exitCode: 0,
         blockers: [{ kind, detail: '' }],
         producedWork: true
       }).label
+    expect(labelFor('stuck')).toBe('Round stalled')
     expect(labelFor('looping')).toBe('Handoff/turns exhausted')
-    expect(labelFor('disagreement-unresolved')).toBe('Unreconciled answers')
     expect(labelFor('tool-error-cluster')).toBe('Tool errors clustered')
   })
 
