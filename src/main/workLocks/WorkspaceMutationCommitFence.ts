@@ -469,7 +469,7 @@ export class WorkspaceMutationCommitFence {
       fd = this.fs.openSync(temporaryPath, flags, PRIVATE_FILE_MODE)
       const opened = this.fs.fstatSync(fd)
       assertRegularFile(opened, temporaryPath)
-      if ((Number(opened.mode) & 0o077) !== 0) {
+      if (process.platform !== 'win32' && (Number(opened.mode) & 0o077) !== 0) {
         throw new Error(`Workspace mutation authority file is not private: ${temporaryPath}`)
       }
       writeFully(this.fs, fd, Buffer.from(content, 'utf8'))
@@ -553,7 +553,7 @@ export class WorkspaceMutationCommitFence {
     if (
       !privateStat.isDirectory() ||
       privateStat.isSymbolicLink() ||
-      (Number(privateStat.mode) & 0o077) !== 0
+      (process.platform !== 'win32' && (Number(privateStat.mode) & 0o077) !== 0)
     ) {
       throw new Error(`Workspace mutation commit-fence authority is not private: ${this.directory}`)
     }

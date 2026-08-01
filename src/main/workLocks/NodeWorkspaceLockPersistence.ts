@@ -525,7 +525,7 @@ export class NodeWorkspaceLockPersistence {
     if (
       !privateStat.isDirectory() ||
       privateStat.isSymbolicLink() ||
-      (Number(privateStat.mode) & 0o077) !== 0
+      (process.platform !== 'win32' && (Number(privateStat.mode) & 0o077) !== 0)
     ) {
       throw new Error(`Workspace-lock authority directory is not private: ${path}`)
     }
