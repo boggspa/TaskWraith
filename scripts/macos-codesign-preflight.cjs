@@ -14,11 +14,14 @@ function validateCodeSigningIdentityOutput(output, selectedIdentity) {
     return 'security find-identity reported no valid code-signing identity'
   }
   const selected = String(selectedIdentity || '').trim()
+  const developerIdName = `Developer ID Application: ${selected}`
   if (
     selected &&
     !identities.some(
       (identity) =>
-        identity.fingerprint.toLowerCase() === selected.toLowerCase() || identity.name === selected
+        identity.fingerprint.toLowerCase() === selected.toLowerCase() ||
+        identity.name === selected ||
+        identity.name === developerIdName
     )
   ) {
     return `CSC_NAME does not select any valid code-signing identity`

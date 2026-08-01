@@ -28,10 +28,19 @@ describe('macOS code-signing identity preflight', () => {
     expect(
       validateCodeSigningIdentityOutput(output, 'Developer ID Application: Example (TEAMID)')
     ).toBeNull()
+    expect(validateCodeSigningIdentityOutput(output, 'Example (TEAMID)')).toBeNull()
     expect(
       validateCodeSigningIdentityOutput(output, 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')
     ).toBeNull()
     expect(validateCodeSigningIdentityOutput(output, 'Missing Identity')).toContain('CSC_NAME')
+  })
+
+  it('does not match the short selector against a non-Developer ID identity', () => {
+    const output = `
+  1) BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB "Apple Distribution: Example (TEAMID)"
+     1 valid identities found
+`
+    expect(validateCodeSigningIdentityOutput(output, 'Example (TEAMID)')).toContain('CSC_NAME')
   })
 
   it('rejects the successful no-identity output from security', () => {
