@@ -157,6 +157,44 @@
   line-height: 1.35;
 }
 
+.workspace-lock-recovery-button {
+  align-self: flex-start;
+  margin-top: 0.2rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--warning, #d6a23a) 58%, transparent);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--warning, #d6a23a) 12%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.workspace-lock-recovery-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warning, #d6a23a) 20%, transparent);
+}
+
+.workspace-lock-recovery-button:disabled {
+  opacity: 0.62;
+  cursor: wait;
+}
+
+.workspace-lock-recovery-result {
+  margin: 0;
+  padding: 0.55rem 0.75rem 0.65rem;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 9%, transparent);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.workspace-lock-recovery-result--standalone {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, var(--warning, #d6a23a) 45%, transparent);
+  border-radius: 0.45rem;
+  background: color-mix(in srgb, var(--warning, #d6a23a) 10%, transparent);
+}
+
 .workspace-lock-since {
   opacity: 0.8;
 }

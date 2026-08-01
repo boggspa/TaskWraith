@@ -59,6 +59,7 @@ describe('RendererIpcPolicy', () => {
     'execution-runs:append-stack-step',
     'execution-runs:cancel',
     'execution-runs:formalize',
+    'work-locks:force-release-recovery',
     'app:quit'
   ])('keeps %s behind main-renderer authority', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)

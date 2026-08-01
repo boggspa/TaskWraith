@@ -515,7 +515,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // renderer would widen a path that bypasses approval, so they stay here.
   'thread-message:targets',
   'thread-message:inbox',
-  'thread-message:send'
+  'thread-message:send',
+
+  // Force-releasing a recovery-blocked acquisition is a native-confirmed,
+  // host-wide recovery act. Projection reads stay secondary-safe; this does not.
+  'work-locks:force-release-recovery'
 ])
 
 export function ipcChannelRequiresMainRenderer(channel: string): boolean {

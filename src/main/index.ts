@@ -1928,6 +1928,7 @@ import {
   type VerifiedWorkspaceMutationExecutionContext
 } from './mcp/VerifiedWorkspaceMutationHandoff'
 import { registerWorkLockHandlers } from './ipc/workLockHandlers'
+import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
 import {
   resolveToolDispatchContractStrict,
   type CanonicalDispatchOwner,
@@ -38262,6 +38263,59 @@ if (isGeminiMcpBridgeProcess) {
           )
         }
         return workspaceLockRuntimeRef.subscribe(query, onUpdate)
+      },
+      forceReleaseRecovery: async (event, request) => {
+        if (!isMainRendererSender(event)) {
+          return {
+            ok: false,
+            reason: 'not_found_or_forbidden',
+            message: 'Only the main TaskWraith window can approve workspace-lock recovery.'
+          }
+        }
+        const runtime = workspaceLockRuntimeRef
+        if (!runtime) {
+          return {
+            ok: false,
+            reason: 'unavailable',
+            message:
+              workspaceLockStartupRecoveryBlockedReason || 'Workspace-lock recovery is unavailable.'
+          }
+        }
+        const owner = BrowserWindow.fromWebContents(event.sender)
+        if (!owner || owner.isDestroyed()) {
+          return {
+            ok: false,
+            reason: 'unavailable',
+            message: 'A live main window is required for human-approved recovery.'
+          }
+        }
+        return recoverWorkspaceLock({
+          runtime,
+          lockId: request.lockId,
+          confirm: async (confirmation) => {
+            const evidence =
+              confirmation.evidence === 'owner_dead'
+                ? `The exact owner PID ${confirmation.ownerPid} is no longer running.`
+                : `PID ${confirmation.ownerPid} now belongs to a different process birth identity.`
+            const result = await dialog.showMessageBox(owner, {
+              type: 'warning',
+              title: 'Force release workspace protection?',
+              message: 'Release this recovery-blocked workspace acquisition?',
+              detail: [
+                `${confirmation.ownerLabel} · run ${confirmation.runId}`,
+                confirmation.worktreePath || confirmation.workspacePath,
+                evidence,
+                '',
+                'TaskWraith still cannot prove that every descendant process has exited. Force release can allow a new writer to overlap an old descendant. Continue only when you have verified this exact run is finished.'
+              ].join('\n'),
+              buttons: ['Cancel', 'Force release'],
+              defaultId: 0,
+              cancelId: 0,
+              noLink: true
+            })
+            return result.response === 1
+          }
+        })
       },
       projectSnapshot: (event, query, snapshot) => {
         if (isMainRendererSender(event)) return snapshot

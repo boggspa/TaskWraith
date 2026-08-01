@@ -205,7 +205,9 @@ import type {
 import type {
   WorkLockProjectionQuery,
   WorkLockProjectionSnapshot,
-  WorkLockProjectionUpdate
+  WorkLockProjectionUpdate,
+  WorkLockRecoveryRequest,
+  WorkLockRecoveryResult
 } from '../shared/workLockProjection'
 import type { WatchPollProgress } from '../shared/watchPrPollCycle'
 import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
@@ -2047,6 +2049,9 @@ declare global {
         dayCount?: number
       ) => Promise<WorkspaceActivitySnapshot>
       listWorkLocks: (query?: WorkLockProjectionQuery) => Promise<WorkLockProjectionSnapshot>
+      forceReleaseRecoveryBlockedWorkLock: (
+        request: WorkLockRecoveryRequest
+      ) => Promise<WorkLockRecoveryResult>
       subscribeWorkLocks: (
         query: WorkLockProjectionQuery,
         callback: (update: WorkLockProjectionUpdate) => void

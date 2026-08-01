@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useWorkspaceLocks } from '../hooks/useWorkspaceLocks'
 import {
   buildWorkLockDisplayRows,
@@ -18,9 +19,20 @@ export interface WorkspaceLockPillViewProps {
   snapshot: WorkLockProjectionSnapshot | null
   effectiveWorkspacePath?: string
   nowMs?: number
+  onForceRelease?: (lockId: string) => void | Promise<void>
+  recoveringLockId?: string | null
+  recoveryMessage?: string | null
 }
 
-function LockRow({ row }: { row: WorkLockDisplayRow }): React.JSX.Element {
+function LockRow({
+  row,
+  onForceRelease,
+  recoveringLockId
+}: {
+  row: WorkLockDisplayRow
+  onForceRelease?: (lockId: string) => void | Promise<void>
+  recoveringLockId?: string | null
+}): React.JSX.Element {
   const { lock } = row
   const provider = lock.owner.provider ? getProviderLabel(lock.owner.provider) : null
   const identity = [
@@ -64,6 +76,16 @@ function LockRow({ row }: { row: WorkLockDisplayRow }): React.JSX.Element {
         </span>
       )}
       <span className="workspace-lock-recovery-copy">{row.statusDescription}</span>
+      {lock.status === 'recovery_blocked' && onForceRelease && (
+        <button
+          type="button"
+          className="workspace-lock-recovery-button"
+          disabled={Boolean(recoveringLockId)}
+          onClick={() => void onForceRelease(lock.lockId)}
+        >
+          {recoveringLockId === lock.lockId ? 'Reviewing recovery…' : 'Review force release…'}
+        </button>
+      )}
       <span className="workspace-lock-since">Since {row.sinceLabel}</span>
     </li>
   )
@@ -72,7 +94,10 @@ function LockRow({ row }: { row: WorkLockDisplayRow }): React.JSX.Element {
 export function WorkspaceLockPillView({
   snapshot,
   effectiveWorkspacePath,
-  nowMs
+  nowMs,
+  onForceRelease,
+  recoveringLockId,
+  recoveryMessage
 }: WorkspaceLockPillViewProps): React.JSX.Element | null {
   const sampledAtMs = Date.parse(snapshot?.sampledAt || '')
   const referenceNowMs = nowMs ?? (Number.isFinite(sampledAtMs) ? sampledAtMs : 0)
@@ -81,7 +106,16 @@ export function WorkspaceLockPillView({
     effectiveWorkspacePath,
     nowMs: referenceNowMs
   })
-  if (rows.length === 0) return null
+  if (rows.length === 0) {
+    return recoveryMessage ? (
+      <p
+        className="workspace-lock-recovery-result workspace-lock-recovery-result--standalone"
+        role="status"
+      >
+        {recoveryMessage}
+      </p>
+    ) : null
+  }
 
   const activeCount = countActiveWorkLocks(snapshot)
   const recoveredCount = rows.length - activeCount
@@ -110,9 +144,15 @@ export function WorkspaceLockPillView({
         </div>
         <ul>
           {rows.map((row) => (
-            <LockRow key={row.lock.lockId} row={row} />
+            <LockRow
+              key={row.lock.lockId}
+              row={row}
+              onForceRelease={onForceRelease}
+              recoveringLockId={recoveringLockId}
+            />
           ))}
         </ul>
+        {recoveryMessage && <p className="workspace-lock-recovery-result">{recoveryMessage}</p>}
       </div>
     </details>
   )
@@ -127,10 +167,34 @@ export function WorkspaceLockPill({
     workspacePath,
     ...(chatId ? { chatId } : {})
   })
+  const [recoveringLockId, setRecoveringLockId] = useState<string | null>(null)
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
+
+  const forceRelease = async (lockId: string): Promise<void> => {
+    if (recoveringLockId) return
+    setRecoveringLockId(lockId)
+    setRecoveryMessage(null)
+    try {
+      const result = await window.api.forceReleaseRecoveryBlockedWorkLock({
+        lockId,
+        workspacePath,
+        ...(chatId ? { chatId } : {})
+      })
+      setRecoveryMessage(result.message)
+    } catch {
+      setRecoveryMessage('Workspace-lock recovery could not be requested.')
+    } finally {
+      setRecoveringLockId(null)
+    }
+  }
+
   return (
     <WorkspaceLockPillView
       snapshot={snapshot}
       effectiveWorkspacePath={effectiveWorkspacePath || workspacePath}
+      onForceRelease={forceRelease}
+      recoveringLockId={recoveringLockId}
+      recoveryMessage={recoveryMessage}
     />
   )
 }

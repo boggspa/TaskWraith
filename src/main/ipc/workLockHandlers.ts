@@ -6,6 +6,8 @@ import {
   type WorkLockProjectionChangeReason,
   type WorkLockProjectionQuery,
   type WorkLockProjectionSnapshot,
+  type WorkLockRecoveryRequest,
+  type WorkLockRecoveryResult,
   type WorkLockProjectionSubscribeRequest,
   type WorkLockProjectionSubscribeResult
 } from '../../shared/workLockProjection'
@@ -51,6 +53,10 @@ export interface WorkLockHandlerDeps {
     query: WorkLockProjectionQuery,
     onUpdate: (update: WorkLockProjectionServiceUpdate) => void
   ) => WorkLockProjectionSubscription
+  forceReleaseRecovery: (
+    event: IpcMainInvokeEvent,
+    request: WorkLockRecoveryRequest
+  ) => Promise<WorkLockRecoveryResult>
 }
 
 interface HandlerSubscription {
@@ -87,6 +93,17 @@ function subscriptionIdFromInput(input: unknown): string {
   return stringField((input as Record<string, unknown>).subscriptionId) || ''
 }
 
+function recoveryRequestFromInput(input: unknown): WorkLockRecoveryRequest | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null
+  const record = input as Record<string, unknown>
+  const lockId = stringField(record.lockId)
+  if (!lockId) return null
+  return {
+    lockId,
+    ...queryFromInput(record)
+  }
+}
+
 export function registerWorkLockHandlers(deps: WorkLockHandlerDeps): void {
   const subscriptions = new Map<string, HandlerSubscription>()
 
@@ -96,6 +113,44 @@ export function registerWorkLockHandlers(deps: WorkLockHandlerDeps): void {
     const scoped = scopeWorkLockProjectionSnapshot(snapshot, query)
     return deps.projectSnapshot?.(event, query, scoped) ?? scoped
   })
+
+  ipcMain.handle(
+    'work-locks:force-release-recovery',
+    async (event, input?: unknown): Promise<WorkLockRecoveryResult> => {
+      const request = recoveryRequestFromInput(input)
+      if (!request) {
+        return {
+          ok: false,
+          reason: 'invalid_request',
+          message: 'A recovery-blocked lock id is required.'
+        }
+      }
+      try {
+        const query = deps.resolveAuthorizedQuery(event, request)
+        const snapshot = await deps.list(query)
+        const scoped = scopeWorkLockProjectionSnapshot(snapshot, query)
+        const projected = deps.projectSnapshot?.(event, query, scoped) ?? scoped
+        const selected = projected.locks.find((lock) => lock.lockId === request.lockId)
+        if (!selected || selected.status !== 'recovery_blocked') {
+          return {
+            ok: false,
+            reason: 'not_found_or_forbidden',
+            message: 'The selected recovery-blocked acquisition is unavailable in this renderer.'
+          }
+        }
+        return await deps.forceReleaseRecovery(event, {
+          lockId: request.lockId,
+          ...query
+        })
+      } catch {
+        return {
+          ok: false,
+          reason: 'unavailable',
+          message: 'Workspace-lock recovery is unavailable.'
+        }
+      }
+    }
+  )
 
   ipcMain.handle(
     'work-locks:subscribe',

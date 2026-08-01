@@ -92,6 +92,11 @@ function setup(overrides: Partial<WorkLockHandlerDeps> = {}) {
       listener = onUpdate
       return { snapshot: snapshot(), unsubscribe }
     }),
+    forceReleaseRecovery: vi.fn(async () => ({
+      ok: true as const,
+      releasedLeaseCount: 1,
+      message: 'released'
+    })),
     ...overrides
   }
   registerWorkLockHandlers(deps)
@@ -107,12 +112,57 @@ beforeEach(() => {
 })
 
 describe('registerWorkLockHandlers', () => {
-  it('registers list, subscribe, and unsubscribe handlers', () => {
+  it('registers list, recovery, subscribe, and unsubscribe handlers', () => {
     setup()
 
     expect(handlerFor('work-locks:list')).toBeTypeOf('function')
+    expect(handlerFor('work-locks:force-release-recovery')).toBeTypeOf('function')
     expect(handlerFor('work-locks:subscribe')).toBeTypeOf('function')
     expect(handlerFor('work-locks:unsubscribe')).toBeTypeOf('function')
+  })
+
+  it('forwards only a visible recovery-blocked lock to the recovery authority', async () => {
+    const recovery = snapshot()
+    recovery.locks = recovery.locks.map((entry) =>
+      entry.lockId === 'base' ? { ...entry, status: 'recovery_blocked' as const } : entry
+    )
+    const forceReleaseRecovery = vi.fn(async () => ({
+      ok: true as const,
+      releasedLeaseCount: 1,
+      message: 'released'
+    }))
+    setup({ list: vi.fn(() => recovery), forceReleaseRecovery })
+    const renderer = sender(1)
+
+    await expect(
+      handlerFor('work-locks:force-release-recovery')(
+        { sender: renderer },
+        { lockId: 'base', workspacePath: '/repo', chatId: 'chat-1' }
+      )
+    ).resolves.toMatchObject({ ok: true, releasedLeaseCount: 1 })
+    expect(forceReleaseRecovery).toHaveBeenCalledWith(
+      expect.objectContaining({ sender: renderer }),
+      { lockId: 'base', workspacePath: '/repo', chatId: 'chat-1' }
+    )
+  })
+
+  it('does not reveal or release a held, hidden, or malformed lock', async () => {
+    const forceReleaseRecovery = vi.fn()
+    setup({ forceReleaseRecovery })
+    const renderer = sender(1)
+    const handler = handlerFor('work-locks:force-release-recovery')
+
+    await expect(
+      handler({ sender: renderer }, { lockId: 'base', workspacePath: '/repo' })
+    ).resolves.toMatchObject({ ok: false, reason: 'not_found_or_forbidden' })
+    await expect(
+      handler({ sender: renderer }, { lockId: 'other', workspacePath: '/repo' })
+    ).resolves.toMatchObject({ ok: false, reason: 'not_found_or_forbidden' })
+    await expect(handler({ sender: renderer }, { lockId: ' ' })).resolves.toMatchObject({
+      ok: false,
+      reason: 'invalid_request'
+    })
+    expect(forceReleaseRecovery).not.toHaveBeenCalled()
   })
 
   it('authorizes and scopes list results to a base checkout and its worktrees', async () => {
@@ -254,10 +304,12 @@ describe('registerWorkLockHandlers', () => {
     const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
 
     expect(preload).toContain("ipcRenderer.invoke('work-locks:list'")
+    expect(preload).toContain("'work-locks:force-release-recovery'")
     expect(preload).toContain(".invoke('work-locks:subscribe'")
     expect(preload).toContain("ipcRenderer.on('work-locks:changed'")
     expect(preload).toContain("ipcRenderer.invoke('work-locks:unsubscribe'")
     expect(preloadTypes).toContain('listWorkLocks:')
+    expect(preloadTypes).toContain('forceReleaseRecoveryBlockedWorkLock:')
     expect(preloadTypes).toContain('subscribeWorkLocks:')
     expect(preloadTypes).not.toContain('processBirthIdentity')
     expect(preloadTypes).not.toContain('ownerPid')

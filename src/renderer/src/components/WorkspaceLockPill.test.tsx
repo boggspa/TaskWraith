@@ -78,7 +78,12 @@ describe('WorkspaceLockPillView', () => {
       ]
     })
     const html = renderToStaticMarkup(
-      <WorkspaceLockPillView snapshot={snapshot} nowMs={Date.parse('2026-07-29T15:10:00.000Z')} />
+      <WorkspaceLockPillView
+        snapshot={snapshot}
+        nowMs={Date.parse('2026-07-29T15:10:00.000Z')}
+        onForceRelease={() => undefined}
+        recoveryMessage="Recovery requires a restart."
+      />
     )
 
     expect(html).toContain('1 active edit')
@@ -86,7 +91,25 @@ describe('WorkspaceLockPillView', () => {
     expect(html).toContain('Recovery paused')
     expect(html).toContain('Recovered safely')
     expect(html).toContain('kept this edit protected')
+    expect(html).toContain('Review force release…')
+    expect(html).toContain('Recovery requires a restart.')
     expect(html.toLowerCase()).not.toContain('conflict')
+  })
+
+  it('keeps the restart-required recovery result visible after the lock disappears', () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceLockPillView
+        snapshot={createWorkLockProjectionSnapshot({
+          generation: 5,
+          sampledAt: '2026-07-29T15:10:00.000Z',
+          locks: []
+        })}
+        recoveryMessage="The approved acquisition was released durably. Restart TaskWraith."
+      />
+    )
+
+    expect(html).toContain('workspace-lock-recovery-result--standalone')
+    expect(html).toContain('Restart TaskWraith.')
   })
 
   it('renders nothing for an empty projection', () => {

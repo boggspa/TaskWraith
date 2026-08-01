@@ -389,6 +389,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'work-locks:list': ['optionalObject'],
   'work-locks:subscribe': ['object'],
   'work-locks:unsubscribe': ['optionalObject'],
+  'work-locks:force-release-recovery': ['object'],
   'git:stage': ['optionalObject'],
   'git:unstage': ['optionalObject'],
   'git:commit': ['optionalObject'],

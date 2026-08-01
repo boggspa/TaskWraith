@@ -97,7 +97,9 @@ import {
   type WorkLockProjectionQuery,
   type WorkLockProjectionSnapshot,
   type WorkLockProjectionSubscribeResult,
-  type WorkLockProjectionUpdate
+  type WorkLockProjectionUpdate,
+  type WorkLockRecoveryRequest,
+  type WorkLockRecoveryResult
 } from '../shared/workLockProjection'
 import type {
   ChatPopoutRoundExpansionSnapshot,
@@ -676,6 +678,11 @@ const api = {
   },
   listWorkLocks: (query: WorkLockProjectionQuery = {}) =>
     ipcRenderer.invoke('work-locks:list', query) as Promise<WorkLockProjectionSnapshot>,
+  forceReleaseRecoveryBlockedWorkLock: (request: WorkLockRecoveryRequest) =>
+    ipcRenderer.invoke(
+      'work-locks:force-release-recovery',
+      request
+    ) as Promise<WorkLockRecoveryResult>,
   subscribeWorkLocks: (
     query: WorkLockProjectionQuery,
     callback: (update: WorkLockProjectionUpdate) => void

@@ -267,8 +267,15 @@ describe('IpcValidation', () => {
     expect(() =>
       validateIpcArgs('work-locks:unsubscribe', [{ subscriptionId: 'sub-1' }])
     ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('work-locks:force-release-recovery', [
+        { lockId: 'lock-1', workspacePath: '/repo', chatId: 'chat-1' }
+      ])
+    ).not.toThrow()
     expect(() => validateIpcArgs('work-locks:list', ['repo'])).toThrow(/object/)
     expect(() => validateIpcArgs('work-locks:subscribe', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('work-locks:force-release-recovery', [])).toThrow(/object/)
+    expect(() => validateIpcArgs('work-locks:force-release-recovery', ['lock-1'])).toThrow(/object/)
   })
 
   it('accepts registered and chat-scoped external diff targets', () => {

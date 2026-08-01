@@ -96,6 +96,33 @@ export interface WorkLockProjectionQuery {
   chatId?: string
 }
 
+export interface WorkLockRecoveryRequest extends WorkLockProjectionQuery {
+  /** Public lock id selected from the renderer-safe projection. */
+  lockId: string
+}
+
+export type WorkLockRecoveryFailureReason =
+  | 'invalid_request'
+  | 'not_found_or_forbidden'
+  | 'unavailable'
+  | 'owner_live'
+  | 'owner_identity_unavailable'
+  | 'cancelled'
+  | 'stale'
+  | 'release_failed'
+
+export type WorkLockRecoveryResult =
+  | {
+      ok: true
+      releasedLeaseCount: number
+      message: string
+    }
+  | {
+      ok: false
+      reason: WorkLockRecoveryFailureReason
+      message: string
+    }
+
 export interface WorkLockProjectionSubscribeRequest extends WorkLockProjectionQuery {
   subscriptionId: string
 }
