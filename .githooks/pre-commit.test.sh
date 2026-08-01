@@ -390,4 +390,84 @@ else
   exit 1
 fi
 
+# ── gitignored force-add guard ──────────────────────────────────────────────
+# `git add -f` is the only way a gitignored path reaches the index, and this
+# hook runs AFTER staging — at which point a plain `git check-ignore` reports
+# the path as NOT ignored, because it is now in the index. `--no-index` is
+# therefore load-bearing: without it the guard is vacuous and blocks nothing
+# while looking entirely correct. The first case below is what proves it fires;
+# the third is what proves it does not break the docs/how-to workflow.
+setup_ignored_repo() {
+  local name="$1" repo
+  repo="$(new_repo "$name")"
+  printf 'private/\n' > "$repo/.gitignore"
+  mkdir -p "$repo/private"
+  printf 'tracked despite the rule\n' > "$repo/private/force-added.md"
+  git -C "$repo" add .gitignore
+  git -C "$repo" add -f -- private/force-added.md
+  git -C "$repo" commit -qm ignored-baseline --no-verify
+  printf '%s' "$repo"
+}
+
+stage_ignored_new_file() {
+  local repo="$1"
+  mkdir -p "$repo/private"
+  printf 'e2ee review findings\n' > "$repo/private/dossier.md"
+  git -C "$repo" add -f -- private/dossier.md
+}
+
+repo="$(setup_ignored_repo ignored-add-blocks)"
+stage_ignored_new_file "$repo"
+expect_block 'force-adding a gitignored path blocks' "$repo"
+
+repo="$(setup_ignored_repo ignored-add-ordinary)"
+stage_new_file "$repo" src/ordinary.ts
+expect_allow 'an ordinary new file is unaffected' "$repo"
+
+# `git add -- <path>` REFUSES a tracked-but-ignored file ("paths are ignored,
+# use -f"); only `-u` or `-f` stages it. That is the real docs/how-to workflow,
+# so it is what this case must exercise — the guard must let the resulting
+# status-M change through untouched.
+repo="$(setup_ignored_repo ignored-add-tracked-modify)"
+printf 'staged change\n' >> "$repo/private/force-added.md"
+git -C "$repo" add -u -- private/force-added.md
+expect_allow 'modifying an already-tracked ignored path still passes' "$repo"
+
+# The same edit staged with -f is still a modification, not an addition, so it
+# must also pass — otherwise the guard would fire on ordinary docs edits.
+repo="$(setup_ignored_repo ignored-modify-via-force)"
+printf 'staged change\n' >> "$repo/private/force-added.md"
+git -C "$repo" add -f -- private/force-added.md
+expect_allow 'a -f staged MODIFICATION is not an addition and still passes' "$repo"
+
+repo="$(setup_ignored_repo ignored-add-tracked-delete)"
+git -C "$repo" rm -q -- private/force-added.md
+expect_allow 'deleting an already-tracked ignored path still passes' "$repo"
+
+# The two overrides must stay distinct. Overriding a coordination conflict must
+# never also authorise publishing a private document to a public remote.
+repo="$(setup_ignored_repo ignored-add-claimed-override)"
+stage_ignored_new_file "$repo"
+if (
+  cd "$repo"
+  TW_ALLOW_CLAIMED=1 .githooks/pre-commit
+) >/dev/null 2>&1; then
+  printf 'FAIL: TW_ALLOW_CLAIMED must NOT bypass the gitignored force-add guard\n' >&2
+  exit 1
+else
+  assertions=$((assertions + 1))
+fi
+
+repo="$(setup_ignored_repo ignored-add-own-override)"
+stage_ignored_new_file "$repo"
+if (
+  cd "$repo"
+  TW_ALLOW_IGNORED_ADD=1 .githooks/pre-commit
+) >/dev/null 2>&1; then
+  assertions=$((assertions + 1))
+else
+  printf 'FAIL: TW_ALLOW_IGNORED_ADD no longer overrides the gitignored force-add guard\n' >&2
+  exit 1
+fi
+
 printf 'pre-commit marker tests passed (%s assertions)\n' "$assertions"

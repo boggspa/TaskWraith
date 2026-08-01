@@ -29,6 +29,10 @@ done < <(git diff --cached -z --name-only --no-renames --diff-filter=ACDMRT)
 warn=0
 block=0
 derived_runtime_recovery_block=0
+# Tracked separately from `block` so the closing advice names the right
+# override. A private-publish refusal must never be answered with
+# TW_ALLOW_CLAIMED, which does not lift it.
+claim_block=0
 
 # ── epoch helper: GNU and BSD date disagree; unparseable means "do not block".
 to_epoch() {
@@ -231,6 +235,7 @@ report_live_overlap() {
       "$path" "$claim_pid" "${claim_agent:-unknown agent}"
     printf '           claim: %s%s\n' "$marker" "$scope"
     block=1
+    claim_block=1
   else
     printf '  override: committing %s despite live claim in %s%s\n' \
       "$path" "$marker" "$scope"
@@ -239,6 +244,65 @@ report_live_overlap() {
 }
 
 now="$(date -u +%s)"
+
+# ── 0. BLOCK: force-adding a gitignored path into a public repository ───────
+# `origin` is PUBLIC, and `docs/` is gitignored-but-tracked: 176 files were
+# force-added long ago, so the ignore rule protects only the ~19 that never
+# were — among them docs/security/**, which holds the e2ee review dossier and
+# findings. Gitignore cannot defend those on its own, because `git add -f`
+# overrides it by definition and the resulting commit looks like routine docs
+# work.
+#
+# The rule is DERIVED, not a list of paths, so a private document written
+# tomorrow is covered the day it exists: an ADDED path that git itself calls
+# ignored can only have arrived via `-f`, and a force-add into a public repo
+# should be a decision rather than a side effect. Only status-A paths are
+# examined, so modifying or deleting the 176 already-tracked docs files is
+# untouched and the docs/how-to workflow is unaffected.
+#
+# LANDMINE: `--no-index` is load-bearing. This hook runs AFTER staging, and a
+# plain `git check-ignore` reports an already-staged path as NOT ignored
+# because the index now contains it — so without `--no-index` this guard never
+# fires even once while looking completely correct.
+#
+# This is the second condition that blocks, against the narrowness rule above,
+# because the two failures are not comparable: a claim collision is recovered
+# by coordinating, and a security review published to a public remote cannot
+# be recalled at all. Its override is deliberately SEPARATE from
+# TW_ALLOW_CLAIMED, so waving through a coordination conflict never also
+# authorises a publish.
+#
+# Override once: TW_ALLOW_IGNORED_ADD=1 git commit ...
+added_paths=()
+while IFS= read -r -d '' added_path; do
+  added_paths[${#added_paths[@]}]="$added_path"
+done < <(git diff --cached -z --name-only --no-renames --diff-filter=A)
+
+if [ "${#added_paths[@]}" -gt 0 ]; then
+  for added_path in "${added_paths[@]}"; do
+    [ -n "$added_path" ] || continue
+    ignore_status=0
+    git check-ignore -q --no-index -- "$added_path" 2>/dev/null || ignore_status=$?
+    # 1 means "not ignored" — the ordinary case, and the only silent one.
+    [ "$ignore_status" -eq 1 ] && continue
+    if [ "$ignore_status" -ne 0 ]; then
+      printf '  note: could not evaluate ignore status for %s (git exit %s).\n' \
+        "$added_path" "$ignore_status"
+      warn=1
+      continue
+    fi
+    if [ -n "${TW_ALLOW_IGNORED_ADD:-}" ]; then
+      printf '  override: publishing gitignored %s to a public repository.\n' "$added_path"
+      warn=1
+      continue
+    fi
+    printf '\n  BLOCKED  %s is gitignored and is being ADDED to a public repo\n' "$added_path"
+    printf '           A gitignored path reaches the index only through `git add -f`.\n'
+    printf '           Unstage it with `git restore --staged -- %s`, or, if it is\n' "$added_path"
+    printf '           genuinely meant to be published, re-run with TW_ALLOW_IGNORED_ADD=1.\n'
+    block=1
+  done
+fi
 
 # ── 1. BLOCK: staging a path claimed by another LIVE session ────────────────
 # Manual markers are promises and remain live only while their owner exists and
@@ -545,9 +609,13 @@ if [ "$block" -eq 1 ]; then
     printf '\n  A runtime-derived workspace lock needs TaskWraith recovery reconciliation.\n'
     printf '  Restart TaskWraith and inspect the lock owner before forcing any override.\n'
     printf '  Re-run with TW_ALLOW_CLAIMED=1 only after you prove the durable claim is wrong.\n\n'
-  else
+  elif [ "$claim_block" -eq 1 ]; then
     printf '\n  Another session is editing that file right now. Coordinate, pick different\n'
     printf '  work, or re-run with TW_ALLOW_CLAIMED=1 if you know the claim is wrong.\n\n'
+  else
+    # Section 0 already printed the path, the cause, and both remedies. Adding
+    # the claim advice here would name an override that does not lift it.
+    printf '\n'
   fi
   exit 1
 fi
