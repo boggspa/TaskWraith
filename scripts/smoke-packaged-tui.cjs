@@ -581,11 +581,23 @@ async function runPackagedHostLiveRoundTrip(packageRoot, packageTarget, launcher
   } finally {
     if (appPid) await stopProcess(appPid)
     if (app) await stopChild(app)
-    fs.rmSync(userDataPath, { recursive: true, force: true })
+    removeSmokeTree(userDataPath)
     if (smokePackageRoot !== packageRoot) {
-      fs.rmSync(smokePackageRoot, { recursive: true, force: true })
+      removeSmokeTree(smokePackageRoot)
     }
   }
+}
+
+function removeSmokeTree(targetPath) {
+  // Electron utility processes can briefly retain Chromium profile files on
+  // Windows after the packaged App exits. Keep cleanup fail-closed, but allow
+  // Node's bounded EBUSY/EPERM retry path to wait for those handles to close.
+  fs.rmSync(targetPath, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100
+  })
 }
 
 /**

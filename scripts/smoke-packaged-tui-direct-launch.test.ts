@@ -23,4 +23,15 @@ describe('packaged TUI disposable macOS host launch', () => {
 
     expect(source).toContain('...invocation.spawnOptions')
   })
+
+  it('bounds retries while Windows releases disposable Chromium profile files', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'scripts', 'smoke-packaged-tui.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('removeSmokeTree(userDataPath)')
+    expect(source).toContain('maxRetries: 10')
+    expect(source).toContain('retryDelay: 100')
+  })
 })
