@@ -53,6 +53,7 @@ const requirePackagedHost = process.env.TASKWRAITH_TUI_REQUIRE_PACKAGED_HOST ===
 const skipPackagedHost = process.env.TASKWRAITH_TUI_SKIP_PACKAGED_HOST === '1'
 const helpTimeoutMs = readIntegerEnv('TASKWRAITH_TUI_SMOKE_TIMEOUT_MS', 15000)
 const liveTimeoutMs = readIntegerEnv('TASKWRAITH_TUI_LIVE_SMOKE_TIMEOUT_MS', 40000)
+const bundleCopyTimeoutMs = readIntegerEnv('TASKWRAITH_TUI_BUNDLE_COPY_TIMEOUT_MS', 180000)
 
 main().catch((error) => {
   const message =
@@ -796,7 +797,7 @@ function isRecoverablePackagedHostFailure(message) {
   }
   // Packaged App never reached control readiness (modal hang, registration abort, etc.).
   if (
-    /timed out waiting for packaged App local control|exited before local control|clone packaged App|ad-hoc sign packaged App/i.test(
+    /timed out waiting for packaged App local control|exited before local control|(?:clone|copy) packaged App|ad-hoc sign packaged App/i.test(
       text
     )
   ) {
@@ -821,11 +822,18 @@ function summarizeFailure(message) {
 function prepareDarwinSmokeBundle(packageRoot, userDataPath) {
   // A second running copy with the release bundle identifier can collide in
   // Launch Services before Electron reaches our disposable-profile flags.
-  // Clone the package, give only the clone a smoke identity, and ad-hoc sign
-  // it. That unique signed clone is safe to launch through its inner binary;
+  // Copy the package, give only the copy a smoke identity, and ad-hoc sign it.
+  // `ditto` works both for an ordinary build directory and across the read-only
+  // mounted-DMG boundary where APFS clonefile (`cp -c`) fails with EXDEV.
+  // That unique signed copy is safe to launch through its inner binary;
   // the verified release artifact remains byte-for-byte untouched.
   const smokePackageRoot = `${userDataPath}.app`
-  runChecked('/bin/cp', ['-cR', packageRoot, smokePackageRoot], 'clone packaged App for smoke')
+  runChecked(
+    '/usr/bin/ditto',
+    [packageRoot, smokePackageRoot],
+    'copy packaged App for smoke',
+    bundleCopyTimeoutMs
+  )
   const infoPlist = path.join(smokePackageRoot, 'Contents', 'Info.plist')
   const smokeBundleIdentifier = `com.chrisizatt.taskwraith.package-smoke.${process.pid}.${Date.now()}`
   runChecked(
@@ -841,10 +849,10 @@ function prepareDarwinSmokeBundle(packageRoot, userDataPath) {
   return smokePackageRoot
 }
 
-function runChecked(command, commandArgs, label) {
+function runChecked(command, commandArgs, label, timeoutMs = helpTimeoutMs) {
   const result = spawnSync(command, commandArgs, {
     encoding: 'utf8',
-    timeout: helpTimeoutMs
+    timeout: timeoutMs
   })
   if (result.error) fail(`${label} failed to spawn: ${result.error.message}`)
   if (result.status !== 0) {

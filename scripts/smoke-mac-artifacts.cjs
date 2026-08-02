@@ -48,6 +48,26 @@ function runChecked(command, args, options, label) {
   return result
 }
 
+function sleepSync(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+function detachMountedImage(
+  mountPoint,
+  { maxAttempts = 6, run = spawnSync, wait = sleepSync } = {}
+) {
+  let result
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    result = run('hdiutil', ['detach', mountPoint], {
+      encoding: 'utf8',
+      timeout: 30_000
+    })
+    if (result.status === 0) return result
+    if (attempt < maxAttempts) wait(250 * 2 ** (attempt - 1))
+  }
+  return result
+}
+
 function verifyAndSmokeApp(appPath, repoRoot, label) {
   runChecked(
     'codesign',
@@ -89,6 +109,7 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
   const zipRoot = path.join(tempRoot, 'zip')
   const mountPoint = path.join(tempRoot, 'dmg')
   let mounted = false
+  let cleanupError = null
 
   try {
     fs.mkdirSync(zipRoot)
@@ -112,20 +133,25 @@ function runCli(argv = process.argv.slice(2), repoRoot = process.cwd()) {
     verifyAndSmokeApp(dmgApp, repoRoot, 'mounted DMG app')
   } finally {
     if (mounted) {
-      const detach = spawnSync('hdiutil', ['detach', mountPoint], {
-        encoding: 'utf8',
-        timeout: 30_000
-      })
+      const detach = detachMountedImage(mountPoint)
       if (detach.status !== 0) {
-        console.error(
-          `[smoke-mac-artifacts] warning: could not detach ${mountPoint}: ${
-            detach.stderr || detach.stdout || detach.error || 'unknown error'
-          }`
+        cleanupError = new Error(
+          `could not detach ${mountPoint}: ${detach.stderr || detach.stdout || detach.error || 'unknown error'}`
         )
+      } else {
+        mounted = false
       }
     }
-    fs.rmSync(tempRoot, { recursive: true, force: true })
+    if (!mounted) {
+      try {
+        fs.rmSync(tempRoot, { recursive: true, force: true })
+      } catch (error) {
+        cleanupError ??= error
+      }
+    }
   }
+
+  if (cleanupError) throw cleanupError
 
   console.log('[smoke-mac-artifacts] ZIP and DMG containers passed integrity and payload smoke')
   return 0
@@ -149,6 +175,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  detachMountedImage,
   findTaskWraithApp,
   resolveMacArtifacts,
   runCli
