@@ -2385,6 +2385,18 @@
   background: var(--provider-ollama-color);
   box-shadow: 0 0 6px color-mix(in srgb, var(--provider-ollama-color) 50%, transparent);
 }
+.welcome-usage-provider-card-dot.provider-antigravity {
+  background: var(--provider-antigravity-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-antigravity-color) 50%, transparent);
+}
+.welcome-usage-provider-card-dot.provider-pi {
+  background: var(--provider-pi-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-pi-color) 50%, transparent);
+}
+.welcome-usage-provider-card-dot.provider-mistral {
+  background: var(--provider-mistral-color);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--provider-mistral-color) 50%, transparent);
+}
 .welcome-usage-provider-card-totals {
   display: flex;
   align-items: baseline;
@@ -2441,6 +2453,15 @@
 }
 .welcome-usage-provider-card-fill.provider-ollama {
   background: linear-gradient(90deg, color-mix(in srgb, var(--provider-ollama-color) 70%, transparent), var(--provider-ollama-color));
+}
+.welcome-usage-provider-card-fill.provider-antigravity {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-antigravity-color) 70%, transparent), var(--provider-antigravity-color));
+}
+.welcome-usage-provider-card-fill.provider-pi {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-pi-color) 70%, transparent), var(--provider-pi-color));
+}
+.welcome-usage-provider-card-fill.provider-mistral {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--provider-mistral-color) 70%, transparent), var(--provider-mistral-color));
 }
 
 /* Giant 24H wall-time timecode. The single dominant glyph of

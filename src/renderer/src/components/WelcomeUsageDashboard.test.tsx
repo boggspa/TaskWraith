@@ -23,7 +23,7 @@ const modelComparisonHueClasses = [
   ...Object.values(PI_UPSTREAM_BRANDS).map((brand) => brand.hueClass)
 ]
 
-describe('WelcomeUsageDashboard model comparisons', () => {
+describe('WelcomeUsageDashboard', () => {
   it('keeps dashboard meter-card chrome isolated from the Settings table', () => {
     const now = Date.parse('2026-07-11T03:30:00.000Z')
     const record: UsageRecord = {
@@ -67,6 +67,24 @@ describe('WelcomeUsageDashboard model comparisons', () => {
             `\\.welcome-usage-model-meter-fill\\.provider-${hueClass},\\s*` +
             `\\.welcome-usage-bar-segment\\.provider-${hueClass}\\s*` +
             `\\{\\s*color: var\\(--provider-${hueClass}-color\\);\\s*\\}`
+        )
+      )
+    }
+  )
+
+  it.each(['antigravity', 'pi', 'mistral'] as const)(
+    '%s paints its Providers-tab dot and meter fill with its provider hue',
+    (provider) => {
+      expect(modelComparisonCss).toMatch(
+        new RegExp(
+          `\\.welcome-usage-provider-card-dot\\.provider-${provider}\\s*\\{[^}]*` +
+            `var\\(--provider-${provider}-color\\)[^}]*\\}`
+        )
+      )
+      expect(modelComparisonCss).toMatch(
+        new RegExp(
+          `\\.welcome-usage-provider-card-fill\\.provider-${provider}\\s*\\{[^}]*` +
+            `var\\(--provider-${provider}-color\\)[^}]*\\}`
         )
       )
     }
