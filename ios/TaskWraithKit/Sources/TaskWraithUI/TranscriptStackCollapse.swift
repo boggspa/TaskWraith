@@ -94,9 +94,10 @@ public func twCanCollapseIntoStack(_ row: RemoteThreadSnapshot.Row) -> Bool {
 }
 
 /// Plain system notices ("@-mention: extra turn appended…", round-close
-/// markers) collapse to one line. Special system surfaces keep their full
-/// rendering: context-compaction cards, question/plan/health/sub-thread
-/// cards, and rows with media attachments.
+/// markers, and context-compaction records) collapse to one line. Expanding
+/// a compaction record restores its full card. Interactive/special surfaces
+/// (question/plan/health/sub-thread cards) and rows with media attachments
+/// keep their full rendering.
 public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard row.role == "system" || row.kind == "system" else { return false }
     guard let preview = row.preview, !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -106,8 +107,6 @@ public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard (row.thinking?.preview ?? "").isEmpty else { return false }
     guard (row.media ?? []).isEmpty, (row.imageThumbnails ?? []).isEmpty,
         (row.imageAttachmentCount ?? 0) == 0
-    else { return false }
-    guard !ContextCompactionSummaryCard.matches(preview: preview, role: row.role, kind: row.kind)
     else { return false }
     return true
 }
