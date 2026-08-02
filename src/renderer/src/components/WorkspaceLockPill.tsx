@@ -6,7 +6,10 @@ import {
   countActiveWorkLocks,
   type WorkLockDisplayRow
 } from '../lib/workLockProjection'
-import type { WorkLockProjectionSnapshot } from '../../../shared/workLockProjection'
+import {
+  workspaceLockRecoveryMessage,
+  type WorkLockProjectionSnapshot
+} from '../../../shared/workLockProjection'
 import { getProviderLabel } from '../lib/providerLabels'
 import {
   resolveWorkspaceLockPopoverPosition,
@@ -268,7 +271,7 @@ export function WorkspaceLockPill({
         workspacePath,
         ...(chatId ? { chatId } : {})
       })
-      setRecoveryMessage(result.message)
+      setRecoveryMessage(workspaceLockRecoveryMessage(result))
     } catch {
       setRecoveryMessage('Workspace-lock recovery could not be requested.')
     } finally {

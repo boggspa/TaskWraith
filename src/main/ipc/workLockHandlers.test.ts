@@ -95,6 +95,7 @@ function setup(overrides: Partial<WorkLockHandlerDeps> = {}) {
     forceReleaseRecovery: vi.fn(async () => ({
       ok: true as const,
       releasedLeaseCount: 1,
+      attentionRequired: false,
       message: 'released'
     })),
     ...overrides
@@ -129,6 +130,7 @@ describe('registerWorkLockHandlers', () => {
     const forceReleaseRecovery = vi.fn(async () => ({
       ok: true as const,
       releasedLeaseCount: 1,
+      attentionRequired: false,
       message: 'released'
     }))
     setup({ list: vi.fn(() => recovery), forceReleaseRecovery })

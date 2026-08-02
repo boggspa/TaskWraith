@@ -229,6 +229,7 @@ export async function recoverWorkspaceLock(
     return {
       ok: true,
       releasedLeaseCount: released.released.length,
+      attentionRequired: true,
       message:
         'The approved acquisition was released durably, but mutation admission remains fail-closed because runtime integrity could not be re-established. Restart TaskWraith before starting another write-capable run.'
     }
@@ -238,6 +239,7 @@ export async function recoverWorkspaceLock(
     return {
       ok: true,
       releasedLeaseCount: released.released.length,
+      attentionRequired: true,
       message: `The approved acquisition was released durably. This run still has ${remainingLeaseCount} protected lease${remainingLeaseCount === 1 ? '' : 's'}; release its remaining recovery-blocked acquisition before starting a conflicting write. No restart is required.`
     }
   }
@@ -245,6 +247,7 @@ export async function recoverWorkspaceLock(
   return {
     ok: true,
     releasedLeaseCount: released.released.length,
+    attentionRequired: false,
     message:
       'The approved acquisition was released durably. Write-capable runs can start immediately; no restart is required.'
   }

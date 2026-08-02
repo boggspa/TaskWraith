@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
   createWorkLockProjectionSnapshot,
-  type WorkLockProjectionSource
+  type WorkLockProjectionSource,
+  workspaceLockRecoveryMessage
 } from '../../../shared/workLockProjection'
 import { WorkspaceLockPillView } from './WorkspaceLockPill'
 import { resolveWorkspaceLockPopoverPosition } from '../lib/workspaceLockPopoverPosition'
@@ -44,6 +45,32 @@ function lock(overrides: Partial<WorkLockProjectionSource> = {}): WorkLockProjec
 }
 
 describe('WorkspaceLockPillView', () => {
+  it('hides resolved release notices while retaining actionable recovery feedback', () => {
+    expect(
+      workspaceLockRecoveryMessage({
+        ok: true,
+        releasedLeaseCount: 1,
+        attentionRequired: false,
+        message: 'Write-capable runs can start immediately.'
+      })
+    ).toBeNull()
+    expect(
+      workspaceLockRecoveryMessage({
+        ok: true,
+        releasedLeaseCount: 1,
+        attentionRequired: true,
+        message: 'Restart TaskWraith.'
+      })
+    ).toBe('Restart TaskWraith.')
+    expect(
+      workspaceLockRecoveryMessage({
+        ok: false,
+        reason: 'release_failed',
+        message: 'The acquisition remains protected.'
+      })
+    ).toBe('The acquisition remains protected.')
+  })
+
   it('renders a compact satellite trigger for active workspace edits', () => {
     const snapshot = createWorkLockProjectionSnapshot({
       generation: 2,

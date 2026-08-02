@@ -115,6 +115,7 @@ export type WorkLockRecoveryResult =
   | {
       ok: true
       releasedLeaseCount: number
+      attentionRequired: boolean
       message: string
     }
   | {
@@ -122,6 +123,11 @@ export type WorkLockRecoveryResult =
       reason: WorkLockRecoveryFailureReason
       message: string
     }
+
+export function workspaceLockRecoveryMessage(result: WorkLockRecoveryResult): string | null {
+  if (result.ok && !result.attentionRequired) return null
+  return result.message
+}
 
 export interface WorkLockProjectionSubscribeRequest extends WorkLockProjectionQuery {
   subscriptionId: string

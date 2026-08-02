@@ -55,6 +55,7 @@ describe('recoverWorkspaceLock', () => {
     expect(result).toEqual({
       ok: true,
       releasedLeaseCount: 0,
+      attentionRequired: false,
       message:
         'The approved acquisition was released durably. Write-capable runs can start immediately; no restart is required.'
     })
@@ -88,6 +89,7 @@ describe('recoverWorkspaceLock', () => {
 
     expect(result).toMatchObject({
       ok: true,
+      attentionRequired: true,
       message:
         'The approved acquisition was released durably. This run still has 2 protected leases; release its remaining recovery-blocked acquisition before starting a conflicting write. No restart is required.'
     })
@@ -107,6 +109,7 @@ describe('recoverWorkspaceLock', () => {
 
     expect(result).toMatchObject({
       ok: true,
+      attentionRequired: true,
       message:
         'The approved acquisition was released durably, but mutation admission remains fail-closed because runtime integrity could not be re-established. Restart TaskWraith before starting another write-capable run.'
     })
@@ -128,6 +131,7 @@ describe('recoverWorkspaceLock', () => {
 
     expect(result).toMatchObject({
       ok: true,
+      attentionRequired: true,
       message: expect.stringContaining('Restart TaskWraith')
     })
     expect(onReconciliationFailure).toHaveBeenCalledWith(

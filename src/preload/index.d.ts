@@ -2182,7 +2182,9 @@ declare global {
       getRunEventReplay: (runId: string) => Promise<RunEventReplay>
       analyzeRun: (request: RunAnalystRequest) => Promise<RunAnalystSnapshot>
       summarizeCloseout: (request: CloseoutSummaryRequest) => Promise<CloseoutSummarySnapshot>
-      proposeContinuation: (request: ContinuationProposalRequest) => Promise<ContinuationProposalSnapshot>
+      proposeContinuation: (
+        request: ContinuationProposalRequest
+      ) => Promise<ContinuationProposalSnapshot>
       getApprovalLedger: (filter?: ApprovalLedgerFilter) => Promise<ApprovalLedgerRecord[]>
       recordApprovalElevationAck: (input: {
         provider: string

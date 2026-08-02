@@ -151,7 +151,7 @@ export function deriveComposerSuggestionCandidates(
 
   return candidatesInPriorityOrder(ctx).filter(
     (candidate): candidate is ComposerSuggestionCandidate =>
-      Boolean(candidate) && !ctx.dismissedIds.has(candidate.suggestion.id)
+      candidate !== null && !ctx.dismissedIds.has(candidate.suggestion.id)
   )
 }
 

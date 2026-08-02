@@ -273,14 +273,14 @@ export function useComposerSuggestion(
     retire(suggestion.id)
     acceptedSuggestionRef.current = { chatId, text: suggestionText }
     return suggestionText
-  }, [chatId, retire, suggestion, suggestionText])
+  }, [chatId, retire, setPersonalization, suggestion, suggestionText])
 
   const dismiss = useCallback((): void => {
     if (!suggestion) return
     recordComposerSuggestionEvent(suggestion.trigger, 'dismissed')
     setPersonalization(recordComposerSuggestionFeedback(chatId, suggestion.trigger, 'dismissed'))
     retire(suggestion.id)
-  }, [chatId, retire, suggestion])
+  }, [chatId, retire, setPersonalization, suggestion])
 
   const observeSentDraft = useCallback(
     (sentDraft: string): void => {
@@ -289,12 +289,14 @@ export function useComposerSuggestion(
         recordComposerSuggestionSentPrompt(
           chatId,
           sentDraft,
-          acceptedSuggestion?.chatId === chatId ? acceptedSuggestion.text : null
+          acceptedSuggestion && acceptedSuggestion.chatId === chatId
+            ? acceptedSuggestion.text
+            : null
         )
       )
       acceptedSuggestionRef.current = null
     },
-    [chatId]
+    [chatId, setPersonalization]
   )
 
   const explanation = suggestion
