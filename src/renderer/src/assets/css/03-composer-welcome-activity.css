@@ -5975,6 +5975,49 @@
   overflow-wrap: anywhere;
 }
 
+.composer-goal-markdown > :first-child {
+  margin-top: 0;
+}
+
+.composer-goal-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.composer-goal-markdown :is(p, ul, ol, blockquote, pre, .markdown-table-scroll) {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.composer-goal-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 6px;
+  color: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1.3;
+}
+
+.composer-goal-markdown :is(ul, ol) {
+  padding-inline-start: 22px;
+}
+
+.composer-goal-markdown li + li {
+  margin-top: 3px;
+}
+
+.composer-goal-markdown blockquote {
+  padding-left: 8px;
+  border-left: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+  color: color-mix(in srgb, currentColor 88%, transparent);
+}
+
+.composer-goal-markdown :is(pre, .message-code-shell, .markdown-table-scroll) {
+  max-width: 100%;
+  overflow: auto;
+}
+
+.composer-goal-markdown a {
+  color: var(--accent);
+}
+
 .composer-goal-reason {
   color: color-mix(in srgb, var(--text-secondary) 88%, transparent);
 }

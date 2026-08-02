@@ -76,6 +76,7 @@ import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { ComposerAboveRowsToggleButton } from '../components/ComposerAboveRowsToggleButton'
+import { GoalPopoverMarkdown } from './GoalPopoverMarkdown'
 import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
@@ -5140,7 +5141,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                            className="composer-goal-textarea"
 	                            value={goalDraft}
 	                            onChange={(event) => setGoalDraft(event.target.value)}
-	                            placeholder="Describe the objective and stopping condition"
+                            placeholder="Describe the objective and stopping condition (Markdown supported)"
 	                            aria-label="Goal objective"
 	                            rows={3}
 	                            maxLength={MAX_ACTIVE_GOAL_OBJECTIVE_CHARS}
@@ -5171,12 +5172,16 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                          <div className={`composer-goal-status is-${currentActiveGoal.status}`}>
 	                            {currentActiveGoal.status}
 	                          </div>
-	                          <p className="composer-goal-objective">{currentActiveGoal.objective}</p>
-	                          {currentActiveGoal.blockedReason && (
-	                            <p className="composer-goal-reason">
-	                              {currentActiveGoal.blockedReason}
-	                            </p>
-	                          )}
+                          <GoalPopoverMarkdown
+                            className="composer-goal-objective"
+                            content={currentActiveGoal.objective}
+                          />
+                          {currentActiveGoal.blockedReason && (
+                            <GoalPopoverMarkdown
+                              className="composer-goal-reason"
+                              content={currentActiveGoal.blockedReason}
+                            />
+                          )}
 	                          {goalRuntimeLabel && (
 	                            <p className="composer-goal-runtime">{goalRuntimeLabel}</p>
 	                          )}
