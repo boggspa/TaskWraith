@@ -29,9 +29,10 @@ const MISTRAL_CYCLE_START = new Date('2026-07-01T00:00:00.000Z')
 
 function mistralSnapshot(
   spentUsd: number,
-  source: 'estimated' | 'mistral' = 'estimated'
+  source: 'estimated' | 'mistral' = 'estimated',
+  localAfterReadingUsd = 0
 ): MistralQuotaSnapshot {
-  const cycle =
+  let cycle =
     source === 'mistral'
       ? applyAnchor(startCycle(MISTRAL_CYCLE_START), {
           allowanceUsd: 10,
@@ -43,6 +44,9 @@ function mistralSnapshot(
           costUsd: spentUsd,
           totalTokens: 200_000
         })
+  if (source === 'mistral' && localAfterReadingUsd > 0) {
+    cycle = accumulate(cycle, { costUsd: localAfterReadingUsd, totalTokens: 1_000 })
+  }
   const plan = source === 'mistral' ? 'pro' : 'unknown'
   return {
     estimate: estimateQuota(cycle, plan, MISTRAL_CYCLE_START),
@@ -651,6 +655,20 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('$8.00 of $10.00')
     expect(html).toContain('Mistral-sourced figures')
     expect(html).not.toContain('provider-mistral is-warning is-estimated')
+  })
+
+  it('shows a post-reading local increment instead of leaving the compact figure frozen', () => {
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[]}
+        mistralQuota={{ snapshot: mistralSnapshot(0.19, 'mistral', 0.004), loading: false }}
+      />
+    )
+
+    expect(html).toContain('>~$0.194</td>')
+    expect(html).toContain('+ ~$0.004 tracked locally since reading')
+    expect(html).toContain('Mistral baseline + local estimate')
+    expect(html).toContain('provider-mistral is-estimated')
   })
 })
 

@@ -256,8 +256,14 @@ describe('applyAnchor — the user reads their own console', () => {
     c = accumulate(c, { costUsd: 0.5, totalTokens: 1000 })
     c = accumulate(c, { costUsd: 0.25, totalTokens: 1000 })
     // 0.31 from the console + 0.75 observed since. The pre-anchor $4 stays out.
-    expect(estimateQuota(c, 'pro', T0).spentUsd).toBeCloseTo(1.06, 6)
-    expect(estimateQuota(c, 'pro', T0).confidence).toBe('anchored')
+    const estimate = estimateQuota(c, 'pro', T0)
+    expect(estimate.spentUsd).toBeCloseTo(1.06, 6)
+    expect(estimate.locallyEstimatedSinceReadingUsd).toBeCloseTo(0.75, 6)
+    expect(estimate.confidence).toBe('anchored')
+    // The console baseline is real, but the combined total is now mixed with a
+    // local projection and must visibly regain its estimate hedge.
+    expect(estimate.vendorReported).toBe(false)
+    expect(estimate.label).toContain('(estimated)')
   })
 
   it('never goes backwards if local accumulation is somehow below the watermark', () => {
@@ -362,6 +368,18 @@ describe('applyReport — the Admin API answered', () => {
     expect(e.ceilingConfidence).toBe('reported')
     expect(e.vendorReported).toBe(true)
     expect(e.label).not.toContain('(estimated)')
+  })
+
+  it('adds locally observed turns after an Admin report without double-counting earlier turns', () => {
+    let c = applyReport(cycleWith(4), { ...REPORT, allowanceUsd: 50 })
+    expect(c.report?.localSpentUsdAtReport).toBe(4)
+    c = accumulate(c, { costUsd: 0.5, totalTokens: 1000 })
+    const e = estimateQuota(c, 'pro', T0)
+    expect(e.spentUsd).toBeCloseTo(3.77, 6)
+    expect(e.locallyEstimatedSinceReadingUsd).toBeCloseTo(0.5, 6)
+    expect(e.confidence).toBe('reported')
+    expect(e.vendorReported).toBe(false)
+    expect(e.label).toContain('(estimated)')
   })
 
   it('is not overridden by a recorded limit event', () => {

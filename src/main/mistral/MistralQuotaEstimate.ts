@@ -132,6 +132,13 @@ export interface MistralQuotaReport {
   /** Spend for the reported period, in USD. */
   readonly spentUsd: number
   /**
+   * `cycle.spentUsd` when this report was applied. The Admin API reading already
+   * includes everything before that watermark; only later local estimates may
+   * be added on top. Optional for schema-v1 files written before the watermark
+   * existed — those safely show the report alone until the next refresh.
+   */
+  readonly localSpentUsdAtReport?: number
+  /**
    * Entitlement, when the response carries one. The documented usage endpoint
    * reports CONSUMPTION only, so expect this to be absent and the ceiling to
    * fall through to the anchor or the seed.
@@ -276,6 +283,12 @@ export interface MistralQuotaEstimate {
    *  UI how much to trust it. */
   readonly usedPercent: number
   readonly spentUsd: number
+  /**
+   * Estimated spend observed locally after the latest console/Admin reading.
+   * This is broken out so renderers can show that a low-cost Devstral turn is
+   * moving the total even when ordinary two-decimal currency rounding hides it.
+   */
+  readonly locallyEstimatedSinceReadingUsd: number
   readonly estimatedCeilingUsd: number
   /**
    * Confidence in the SPEND figure — the number the user actually watches.
@@ -379,7 +392,7 @@ export function applyReport(
   const allowanceUsd = positiveOrZero(report.allowanceUsd ?? 0)
   return {
     ...cycle,
-    report,
+    report: { ...report, localSpentUsdAtReport: cycle.spentUsd },
     ...(allowanceUsd > 0 ? { knownAllowanceUsd: allowanceUsd } : {})
   }
 }
@@ -546,9 +559,13 @@ function bandFor(fraction: number): MistralQuotaBand {
 function labelFor(
   band: MistralQuotaBand,
   spent: MistralQuotaConfidence,
-  ceiling: MistralQuotaConfidence
+  ceiling: MistralQuotaConfidence,
+  hasLocalEstimateSinceReading = false
 ): string {
-  const measured = isVendorReportedConfidence(spent) && isVendorReportedConfidence(ceiling)
+  const measured =
+    !hasLocalEstimateSinceReading &&
+    isVendorReportedConfidence(spent) &&
+    isVendorReportedConfidence(ceiling)
   const hedge = measured || (spent === 'learned' && ceiling === 'learned') ? '' : ' (estimated)'
   switch (band) {
     case 'exceeded':
@@ -575,12 +592,19 @@ function labelFor(
  */
 function resolveSpend(cycle: MistralQuotaCycle): {
   spentUsd: number
+  locallyEstimatedSinceReadingUsd: number
   source: MistralQuotaFigureSource
 } {
   const report = cycle.report
   if (report && Number.isFinite(report.spentUsd)) {
+    const watermark = report.localSpentUsdAtReport
+    const sinceReport =
+      typeof watermark === 'number' && Number.isFinite(watermark)
+        ? Math.max(0, cycle.spentUsd - watermark)
+        : 0
     return {
-      spentUsd: Math.max(0, report.spentUsd),
+      spentUsd: Math.max(0, report.spentUsd + sinceReport),
+      locallyEstimatedSinceReadingUsd: sinceReport,
       source: {
         confidence: 'reported',
         ...(report.declared
@@ -595,6 +619,7 @@ function resolveSpend(cycle: MistralQuotaCycle): {
     const sinceAnchor = Math.max(0, cycle.spentUsd - anchor.localSpentUsdAtAnchor)
     return {
       spentUsd: Math.max(0, anchor.spentUsd + sinceAnchor),
+      locallyEstimatedSinceReadingUsd: sinceAnchor,
       source: {
         confidence: 'anchored',
         ...(anchor.declared
@@ -606,6 +631,7 @@ function resolveSpend(cycle: MistralQuotaCycle): {
   }
   return {
     spentUsd: Math.max(0, cycle.spentUsd),
+    locallyEstimatedSinceReadingUsd: 0,
     source: { confidence: cycle.turns > 0 ? 'calibrating' : 'seeded' }
   }
 }
@@ -663,7 +689,7 @@ export function estimateQuota(
   const effectivePlan = plan === 'unknown' ? MISTRAL_UNKNOWN_PLAN_SEEDS_AS : plan
   const seeded = PLAN_SEED_USD[effectivePlan] ?? PLAN_SEED_USD.unknown
 
-  const { spentUsd, source: spentSource } = resolveSpend(cycle)
+  const { spentUsd, locallyEstimatedSinceReadingUsd, source: spentSource } = resolveSpend(cycle)
   const { ceilingUsd, source: ceilingSource } = resolveCeiling(cycle, seeded)
   const safeCeiling = ceilingUsd > 0 ? ceilingUsd : seeded
 
@@ -677,20 +703,28 @@ export function estimateQuota(
 
   const fraction = spentUsd / safeCeiling
   const band = bandFor(fraction)
+  const vendorReported =
+    locallyEstimatedSinceReadingUsd <= 0 &&
+    isVendorReportedConfidence(spentConfidence) &&
+    isVendorReportedConfidence(ceilingSource.confidence)
 
   return {
     band,
     usedPercent: Math.max(0, Math.min(100, Math.round(fraction * 100))),
     spentUsd,
+    locallyEstimatedSinceReadingUsd,
     estimatedCeilingUsd: safeCeiling,
     confidence: spentConfidence,
     ceilingConfidence: ceilingSource.confidence,
     spentSource: { ...spentSource, confidence: spentConfidence },
     ceilingSource,
-    vendorReported:
-      isVendorReportedConfidence(spentConfidence) &&
-      isVendorReportedConfidence(ceilingSource.confidence),
-    label: labelFor(band, spentConfidence, ceilingSource.confidence),
+    vendorReported,
+    label: labelFor(
+      band,
+      spentConfidence,
+      ceilingSource.confidence,
+      locallyEstimatedSinceReadingUsd > 0
+    ),
     cycleResetsAt: resolveResetAt(cycle, now).toISOString()
   }
 }

@@ -156,6 +156,25 @@ describe('MistralQuotaStore — debounced flush', () => {
     expect(snapshot?.plan).toBe('team')
     expect(snapshot?.estimate.estimatedCeilingUsd).toBeCloseTo(27.8, 6)
   })
+
+  it('round-trips an Admin reading watermark and keeps accumulating after it', async () => {
+    const first = makeStore()
+    await first.recordTurnCost({ costUsd: 0.25, totalTokens: 10 })
+    await first.setReport({
+      spentUsd: 3,
+      allowanceUsd: 30,
+      fetchedAt: T0.toISOString()
+    })
+    await first.recordTurnCost({ costUsd: 0.5, totalTokens: 20 })
+    await first.flush()
+
+    const second = makeStore()
+    const snapshot = await second.currentEstimate()
+    expect(snapshot?.estimate.spentUsd).toBeCloseTo(3.5, 6)
+    expect(snapshot?.estimate.locallyEstimatedSinceReadingUsd).toBeCloseTo(0.5, 6)
+    expect(snapshot?.estimate.vendorReported).toBe(false)
+    expect(snapshot?.totalTokens).toBe(30)
+  })
 })
 
 describe('MistralQuotaStore — rollover on load', () => {

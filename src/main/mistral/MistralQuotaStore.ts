@@ -202,9 +202,11 @@ function decodeReport(value: unknown): MistralQuotaReport | null {
   if (!finiteAtLeastZero(record.spentUsd) || !isIsoTimestamp(record.fetchedAt)) return null
   const declared = decodeDeclared(record.declared, ['spent'])
   const allowance = record.allowanceUsd
+  const localSpentUsdAtReport = record.localSpentUsdAtReport
   return {
     spentUsd: record.spentUsd,
     fetchedAt: record.fetchedAt,
+    ...(finiteAtLeastZero(localSpentUsdAtReport) ? { localSpentUsdAtReport } : {}),
     ...(finiteAtLeastZero(allowance) && allowance > 0 ? { allowanceUsd: allowance } : {}),
     ...(typeof record.periodStart === 'string' ? { periodStart: record.periodStart } : {}),
     ...(typeof record.periodEnd === 'string' ? { periodEnd: record.periodEnd } : {}),

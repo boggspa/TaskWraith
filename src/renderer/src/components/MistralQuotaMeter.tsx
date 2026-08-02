@@ -44,10 +44,10 @@
  * are not spending.
  *
  * Pure presentational view (`MistralQuotaMeterView`, SSR-testable) + a thin IPC
- * shell. The read is a cheap local file, not a probe, so it simply re-reads
- * whenever the sidebar's `refreshKey` moves.
+ * shell. The read is a cheap local file, not a probe, so it follows usage
+ * broadcasts directly and carries a slow visible-window self-heal heartbeat.
  */
-import { useEffect, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
 import type { MistralQuotaSnapshot } from '../../../main/mistral/MistralQuotaStore'
 import type {
   MistralQuotaEstimate,
@@ -56,6 +56,10 @@ import type {
 import { formatResetShort } from '../lib/UsageFormat'
 import { formatCostAlwaysOn, type DisplayCurrency } from '../lib/formatCost'
 import { providerPlanName } from '../lib/providerPlanName'
+import {
+  formatMistralAccumulatedSpend,
+  formatMistralLocalIncrement
+} from './MistralQuotaFormatting'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import './MistralQuotaMeter.css'
@@ -75,7 +79,15 @@ const SEEDED_TOOLTIP = [
 ].join(' ')
 
 const MONEY_TOOLTIP = 'Estimated spend this cycle — projected locally, never billed or reported.'
+const MIXED_MONEY_TOOLTIP =
+  'Your Mistral reading plus TaskWraith’s locally estimated spend since that reading.'
 
+/** Cheap local IPC reads keep the meter self-healing even when a completed run
+ *  is persisted main-side without the renderer-originated usage broadcast. */
+const MISTRAL_QUOTA_REFRESH_INTERVAL_MS = 30_000
+/** Re-read once more after a usage event so a cross-process notification cannot
+ *  win a race with the quota store's async first load. */
+const MISTRAL_QUOTA_USAGE_SETTLE_MS = 250
 
 /** Where each half of a vendor-sourced reading came from, stated plainly. */
 function sourcePhrase(source: MistralQuotaFigureSource): string {
@@ -128,27 +140,39 @@ export function MistralQuotaMeterView({
   if (!snapshot) return null
 
   const { estimate } = snapshot
-  // `vendorReported` means BOTH halves came from Mistral — a real spend against
-  // a guessed ceiling is still a guessed ratio and must still be hedged.
+  const locallyEstimatedSinceReadingUsd = Math.max(0, estimate.locallyEstimatedSinceReadingUsd ?? 0)
+  const hasLocalIncrement = locallyEstimatedSinceReadingUsd > 0
+  // `vendorReported` means BOTH halves and the displayed total came from
+  // Mistral. Once a local increment is added, the baseline remains real but the
+  // combined number regains its estimate hedge.
   const measured = estimate.vendorReported === true
-  const calibrated = measured || estimate.confidence === 'learned'
   const ceilingFromVendor =
     estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
-  // The spend half is judged separately: an anchored reading is Mistral's own
-  // number even when the ceiling behind it is still a plan default.
-  const spendFromVendor = estimate.confidence === 'anchored' || estimate.confidence === 'reported'
+  const spendBaseFromVendor =
+    estimate.confidence === 'anchored' || estimate.confidence === 'reported'
+  const spendFullyFromVendor = spendBaseFromVendor && !hasLocalIncrement
+  const calibrated = estimate.confidence === 'learned' || (spendBaseFromVendor && ceilingFromVendor)
   const fraction = Math.max(0, Math.min(1, estimate.usedPercent / 100))
   const resetsAt = formatResetShort({ resetAt: estimate.cycleResetsAt })
   const planName =
     snapshot.plan === 'unknown' ? undefined : providerPlanName('mistral', snapshot.plan)
   const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
-  const spent = money(estimate.spentUsd)
+  const spent = formatMistralAccumulatedSpend(
+    estimate.spentUsd,
+    locallyEstimatedSinceReadingUsd,
+    currency ?? 'USD',
+    locale
+  )
+  const localIncrement = hasLocalIncrement
+    ? formatMistralLocalIncrement(locallyEstimatedSinceReadingUsd, currency ?? 'USD', locale)
+    : null
   const ceiling = money(estimate.estimatedCeilingUsd)
-  const title = measured
-    ? vendorTooltip(estimate)
-    : calibrated
-      ? ESTIMATE_TOOLTIP
-      : `${ESTIMATE_TOOLTIP} ${SEEDED_TOOLTIP}`
+  const title =
+    spendBaseFromVendor && ceilingFromVendor
+      ? vendorTooltip(estimate)
+      : calibrated
+        ? ESTIMATE_TOOLTIP
+        : `${ESTIMATE_TOOLTIP} ${SEEDED_TOOLTIP}`
   // A vendor figure drops the `~` and the "est." qualifier — carrying them over
   // a number Mistral itself reported would understate what we actually know.
   // Anything short of that keeps the hedge: "of ~$27.80 est." can never be read
@@ -157,6 +181,7 @@ export function MistralQuotaMeterView({
   const footnote = [
     ceilingText,
     resetsAt ? `resets ${resetsAt}` : null,
+    localIncrement ? `+ ~${localIncrement} tracked locally since reading` : null,
     measured ? null : calibrated ? null : 'not yet calibrated'
   ]
     .filter(Boolean)
@@ -184,9 +209,15 @@ export function MistralQuotaMeterView({
             </span>
             <span
               className="model-usage-window-percent"
-              title={spendFromVendor ? vendorTooltip(estimate) : MONEY_TOOLTIP}
+              title={
+                spendFullyFromVendor
+                  ? vendorTooltip(estimate)
+                  : hasLocalIncrement
+                    ? MIXED_MONEY_TOOLTIP
+                    : MONEY_TOOLTIP
+              }
             >
-              {spendFromVendor ? spent : `~${spent}`}
+              {spendFullyFromVendor ? spent : `~${spent}`}
             </span>
           </div>
           <QuotaProgressBar
@@ -205,9 +236,10 @@ export function MistralQuotaMeterView({
 }
 
 /**
- * Reads the persisted estimate over IPC. Cheap (one small local file), so it
- * simply re-reads on mount and whenever `refreshKey` moves; there is no probe
- * to throttle and no cold-start retry to run.
+ * Reads the persisted estimate over IPC. This is one tiny local file, not a
+ * vendor probe, so the meter listens to usage changes directly and performs a
+ * slow visible-window heartbeat as a self-heal. The outer `refreshKey` remains
+ * supported for the card's manual refresh and existing App-level broadcast.
  */
 export function useMistralQuotaMeterState(refreshKey?: number): MistralQuotaMeterViewProps {
   const [snapshot, setSnapshot] = useState<MistralQuotaSnapshot | null>(null)
@@ -218,15 +250,10 @@ export function useMistralQuotaMeterState(refreshKey?: number): MistralQuotaMete
   )
   const mountedRef = useRef(true)
 
-  useEffect(() => {
-    mountedRef.current = true
+  const readSnapshot = useCallback((): void => {
     const api = typeof window !== 'undefined' ? window.api : undefined
-    if (typeof api?.getMistralQuotaEstimate !== 'function') {
-      return () => {
-        mountedRef.current = false
-      }
-    }
-    api
+    if (typeof api?.getMistralQuotaEstimate !== 'function') return
+    void api
       .getMistralQuotaEstimate()
       .then((next) => {
         if (!mountedRef.current) return
@@ -240,10 +267,51 @@ export function useMistralQuotaMeterState(refreshKey?: number): MistralQuotaMete
         if (!mountedRef.current) return
         setLoading(false)
       })
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
     }
-  }, [refreshKey])
+  }, [])
+
+  useEffect(() => {
+    readSnapshot()
+  }, [readSnapshot, refreshKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const api = window.api
+    if (typeof api?.getMistralQuotaEstimate !== 'function') return
+
+    let settleTimer: ReturnType<typeof setTimeout> | null = null
+    const refreshAfterUsage = (): void => {
+      readSnapshot()
+      if (settleTimer) clearTimeout(settleTimer)
+      settleTimer = setTimeout(readSnapshot, MISTRAL_QUOTA_USAGE_SETTLE_MS)
+    }
+    const unsubscribe =
+      typeof api.onUsageChanged === 'function' ? api.onUsageChanged(refreshAfterUsage) : undefined
+    const interval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') readSnapshot()
+    }, MISTRAL_QUOTA_REFRESH_INTERVAL_MS)
+    const refreshWhenVisible = (): void => {
+      if (document.visibilityState === 'visible') readSnapshot()
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', refreshWhenVisible)
+    }
+
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe()
+      clearInterval(interval)
+      if (settleTimer) clearTimeout(settleTimer)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', refreshWhenVisible)
+      }
+    }
+  }, [readSnapshot])
 
   return { snapshot, loading }
 }

@@ -66,6 +66,10 @@ import {
   type GrokCreditsMeterViewProps
 } from './GrokCreditsMeter'
 import {
+  formatMistralAccumulatedSpend,
+  formatMistralLocalIncrement
+} from './MistralQuotaFormatting'
+import {
   MistralQuotaMeterView,
   useMistralQuotaMeterState,
   type MistralQuotaMeterViewProps
@@ -456,8 +460,11 @@ function compactMistralCell(
   if (!snapshot) return null
 
   const { estimate } = snapshot
+  const locallyEstimatedSinceReadingUsd = Math.max(0, estimate.locallyEstimatedSinceReadingUsd ?? 0)
+  const hasLocalIncrement = locallyEstimatedSinceReadingUsd > 0
   const measured = estimate.vendorReported === true
-  const spendFromVendor = estimate.confidence === 'anchored' || estimate.confidence === 'reported'
+  const spendFromVendor =
+    !hasLocalIncrement && (estimate.confidence === 'anchored' || estimate.confidence === 'reported')
   const ceilingFromVendor =
     estimate.ceilingConfidence === 'anchored' || estimate.ceilingConfidence === 'reported'
   const resetText = formatResetShort({ resetAt: estimate.cycleResetsAt })
@@ -465,12 +472,29 @@ function compactMistralCell(
   // General) via the shared FX table — the reverse of the conversion the
   // console reading went through on entry, so a €0.32 reading reads €0.32.
   const money = (usd: number): string => formatCostAlwaysOn(usd, currency ?? 'USD', locale)
-  const spentText = `${spendFromVendor ? '' : '~'}${money(estimate.spentUsd)}`
+  const spentText = `${spendFromVendor ? '' : '~'}${formatMistralAccumulatedSpend(
+    estimate.spentUsd,
+    locallyEstimatedSinceReadingUsd,
+    currency ?? 'USD',
+    locale
+  )}`
   const ceilingText = `${ceilingFromVendor ? '' : '~'}${money(estimate.estimatedCeilingUsd)}`
-  const sourceText = measured ? 'Mistral-sourced figures' : 'estimated locally'
+  const sourceText = measured
+    ? 'Mistral-sourced figures'
+    : hasLocalIncrement &&
+        (estimate.confidence === 'anchored' || estimate.confidence === 'reported')
+      ? 'Mistral baseline + local estimate'
+      : 'estimated locally'
   const title = [
     `Mistral monthly: ${estimate.label}`,
     `${spentText} of ${ceilingText}`,
+    hasLocalIncrement
+      ? `+ ~${formatMistralLocalIncrement(
+          locallyEstimatedSinceReadingUsd,
+          currency ?? 'USD',
+          locale
+        )} tracked locally since reading`
+      : '',
     resetText ? `resets ${resetText}` : '',
     sourceText,
     mistralQuota.loading ? 'refreshing' : ''
