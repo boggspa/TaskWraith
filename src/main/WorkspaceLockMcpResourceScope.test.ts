@@ -14,7 +14,7 @@ describe('workspaceLockMcpResourcePath', () => {
     expect(result).toBe(resolve('/workspace-lane', 'src/file.ts'))
   })
 
-  it('requires workspace scope for multi-path and repository mutations', () => {
+  it('leaves multi-path and repository mutations to complete exact-set derivation', () => {
     expect(
       workspaceLockMcpResourcePath(
         'move_path',

@@ -198,17 +198,18 @@ describe('buildGrokCliArgs', () => {
     expect(denied).not.toContain('Grep(*)')
   })
 
-  it('lets ACP native file edits reach the workspace preflight on write-capable seats', () => {
+  it('keeps ACP native edits broker-only on write-capable seats while preserving reads', () => {
     const args = buildGrokAcpCliArgs({ readOnlySeat: false })
     const denied = args
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
 
     expect(denied).toEqual([...GROK_ACP_WRITE_MODE_DENY_RULES])
-    expect(denied).not.toContain('Edit(*)')
-    expect(denied).not.toContain('Write(*)')
+    expect(denied).toContain('Edit(*)')
+    expect(denied).toContain('Write(*)')
     expect(denied).toContain('Bash(*)')
     expect(denied).toContain('Shell(*)')
+    expect(denied).not.toContain('Read(*)')
   })
 
   it('does not pass effort for Grok Composer 2.5 Fast', () => {

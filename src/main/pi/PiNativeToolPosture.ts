@@ -1,10 +1,8 @@
 import type { AgenticServicePolicy } from '../store/types'
 
 /**
- * The already-verified permission fields that can narrow Pi's native tool
- * allowlist. Signature verification belongs at the main run boundary; this
- * helper only consumes that trusted projection and never treats it as a source
- * of elevation.
+ * The already-verified permission fields that can enable Pi's exact brokered
+ * file tools. Native Pi tools stay read-only for every posture.
  */
 export interface PiNativeToolEffectivePermissions {
   readonly readOnly?: boolean
@@ -27,20 +25,18 @@ export interface PiNativeToolPosture {
 }
 
 /**
- * Resolve Pi's launch-time native-tool posture without ever widening it.
+ * Resolve Pi's launch-time brokered-file posture without ever widening it.
  *
- * Pi has no per-tool approval bridge and runs with `--no-approve`, so write
- * tools are present only for the one historically write-capable mode and only
- * while the signed effective posture leaves both relevant services enabled.
- * Missing posture fields preserve the approval-mode baseline; explicit
- * read-only/deny fields can only downgrade it.
+ * Pi runs native tools with `--no-approve`, so that list is always read-only.
+ * The historically write-capable mode now enables only TaskWraith's exact file
+ * bridge. Shell policy is irrelevant because no native shell is exposed;
+ * read-only/file-change deny can still downgrade the broker surface.
  */
 export function resolvePiNativeToolPosture(input: PiNativeToolPostureInput): PiNativeToolPosture {
   const permissions = input.effectivePermissions
   const writeCapable =
     input.approvalMode === 'default' &&
     permissions?.readOnly !== true &&
-    permissions?.agenticServices?.shellCommands !== 'deny' &&
     permissions?.agenticServices?.fileChanges !== 'deny'
 
   return Object.freeze({

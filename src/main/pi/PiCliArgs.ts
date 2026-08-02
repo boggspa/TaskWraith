@@ -9,10 +9,9 @@
  *    `--no-skills`, `--no-prompt-templates` close the project-config
  *    pre-prompt execution class (the Kimi B3 lesson) by flag instead of by
  *    guard-and-refuse.
- *  - Tool posture rides pi's first-class allowlist: read-only seats get
- *    `--tools read,grep,find,ls`; write seats add bash, edit, write. Bash
- *    on a write seat is unmediated (the Grok write-mode precedent — the
- *    diff-review posture is the containment story, not per-call approval).
+ *  - Pi's native allowlist is always read-only (`read,grep,find,ls`). A
+ *    write-approved seat receives only TaskWraith's explicit exact-file
+ *    extension tools; native bash/edit/write never bypass transaction locks.
  *  - `PI_CODING_AGENT_DIR` points at a per-run isolated home so user-level
  *    settings/extensions never load; sessions live in a persistent per-chat
  *    dir via `--session-dir` + `--session-id` (deterministic resume).
@@ -21,16 +20,13 @@
  *    provider API traffic is unaffected.
  */
 
+import {
+  isPiTaskWraithToolName,
+  type PiTaskWraithToolName
+} from './PiEnsembleCoordination'
+
 export const PI_READ_ONLY_TOOLS: readonly string[] = ['read', 'grep', 'find', 'ls']
-export const PI_WRITE_TOOLS: readonly string[] = [
-  'read',
-  'bash',
-  'edit',
-  'write',
-  'grep',
-  'find',
-  'ls'
-]
+export const PI_WRITE_TOOLS: readonly string[] = PI_READ_ONLY_TOOLS
 
 export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
@@ -53,7 +49,7 @@ export interface PiRpcArgsInput {
    */
   coordinationExtensionPath?: string
   /** Fixed custom tool names implemented by coordinationExtensionPath. */
-  coordinationToolNames?: readonly string[]
+  coordinationToolNames?: readonly PiTaskWraithToolName[]
 }
 
 export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
@@ -68,6 +64,9 @@ export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
   }
   if (!input.coordinationExtensionPath && coordinationToolNames.length > 0) {
     throw new TypeError('Pi coordination tools require their TaskWraith-owned extension path.')
+  }
+  if (!coordinationToolNames.every(isPiTaskWraithToolName)) {
+    throw new TypeError('Pi extension tools must come from TaskWraith fixed allowlists.')
   }
   const tools = [...new Set([...nativeTools, ...coordinationToolNames])]
   args.push('--tools', tools.join(','))

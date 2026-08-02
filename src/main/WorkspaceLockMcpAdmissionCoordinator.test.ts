@@ -240,7 +240,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(acquire).not.toHaveBeenCalled()
   })
 
-  it('passes the exact supplied resource to lane validation and records a block', async () => {
+  it('passes every exact derived resource to lane validation without poisoning the lane', async () => {
     const validateLaneWriteScope = vi.fn(() => ({
       ok: false as const,
       reason: 'Resource is outside the approved lane scope.'
@@ -256,17 +256,21 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     )
     const resourcePath = '/worktree/file.txt '
 
-    const result = await coordinator.admit(input({ context: ensembleContext(), resourcePath }))
+    const result = await coordinator.admit(
+      input({
+        context: ensembleContext(),
+        args: { path: resourcePath, content: 'body' },
+        resourcePath
+      })
+    )
 
     expect(validateLaneWriteScope).toHaveBeenCalledWith('run-1', {
       toolName: 'write_file',
       workspacePath: resolve('/worktree'),
+      resourcePaths: [resourcePath],
       resourcePath
     })
-    expect(markLaneBlocked).toHaveBeenCalledWith(
-      'run-1',
-      'Resource is outside the approved lane scope.'
-    )
+    expect(markLaneBlocked).not.toHaveBeenCalled()
     expect(result).toMatchObject({
       ok: false,
       reason: 'Resource is outside the approved lane scope.'
@@ -274,6 +278,51 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     if (result.ok) throw new Error('Expected denial.')
     expect(JSON.parse(result.text)).toMatchObject({ laneId: 'lane-1' })
     expect(acquire).not.toHaveBeenCalled()
+  })
+
+  it('validates a multi-file patch as an atomic set of exact resources', async () => {
+    const validateLaneWriteScope = vi.fn(() => ({ ok: true as const }))
+    const acquire = vi.fn(async (runtimeInput: WorkspaceLockRuntimeAcquireInput) =>
+      successfulAcquisition(runtimeInput)
+    )
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({
+        getRuntime: () => ({ acquire }),
+        validateLaneWriteScope
+      })
+    )
+    const patch = [
+      'diff --git a/a.ts b/a.ts',
+      '--- a/a.ts',
+      '+++ b/a.ts',
+      '@@ -1 +1 @@',
+      '-a',
+      '+A',
+      'diff --git a/b.ts b/b.ts',
+      '--- a/b.ts',
+      '+++ b/b.ts',
+      '@@ -1 +1 @@',
+      '-b',
+      '+B',
+      ''
+    ].join('\n')
+
+    await expect(
+      coordinator.admit(
+        input({
+          context: ensembleContext(),
+          toolName: 'apply_patch',
+          args: { patch },
+          resourcePath: undefined
+        })
+      )
+    ).resolves.toMatchObject({ ok: true })
+    expect(validateLaneWriteScope).toHaveBeenCalledWith('run-1', {
+      toolName: 'apply_patch',
+      workspacePath: resolve('/worktree'),
+      resourcePaths: [resolve('/worktree/a.ts'), resolve('/worktree/b.ts')],
+      resourcePath: undefined
+    })
   })
 
   it('never falls back to the run id when opaque owner allocation fails', async () => {
@@ -298,10 +347,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
       code: 'owner_identity_unavailable',
       laneId: 'lane-1'
     })
-    expect(markLaneBlocked).toHaveBeenCalledWith(
-      'run-1',
-      'Workspace mutation write_file has no exact opaque lock-owner identity.'
-    )
+    expect(markLaneBlocked).not.toHaveBeenCalled()
     expect(acquire).not.toHaveBeenCalled()
   })
 
@@ -381,6 +427,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(validateLaneWriteScope).toHaveBeenCalledWith('run-1', {
       toolName: 'write_file',
       workspacePath: resolve('/worktree'),
+      resourcePaths: ['/worktree/file.txt'],
       resourcePath: '/worktree/file.txt'
     })
     expect(acquire).toHaveBeenCalledWith({
@@ -611,33 +658,40 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(getOpaqueOwnerId).not.toHaveBeenCalled()
   })
 
-  it('returns and records a structured runtime conflict', async () => {
+  it('waits through transient contention without poisoning the participant lane', async () => {
     const markLaneBlocked = vi.fn()
-    const acquire = vi.fn(
-      async (): Promise<WorkspaceLockRuntimeAcquireResult> => ({
+    const acquire = vi
+      .fn<
+        (
+          runtimeInput: WorkspaceLockRuntimeAcquireInput
+        ) => Promise<WorkspaceLockRuntimeAcquireResult>
+      >()
+      .mockResolvedValueOnce({
         ok: false,
         code: 'conflict',
         message: 'Another run holds this file.'
       })
-    )
+      .mockImplementationOnce(async (runtimeInput) => successfulAcquisition(runtimeInput))
+    const subscribe = vi.fn((_query, onChange: () => void) => {
+      queueMicrotask(onChange)
+      return { unsubscribe: vi.fn() }
+    })
     const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
       dependencies({
-        getRuntime: () => ({ acquire }),
+        getRuntime: () => ({ acquire, subscribe: subscribe as never }),
         markLaneBlocked
       })
     )
 
     const result = await coordinator.admit(input({ context: ensembleContext() }))
 
-    expect(markLaneBlocked).toHaveBeenCalledWith('run-1', 'Another run holds this file.')
+    expect(acquire).toHaveBeenCalledTimes(2)
+    expect(subscribe).toHaveBeenCalledOnce()
+    expect(markLaneBlocked).not.toHaveBeenCalled()
     expect(result).toMatchObject({
-      ok: false,
-      reason: 'Another run holds this file.'
-    })
-    if (result.ok) throw new Error('Expected denial.')
-    expect(JSON.parse(result.text)).toMatchObject({
-      code: 'conflict',
-      laneId: 'lane-1'
+      ok: true,
+      claimsHeld: true,
+      acquiredTransitionId: 'transition-1'
     })
   })
 

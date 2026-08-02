@@ -9,13 +9,9 @@ import {
   type ProviderNativeActionContext,
   type ResolvedProviderAction
 } from '../shared/providerActionTaxonomy'
-import type { TaskWraithMcpToolName } from '../shared/taskWraithMcpCatalog'
+import { isReadOnlyShellCommand } from './grok/GrokReadOnlyShell'
 import type { ProviderId } from './store/types'
-import type {
-  WorkspaceLockClaimKind,
-  WorkspaceLockClaimRequest,
-  WorkspaceLockHunk
-} from './workLocks/WorkspaceLockTypes'
+import type { WorkspaceLockClaimRequest, WorkspaceLockHunk } from './workLocks/WorkspaceLockTypes'
 
 export type WorkspaceMutationCallSource = 'taskwraith-catalog' | 'provider-native'
 export type WorkspaceMutationExecutionMode = 'execute' | 'dry-run'
@@ -178,16 +174,8 @@ function baseClaim(context: ClaimContext): Omit<WorkspaceLockClaimRequest, 'kind
   }
 }
 
-function workspaceClaim(context: ClaimContext): WorkspaceLockClaimRequest {
-  return { ...baseClaim(context), kind: 'workspace' }
-}
-
-function pathClaim(
-  context: ClaimContext,
-  kind: Exclude<WorkspaceLockClaimKind, 'workspace' | 'hunk'>,
-  targetPath: string
-): WorkspaceLockClaimRequest {
-  return { ...baseClaim(context), kind, targetPath }
+function pathClaim(context: ClaimContext, targetPath: string): WorkspaceLockClaimRequest {
+  return { ...baseClaim(context), kind: 'file', targetPath }
 }
 
 function hunkClaim(
@@ -196,6 +184,15 @@ function hunkClaim(
   hunk: WorkspaceLockHunk
 ): WorkspaceLockClaimRequest {
   return { ...baseClaim(context), kind: 'hunk', targetPath, hunk }
+}
+
+function exactPathPrefixes(context: ClaimContext, targetPath: string): string[] {
+  const relativePath = relative(context.worktreePath, targetPath)
+  if (!relativePath) return [targetPath]
+  const segments = relativePath.split(sep).filter(Boolean)
+  return segments.map((_segment, index) =>
+    resolve(context.worktreePath, ...segments.slice(0, index + 1))
+  )
 }
 
 function promoteNativeHunkClaims(
@@ -210,9 +207,7 @@ function promoteNativeHunkClaims(
   if (input.source !== 'provider-native') return [...claims]
   return uniqueClaims(
     claims.map((claim) =>
-      claim.kind === 'hunk' && claim.targetPath
-        ? pathClaim(context, 'file', claim.targetPath)
-        : claim
+      claim.kind === 'hunk' && claim.targetPath ? pathClaim(context, claim.targetPath) : claim
     )
   )
 }
@@ -303,7 +298,7 @@ async function deriveReplaceClaims(
     firstArgument(args, ['path', 'file_path', 'filePath']),
     'replace path'
   )
-  const fallback = [pathClaim(context, 'file', targetPath)]
+  const fallback = [pathClaim(context, targetPath)]
   const oldStringValue = firstArgument(args, ['old_string', 'oldString', 'old_text', 'oldText'])
   if (typeof oldStringValue !== 'string' || oldStringValue.length === 0) return fallback
 
@@ -322,15 +317,24 @@ async function deriveReplaceClaims(
   )
 }
 
-async function pathKind(
+async function assertExactPathMutation(
   dependencies: WorkspaceMutationClaimDependencies,
-  targetPath: string
-): Promise<'file' | 'tree'> {
+  targetPath: string,
+  operation: string,
+  options: { allowEmptyDirectory?: boolean } = {}
+): Promise<void> {
   try {
     const stat = await dependencies.lstat(targetPath)
-    return stat.isFile() ? 'file' : 'tree'
-  } catch {
-    return 'tree'
+    if (stat.isDirectory() && !options.allowEmptyDirectory) {
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        `${operation} cannot mutate a directory under exact file/hunk locking.`
+      )
+    }
+  } catch (error) {
+    if (error instanceof WorkspaceMutationClaimDerivationError) throw error
+    // Missing destinations are exact planned paths. Executor validation owns
+    // every other filesystem error and runs inside the acquired transaction.
   }
 }
 
@@ -344,7 +348,13 @@ async function deriveDeleteClaims(
     firstArgument(args, ['path', 'file_path', 'filePath']),
     'delete path'
   )
-  return [pathClaim(context, await pathKind(dependencies, targetPath), targetPath)]
+  // delete_path only removes empty directories. Treating that directory entry
+  // as one exact path is safe: a concurrent child creation makes rmdir fail
+  // rather than deleting data.
+  await assertExactPathMutation(dependencies, targetPath, 'delete_path', {
+    allowEmptyDirectory: true
+  })
+  return [pathClaim(context, targetPath)]
 }
 
 async function deriveMoveClaims(
@@ -362,14 +372,19 @@ async function deriveMoveClaims(
     firstArgument(args, ['to', 'destination', 'destinationPath', 'new_path', 'newPath']),
     'move destination'
   )
-  const [sourceKind, destinationKind] = await Promise.all([
-    pathKind(dependencies, sourcePath),
-    pathKind(dependencies, destinationPath)
+  await Promise.all([
+    assertExactPathMutation(dependencies, sourcePath, 'move_path'),
+    assertExactPathMutation(dependencies, destinationPath, 'move_path', {
+      allowEmptyDirectory: true
+    })
   ])
-  return uniqueClaims([
-    pathClaim(context, sourceKind, sourcePath),
-    pathClaim(context, destinationKind, destinationPath)
-  ])
+  const createdParentPaths =
+    args.createParents === true ? exactPathPrefixes(context, dirname(destinationPath)) : []
+  return uniqueClaims(
+    [sourcePath, destinationPath, ...createdParentPaths].map((targetPath) =>
+      pathClaim(context, targetPath)
+    )
+  )
 }
 
 async function deriveRenameClaims(
@@ -397,14 +412,13 @@ async function deriveRenameClaims(
     resolve(dirname(sourcePath), newName),
     'rename destination'
   )
-  const [sourceKind, destinationKind] = await Promise.all([
-    pathKind(dependencies, sourcePath),
-    pathKind(dependencies, destinationPath)
+  await Promise.all([
+    assertExactPathMutation(dependencies, sourcePath, 'rename_path'),
+    assertExactPathMutation(dependencies, destinationPath, 'rename_path', {
+      allowEmptyDirectory: true
+    })
   ])
-  return uniqueClaims([
-    pathClaim(context, sourceKind, sourcePath),
-    pathClaim(context, destinationKind, destinationPath)
-  ])
+  return uniqueClaims([pathClaim(context, sourcePath), pathClaim(context, destinationPath)])
 }
 
 function patchPath(rawValue: string): string | null | undefined {
@@ -560,23 +574,50 @@ async function derivePatchClaims(
   _dependencies: WorkspaceMutationClaimDependencies
 ): Promise<WorkspaceLockClaimRequest[]> {
   const patchValue = firstArgument(args, ['patch', 'diff'])
-  if (typeof patchValue !== 'string') return [workspaceClaim(context)]
+  if (typeof patchValue !== 'string') {
+    throw new WorkspaceMutationClaimDerivationError(
+      'invalid-call',
+      'apply_patch requires a complete unified diff before an edit scope can be acquired.'
+    )
+  }
   const parsed = parseUnifiedPatch(patchValue)
-  if (parsed.invalid) return [workspaceClaim(context)]
+  if (parsed.invalid) {
+    throw new WorkspaceMutationClaimDerivationError(
+      'invalid-call',
+      'apply_patch must be a valid unified diff before an edit scope can be acquired.'
+    )
+  }
 
   const claims: WorkspaceLockClaimRequest[] = []
   for (const file of parsed.files) {
     const rawPaths = [file.oldPath, file.newPath].filter(
       (value): value is string => typeof value === 'string'
     )
-    if (rawPaths.length === 0) return [workspaceClaim(context)]
+    if (rawPaths.length === 0) {
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        'apply_patch contains a file entry without an exact path.'
+      )
+    }
     const targetPaths = rawPaths.map((path) => resolveTargetPath(context, path, 'patch path'))
+    const createdDestinationPaths =
+      typeof file.newPath === 'string' && file.newPath !== file.oldPath
+        ? exactPathPrefixes(
+            context,
+            resolveTargetPath(context, file.newPath, 'patch destination path')
+          ).slice(0, -1)
+        : []
     // Unified patches can be applied with offset/fuzz semantics by the
     // executor, so the header's old-side line range is not proof of the
     // coordinates that will actually change. Keep exact-string `replace`
     // eligible for hunk concurrency, but serialize every path named by
-    // `apply_patch` at whole-file scope.
-    claims.push(...targetPaths.map((targetPath) => pathClaim(context, 'file', targetPath)))
+    // `apply_patch` at whole-file scope. A new or renamed destination may also
+    // create parent directory entries, so include those exact entries in the
+    // same atomic proposal.
+    claims.push(
+      ...createdDestinationPaths.map((targetPath) => pathClaim(context, targetPath)),
+      ...targetPaths.map((targetPath) => pathClaim(context, targetPath))
+    )
   }
   return uniqueClaims(claims)
 }
@@ -591,7 +632,7 @@ function isDeclaredPatchDryRun(
   )
 }
 
-const IMPLICIT_WORKSPACE_OUTPUT_TOOLS: ReadonlySet<TaskWraithMcpToolName> = new Set([
+const HOST_ASSET_MEDIA_TOOLS = new Set([
   'video_encode_clip',
   'video_concat_clips',
   'audio_extract',
@@ -634,8 +675,28 @@ export async function deriveWorkspaceMutationClaims(
   }
 
   const context = claimContext(input)
-  if (lock === 'workspace-repository' || lock === 'workspace-runtime') {
-    return [workspaceClaim(context)]
+  if (lock === 'workspace-repository') {
+    // Git staging and commit share one exact metadata mutex per effective
+    // checkout. It serializes repository metadata without excluding unrelated
+    // file edits or reads for the lifetime of a participant run.
+    return [pathClaim(context, resolve(context.worktreePath, '.git'))]
+  }
+
+  if (lock === 'workspace-runtime') {
+    if (
+      action.metadata.operation === 'workspace.read' ||
+      action.metadata.operation === 'media.read'
+    ) {
+      return []
+    }
+    if (action.catalogTool === 'run_shell_command') {
+      const command = firstArgument(args, ['command', 'cmd'])
+      if (typeof command === 'string' && isReadOnlyShellCommand(command)) return []
+    }
+    throw new WorkspaceMutationClaimDerivationError(
+      'invalid-call',
+      `${action.catalogTool} cannot prove an exact file/hunk mutation scope; use exact TaskWraith file tools or a read-only command.`
+    )
   }
 
   if (lock !== 'workspace-paths') {
@@ -652,7 +713,11 @@ export async function deriveWorkspaceMutationClaims(
         firstArgument(args, ['path', 'file_path', 'filePath']),
         'write path'
       )
-      return [pathClaim(context, 'file', targetPath)]
+      // New-file writes create every missing parent directory inside the same
+      // broker operation. Claim each exact directory entry as well as the file
+      // so a concurrent delete/rename of that entry cannot race the commit.
+      // These are exact path mutexes: they do not lock descendants or reads.
+      return exactPathPrefixes(context, targetPath).map((path) => pathClaim(context, path))
     }
     case 'replace':
       return promoteNativeHunkClaims(
@@ -666,7 +731,13 @@ export async function deriveWorkspaceMutationClaims(
         firstArgument(args, ['path', 'directory']),
         'directory path'
       )
-      return [pathClaim(context, 'tree', targetPath)]
+      // The executor defaults to recursive mkdir, so every directory entry it
+      // may create is part of the exact proposal. Existing prefix entries are
+      // harmless exact mutexes and do not block reads or mutations beneath
+      // those directories.
+      const targetPaths =
+        args.recursive === false ? [targetPath] : exactPathPrefixes(context, targetPath)
+      return targetPaths.map((path) => pathClaim(context, path))
     }
     case 'delete_path':
       return deriveDeleteClaims(context, args, dependencies)
@@ -681,11 +752,14 @@ export async function deriveWorkspaceMutationClaims(
         await derivePatchClaims(context, args, dependencies)
       )
     default:
-      if (IMPLICIT_WORKSPACE_OUTPUT_TOOLS.has(action.catalogTool)) {
-        return [workspaceClaim(context)]
+      if (HOST_ASSET_MEDIA_TOOLS.has(action.catalogTool)) {
+        // These tools read workspace inputs but write only TaskWraith-owned
+        // staging/asset-store files, so there is no workspace mutation to lock.
+        return []
       }
-      // A new workspace-path mutation is safe by default, but cannot silently
-      // run unlocked while its path-specific strategy is being added.
-      return [workspaceClaim(context)]
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        `${action.catalogTool} has no exact file/hunk claim derivation.`
+      )
   }
 }

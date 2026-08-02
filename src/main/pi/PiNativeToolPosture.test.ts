@@ -33,13 +33,6 @@ describe('resolvePiNativeToolPosture', () => {
       }
     ],
     [
-      'a shell-command deny',
-      {
-        readOnly: false,
-        agenticServices: { shellCommands: 'deny' as const, fileChanges: 'allow' as const }
-      }
-    ],
-    [
       'a file-change deny',
       {
         readOnly: false,
@@ -56,6 +49,18 @@ describe('resolvePiNativeToolPosture', () => {
       writeCapable: false,
       effectiveMode: 'plan'
     })
+  })
+
+  it('keeps exact file tools available when only native shell commands are denied', () => {
+    expect(
+      resolvePiNativeToolPosture({
+        approvalMode: 'default',
+        effectivePermissions: {
+          readOnly: false,
+          agenticServices: { shellCommands: 'deny', fileChanges: 'allow' }
+        }
+      })
+    ).toEqual({ writeCapable: true, effectiveMode: 'default' })
   })
 
   it.each(['plan', 'acceptEdits', 'auto_edit', 'default ', '', undefined, null])(

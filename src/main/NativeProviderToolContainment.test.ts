@@ -10,10 +10,6 @@ import type { NativeWorkspaceToolPreflight } from './native-tools/NativeWorkspac
 
 describe('NativeProviderToolContainment', () => {
   it.each([
-    'Read',
-    'ReadFile',
-    'Glob',
-    'Grep',
     'Write',
     'Edit',
     'NotebookEdit',
@@ -23,6 +19,13 @@ describe('NativeProviderToolContainment', () => {
   ])('requires brokered execution for native %s', (toolName) => {
     expect(nativeProviderToolRequiresBroker(toolName)).toBe(true)
   })
+
+  it.each(['Read', 'ReadFile', 'Glob', 'Grep', 'FindFiles', 'ListDirectory'])(
+    'leaves side-effect-free native %s available',
+    (toolName) => {
+      expect(nativeProviderToolRequiresBroker(toolName)).toBe(false)
+    }
+  )
 
   it.each([
     'mcp__TaskWraith__read_file',
@@ -60,9 +63,9 @@ describe('NativeProviderToolContainment', () => {
     expect(isExplicitTaskWraithBrokerTool('mcp__TaskWraith__capability_invoke')).toBe(false)
   })
 
-  it('denies a bare native read before the canonical MCP auto-allow path', () => {
-    expect(nativeProviderApprovalPriority('read_file', true)).toBe('deny-native')
-    expect(nativeProviderApprovalPriority('list_directory', true)).toBe('deny-native')
+  it('allows a declared native read to use the ordinary safe auto-allow path', () => {
+    expect(nativeProviderApprovalPriority('read_file', true)).toBe('allow-auto')
+    expect(nativeProviderApprovalPriority('list_directory', true)).toBe('allow-auto')
   })
 
   it('auto-allows only the explicitly namespaced broker form', () => {
@@ -95,7 +98,7 @@ describe('classifyNativeWorkspacePreflightDecision', () => {
     })
   })
 
-  it('routes a workspace-verified native write through the fileChanges ledger', () => {
+  it('keeps a workspace-verified native write on the exact broker path', () => {
     const preflight: NativeWorkspaceToolPreflight = {
       kind: 'allow',
       canonicalTool: 'write_file',
@@ -106,12 +109,12 @@ describe('classifyNativeWorkspacePreflightDecision', () => {
       requiresRuntimeSandbox: false
     }
     expect(classifyNativeWorkspacePreflightDecision('Claude', 'Write', preflight)).toEqual({
-      action: 'gate',
-      service: 'fileChanges'
+      action: 'deny',
+      message: expect.stringContaining('TaskWraith MCP workspace tool')
     })
   })
 
-  it('routes a sandboxed native shell through the shellCommands ledger', () => {
+  it('keeps even a workspace-sandboxed native shell on the exact broker path', () => {
     const preflight: NativeWorkspaceToolPreflight = {
       kind: 'allow',
       canonicalTool: 'run_shell_command',
@@ -123,8 +126,8 @@ describe('classifyNativeWorkspacePreflightDecision', () => {
       requiresRuntimeSandbox: true
     }
     expect(classifyNativeWorkspacePreflightDecision('Claude', 'Bash', preflight)).toEqual({
-      action: 'gate',
-      service: 'shellCommands'
+      action: 'deny',
+      message: expect.stringContaining('TaskWraith MCP workspace tool')
     })
   })
 

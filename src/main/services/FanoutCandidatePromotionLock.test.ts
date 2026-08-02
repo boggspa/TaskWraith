@@ -56,7 +56,8 @@ function capability(
   transitionId: string,
   kind: 'workspace' | 'file',
   executableTargetPath: string,
-  index: number
+  index: number,
+  canonicalRootPath = '/canonical/base'
 ): Extract<WorkspaceLockMutationVerificationResult, { ok: true }>['capabilities'][number] {
   return {
     token: {
@@ -70,9 +71,9 @@ function capability(
     kind,
     executableTargetPath,
     verifiedPathEvidence: {
-      requestedRootPath: '/base',
+      requestedRootPath: canonicalRootPath,
       requestedTargetPath: executableTargetPath,
-      lexicalRootPath: '/base',
+      lexicalRootPath: canonicalRootPath,
       lexicalTargetPath: executableTargetPath,
       pathFlavor: 'posix',
       caseSensitive: true,
@@ -90,14 +91,14 @@ function capability(
         key: `object-${index}`
       },
       containment: {
-        canonicalRootPath: '/canonical/base',
+        canonicalRootPath,
         canonicalTargetPath: executableTargetPath,
-        comparisonRootPath: '/canonical/base',
+        comparisonRootPath: canonicalRootPath,
         comparisonTargetPath: executableTargetPath,
         relativeTargetPath:
-          executableTargetPath === '/canonical/base'
+          executableTargetPath === canonicalRootPath
             ? '.'
-            : executableTargetPath.slice('/canonical/base/'.length),
+            : executableTargetPath.slice(`${canonicalRootPath}/`.length),
         rootIdentity: {
           device: '1',
           inode: '1',
@@ -118,10 +119,7 @@ function verified(transitionId: string): WorkspaceLockMutationVerificationResult
   return {
     ok: true,
     acquiredTransitionId: transitionId,
-    capabilities: [
-      capability(transitionId, 'workspace', '/canonical/base', 1),
-      capability(transitionId, 'file', '/canonical/base/src/a.ts', 2)
-    ]
+    capabilities: [capability(transitionId, 'file', '/canonical/base/src/a.ts', 2)]
   }
 }
 
@@ -143,16 +141,21 @@ function harness() {
     acquireMutationFence: vi.fn(async (owner) => {
       events.push(`fence:acquire:${owner.runId}`)
       return {
-        lockOwnerId: owner.lockOwnerId,
-        runId: owner.runId,
-        pid: owner.pid,
-        processBirthIdentity: owner.processBirthIdentity,
-        fenceId: 'fence',
-        acquiredAt: 'T1'
+        owners: [
+          {
+            lockOwnerId: owner.lockOwnerId,
+            runId: owner.runId,
+            pid: owner.pid,
+            processBirthIdentity: owner.processBirthIdentity,
+            partitionKey: 'file:a',
+            fenceId: 'fence',
+            acquiredAt: 'T1'
+          }
+        ]
       }
     }),
     releaseMutationFence: vi.fn((fence) => {
-      events.push(`fence:release:${fence.runId}`)
+      events.push(`fence:release:${fence.owners[0].runId}`)
     }),
     releaseAcquisition: vi.fn(async (_runId, transitionId) => {
       events.push(`release:${transitionId}`)
@@ -163,7 +166,7 @@ function harness() {
 }
 
 describe('DurableFanoutCandidatePromotionLock', () => {
-  it('atomically claims the base and whole patch files, refreshes under the fence, and verifies execution capabilities', async () => {
+  it('atomically claims only whole patch files, refreshes under target fences, and verifies execution capabilities', async () => {
     const { runtime, events } = harness()
     const lock = new DurableFanoutCandidatePromotionLock({
       runtime,
@@ -192,7 +195,6 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     })
     const firstClaims = vi.mocked(runtime.acquireClaims).mock.calls[0][1]
     expect(firstClaims).toEqual([
-      expect.objectContaining({ kind: 'workspace', worktreePath: '/base' }),
       expect.objectContaining({ kind: 'file', targetPath: resolve('/base', 'src/a.ts') })
     ])
     expect(firstClaims.some((claim) => claim.kind === 'hunk')).toBe(false)
@@ -202,9 +204,9 @@ describe('DurableFanoutCandidatePromotionLock', () => {
       chatId: 'chat-a'
     })
     expect(events).toEqual([
-      'acquire:workspace,file',
+      'acquire:file',
       'fence:acquire:fanout-candidate-promotion:operation-1',
-      'replace:acquire:workspace,file',
+      'replace:acquire:file',
       'verify:refresh',
       'apply',
       'fence:release:fanout-candidate-promotion:operation-1',
@@ -343,16 +345,21 @@ describe('DurableFanoutCandidatePromotionLock', () => {
         return {
           ok: true as const,
           acquiredTransitionId: transitionId,
-          capabilities: [capability(transitionId, 'workspace', domain, 1)]
+          capabilities: [capability(transitionId, 'file', `${domain}/src/a.ts`, 1, domain)]
         }
       }),
       acquireMutationFence: vi.fn(async (owner) => ({
-        lockOwnerId: owner.lockOwnerId,
-        runId: owner.runId,
-        pid: owner.pid,
-        processBirthIdentity: owner.processBirthIdentity,
-        fenceId: `fence:${owner.runId}`,
-        acquiredAt: 'T1'
+        owners: [
+          {
+            lockOwnerId: owner.lockOwnerId,
+            runId: owner.runId,
+            pid: owner.pid,
+            processBirthIdentity: owner.processBirthIdentity,
+            partitionKey: `file:${owner.runId}`,
+            fenceId: `fence:${owner.runId}`,
+            acquiredAt: 'T1'
+          }
+        ]
       })),
       releaseMutationFence: vi.fn(),
       releaseAcquisition: vi.fn(async (runId, transitionId) => {
@@ -365,7 +372,8 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     const makeLock = () =>
       new DurableFanoutCandidatePromotionLock({
         runtime,
-        nextOperationId: () => `operation-${++sequence}`
+        nextOperationId: () => `operation-${++sequence}`,
+        contentionRetryDelayMs: 5
       })
     let releaseBase: (() => void) | undefined
     let releaseOther: (() => void) | undefined
@@ -376,6 +384,7 @@ describe('DurableFanoutCandidatePromotionLock', () => {
       releaseOther = resolve
     })
     const baseEntered = vi.fn()
+    const secondEntered = vi.fn()
     const otherEntered = vi.fn()
 
     const first = makeLock().withPromotionLock(
@@ -392,17 +401,21 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     )
     await vi.waitFor(() => expect(baseEntered).toHaveBeenCalledOnce())
 
-    await expect(
-      makeLock().withPromotionLock(
-        {
-          chatId: 'chat-b',
-          candidateId: 'candidate-b',
-          baseWorkspacePath: '/base',
-          patch: PATCH
-        },
-        vi.fn()
-      )
-    ).rejects.toMatchObject({ code: 'lock-conflict' })
+    const second = makeLock().withPromotionLock(
+      {
+        chatId: 'chat-b',
+        candidateId: 'candidate-b',
+        baseWorkspacePath: '/base',
+        patch: PATCH
+      },
+      async () => {
+        secondEntered()
+      }
+    )
+    await vi.waitFor(() =>
+      expect(vi.mocked(runtime.acquireClaims).mock.calls.length).toBeGreaterThanOrEqual(2)
+    )
+    expect(secondEntered).not.toHaveBeenCalled()
 
     const isolated = makeLock().withPromotionLock(
       {
@@ -418,9 +431,42 @@ describe('DurableFanoutCandidatePromotionLock', () => {
     )
     await vi.waitFor(() => expect(otherEntered).toHaveBeenCalledOnce())
 
-    releaseOther?.()
     releaseBase?.()
-    await Promise.all([first, isolated])
+    await vi.waitFor(() => expect(secondEntered).toHaveBeenCalledOnce())
+    releaseOther?.()
+    await Promise.all([first, second, isolated])
     expect(heldDomains.size).toBe(0)
+  })
+
+  it('cancels a queued promotion without failing or poisoning the current holder', async () => {
+    let wanted = true
+    const { runtime } = harness()
+    vi.mocked(runtime.acquireClaims).mockResolvedValue({
+      ok: false,
+      code: 'conflict',
+      message: 'target is busy'
+    })
+    const lock = new DurableFanoutCandidatePromotionLock({
+      runtime,
+      nextOperationId: () => 'operation-cancelled',
+      contentionRetryDelayMs: 5
+    })
+    const operation = vi.fn()
+    const queued = lock.withPromotionLock(
+      {
+        chatId: 'chat-a',
+        candidateId: 'candidate-a',
+        baseWorkspacePath: '/base',
+        patch: PATCH,
+        stillWanted: () => wanted
+      },
+      operation
+    )
+
+    await vi.waitFor(() => expect(runtime.acquireClaims).toHaveBeenCalled())
+    wanted = false
+    await expect(queued).rejects.toMatchObject({ code: 'cancelled' })
+    expect(operation).not.toHaveBeenCalled()
+    expect(runtime.releaseAcquisition).not.toHaveBeenCalled()
   })
 })

@@ -176,7 +176,7 @@ describe('Pi scheduled launch evidence', () => {
     expect(() => assertPiLaunchAuthorityInvariants(result.authority)).not.toThrow()
   })
 
-  it('keeps every non-default approval mode read-only and binds the exact tool policy', async () => {
+  it('keeps native Pi tools read-only even when exact brokered edits are approved', async () => {
     const readOnlyDigests = new Set<string>()
     for (const approvalMode of ['plan', 'acceptEdits', 'auto_edit', 'never']) {
       const authority = await buildPiSealEvidence(deps(), facts({ approvalMode }))
@@ -190,7 +190,8 @@ describe('Pi scheduled launch evidence', () => {
     const writeResult = await resolvePiSealEvidence(deps(), facts({ approvalMode: 'default' }))
     expect(write.controls.writeCapable).toBe(true)
     expect(writeResult.args[writeResult.args.indexOf('--tools') + 1]).toBe(PI_WRITE_TOOLS.join(','))
-    expect(write.tools.nativeToolPolicySha256).not.toBe([...readOnlyDigests][0])
+    expect(PI_WRITE_TOOLS).toEqual(PI_READ_ONLY_TOOLS)
+    expect(write.tools.nativeToolPolicySha256).toBe([...readOnlyDigests][0])
   })
 
   it.each([
@@ -199,13 +200,6 @@ describe('Pi scheduled launch evidence', () => {
       {
         readOnly: true,
         agenticServices: { shellCommands: 'allow' as const, fileChanges: 'allow' as const }
-      }
-    ],
-    [
-      'shell-command deny',
-      {
-        readOnly: false,
-        agenticServices: { shellCommands: 'deny' as const, fileChanges: 'allow' as const }
       }
     ],
     [
@@ -232,6 +226,22 @@ describe('Pi scheduled launch evidence', () => {
       expect(result.args[result.args.indexOf('--tools') + 1]).not.toContain('write')
     }
   )
+
+  it('does not disable exact file posture when only native shell is denied', async () => {
+    const result = await resolvePiSealEvidence(
+      deps(),
+      facts({
+        approvalMode: 'default',
+        effectivePermissions: {
+          readOnly: false,
+          agenticServices: { shellCommands: 'deny', fileChanges: 'allow' }
+        }
+      })
+    )
+
+    expect(result.authority.controls.writeCapable).toBe(true)
+    expect(result.args[result.args.indexOf('--tools') + 1]).toBe(PI_READ_ONLY_TOOLS.join(','))
+  })
 
   it('uses --no-session and fresh authority for ephemeral ensemble lanes', async () => {
     const result = await resolvePiSealEvidence(deps(), facts({ ephemeralSession: true }))

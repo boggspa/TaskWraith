@@ -146,16 +146,50 @@ describe('provider dispatch integration', () => {
     )
   })
 
-  it('binds Pi Ensemble coordination to a per-run broker credential before launch', () => {
+  it('binds Pi managed tools to a per-run server-side allowlist before launch', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
-    expect(pi).toContain('mcpBridgeRuntime.issuePiEnsembleCoordinationCredential(route)')
-    expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piCoordinationBrokerToken!')
-    expect(pi).toContain(
-      'mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)'
-    )
-    expect(pi.indexOf('issuePiEnsembleCoordinationCredential(route)')).toBeLessThan(
+    expect(pi).toContain('mcpBridgeRuntime.issuePiTaskWraithCredential(')
+    expect(pi).toContain('TASKWRAITH_PI_COORDINATION_TOKEN = piTaskWraithBrokerToken!')
+    expect(pi).toContain('mcpBridgeRuntime.revokePiTaskWraithCredential(piTaskWraithBrokerToken)')
+    expect(pi.indexOf('issuePiTaskWraithCredential(')).toBeLessThan(
       pi.indexOf('await runCliProviderProcess(')
+    )
+    expect(pi).toContain('PI_EXACT_FILE_TOOL_NAMES')
+  })
+
+  it('revokes a Pi credential before a readiness timeout writes the read-only fallback', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+    const readinessSettlement = sourceBetween(
+      "const settleStdinReadiness = (reason: 'ready' | 'timeout' | 'process_exit'): void => {",
+      'const consumeStdinReadinessMarker = (text: string): string => {'
+    )
+    const unavailableCallback = pi.slice(
+      pi.indexOf('onUnavailable: (reason) => {'),
+      pi.indexOf('const detail =', pi.indexOf('onUnavailable: (reason) => {'))
+    )
+
+    expect(unavailableCallback).toContain('revokePiRunCredential()')
+    expect(readinessSettlement.indexOf('stdinReadiness.onUnavailable?.(reason)')).toBeLessThan(
+      readinessSettlement.indexOf(
+        'writeStdinPlan(stdinReadiness.fallbackInitialLines || stdinPlan?.initialLines || [])'
+      )
+    )
+  })
+
+  it('releases exact mutation ownership before result and media projection', () => {
+    const executor = sourceBetween(
+      'async function executeGeminiMcpTool(',
+      'async function startGeminiMcpBroker()'
+    )
+    const immediateRelease = executor.indexOf('await releaseWorkspaceMutationTransaction()')
+
+    expect(immediateRelease).toBeGreaterThan(
+      executor.indexOf('if (dispatchContract && String(handledDispatchOwner)')
+    )
+    expect(immediateRelease).toBeLessThan(executor.indexOf('const finalRichResult ='))
+    expect(executor.slice(executor.indexOf('} finally {'))).toContain(
+      'await releaseWorkspaceMutationTransaction()'
     )
   })
 

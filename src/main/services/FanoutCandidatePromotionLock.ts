@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { isAbsolute, relative, sep } from 'node:path'
 
 import type {
+  WorkspaceLockRuntime,
   WorkspaceLockRuntimeAcquireResult,
-  WorkspaceLockRuntimeOwnerInput
+  WorkspaceLockRuntimeOwnerInput,
+  WorkspaceMutationCommitFenceAcquisition
 } from '../WorkspaceLockRuntime'
 import { deriveWorkspaceMutationClaims } from '../WorkspaceMutationClaims'
-import type { WorkspaceMutationCommitFenceOwner } from '../workLocks/WorkspaceMutationCommitFence'
 import type {
+  CanonicalWorkspaceLockClaim,
   WorkspaceLockClaimRequest,
   WorkspaceLockMutationVerificationResult,
   WorkspaceLockOwner,
@@ -19,6 +21,8 @@ export interface FanoutCandidatePromotionLockInput {
   candidateId: string
   baseWorkspacePath: string
   patch: string
+  /** Checked while another exact promotion transaction owns a target file. */
+  stillWanted?: () => boolean
 }
 
 export interface VerifiedFanoutCandidatePromotion {
@@ -51,6 +55,7 @@ export interface FanoutCandidatePromotionLockResult<T> {
  * cannot reach a process-global authority or silently promote unlocked.
  */
 export interface FanoutCandidatePromotionLockRuntime {
+  subscribe?: WorkspaceLockRuntime['subscribe']
   acquireClaims(
     owner: WorkspaceLockRuntimeOwnerInput,
     claims: readonly WorkspaceLockClaimRequest[]
@@ -58,14 +63,19 @@ export interface FanoutCandidatePromotionLockRuntime {
   replaceClaims(
     owner: WorkspaceLockOwner,
     previousAcquiredTransitionId: string,
-    claims: readonly WorkspaceLockClaimRequest[]
+    claims: readonly WorkspaceLockClaimRequest[],
+    stillWanted?: () => boolean
   ): Promise<WorkspaceLockRuntimeAcquireResult>
   verifyAcquisitionForMutation(
     owner: WorkspaceLockOwner,
     acquiredTransitionId: string
   ): Promise<WorkspaceLockMutationVerificationResult>
-  acquireMutationFence(owner: WorkspaceLockOwner): Promise<WorkspaceMutationCommitFenceOwner>
-  releaseMutationFence(fence: WorkspaceMutationCommitFenceOwner): void
+  acquireMutationFence(
+    owner: WorkspaceLockOwner,
+    claims: readonly CanonicalWorkspaceLockClaim[],
+    stillWanted?: () => boolean
+  ): Promise<WorkspaceMutationCommitFenceAcquisition>
+  releaseMutationFence(fence: WorkspaceMutationCommitFenceAcquisition): void
   releaseAcquisition(
     runId: string,
     acquiredTransitionId: string
@@ -77,6 +87,7 @@ export interface DurableFanoutCandidatePromotionLockOptions {
   nextOperationId?: () => string
   scheduleCleanupRetry?: (operation: () => void, delayMs: number) => unknown
   cleanupRetryDelaysMs?: readonly number[]
+  contentionRetryDelayMs?: number
 }
 
 export class FanoutCandidatePromotionLockError extends Error {
@@ -84,6 +95,7 @@ export class FanoutCandidatePromotionLockError extends Error {
     | 'invalid-input'
     | 'lock-unavailable'
     | 'lock-conflict'
+    | 'cancelled'
     | 'verification-failed'
     | 'cleanup-failed'
 
@@ -98,24 +110,18 @@ export class FanoutCandidatePromotionLockError extends Error {
  * Durable operation-scoped mediation for applying a fan-out candidate patch
  * to its base checkout.
  *
- * Candidate promotion deliberately acquires one atomic claim set:
- *
- * 1. a workspace claim serializes every promotion/mutation in the
- *    same effective base worktree, even when two patches happen to be
- *    disjoint;
- * 2. the immutable apply_patch bytes derive exact paths, conservatively
- *    promoted to whole-file claims because git may apply a hunk with offsets.
- *
- * Separate linked worktrees retain different lock domains and remain
- * independent. The patch acquisition is atomically refreshed after entering
- * the global mutation fence, so hunk baselines and path evidence are current
- * immediately before execution.
+ * Candidate promotion derives one atomic set of exact patch-file claims. Git
+ * may apply a patch hunk with offsets, so candidate hunks are conservatively
+ * promoted to whole-file scope, but unrelated files and linked worktrees stay
+ * independent. Claims are refreshed after entering their target-partitioned
+ * commit fences, immediately before execution.
  */
 export class DurableFanoutCandidatePromotionLock implements FanoutCandidatePromotionLock {
   private readonly runtime: FanoutCandidatePromotionLockRuntime
   private readonly nextOperationId: () => string
   private readonly scheduleCleanupRetry: (operation: () => void, delayMs: number) => unknown
   private readonly cleanupRetryDelaysMs: readonly number[]
+  private readonly contentionRetryDelayMs: number
 
   constructor(options: DurableFanoutCandidatePromotionLockOptions) {
     this.runtime = options.runtime
@@ -128,6 +134,7 @@ export class DurableFanoutCandidatePromotionLock implements FanoutCandidatePromo
         return timer
       })
     this.cleanupRetryDelaysMs = options.cleanupRetryDelaysMs || [250, 1_000, 4_000, 15_000]
+    this.contentionRetryDelayMs = options.contentionRetryDelayMs ?? 250
   }
 
   async withPromotionLock<T>(
@@ -154,14 +161,21 @@ export class DurableFanoutCandidatePromotionLock implements FanoutCandidatePromo
 
     let owner: WorkspaceLockOwner | null = null
     let acquisitionTransitionId: string | null = null
-    let mutationFence: WorkspaceMutationCommitFenceOwner | null = null
+    let mutationFence: WorkspaceMutationCommitFenceAcquisition | null = null
     let operationCompleted = false
     let result: T | undefined
     let operationError: unknown
+    const stillWanted = input.stillWanted || (() => true)
 
     try {
       const claims = await derivePromotionClaims(input)
-      const acquisition = await this.runtime.acquireClaims(ownerInput, claims)
+      const acquisition = await this.acquireClaimsWhenAvailable(ownerInput, claims, stillWanted)
+      if (!acquisition) {
+        throw new FanoutCandidatePromotionLockError(
+          'cancelled',
+          'Candidate promotion was cancelled while waiting for its exact file scope.'
+        )
+      }
       assertAcquired(acquisition, 'base workspace and candidate patch')
       owner = acquisition.owner
       acquisitionTransitionId = requireTransitionId(
@@ -169,13 +183,18 @@ export class DurableFanoutCandidatePromotionLock implements FanoutCandidatePromo
         'base workspace and candidate patch'
       )
 
-      mutationFence = await this.runtime.acquireMutationFence(owner)
+      mutationFence = await this.runtime.acquireMutationFence(
+        owner,
+        acquisition.authority.leases.map((lease) => lease.claim),
+        stillWanted
+      )
 
       const refreshedClaims = await derivePromotionClaims(input)
       const refreshed = await this.runtime.replaceClaims(
         owner,
         acquisitionTransitionId,
-        refreshedClaims
+        refreshedClaims,
+        stillWanted
       )
       assertAcquired(refreshed, 'refreshed base workspace and candidate patch')
       acquisitionTransitionId = requireTransitionId(
@@ -260,6 +279,41 @@ export class DurableFanoutCandidatePromotionLock implements FanoutCandidatePromo
     }
   }
 
+  private async acquireClaimsWhenAvailable(
+    owner: WorkspaceLockRuntimeOwnerInput,
+    claims: readonly WorkspaceLockClaimRequest[],
+    stillWanted: () => boolean
+  ): Promise<WorkspaceLockRuntimeAcquireResult | null> {
+    let result = await this.runtime.acquireClaims(owner, claims)
+    while (!result.ok && (result.code === 'conflict' || result.code === 'authority_busy')) {
+      if (!stillWanted()) return null
+      await this.waitForAvailability(stillWanted)
+      if (!stillWanted()) return null
+      result = await this.runtime.acquireClaims(owner, claims)
+    }
+    return result
+  }
+
+  private waitForAvailability(stillWanted: () => boolean): Promise<void> {
+    return new Promise((resolveWait) => {
+      let settled = false
+      let subscription: ReturnType<
+        NonNullable<FanoutCandidatePromotionLockRuntime['subscribe']>
+      > | null = null
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        clearInterval(recheck)
+        subscription?.unsubscribe()
+        resolveWait()
+      }
+      const recheck = setInterval(finish, this.contentionRetryDelayMs)
+      recheck.unref?.()
+      subscription = this.runtime.subscribe?.({}, () => finish()) || null
+      if (!stillWanted()) finish()
+    })
+  }
+
   private queueCleanupRetry(operation: () => void | Promise<void>, label: string): void {
     let attempt = 0
     const run = (): void => {
@@ -299,6 +353,12 @@ function validateInput(input: FanoutCandidatePromotionLockInput): void {
         `Candidate promotion ${label} is required.`
       )
     }
+  }
+  if (typeof input.patch !== 'string' || !input.patch.trim()) {
+    throw new FanoutCandidatePromotionLockError(
+      'invalid-input',
+      'Candidate promotion requires a non-empty immutable patch.'
+    )
   }
 }
 
@@ -348,22 +408,28 @@ function verifiedPromotionCapabilities(
   verification: WorkspaceLockMutationVerificationResult
 ): VerifiedFanoutCandidatePromotion {
   assertVerified(verification, 'base workspace and candidate patch')
-  const workspaceCapabilities = verification.capabilities.filter(
-    (capability) => capability.kind === 'workspace'
-  )
-  if (workspaceCapabilities.length !== 1) {
+  if (!verification.capabilities.length) {
     throw new FanoutCandidatePromotionLockError(
       'verification-failed',
-      'Candidate promotion requires exactly one verified base-workspace capability.'
+      'Candidate promotion requires at least one verified patch-file capability.'
     )
   }
-  const baseWorkspacePath = workspaceCapabilities[0].executableTargetPath
-  const targetPaths = [
+  const verifiedRoots = [
     ...new Set(
-      verification.capabilities
-        .filter((capability) => capability.kind !== 'workspace')
-        .map((capability) => capability.executableTargetPath)
+      verification.capabilities.map(
+        (capability) => capability.verifiedPathEvidence.containment.canonicalRootPath
+      )
     )
+  ]
+  if (verifiedRoots.length !== 1) {
+    throw new FanoutCandidatePromotionLockError(
+      'verification-failed',
+      'Candidate promotion patch files do not share one verified base workspace.'
+    )
+  }
+  const baseWorkspacePath = verifiedRoots[0]
+  const targetPaths = [
+    ...new Set(verification.capabilities.map((capability) => capability.executableTargetPath))
   ].sort()
   for (const targetPath of targetPaths) {
     const relativePath = relative(baseWorkspacePath, targetPath)
@@ -380,14 +446,6 @@ function verifiedPromotionCapabilities(
 async function derivePromotionClaims(
   input: FanoutCandidatePromotionLockInput
 ): Promise<WorkspaceLockClaimRequest[]> {
-  const workspaceClaim: WorkspaceLockClaimRequest = {
-    workspacePath: input.baseWorkspacePath,
-    worktreePath: input.baseWorkspacePath,
-    kind: 'workspace',
-    mode: 'write'
-  }
-  if (!input.patch.trim()) return [workspaceClaim]
-
   const derived = await deriveWorkspaceMutationClaims({
     workspacePath: input.baseWorkspacePath,
     worktreePath: input.baseWorkspacePath,
@@ -399,7 +457,7 @@ async function derivePromotionClaims(
     const { hunk: _hunk, ...wholeFile } = claim
     return { ...wholeFile, kind: 'file' }
   })
-  return [workspaceClaim, ...conservative]
+  return conservative
 }
 
 function errorMessage(error: unknown): string {

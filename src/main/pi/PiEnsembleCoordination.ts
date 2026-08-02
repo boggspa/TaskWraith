@@ -7,8 +7,8 @@ import { join, relative, resolve } from 'node:path'
  *
  * Pi has no MCP client.  These names are implemented by a TaskWraith-owned,
  * per-run Pi extension which talks only to the already-authenticated local
- * TaskWraith broker.  It is not a generic MCP proxy: it cannot expose shell,
- * file, network, or arbitrary host tools to Pi.
+ * TaskWraith broker. It is not a generic MCP proxy; the separate exact-file
+ * list below is the only mutation surface that may be combined with it.
  */
 export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'ensemble_yield',
@@ -21,7 +21,18 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'blackboard_delete'
 ] as const)
 
+/** Exact workspace mutation tools whose arguments can be locked and committed
+ * inside TaskWraith's broker transaction. Shell and opaque runtime tools are
+ * intentionally absent. */
+export const PI_EXACT_FILE_TOOL_NAMES = Object.freeze([
+  'write_file',
+  'replace',
+  'apply_patch'
+] as const)
+
 export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
+export type PiExactFileToolName = (typeof PI_EXACT_FILE_TOOL_NAMES)[number]
+export type PiTaskWraithToolName = PiEnsembleCoordinationToolName | PiExactFileToolName
 
 /**
  * The broker enforces this independently of Pi's extension registration.
@@ -41,15 +52,29 @@ export function isPiEnsembleCoordinationToolName(
   )
 }
 
+export function isPiTaskWraithToolName(value: unknown): value is PiTaskWraithToolName {
+  return (
+    isPiEnsembleCoordinationToolName(value) ||
+    (typeof value === 'string' && (PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value))
+  )
+}
+
 /** Printed by the app-owned extension only after every fixed tool is registered. */
-export const PI_ENSEMBLE_COORDINATION_READY_MARKER =
-  '__TASKWRAITH_PI_ENSEMBLE_COORDINATION_READY_V1__'
+export const PI_TASKWRAITH_TOOLS_READY_MARKER = '__TASKWRAITH_PI_TOOLS_READY_V2__'
+export const PI_ENSEMBLE_COORDINATION_READY_MARKER = PI_TASKWRAITH_TOOLS_READY_MARKER
 
-const EXTENSION_FILE_NAME = 'taskwraith-ensemble-coordination.mjs'
+const EXTENSION_FILE_NAME = 'taskwraith-tools.mjs'
 
-export interface PreparedPiEnsembleCoordinationExtension {
+export interface PreparedPiTaskWraithExtension {
   readonly path: string
   readonly sourceSha256: string
+  readonly toolNames: readonly PiTaskWraithToolName[]
+}
+
+export interface PreparedPiEnsembleCoordinationExtension extends Omit<
+  PreparedPiTaskWraithExtension,
+  'toolNames'
+> {
   readonly toolNames: readonly PiEnsembleCoordinationToolName[]
 }
 
@@ -61,9 +86,23 @@ export interface PreparedPiEnsembleCoordinationExtension {
 export function preparePiEnsembleCoordinationExtension(input: {
   isolatedHomeDir: string
 }): PreparedPiEnsembleCoordinationExtension {
+  return preparePiTaskWraithExtension({
+    isolatedHomeDir: input.isolatedHomeDir,
+    toolNames: PI_ENSEMBLE_COORDINATION_TOOL_NAMES
+  }) as PreparedPiEnsembleCoordinationExtension
+}
+
+export function preparePiTaskWraithExtension(input: {
+  isolatedHomeDir: string
+  toolNames: readonly PiTaskWraithToolName[]
+}): PreparedPiTaskWraithExtension {
   const isolatedHomeDir = requireCanonicalDirectory(input.isolatedHomeDir)
+  const toolNames = [...new Set(input.toolNames)]
+  if (!toolNames.length || !toolNames.every(isPiTaskWraithToolName)) {
+    throw new TypeError('Pi TaskWraith extension requires a non-empty fixed tool allowlist.')
+  }
   const path = join(isolatedHomeDir, EXTENSION_FILE_NAME)
-  const source = PI_ENSEMBLE_COORDINATION_EXTENSION_SOURCE
+  const source = piTaskWraithExtensionSource(toolNames)
   // `wx` means a pre-existing file (including one planted before this call)
   // is never replaced. The isolated home itself is main-issued and 0700, but
   // fail-closed is still clearer than silently accepting an unexpected file.
@@ -89,7 +128,7 @@ export function preparePiEnsembleCoordinationExtension(input: {
   return Object.freeze({
     path: canonicalPath,
     sourceSha256: createHash('sha256').update(source, 'utf8').digest('hex'),
-    toolNames: PI_ENSEMBLE_COORDINATION_TOOL_NAMES
+    toolNames: Object.freeze(toolNames)
   })
 }
 
@@ -106,6 +145,33 @@ export function piEnsembleCoordinationReadyPromptAppendix(
   ].join('\n')
 }
 
+export function piTaskWraithToolsReadyPromptAppendix(
+  receipt: PreparedPiTaskWraithExtension
+): string {
+  const exactFileTools = receipt.toolNames.filter((name) =>
+    (PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(name)
+  )
+  const coordinationTools = receipt.toolNames.filter((name) =>
+    (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(name)
+  )
+  return [
+    'TaskWraith managed-tools receipt (verified for this run):',
+    `- Transport: explicit app-owned Pi extension over the run-bound local broker (receipt ${receipt.sourceSha256.slice(0, 12)}).`,
+    `- Direct tools: ${receipt.toolNames.map((name) => `\`${name}\``).join(', ')}.`,
+    ...(exactFileTools.length
+      ? [
+          `- Exact edit tools (${exactFileTools.join(', ')}) acquire only their proposed file/hunk targets and release them immediately after each call. Native Pi bash/edit/write remain disabled.`
+        ]
+      : []),
+    ...(coordinationTools.length
+      ? [
+          '- Ensemble coordination remains policy-gated and uses the same run-bound server-side allowlist.'
+        ]
+      : []),
+    '- If a call is rejected, report the tool result and continue; do not probe another transport.'
+  ].join('\n')
+}
+
 /** Exact fallback inserted if the extension did not prove ready before the turn starts. */
 export function piEnsembleCoordinationUnavailablePromptAppendix(reason?: string): string {
   return [
@@ -113,6 +179,27 @@ export function piEnsembleCoordinationUnavailablePromptAppendix(reason?: string)
     '- Do not call, search for, or retry `ensemble_*`, `blackboard_*`, or `scout_brief` tools.',
     '- To suggest a next participant, write one unambiguous `@Role` or `@Model` mention in your response. TaskWraith routes unique in-round mentions; ordinary rotation remains available.',
     ...(reason ? [`- Availability reason: ${reason}`] : [])
+  ].join('\n')
+}
+
+export function piTaskWraithToolsUnavailablePromptAppendix(input: {
+  exactFileToolsExpected: boolean
+  coordinationExpected: boolean
+  reason?: string
+}): string {
+  return [
+    'TaskWraith managed-tools receipt: unavailable for this run.',
+    ...(input.exactFileToolsExpected
+      ? [
+          '- Native Pi bash/edit/write are disabled. Continue read-only and report that exact file tools were unavailable; do not attempt another write transport.'
+        ]
+      : []),
+    ...(input.coordinationExpected
+      ? [
+          '- Do not call, search for, or retry `ensemble_*`, `blackboard_*`, or `scout_brief` tools. Use one unambiguous `@Role` or `@Model` mention instead.'
+        ]
+      : []),
+    ...(input.reason ? [`- Availability reason: ${input.reason}`] : [])
   ].join('\n')
 }
 
@@ -134,14 +221,15 @@ function requireCanonicalDirectory(value: string): string {
 // This source is deliberately self-contained. Pi's explicit extension loader
 // resolves `typebox` from Pi's own runtime, and this file imports only Node's
 // local Unix-socket client otherwise. The model cannot choose the broker path,
-// token, parent provider, or tool name: all are fixed below or injected by
-// TaskWraith into this per-run process environment.
-const PI_ENSEMBLE_COORDINATION_EXTENSION_SOURCE = `
+// token or parent provider. Registered tool names are generated only from the
+// fixed allowlists above, then independently re-authorized by the broker token.
+function piTaskWraithExtensionSource(toolNames: readonly PiTaskWraithToolName[]): string {
+  return `
 import { createConnection } from 'node:net'
 import { Type } from 'typebox'
 
-const READY_MARKER = '${PI_ENSEMBLE_COORDINATION_READY_MARKER}'
-const TOOL_NAMES = ${JSON.stringify(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)}
+const READY_MARKER = '${PI_TASKWRAITH_TOOLS_READY_MARKER}'
+const TOOL_NAMES = ${JSON.stringify(toolNames)}
 const SOCKET_PATH = process.env.TASKWRAITH_PI_COORDINATION_SOCKET || ''
 const TOKEN = process.env.TASKWRAITH_PI_COORDINATION_TOKEN || ''
 const RUN_ID = process.env.TASKWRAITH_RUN_ID || ''
@@ -225,7 +313,10 @@ function descriptionFor(name) {
     scout_brief: 'Emit structured findings from a parallel scout lane. Required: findings and confidence; optional blockers, recommendations, tags.',
     blackboard_post: 'Post a durable shared Ensemble entry. Required: key and value; optional pollOptions, category, scope.',
     blackboard_read: 'Read bounded shared Ensemble blackboard entries. All filters are optional.',
-    blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.'
+    blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
+    write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
+    replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
+    apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.'
   }
   return descriptions[name] || 'Use this TaskWraith Ensemble coordination tool.'
 }
@@ -287,6 +378,21 @@ function parametersFor(name) {
         category: optionalText(),
         all: Type.Optional(Type.Boolean())
       })
+    case 'write_file':
+      return object({ path: Type.String(), content: Type.String() })
+    case 'replace':
+      return object({
+        path: Type.String(),
+        old_string: Type.String(),
+        new_string: Type.String(),
+        replace_all: Type.Optional(Type.Boolean())
+      })
+    case 'apply_patch':
+      return object({
+        patch: Type.String(),
+        dryRun: Type.Optional(Type.Boolean()),
+        check: Type.Optional(Type.Boolean())
+      })
     default:
       return object({})
   }
@@ -316,3 +422,4 @@ export default function (pi) {
   process.stderr.write(READY_MARKER + '\\n')
 }
 `.trimStart()
+}

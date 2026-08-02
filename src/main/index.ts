@@ -1391,11 +1391,11 @@ import {
 } from './grok/GrokCliArgs'
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
 import {
-  grokTaskWraithSafeToolRequested,
+  grokTaskWraithBrokerToolRequested,
+  resolveStructuredTaskWraithToolRequest,
   shouldAdvertiseTaskWraithMcpToGrok,
   structuredProviderNetworkAccessAllowed,
-  structuredProviderNetworkReadRequested,
-  structuredTaskWraithSafeToolRequested
+  structuredProviderNetworkReadRequested
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { isReadOnlyGitShellCommand, shellCommandFromRawCommand } from './ReadOnlyGitShellCommand'
@@ -1462,11 +1462,14 @@ import {
 import { PiLiveSteerTracker, parsePiQueueUpdate, piLiveSteerEnabled } from './pi/PiSteerDelivery'
 import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
-  PI_ENSEMBLE_COORDINATION_READY_MARKER,
-  piEnsembleCoordinationReadyPromptAppendix,
-  piEnsembleCoordinationUnavailablePromptAppendix,
-  preparePiEnsembleCoordinationExtension,
-  type PreparedPiEnsembleCoordinationExtension
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_TASKWRAITH_TOOLS_READY_MARKER,
+  piTaskWraithToolsReadyPromptAppendix,
+  piTaskWraithToolsUnavailablePromptAppendix,
+  preparePiTaskWraithExtension,
+  type PiTaskWraithToolName,
+  type PreparedPiTaskWraithExtension
 } from './pi/PiEnsembleCoordination'
 import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
 import { splitPiWireModelId } from './pi/PiModels'
@@ -1942,7 +1945,7 @@ import {
   type CanonicalDispatchOwner,
   type ResolvedToolDispatchContract
 } from '../shared/providerActionTaxonomy'
-import type { WorkspaceMutationCommitFenceOwner } from './workLocks/WorkspaceMutationCommitFence'
+import type { WorkspaceMutationCommitFenceAcquisition } from './WorkspaceLockRuntime'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
@@ -13573,23 +13576,24 @@ function mcpWriteLockApprovalContext(
   const contract = resolveToolDispatchContractStrict(toolName)
   if (
     !contract.ok ||
-    (contract.lock !== 'workspace-paths' &&
-      contract.lock !== 'workspace-repository' &&
-      contract.lock !== 'workspace-runtime')
+    (contract.lock !== 'workspace-paths' && contract.lock !== 'workspace-repository')
   ) {
     return null
   }
   const workspacePath = resolve(context.workspacePath || context.cwd || cwd)
-  let lockTarget = workspacePath
+  let lockTarget =
+    contract.lock === 'workspace-repository'
+      ? formatScopedPath(context, resolve(workspacePath, '.git'))
+      : 'the exact paths declared by this tool call'
   if (toolName === 'write_file' || toolName === 'replace') {
     const rawPath = String(args.path || args.file_path || '')
-    lockTarget = rawPath ? previewGeminiMcpPath(context, rawPath) : workspacePath
+    lockTarget = rawPath ? previewGeminiMcpPath(context, rawPath) : lockTarget
   }
-  const kind = contract.lock === 'workspace-paths' ? 'path/hunk' : 'workspace-wide'
+  const kind = contract.lock === 'workspace-paths' ? 'file/hunk' : 'repository-metadata'
   return {
     laneId,
     lockTarget,
-    note: `Ensemble lane ${laneId} will request a ${kind} write lock for ${lockTarget}.`
+    note: `Ensemble lane ${laneId} will request an exact ${kind} mutation scope only while this operation executes: ${lockTarget}.`
   }
 }
 
@@ -19665,6 +19669,10 @@ async function tryRunClaudeSdk(
           // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
           // MCP servers are configured separately and remain available.
           tools: [],
+          // Prevent implicit workspace/user settings, hooks, plugins, and MCP
+          // descendants from creating an unobservable write surface. Reviewed
+          // TaskWraith/user MCP servers are supplied explicitly below.
+          settingSources: [],
           resume: payload.providerSessionId || undefined,
           abortController: controller,
           canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
@@ -20306,8 +20314,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // Without this, every broker call fails headlessly as "User rejected MCP"
   // even though TaskWraith policy allows it (pass-1 finding). Brokered tools
   // still route through TaskWraith's gateway (workspace guards + approval
-  // ledger); NATIVE tools stay callable too, bounded by the argv's
-  // `--sandbox enabled` — both stacks stay available, each with its own bound.
+  // ledger); native reads stay available, while opaque native mutations are
+  // denied by the transient policy and use the broker instead.
   const writeCapable = cursorWriteCapable(payload.approvalMode)
   const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   const cursorAdvertiseTaskWraithMcp =
@@ -20451,9 +20459,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // Transient workspace config (restored after the run): allow THIS
       // broker's tools, and strip workspace-registered MCP servers — under
       // `--force` those would execute ungoverned. The native-tool deny-list is
-      // seat-scoped: write seats keep native shell/write (sandbox-bounded —
-      // the both-stacks directive); read-only seats keep the native mutators
-      // denied so read-only holds on the native stack as well as the broker.
+      // seat-scoped and always denies opaque native shell/write. Write seats
+      // receive their mutation capability from the exact broker only.
       const cursorDir = join(payload.workspace!, '.cursor')
       const mcpPath = join(cursorDir, 'mcp.json')
       workspaceMcpAliasesGlobalRegistry = cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
@@ -20518,8 +20525,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       })
       cursorMcpBridgeActive = true
     } catch (error) {
-      // Degrade WITH A VISIBLE WARNING (Grok parity): the seat runs native-only
-      // rather than dying — or worse, trying tools that would all reject.
+      // Degrade WITH A VISIBLE WARNING (Grok parity): the seat keeps serving
+      // native reads in ask mode rather than dying or regaining opaque writes.
       await releaseCursorConfigurationLeases()
       cursorMcpBridgeActive = false
       if (
@@ -20539,7 +20546,7 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           provider: 'cursor',
           severity: 'warning',
           title: 'Cursor MCP bridge unavailable',
-          message: `TaskWraith could not set up the MCP broker; Cursor is running with native tools only. ${
+          message: `TaskWraith could not set up the MCP broker; Cursor is continuing with native reads only. ${
             error instanceof Error ? error.message : String(error)
           }${
             error instanceof CursorGlobalBrokerRegistryInstallError
@@ -20589,12 +20596,12 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // match and silently disabled Cursor). Containment is the native
   // `--sandbox enabled`, an HONEST PARTIAL backstop: it blocks writes to
   // $HOME-root sensitive dirs (~/.ssh, ~/.aws) for a normal project workspace,
-  // but the sandbox grants the workspace's PARENT area, so a workspace placed
-  // directly under $HOME leaves $HOME writable. Read-only seats add a read-only
+  // but the sandbox grants the workspace's PARENT area, so it is never treated
+  // as the mutation boundary. Read-only seats add a read-only
   // `--mode` (a BRIDGED read-only seat instead runs default mode — ask/plan
   // execute no tools headlessly — contained by the transient native-mutator
-  // deny-list + safe-subset broker); write-capable seats run in Cursor's
-  // default (write+shell) mode, still sandboxed. The contained argv never emits
+  // deny-list + safe-subset broker); write-capable seats use default mode only
+  // while the exact broker is active and native mutators are denied. The contained argv never emits
   // write-widening or sandbox-disabling flags (`--force` only with the bridge)
   // and guards the trailing prompt against flag injection. Path B inherits the
   // user's REAL ~/.cursor login via the process env (headless-verified:
@@ -20900,36 +20907,49 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     }
   }
 
-  // Pi's `--no-extensions` wall stays enabled. Ensemble lanes may add exactly
-  // one app-created extension by explicit path; it registers only the fixed
-  // coordination tools and proves registration before the model prompt is sent.
-  let ensembleCoordination: PreparedPiEnsembleCoordinationExtension | undefined
-  let ensembleCoordinationPreparationFailure: string | undefined
-  let piCoordinationBrokerToken: string | undefined
+  // Pi's `--no-extensions` wall stays enabled. Main may add exactly one
+  // app-created extension by explicit path. A write-approved seat gets only
+  // exact brokered file mutations; Ensemble lanes may additionally get the
+  // fixed coordination surface. The broker re-enforces this per-token list.
+  let taskWraithTools: PreparedPiTaskWraithExtension | undefined
+  let taskWraithToolsPreparationFailure: string | undefined
+  let piTaskWraithBrokerToken: string | undefined
+  const revokePiRunCredential = (): void => {
+    mcpBridgeRuntime.revokePiTaskWraithCredential(piTaskWraithBrokerToken)
+    piTaskWraithBrokerToken = undefined
+  }
   const piCoordinationPolicy =
     payload.effectivePermissions?.agenticServices?.mcpTools ??
     AppStore.getSettings().agenticServices?.mcpTools
   const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
-  if (ephemeralSession && piCoordinationAllowed) {
+  const exactFileToolsExpected = writeCapable
+  const coordinationExpected = ephemeralSession && piCoordinationAllowed
+  const piTaskWraithToolNames: PiTaskWraithToolName[] = [
+    ...(exactFileToolsExpected ? PI_EXACT_FILE_TOOL_NAMES : []),
+    ...(coordinationExpected ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : [])
+  ]
+  if (piTaskWraithToolNames.length > 0) {
     try {
       await startGeminiMcpBroker()
-      ensembleCoordination = preparePiEnsembleCoordinationExtension({
-        isolatedHomeDir: isolatedHomeLease.path
+      taskWraithTools = preparePiTaskWraithExtension({
+        isolatedHomeDir: isolatedHomeLease.path,
+        toolNames: piTaskWraithToolNames
       })
-      piCoordinationBrokerToken = mcpBridgeRuntime.issuePiEnsembleCoordinationCredential(route)
+      piTaskWraithBrokerToken = mcpBridgeRuntime.issuePiTaskWraithCredential(
+        route,
+        piTaskWraithToolNames
+      )
     } catch (error) {
-      mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)
-      piCoordinationBrokerToken = undefined
-      ensembleCoordination = undefined
-      ensembleCoordinationPreparationFailure =
-        error instanceof Error ? error.message : String(error)
+      revokePiRunCredential()
+      taskWraithTools = undefined
+      taskWraithToolsPreparationFailure = error instanceof Error ? error.message : String(error)
     }
   } else if (ephemeralSession) {
-    ensembleCoordinationPreparationFailure =
+    taskWraithToolsPreparationFailure =
       'This lane’s Tool calls policy disables managed Ensemble coordination.'
   }
-  const preparedEnsembleCoordination =
-    ensembleCoordination && piCoordinationBrokerToken ? ensembleCoordination : undefined
+  const preparedTaskWraithTools =
+    taskWraithTools && piTaskWraithBrokerToken ? taskWraithTools : undefined
 
   const args = buildPiRpcArgs({
     upstream: split.upstream,
@@ -20939,10 +20959,10 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     ...(ephemeralSession
       ? { ephemeralSession: true }
       : { sessionId: `taskwraith-${route.appChatId || 'chat'}` }),
-    ...(preparedEnsembleCoordination
+    ...(preparedTaskWraithTools
       ? {
-          coordinationExtensionPath: preparedEnsembleCoordination.path,
-          coordinationToolNames: preparedEnsembleCoordination.toolNames
+          coordinationExtensionPath: preparedTaskWraithTools.path,
+          coordinationToolNames: preparedTaskWraithTools.toolNames
         }
       : {})
   })
@@ -20968,31 +20988,38 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   resolvedEnv.PI_SKIP_VERSION_CHECK = '1'
   resolvedEnv.PI_OFFLINE = '1'
 
-  if (preparedEnsembleCoordination) {
+  if (preparedTaskWraithTools) {
     // This unique token binds the local socket to this exact Pi run before the
     // broker accepts caller-controlled route fields. The broker independently
-    // constrains Pi to its fixed coordination allowlist, so a native
-    // write-capable Pi shell cannot turn the token into generic MCP authority.
+    // constrains Pi to the per-run fixed allowlist, so token visibility can
+    // never turn the contained extension into generic MCP authority.
     resolvedEnv.TASKWRAITH_PI_COORDINATION_SOCKET = geminiMcpSocketPath()
-    resolvedEnv.TASKWRAITH_PI_COORDINATION_TOKEN = piCoordinationBrokerToken!
+    resolvedEnv.TASKWRAITH_PI_COORDINATION_TOKEN = piTaskWraithBrokerToken!
   }
 
-  const piCoordinationFallbackPrompt = `${payload.prompt}\n\n${piEnsembleCoordinationUnavailablePromptAppendix(
-    ensembleCoordinationPreparationFailure ||
-      'extension readiness was not verified before this turn began'
+  const managedToolsFallbackPrompt = `${payload.prompt}\n\n${piTaskWraithToolsUnavailablePromptAppendix(
+    {
+      exactFileToolsExpected,
+      coordinationExpected,
+      reason:
+        taskWraithToolsPreparationFailure ||
+        'extension readiness was not verified before this turn began'
+    }
   )}`
-  if (ephemeralSession && !preparedEnsembleCoordination) {
+  if ((exactFileToolsExpected || ephemeralSession) && !preparedTaskWraithTools) {
     appendDurableRunEventForRoute(
       'pi',
       route,
       'tool',
       'control',
-      'Pi Ensemble coordination surface unavailable before launch',
+      'Pi managed tool surface unavailable before launch',
       {
-        eventType: 'ensemble_coordination_surface',
+        eventType: 'pi_managed_tool_surface',
         status: 'unavailable',
-        reason: ensembleCoordinationPreparationFailure || 'managed extension was not prepared',
-        fallback: 'unambiguous @Role/@Model mention routing'
+        reason: taskWraithToolsPreparationFailure || 'managed extension was not prepared',
+        exactFileToolsExpected,
+        coordinationExpected,
+        fallback: 'read-only continuation'
       }
     )
   }
@@ -21000,38 +21027,38 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
-    ...(ephemeralSession && !preparedEnsembleCoordination
+    ...((exactFileToolsExpected || ephemeralSession) && !preparedTaskWraithTools
       ? {
-          warning: `Pi Ensemble coordination is unavailable for this turn. ${
-            ensembleCoordinationPreparationFailure ||
+          warning: `Pi managed tools are unavailable for this turn. ${
+            taskWraithToolsPreparationFailure ||
             'The managed extension was not prepared; no manual Pi/MCP installation is required.'
-          } TaskWraith will use safe @Role/@Model mention routing instead.`
+          } Pi is continuing read-only.`
         }
       : {}),
-    stdinPlan: preparedEnsembleCoordination
+    stdinPlan: preparedTaskWraithTools
       ? {
           initialLines: [
             piPromptCommand(
-              `${payload.prompt}\n\n${piEnsembleCoordinationReadyPromptAppendix(preparedEnsembleCoordination)}`
+              `${payload.prompt}\n\n${piTaskWraithToolsReadyPromptAppendix(preparedTaskWraithTools)}`
             )
           ],
           readiness: {
-            marker: PI_ENSEMBLE_COORDINATION_READY_MARKER,
+            marker: PI_TASKWRAITH_TOOLS_READY_MARKER,
             timeoutMs: 3_000,
-            fallbackInitialLines: [piPromptCommand(piCoordinationFallbackPrompt)],
+            fallbackInitialLines: [piPromptCommand(managedToolsFallbackPrompt)],
             onReady: () => {
               appendDurableRunEventForRoute(
                 'pi',
                 route,
                 'tool',
                 'control',
-                'Pi Ensemble coordination surface verified',
+                'Pi managed tool surface verified',
                 {
-                  eventType: 'ensemble_coordination_surface',
+                  eventType: 'pi_managed_tool_surface',
                   status: 'verified',
                   transport: 'explicit_pi_extension_local_broker',
-                  extensionSha256: preparedEnsembleCoordination.sourceSha256,
-                  tools: [...preparedEnsembleCoordination.toolNames]
+                  extensionSha256: preparedTaskWraithTools.sourceSha256,
+                  tools: [...preparedTaskWraithTools.toolNames]
                 }
               )
               sendAgentCompatLine(
@@ -21041,14 +21068,20 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   type: 'provider_warning',
                   provider: 'pi',
                   severity: 'info',
-                  title: 'Pi Ensemble coordination verified',
-                  message:
-                    'TaskWraith attached the fixed managed Pi coordination surface for this turn. The receipt-gated tools are available; no generic MCP, shell, or file tools were added.'
+                  title: 'Pi managed tools verified',
+                  message: exactFileToolsExpected
+                    ? 'TaskWraith attached the run-bound Pi tool surface. Exact file edits are transaction-locked; native shell/edit/write and generic MCP remain unavailable.'
+                    : 'TaskWraith attached the fixed run-bound Pi coordination surface; native mutation tools and generic MCP remain unavailable.'
                 },
                 route
               )
             },
             onUnavailable: (reason) => {
+              // Readiness failure switches this process to a native read-only
+              // prompt. Revoke the server-side credential before that prompt
+              // is written; the token string may remain visible in the child
+              // environment, but it no longer authorizes any broker call.
+              revokePiRunCredential()
               const detail =
                 reason === 'timeout'
                   ? 'The managed Pi extension did not prove ready within three seconds.'
@@ -21058,12 +21091,12 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                 route,
                 'tool',
                 'control',
-                'Pi Ensemble coordination surface unavailable',
+                'Pi managed tool surface unavailable',
                 {
-                  eventType: 'ensemble_coordination_surface',
+                  eventType: 'pi_managed_tool_surface',
                   status: 'unavailable',
                   reason,
-                  fallback: 'unambiguous @Role/@Model mention routing'
+                  fallback: 'read-only continuation'
                 }
               )
               sendAgentCompatLine(
@@ -21073,8 +21106,8 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   type: 'provider_warning',
                   provider: 'pi',
                   severity: 'warning',
-                  title: 'Pi Ensemble coordination unavailable',
-                  message: `${detail} Pi is continuing without coordination tools; it was told to use safe @Role/@Model mention routing. No manual Pi/MCP installation is required.`
+                  title: 'Pi managed tools unavailable',
+                  message: `${detail} Pi is continuing read-only and was told not to probe another write transport. No manual Pi/MCP installation is required.`
                 },
                 route
               )
@@ -21083,11 +21116,15 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         }
       : {
           initialLines: [
-            piPromptCommand(ephemeralSession ? piCoordinationFallbackPrompt : payload.prompt)
+            piPromptCommand(
+              exactFileToolsExpected || ephemeralSession
+                ? managedToolsFallbackPrompt
+                : payload.prompt
+            )
           ]
         },
     onComplete: () => {
-      mcpBridgeRuntime.revokePiEnsembleCoordinationCredential(piCoordinationBrokerToken)
+      revokePiRunCredential()
       const cleanup = isolatedHomeLease.cleanup()
       if (!cleanup.ok) {
         sendAgentCompatLine(
@@ -21502,9 +21539,10 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
   // runs without an explicit allow — no silent shell.
   const grokPermissionHandler = async (request: AcpPermissionRequest) => {
     // Grok may qualify this bridge as taskwraith-grok OR taskwraith-broker.
-    // Strip either trusted namespace, then fail closed against the immutable
-    // safe set before allowing it on a read-only seat.
-    if (grokTaskWraithSafeToolRequested(request)) return 'allow'
+    // Strip either trusted namespace, then require one exact TaskWraith broker
+    // contract. This permission only lets the provider invoke the broker; the
+    // broker still enforces the signed service policy and mutation transaction.
+    if (grokTaskWraithBrokerToolRequested(request)) return 'allow'
     const networkRead = grokAcpNetworkReadRequested('grok', request)
     if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
     const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
@@ -21519,39 +21557,14 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       runtimeSandboxed: false
     })
     if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
-    if (!grokWriteCapable(payload.approvalMode)) {
-      if (networkRead) return 'allow'
-      if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
-        return 'allow'
-      }
-      // Native shell has already failed closed above because this runtime has
-      // no workspace-rooted shell sandbox. Unknown/non-workspace calls stay
-      // denied under read-only posture.
-      return 'deny'
+    if (networkRead) return 'allow'
+    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
+      return 'allow'
     }
-    const service =
-      nativeWorkspacePreflight.kind === 'allow'
-        ? nativeWorkspacePreflight.service
-        : grokToolKindToService(request.toolKind)
-    const allowed = await requestAgenticServiceApproval(
-      event.sender,
-      'grok',
-      service,
-      payload.scope === 'global' ? undefined : payload.workspace,
-      {
-        method: `grok/${request.toolKind || 'tool'}`,
-        title: `Grok wants to run: ${request.toolName}`,
-        body: `Grok requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
-        preview: buildAcpToolApprovalPreview({
-          toolName: request.toolName,
-          rawToolCall: request.rawToolCall,
-          service,
-          cwd: payload.scope === 'global' ? undefined : payload.workspace
-        }),
-        runId: route.appRunId
-      }
-    )
-    return allowed ? 'allow' : 'deny'
+    // Opaque native mutations cannot join an exact TaskWraith edit
+    // transaction. The argv deny-list prevents these calls; this is the
+    // defense-in-depth floor if a provider version reports one anyway.
+    return 'deny'
   }
 
   const finishGrokAcpTurn = (
@@ -22035,26 +22048,25 @@ function maybeLogMistralRawAcp(direction: 'in' | 'out', message: unknown): void 
 }
 
 /**
- * Whether a Vibe permission request targets one of TaskWraith's own immutable
- * read-only broker tools.
+ * Whether a Vibe permission request targets one exact TaskWraith broker tool.
  *
- * Accepts either qualifier this seat can actually produce — the scoped
- * safe-subset server name or the broker's own namespace — and then fails closed
- * on the UNQUALIFIED tool membership check. The qualifier only says "this came
- * from a server we attached"; membership in the immutable read-only set is what
- * authorizes it.
+ * Accepts only qualifiers this seat can actually produce, then fails closed on
+ * strict canonical tool resolution. This ACP permission is not mutation
+ * approval: the broker independently applies the signed service gate and exact
+ * edit transaction before executing the call.
  */
-function mistralTaskWraithSafeToolRequested(request: {
+function mistralTaskWraithBrokerToolRequested(request: {
   toolName?: string
   toolKind?: string
   rawToolCall?: unknown
 }): boolean {
-  const namespaces = [
-    MISTRAL_SCOPED_MCP_SERVER_NAME,
-    MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
-    GEMINI_MCP_SERVER_NAME
-  ]
-  return structuredTaskWraithSafeToolRequested(request, namespaces)
+  return Boolean(
+    resolveStructuredTaskWraithToolRequest(request, [
+      MISTRAL_SCOPED_MCP_SERVER_NAME,
+      MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
+      GEMINI_MCP_SERVER_NAME
+    ])
+  )
 }
 
 /**
@@ -22465,10 +22477,10 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // rather than defence-in-depth. The ACP core turns a 'deny' into a rejected
   // outcome, so nothing runs without an explicit allow.
   const mistralPermissionHandler = async (request: AcpPermissionRequest) => {
-    // TaskWraith's own immutable read-only broker tools are already gated by
-    // the broker's gateway; auto-allowing them here avoids a second card for a
-    // call the host is about to execute itself. Fails closed on membership.
-    if (mistralTaskWraithSafeToolRequested(request)) return 'allow'
+    // TaskWraith broker tools are independently gated by the broker. Allowing
+    // the ACP hop here avoids a duplicate provider card; it does not bypass the
+    // signed service policy or exact mutation transaction.
+    if (mistralTaskWraithBrokerToolRequested(request)) return 'allow'
     const networkRead = grokAcpNetworkReadRequested('mistral', request)
     if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
     const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
@@ -22483,11 +22495,12 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       runtimeSandboxed: false
     })
     if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
+    if (networkRead) return 'allow'
+    if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
+      return 'allow'
+    }
+    if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
     if (mistralReadOnlySeat) {
-      if (networkRead) return 'allow'
-      if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
-        return 'allow'
-      }
       // Deliberate divergence from Grok's read-only ACP handler, which denies
       // every shell call. Grok can afford that because its read-only argv
       // (`--deny 'Bash(*)'`) stops it ATTEMPTING one; this seat has no argv, so
@@ -22496,32 +22509,11 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       // dead-ended turn is this branch. isReadOnlyShellCommand is the
       // fail-closed authority — anything it cannot prove read-only, including
       // anything it cannot parse, falls through to the deny below.
-      if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
       return 'deny'
     }
-    const service =
-      nativeWorkspacePreflight.kind === 'allow'
-        ? nativeWorkspacePreflight.service
-        : grokToolKindToService(request.toolKind)
-    const allowed = await requestAgenticServiceApproval(
-      event.sender,
-      'mistral',
-      service,
-      payload.scope === 'global' ? undefined : payload.workspace,
-      {
-        method: `mistral/${request.toolKind || 'tool'}`,
-        title: `Mistral wants to run: ${request.toolName}`,
-        body: `Mistral requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
-        preview: buildAcpToolApprovalPreview({
-          toolName: request.toolName,
-          rawToolCall: request.rawToolCall,
-          service,
-          cwd: payload.scope === 'global' ? undefined : payload.workspace
-        }),
-        runId: route.appRunId
-      }
-    )
-    return allowed ? 'allow' : 'deny'
+    // A write-capable seat remains useful for brokered exact edits, but its
+    // opaque native mutators never bypass the transaction boundary.
+    return 'deny'
   }
 
   const finishMistralAcpTurn = (
@@ -25207,7 +25199,7 @@ function codexSandboxPolicyForMode(
     scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
   const writableRoots =
     scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
-  if (approvalMode === 'plan') {
+  if (scope !== 'global' || approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
   }
   return {
@@ -29840,7 +29832,10 @@ async function runCodexAppServerWithClient(
       ? 'on-request'
       : codexApprovalPolicyForMode(payload.approvalMode, settings)
   const fullAccessGranted = isFullShellAccessGranted(payload.effectivePermissions)
-  const sandbox = codexSandboxForMode(payload.approvalMode, fullAccessGranted)
+  const sandbox =
+    payload.scope === 'global'
+      ? codexSandboxForMode(payload.approvalMode, fullAccessGranted)
+      : 'read-only'
   const threadLaunchPlan = buildCodexAppServerThreadLaunchPlan({
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
@@ -30136,10 +30131,9 @@ async function runCodexExecFallback(
     return
   }
   const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
-  const sandbox = codexSandboxForMode(
-    payload.approvalMode,
-    isFullShellAccessGranted(payload.effectivePermissions)
-  )
+  // Exec fallback has no route-stamped TaskWraith broker. Keep the run useful
+  // for reads, but never restore opaque workspace mutation authority.
+  const sandbox = 'read-only'
   const args = [
     ...buildCodexFastServiceTierCompatibilityArgs(),
     ...codexReasoning.execConfigArgs,
@@ -32097,10 +32091,17 @@ async function runAntigravityAgyProvider(
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
       effectivePermissions: payload.effectivePermissions,
-      // agy has no per-tool approval bridge, so a denied shell/file service can
-      // only be honoured by launching read-only. Same predicate the capability
-      // contract reports with, so the two cannot disagree.
+      // agy has no per-tool approval bridge. Shared checkouts therefore stay
+      // plan-only; accept-edits is retained only for a separately selected,
+      // main-verified worktree where its writes cannot race the base checkout.
       agenticServices: AppStore.getSettings().agenticServices,
+      isolatedMutationWorkspace: Boolean(
+        payload.runtimeWorktree?.status === 'selected' &&
+        payload.runtimeWorktree.effectiveWorkspacePath &&
+        payload.runtimeWorktree.baseWorkspacePath &&
+        resolve(payload.runtimeWorktree.effectiveWorkspacePath) !==
+          resolve(payload.runtimeWorktree.baseWorkspacePath)
+      ),
       conversationId: payload.providerSessionId
     })
   } catch (error) {
@@ -34574,7 +34575,9 @@ async function executeGeminiMcpTool(
         provider: parentProvider,
         toolName,
         args
-      })
+      }),
+      acquisitionStillWanted: () =>
+        canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
     })
   } catch (error) {
     workspaceMutationOperationDone?.finish()
@@ -34656,9 +34659,65 @@ async function executeGeminiMcpTool(
 
   let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
   let hostCommandProjection: HostCommandProjectionScope | null = null
-  let workspaceMutationFence: WorkspaceMutationCommitFenceOwner | null = null
+  let workspaceMutationFence: WorkspaceMutationCommitFenceAcquisition | null = null
   let workspaceMutationTransitionId = workspaceMutationAdmission.acquiredTransitionId
   let workspaceLockLifecycleResolved = true
+  const releaseWorkspaceMutationTransaction = async (): Promise<void> => {
+    if (!workspaceLockLifecycleResolved) return
+    if (workspaceMutationFence) {
+      if (!workspaceLockRuntimeRef) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(
+          'Mutation-fence ownership became unresolved because the runtime disappeared.'
+        )
+        return
+      }
+      try {
+        workspaceLockRuntimeRef.releaseMutationFence(workspaceMutationFence)
+        workspaceMutationFence = null
+      } catch (error) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(error instanceof Error ? error.message : String(error))
+        console.error('[workspace-lock] mutation-fence release failed:', error)
+        return
+      }
+    }
+    if (
+      workspaceMutationAdmission.releaseAfterOperation &&
+      workspaceMutationTransitionId &&
+      workspaceMutationAdmission.owner
+    ) {
+      if (!workspaceLockRuntimeRef) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(
+          'Exact acquisition ownership became unresolved because the runtime disappeared.'
+        )
+        return
+      }
+      try {
+        const released = await workspaceLockRuntimeRef.releaseAcquisition(
+          workspaceMutationAdmission.owner.runId,
+          workspaceMutationTransitionId
+        )
+        if (!released.ok) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(released.message)
+          console.error(
+            '[workspace-lock] operation lease release failed:',
+            new Error(released.message)
+          )
+          return
+        }
+        workspaceMutationTransitionId = undefined
+      } catch (error) {
+        workspaceLockLifecycleResolved = false
+        poisonWorkspaceLockMutationAdmission(error instanceof Error ? error.message : String(error))
+        console.error('[workspace-lock] operation lease release failed:', error)
+        return
+      }
+    }
+    workspaceMutationOperationDone?.finish()
+  }
   try {
     if (workspaceMutationAdmission.owner) {
       if (!workspaceLockRuntimeRef) {
@@ -34666,13 +34725,15 @@ async function executeGeminiMcpTool(
       }
       workspaceMutationFence = await workspaceLockRuntimeRef.acquireMutationFence(
         workspaceMutationAdmission.owner,
-        workspaceMutationAdmission.canonicalClaims
+        workspaceMutationAdmission.canonicalClaims,
+        () => canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
       )
       if (workspaceMutationTransitionId && workspaceMutationAdmission.runtimeInput) {
         const refreshed = await workspaceLockRuntimeRef.replaceAcquisitionForMutation(
           workspaceMutationAdmission.runtimeInput,
           workspaceMutationAdmission.owner,
-          workspaceMutationTransitionId
+          workspaceMutationTransitionId,
+          () => canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
         )
         if (!refreshed.ok) {
           throw new Error(`Workspace mutation refresh failed: ${refreshed.message}`)
@@ -37051,6 +37112,11 @@ async function executeGeminiMcpTool(
       )
     }
 
+    // The executor has completed its filesystem/repository mutation. Release
+    // every exact partition and lease before transcript projection, media
+    // persistence, or other post-operation work can extend contention.
+    await releaseWorkspaceMutationTransaction()
+
     const finalRichResult = richResult as McpToolExecutionResult | null
     const finalPermissionRetryResult = permissionRetryResult as McpToolExecutionResult | null
     const trustedMediaRefs = finalRichResult?.trustedMediaRefs ?? []
@@ -37299,61 +37365,8 @@ async function executeGeminiMcpTool(
       isError: true
     }
   } finally {
-    if (workspaceMutationFence) {
-      if (!workspaceLockRuntimeRef) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(
-          'Mutation-fence ownership became unresolved because the runtime disappeared.'
-        )
-      } else {
-        try {
-          workspaceLockRuntimeRef.releaseMutationFence(workspaceMutationFence)
-        } catch (error) {
-          workspaceLockLifecycleResolved = false
-          poisonWorkspaceLockMutationAdmission(
-            error instanceof Error ? error.message : String(error)
-          )
-          console.error('[workspace-lock] mutation-fence release failed:', error)
-        }
-      }
-    }
-    if (
-      workspaceLockLifecycleResolved &&
-      workspaceMutationAdmission.releaseAfterOperation &&
-      workspaceMutationTransitionId &&
-      workspaceMutationAdmission.owner
-    ) {
-      if (!workspaceLockRuntimeRef) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(
-          'Exact acquisition ownership became unresolved because the runtime disappeared.'
-        )
-      } else {
-        try {
-          const released = await workspaceLockRuntimeRef.releaseAcquisition(
-            workspaceMutationAdmission.owner.runId,
-            workspaceMutationTransitionId
-          )
-          if (!released.ok) {
-            workspaceLockLifecycleResolved = false
-            poisonWorkspaceLockMutationAdmission(released.message)
-            console.error(
-              '[workspace-lock] operation lease release failed:',
-              new Error(released.message)
-            )
-          }
-        } catch (error) {
-          workspaceLockLifecycleResolved = false
-          poisonWorkspaceLockMutationAdmission(
-            error instanceof Error ? error.message : String(error)
-          )
-          console.error('[workspace-lock] operation lease release failed:', error)
-        }
-      }
-    }
-    if (workspaceLockLifecycleResolved) {
-      workspaceMutationOperationDone?.finish()
-    } else {
+    await releaseWorkspaceMutationTransaction()
+    if (!workspaceLockLifecycleResolved) {
       console.error(
         '[workspace-lock] retaining the visible acquisition and in-flight lifecycle after an unresolved release.'
       )

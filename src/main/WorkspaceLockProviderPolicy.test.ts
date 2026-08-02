@@ -16,32 +16,23 @@ function run(
 }
 
 describe('providerRunRequiresCoarseWorkspaceLock', () => {
-  it('does not serialize Kimi runs whose writes are already broker-only', () => {
-    expect(providerRunRequiresCoarseWorkspaceLock(run('kimi'))).toBe(false)
-    expect(providerRunRequiresCoarseWorkspaceLock(run('kimi', { approvalMode: 'auto_edit' }))).toBe(
-      false
-    )
-  })
-
-  it('retains coarse fallback for opaque or nontransactional native writers', () => {
-    expect(providerRunRequiresCoarseWorkspaceLock(run('claude', { approvalMode: 'plan' }))).toBe(
-      true
-    )
-    expect(providerRunRequiresCoarseWorkspaceLock(run('grok'))).toBe(true)
-    expect(providerRunRequiresCoarseWorkspaceLock(run('grok', { approvalMode: 'plan' }))).toBe(
-      false
-    )
-    expect(providerRunRequiresCoarseWorkspaceLock(run('cursor'))).toBe(true)
-    expect(providerRunRequiresCoarseWorkspaceLock(run('pi'))).toBe(true)
-  })
-
-  it('keeps brokered API lanes and non-workspace runs out of coarse authority', () => {
-    expect(
-      providerRunRequiresCoarseWorkspaceLock(
-        run('antigravity', { model: 'gemini-api:gemini-2.5-pro' })
+  it('never turns provider or participant dispatch into a workspace mutation', () => {
+    for (const provider of [
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'mistral',
+      'pi',
+      'ollama',
+      'antigravity'
+    ] as const) {
+      expect(providerRunRequiresCoarseWorkspaceLock(run(provider))).toBe(false)
+      expect(providerRunRequiresCoarseWorkspaceLock(run(provider, { approvalMode: 'plan' }))).toBe(
+        false
       )
-    ).toBe(false)
-    expect(providerRunRequiresCoarseWorkspaceLock(run('ollama'))).toBe(false)
+    }
     expect(
       providerRunRequiresCoarseWorkspaceLock(
         run('codex', { scope: 'global', workspace: undefined })

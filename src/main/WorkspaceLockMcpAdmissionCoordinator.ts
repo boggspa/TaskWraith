@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
+import { deriveWorkspaceMutationClaims } from './WorkspaceMutationClaims'
 import type {
   WorkspaceExternalMutationAuthorityReceipt,
   WorkspaceLockRuntime,
@@ -39,7 +40,12 @@ export interface WorkspaceLockMcpOwnerIdentityQuery {
 export interface WorkspaceLockMcpLaneScopeQuery {
   toolName: string
   workspacePath: string
-  /** Exact executor resource. Undefined means workspace-wide scope is required. */
+  /**
+   * Executor-derived targets. An empty array proves no workspace mutation;
+   * undefined means derivation failed and must not be guessed.
+   */
+  resourcePaths?: readonly string[]
+  /** Legacy single-target fallback used to reject an escaped external path. */
   resourcePath: string | undefined
 }
 
@@ -59,7 +65,9 @@ export interface WorkspaceLockMcpProviderSubleaseInput {
 }
 
 export interface WorkspaceLockMcpAdmissionCoordinatorDependencies {
-  getRuntime: () => Pick<WorkspaceLockRuntime, 'acquire'> | null
+  getRuntime: () =>
+    | (Pick<WorkspaceLockRuntime, 'acquire'> & Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>)
+    | null
   getRuntimeUnavailableReason?: () => string | null | undefined
   getChat: (chatId: string) => WorkspaceLockMcpAdmissionChat | null | undefined
   getOpaqueOwnerId: (query: WorkspaceLockMcpOwnerIdentityQuery) => string | null | undefined
@@ -98,6 +106,8 @@ export interface WorkspaceLockMcpAdmissionInput<
    * relies on this durable pre-spawn lifecycle.
    */
   ownerLifecycle?: 'run' | 'launching-child'
+  /** Checked while a contended exact target is queued. */
+  acquisitionStillWanted?: () => boolean
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -199,13 +209,31 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     const chat = input.context.appChatId ? this.deps.getChat(input.context.appChatId) : null
     const baseWorkspacePath = resolve(chat?.workspacePath || effectiveWorkspacePath)
     const laneId = input.context.ensembleRun?.laneId
+    const mutation = {
+      source: 'taskwraith-catalog' as const,
+      provider: input.provider,
+      workspacePath: baseWorkspacePath,
+      worktreePath: effectiveWorkspacePath,
+      action: input.toolName,
+      args: input.args
+    }
+    let resourcePaths: readonly string[] | undefined
+    try {
+      resourcePaths = (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
+        claim.targetPath ? [claim.targetPath] : []
+      )
+    } catch {
+      // Runtime derivation below returns the typed tool error. Scope validation
+      // receives undefined so it cannot reinterpret an invalid proposal as a
+      // scope-less mutation.
+    }
     const scopeCheck = this.deps.validateLaneWriteScope(runId, {
       toolName: input.toolName,
       workspacePath: effectiveWorkspacePath,
+      resourcePaths,
       resourcePath: input.resourcePath
     })
     if (scopeCheck && !scopeCheck.ok) {
-      this.deps.markLaneBlocked(runId, scopeCheck.reason)
       return this.denied(input.toolName, scopeCheck.reason, { laneId })
     }
 
@@ -222,7 +250,6 @@ export class WorkspaceLockMcpAdmissionCoordinator {
         )
       : this.ownerInput(input, runId, chat, ownerQuery)
     if (!ownerInput.ok) {
-      if (laneId) this.deps.markLaneBlocked(runId, ownerInput.reason)
       return this.denied(input.toolName, ownerInput.reason, {
         code: ownerInput.code,
         laneId
@@ -231,23 +258,30 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     const runtimeInput: WorkspaceLockRuntimeAcquireInput = {
       owner: ownerInput.owner,
       mutation: {
-        source: 'taskwraith-catalog',
-        provider: input.provider,
-        workspacePath: baseWorkspacePath,
-        worktreePath: effectiveWorkspacePath,
-        action: input.toolName,
-        args: input.args
+        ...mutation
       },
       externalMutationAuthority: input.externalMutationAuthority
     }
-    const acquired = providerScopeAdmission
-      ? await this.deps.acquireProviderScopeSublease({
-          admission: providerScopeAdmission,
-          runtimeInput
-        })
-      : await runtime.acquire(runtimeInput)
+    const acquire = (): Promise<WorkspaceLockRuntimeAcquireResult> =>
+      providerScopeAdmission
+        ? this.deps.acquireProviderScopeSublease({
+            admission: providerScopeAdmission,
+            runtimeInput
+          })
+        : runtime.acquire(runtimeInput)
+    const acquired = await acquireWorkspaceMutationWhenAvailable({
+      runtime,
+      acquire,
+      stillWanted: input.acquisitionStillWanted || (() => true)
+    })
+    if (!acquired) {
+      return this.denied(
+        input.toolName,
+        'Workspace mutation was cancelled while waiting for its exact edit scope.',
+        { code: 'workspace_lock_cancelled', laneId }
+      )
+    }
     if (!acquired.ok) {
-      if (laneId) this.deps.markLaneBlocked(runId, acquired.message)
       return this.denied(input.toolName, acquired.message, {
         code: acquired.code,
         laneId
@@ -255,7 +289,6 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     }
     if (providerScopeAdmission && !sameExactOwner(acquired.owner, providerScopeAdmission.owner)) {
       const reason = 'Provider-scope workspace-lock sublease returned a different exact owner.'
-      if (laneId) this.deps.markLaneBlocked(runId, reason)
       return this.denied(input.toolName, reason, {
         code: 'owner_identity_unavailable',
         laneId
@@ -364,6 +397,42 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       reason
     }
   }
+}
+
+async function acquireWorkspaceMutationWhenAvailable(input: {
+  runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>
+  acquire: () => Promise<WorkspaceLockRuntimeAcquireResult>
+  stillWanted: () => boolean
+}): Promise<WorkspaceLockRuntimeAcquireResult | null> {
+  let result = await input.acquire()
+  while (!result.ok && (result.code === 'conflict' || result.code === 'authority_busy')) {
+    if (!input.stillWanted()) return null
+    await waitForWorkspaceLockStateChange(input.runtime, input.stillWanted)
+    if (!input.stillWanted()) return null
+    result = await input.acquire()
+  }
+  return result
+}
+
+function waitForWorkspaceLockStateChange(
+  runtime: Partial<Pick<WorkspaceLockRuntime, 'subscribe'>>,
+  stillWanted: () => boolean
+): Promise<void> {
+  return new Promise((resolveWait) => {
+    let settled = false
+    let subscription: ReturnType<WorkspaceLockRuntime['subscribe']> | null = null
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      clearInterval(cancelPoll)
+      subscription?.unsubscribe()
+      resolveWait()
+    }
+    const cancelPoll = setInterval(finish, 250)
+    cancelPoll.unref?.()
+    subscription = runtime.subscribe?.({}, () => finish()) || null
+    if (!stillWanted()) finish()
+  })
 }
 
 function exactRunId(value: string | null | undefined): string | null {

@@ -10,13 +10,16 @@ import type {
   WorkspaceLockMcpAdmissionCoordinator
 } from './WorkspaceLockMcpAdmissionCoordinator'
 import { workspaceLockMcpResourcePath } from './WorkspaceLockMcpResourceScope'
-import type { WorkspaceLockRuntime, WorkspaceLockRuntimeAcquireInput } from './WorkspaceLockRuntime'
+import type {
+  WorkspaceLockRuntime,
+  WorkspaceLockRuntimeAcquireInput,
+  WorkspaceMutationCommitFenceAcquisition
+} from './WorkspaceLockRuntime'
 import type {
   WorkspaceLockRunLifecycleOperation,
   WorkspaceLockRunLifecycleTracker
 } from './WorkspaceLockRunLifecycle'
 import { prepareVerifiedWorkspaceMutationHandoff } from './mcp/VerifiedWorkspaceMutationHandoff'
-import type { WorkspaceMutationCommitFenceOwner } from './workLocks/WorkspaceMutationCommitFence'
 import type {
   WorkspaceLockMutationCapability,
   WorkspaceLockOwner
@@ -128,7 +131,7 @@ export type WorkspaceLockMcpExecutionPrepareResult<
 interface ExecutionState {
   admission?: Extract<WorkspaceLockMcpAdmission, { ok: true }>
   owner?: WorkspaceLockOwner
-  fence: WorkspaceMutationCommitFenceOwner | null
+  fence: WorkspaceMutationCommitFenceAcquisition | null
   lifecycleOperation: WorkspaceLockRunLifecycleOperation | null
   transitionId?: string
   cleanupPromise?: Promise<WorkspaceLockMcpExecutionCleanupResult>
@@ -190,7 +193,8 @@ export class WorkspaceLockMcpExecutionCoordinator<
           args: input.args
         }),
         ownerLifecycle: requiresChildCapableLifecycle(input.toolName) ? 'launching-child' : 'run',
-        ...(input.executionPid ? { executionPid: input.executionPid } : {})
+        ...(input.executionPid ? { executionPid: input.executionPid } : {}),
+        acquisitionStillWanted: input.executionAuthorityStillLive
       })
       if (admission.ok === false) {
         state.lifecycleOperation?.finish()
@@ -229,12 +233,17 @@ export class WorkspaceLockMcpExecutionCoordinator<
         if (!state.transitionId || !admission.runtimeInput) {
           throw new Error('Workspace mutation admission omitted its exact acquisition receipt.')
         }
-        state.fence = await runtime.acquireMutationFence(admission.owner, admission.canonicalClaims)
+        state.fence = await runtime.acquireMutationFence(
+          admission.owner,
+          admission.canonicalClaims,
+          input.executionAuthorityStillLive
+        )
 
         const refreshed = await runtime.replaceAcquisitionForMutation(
           admission.runtimeInput,
           admission.owner,
-          state.transitionId
+          state.transitionId,
+          input.executionAuthorityStillLive
         )
         if (refreshed.ok === false) {
           throw new Error(`Workspace mutation refresh failed: ${refreshed.message}`)

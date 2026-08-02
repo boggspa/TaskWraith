@@ -37,9 +37,10 @@ describe('ProviderCapabilities', () => {
       status: { provider: 'antigravity', available: true, binaryPath: '/usr/local/bin/agy' }
     })
 
-    expect(contract.approvals.providerMode).toContain('--sandbox --mode accept-edits')
+    expect(contract.approvals.providerMode).toContain('--sandbox --mode plan')
     expect(contract.approvals.inAppApprovals).toBe(false)
     expect(contract.approvals.notes.join(' ')).toContain('no credential access')
+    expect(contract.approvals.notes.join(' ')).toContain('isolated worktrees')
     expect(contract.mcp.state).toBe('unavailable')
     expect(contract.tools.mcpTools.state).toBe('unavailable')
     expect(contract.tools.delegate.state).toBe('unavailable')
@@ -58,10 +59,10 @@ describe('ProviderCapabilities', () => {
 
     it('describes its own tool allowlist, not Claude', () => {
       const contract = piContract('default')
-      expect(contract.approvals.notes.join(' ')).toContain('--tools allowlist')
+      expect(contract.approvals.notes.join(' ')).toContain('native read tools only')
       expect(contract.approvals.notes.join(' ')).not.toContain('Claude')
-      expect(contract.approvals.providerMode).toContain('write tool allowlist')
-      expect(contract.approvals.inAppApprovals).toBe(false)
+      expect(contract.approvals.providerMode).toContain('brokered exact file tools')
+      expect(contract.approvals.inAppApprovals).toBe(true)
       expect(
         contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
       ).toBeUndefined()
@@ -71,7 +72,7 @@ describe('ProviderCapabilities', () => {
       const contract = piContract('default')
 
       expect(contract.mcp.source).toBe('taskwraith')
-      expect(contract.mcp.serverName).toBe('TaskWraith Pi Ensemble extension')
+      expect(contract.mcp.serverName).toBe('TaskWraith Pi managed tools')
       expect(contract.mcp.message).toContain('no manual Pi/MCP installation')
       expect(contract.mcp.tools).toEqual(
         expect.arrayContaining(['ensemble_yield', 'ensemble_send', 'blackboard_post'])
@@ -83,7 +84,7 @@ describe('ProviderCapabilities', () => {
       expect(contract.tools.creativeApps.state).toBe('unavailable')
     })
 
-    it('does not attach Pi Ensemble coordination when Tool calls are denied', () => {
+    it('removes coordination but retains exact file tools when Tool calls are denied', () => {
       const contract = buildProviderCapabilityContract({
         provider: 'pi',
         settings: settings({ ...defaultServices, mcpTools: 'deny' }),
@@ -91,9 +92,9 @@ describe('ProviderCapabilities', () => {
         status: { provider: 'pi', available: true }
       })
 
-      expect(contract.mcp.state).toBe('blocked')
-      expect(contract.mcp.available).toBe(false)
-      expect(contract.mcp.tools).toEqual([])
+      expect(contract.mcp.state).toBe('available')
+      expect(contract.mcp.available).toBe(true)
+      expect(contract.mcp.tools).toEqual(['write_file', 'replace', 'apply_patch'])
       expect(contract.tools.mcpTools.state).toBe('unavailable')
     })
 
@@ -124,13 +125,6 @@ describe('ProviderCapabilities', () => {
         }
       ],
       [
-        'shell-command deny',
-        {
-          readOnly: false,
-          agenticServices: { shellCommands: 'deny' as const, fileChanges: 'allow' as const }
-        }
-      ],
-      [
         'file-change deny',
         {
           readOnly: false,
@@ -157,10 +151,7 @@ describe('ProviderCapabilities', () => {
       }
     )
 
-    it.each([
-      ['shell commands', { ...defaultServices, shellCommands: 'deny' as const }],
-      ['file changes', { ...defaultServices, fileChanges: 'deny' as const }]
-    ])(
+    it.each([['file changes', { ...defaultServices, fileChanges: 'deny' as const }]])(
       'uses current service settings to downgrade capability reporting for %s',
       (_label, services) => {
         const contract = buildProviderCapabilityContract({
@@ -177,6 +168,20 @@ describe('ProviderCapabilities', () => {
         ).toMatchObject({ severity: 'warning' })
       }
     )
+
+    it('keeps brokered file edits when only native shell commands are denied', () => {
+      const contract = buildProviderCapabilityContract({
+        provider: 'pi',
+        settings: settings({ ...defaultServices, shellCommands: 'deny' }),
+        approvalMode: 'default',
+        status: { provider: 'pi', available: true }
+      })
+
+      expect(contract.approvals.effectiveMode).toBe('default')
+      expect(contract.approvals.providerMode).toContain('brokered exact file tools')
+      expect(contract.tools.shellCommands.state).toBe('unavailable')
+      expect(contract.tools.fileChanges.tools).toEqual(['write_file', 'replace', 'apply_patch'])
+    })
   })
 
   // agy has no per-tool approval bridge, so a denied shell/file service can only

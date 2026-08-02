@@ -132,6 +132,40 @@ describe('WorkspaceMutationCommitFence', () => {
     expect(second.readFence()).toBeNull()
   })
 
+  it('isolates exact target partitions while excluding a second commit to the same target', async () => {
+    const root = temporaryRoot()
+    const firstOwner = identity('partition-first', 211)
+    const secondOwner = identity('partition-second', 212)
+    const observations = new Map([
+      [firstOwner.pid, live(firstOwner.processBirthIdentity)],
+      [secondOwner.pid, live(secondOwner.processBirthIdentity)]
+    ])
+    const first = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: (pid) => observations.get(pid) || { state: 'dead' },
+      nextId: idSource('partition-first')
+    })
+    const second = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: (pid) => observations.get(pid) || { state: 'dead' },
+      nextId: idSource('partition-second')
+    })
+
+    const firstFence = await first.acquire(firstOwner, 'target-a')
+    const disjointFence = await second.acquire(secondOwner, 'target-b')
+    expect(first.readFence('target-a')).toEqual(firstFence)
+    expect(second.readFence('target-b')).toEqual(disjointFence)
+
+    await expect(second.acquire(secondOwner, 'target-a')).rejects.toBeInstanceOf(
+      WorkspaceMutationCommitFenceBusyError
+    )
+
+    expect(first.release(firstFence)).toBe(true)
+    expect(second.release(disjointFence)).toBe(true)
+    expect(first.readFence('target-a')).toBeNull()
+    expect(second.readFence('target-b')).toBeNull()
+  })
+
   it('releases in finally when the broker executor rejects', async () => {
     const root = temporaryRoot()
     const owner = identity('throwing', 303)

@@ -7,6 +7,7 @@ import { join, resolve } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { buildSync } from 'esbuild'
 import { describe, expect, it, vi } from 'vitest'
+import { PI_EXACT_FILE_TOOL_NAMES } from '../pi/PiEnsembleCoordination'
 import {
   applyMcpBridgeProfileArgvToEnv,
   beginBridgeSubprocessLogHistoryClear,
@@ -1037,7 +1038,7 @@ describe('MCP bridge stream writes', () => {
 
     expect(rejected).toMatchObject({
       ok: false,
-      error: expect.stringContaining('only permits ensemble coordination tools')
+      error: expect.stringContaining('does not permit run_shell_command')
     })
     expect(executeGeminiMcpTool).not.toHaveBeenCalled()
 
@@ -1057,6 +1058,73 @@ describe('MCP bridge stream writes', () => {
       'pi',
       {}
     )
+  })
+
+  it('binds a Pi exact-file credential to only its declared mutation tools', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+    const piCredential = runtime.issuePiTaskWraithCredential(
+      { appRunId: 'pi-run-write', appChatId: 'chat-write' },
+      PI_EXACT_FILE_TOOL_NAMES
+    )
+
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'write_file',
+        arguments: { path: 'src/a.ts', content: 'next' },
+        appRunId: 'pi-run-write',
+        appChatId: 'chat-write'
+      })
+    ).resolves.toMatchObject({ ok: true })
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'write_file',
+      { path: 'src/a.ts', content: 'next' },
+      { appRunId: 'pi-run-write', appChatId: 'chat-write' },
+      'pi',
+      {}
+    )
+
+    for (const tool of [
+      'run_shell_command',
+      'capability_invoke',
+      'git_stage',
+      'git_commit',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
+      'ensemble_yield'
+    ]) {
+      const result = await runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool,
+        arguments: {},
+        appRunId: 'pi-run-write',
+        appChatId: 'chat-write'
+      })
+      expect(result).toMatchObject({
+        ok: false,
+        error: expect.stringContaining(
+          tool === 'capability_invoke' ? 'Unknown TaskWraith MCP tool' : 'does not permit'
+        )
+      })
+    }
+    expect(executeGeminiMcpTool).toHaveBeenCalledOnce()
+
+    runtime.revokePiTaskWraithCredential(piCredential)
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'write_file',
+        arguments: { path: 'src/a.ts', content: 'later' },
+        appRunId: 'pi-run-write',
+        appChatId: 'chat-write'
+      })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('authentication failed') })
   })
 
   it('does not let a Pi coordination credential impersonate another live run', async () => {

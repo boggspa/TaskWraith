@@ -1,10 +1,10 @@
 import { isAbsolute, resolve } from 'node:path'
 
 /**
- * Returns one exact resource only when the mutation has a single path role.
- * Multi-path and repository/runtime tools deliberately return undefined so an
- * Ensemble writer needs workspace-wide scope instead of validating one path
- * and silently mutating another.
+ * Legacy single-target hint for approval/scope presentation. Multi-target and
+ * repository/runtime tools deliberately return undefined: authoritative lock
+ * admission derives their complete atomic file/hunk target set from the tool
+ * arguments and never interprets an absent hint as broader scope.
  */
 export function workspaceLockMcpResourcePath(
   toolName: string,

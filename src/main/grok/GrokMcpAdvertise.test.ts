@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  grokTaskWraithBrokerToolRequested,
   grokTaskWraithSafeToolRequested,
+  resolveStructuredTaskWraithToolRequest,
   shouldAdvertiseTaskWraithMcpToGrok,
   structuredProviderNetworkAccessAllowed,
   structuredProviderNetworkReadRequested,
@@ -187,6 +189,30 @@ describe('grokTaskWraithSafeToolRequested', () => {
         rawToolCall: { rawInput: { tool_name: 'other-broker__ask_user_question' } }
       })
     ).toBe(false)
+  })
+
+  it('recognizes an exact mutating broker call without treating its title as authority', () => {
+    const request = {
+      toolName: 'Edit a file',
+      toolKind: 'edit',
+      rawToolCall: {
+        kind: 'edit',
+        rawInput: {
+          tool_name: 'taskwraith-grok__write_file',
+          path: 'src/a.ts',
+          content: 'next'
+        }
+      }
+    }
+    expect(grokTaskWraithBrokerToolRequested(request)).toBe(true)
+    expect(grokTaskWraithSafeToolRequested(request)).toBe(false)
+    expect(
+      resolveStructuredTaskWraithToolRequest(request, [
+        'taskwraith-grok',
+        'taskwraith-broker',
+        'TaskWraith'
+      ])
+    ).toMatchObject({ toolName: 'write_file' })
   })
 })
 

@@ -4,7 +4,8 @@ import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 import {
   resolveProviderNativeActionStrict,
-  resolveToolDispatchContractStrict
+  resolveToolDispatchContractStrict,
+  type ResolvedToolDispatchContract
 } from '../../shared/providerActionTaxonomy'
 
 const GROK_LEGACY_BROKER_MCP_TOOL_NAMESPACE = 'taskwraith-broker'
@@ -101,6 +102,20 @@ export function structuredTaskWraithSafeToolRequested(
     return false
   }
 
+  const contract = resolveStructuredTaskWraithToolRequest(request, namespaces)
+  const toolName = contract?.toolName
+  return Boolean(
+    toolName && (isReadOnlyAdvertisedTool(toolName) || isCapabilityGatewayToolName(toolName))
+  )
+}
+
+/** Resolve an ACP request to one exact TaskWraith broker contract. */
+export function resolveStructuredTaskWraithToolRequest(
+  request: StructuredTaskWraithToolRequest,
+  namespaces: readonly string[]
+): ResolvedToolDispatchContract | null {
+  const raw = record(request.rawToolCall)
+  const rawInput = record(raw?.rawInput)
   // `rawInput.name` is ambiguous. For an ordinary tool it is a machine identity,
   // but for the capability gateway it is the envelope's OWN ARGUMENT — the target
   // being invoked. Counting it as a competing identity makes the agreement check
@@ -122,7 +137,7 @@ export function structuredTaskWraithSafeToolRequested(
     typeof rawInput?.name === 'string' && rawInput.name.trim().length > 0 ? rawInput.name : null
   const identities =
     gatewayEnvelope || !targetArgument ? envelopeIdentities : [...envelopeIdentities, targetArgument]
-  if (identities.length === 0) return false
+  if (identities.length === 0) return null
   const resolved = identities.map((candidate) => {
     const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)
     if (!toolName) return null
@@ -130,18 +145,15 @@ export function structuredTaskWraithSafeToolRequested(
     if (!contract.ok) return null
     return contract
   })
-  if (resolved.some((contract) => contract === null)) return false
+  if (resolved.some((contract) => contract === null)) return null
   const contracts = resolved.filter((contract) => contract !== null)
   if (
     new Set(contracts.map((contract) => contract.toolName)).size !== 1 ||
     new Set(contracts.map((contract) => contract.effectiveToolName)).size !== 1
   ) {
-    return false
+    return null
   }
-  const toolName = contracts[0]?.toolName
-  return Boolean(
-    toolName && (isReadOnlyAdvertisedTool(toolName) || isCapabilityGatewayToolName(toolName))
-  )
+  return contracts[0] ?? null
 }
 
 /**
@@ -152,6 +164,12 @@ export function structuredTaskWraithSafeToolRequested(
  */
 export function grokTaskWraithSafeToolRequested(request: StructuredTaskWraithToolRequest): boolean {
   return structuredTaskWraithSafeToolRequested(request, GROK_TASKWRAITH_MCP_TOOL_NAMESPACES)
+}
+
+export function grokTaskWraithBrokerToolRequested(
+  request: StructuredTaskWraithToolRequest
+): boolean {
+  return Boolean(resolveStructuredTaskWraithToolRequest(request, GROK_TASKWRAITH_MCP_TOOL_NAMESPACES))
 }
 
 /**

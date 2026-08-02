@@ -5,17 +5,11 @@ import {
   resolveToolDispatchContractStrict
 } from '../shared/providerActionTaxonomy'
 
-const NATIVE_FILESYSTEM_OR_SHELL_TOOLS = new Set([
+const NATIVE_MUTATION_OR_SHELL_TOOLS = new Set([
   'bash',
   'shell',
   'runcommand',
   'runterminalcommand',
-  'read',
-  'readfile',
-  'glob',
-  'grep',
-  'findfiles',
-  'listdirectory',
   'write',
   'writefile',
   'edit',
@@ -39,9 +33,9 @@ export function isExplicitTaskWraithBrokerTool(toolName: string, toolArgs?: unkn
 }
 
 /**
- * Native provider filesystem and shell tools cannot enforce TaskWraith's
- * signed chat/run/workspace grants at every path open. Keep them broker-only;
- * the explicitly namespaced TaskWraith MCP equivalents remain available.
+ * Native provider mutations and shell tools cannot execute inside
+ * TaskWraith's exact per-operation commit fence. Keep them broker-only; native
+ * reads remain available because they neither acquire nor need a write lease.
  */
 export function nativeProviderToolRequiresBroker(toolName: string, toolArgs?: unknown): boolean {
   if (isExplicitTaskWraithBrokerTool(toolName, toolArgs)) return false
@@ -50,7 +44,7 @@ export function nativeProviderToolRequiresBroker(toolName: string, toolArgs?: un
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '')
-  return NATIVE_FILESYSTEM_OR_SHELL_TOOLS.has(compact)
+  return NATIVE_MUTATION_OR_SHELL_TOOLS.has(compact)
 }
 
 export type NativeProviderApprovalPriority = 'deny-native' | 'allow-auto' | 'continue'
@@ -80,18 +74,15 @@ export type NativeWorkspaceCanUseDecision =
   | { action: 'gate'; service: AgenticServiceId }
 
 /**
- * WS-B dual-stack: map a shared `NativeWorkspaceToolGate` preflight result onto
- * a provider `canUseTool` / permission decision WITHOUT ever flipping a bare
- * native tool straight to allow. This lets native FS calls run again (rather
- * than being quarantined to the broker) while keeping every path workspace-
- * bounded and every mutation on the normal approval ledger:
+ * Map a shared `NativeWorkspaceToolGate` result onto a provider permission
+ * decision without weakening the exact-mutation boundary:
  *
  *   - `allow` + `read`        → allow directly. The path is already proven
  *     inside the active workspace and reads are preset-safe, mirroring how the
  *     namespaced MCP read tools auto-allow.
- *   - `allow` + `write`/`shell` → route through the agentic-service ledger
- *     (`gate`) so the read-only clamp, policy, grants, external-path detection,
- *     and audit still apply to the native mutation.
+ *   - `allow` + `write`/`shell` → deny the opaque native execution and direct
+ *     the provider to the namespaced broker, where the ledger and exact target
+ *     transaction both apply.
  *   - `deny`                  → deny with the gate's specific workspace-bound
  *     reason (OOW path, missing authority, or unsandboxed shell).
  *   - `not_applicable`        → keep the bare native tool broker-only (the prior
@@ -105,7 +96,7 @@ export function classifyNativeWorkspacePreflightDecision(
 ): NativeWorkspaceCanUseDecision {
   if (preflight.kind === 'allow') {
     if (preflight.access === 'read') return { action: 'allow' }
-    return { action: 'gate', service: preflight.service }
+    return { action: 'deny', message: nativeProviderBrokerOnlyMessage(provider, toolName) }
   }
   if (preflight.kind === 'deny') {
     return { action: 'deny', message: preflight.reason }

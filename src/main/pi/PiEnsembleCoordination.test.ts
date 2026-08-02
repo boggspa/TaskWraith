@@ -5,10 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   PI_ENSEMBLE_COORDINATION_READY_MARKER,
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES,
   isPiEnsembleCoordinationToolName,
+  isPiTaskWraithToolName,
   piEnsembleCoordinationReadyPromptAppendix,
   piEnsembleCoordinationUnavailablePromptAppendix,
-  preparePiEnsembleCoordinationExtension
+  piTaskWraithToolsReadyPromptAppendix,
+  preparePiEnsembleCoordinationExtension,
+  preparePiTaskWraithExtension
 } from './PiEnsembleCoordination'
 
 const temporaryHomes: string[] = []
@@ -40,7 +44,7 @@ describe('Pi managed Ensemble coordination extension', () => {
 
     const prepared = preparePiEnsembleCoordinationExtension({ isolatedHomeDir: home })
 
-    expect(prepared.path).toBe(join(home, 'taskwraith-ensemble-coordination.mjs'))
+    expect(prepared.path).toBe(join(home, 'taskwraith-tools.mjs'))
     expect(prepared.sourceSha256).toMatch(/^[a-f0-9]{64}$/)
     expect(prepared.toolNames).toEqual(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)
     const source = readFileSync(prepared.path, 'utf8')
@@ -53,7 +57,28 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain("case 'blackboard_post'")
     expect(source).toContain('throw new Error(resultText(result))')
     expect(source).not.toContain('run_shell_command')
-    expect(source).not.toContain('write_file')
+    expect(source).toContain(
+      `const TOOL_NAMES = ${JSON.stringify(PI_ENSEMBLE_COORDINATION_TOOL_NAMES)}`
+    )
+  })
+
+  it('builds one fixed extension for exact file tools plus coordination', () => {
+    const home = createCanonicalHome()
+    const toolNames = [...PI_EXACT_FILE_TOOL_NAMES, ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES]
+
+    const prepared = preparePiTaskWraithExtension({ isolatedHomeDir: home, toolNames })
+    const source = readFileSync(prepared.path, 'utf8')
+
+    expect(prepared.toolNames).toEqual(toolNames)
+    for (const toolName of toolNames) expect(isPiTaskWraithToolName(toolName)).toBe(true)
+    expect(isPiTaskWraithToolName('run_shell_command')).toBe(false)
+    expect(source).toContain("case 'write_file'")
+    expect(source).toContain("case 'replace'")
+    expect(source).toContain("case 'apply_patch'")
+    expect(source).not.toContain('run_shell_command')
+    const prompt = piTaskWraithToolsReadyPromptAppendix(prepared)
+    expect(prompt).toContain('Native Pi bash/edit/write remain disabled')
+    expect(prompt).toContain('acquire only their proposed file/hunk targets')
   })
 
   it('does not overwrite an unexpected pre-existing extension file', () => {

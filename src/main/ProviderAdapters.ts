@@ -366,21 +366,20 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'pi') {
-    // Pi has no built-in permission system; containment is TaskWraith-owned
-    // argv (tool allowlist by posture, project-config discovery disabled) plus
-    // the BYOK env firewall. Native tools are not individually mediated —
-    // write posture is the diff-review model, like Grok write mode.
+    // Pi has no built-in permission system. TaskWraith therefore keeps native
+    // Pi read-only and attaches one fixed, run-bound extension for approved
+    // exact file transactions (plus governed Ensemble coordination).
     return {
       provider,
       label: providerLabel(provider),
       transport: 'pi-cli',
       runChannel: 'run-agent',
-      capabilitySource: 'provider',
+      capabilitySource: 'mixed',
       features: {
         persistentSessions: true,
-        appManagedApprovals: false,
-        workspaceGrants: false,
-        agentBenchMcpBridge: false,
+        appManagedApprovals: true,
+        workspaceGrants: true,
+        agentBenchMcpBridge: true,
         providerManagedMcp: false,
         nativeThreadTools: true,
         hostCommandFallback: false
@@ -395,7 +394,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         imageAttachments: false,
         contextInjection: false,
         sessionResumption: true,
-        perThreadMcp: false,
+        perThreadMcp: true,
         assistantTextStreaming: 'token'
       },
       capabilityCaveats: [
@@ -403,9 +402,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
           id: 'pi-tool-allowlist-posture',
           severity: 'info',
           capability: 'approvalModes',
-          title: 'Pi posture rides its tool allowlist',
+          title: 'Pi writes use exact TaskWraith transactions',
           message:
-            'Pi ships no permission prompts. Plan seats run with read-only built-ins (read, grep, find, ls); write-capable seats add bash, edit and write without per-call approval — review changes via diffs. The TaskWraith MCP bridge is not attached in this version.'
+            'Pi always runs with read-only built-ins (read, grep, find, ls). A write-approved seat gets only write_file, replace and apply_patch through a fixed per-run TaskWraith extension with app approvals, exact path claims and immediate release; native bash, edit and write stay disabled.'
         }
       ]
     }

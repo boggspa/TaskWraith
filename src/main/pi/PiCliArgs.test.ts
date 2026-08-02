@@ -5,7 +5,10 @@ import {
   buildPiProcessEnv,
   buildPiRpcArgs
 } from './PiCliArgs'
-import { PI_ENSEMBLE_COORDINATION_TOOL_NAMES } from './PiEnsembleCoordination'
+import {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES
+} from './PiEnsembleCoordination'
 
 describe('buildPiRpcArgs', () => {
   const base = {
@@ -32,7 +35,7 @@ describe('buildPiRpcArgs', () => {
     expect(args[args.indexOf('--model') + 1]).toBe('deepseek-v4-flash')
   })
 
-  it('maps posture to the tool allowlist', () => {
+  it('keeps native tools read-only for every posture', () => {
     const readOnly = buildPiRpcArgs({ ...base, writeCapable: false })
     expect(readOnly[readOnly.indexOf('--tools') + 1]).toBe(PI_READ_ONLY_TOOLS.join(','))
     expect(readOnly[readOnly.indexOf('--tools') + 1]).not.toContain('bash')
@@ -40,6 +43,10 @@ describe('buildPiRpcArgs', () => {
 
     const write = buildPiRpcArgs({ ...base, writeCapable: true })
     expect(write[write.indexOf('--tools') + 1]).toBe(PI_WRITE_TOOLS.join(','))
+    expect(PI_WRITE_TOOLS).toEqual(PI_READ_ONLY_TOOLS)
+    expect(write[write.indexOf('--tools') + 1]).not.toContain('bash')
+    expect(write[write.indexOf('--tools') + 1]).not.toContain('edit')
+    expect(write[write.indexOf('--tools') + 1]).not.toContain('write')
   })
 
   it('uses session-dir + session-id for durable chats and --no-session for ephemeral lanes', () => {
@@ -83,6 +90,18 @@ describe('buildPiRpcArgs', () => {
     expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_ENSEMBLE_COORDINATION_TOOL_NAMES])
   })
 
+  it('adds exact brokered file tools without restoring native mutation tools', () => {
+    const args = buildPiRpcArgs({
+      ...base,
+      writeCapable: true,
+      coordinationExtensionPath: '/tmp/taskwraith-pi-home/taskwraith-tools.mjs',
+      coordinationToolNames: PI_EXACT_FILE_TOOL_NAMES
+    })
+    const tools = args[args.indexOf('--tools') + 1].split(',')
+    expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_EXACT_FILE_TOOL_NAMES])
+    expect(tools).not.toEqual(expect.arrayContaining(['bash', 'edit', 'write']))
+  })
+
   it('refuses a custom coordination allowlist without its explicit extension', () => {
     expect(() =>
       buildPiRpcArgs({
@@ -94,6 +113,14 @@ describe('buildPiRpcArgs', () => {
     expect(() =>
       buildPiRpcArgs({ ...base, writeCapable: false, coordinationExtensionPath: '/tmp/extension.mjs' })
     ).toThrow(/allowlist/i)
+    expect(() =>
+      buildPiRpcArgs({
+        ...base,
+        writeCapable: true,
+        coordinationExtensionPath: '/tmp/extension.mjs',
+        coordinationToolNames: ['run_shell_command'] as never
+      })
+    ).toThrow(/fixed allowlists/i)
   })
 })
 

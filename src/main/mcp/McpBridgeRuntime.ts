@@ -35,7 +35,11 @@ import { MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE } from './McpInternalError'
 import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
-import { isPiEnsembleCoordinationToolName } from '../pi/PiEnsembleCoordination'
+import {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  isPiTaskWraithToolName,
+  type PiTaskWraithToolName
+} from '../pi/PiEnsembleCoordination'
 import {
   resolveCatalogActionStrict,
   resolveToolDispatchContractStrict
@@ -2232,26 +2236,47 @@ export class McpBridgeRuntime {
   private geminiMcpBridgeInstalledForCurrentToken = false
   private kimiMcpBridgeInstalledForCurrentToken = false
   /**
-   * Pi is the only broker client whose token can be observed by a native shell
-   * in the same provider process. Bind that token to exactly one active Pi run
+   * Pi's model-visible extension shares a process with its broker credential.
+   * Bind that token to one active run and a fixed server-side tool allowlist
    * before resolving any caller-supplied route or provider stamp.
    */
-  private readonly piEnsembleCoordinationCredentials = new Map<string, McpBridgeAgentRunRoute>()
+  private readonly piTaskWraithCredentials = new Map<
+    string,
+    { route: McpBridgeAgentRunRoute; allowedTools: ReadonlySet<PiTaskWraithToolName> }
+  >()
 
   constructor(private readonly deps: McpBridgeRuntimeDeps) {}
 
   issuePiEnsembleCoordinationCredential(route: McpBridgeAgentRunRoute): string {
+    return this.issuePiTaskWraithCredential(route, PI_ENSEMBLE_COORDINATION_TOOL_NAMES)
+  }
+
+  issuePiTaskWraithCredential(
+    route: McpBridgeAgentRunRoute,
+    allowedTools: readonly PiTaskWraithToolName[]
+  ): string {
     const boundRoute = normalizeRunRoute(route)
     if (!boundRoute.appRunId) {
-      throw new TypeError('Pi Ensemble coordination credentials require an app run id.')
+      throw new TypeError('Pi TaskWraith credentials require an app run id.')
+    }
+    const exactAllowedTools = [...new Set(allowedTools)]
+    if (!exactAllowedTools.length || !exactAllowedTools.every(isPiTaskWraithToolName)) {
+      throw new TypeError('Pi TaskWraith credentials require a non-empty fixed tool allowlist.')
     }
     const token = randomBytes(32).toString('hex')
-    this.piEnsembleCoordinationCredentials.set(token, Object.freeze({ ...boundRoute }))
+    this.piTaskWraithCredentials.set(token, {
+      route: Object.freeze({ ...boundRoute }),
+      allowedTools: new Set(exactAllowedTools)
+    })
     return token
   }
 
   revokePiEnsembleCoordinationCredential(token: string | null | undefined): void {
-    if (typeof token === 'string' && token) this.piEnsembleCoordinationCredentials.delete(token)
+    this.revokePiTaskWraithCredential(token)
+  }
+
+  revokePiTaskWraithCredential(token: string | null | undefined): void {
+    if (typeof token === 'string' && token) this.piTaskWraithCredentials.delete(token)
   }
 
   private processExecPath(): string {
@@ -2438,12 +2463,12 @@ export class McpBridgeRuntime {
 
   async handleGeminiMcpBrokerRequest(request: unknown): Promise<unknown> {
     const brokerRequestRecord = isRecord(request) ? request : {}
-    const piCredentialRoute =
+    const piCredential =
       typeof brokerRequestRecord.token === 'string'
-        ? this.piEnsembleCoordinationCredentials.get(brokerRequestRecord.token)
+        ? this.piTaskWraithCredentials.get(brokerRequestRecord.token)
         : undefined
     if (
-      !piCredentialRoute &&
+      !piCredential &&
       (!this.isValidGeminiMcpBrokerToken(brokerRequestRecord.token) ||
         !this.isValidGeminiMcpBrokerInstanceEpoch(brokerRequestRecord.instanceEpoch))
     ) {
@@ -2467,39 +2492,40 @@ export class McpBridgeRuntime {
     const toolName = dispatchContract.toolName
     const requestedRoute = normalizeRunRoute(brokerRequestRecord)
     if (
-      piCredentialRoute &&
-      ((requestedRoute.appRunId && requestedRoute.appRunId !== piCredentialRoute.appRunId) ||
-        (requestedRoute.appChatId && requestedRoute.appChatId !== piCredentialRoute.appChatId))
+      piCredential &&
+      ((requestedRoute.appRunId && requestedRoute.appRunId !== piCredential.route.appRunId) ||
+        (requestedRoute.appChatId && requestedRoute.appChatId !== piCredential.route.appChatId))
     ) {
       return {
         ok: false,
         error: 'Pi Ensemble coordination credential is bound to a different run route.'
       }
     }
-    const route = piCredentialRoute || requestedRoute
+    const route = piCredential?.route || requestedRoute
     const routeProvider = route.appRunId
       ? this.deps.resolveBrokerParentProviderFromRunId?.(route.appRunId)
       : undefined
     const stampedParentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
-    if (!piCredentialRoute && (routeProvider === 'pi' || stampedParentProvider === 'pi')) {
+    if (!piCredential && (routeProvider === 'pi' || stampedParentProvider === 'pi')) {
       return {
         ok: false,
         error: 'Pi Ensemble coordination requires a run-bound credential.'
       }
     }
-    const parentProvider = piCredentialRoute
+    const parentProvider = piCredential
       ? 'pi'
       : resolveBrokerParentProvider(brokerRequestRecord.parentProvider, routeProvider)
     // Pi's explicit per-run extension is intentionally not a generic MCP
-    // client. Its process environment contains the run-bound local-broker
-    // credential, and a write-capable native Pi shell could inspect that
-    // environment; authentication alone therefore cannot be its authority
-    // boundary. Enforce the fixed ensemble-only allowlist at the broker before
-    // the generic executor or capability gateway see the call.
-    if (parentProvider === 'pi' && !isPiEnsembleCoordinationToolName(toolName)) {
+    // client. Authentication alone is not its authority boundary: enforce the
+    // credential's fixed tool allowlist before the generic executor or
+    // capability gateway sees the call.
+    if (
+      parentProvider === 'pi' &&
+      (!piCredential || !piCredential.allowedTools.has(toolName as PiTaskWraithToolName))
+    ) {
       return {
         ok: false,
-        error: `Pi's contained TaskWraith bridge only permits ensemble coordination tools; ${String(rawToolName || 'unknown')} is unavailable.`
+        error: `Pi's contained TaskWraith bridge does not permit ${String(rawToolName || 'unknown')} for this run.`
       }
     }
     const callerContext: McpCallerContext = {

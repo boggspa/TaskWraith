@@ -98,6 +98,15 @@ describe('deriveWorkspaceMutationClaims', () => {
         branch: 'master',
         kind: 'file',
         mode: 'write',
+        targetPath: join(workspacePath, 'src')
+      }),
+      expect.objectContaining({
+        workspacePath,
+        worktreePath: workspacePath,
+        worktreeName: 'master',
+        branch: 'master',
+        kind: 'file',
+        mode: 'write',
         targetPath: join(workspacePath, 'src/new.ts')
       })
     ])
@@ -309,6 +318,30 @@ describe('deriveWorkspaceMutationClaims', () => {
       expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'new.txt') })
     ])
 
+    const nestedNewFilePatch = [
+      'diff --git a/nested/deep/new.txt b/nested/deep/new.txt',
+      'new file mode 100644',
+      '--- /dev/null',
+      '+++ b/nested/deep/new.txt',
+      '@@ -0,0 +1 @@',
+      '+new',
+      ''
+    ].join('\n')
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'apply_patch',
+        args: { patch: nestedNewFilePatch }
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'nested') }),
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'nested/deep') }),
+      expect.objectContaining({
+        kind: 'file',
+        targetPath: join(workspacePath, 'nested/deep/new.txt')
+      })
+    ])
+
     const deleteFilePatch = [
       'diff --git a/old.txt b/old.txt',
       'deleted file mode 100644',
@@ -384,10 +417,10 @@ describe('deriveWorkspaceMutationClaims', () => {
         action: 'apply_patch',
         args: { patch: '*** Begin Patch\n*** End Patch\n' }
       })
-    ).resolves.toEqual([expect.objectContaining({ kind: 'workspace' })])
+    ).rejects.toMatchObject({ code: 'invalid-call' })
   })
 
-  it('derives deletion and independent source/destination move and rename claim kinds', async () => {
+  it('derives only exact paths and refuses directory moves or renames', async () => {
     const workspacePath = await temporaryWorkspace()
     await mkdir(join(workspacePath, 'folder'))
     await writeFile(join(workspacePath, 'file.txt'), 'content')
@@ -397,10 +430,11 @@ describe('deriveWorkspaceMutationClaims', () => {
       deriveWorkspaceMutationClaims({
         workspacePath,
         action: 'create_directory',
-        args: { path: 'created' }
+        args: { path: 'created/nested' }
       })
     ).resolves.toEqual([
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'created') })
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'created') }),
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'created/nested') })
     ])
     await expect(
       deriveWorkspaceMutationClaims({
@@ -418,7 +452,7 @@ describe('deriveWorkspaceMutationClaims', () => {
         args: { path: 'folder' }
       })
     ).resolves.toEqual([
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') })
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'folder') })
     ])
     await expect(
       deriveWorkspaceMutationClaims({
@@ -426,10 +460,7 @@ describe('deriveWorkspaceMutationClaims', () => {
         action: 'move_path',
         args: { from: 'folder', to: 'moved' }
       })
-    ).resolves.toEqual([
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') }),
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'moved') })
-    ])
+    ).rejects.toMatchObject({ code: 'invalid-call' })
     await expect(
       deriveWorkspaceMutationClaims({
         workspacePath,
@@ -438,17 +469,22 @@ describe('deriveWorkspaceMutationClaims', () => {
       })
     ).resolves.toEqual([
       expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'file.txt') }),
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'renamed.txt') })
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'renamed.txt') })
     ])
     await expect(
       deriveWorkspaceMutationClaims({
         workspacePath,
         action: 'move_path',
-        args: { from: 'file.txt', to: 'folder' }
+        args: { from: 'file.txt', to: 'new/deep/moved.txt', createParents: true }
       })
     ).resolves.toEqual([
       expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'file.txt') }),
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') })
+      expect.objectContaining({
+        kind: 'file',
+        targetPath: join(workspacePath, 'new/deep/moved.txt')
+      }),
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'new') }),
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'new/deep') })
     ])
     await expect(
       deriveWorkspaceMutationClaims({
@@ -456,13 +492,7 @@ describe('deriveWorkspaceMutationClaims', () => {
         action: 'move_path',
         args: { from: 'folder', to: 'destination.txt' }
       })
-    ).resolves.toEqual([
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') }),
-      expect.objectContaining({
-        kind: 'file',
-        targetPath: join(workspacePath, 'destination.txt')
-      })
-    ])
+    ).rejects.toMatchObject({ code: 'invalid-call' })
     await expect(
       deriveWorkspaceMutationClaims({
         workspacePath,
@@ -471,7 +501,7 @@ describe('deriveWorkspaceMutationClaims', () => {
       })
     ).resolves.toEqual([
       expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'file.txt') }),
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') })
+      expect.objectContaining({ kind: 'file', targetPath: join(workspacePath, 'folder') })
     ])
     await expect(
       deriveWorkspaceMutationClaims({
@@ -479,13 +509,7 @@ describe('deriveWorkspaceMutationClaims', () => {
         action: 'rename_path',
         args: { path: 'folder', newName: 'destination.txt' }
       })
-    ).resolves.toEqual([
-      expect.objectContaining({ kind: 'tree', targetPath: join(workspacePath, 'folder') }),
-      expect.objectContaining({
-        kind: 'file',
-        targetPath: join(workspacePath, 'destination.txt')
-      })
-    ])
+    ).rejects.toMatchObject({ code: 'invalid-call' })
   })
 
   it('promotes closed provider-native hunk derivation to whole-file claims', async () => {
@@ -540,10 +564,10 @@ describe('deriveWorkspaceMutationClaims', () => {
         },
         nativeContext: { toolKind: 'edit', rawToolCall: { changes: ['native.txt'] } }
       })
-    ).resolves.toEqual([expect.objectContaining({ kind: 'workspace' })])
+    ).rejects.toMatchObject({ code: 'invalid-call' })
   })
 
-  it('covers every canonical mutating action with a claim or declared non-workspace lock', async () => {
+  it('never derives a workspace or tree claim for a canonical mutation', async () => {
     const workspacePath = await temporaryWorkspace()
     await mkdir(join(workspacePath, 'folder'))
     await writeFile(join(workspacePath, 'target.txt'), 'needle\n')
@@ -564,49 +588,62 @@ describe('deriveWorkspaceMutationClaims', () => {
           '+next',
           ''
         ].join('\n')
-      }
+      },
+      run_shell_command: { command: 'pwd' }
     }
 
     for (const toolName of TASKWRAITH_MCP_TOOLS) {
       const metadata = TASKWRAITH_TOOL_ACTIONS[toolName]
       if (metadata.mutation === 'none') continue
-      const claims = await deriveWorkspaceMutationClaims({
-        workspacePath,
-        action: toolName,
-        args: representativeArgs[toolName] || {}
-      })
-      const requiresWorkspaceClaim =
-        metadata.lock === 'workspace-paths' ||
-        metadata.lock === 'workspace-repository' ||
-        metadata.lock === 'workspace-runtime'
-
-      if (requiresWorkspaceClaim) {
-        expect(claims, `${toolName} must derive a workspace mutation claim`).not.toHaveLength(0)
-      } else {
+      try {
+        const claims = await deriveWorkspaceMutationClaims({
+          workspacePath,
+          action: toolName,
+          args: representativeArgs[toolName] || {}
+        })
         expect(
-          [
-            'none',
-            'host-resource',
-            'external-resource',
-            'application-resource',
-            'workspace-runtime'
-          ],
-          `${toolName} must explicitly declare why it has no workspace write claim`
-        ).toContain(metadata.lock)
-        expect(claims, `${toolName} must not claim the workspace`).toEqual([])
+          claims.every((claim) => claim.kind === 'file' || claim.kind === 'hunk'),
+          `${toolName} must use only exact file/hunk claims`
+        ).toBe(true)
+      } catch (error) {
+        expect(error, `${toolName} must fail closed without a broad claim`).toMatchObject({
+          code: 'invalid-call'
+        })
       }
     }
   })
 
-  it('honors explicit workspace-runtime locks even for read-labelled operations', async () => {
+  it('does not lock read-labelled runtime operations and rejects opaque shell mutations', async () => {
     const workspacePath = await temporaryWorkspace()
 
     await expect(
       deriveWorkspaceMutationClaims({ workspacePath, action: 'get_diagnostics', args: {} })
-    ).resolves.toEqual([expect.objectContaining({ kind: 'workspace', workspacePath })])
+    ).resolves.toEqual([])
     await expect(
       deriveWorkspaceMutationClaims({ workspacePath, action: 'video_probe', args: {} })
-    ).resolves.toEqual([expect.objectContaining({ kind: 'workspace', workspacePath })])
+    ).resolves.toEqual([])
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'run_shell_command',
+        args: { command: 'touch changed.txt' }
+      })
+    ).rejects.toMatchObject({ code: 'invalid-call' })
+  })
+
+  it('uses one exact git metadata mutex instead of a workspace claim', async () => {
+    const workspacePath = await temporaryWorkspace()
+
+    for (const action of ['git_stage', 'git_commit']) {
+      await expect(
+        deriveWorkspaceMutationClaims({ workspacePath, action, args: {} })
+      ).resolves.toEqual([
+        expect.objectContaining({
+          kind: 'file',
+          targetPath: join(workspacePath, '.git')
+        })
+      ])
+    }
   })
 
   it('keeps linked worktrees as the claim domain even when they live outside the workspace', async () => {

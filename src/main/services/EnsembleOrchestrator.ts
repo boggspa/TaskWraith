@@ -10812,6 +10812,7 @@ export class EnsembleOrchestrator {
     input: {
       toolName: string
       workspacePath: string
+      resourcePaths?: readonly string[]
       resourcePath?: string
     }
   ): { ok: true } | { ok: false; reason: string } {
@@ -10825,6 +10826,15 @@ export class EnsembleOrchestrator {
     }
     const run = this.actionableRunForTool(runId)
     if (!run?.laneId) return { ok: true }
+    const proposedResourcePaths = input.resourcePaths
+      ? [...input.resourcePaths]
+      : input.resourcePath
+        ? [input.resourcePath]
+        : undefined
+    // Some historically runtime-labelled tools only read the checkout or
+    // write TaskWraith's private asset store. Exact derivation proves that
+    // before this gate, so they need no writer lane or workspace exclusion.
+    if (proposedResourcePaths?.length === 0) return { ok: true }
     const lane = this.deps.getChat(run.chatId)?.ensemble?.activeRound?.lanes?.[run.laneId]
     if (lane?.intent !== 'write') {
       return {
@@ -10852,28 +10862,32 @@ export class EnsembleOrchestrator {
       }
     }
     const workspacePath = resolve(input.workspacePath)
-    const resourcePath = input.resourcePath ? resolve(input.resourcePath) : undefined
-    if (resourcePath && !pathIsInsideOrSame(workspacePath, resourcePath)) {
+    const resourcePaths = proposedResourcePaths?.map((resourcePath) => resolve(resourcePath))
+    if (resourcePaths?.some((resourcePath) => !pathIsInsideOrSame(workspacePath, resourcePath))) {
       return {
         ok: false,
         reason:
           'External path writes are disabled inside parallel writer lanes; use a serial writer for external grants.'
       }
     }
-    if (!resourcePath) {
+    if (!resourcePaths) {
       return scopes.some((scope) => scope.kind === 'workspace')
         ? { ok: true }
         : {
             ok: false,
-            reason: `Workspace-wide tool ${input.toolName} requires an approved workspace write scope.`
+            reason: `Tool ${input.toolName} did not provide an exact edit scope and cannot use a path-scoped writer lane.`
           }
     }
-    return scopes.some((scope) => writeScopeAllowsResource(scope, workspacePath, resourcePath))
-      ? { ok: true }
-      : {
+    const deniedResource = resourcePaths.find(
+      (resourcePath) =>
+        !scopes.some((scope) => writeScopeAllowsResource(scope, workspacePath, resourcePath))
+    )
+    return deniedResource
+      ? {
           ok: false,
-          reason: `Lane ${run.laneId} is not approved to write ${toWorkspaceRelative(workspacePath, resourcePath)}.`
+          reason: `Lane ${run.laneId} is not approved to write ${toWorkspaceRelative(workspacePath, deniedResource)}.`
         }
+      : { ok: true }
   }
 
   private activeBossmanParticipantId(

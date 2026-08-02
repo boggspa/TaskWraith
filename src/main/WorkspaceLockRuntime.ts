@@ -26,6 +26,7 @@ import {
 } from './workLocks/WorkspaceLockAuthority'
 import {
   WorkspaceMutationCommitFence,
+  WorkspaceMutationCommitFenceBusyError,
   type WorkspaceMutationCommitFenceOwner
 } from './workLocks/WorkspaceMutationCommitFence'
 import { normalizeWorkspaceLockOwnerPresentation } from './workLocks/WorkspaceLockTypes'
@@ -76,8 +77,9 @@ export interface WorkspaceLockRuntimeAcquireInput {
    */
   externalMutationAuthority?: WorkspaceExternalMutationAuthorityReceipt
   /**
-   * A write-capable provider surface with no inspectable native action gets a
-   * workspace claim rather than pretending it has path-level mediation.
+   * @deprecated Launch-time/coarse claims are intentionally unsupported.
+   * Kept temporarily so older coordinator callers fail closed at derivation
+   * instead of regaining workspace-wide exclusion through version skew.
    */
   coarseWorkspaceFallback?: boolean
 }
@@ -153,6 +155,7 @@ export type WorkspaceLockRuntimeAcquireResult =
         | 'owner_not_live'
         | 'authority_busy'
         | 'conflict'
+        | 'cancelled'
       message: string
       authority?: WorkspaceLockAcquireResult & { ok: false }
     }
@@ -222,8 +225,12 @@ interface WorkspaceLockAuthorityLike {
 }
 
 interface WorkspaceMutationCommitFenceLike {
-  acquire(owner: WorkspaceLockOwner): Promise<WorkspaceMutationCommitFenceOwner>
+  acquire(owner: WorkspaceLockOwner, partitionKey?: string): Promise<WorkspaceMutationCommitFenceOwner>
   release(owner: WorkspaceMutationCommitFenceOwner): boolean
+}
+
+export interface WorkspaceMutationCommitFenceAcquisition {
+  readonly owners: readonly WorkspaceMutationCommitFenceOwner[]
 }
 
 interface WorkspaceLockProcessIdentityLike {
@@ -328,6 +335,8 @@ export class WorkspaceLockRuntime {
   ): Promise<WorkspaceLockRuntimeAcquireResult> {
     const unavailable = this.unavailableResult()
     if (unavailable) return unavailable
+    const exactnessFailure = exactMutationClaimFailure(claims)
+    if (exactnessFailure) return exactnessFailure
     const owner = await this.resolveOwner(ownerInput)
     if (!owner.ok) return owner
     if (!claims.length) {
@@ -455,22 +464,26 @@ export class WorkspaceLockRuntime {
   async replaceAcquisitionForMutation(
     input: WorkspaceLockRuntimeAcquireInput,
     owner: WorkspaceLockOwner,
-    previousAcquiredTransitionId: string
+    previousAcquiredTransitionId: string,
+    stillWanted: () => boolean = () => true
   ): Promise<WorkspaceLockRuntimeAcquireResult> {
     const unavailable = this.unavailableResult()
     if (unavailable) return unavailable
     const derived = await this.deriveClaims(input)
     if (!derived.ok) return derived
-    return this.replaceClaims(owner, previousAcquiredTransitionId, derived.claims)
+    return this.replaceClaims(owner, previousAcquiredTransitionId, derived.claims, stillWanted)
   }
 
   async replaceClaims(
     owner: WorkspaceLockOwner,
     previousAcquiredTransitionId: string,
-    claims: readonly WorkspaceLockClaimRequest[]
+    claims: readonly WorkspaceLockClaimRequest[],
+    stillWanted: () => boolean = () => true
   ): Promise<WorkspaceLockRuntimeAcquireResult> {
     const unavailable = this.unavailableResult()
     if (unavailable) return unavailable
+    const exactnessFailure = exactMutationClaimFailure(claims)
+    if (exactnessFailure) return exactnessFailure
     if (!claims.length) {
       return {
         ok: true,
@@ -485,37 +498,43 @@ export class WorkspaceLockRuntime {
       }
     }
     const transitionId = `runtime-replace-${randomUUID()}`
-    let replaced: WorkspaceLockAcquireResult
-    try {
-      replaced = await retryWorkspaceLockAcquire(() =>
-        this.authority.replaceAcquisition(
-          owner,
-          previousAcquiredTransitionId,
-          [...claims],
-          { transitionId }
+    for (;;) {
+      let replaced: WorkspaceLockAcquireResult
+      try {
+        replaced = await retryWorkspaceLockAcquire(() =>
+          this.authority.replaceAcquisition(owner, previousAcquiredTransitionId, [...claims], {
+            transitionId
+          })
         )
-      )
-    } catch (error) {
-      this.markUnhealthy(
-        `Workspace-lock replacement reconciliation failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-      return {
-        ok: false,
-        code: 'runtime_unavailable',
-        message: error instanceof Error ? error.message : String(error)
+      } catch (error) {
+        this.markUnhealthy(
+          `Workspace-lock replacement reconciliation failed: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        return {
+          ok: false,
+          code: 'runtime_unavailable',
+          message: error instanceof Error ? error.message : String(error)
+        }
+      }
+      if (replaced.ok) return { ok: true, owner, claims: [...claims], authority: replaced }
+      if (replaced.reason !== 'conflict' && replaced.reason !== 'authority_busy') {
+        return {
+          ok: false,
+          code: replaced.reason === 'invalid_request' ? 'invalid_claim' : replaced.reason,
+          message: replaced.message,
+          authority: replaced
+        }
+      }
+      if (!stillWanted()) return cancelledWorkspaceMutationReplacement()
+      try {
+        await this.waitForMutationAvailability(stillWanted)
+      } catch (error) {
+        if (!stillWanted()) return cancelledWorkspaceMutationReplacement()
+        throw error
       }
     }
-    if (!replaced.ok) {
-      return {
-        ok: false,
-        code: replaced.reason === 'invalid_request' ? 'invalid_claim' : replaced.reason,
-        message: replaced.message,
-        authority: replaced
-      }
-    }
-    return { ok: true, owner, claims: [...claims], authority: replaced }
   }
 
   async transferAcquisition(
@@ -627,18 +646,102 @@ export class WorkspaceLockRuntime {
 
   async acquireMutationFence(
     owner: WorkspaceLockOwner,
-    _claims: readonly CanonicalWorkspaceLockClaim[] = []
-  ): Promise<WorkspaceMutationCommitFenceOwner> {
+    claims: readonly CanonicalWorkspaceLockClaim[] = [],
+    stillWanted: () => boolean = () => true
+  ): Promise<WorkspaceMutationCommitFenceAcquisition> {
     this.assertHealthy()
-    return this.mutationFence.acquire(owner)
+    const partitionKeys = mutationFencePartitionKeys(claims)
+    if (!partitionKeys.length) {
+      throw new Error('Workspace mutation commit fence requires at least one exact claim.')
+    }
+    const owners: WorkspaceMutationCommitFenceOwner[] = []
+    try {
+      for (const partitionKey of partitionKeys) {
+        for (;;) {
+          if (!stillWanted()) {
+            throw new Error('Workspace mutation was cancelled while waiting for its exact target.')
+          }
+          try {
+            owners.push(await this.mutationFence.acquire(owner, partitionKey))
+            break
+          } catch (error) {
+            if (!(error instanceof WorkspaceMutationCommitFenceBusyError)) throw error
+            await this.waitForMutationAvailability(stillWanted)
+          }
+        }
+      }
+      return Object.freeze({ owners: Object.freeze([...owners]) })
+    } catch (error) {
+      const releaseErrors: unknown[] = []
+      for (const acquired of [...owners].reverse()) {
+        try {
+          if (!this.mutationFence.release(acquired)) {
+            releaseErrors.push(
+              new Error(`Workspace mutation partition ${acquired.partitionKey} was not released.`)
+            )
+          }
+        } catch (releaseError) {
+          releaseErrors.push(releaseError)
+        }
+      }
+      if (releaseErrors.length) {
+        const message =
+          'Workspace mutation fence acquisition failed and partial partition cleanup failed.'
+        this.markUnhealthy(message)
+        throw new AggregateError([error, ...releaseErrors], message)
+      }
+      throw error
+    }
   }
 
-  releaseMutationFence(fence: WorkspaceMutationCommitFenceOwner): void {
-    if (!this.mutationFence.release(fence)) {
-      const message = 'Workspace mutation commit fence was not owned by this operation.'
-      this.markUnhealthy(message)
-      throw new Error(message)
+  releaseMutationFence(fence: WorkspaceMutationCommitFenceAcquisition): void {
+    const errors: unknown[] = []
+    for (const owner of [...fence.owners].reverse()) {
+      try {
+        if (!this.mutationFence.release(owner)) {
+          errors.push(
+            new Error(`Workspace mutation partition ${owner.partitionKey} was not owned.`)
+          )
+        }
+      } catch (error) {
+        errors.push(error)
+      }
     }
+    if (errors.length) {
+      const message = 'Workspace mutation commit fence was not owned in full by this operation.'
+      this.markUnhealthy(message)
+      throw new AggregateError(errors, message)
+    }
+  }
+
+  private waitForMutationAvailability(stillWanted: () => boolean): Promise<void> {
+    return new Promise((resolveWait, rejectWait) => {
+      let settled = false
+      const finish = (error?: unknown): void => {
+        if (settled) return
+        settled = true
+        clearInterval(cancelPoll)
+        this.subscribers.delete(onUpdate)
+        if (error) rejectWait(error)
+        else resolveWait()
+      }
+      const onUpdate: ProjectionSubscriber = () => finish()
+      this.subscribers.add(onUpdate)
+      const cancelPoll = setInterval(() => {
+        if (!stillWanted()) {
+          finish(new Error('Workspace mutation was cancelled while waiting for its exact target.'))
+        } else {
+          // Cross-process fence release precedes the matching durable lease
+          // release by only the executor cleanup boundary. This bounded
+          // recheck also closes a release-before-subscribe race.
+          finish()
+        }
+      }, 250)
+      cancelPoll.unref?.()
+      if (!stillWanted()) {
+        finish(new Error('Workspace mutation was cancelled while waiting for its exact target.'))
+      }
+    })
   }
 
   async releaseRun(runId: string): Promise<WorkspaceLockReleaseResult> {
@@ -954,19 +1057,25 @@ export class WorkspaceLockRuntime {
     try {
       return { ok: true, claims: await deriveWorkspaceMutationClaims(input.mutation) }
     } catch (error) {
-      if (
-        error instanceof WorkspaceMutationClaimDerivationError &&
-        error.code === 'path-escape' &&
-        (await exactExternalMutationAuthorityMatch(input))
-      ) {
-        return { ok: true, claims: [coarseWorkspaceClaim(input.mutation, true)] }
-      }
-      if (
-        input.coarseWorkspaceFallback &&
-        error instanceof WorkspaceMutationClaimDerivationError &&
-        error.code === 'unmapped-action'
-      ) {
-        return { ok: true, claims: [coarseWorkspaceClaim(input.mutation)] }
+      if (error instanceof WorkspaceMutationClaimDerivationError && error.code === 'path-escape') {
+        const match = await exactExternalMutationAuthorityMatch(input)
+        if (match) {
+          const rootPath = await canonicalExistingDirectoryForTarget(match.targetPath)
+          const targetPaths =
+            input.mutation.action === 'write_file'
+              ? exactTargetPathPrefixes(rootPath, match.targetPath)
+              : [match.targetPath]
+          return {
+            ok: true,
+            claims: targetPaths.map((targetPath) => ({
+              workspacePath: rootPath,
+              worktreePath: rootPath,
+              kind: 'file',
+              mode: 'write',
+              targetPath
+            }))
+          }
+        }
       }
       const message = error instanceof Error ? error.message : String(error)
       return {
@@ -1169,6 +1278,20 @@ async function canonicalExistingDirectoryForTarget(targetPath: string): Promise<
   }
 }
 
+function exactTargetPathPrefixes(rootPath: string, targetPath: string): string[] {
+  const relativePath = relative(rootPath, targetPath)
+  if (
+    !relativePath ||
+    relativePath === '..' ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error('External mutation target is not beneath its stable directory root.')
+  }
+  const segments = relativePath.split(sep).filter(Boolean)
+  return segments.map((_segment, index) => resolve(rootPath, ...segments.slice(0, index + 1)))
+}
+
 function workspaceMutationFingerprint(mutation: WorkspaceMutationCall): string {
   return createHash('sha256')
     .update(
@@ -1217,19 +1340,52 @@ function canonicalWorkspaceIdentity(inputPath: string): string {
   }).comparisonPath
 }
 
-function coarseWorkspaceClaim(
-  input: WorkspaceMutationCall,
-  globalFilesystem = false
-): WorkspaceLockClaimRequest {
-  const workspacePath = resolve(input.workspacePath)
+/**
+ * A commit fence protects the shortest mutation boundary that can still race.
+ * File and hunk claims for the same physical target deliberately share one
+ * partition, so disjoint hunk leases re-read and commit serially without
+ * blocking unrelated files. Broad claims are rejected again at this boundary
+ * so a stale or version-skewed caller cannot revive a workspace-wide fence.
+ */
+export function mutationFencePartitionKeys(
+  claims: readonly CanonicalWorkspaceLockClaim[]
+): readonly string[] {
+  const keys = new Set<string>()
+  for (const claim of claims) {
+    if (claim.kind !== 'file' && claim.kind !== 'hunk') {
+      throw new Error(
+        `Workspace mutation fences accept only exact file/hunk claims; ${claim.kind} scope is not permitted.`
+      )
+    }
+    const domain = claim.worktreeObjectIdentity || claim.worktreeIdentity
+    const target = claim.objectIdentity || claim.comparisonTargetPath
+    const scope = `file\0${domain}\0${target}`
+    keys.add(`mutation-target:${createHash('sha256').update(scope, 'utf8').digest('hex')}`)
+  }
+  return Object.freeze([...keys].sort())
+}
+
+function exactMutationClaimFailure(
+  claims: readonly WorkspaceLockClaimRequest[]
+): Extract<WorkspaceLockRuntimeAcquireResult, { ok: false }> | null {
+  const broadClaim = claims.find((claim) => claim.kind !== 'file' && claim.kind !== 'hunk')
+  return broadClaim
+    ? {
+        ok: false,
+        code: 'invalid_claim',
+        message: `Workspace mutation transactions accept only exact file/hunk claims; ${broadClaim.kind} scope is not permitted.`
+      }
+    : null
+}
+
+function cancelledWorkspaceMutationReplacement(): Extract<
+  WorkspaceLockRuntimeAcquireResult,
+  { ok: false }
+> {
   return {
-    workspacePath,
-    worktreePath: resolve(input.worktreePath || workspacePath),
-    ...(input.worktreeName ? { worktreeName: input.worktreeName } : {}),
-    ...(input.branch ? { branch: input.branch } : {}),
-    kind: 'workspace',
-    mode: 'write',
-    ...(globalFilesystem ? { globalFilesystem: true } : {})
+    ok: false,
+    code: 'cancelled',
+    message: 'Workspace mutation was cancelled while waiting to refresh its exact edit scope.'
   }
 }
 

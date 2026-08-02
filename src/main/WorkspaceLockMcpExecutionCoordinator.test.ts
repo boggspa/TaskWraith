@@ -217,7 +217,7 @@ function harness(
     capabilities: overrides.capabilities || [capability()]
   }))
   const runtime: WorkspaceLockMcpExecutionRuntime = {
-    acquireMutationFence: vi.fn(async () => fence),
+    acquireMutationFence: vi.fn(async () => ({ owners: [fence] })),
     getUnhealthyReason: vi.fn(() => null),
     releaseAcquisition: vi.fn(async () => successfulRelease()),
     releaseMutationFence: vi.fn(),

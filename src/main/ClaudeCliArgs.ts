@@ -80,7 +80,12 @@ export function buildClaudeCliArgs(input: BuildClaudeCliArgsInput): string[] {
     // Empty --tools disables every built-in, including future additions. MCP
     // servers load separately and remain available through their namespaces.
     '--tools',
-    ''
+    '',
+    // Do not auto-load workspace/user settings, hooks, plugins, or MCP files.
+    // TaskWraith supplies its reviewed settings and MCP config explicitly.
+    '--setting-sources',
+    '',
+    '--strict-mcp-config'
   ]
   if (input.model && input.model !== 'default') {
     args.push('--model', input.model)

@@ -95,7 +95,7 @@ export function resolveCursorPathBBrokerPolicy(input: {
     return Object.freeze({
       bridgeMode: 'full',
       allowRules: Object.freeze([...CURSOR_BROKER_MCP_ALLOW_RULES]),
-      denyRules: Object.freeze([]),
+      denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
       ...common
     })
   }
@@ -126,6 +126,7 @@ export function buildCursorPathBLaunchPlan(
   assertBrokerOutcome(input)
   const policy = resolveCursorPathBBrokerPolicy(input)
   const brokerActive = input.brokerOutcome === 'active'
+  const transactionalWriteSeat = input.writeCapable && brokerActive
   const prompt = brokerActive
     ? input.prompt
     : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
@@ -149,7 +150,7 @@ export function buildCursorPathBLaunchPlan(
     prompt,
     model: wireModel
   }
-  const argv = input.writeCapable
+  const argv = transactionalWriteSeat
     ? buildContainedCursorWriteArgv({
         ...argvInput,
         forceAllowMcpTools: brokerActive
@@ -173,7 +174,7 @@ export function buildCursorPathBLaunchPlan(
     taskWraithMcpAdvertised: brokerActive,
     taskWraithMcpProfileId: brokerActive ? input.taskWraithMcpProfileId : null,
     controls: Object.freeze({
-      executionMode: input.writeCapable || brokerActive ? 'contained-default' : 'ask',
+      executionMode: transactionalWriteSeat || brokerActive ? 'contained-default' : 'ask',
       bridgeMode: brokerActive ? policy.bridgeMode : 'none',
       brokerRegistration: brokerActive ? 'global' : 'none',
       forceMcpTools: brokerActive,

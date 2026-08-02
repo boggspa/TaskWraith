@@ -37,6 +37,12 @@ export interface PrepareAntigravityProviderLaunchInput {
    * genuinely have no settings context keep the previous behaviour.
    */
   agenticServices?: Pick<AgenticServicesSettings, 'shellCommands' | 'fileChanges'> | null
+  /**
+   * Main-owned proof that agy is writing in a separate selected worktree.
+   * The official CLI has no exact mutation bridge, so shared checkouts remain
+   * plan-only while structurally isolated candidates may retain accept-edits.
+   */
+  isolatedMutationWorkspace?: boolean
   inheritedEnv?: Readonly<Record<string, string | undefined>>
   /** Exact opaque owner issued for this seat by workspace-lock admission. */
   workspaceLockOwnerId?: string | null
@@ -85,7 +91,7 @@ function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): bool
   // so the contract cannot claim plan while the argv says accept-edits.
   if (agenticServicesDenyWrites(input.agenticServices)) return false
   const mode = typeof input.approvalMode === 'string' ? input.approvalMode.trim() : ''
-  return Boolean(mode && mode !== 'plan')
+  return input.isolatedMutationWorkspace === true && Boolean(mode && mode !== 'plan')
 }
 
 function selectedAgyModel(value: string | null | undefined): string | null {

@@ -216,9 +216,80 @@ describe('WorkspaceLockRuntime', () => {
       pid: 10,
       processBirthIdentity: 'main-birth'
     })
-    expect(claimsArg[0]).toMatchObject({ kind: 'file' })
-    expect(claimsArg[0].targetPath).toBe(resolve('/workspace', 'src/new.ts'))
+    expect(claimsArg).toEqual([
+      expect.objectContaining({ kind: 'file', targetPath: resolve('/workspace', 'src') }),
+      expect.objectContaining({ kind: 'file', targetPath: resolve('/workspace', 'src/new.ts') })
+    ])
     expect(optionsArg).toMatchObject({ transitionId: expect.any(String) })
+  })
+
+  it('waits and retries refresh contention without poisoning the transaction', async () => {
+    const h = harness()
+    const owner = {
+      lockOwnerId: 'refresh-owner',
+      runId: 'refresh-run',
+      pid: 10,
+      processBirthIdentity: 'main-birth'
+    }
+    const claims = [
+      { workspacePath: '/workspace', kind: 'file' as const, targetPath: '/workspace/file.ts' }
+    ]
+    h.authority.replaceAcquisition
+      .mockResolvedValueOnce({
+        ok: false,
+        reason: 'conflict',
+        message: 'another exact edit is finishing'
+      } as never)
+      .mockResolvedValueOnce({
+        ok: true,
+        transitionId: 'refresh-after-wait',
+        tokens: [],
+        leases: [],
+        claims: []
+      } as never)
+
+    const replacement = h.runtime.replaceClaims(owner, 'acquire', claims)
+    setTimeout(() => h.emitAuthoritySnapshot(emptySnapshot()), 0)
+    await expect(replacement).resolves.toMatchObject({
+      ok: true,
+      authority: { transitionId: 'refresh-after-wait' }
+    })
+    expect(h.authority.replaceAcquisition).toHaveBeenCalledTimes(2)
+    expect(h.authority.replaceAcquisition.mock.calls[0]?.[3]?.transitionId).toBe(
+      h.authority.replaceAcquisition.mock.calls[1]?.[3]?.transitionId
+    )
+    expect(h.runtime.getUnhealthyReason()).toBeNull()
+  })
+
+  it('cancels a contended refresh without poisoning future mutation admission', async () => {
+    const h = harness()
+    h.authority.replaceAcquisition.mockResolvedValue({
+      ok: false,
+      reason: 'conflict',
+      message: 'another exact edit is finishing'
+    } as never)
+
+    await expect(
+      h.runtime.replaceClaims(
+        {
+          lockOwnerId: 'cancel-owner',
+          runId: 'cancel-run',
+          pid: 10,
+          processBirthIdentity: 'main-birth'
+        },
+        'acquire',
+        [
+          {
+            workspacePath: '/workspace',
+            kind: 'file',
+            targetPath: '/workspace/file.ts'
+          }
+        ],
+        () => false
+      )
+    ).resolves.toMatchObject({ ok: false, code: 'cancelled' })
+    expect(h.authority.replaceAcquisition).toHaveBeenCalledOnce()
+    expect(h.runtime.getUnhealthyReason()).toBeNull()
   })
 
   it('normalizes untrusted owner presentation before durable lock admission', async () => {
@@ -264,12 +335,17 @@ describe('WorkspaceLockRuntime', () => {
   it('atomically acquires and replaces an explicit combined claim set', async () => {
     const { runtime, authority } = harness()
     const claims = [
-      { workspacePath: '/workspace', kind: 'workspace' as const, mode: 'write' as const },
       {
         workspacePath: '/workspace',
         kind: 'file' as const,
         mode: 'write' as const,
         targetPath: '/workspace/file.ts'
+      },
+      {
+        workspacePath: '/workspace',
+        kind: 'file' as const,
+        mode: 'write' as const,
+        targetPath: '/workspace/other.ts'
       }
     ]
 
@@ -339,8 +415,8 @@ describe('WorkspaceLockRuntime', () => {
       owner: { lockOwnerId: 'run-1', runId: 'run-1' },
       mutation: {
         workspacePath: '/workspace',
-        action: 'run_shell_command',
-        args: { command: 'touch file' }
+        action: 'write_file',
+        args: { path: 'file.txt', content: 'next' }
       }
     })
 
@@ -348,7 +424,7 @@ describe('WorkspaceLockRuntime', () => {
     expect(authority.acquireMany).not.toHaveBeenCalled()
   })
 
-  it('uses a coarse workspace claim only for an explicitly unobservable write surface', async () => {
+  it('never broadens an unobservable write surface into a workspace claim', async () => {
     const { runtime, authority } = harness()
 
     const result = await runtime.acquire({
@@ -362,41 +438,75 @@ describe('WorkspaceLockRuntime', () => {
       coarseWorkspaceFallback: true
     })
 
-    expect(result.ok).toBe(true)
-    expect(authority.acquireMany).toHaveBeenCalledTimes(1)
-    const [ownerArg2, claimsArg2, optionsArg2] = authority.acquireMany.mock.calls[0]!
-    expect(ownerArg2).toEqual(expect.anything())
-    expect(claimsArg2[0]).toMatchObject({ kind: 'workspace' })
-    expect(claimsArg2[0].workspacePath).toBe(resolve('/workspace'))
-    expect(optionsArg2).toMatchObject({ transitionId: expect.any(String) })
+    expect(result).toMatchObject({ ok: false, code: 'unmapped_action' })
+    expect(authority.acquireMany).not.toHaveBeenCalled()
   })
 
-  it('conservatively serializes an exact signed external-path mutation', async () => {
-    const { runtime, authority } = harness()
-    const mutation = {
-      workspacePath: '/workspace',
-      action: 'write_file',
-      args: { path: '/outside/granted.txt' }
+  it('rejects broad canonical claims again at the mutation-fence boundary', async () => {
+    const { runtime, mutationFence } = harness()
+    const owner = {
+      lockOwnerId: 'exact-owner',
+      runId: 'exact-run',
+      pid: 10,
+      processBirthIdentity: 'main-birth'
     }
 
-    const result = await runtime.acquire({
-      owner: { lockOwnerId: 'external-run', runId: 'external-run', provider: 'codex' },
-      mutation,
-      externalMutationAuthority: createWorkspaceExternalMutationAuthorityReceipt({
-        mutation,
-        provider: 'codex',
-        runId: 'external-run',
-        targetPath: '/outside/granted.txt',
-        grantId: 'grant-1',
-        grantSignature: 'a'.repeat(64)
-      })
-    })
+    await expect(
+      runtime.acquireMutationFence(owner, [
+        projectedLease('broad-fence', 'held', '2026-07-29T00:00:00.000Z').claim
+      ])
+    ).rejects.toThrow(/only exact file\/hunk claims/)
+    expect(mutationFence.acquire).not.toHaveBeenCalled()
+  })
 
-    expect(result).toMatchObject({
-      ok: true,
-      claims: [expect.objectContaining({ kind: 'workspace' })]
-    })
-    expect(authority.acquireMany).toHaveBeenCalledOnce()
+  it('claims every exact parent entry an external write may create', async () => {
+    const { runtime, authority } = harness()
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-external-write-lock-'))
+    const workspacePath = join(root, 'workspace')
+    const grantedRoot = join(root, 'granted')
+    await Promise.all([mkdir(workspacePath), mkdir(grantedRoot)])
+    const canonicalGrantedRoot = await realpath(grantedRoot)
+    const lexicalTargetPath = join(grantedRoot, 'nested', 'deep', 'granted.txt')
+    const targetPath = join(canonicalGrantedRoot, 'nested', 'deep', 'granted.txt')
+    const mutation = {
+      workspacePath,
+      action: 'write_file',
+      args: { path: lexicalTargetPath }
+    }
+
+    try {
+      const result = await runtime.acquire({
+        owner: { lockOwnerId: 'external-run', runId: 'external-run', provider: 'codex' },
+        mutation,
+        externalMutationAuthority: createWorkspaceExternalMutationAuthorityReceipt({
+          mutation,
+          provider: 'codex',
+          runId: 'external-run',
+          targetPath,
+          grantId: 'grant-1',
+          grantSignature: 'a'.repeat(64)
+        })
+      })
+      if (!result.ok) throw new Error(result.message)
+
+      expect(result).toMatchObject({
+        ok: true,
+        claims: [
+          expect.objectContaining({
+            kind: 'file',
+            targetPath: join(canonicalGrantedRoot, 'nested')
+          }),
+          expect.objectContaining({
+            kind: 'file',
+            targetPath: join(canonicalGrantedRoot, 'nested/deep')
+          }),
+          expect.objectContaining({ kind: 'file', targetPath })
+        ]
+      })
+      expect(authority.acquireMany).toHaveBeenCalledOnce()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('rejects a receipt bound to a different escaped target', async () => {
@@ -527,7 +637,7 @@ describe('WorkspaceLockRuntime', () => {
     )
     await expect(
       acquireHarness.runtime.acquireClaims({ lockOwnerId: 'owner-a', runId: 'run-a' }, [
-        { workspacePath: '/workspace', kind: 'workspace' }
+        { workspacePath: '/workspace', kind: 'file', targetPath: '/workspace/a.ts' }
       ])
     ).resolves.toMatchObject({ ok: true })
     expect(acquireHarness.authority.acquireMany).toHaveBeenCalledTimes(2)
@@ -548,7 +658,7 @@ describe('WorkspaceLockRuntime', () => {
     }
     await expect(
       replaceHarness.runtime.replaceClaims(owner, 'acquire-r', [
-        { workspacePath: '/workspace', kind: 'workspace' }
+        { workspacePath: '/workspace', kind: 'file', targetPath: '/workspace/a.ts' }
       ])
     ).resolves.toMatchObject({ ok: true })
     expect(replaceHarness.authority.replaceAcquisition).toHaveBeenCalledTimes(2)
@@ -584,17 +694,22 @@ describe('WorkspaceLockRuntime', () => {
     fenceHarness.mutationFence.release.mockReturnValue(false)
     expect(() =>
       fenceHarness.runtime.releaseMutationFence({
-        lockOwnerId: 'owner',
-        runId: 'run',
-        pid: 10,
-        processBirthIdentity: 'main-birth',
-        fenceId: 'fence',
-        acquiredAt: '2026-07-29T00:00:00.000Z'
+        owners: [
+          {
+            lockOwnerId: 'owner',
+            runId: 'run',
+            pid: 10,
+            processBirthIdentity: 'main-birth',
+            partitionKey: 'file:a',
+            fenceId: 'fence',
+            acquiredAt: '2026-07-29T00:00:00.000Z'
+          }
+        ]
       })
     ).toThrow(/not owned/)
     await expect(
       fenceHarness.runtime.acquireClaims({ lockOwnerId: 'next', runId: 'next' }, [
-        { workspacePath: '/workspace', kind: 'workspace' }
+        { workspacePath: '/workspace', kind: 'file', targetPath: '/workspace/next.ts' }
       ])
     ).resolves.toMatchObject({ ok: false, code: 'runtime_unavailable' })
 
@@ -608,6 +723,50 @@ describe('WorkspaceLockRuntime', () => {
       releaseHarness.runtime.releaseAcquisition('run', 'transition')
     ).resolves.toMatchObject({ ok: false, reason: 'authority_busy' })
     expect(releaseHarness.runtime.getUnhealthyReason()).toMatch(/busy/)
+  })
+
+  it('poisons admission when a partial fence acquisition cannot clean up its ownership', async () => {
+    const h = harness()
+    const owner = {
+      lockOwnerId: 'partial-owner',
+      runId: 'partial-run',
+      pid: 10,
+      processBirthIdentity: 'main-birth'
+    }
+    h.mutationFence.acquire
+      .mockResolvedValueOnce({
+        ...owner,
+        partitionKey: 'first-partition',
+        fenceId: 'first-fence',
+        acquiredAt: '2026-07-29T00:00:00.000Z'
+      })
+      .mockRejectedValueOnce(new Error('second partition acquisition failed'))
+    h.mutationFence.release.mockReturnValue(false)
+    const firstClaim = {
+      ...projectedLease('first-exact', 'held', '2026-07-29T00:00:00.000Z').claim,
+      kind: 'file' as const,
+      targetCanonicalPath: '/workspace/a.ts',
+      comparisonTargetPath: '/workspace/a.ts',
+      physicalTargetIdentity: '/workspace/a.ts'
+    }
+    const secondClaim = {
+      ...projectedLease('second-exact', 'held', '2026-07-29T00:00:00.000Z').claim,
+      kind: 'file' as const,
+      targetCanonicalPath: '/workspace/b.ts',
+      comparisonTargetPath: '/workspace/b.ts',
+      physicalTargetIdentity: '/workspace/b.ts'
+    }
+
+    await expect(h.runtime.acquireMutationFence(owner, [firstClaim, secondClaim])).rejects.toThrow(
+      /partial partition cleanup failed/
+    )
+    expect(h.mutationFence.release).toHaveBeenCalledOnce()
+    expect(h.runtime.getUnhealthyReason()).toMatch(/partial partition cleanup failed/)
+    await expect(
+      h.runtime.acquireClaims({ lockOwnerId: 'next', runId: 'next' }, [
+        { workspacePath: '/workspace', kind: 'file', targetPath: '/workspace/next.ts' }
+      ])
+    ).resolves.toMatchObject({ ok: false, code: 'runtime_unavailable' })
   })
 
   it('retries transient authority contention before poisoning release health', async () => {

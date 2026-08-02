@@ -95,6 +95,7 @@ describe('prepareAntigravityProviderLaunch', () => {
           settings: OPTED_IN,
           prompt: 'Apply the fix.',
           approvalMode: 'default',
+          isolatedMutationWorkspace: true,
           agenticServices
         },
         { resolveBinary }
@@ -111,6 +112,7 @@ describe('prepareAntigravityProviderLaunch', () => {
           settings: OPTED_IN,
           prompt: 'Apply the fix.',
           approvalMode: 'default',
+          isolatedMutationWorkspace: true,
           agenticServices: { shellCommands: 'ask', fileChanges: 'allow' }
         },
         { resolveBinary }
@@ -119,11 +121,14 @@ describe('prepareAntigravityProviderLaunch', () => {
       expect(launch.mode).toBe('accept-edits')
     })
 
-    // Omitting the settings must not fabricate a denial and silently strip write
-    // capability from callers that have no settings context.
-    it('does not clamp when no service policy is supplied', async () => {
+    it('retains isolated-worktree writes when no service policy is supplied', async () => {
       const launch = await prepareAntigravityProviderLaunch(
-        { settings: OPTED_IN, prompt: 'Apply the fix.', approvalMode: 'default' },
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          isolatedMutationWorkspace: true
+        },
         { resolveBinary }
       )
 
@@ -202,6 +207,7 @@ describe('prepareAntigravityProviderLaunch', () => {
           settings: OPTED_IN,
           prompt: 'Apply the fix.',
           approvalMode: 'default',
+          isolatedMutationWorkspace: true,
           conversationId: CONVERSATION
         },
         { resolveBinary }
@@ -220,7 +226,8 @@ describe('prepareAntigravityProviderLaunch', () => {
         settings: OPTED_IN,
         prompt: 'Apply the approved change.',
         model: 'Gemini 3.6 Flash (High)',
-        approvalMode: 'default'
+        approvalMode: 'default',
+        isolatedMutationWorkspace: true
       },
       {
         resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'path' })
@@ -232,6 +239,22 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.args).toContain('accept-edits')
     expect(launch.args).toContain('Gemini 3.6 Flash (High)')
     expect(launch.args).not.toContain('--dangerously-skip-permissions')
+  })
+
+  it('keeps a write-approved shared checkout in plan mode without an exact bridge', async () => {
+    const launch = await prepareAntigravityProviderLaunch(
+      {
+        settings: OPTED_IN,
+        prompt: 'Inspect and propose the change.',
+        approvalMode: 'default'
+      },
+      {
+        resolveBinary: async () => ({ binaryPath: '/usr/local/bin/agy', source: 'path' })
+      }
+    )
+
+    expect(launch.mode).toBe('plan')
+    expect(launch.args).not.toContain('accept-edits')
   })
 
   it('keeps an explicitly read-only effective posture in plan mode', async () => {

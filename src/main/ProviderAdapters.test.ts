@@ -271,10 +271,31 @@ describe('defaultProviderDescriptor capabilities', () => {
       'grok',
       'ollama',
       'cursor',
-      'antigravity'
+      'antigravity',
+      'pi'
     ] as const) {
       expect(defaultProviderDescriptor(provider).features.workspaceGrants).toBe(true)
     }
+  })
+
+  it('describes Pi native reads and run-bound exact TaskWraith mutations', () => {
+    const descriptor = defaultProviderDescriptor('pi')
+    expect(descriptor.capabilitySource).toBe('mixed')
+    expect(descriptor.features).toMatchObject({
+      appManagedApprovals: true,
+      workspaceGrants: true,
+      agentBenchMcpBridge: true,
+      providerManagedMcp: false,
+      nativeThreadTools: true
+    })
+    expect(descriptor.capabilities.perThreadMcp).toBe(true)
+    expect(descriptor.capabilityCaveats).toContainEqual(
+      expect.objectContaining({
+        id: 'pi-tool-allowlist-posture',
+        title: 'Pi writes use exact TaskWraith transactions',
+        message: expect.stringContaining('native bash, edit and write stay disabled')
+      })
+    )
   })
 
   it('pins Cursor to Path-B sandbox-contained native tools', () => {

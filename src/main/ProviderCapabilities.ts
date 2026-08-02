@@ -22,7 +22,10 @@ import {
   resolvePiNativeToolPosture,
   type PiNativeToolEffectivePermissions
 } from './pi/PiNativeToolPosture'
-import { PI_ENSEMBLE_COORDINATION_TOOL_NAMES } from './pi/PiEnsembleCoordination'
+import {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES
+} from './pi/PiEnsembleCoordination'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -618,12 +621,12 @@ function approvalContract(
       requestedMode,
       effectiveMode,
       providerMode: piWriteCapable
-        ? 'pi rpc with the write tool allowlist (read, bash, edit, write, grep, find, ls)'
+        ? 'pi rpc with native reads plus brokered exact file tools (write_file, replace, apply_patch)'
         : 'pi rpc with the read-only tool allowlist (read, grep, find, ls)',
-      inAppApprovals: false,
-      supportsWorkspaceGrants: false,
+      inAppApprovals: piWriteCapable,
+      supportsWorkspaceGrants: piWriteCapable,
       notes: [
-        'Pi runs in RPC mode with an explicit native --tools allowlist and --no-approve, so native shell/file containment is chosen at launch rather than through per-tool approval. In Ensemble mode only, TaskWraith may load one explicit per-run coordination extension after it proves ready; it preserves disabled extension discovery and cannot expose generic shell/file tools. Extensions, skills, prompt templates and context files remain disabled, and the credential firewall passes only the selected upstream key.'
+        'Pi runs in RPC mode with native read tools only. A write-approved seat receives one explicit per-run TaskWraith extension for exact file transactions; Ensemble lanes may add fixed coordination tools to the same server-authorized allowlist. Native bash/edit/write, extension discovery, skills, prompt templates and context files remain disabled, and the credential firewall passes only the selected upstream key.'
       ]
     }
   }
@@ -641,7 +644,7 @@ function approvalContract(
       inAppApprovals: false,
       supportsWorkspaceGrants: false,
       notes: [
-        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. The official agy CLI has no supported per-tool approval bridge in this transport; no credential access or permission-bypass flag is used.'
+        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Shared checkouts use plan mode because the official agy CLI has no exact per-edit bridge; sandboxed accept-edits is retained only for main-verified isolated worktrees, and no credential access or permission-bypass flag is used.'
       ]
     }
   }
@@ -659,9 +662,8 @@ function approvalContract(
 /**
  * Providers with no per-tool approval bridge can only honour a denied
  * shell/file service at launch, by giving up write capability. AntiGravity
- * uses this settings projection; Pi uses `resolvePiNativeToolPosture` below so
- * its capability report, signed seal posture, and launched native allowlist
- * share the same stricter decision.
+ * uses this settings projection. Pi's native posture still uses the same
+ * downgrade helper, but approved edits now travel through its exact broker.
  */
 function effectiveNoBridgeMode(requestedMode: string, services: AgenticServicesSettings): string {
   if (requestedMode === 'plan') return requestedMode
@@ -695,13 +697,14 @@ export function buildProviderCapabilityContract({
       } satisfies PiNativeToolEffectivePermissions)
   })
   const effectiveMode =
-    // Both lack a per-tool approval bridge, so a denied shell/file service can
-    // only be honoured by dropping write capability at launch. AntiGravity was
-    // missing from this clamp: the setting reported as enforced while the run
-    // still received `--mode accept-edits`.
+    // The capability snapshot has no selected-worktree context. Report the
+    // shared-checkout floor for official agy (plan); launch may raise only a
+    // main-verified isolated worktree to sandboxed accept-edits.
     provider === 'pi'
       ? piNativeToolPosture.effectiveMode
-      : provider === 'gemini' || provider === 'antigravity'
+      : provider === 'antigravity'
+        ? 'plan'
+        : provider === 'gemini'
         ? effectiveNoBridgeMode(requestedMode, services)
         : requestedMode
   const statusRecord = asRecord(status)
@@ -1000,55 +1003,46 @@ export function buildProviderCapabilityContract({
     const piCoordinationPolicy =
       effectivePermissions?.agenticServices?.mcpTools ?? services.mcpTools
     const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
-    const piNativeWriteTools = piNativeToolPosture.writeCapable
+    const piExactFileTools = piNativeToolPosture.writeCapable
+    const piManagedTools = [
+      ...(piExactFileTools ? PI_EXACT_FILE_TOOL_NAMES : []),
+      ...(piCoordinationAllowed ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : [])
+    ]
     mcp = {
-      state: piCoordinationAllowed ? serviceState(piCoordinationPolicy) : 'blocked',
+      state: piManagedTools.length ? 'available' : 'blocked',
       source: 'taskwraith',
-      available: piCoordinationAllowed,
-      enabled: piCoordinationAllowed,
-      installed: piCoordinationAllowed,
-      serverName: 'TaskWraith Pi Ensemble extension',
-      tools: piCoordinationAllowed ? [...PI_ENSEMBLE_COORDINATION_TOOL_NAMES] : [],
-      message: piCoordinationAllowed
-        ? 'Ensemble-only: TaskWraith loads a fixed per-run Pi coordination extension after it proves ready. Pi extension discovery stays disabled and the extension exposes no generic shell or file tools; no manual Pi/MCP installation is required.'
-        : 'Pi Ensemble coordination is disabled by this lane’s Tool calls policy. Native Pi tools remain governed by the launch allowlist.'
+      available: piManagedTools.length > 0,
+      enabled: piManagedTools.length > 0,
+      installed: piManagedTools.length > 0,
+      serverName: 'TaskWraith Pi managed tools',
+      tools: piManagedTools,
+      message: piManagedTools.length
+        ? 'TaskWraith loads one fixed per-run Pi extension after it proves ready; no manual Pi/MCP installation is required. Write-approved seats receive only exact brokered file transactions; Ensemble coordination follows the Tool calls policy. Native mutation tools and generic MCP remain disabled.'
+        : 'This Pi posture has no managed mutation or coordination tools. Native Pi remains read-only.'
     }
-    shellCommands = piNativeWriteTools
-      ? delegatedCapability(
-          'shellCommands',
-          services.shellCommands,
-          ['bash'],
-          'Pi exposes native bash only in its exact write-capable allowlist; TaskWraith does not claim per-command interception for that native tool.'
-        )
-      : unavailableCapability(
-          'shellCommands',
-          'provider',
-          'This Pi posture launches the native read-only allowlist (read, grep, find, ls), which has no shell command tool.'
-        )
-    fileChanges = piNativeWriteTools
-      ? delegatedCapability(
+    shellCommands = unavailableCapability(
+      'shellCommands',
+      'provider',
+      'Pi always launches native read tools only; opaque shell mutation cannot be assigned an exact file/hunk transaction.'
+    )
+    fileChanges = piExactFileTools
+      ? serviceCapability(
           'fileChanges',
           services.fileChanges,
-          ['edit', 'write'],
-          'Pi exposes native edit/write only in its exact write-capable allowlist; TaskWraith does not claim per-file approval for those native tools.'
+          'taskwraith',
+          [...PI_EXACT_FILE_TOOL_NAMES],
+          'Pi exact file tools run through TaskWraith approval, multi-target locking, commit fencing, and immediate release.'
         )
       : unavailableCapability(
           'fileChanges',
           'provider',
           'This Pi posture launches the native read-only allowlist, which has no file-edit tool.'
         )
-    externalPublish = piNativeWriteTools
-      ? delegatedCapability(
-          'externalPublish',
-          services.externalPublish,
-          ['bash'],
-          'A write-capable Pi lane could invoke provider-native bash; TaskWraith does not claim a dedicated publishing bridge for it.'
-        )
-      : unavailableCapability(
-          'externalPublish',
-          'provider',
-          'This Pi posture has no native shell tool, so it cannot publish externally through Pi.'
-        )
+    externalPublish = unavailableCapability(
+      'externalPublish',
+      'provider',
+      'Pi has no native shell tool or publishing bridge in this contained transport.'
+    )
     mcpTools = piCoordinationAllowed
       ? serviceCapability(
           'mcpTools',
@@ -1093,7 +1087,7 @@ export function buildProviderCapabilityContract({
       'fileChanges',
       services.fileChanges,
       ['official_agy_accept_edits'],
-      'AntiGravity file changes are available only in the explicitly write-capable, sandboxed official agy mode; TaskWraith does not claim per-tool interception.'
+      'Official agy file changes are available only in a main-verified isolated worktree; shared checkouts stay plan-only because TaskWraith cannot intercept exact edits on this transport.'
     )
     externalPublish = delegatedCapability(
       'externalPublish',

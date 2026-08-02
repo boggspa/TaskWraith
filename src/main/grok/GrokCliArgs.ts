@@ -87,7 +87,7 @@ export const GROK_ACP_READ_ONLY_DENY_RULES = [
   'Write(*)'
 ] as const
 
-export const GROK_ACP_WRITE_MODE_DENY_RULES = ['Bash(*)', 'Shell(*)'] as const
+export const GROK_ACP_WRITE_MODE_DENY_RULES = GROK_ACP_READ_ONLY_DENY_RULES
 
 /** True when the approval mode permits writes (anything other than read-only plan). */
 export function grokWriteCapable(approvalMode: string | null | undefined): boolean {
@@ -137,15 +137,15 @@ export const GROK_MCP_SHELL_PROMPT_NOTE =
 
 /**
  * WRITE-mode steer prepended to a write-capable Grok turn's prompt. In write
- * mode Grok's Edit/Write tools are auto-approved (diff-reviewed). Native
- * Bash/Shell are denied at argv — shell must go through the TaskWraith MCP
- * broker when it is attached. Steer away from dead-ending on a refused tool.
+ * mode Grok's native Edit/Write/Bash/Shell tools remain denied. Mutations go
+ * through the TaskWraith MCP broker so each exact edit target is acquired and
+ * released around the operation. Steer away from dead-ending on a refused tool.
  * The host gate stays the safety floor.
  */
 export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
-  'When the task requests file changes, use Write and Edit (approved and diff-reviewed). ' +
-  'When the task requests shell work, use the TaskWraith MCP run_shell_command tool — ' +
-  'native Bash/Shell are unavailable. An explicit no-tools instruction in the user ' +
+  'When the task requests file changes, use the TaskWraith MCP file tools; native Write/Edit ' +
+  'cannot participate in exact edit transactions. For supported shell work, use the TaskWraith ' +
+  'MCP run_shell_command tool — native Bash/Shell are unavailable. An explicit no-tools instruction in the user ' +
   'request or role brief overrides that allowance: do not call shell, file, goal, ' +
   'or any other tool. If a tool call is refused or fails, do not end your turn; ' +
   'retry only the same requested operation with an equivalent allowed tool. Never ' +
@@ -158,8 +158,8 @@ export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
  * in both variants; this one makes the degraded boundary explicit.
  */
 export const GROK_WRITE_MODE_NO_BROKER_PROMPT_PREAMBLE =
-  'When the task requests file changes, use Write and Edit (approved and diff-reviewed). ' +
-  'Native Bash/Shell are unavailable, and the TaskWraith shell broker is not verified for this turn. ' +
+  'The TaskWraith mutation broker is not verified for this turn, so this run can inspect and explain but cannot change files. ' +
+  'Native Write/Edit/Bash/Shell are unavailable. ' +
   'Do not call, search for, or retry a TaskWraith shell tool. An explicit no-tools instruction in the user ' +
   'request or role brief overrides that allowance: do not call file, goal, or any other tool. ' +
   'If shell work is required, report that exact blocker and answer from the evidence already available; ' +

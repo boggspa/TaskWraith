@@ -86,7 +86,10 @@ describe('buildClaudeCliArgs', () => {
       '--permission-mode',
       'default',
       '--tools',
-      ''
+      '',
+      '--setting-sources',
+      '',
+      '--strict-mcp-config'
     ])
     expect(args).not.toContain('--budget-tokens')
     expect(args).not.toContain('--effort')

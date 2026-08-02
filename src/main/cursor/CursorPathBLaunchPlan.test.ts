@@ -112,7 +112,7 @@ describe('CursorPathBLaunchPlan', () => {
     })
     expect(writePlan).toMatchObject({
       bridgeMode: 'full',
-      denyRules: [],
+      denyRules: ['Shell(**)', 'Write(**)'],
       safeSubset: false,
       planSubset: false
     })
@@ -133,6 +133,32 @@ describe('CursorPathBLaunchPlan', () => {
     expect(plan.taskWraithMcpAdvertised).toBe(false)
     expect(plan.argv).not.toContain('--force')
     expect(plan.argv).toContain('ask')
+  })
+
+  it('keeps write seats native-read-only unless the exact broker is active', () => {
+    const degraded = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'native-only-degraded',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+    expect(degraded.controls.executionMode).toBe('ask')
+    expect(degraded.argv).toContain('ask')
+    expect(degraded.argv).not.toContain('--force')
+
+    const active = buildCursorPathBLaunchPlan(
+      input({
+        writeCapable: true,
+        brokerRequested: true,
+        brokerOutcome: 'active',
+        taskWraithMcpProfileId: 'taskwraith-full-v1'
+      })
+    )
+    expect(active.controls.executionMode).toBe('contained-default')
+    expect(active.argv).toContain('--force')
+    expect(active.broker.denyRules).toEqual(['Shell(**)', 'Write(**)'])
   })
 
   it('resolves Cursor Grok reasoning and fast controls into the wire model', () => {

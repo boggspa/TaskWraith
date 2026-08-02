@@ -17861,6 +17861,23 @@ Next action:
       ).toEqual({ ok: true })
       expect(
         harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'apply_patch',
+          workspacePath: '/repo',
+          resourcePaths: [
+            '/repo/src/worker/a.ts',
+            '/repo/src/worker/nested/b.ts'
+          ]
+        })
+      ).toEqual({ ok: true })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
+          toolName: 'apply_patch',
+          workspacePath: '/repo',
+          resourcePaths: ['/repo/src/worker/a.ts', '/repo/src/other/b.ts']
+        })
+      ).toMatchObject({ ok: false })
+      expect(
+        harness.orchestrator.validateLaneWriteScopeForRun(workerRun.appRunId, {
           toolName: 'write_file',
           workspacePath: '/repo',
           resourcePath: '/repo/src/other/output.ts'
