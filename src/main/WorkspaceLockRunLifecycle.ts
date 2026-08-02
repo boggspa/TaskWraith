@@ -163,6 +163,25 @@ export class WorkspaceLockRunLifecycleTracker {
     }
   }
 
+  /**
+   * Reconciles local operation bookkeeping after the durable authority has
+   * already released every acquisition for this run through the explicit
+   * human-recovery path. The caller owns that proof; this method never releases
+   * authority itself.
+   */
+  reconcileExternallyReleasedRun(runId: string): void {
+    const normalizedRunId = requireRunId(runId)
+    const run = this.runs.get(normalizedRunId)
+    if (!run || run.releaseState === 'released') return
+    for (const operation of run.operations.values()) {
+      if (operation.timer !== undefined) this.clearTimer(operation.timer)
+    }
+    run.operations.clear()
+    run.terminalRequested = true
+    run.releaseState = 'released'
+    this.deps.onReleased?.(normalizedRunId)
+  }
+
   private runState(runId: string): TrackedRun {
     const existing = this.runs.get(runId)
     if (existing) return existing

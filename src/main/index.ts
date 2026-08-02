@@ -1933,6 +1933,7 @@ import {
 } from './mcp/VerifiedWorkspaceMutationHandoff'
 import { registerWorkLockHandlers } from './ipc/workLockHandlers'
 import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
+import { providerRunRequiresCoarseWorkspaceLock } from './WorkspaceLockProviderPolicy'
 import {
   resolveToolDispatchContractStrict,
   type CanonicalDispatchOwner,
@@ -2215,46 +2216,6 @@ const workspaceExternalMutationAuthorityIssuer =
         isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
       })
   })
-
-function providerRunRequiresCoarseWorkspaceLock(payload: AgentRunPayload): boolean {
-  if (payload.scope !== 'workspace' || !payload.workspace) return false
-  // Claude Code auto-loads workspace/user hooks, plugins, and MCP servers even
-  // when TaskWraith requests a read-only posture. Preserve those live surfaces
-  // while serializing every native Claude workspace transport.
-  if (payload.provider === 'claude') return true
-  if (payload.provider === 'kimi' || payload.provider === 'grok') {
-    return payload.approvalMode !== 'plan'
-  }
-  if (payload.provider === 'mistral') {
-    return mistralWriteCapable(payload.approvalMode)
-  }
-  if (payload.provider === 'cursor') return cursorWriteCapable(payload.approvalMode)
-  if (payload.provider === 'pi') {
-    return resolvePiNativeToolPosture({
-      approvalMode: payload.approvalMode,
-      effectivePermissions: payload.effectivePermissions
-    }).writeCapable
-  }
-  if (payload.provider === 'codex') {
-    return (
-      codexSandboxForMode(
-        payload.approvalMode,
-        isFullShellAccessGranted(payload.effectivePermissions)
-      ) === 'workspace-write'
-    )
-  }
-  if (payload.provider === 'antigravity') {
-    // gemini-api:* is an in-process host lane. It has no child to receive a
-    // launching-child acquisition; its MCP mutations use ordinary exact
-    // main-owned per-operation claims instead.
-    if (isAntigravityGeminiApiModelCandidate(payload.model)) return false
-    // The official agy transport auto-loads user hooks/plugins, whose
-    // subprocesses can mutate the workspace even in plan mode. Preserve that
-    // live customization surface but serialize the entire native transport.
-    return true
-  }
-  return false
-}
 
 async function admitOpaqueProviderWorkspaceMutation(payload: AgentRunPayload): Promise<void> {
   if (!providerRunRequiresCoarseWorkspaceLock(payload)) return
@@ -29535,18 +29496,43 @@ function createCodexWorkspaceLockStartupBinding(
     )
   }
 
-  // This hold is deliberately distinct from the bounded setup operation around
-  // the owner transition. The exact app-server PID can exit while an inherited
-  // MCP/shell descendant remains alive. Until whole-tree death is independently
-  // proven, terminal run cleanup must retain the transferred acquisition.
-  const unprovenTreeHold = workspaceLockRunLifecycle.begin(key.runId)
+  // Terminal run cleanup is safe to proceed: the durable authority always
+  // retains child and launching-child acquisitions until exact release or
+  // explicit human recovery. Process-tree uncertainty therefore quarantines
+  // only this checkout and must not become a synthetic unresolved operation.
   let transferAttempted = false
   let childReceipt: WorkspaceLockProviderAdmission | null = null
   let retainedReason: string | null = null
+  let childQuarantineOperation: Promise<void> | null = null
 
-  const retainAndPoison = (reason: string): void => {
+  const retainAsScopedQuarantine = (reason: string): void => {
     retainedReason ||= reason
+    console.warn(`[workspace-lock] ${reason}`)
+  }
+
+  const retainAfterIntegrityFailure = (reason: string): void => {
+    retainAsScopedQuarantine(reason)
     poisonWorkspaceLockMutationAdmission(reason)
+  }
+
+  const quarantineTransferredChild = (reason: string): Promise<void> => {
+    retainAsScopedQuarantine(reason)
+    if (!childReceipt) {
+      const error = new Error('Codex child quarantine has no exact transferred acquisition.')
+      retainAfterIntegrityFailure(error.message)
+      return Promise.reject(error)
+    }
+    childQuarantineOperation ||= workspaceLockProviderCoordinator
+      .quarantineChildForRecovery(key, childReceipt)
+      .catch((error) => {
+        retainAfterIntegrityFailure(
+          `Codex child acquisition ${childReceipt?.transitionId || admission.transitionId} could not enter durable recovery quarantine: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+        throw error
+      })
+    return childQuarantineOperation
   }
 
   return {
@@ -29556,7 +29542,7 @@ function createCodexWorkspaceLockStartupBinding(
       try {
         childReceipt = await workspaceLockProviderCoordinator.transferToChild(key, process.pid)
       } catch (error) {
-        retainAndPoison(
+        retainAfterIntegrityFailure(
           `Codex workspace-lock transfer to PID ${process.pid} was not proven atomic: ${
             error instanceof Error ? error.message : String(error)
           }`
@@ -29567,33 +29553,42 @@ function createCodexWorkspaceLockStartupBinding(
         // `close` proves only that the exact app-server root is gone. Codex may
         // have spawned MCP or shell descendants carrying the same owner env, so
         // releasing `childReceipt` here would reopen the workspace underneath
-        // an unobserved writer. Retain/quarantine until a whole-tree observer is
-        // available; never substitute PID-only or elapsed-time evidence.
-        retainAndPoison(
+        // an unobserved writer. Keep the lease conflicting, but expose this exact
+        // acquisition to the existing human-approved recovery path immediately.
+        void quarantineTransferredChild(
           `Codex app-server PID ${process.pid} closed without proof that its inherited process tree is dead; retaining workspace-lock acquisition ${childReceipt?.transitionId || admission.transitionId}.`
-        )
+        ).catch(() => undefined)
       })
     },
     settleAfterClientClosed: async (clientDeathProven) => {
       if (!clientDeathProven) {
-        retainAndPoison(
+        if (!childReceipt) {
+          retainAfterIntegrityFailure(
+            'Codex app-server teardown did not preserve an exact child acquisition for recovery.'
+          )
+          return
+        }
+        await quarantineTransferredChild(
           'Codex app-server teardown did not prove exact child death; retaining its workspace-lock acquisition.'
-        )
+        ).catch(() => undefined)
         return
       }
       if (transferAttempted) {
-        if (!retainedReason) {
-          retainAndPoison(
-            `Codex child acquisition ${childReceipt?.transitionId || admission.transitionId} lacks whole-tree death proof and remains retained.`
+        if (childReceipt) {
+          await quarantineTransferredChild(
+            `Codex child acquisition ${childReceipt.transitionId} lacks whole-tree death proof and remains retained.`
+          ).catch(() => undefined)
+        } else if (!retainedReason) {
+          retainAfterIntegrityFailure(
+            'Codex workspace-lock transfer completed without an exact child recovery receipt.'
           )
         }
         return
       }
       try {
         await workspaceLockProviderCoordinator.releaseSetupFailure(key, admission)
-        unprovenTreeHold.finish()
       } catch (error) {
-        retainAndPoison(
+        retainAfterIntegrityFailure(
           `Codex pre-spawn workspace-lock release failed: ${
             error instanceof Error ? error.message : String(error)
           }`
@@ -38328,6 +38323,15 @@ if (isGeminiMcpBridgeProcess) {
         return recoverWorkspaceLock({
           runtime,
           lockId: request.lockId,
+          getMutationAdmissionUnavailableReason: () =>
+            workspaceLockStartupRecoveryBlockedReason ??
+            workspaceLockMutationAdmissionPoisonReason ??
+            runtime.getUnhealthyReason(),
+          onRunFullyReleased: (runId) => {
+            workspaceLockRunLifecycle.reconcileExternallyReleasedRun(runId)
+            workspaceLockProviderCoordinator.reconcileExternallyReleasedRun(runId)
+          },
+          onReconciliationFailure: poisonWorkspaceLockMutationAdmission,
           confirm: async (confirmation) => {
             const evidence =
               confirmation.evidence === 'owner_dead'

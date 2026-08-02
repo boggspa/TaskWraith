@@ -43,7 +43,8 @@ function harness() {
       ok: true as const,
       transitionId: 'release',
       released: []
-    }))
+    })),
+    quarantineChildOwnerAcquisitions: vi.fn(async () => undefined)
   }
   const identities = new WorkspaceLockExecutionIdentityRegistry({
     createId: () => 'opaque-owner'
@@ -184,6 +185,29 @@ describe('WorkspaceLockProviderCoordinator', () => {
     expect(identities.get({ kind: 'logical-run', runId: 'run-1' })).toBeNull()
   })
 
+  it('moves the exact closed child into durable recovery quarantine', async () => {
+    const { coordinator, runtime } = harness()
+    await coordinator.admitCoarseWriteRun({
+      provider: 'cursor',
+      runId: 'run-1',
+      workspacePath: '/workspace',
+      worktreePath: '/workspace'
+    })
+    const childAdmission = await coordinator.transferToChild({ runId: 'run-1' }, 44)
+
+    await coordinator.quarantineChildForRecovery({ runId: 'run-1' }, childAdmission)
+
+    expect(runtime.quarantineChildOwnerAcquisitions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lockOwnerId: 'opaque-owner',
+        runId: 'run-1',
+        lifecycle: 'child',
+        pid: 44
+      })
+    )
+    expect(coordinator.get({ runId: 'run-1' })).toBe(childAdmission)
+  })
+
   it('retains a pre-transfer guardian across terminal cleanup', async () => {
     const { coordinator, identities } = harness()
     const admission = await coordinator.admitCoarseWriteRun({
@@ -198,6 +222,23 @@ describe('WorkspaceLockProviderCoordinator', () => {
     expect(admission.owner.lifecycle).toBe('launching-child')
     expect(coordinator.get({ runId: 'run-1' })).toBe(admission)
     expect(identities.get({ kind: 'logical-run', runId: 'run-1' })).toBe('opaque-owner')
+  })
+
+  it('forgets child receipts after authority-confirmed external recovery', async () => {
+    const { coordinator, runtime, identities } = harness()
+    await coordinator.admitCoarseWriteRun({
+      provider: 'cursor',
+      runId: 'run-1',
+      workspacePath: '/workspace',
+      worktreePath: '/workspace'
+    })
+    await coordinator.transferToChild({ runId: 'run-1' }, 44)
+
+    coordinator.reconcileExternallyReleasedRun('run-1')
+
+    expect(coordinator.get({ runId: 'run-1' })).toBeNull()
+    expect(identities.get({ kind: 'logical-run', runId: 'run-1' })).toBeNull()
+    expect(runtime.releaseAcquisition).not.toHaveBeenCalled()
   })
 
   it('refuses to use the child-close release path before transfer', async () => {

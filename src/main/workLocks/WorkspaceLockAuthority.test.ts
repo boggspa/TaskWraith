@@ -643,6 +643,107 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
   }, 20_000)
 
+  it('durably exposes one exact closed child to recovery without restarting', async () => {
+    const h = harness()
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    const launchingOwner = owner({
+      lockOwnerId: 'restartless-child',
+      runId: 'restartless-run',
+      lifecycle: 'launching-child'
+    })
+    const admitted = await authority.acquire(
+      launchingOwner,
+      {
+        workspacePath: h.workspace,
+        kind: 'file',
+        targetPath: path.join(h.workspace, 'src', 'a.ts')
+      },
+      { transitionId: 'restartless-admission' }
+    )
+    if (!admitted.ok) throw new Error('fixture admission failed')
+    const childOwner = {
+      ...launchingOwner,
+      lifecycle: 'child' as const,
+      pid: 203,
+      processBirthIdentity: 'spawned-child-birth'
+    }
+    const transferred = await authority.transferAcquisition(
+      launchingOwner,
+      admitted.transitionId,
+      childOwner,
+      { transitionId: 'restartless-transfer' }
+    )
+    if (!transferred.ok) throw new Error('fixture transfer failed')
+    const nested = await authority.acquire(
+      childOwner,
+      {
+        workspacePath: h.workspace,
+        kind: 'file',
+        targetPath: path.join(h.workspace, 'src', 'b.ts')
+      },
+      { transitionId: 'restartless-nested' }
+    )
+    if (!nested.ok) throw new Error('fixture nested acquisition failed')
+
+    const quarantined = await authority.quarantineChildOwnerAcquisitions(childOwner)
+
+    expect(quarantined.decisions).toHaveLength(2)
+    expect(quarantined.decisions).toEqual(
+      expect.arrayContaining([
+        { leaseId: transferred.leases[0].leaseId, status: 'recovery_blocked' },
+        { leaseId: nested.leases[0].leaseId, status: 'recovery_blocked' }
+      ])
+    )
+    const blocked = authority
+      .snapshot()
+      .leases.find((lease) => lease.acquiredTransitionId === 'restartless-transfer')
+    if (!blocked) throw new Error('fixture quarantine lease missing')
+    expect(blocked).toMatchObject({
+      acquiredTransitionId: 'restartless-transfer',
+      status: 'recovery_blocked'
+    })
+    expect(await authority.quarantineChildOwnerAcquisitions(childOwner)).toEqual({ decisions: [] })
+    expect(
+      await authority.acquire(
+        owner({
+          lockOwnerId: 'restartless-rival',
+          runId: 'restartless-rival-run',
+          pid: 202,
+          processBirthIdentity: 'owner-b-birth'
+        }),
+        {
+          workspacePath: h.workspace,
+          kind: 'file',
+          targetPath: path.join(h.workspace, 'src', 'a.ts')
+        }
+      )
+    ).toMatchObject({ ok: false, reason: 'conflict' })
+    expect(
+      await authority.forceReleaseRecoveryBlockedAcquisition(
+        'restartless-run',
+        'restartless-transfer',
+        [blocked.leaseId],
+        'restartless-human-approval'
+      )
+    ).toMatchObject({ ok: true })
+    const nestedBlocked = authority
+      .snapshot()
+      .leases.find((lease) => lease.acquiredTransitionId === 'restartless-nested')
+    if (!nestedBlocked) throw new Error('fixture nested quarantine lease missing')
+    expect(
+      await authority.forceReleaseRecoveryBlockedAcquisition(
+        'restartless-run',
+        'restartless-nested',
+        [nestedBlocked.leaseId],
+        'restartless-nested-human-approval'
+      )
+    ).toMatchObject({ ok: true })
+    authority.dispose()
+  })
+
   it('releases parent leases while retaining managed children and replays the typed result', async () => {
     const h = harness()
     const authority = await WorkspaceLockAuthority.open({

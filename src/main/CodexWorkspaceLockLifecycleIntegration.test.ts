@@ -35,7 +35,7 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
     expect(provider).not.toContain('createDedicatedWorkspaceLockClient')
   })
 
-  it('transfers the exact admission before initialize and retains it without tree-death proof', () => {
+  it('transfers before initialize and scopes unproven tree death to the retained lease', () => {
     const binding = section(
       'function createCodexWorkspaceLockStartupBinding(',
       'async function runCodexAppServer('
@@ -50,10 +50,20 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
     expect(binding).toContain('workspaceLockProviderCoordinator.transferToChild(key, process.pid)')
     expect(binding).toContain('void process.closed.then(() => {')
     expect(binding).toContain('retaining workspace-lock acquisition')
+    expect(binding).toContain('retainAsScopedQuarantine(')
+    expect(binding).toContain('retainAfterIntegrityFailure(')
+    expect(binding).toContain('.quarantineChildForRecovery(key, childReceipt)')
+    expect(binding).not.toContain('const unprovenTreeHold')
     expect(binding).not.toContain('releaseChild(')
     expect(binding).toContain(
       'workspaceLockProviderCoordinator.releaseSetupFailure(key, admission)'
     )
+    const closeHandler = binding.slice(
+      binding.indexOf('void process.closed.then(() => {'),
+      binding.indexOf('settleAfterClientClosed: async (clientDeathProven) => {')
+    )
+    expect(closeHandler).toContain('quarantineTransferredChild(')
+    expect(closeHandler).not.toContain('retainAfterIntegrityFailure(')
 
     const bindIndex = provider.indexOf('...(bindSpawnedProcess ? { bindSpawnedProcess } : {})')
     const initializeIndex = provider.indexOf('buildCodexAppServerThreadLaunchPlan({')

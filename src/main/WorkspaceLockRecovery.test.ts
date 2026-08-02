@@ -32,6 +32,8 @@ function runtime(
       transitionId: 'release-1',
       released: []
     })),
+    activeLeaseCountForRun: vi.fn(() => 0),
+    getUnhealthyReason: vi.fn(() => null),
     ...overrides
   }
 }
@@ -40,11 +42,13 @@ describe('recoverWorkspaceLock', () => {
   it('binds a human confirmation receipt to the exact dead child acquisition', async () => {
     const target = runtime()
     const confirm = vi.fn(async () => true)
+    const onRunFullyReleased = vi.fn()
 
     const result = await recoverWorkspaceLock({
       runtime: target,
       lockId: candidate.lockId,
       confirm,
+      onRunFullyReleased,
       createApprovalReceiptId: () => 'approval-1'
     })
 
@@ -52,7 +56,7 @@ describe('recoverWorkspaceLock', () => {
       ok: true,
       releasedLeaseCount: 0,
       message:
-        'The approved acquisition was released durably. Restart TaskWraith before starting another write-capable run.'
+        'The approved acquisition was released durably. Write-capable runs can start immediately; no restart is required.'
     })
     expect(confirm).toHaveBeenCalledWith({
       lockId: 'lease-1',
@@ -67,6 +71,67 @@ describe('recoverWorkspaceLock', () => {
     expect(target.forceReleaseRecoveryBlockedAcquisition).toHaveBeenCalledWith(
       candidate,
       'approval-1'
+    )
+    expect(onRunFullyReleased).toHaveBeenCalledWith('run-1')
+  })
+
+  it('keeps a remaining acquisition scoped without requiring a restart', async () => {
+    const target = runtime({ activeLeaseCountForRun: vi.fn(() => 2) })
+    const onRunFullyReleased = vi.fn()
+
+    const result = await recoverWorkspaceLock({
+      runtime: target,
+      lockId: candidate.lockId,
+      confirm: vi.fn(async () => true),
+      onRunFullyReleased
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      message:
+        'The approved acquisition was released durably. This run still has 2 protected leases; release its remaining recovery-blocked acquisition before starting a conflicting write. No restart is required.'
+    })
+    expect(onRunFullyReleased).not.toHaveBeenCalled()
+  })
+
+  it('preserves restart-required fail-closed behavior for a real integrity fault', async () => {
+    const target = runtime({
+      getUnhealthyReason: vi.fn(() => 'mutation fence ownership is ambiguous')
+    })
+
+    const result = await recoverWorkspaceLock({
+      runtime: target,
+      lockId: candidate.lockId,
+      confirm: vi.fn(async () => true)
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      message:
+        'The approved acquisition was released durably, but mutation admission remains fail-closed because runtime integrity could not be re-established. Restart TaskWraith before starting another write-capable run.'
+    })
+  })
+
+  it('fails closed when post-release in-memory reconciliation throws', async () => {
+    const onReconciliationFailure = vi.fn()
+    const target = runtime()
+
+    const result = await recoverWorkspaceLock({
+      runtime: target,
+      lockId: candidate.lockId,
+      confirm: vi.fn(async () => true),
+      onRunFullyReleased: () => {
+        throw new Error('provider receipt cleanup failed')
+      },
+      onReconciliationFailure
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      message: expect.stringContaining('Restart TaskWraith')
+    })
+    expect(onReconciliationFailure).toHaveBeenCalledWith(
+      expect.stringContaining('provider receipt cleanup failed')
     )
   })
 

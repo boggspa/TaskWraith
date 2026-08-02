@@ -28,6 +28,8 @@ export interface WorkspaceLockRecoveryRuntime {
     candidate: WorkspaceLockRecoveryBlockedAcquisition,
     approvalReceiptId: string
   ): Promise<WorkspaceLockReleaseResult>
+  activeLeaseCountForRun(runId: string): number
+  getUnhealthyReason(): string | null
 }
 
 export interface RecoverWorkspaceLockOptions {
@@ -35,6 +37,9 @@ export interface RecoverWorkspaceLockOptions {
   lockId: string
   confirm: (confirmation: WorkspaceLockRecoveryConfirmation) => Promise<boolean>
   createApprovalReceiptId?: () => string
+  onRunFullyReleased?: (runId: string) => void | Promise<void>
+  onReconciliationFailure?: (reason: string) => void
+  getMutationAdmissionUnavailableReason?: () => string | null
 }
 
 function sameCandidate(
@@ -201,10 +206,46 @@ export async function recoverWorkspaceLock(
   }
   if (!released.ok) return releaseFailure(released)
 
+  let remainingLeaseCount: number | null = null
+  let reconciliationFailure: string | null = null
+  try {
+    remainingLeaseCount = options.runtime.activeLeaseCountForRun(candidate.ownerRunId)
+    if (remainingLeaseCount === 0) {
+      await options.onRunFullyReleased?.(candidate.ownerRunId)
+    }
+  } catch (error) {
+    reconciliationFailure = `Workspace-lock recovery could not reconcile in-memory run state: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    options.onReconciliationFailure?.(reconciliationFailure)
+  }
+
+  const unavailableReason =
+    reconciliationFailure ??
+    options.getMutationAdmissionUnavailableReason?.() ??
+    options.runtime.getUnhealthyReason()
+
+  if (unavailableReason) {
+    return {
+      ok: true,
+      releasedLeaseCount: released.released.length,
+      message:
+        'The approved acquisition was released durably, but mutation admission remains fail-closed because runtime integrity could not be re-established. Restart TaskWraith before starting another write-capable run.'
+    }
+  }
+
+  if (remainingLeaseCount && remainingLeaseCount > 0) {
+    return {
+      ok: true,
+      releasedLeaseCount: released.released.length,
+      message: `The approved acquisition was released durably. This run still has ${remainingLeaseCount} protected lease${remainingLeaseCount === 1 ? '' : 's'}; release its remaining recovery-blocked acquisition before starting a conflicting write. No restart is required.`
+    }
+  }
+
   return {
     ok: true,
     releasedLeaseCount: released.released.length,
     message:
-      'The approved acquisition was released durably. Restart TaskWraith before starting another write-capable run.'
+      'The approved acquisition was released durably. Write-capable runs can start immediately; no restart is required.'
   }
 }

@@ -21,7 +21,8 @@ import {
 import { NodeWorkspaceLockPersistence } from './workLocks/NodeWorkspaceLockPersistence'
 import {
   WorkspaceLockAuthority,
-  type WorkspaceLockAuthorityListener
+  type WorkspaceLockAuthorityListener,
+  type WorkspaceLockRecoveryResult
 } from './workLocks/WorkspaceLockAuthority'
 import {
   WorkspaceMutationCommitFence,
@@ -214,6 +215,7 @@ interface WorkspaceLockAuthorityLike {
     approvalReceiptId: string,
     options?: { transitionId?: string }
   ): Promise<WorkspaceLockReleaseResult>
+  quarantineChildOwnerAcquisitions(owner: WorkspaceLockOwner): Promise<WorkspaceLockRecoveryResult>
   snapshot(): WorkspaceLockSnapshot
   onChange(listener: WorkspaceLockAuthorityListener): () => void
   dispose(): void
@@ -688,6 +690,25 @@ export class WorkspaceLockRuntime {
     }
   }
 
+  async quarantineChildOwnerAcquisitions(owner: WorkspaceLockOwner): Promise<void> {
+    this.assertHealthy()
+    const reconciliationId = `runtime-quarantine-child-${owner.runId}:${owner.lockOwnerId}:${owner.pid}`
+    try {
+      await retryWorkspaceLockRecovery(
+        () => this.authority.quarantineChildOwnerAcquisitions(owner),
+        (reason) => this.pendingReconciliations.set(reconciliationId, reason)
+      )
+      this.pendingReconciliations.delete(reconciliationId)
+    } catch (error) {
+      this.pendingReconciliations.delete(reconciliationId)
+      const message = `Child workspace-lock quarantine reconciliation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+      this.markUnhealthy(message)
+      throw error
+    }
+  }
+
   recoveryBlockedAcquisition(
     lockId: string
   ): WorkspaceLockRecoveryBlockedAcquisition | null {
@@ -779,6 +800,16 @@ export class WorkspaceLockRuntime {
       )
       throw error
     }
+  }
+
+  activeLeaseCountForRun(runId: string): number {
+    const requestedRunId = runId.trim()
+    if (!requestedRunId) return 0
+    return this.authority
+      .snapshot()
+      .leases.filter(
+        (lease) => lease.owner.runId === requestedRunId && lease.status !== 'recovered'
+      ).length
   }
 
   markUnhealthy(reason: string): void {
@@ -1014,6 +1045,27 @@ async function retryWorkspaceLockRelease(
       await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, delayMs))
     }
   }
+}
+
+async function retryWorkspaceLockRecovery(
+  recover: () => Promise<WorkspaceLockRecoveryResult>,
+  onRetry: (reason: string) => void
+): Promise<WorkspaceLockRecoveryResult> {
+  const retryDelaysMs = [15, 40, 100, 250, 750, 2_000]
+  let lastError: unknown
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      return await recover()
+    } catch (error) {
+      lastError = error
+      if (attempt === retryDelaysMs.length) throw error
+      onRetry(error instanceof Error ? error.message : String(error))
+    }
+    await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, retryDelaysMs[attempt]))
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Workspace-lock recovery reconciliation did not complete.')
 }
 
 function projectionSnapshotsEqual(

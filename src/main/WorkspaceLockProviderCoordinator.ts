@@ -256,6 +256,18 @@ export class WorkspaceLockProviderCoordinator {
     await this.releaseAdmission(input)
   }
 
+  async quarantineChildForRecovery(
+    input: WorkspaceLockProviderAdmissionKey,
+    childAdmission: WorkspaceLockProviderAdmission
+  ): Promise<void> {
+    const current = this.admissions.get(providerAdmissionKey(input))
+    if (!current || current !== childAdmission) return
+    if (current.owner.lifecycle !== 'child') {
+      throw new Error('Provider recovery quarantine requires an exact child admission.')
+    }
+    await this.requireRuntime().quarantineChildOwnerAcquisitions(current.owner)
+  }
+
   private async releaseAdmission(input: WorkspaceLockProviderAdmissionKey): Promise<void> {
     const key = providerAdmissionKey(input)
     const current = this.admissions.get(key)
@@ -278,6 +290,28 @@ export class WorkspaceLockProviderCoordinator {
       }
     }
     this.releaseIdentityIfUnused(runId)
+  }
+
+  /**
+   * Drops child/launching-child receipts only after the durable authority has
+   * confirmed that human-approved recovery left this run with no active lease.
+   * Ordinary terminal cleanup must continue to retain those receipts.
+   */
+  reconcileExternallyReleasedRun(runId: string): void {
+    const normalizedRunId = runId.trim()
+    if (!normalizedRunId) throw new Error('Provider recovery requires an exact run id.')
+    const keyPrefix = `${normalizedRunId}\u0000`
+    if (
+      [...this.pendingAdmissions.keys(), ...this.pendingTransfers.keys()].some((key) =>
+        key.startsWith(keyPrefix)
+      )
+    ) {
+      throw new Error('Provider recovery raced an in-flight admission or owner transfer.')
+    }
+    for (const [key, admission] of this.admissions) {
+      if (admission.runId === normalizedRunId) this.admissions.delete(key)
+    }
+    this.releaseIdentityIfUnused(normalizedRunId)
   }
 
   private releaseIdentityIfUnused(runId: string): void {

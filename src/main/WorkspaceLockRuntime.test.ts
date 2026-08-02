@@ -147,6 +147,10 @@ function harness() {
         released: []
       })
     ),
+    quarantineChildOwnerAcquisitions: vi.fn(async () => ({
+      transitionId: 'quarantine-child',
+      decisions: []
+    })),
     snapshot: vi.fn(() => emptySnapshot()),
     onChange: vi.fn((next) => {
       listener = next
@@ -628,6 +632,28 @@ describe('WorkspaceLockRuntime', () => {
     expect(runtime.getUnhealthyReason()).toBeNull()
   })
 
+  it('reconciles an exact child quarantine without poisoning healthy admission', async () => {
+    const { runtime, authority } = harness()
+    authority.quarantineChildOwnerAcquisitions
+      .mockRejectedValueOnce(new Error('marker projection failed after quarantine commit'))
+      .mockResolvedValueOnce({
+        transitionId: 'quarantine-after-retry',
+        decisions: []
+      })
+
+    const childOwner = {
+      lockOwnerId: 'owner-child',
+      runId: 'run-child',
+      lifecycle: 'child' as const,
+      pid: 44,
+      processBirthIdentity: 'birth-44'
+    }
+    await expect(runtime.quarantineChildOwnerAcquisitions(childOwner)).resolves.toBe(undefined)
+    expect(authority.quarantineChildOwnerAcquisitions).toHaveBeenCalledTimes(2)
+    expect(authority.quarantineChildOwnerAcquisitions).toHaveBeenCalledWith(childOwner)
+    expect(runtime.getUnhealthyReason()).toBeNull()
+  })
+
   it('reconciles post-commit release failures with stable transition ids', async () => {
     const acquisitionHarness = harness()
     acquisitionHarness.authority.releaseAcquisition.mockRejectedValueOnce(
@@ -652,6 +678,25 @@ describe('WorkspaceLockRuntime', () => {
       runHarness.authority.releaseAllForRun.mock.calls[1]?.[1]?.transitionId
     )
     expect(runHarness.runtime.getUnhealthyReason()).toBeNull()
+  })
+
+  it('counts only durable active leases owned by the exact recovered run', () => {
+    const { runtime, authority } = harness()
+    const first = projectedLease('first', 'recovery_blocked', '2026-07-29T00:00:00.000Z')
+    const second = projectedLease('second', 'held', '2026-07-29T00:00:01.000Z')
+    const foreign = projectedLease('foreign', 'held', '2026-07-29T00:00:02.000Z')
+    const recovered = projectedLease('recovered', 'recovered', '2026-07-29T00:00:03.000Z')
+    first.owner.runId = 'run-recovery'
+    second.owner.runId = 'run-recovery'
+    recovered.owner.runId = 'run-recovery'
+    authority.snapshot.mockReturnValue({
+      ...emptySnapshot(),
+      leases: [first, foreign, second, recovered]
+    })
+
+    expect(runtime.activeLeaseCountForRun('run-recovery')).toBe(2)
+    expect(runtime.activeLeaseCountForRun('run-foreign')).toBe(1)
+    expect(runtime.activeLeaseCountForRun('   ')).toBe(0)
   })
 
   it('bounds recovered projection history while preserving every active lease', () => {

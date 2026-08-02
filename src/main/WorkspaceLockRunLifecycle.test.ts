@@ -167,4 +167,34 @@ describe('WorkspaceLockRunLifecycleTracker', () => {
       runId: 'run-6'
     })
   })
+
+  it('cancels unresolved-operation timers after authority-confirmed external release', () => {
+    const onReleased = vi.fn()
+    const onFailClosed = vi.fn()
+    const clearTimer = vi.fn()
+    const tracker = new WorkspaceLockRunLifecycleTracker({
+      releaseRun: vi.fn(async () => undefined),
+      onReleased,
+      onReleaseFailure: vi.fn(),
+      onFailClosed,
+      unresolvedOperationTimeoutMs: 50,
+      setTimer: vi.fn(() => 17),
+      clearTimer
+    })
+    const operation = tracker.begin('run-recovered')
+    tracker.terminal('run-recovered')
+
+    tracker.reconcileExternallyReleasedRun('run-recovered')
+
+    expect(clearTimer).toHaveBeenCalledWith(17)
+    expect(onReleased).toHaveBeenCalledWith('run-recovered')
+    expect(onFailClosed).not.toHaveBeenCalled()
+    expect(tracker.snapshot('run-recovered')).toMatchObject({
+      terminalRequested: true,
+      releaseState: 'released',
+      operations: []
+    })
+    operation.finish()
+    expect(onReleased).toHaveBeenCalledTimes(1)
+  })
 })

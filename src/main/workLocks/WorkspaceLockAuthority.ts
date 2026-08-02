@@ -994,6 +994,74 @@ export class WorkspaceLockAuthority {
   }
 
   /**
+   * Durably exposes every acquisition owned by one exact child incarnation to
+   * the human recovery path without waiting for an application restart. This
+   * does not release or weaken the lease: `recovery_blocked` conflicts exactly
+   * like `held`.
+   */
+  async quarantineChildOwnerAcquisitions(
+    owner: WorkspaceLockOwner
+  ): Promise<WorkspaceLockRecoveryResult> {
+    const ownerError = validateOwner(owner)
+    if (ownerError || owner.lifecycle !== 'child') {
+      throw new Error(ownerError || 'Child quarantine requires an exact child owner identity.')
+    }
+    const committed = await this.commitUnderFence<WorkspaceLockRecoveryResult>(
+      (state, byteLength) => {
+        const acquisition = state.activeLeases
+          .filter((lease) => sameLeaseOwner(lease.owner, owner))
+          .sort(compareLeases)
+        if (!acquisition.length) {
+          return {
+            value: { decisions: [] },
+            previous: state,
+            next: state,
+            reconcileMarkers: true
+          }
+        }
+        if (
+          acquisition.some(
+            (lease) =>
+              lease.owner.lifecycle !== 'launching-child' && lease.owner.lifecycle !== 'child'
+          )
+        ) {
+          throw new Error('Only an exact child acquisition can enter recovery quarantine.')
+        }
+        const decisions = acquisition
+          .filter((lease) => lease.status !== 'recovery_blocked')
+          .map((lease) => ({
+            leaseId: lease.leaseId,
+            status: 'recovery_blocked' as const
+          }))
+        if (!decisions.length) {
+          return {
+            value: { decisions: [] },
+            previous: state,
+            next: state,
+            reconcileMarkers: true
+          }
+        }
+        const transitionId = this.nextId('transition')
+        const appended = appendWorkspaceLockWalEvent(state, {
+          transitionId,
+          timestamp: this.nowIso(),
+          authority: this.walAuthority(),
+          kind: 'recover',
+          payload: { decisions }
+        })
+        this.persistence.appendEvent(appended.line, byteLength)
+        return {
+          value: { transitionId, decisions },
+          previous: state,
+          next: appended.nextState
+        }
+      }
+    )
+    this.afterTransition(committed)
+    return committed.value
+  }
+
+  /**
    * Exact human-approved recovery seam. Integration owns approval provenance
    * and fresh containment probing; core durably binds its opaque receipt to
    * one complete recovery-blocked child acquisition.
