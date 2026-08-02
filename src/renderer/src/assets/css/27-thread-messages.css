@@ -31,39 +31,78 @@
 }
 
 .thread-message-card {
-  border: 1px solid var(--rightdock-border);
+  position: relative;
+  min-width: 0;
+  border: 2px solid color-mix(in srgb, var(--peer-rim, var(--rightdock-border)) 60%, transparent);
   border-radius: var(--rightdock-radius-card);
-  background: var(--rightdock-surface-raised);
-  padding: 10px 12px;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--peer-rim, var(--rightdock-text)) 10%, transparent),
+      transparent 58%
+    ),
+    var(--rightdock-surface-raised);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 0.14);
+  padding: 10px 12px 11px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
-/* A wake request is the one state worth pulling the eye: something will run. */
+/* A wake request is the one state worth pulling the eye: something may run if
+ * policy allows it. Keep the peer identity in the rim while mixing in warning. */
 .thread-message-card[data-wake='true'] {
-  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  border-color: color-mix(
+    in srgb,
+    var(--peer-rim, var(--rightdock-border)) 62%,
+    var(--warning) 38%
+  );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--warning) 18%, transparent),
+    0 12px 28px rgb(0 0 0 / 0.14);
 }
 
 .thread-message-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 8px;
   font-size: 12px;
   color: var(--rightdock-text-muted);
 }
 
+.thread-message-card-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .thread-message-card-glyph {
+  flex: 0 0 auto;
   opacity: 0.7;
 }
 
-.thread-message-card-heading {
+.thread-message-card-identity {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.thread-message-card-identity-icon {
+  filter: drop-shadow(0 4px 8px rgb(0 0 0 / 0.14));
+}
+
+.thread-message-card-heading-text {
+  min-width: 0;
   font-weight: 600;
+  line-height: 1.35;
   color: var(--rightdock-text);
 }
 
 .thread-message-card-badge {
-  margin-left: auto;
+  flex: 0 0 auto;
   font-size: 11px;
   padding: 1px 7px;
   border-radius: 999px;
@@ -76,17 +115,47 @@
  * `pre-wrap` because the body is rendered as PLAIN TEXT, never markdown — another
  * agent wrote it, and markdown would give it links and remote image fetches in the
  * user's transcript. Preserving whitespace keeps prose and pasted snippets legible
- * without making anything in them interactive. `break-word` so an unbroken URL
- * cannot widen the transcript column.
+ * without making anything in them interactive. `anywhere` so an unbroken URL
+ * cannot widen the transcript column. Height and scrolling are owned by the
+ * shared LiveActivityViewport so this behaves like fan-out/invocation output.
  */
+.thread-message-card-content {
+  min-width: 0;
+  color: var(--rightdock-text);
+}
+
+.thread-message-card-viewport {
+  margin: 0;
+  padding-left: 12px;
+  --live-activity-edge-fade-size: 44px;
+}
+
+.thread-message-card-viewport .live-activity-viewport-scroll {
+  padding-right: 2px;
+}
+
+.thread-message-card-viewport .live-activity-viewport-toggle {
+  color: var(--rightdock-text-muted);
+}
+
+.thread-message-card-viewport .live-activity-viewport-toggle:hover {
+  color: var(--rightdock-text);
+  background: var(--rightdock-hover-bg);
+}
+
+.thread-message-card-body-inner {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .thread-message-card-body {
   white-space: pre-wrap;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 1.5;
   color: var(--rightdock-text);
-  max-height: 331px;
-  overflow-y: auto;
 }
 
 .thread-message-card-note {
@@ -192,8 +261,8 @@
 }
 
 /* Dock surface. Scrolls as one column: the inbox can be long and the send form
- * must stay reachable, so nothing here is independently scrollable except a single
- * over-long message body (capped above). */
+ * must stay reachable. Each long card gets the same bounded inner viewport used
+ * by adjacent invocation/fan-out result surfaces. */
 
 .thread-message-dock {
   display: flex;

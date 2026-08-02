@@ -40,6 +40,16 @@ describe('ThreadMessageInboxCard', () => {
     expect(html).toContain('byte budget assertion is red')
   })
 
+  it('uses the invocation-result identity rim and shared bounded viewport', () => {
+    const html = renderToStaticMarkup(<ThreadMessageInboxCard message={message()} />)
+    expect(html).toMatch(/style="--peer-rim:#[0-9A-F]{6}"/)
+    expect(html).toContain('thread-message-card-identity-icon')
+    expect(html).toContain('thread-message-card-viewport')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('aria-label="Peer message from Byte pin fix"')
+    expect(html).toContain('Expand peer message')
+  })
+
   // Attribution is carried into the DOM so styling cannot drift from the model's
   // closed union — there is no 'system' value to render.
   it.each([

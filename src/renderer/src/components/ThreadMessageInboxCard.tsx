@@ -20,6 +20,7 @@
  * is the transcript's existing language for "output from a peer".
  */
 
+import type { CSSProperties } from 'react'
 import {
   threadMessageCardModel,
   threadMessageIndicatorModel,
@@ -27,6 +28,9 @@ import {
   type ThreadMessageIndicatorModel
 } from './ThreadMessageInboxModel'
 import type { ThreadMessageInboxSummary } from '../../../shared/threadMessage'
+import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
+import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
+import { LiveActivityViewport } from './LiveActivityViewport'
 
 interface ThreadMessageInboxCardProps {
   message: ThreadMessageCardInput
@@ -34,31 +38,61 @@ interface ThreadMessageInboxCardProps {
 
 export function ThreadMessageInboxCard({ message }: ThreadMessageInboxCardProps) {
   const model = threadMessageCardModel(message)
+  // A peer thread keeps one visual identity everywhere this inbox is rendered.
+  // The chat id is stable and display-only here; routing still uses the durable
+  // message record in main, never anything rendered into this card.
+  const peerIdentity = assignAgentIdentityFromSeed(message.fromChatId)
   return (
-    <div
+    <article
       className="thread-message-card"
       data-attribution={model.attribution}
       data-wake={model.requestsWake ? 'true' : 'false'}
+      style={{ ['--peer-rim']: peerIdentity.accent } as CSSProperties}
     >
-      <div className="thread-message-card-header">
-        <span className="thread-message-card-glyph" aria-hidden="true">
-          ↩
-        </span>
-        <span className="thread-message-card-heading">{model.headerText}</span>
+      <header className="thread-message-card-header">
+        <div className="thread-message-card-heading">
+          <span className="thread-message-card-glyph" aria-hidden="true">
+            ↩
+          </span>
+          <span className="thread-message-card-identity">
+            <AgentIdentityIcon
+              name={peerIdentity.key}
+              color={peerIdentity.accent}
+              size={30}
+              className="thread-message-card-identity-icon"
+              title={`Peer thread “${model.senderLabel}”`}
+            />
+          </span>
+          <span className="thread-message-card-heading-text">{model.headerText}</span>
+        </div>
         {model.requestsWake ? (
           <span className="thread-message-card-badge" title="This sender asked to start a turn now">
             asks to run now
           </span>
         ) : null}
+      </header>
+      <div className="thread-message-card-content">
+        <LiveActivityViewport
+          className="thread-message-card-viewport"
+          revision={`${model.id}:${model.body.length}:${model.truncated ? 'truncated' : 'complete'}`}
+          collapsedMaxHeight={220}
+          label={`Peer message from ${model.senderLabel}`}
+          expandLabel="Expand peer message"
+          collapseLabel="Collapse peer message"
+          jumpLabel="Jump to latest peer message"
+        >
+          <div className="thread-message-card-body-inner">
+            {/* Plain text on purpose — see the module comment. */}
+            <div className="thread-message-card-body">{model.body}</div>
+            {model.truncated ? (
+              <div className="thread-message-card-note">
+                This message was longer than the limit and was cut short.
+              </div>
+            ) : null}
+          </div>
+        </LiveActivityViewport>
       </div>
-      {/* Plain text on purpose — see the module comment. */}
-      <div className="thread-message-card-body">{model.body}</div>
-      {model.truncated ? (
-        <div className="thread-message-card-note">
-          This message was longer than the limit and was cut short.
-        </div>
-      ) : null}
-    </div>
+    </article>
   )
 }
 
