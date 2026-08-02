@@ -441,12 +441,12 @@ export function FirstLaunchSheet({
       id: 'ollama',
       label: 'Ollama',
       description:
-        'Local models running through Ollama. Best for on-device Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
+        'Local models running through Ollama. Best for on-device Llama, DeepSeek, Rnj-1, GLM, North, Qwen, Granite, Gemma, Ornith, Devstral, Ministral, GPT OSS, MiniCPM, or Nemotron testing — no cloud account needed. Sign in to ollama.com to also use Ollama Cloud / Turbo and private models.',
       variant: ollamaProviderAvailable ? 'signed-in' : 'partial',
       statusText: ollamaProviderAvailable ? 'Local runtime ready' : 'Local setup optional',
       hint: ollamaProviderAvailable
         ? 'Pick Local / Ollama in the provider picker, then choose an installed model in Settings or the composer.'
-        : 'Install Ollama, then pull a model such as `qwen3:4b-instruct`, `qwen3.6:35b`, `ornith:9b`, `laguna-xs-2.1:q8_0`, `devstral-small-2:24b`, `ministral-3:14b`, `granite4.1:30b`, `minicpm-v4.5:8b`, or `gpt-oss:20b`.',
+        : 'Install Ollama, then pull a model from the commands below. Rnj-1 needs Ollama 0.13.3+, GLM-4.7-Flash needs 0.15.0+, and North Mini Code 1.0 needs 0.30.10+.',
       deemphasised: true,
       optional: true,
       localOnly: true,

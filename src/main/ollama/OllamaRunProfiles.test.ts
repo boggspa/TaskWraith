@@ -63,6 +63,21 @@ describe('OllamaRunProfiles', () => {
     ).toBe(262_144)
   })
 
+  it('sizes all six new tags from their verified daemon windows', () => {
+    expect(resolveOllamaRunProfile('llama3.1:8b', 'provider_parity').contextCapTokens).toBe(131_072)
+    expect(resolveOllamaRunProfile('deepseek-r1:8b', 'provider_parity').contextCapTokens).toBe(
+      131_072
+    )
+    expect(resolveOllamaRunProfile('rnj-1', 'provider_parity').contextCapTokens).toBe(32_768)
+    expect(
+      resolveOllamaRunProfile('glm-4.7-flash:q4_K_M', 'provider_parity').contextCapTokens
+    ).toBe(202_752)
+    expect(
+      resolveOllamaRunProfile('north-mini-code-1.0:q4_K_M', 'provider_parity').contextCapTokens
+    ).toBe(500_000)
+    expect(resolveOllamaRunProfile('llama3.2:3b', 'provider_parity').contextCapTokens).toBe(131_072)
+  })
+
   it('keeps local_scout deliberately small even on a huge-window model', () => {
     // Scout trades context for speed on purpose; raising the other ceilings must
     // not drag it up too.
@@ -136,6 +151,20 @@ describe('OllamaRunProfiles', () => {
     expect(
       resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
+    for (const modelId of [
+      'deepseek-r1:8b',
+      'glm-4.7-flash:q4_K_M',
+      'north-mini-code-1.0:q4_K_M'
+    ]) {
+      expect(resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)).toBe(
+        'medium'
+      )
+    }
+    for (const modelId of ['llama3.1:8b', 'rnj-1', 'llama3.2:3b']) {
+      expect(
+        resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)
+      ).toBeUndefined()
+    }
     expect(
       resolveOllamaThinkingLevel('devstral-small-2:24b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBeUndefined()

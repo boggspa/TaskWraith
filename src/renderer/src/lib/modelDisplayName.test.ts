@@ -201,6 +201,14 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('ollama', 'qwen3.5:4b-instruct-q4_K_M')).toBe('Qwen 3.5 (4B Param)')
       expect(humaniseModelId('ollama', 'devstral-small-2:24b')).toBe('Devstral Small 2 (24B Param)')
       expect(humaniseModelId('ollama', 'ministral-3:14b')).toBe('Ministral 3 (14B Param)')
+      expect(humaniseModelId('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
+      expect(humaniseModelId('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+      expect(humaniseModelId('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
+      expect(humaniseModelId('ollama', 'glm-4.7-flash:q4_K_M')).toBe('GLM-4.7-Flash (30B-A3B Q4)')
+      expect(humaniseModelId('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(
+        'North Mini Code 1.0 (30B-A3B Q4)'
+      )
+      expect(humaniseModelId('ollama', 'llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
       // The Mistral Vibe seat's own bare `devstral-small` row is a DIFFERENT
       // identity and must not be pulled onto the local tag's label.
       expect(humaniseModelId('mistral', 'devstral-small')).toBe('Devstral Small')
@@ -265,6 +273,8 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('ollama', 'qwen3.6:35b-a3b')).toBe('qwen3.6:35b')
       expect(canonicalModelIdForProvider('ollama', 'lfm2.5')).toBe('lfm2.5:8b')
       expect(canonicalModelIdForProvider('ollama', 'lfm2.5:latest')).toBe('lfm2.5:8b')
+      expect(canonicalModelIdForProvider('ollama', 'rnj-1:latest')).toBe('rnj-1')
+      expect(canonicalModelIdForProvider('ollama', 'rnj-1:8b')).toBe('rnj-1')
     })
   })
 
@@ -308,6 +318,12 @@ describe('humaniseModelId', () => {
       expect(labels['qwen3.5:4b']).toBeDefined()
       expect(labels['devstral-small-2:24b']).toBeDefined()
       expect(labels['ministral-3:14b']).toBeDefined()
+      expect(labels['llama3.1:8b']).toBeDefined()
+      expect(labels['deepseek-r1:8b']).toBeDefined()
+      expect(labels['rnj-1']).toBeDefined()
+      expect(labels['glm-4.7-flash:q4_k_m']).toBeDefined()
+      expect(labels['north-mini-code-1.0:q4_k_m']).toBeDefined()
+      expect(labels['llama3.2:3b']).toBeDefined()
     })
   })
 })

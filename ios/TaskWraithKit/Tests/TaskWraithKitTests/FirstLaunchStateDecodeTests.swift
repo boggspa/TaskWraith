@@ -20,7 +20,15 @@ struct FirstLaunchStateDecodeTests {
           {"id":"ollama","label":"Ollama","optional":true,"statusKind":"localReady","statusText":"Local Ollama ready","detail":"Local runtime ready.","setupHint":"Pull a model on Mac.","setupCommands":[],"usageWindows":[]}
          ],
          "setupCommands":[{"id":"codex","label":"Codex","command":"npm i -g @openai/codex","source":"OpenAI"}],
-         "ollamaModelCommands":[{"id":"qwen3:4b-instruct","label":"Qwen 3","command":"ollama run qwen3:4b-instruct"}]}}
+         "ollamaModelCommands":[
+          {"id":"qwen3:4b-instruct","label":"Qwen 3","command":"ollama run qwen3:4b-instruct"},
+          {"id":"llama3.1:8b","label":"Llama 3.1 (8B Param)","command":"ollama run llama3.1:8b"},
+          {"id":"deepseek-r1:8b","label":"DeepSeek R1 (8B Param)","command":"ollama run deepseek-r1:8b"},
+          {"id":"rnj-1","label":"Rnj-1 (8B Param; Ollama 0.13.3+)","command":"ollama run rnj-1"},
+          {"id":"glm-4.7-flash:q4_K_M","label":"GLM-4.7-Flash (30B-A3B Q4; Ollama 0.15.0+)","command":"ollama run glm-4.7-flash:q4_K_M"},
+          {"id":"north-mini-code-1.0:q4_K_M","label":"North Mini Code 1.0 (30B-A3B Q4; Ollama 0.30.10+)","command":"ollama run north-mini-code-1.0:q4_K_M"},
+          {"id":"llama3.2:3b","label":"Llama 3.2 (3B Param)","command":"ollama run llama3.2:3b"}
+         ]}}
         """
         let message = try JSONDecoder().decode(FirstLaunchStateMessage.self, from: Data(json.utf8))
 
@@ -40,6 +48,13 @@ struct FirstLaunchStateDecodeTests {
         #expect(message.state.providerCards.contains { $0.id == "gemini" } == false)
         #expect(message.state.providerCards.first?.usageWindows.first?.usedPercent == 28)
         #expect(message.state.ollamaModelCommands.first?.command == "ollama run qwen3:4b-instruct")
+        let commands = Set(message.state.ollamaModelCommands.map(\.command))
+        #expect(commands.contains("ollama run llama3.1:8b"))
+        #expect(commands.contains("ollama run deepseek-r1:8b"))
+        #expect(commands.contains("ollama run rnj-1"))
+        #expect(commands.contains("ollama run glm-4.7-flash:q4_K_M"))
+        #expect(commands.contains("ollama run north-mini-code-1.0:q4_K_M"))
+        #expect(commands.contains("ollama run llama3.2:3b"))
     }
 
     @Test("decodes a \"New Additions\" notice's grouped provider/model content")

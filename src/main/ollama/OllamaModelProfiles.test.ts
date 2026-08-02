@@ -90,6 +90,25 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(lines).not.toContain('Model profile (local)')
   })
 
+  it('gives all six new tags family-specific tool guidance', () => {
+    const expected = new Map([
+      ['llama3.1:8b', 'Llama 3.1 8B'],
+      ['deepseek-r1:8b', 'DeepSeek R1 8B'],
+      ['rnj-1', 'Rnj-1 8B'],
+      ['glm-4.7-flash:q4_K_M', 'GLM-4.7-Flash 30B-A3B'],
+      ['north-mini-code-1.0:q4_K_M', 'North Mini Code 1.0 30B-A3B'],
+      ['llama3.2:3b', 'Llama 3.2 3B']
+    ])
+    for (const [modelId, marker] of expected) {
+      const lines = ollamaModelFamilyPromptLines(modelId).join(' ')
+      expect(lines).toContain(marker)
+      expect(lines).not.toContain('Model profile (local)')
+    }
+    expect(ollamaModelFamilyPromptLines('north-mini-code-1.0:q4_K_M').join(' ')).toContain(
+      'Carry supplied thinking content between turns'
+    )
+  })
+
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {
     const lines = ollamaModelFamilyPromptLines('gpt-oss:latest', 'conversational')
     expect(lines.join(' ')).toContain('tool-intent stub')

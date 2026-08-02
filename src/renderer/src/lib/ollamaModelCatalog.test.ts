@@ -30,4 +30,32 @@ describe('mergeOllamaModelCatalog', () => {
     expect(gptOssRows).toHaveLength(1)
     expect(gptOssRows[0]).toMatchObject({ label: 'GPT OSS (20B Param)' })
   })
+
+  it('humanises all six verified live tags and deduplicates the Rnj alias', () => {
+    const models = mergeOllamaModelCatalog([
+      { id: 'llama3.1:8b', label: 'llama3.1:8b' },
+      { id: 'deepseek-r1:8b', label: 'deepseek-r1:8b' },
+      { id: 'rnj-1:latest', label: 'rnj-1:latest' },
+      { id: 'glm-4.7-flash:q4_K_M', label: 'glm-4.7-flash:q4_K_M' },
+      { id: 'north-mini-code-1.0:q4_K_M', label: 'north-mini-code-1.0:q4_K_M' },
+      { id: 'llama3.2:3b', label: 'llama3.2:3b' }
+    ])
+
+    expect(models.find((model) => model.id === 'llama3.1:8b')?.label).toBe(
+      'Llama 3.1 (8B Param)'
+    )
+    expect(models.find((model) => model.id === 'deepseek-r1:8b')?.label).toBe(
+      'DeepSeek R1 (8B Param)'
+    )
+    expect(models.filter((model) => ollamaModelCatalogKey(model.id) === 'rnj-1')).toHaveLength(1)
+    expect(models.find((model) => model.id === 'glm-4.7-flash:q4_K_M')?.label).toBe(
+      'GLM-4.7-Flash (30B-A3B Q4)'
+    )
+    expect(models.find((model) => model.id === 'north-mini-code-1.0:q4_K_M')?.label).toBe(
+      'North Mini Code 1.0 (30B-A3B Q4)'
+    )
+    expect(models.find((model) => model.id === 'llama3.2:3b')?.label).toBe(
+      'Llama 3.2 (3B Param)'
+    )
+  })
 })

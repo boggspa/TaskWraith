@@ -391,6 +391,36 @@ const OLLAMA_DEFAULT_MODELS = [
     label: 'Ministral 3 (14B Param)',
     description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
   },
+  {
+    id: 'llama3.1:8b',
+    label: 'Llama 3.1 (8B Param)',
+    description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools'
+  },
+  {
+    id: 'deepseek-r1:8b',
+    label: 'DeepSeek R1 (8B Param)',
+    description: 'DeepSeek R1 0528 8B via Ollama · 131k context · tools/thinking'
+  },
+  {
+    id: 'rnj-1',
+    label: 'Rnj-1 (8B Param)',
+    description: 'Essential AI Rnj-1 8B via Ollama · 33k context · tools · agentic coding'
+  },
+  {
+    id: 'glm-4.7-flash:q4_K_M',
+    label: 'GLM-4.7-Flash (30B-A3B Q4)',
+    description: 'Z.ai GLM-4.7-Flash 30B-A3B Q4 via Ollama · 203k context · tools/thinking'
+  },
+  {
+    id: 'north-mini-code-1.0:q4_K_M',
+    label: 'North Mini Code 1.0 (30B-A3B Q4)',
+    description: 'Cohere North Mini Code 1.0 30B-A3B Q4 via Ollama · 500k context · tools/thinking'
+  },
+  {
+    id: 'llama3.2:3b',
+    label: 'Llama 3.2 (3B Param)',
+    description: 'Meta Llama 3.2 3B via Ollama · 131k context · tools'
+  },
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]
 const OLLAMA_DEFAULT_MODEL = OLLAMA_DEFAULT_MODELS[0].id

@@ -19,6 +19,16 @@ describe('ollama model availability helpers', () => {
     expect(isOllamaModelInstalled('ornith:35b', ['ornith:9b'])).toBe(false)
     expect(isOllamaModelInstalled('lfm2.5', ['lfm2.5:8b'])).toBe(true)
     expect(isOllamaModelInstalled('lfm2.5:latest', ['lfm2.5:8b'])).toBe(true)
+    expect(isOllamaModelInstalled('rnj-1', ['rnj-1:latest'])).toBe(true)
+    expect(isOllamaModelInstalled('rnj-1:8b', ['rnj-1:latest'])).toBe(true)
+    expect(
+      isOllamaModelInstalled('glm-4.7-flash:q4_K_M', ['glm-4.7-flash:q4_K_M'])
+    ).toBe(true)
+    expect(
+      isOllamaModelInstalled('north-mini-code-1.0:q4_K_M', [
+        'north-mini-code-1.0:q4_K_M'
+      ])
+    ).toBe(true)
   })
 
   it('builds install-only pull commands for safe model ids', () => {
@@ -28,6 +38,12 @@ describe('ollama model availability helpers', () => {
     )
     expect(buildOllamaPullCommand('laguna-xs-2.1:q8_0')).toBe(
       'ollama pull laguna-xs-2.1:q8_0'
+    )
+    expect(buildOllamaPullCommand('glm-4.7-flash:q4_K_M')).toBe(
+      'ollama pull glm-4.7-flash:q4_K_M'
+    )
+    expect(buildOllamaPullCommand('north-mini-code-1.0:q4_K_M')).toBe(
+      'ollama pull north-mini-code-1.0:q4_K_M'
     )
   })
 

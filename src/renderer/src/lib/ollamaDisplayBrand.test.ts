@@ -56,6 +56,15 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'Mistral',
       providerClass: 'mistral'
     })
+    expect(resolveOllamaDisplayBrand('llama3.1:8b')).toMatchObject({
+      providerLabel: 'Meta',
+      providerClass: 'meta'
+    })
+    expect(resolveOllamaDisplayBrand('llama3.2:3b')?.providerClass).toBe('meta')
+    expect(resolveOllamaDisplayBrand('deepseek-r1:8b')?.providerClass).toBe('deepseek')
+    expect(resolveOllamaDisplayBrand('rnj-1')?.providerLabel).toBe('Essential AI')
+    expect(resolveOllamaDisplayBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
+    expect(resolveOllamaDisplayBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
   })
 
   it('matches the local Mistral tags from the bare id, with no label to help', () => {
@@ -68,15 +77,20 @@ describe('resolveOllamaDisplayBrand', () => {
   it('keeps the provider picker order explicit', () => {
     expect(OLLAMA_DISPLAY_BRANDS.map((brand) => brand.id)).toEqual([
       'alibaba',
+      'cohere',
+      'deepseek',
       'deep-reinforce',
+      'essential',
       'google',
       'ibm',
       'liquid',
+      'meta',
       'mistral',
       'nvidia',
       'openai',
       'openbmb',
-      'poolside'
+      'poolside',
+      'zai'
     ])
   })
 })
@@ -90,6 +104,9 @@ describe('resolveProviderHueClass', () => {
     // Reuses the first-class Mistral seat's hue — one brand, one colour.
     expect(resolveProviderHueClass('ollama', 'devstral-small-2:24b')).toBe('mistral')
     expect(resolveProviderHueClass('ollama', 'ministral-3:14b')).toBe('mistral')
+    expect(resolveProviderHueClass('ollama', 'llama3.2:3b')).toBe('meta')
+    expect(resolveProviderHueClass('ollama', 'deepseek-r1:8b')).toBe('deepseek')
+    expect(resolveProviderHueClass('ollama', 'glm-4.7-flash:q4_K_M')).toBe('zai')
   })
 
   it('returns the runtime provider for non-brand models', () => {
@@ -136,6 +153,8 @@ describe('resolveProviderBrandLabel', () => {
     expect(resolveProviderBrandLabel('ollama', 'laguna-xs-2.1:q8_0')).toBe('Poolside')
     expect(resolveProviderBrandLabel('ollama', 'devstral-small-2:24b')).toBe('Mistral')
     expect(resolveProviderBrandLabel('ollama', 'ministral-3:14b')).toBe('Mistral')
+    expect(resolveProviderBrandLabel('ollama', 'rnj-1')).toBe('Essential AI')
+    expect(resolveProviderBrandLabel('ollama', 'north-mini-code-1.0:q4_K_M')).toBe('Cohere')
   })
 
   it('returns the BYOK upstream brand for a Pi row', () => {

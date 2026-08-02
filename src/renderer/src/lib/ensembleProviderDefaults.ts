@@ -253,7 +253,13 @@ const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)' },
   { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)' },
   { id: 'devstral-small-2:24b', label: 'Devstral Small 2 (24B Param)' },
-  { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)' }
+  { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)' },
+  { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)' },
+  { id: 'deepseek-r1:8b', label: 'DeepSeek R1 (8B Param)' },
+  { id: 'rnj-1', label: 'Rnj-1 (8B Param)' },
+  { id: 'glm-4.7-flash:q4_K_M', label: 'GLM-4.7-Flash (30B-A3B Q4)' },
+  { id: 'north-mini-code-1.0:q4_K_M', label: 'North Mini Code 1.0 (30B-A3B Q4)' },
+  { id: 'llama3.2:3b', label: 'Llama 3.2 (3B Param)' }
 ]
 
 const CODEX_FAST_CAPABLE = new Set<string>([

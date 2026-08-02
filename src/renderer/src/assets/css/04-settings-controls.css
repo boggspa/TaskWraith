@@ -674,6 +674,21 @@
   color: var(--provider-liquid-color);
 }
 
+.settings-model-comparison-dot.provider-meta,
+.settings-model-comparison-fill.provider-meta {
+  color: var(--provider-meta-color);
+}
+
+.settings-model-comparison-dot.provider-cohere,
+.settings-model-comparison-fill.provider-cohere {
+  color: var(--provider-cohere-color);
+}
+
+.settings-model-comparison-dot.provider-essential,
+.settings-model-comparison-fill.provider-essential {
+  color: var(--provider-essential-color);
+}
+
 .settings-model-comparison-dot.provider-nvidia,
 .settings-model-comparison-fill.provider-nvidia {
   color: var(--provider-nvidia-color);
@@ -4367,6 +4382,15 @@ input:disabled, select:disabled, textarea:disabled {
 .run-card-provider.provider-pi {
   --run-card-provider-tint: var(--provider-pi-color);
 }
+.run-card-provider.provider-meta {
+  --run-card-provider-tint: var(--provider-meta-color);
+}
+.run-card-provider.provider-cohere {
+  --run-card-provider-tint: var(--provider-cohere-color);
+}
+.run-card-provider.provider-essential {
+  --run-card-provider-tint: var(--provider-essential-color);
+}
 .run-card-provider.provider-deepseek {
   --run-card-provider-tint: var(--provider-deepseek-color);
 }
@@ -4387,6 +4411,9 @@ input:disabled, select:disabled, textarea:disabled {
 }
 .run-card-provider:is(
     .provider-pi,
+    .provider-meta,
+    .provider-cohere,
+    .provider-essential,
     .provider-deepseek,
     .provider-zai,
     .provider-minimax,

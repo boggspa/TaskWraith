@@ -220,6 +220,12 @@
   --provider-ornith-color: var(--provider-deep-reinforce-color);
   --provider-ibm-color: #3079BC;
   --provider-liquid-color: #D72D82;
+  /* Official upstream anchors adjusted only in lightness to meet the palette's
+   * AA-on-white-and-black invariant: Meta #0668E1, Cohere #355146, Essential
+   * AI #6A46AC. DeepSeek/Z.ai reuse their canonical Pi-upstream tokens below. */
+  --provider-meta-color: #1671EA;
+  --provider-cohere-color: #5E7C6F;
+  --provider-essential-color: #8462CA;
   --provider-nvidia-color: #538200;
   --provider-openbmb-color: #E22B17;
   --provider-poolside-color: #0C8194;

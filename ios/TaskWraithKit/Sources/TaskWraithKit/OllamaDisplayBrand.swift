@@ -43,11 +43,29 @@ public enum OllamaDisplayBrands {
             needles: ["qwen3", "qwen 3", "qwen"],
             fallbackModelLabel: "Qwen 3 (4B Param)"),
         OllamaDisplayBrandDefinition(
+            id: "cohere",
+            providerLabel: "Cohere",
+            providerClass: "cohere",
+            needles: ["north-mini-code-1.0", "north mini code 1.0", "north mini code"],
+            fallbackModelLabel: "North Mini Code 1.0 (30B-A3B Q4)"),
+        OllamaDisplayBrandDefinition(
+            id: "deepseek",
+            providerLabel: "DeepSeek",
+            providerClass: "deepseek",
+            needles: ["deepseek-r1", "deepseek r1", "deepseek"],
+            fallbackModelLabel: "DeepSeek R1 (8B Param)"),
+        OllamaDisplayBrandDefinition(
             id: "deep-reinforce",
             providerLabel: "Deep Reinforce",
             providerClass: "deep-reinforce",
             needles: ["ornith"],
             fallbackModelLabel: "Ornith 1.0 (9B Param)"),
+        OllamaDisplayBrandDefinition(
+            id: "essential",
+            providerLabel: "Essential AI",
+            providerClass: "essential",
+            needles: ["rnj-1", "rnj 1"],
+            fallbackModelLabel: "Rnj-1 (8B Param)"),
         OllamaDisplayBrandDefinition(
             id: "google",
             providerLabel: "Google",
@@ -66,6 +84,12 @@ public enum OllamaDisplayBrands {
             providerClass: "liquid",
             needles: ["lfm2.5", "lfm 2.5", "lfm"],
             fallbackModelLabel: "LFM 2.5 (8B-A1B)"),
+        OllamaDisplayBrandDefinition(
+            id: "meta",
+            providerLabel: "Meta",
+            providerClass: "meta",
+            needles: ["llama3.1", "llama 3.1", "llama3.2", "llama 3.2"],
+            fallbackModelLabel: "Llama 3.1 (8B Param)"),
         // The `mistral` hue class + label already exist for the first-class
         // Mistral Vibe seat, so a local Devstral / Ministral tag reuses them
         // rather than introducing a tenth brand colour. `ministral` needs its
@@ -100,6 +124,12 @@ public enum OllamaDisplayBrands {
             providerClass: "poolside",
             needles: ["laguna-xs-2.1", "laguna xs 2.1", "laguna"],
             fallbackModelLabel: "Laguna XS 2.1 (33B-A3B Q8)"),
+        OllamaDisplayBrandDefinition(
+            id: "zai",
+            providerLabel: "Z.ai",
+            providerClass: "zai",
+            needles: ["glm-4.7-flash", "glm 4.7 flash"],
+            fallbackModelLabel: "GLM-4.7-Flash (30B-A3B Q4)"),
     ]
 
     /// Resolve an Ollama model id (+ optional human label) to its spoofed

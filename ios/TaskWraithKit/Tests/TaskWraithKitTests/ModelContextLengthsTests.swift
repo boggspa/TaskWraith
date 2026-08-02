@@ -362,6 +362,24 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
+    @Test("ollama six-model catalogue uses verified labels and daemon windows")
+    func ollamaSixModelCatalogue() {
+        let models = ModelContextLengths.buildGroups(includeOllama: true)
+            .first { $0.provider == "ollama" }?.models ?? []
+
+        func row(_ id: String) -> ModelContextLengthRow? {
+            models.first { $0.modelId == id }
+        }
+
+        #expect(row("llama3.1:8b")?.contextWindow == 131_072)
+        #expect(row("deepseek-r1:8b")?.label == "DeepSeek R1 (8B Param)")
+        #expect(row("rnj-1")?.contextWindow == 32_768)
+        #expect(row("glm-4.7-flash:q4_K_M")?.contextWindow == 202_752)
+        #expect(row("north-mini-code-1.0:q4_K_M")?.contextWindow == 500_000)
+        #expect(row("north-mini-code-1.0:q4_K_M")?.formatted == "500k")
+        #expect(row("llama3.2:3b")?.contextWindow == 131_072)
+    }
+
     // MARK: - excludeProviders
 
     @Test("excludeProviders: [\"gemini\"] drops gemini; codex & claude present")

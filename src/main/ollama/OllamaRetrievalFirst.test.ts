@@ -14,6 +14,16 @@ describe('OllamaRetrievalFirst', () => {
     expect(ollamaEnforcesRetrievalFirst('qwen3.5:4b')).toBe(true)
     expect(ollamaEnforcesRetrievalFirst('devstral-small-2:24b')).toBe(true)
     expect(ollamaEnforcesRetrievalFirst('ministral-3:14b')).toBe(true)
+    for (const modelId of [
+      'llama3.1:8b',
+      'deepseek-r1:8b',
+      'rnj-1',
+      'glm-4.7-flash:q4_K_M',
+      'north-mini-code-1.0:q4_K_M',
+      'llama3.2:3b'
+    ]) {
+      expect(ollamaEnforcesRetrievalFirst(modelId)).toBe(true)
+    }
     expect(ollamaReadFileExemptFromRetrievalFirst('README.md')).toBe(true)
     expect(ollamaReadFileExemptFromRetrievalFirst('src/main/Foo.ts')).toBe(false)
     expect(ollamaRetrievalFirstBlockedMessage('src/main/Foo.ts')).toContain('workspace_search')

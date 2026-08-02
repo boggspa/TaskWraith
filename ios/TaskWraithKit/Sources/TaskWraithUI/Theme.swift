@@ -180,6 +180,9 @@ public enum TWTheme {
         case "deep-reinforce", "ornith": return 0xBE5809
         case "ibm": return 0x3079BC
         case "liquid": return 0xD72D82
+        case "meta": return 0x1671EA
+        case "cohere": return 0x5E7C6F
+        case "essential": return 0x8462CA
         case "nvidia": return 0x538200
         case "openbmb": return 0xE22B17
         case "poolside": return 0x0C8194
@@ -233,8 +236,8 @@ public enum TWTheme {
     public static let providerAccentKeys: [String] = [
         "gemini", "codex", "openai", "claude", "kimi", "cursor", "ollama", "antigravity",
         "google", "pi", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
-        "ibm", "liquid", "nvidia", "openbmb", "poolside", "deepseek", "zai", "minimax",
-        "mistral", "cerebras", "groq"
+        "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
+        "deepseek", "zai", "minimax", "mistral", "cerebras", "groq"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.
@@ -265,6 +268,9 @@ public enum TWTheme {
         case "google": return "Google"
         case "ibm": return "IBM"
         case "liquid": return "Liquid"
+        case "meta": return "Meta"
+        case "cohere": return "Cohere"
+        case "essential": return "Essential AI"
         case "nvidia": return "NVIDIA"
         case "openai": return "OpenAI"
         case "openbmb": return "OpenBMB"

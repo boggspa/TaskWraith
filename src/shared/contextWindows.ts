@@ -147,7 +147,17 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // (2026-07-30) rather than assumed from the upstream Mistral API — Devstral
   // Small 2 carries a 384k window locally, 3x what the API tier documents.
   'devstral-small-2:24b': 393_216,
-  'ministral-3:14b': 262_144
+  'ministral-3:14b': 262_144,
+  // Exact GGUF metadata (`*.context_length`) from the Ollama registry / local
+  // daemon on 2026-08-02. GLM/North's catalogue pages round these to 198K/488K.
+  'llama3.1:8b': 131_072,
+  'deepseek-r1:8b': 131_072,
+  'rnj-1': 32_768,
+  'rnj-1:latest': 32_768,
+  'rnj-1:8b': 32_768,
+  'glm-4.7-flash:q4_K_M': 202_752,
+  'north-mini-code-1.0:q4_K_M': 500_000,
+  'llama3.2:3b': 131_072
 }
 
 const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {

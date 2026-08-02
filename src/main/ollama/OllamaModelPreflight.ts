@@ -18,6 +18,12 @@ export type OllamaModelFamily =
   | 'nemotron3_33b'
   | 'devstral_small_2_24b'
   | 'ministral_3_14b'
+  | 'llama3_1_8b'
+  | 'deepseek_r1_8b'
+  | 'rnj_1_8b'
+  | 'glm_4_7_flash'
+  | 'north_mini_code_1_0'
+  | 'llama3_2_3b'
   | 'unknown'
 
 export interface OllamaModelPreflightInput {
@@ -59,7 +65,10 @@ function metadataText(modelInfo?: OllamaModelInfo | null): string {
     ...(Array.isArray(modelInfo?.families) ? modelInfo.families : []),
     modelInfo?.show?.details?.family,
     modelInfo?.show?.details?.parameter_size,
-    ...(Array.isArray(modelInfo?.show?.details?.families) ? modelInfo.show.details.families : [])
+    ...(Array.isArray(modelInfo?.show?.details?.families) ? modelInfo.show.details.families : []),
+    ...Object.entries(modelInfo?.show?.model_info || {})
+      .filter(([key]) => /(?:architecture|basename)$/i.test(key))
+      .map(([, value]) => String(value))
   ]
     .filter(Boolean)
     .join(' ')
@@ -72,6 +81,19 @@ export function resolveOllamaModelFamily(
   modelInfo?: OllamaModelInfo | null
 ): OllamaModelFamily {
   const key = modelId.trim().toLowerCase()
+  if (key === 'llama3.1:8b' || key.startsWith('llama3.1:8b-')) return 'llama3_1_8b'
+  if (key === 'deepseek-r1:8b' || key.startsWith('deepseek-r1:8b-')) return 'deepseek_r1_8b'
+  if (key === 'rnj-1' || key === 'rnj-1:latest' || key === 'rnj-1:8b') return 'rnj_1_8b'
+  if (key === 'glm-4.7-flash:q4_k_m' || key.startsWith('glm-4.7-flash:q4_k_m-')) {
+    return 'glm_4_7_flash'
+  }
+  if (
+    key === 'north-mini-code-1.0:q4_k_m' ||
+    key.startsWith('north-mini-code-1.0:q4_k_m-')
+  ) {
+    return 'north_mini_code_1_0'
+  }
+  if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) return 'llama3_2_3b'
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) return 'qwen3_6_35b'
   if (key === 'minicpm-v4.5:8b' || key.startsWith('minicpm-v4.5:8b-')) return 'minicpm_v45_8b'
   if (key === 'granite4.1:3b' || key.startsWith('granite4.1:3b-')) return 'granite4_1_3b'
@@ -115,6 +137,14 @@ export function resolveOllamaModelFamily(
     return 'lfm2_5_8b'
   }
   const meta = metadataText(modelInfo)
+  if (meta.includes('deepseek-r1') || meta.includes('deepseek r1')) return 'deepseek_r1_8b'
+  if (meta.includes('rnj-1') || meta.includes('rnj 1')) return 'rnj_1_8b'
+  if (meta.includes('glm4moelite') || meta.includes('glm-4.7-flash')) return 'glm_4_7_flash'
+  if (meta.includes('cohere2moe') || meta.includes('north mini code')) {
+    return 'north_mini_code_1_0'
+  }
+  if (meta.includes('meta-llama-3.1') || meta.includes('llama-3.1')) return 'llama3_1_8b'
+  if (meta.includes('llama-3.2')) return 'llama3_2_3b'
   if (meta.includes('gptoss') || meta.includes('gpt-oss')) {
     return 'gpt_oss_20b'
   }
@@ -175,6 +205,11 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('lfm2.5')
     aliases.add('lfm2.5:latest')
     aliases.add('lfm2.5:8b')
+  }
+  if (lower === 'rnj-1' || lower === 'rnj-1:latest' || lower === 'rnj-1:8b') {
+    aliases.add('rnj-1')
+    aliases.add('rnj-1:latest')
+    aliases.add('rnj-1:8b')
   }
   return [...aliases]
 }
@@ -321,6 +356,42 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it as a local scout or patcher; for release-critical or multi-file work, pair it with a larger local tag or an explicit verification pass.'
       }
+    case 'llama3_1_8b':
+      return {
+        guidance: `${modelLabel} is a tool-capable general local model with a 131K context window.`,
+        delegateHint:
+          'Use it for scoped local exploration, planning, and focused edits; keep broad repository changes split into verified slices.'
+      }
+    case 'deepseek_r1_8b':
+      return {
+        guidance: `${modelLabel} is a compact reasoning model with native tools and thinking support.`,
+        delegateHint:
+          'Keep tool payloads focused and preserve the model reasoning channel between turns when the runtime supplies it.'
+      }
+    case 'rnj_1_8b':
+      return {
+        guidance: `${modelLabel} is an Essential AI agentic-coding model with native tools and a 32K context window; it requires Ollama 0.13.3 or newer.`,
+        delegateHint:
+          'Use it for scoped implementation and verification; keep context compact and split broad refactors into explicit slices.'
+      }
+    case 'glm_4_7_flash':
+      return {
+        guidance: `${modelLabel} is a 30B-A3B reasoning model with native tools, thinking support, and a 202,752-token window; this registry build requires Ollama 0.15.0 or newer.`,
+        delegateHint:
+          'Use it for deep local review and scoped implementation, with an explicit verification pass before release-sensitive edits.'
+      }
+    case 'north_mini_code_1_0':
+      return {
+        guidance: `${modelLabel} is Cohere's 30B-A3B agentic software-engineering model with native tools, thinking support, and a 500,000-token runtime window; this registry build requires Ollama 0.30.10 or newer.`,
+        delegateHint:
+          'Carry thinking content between turns when supplied, search before reading, and keep each tool action tied to the current implementation step.'
+      }
+    case 'llama3_2_3b':
+      return {
+        guidance: `${modelLabel} is a lightweight tool-capable local model with a 131K context window.`,
+        delegateHint:
+          'Use it for quick lookups, targeted reads, and small focused patches; hand off a concise plan when the task becomes broad.'
+      }
     case 'gpt_oss_20b':
       return {
         guidance: `${modelLabel} has stronger reasoning but can be finicky with tool calls; TaskWraith will nudge it when it stalls.`,
@@ -367,6 +438,15 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 24
     case 'ministral_3_14b':
       return 14
+    case 'llama3_1_8b':
+    case 'deepseek_r1_8b':
+    case 'rnj_1_8b':
+      return 8
+    case 'glm_4_7_flash':
+    case 'north_mini_code_1_0':
+      return 30
+    case 'llama3_2_3b':
+      return 3
     case 'gpt_oss_20b':
       return 20
     default:

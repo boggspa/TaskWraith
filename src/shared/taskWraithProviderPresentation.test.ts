@@ -60,5 +60,15 @@ describe('TaskWraith TUI provider presentation', () => {
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
     expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3')
     expect(taskWraithModelLabel('ollama', 'qwen3.5:9b-q4_K_M')).toBe('Qwen 3.5 (9B Param)')
+    expect(taskWraithModelLabel('ollama', 'llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
+    expect(taskWraithModelLabel('ollama', 'deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(taskWraithModelLabel('ollama', 'rnj-1:latest')).toBe('Rnj-1 (8B Param)')
+    expect(taskWraithModelLabel('ollama', 'glm-4.7-flash:q4_K_M')).toBe(
+      'GLM-4.7-Flash (30B-A3B Q4)'
+    )
+    expect(taskWraithModelLabel('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(
+      'North Mini Code 1.0 (30B-A3B Q4)'
+    )
+    expect(taskWraithModelLabel('ollama', 'llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
   })
 })

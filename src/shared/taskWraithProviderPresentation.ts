@@ -26,6 +26,9 @@ export const TASKWRAITH_PROVIDER_ACCENTS = {
   nvidia: '#538200',
   openbmb: '#E22B17',
   poolside: '#0C8194',
+  meta: '#1671EA',
+  cohere: '#5E7C6F',
+  essential: '#8462CA',
   deepseek: '#4E6AEE',
   zai: '#177DAA',
   minimax: '#C044A4',
@@ -51,7 +54,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   antigravity: 'AntiGravity',
   pi: 'Pi',
   mistral: 'Mistral',
-  ensemble: 'Ensemble'
+  ensemble: 'Ensemble',
+  meta: 'Meta',
+  cohere: 'Cohere',
+  essential: 'Essential AI'
 }
 
 const PROVIDER_SHORT_CODES: Record<string, string> = {
@@ -75,6 +81,9 @@ const PROVIDER_SHORT_CODES: Record<string, string> = {
   openai: 'OAI',
   openbmb: 'BMB',
   poolside: 'PLS',
+  meta: 'MTA',
+  cohere: 'COH',
+  essential: 'EAI',
   deepseek: 'DSK',
   zai: 'ZAI',
   qwen: 'QWN',
@@ -140,7 +149,13 @@ function ollamaModelLabel(model: string): string | undefined {
     [/^nemotron3:33b(?:-|$)/, 'Nemotron 3 Nano Omni (33B Param)'],
     [/^laguna-xs-2\.1:q8_0$/, 'Laguna XS 2.1 (33B-A3B Q8)'],
     [/^devstral-small-2:24b(?:-|$)/, 'Devstral Small 2 (24B Param)'],
-    [/^ministral-3:14b(?:-|$)/, 'Ministral 3 (14B Param)']
+    [/^ministral-3:14b(?:-|$)/, 'Ministral 3 (14B Param)'],
+    [/^llama3\.1:8b(?:-|$)/, 'Llama 3.1 (8B Param)'],
+    [/^deepseek-r1:8b(?:-|$)/, 'DeepSeek R1 (8B Param)'],
+    [/^rnj-1(?::(?:latest|8b))?(?:-|$)/, 'Rnj-1 (8B Param)'],
+    [/^glm-4\.7-flash:q4_k_m(?:-|$)/, 'GLM-4.7-Flash (30B-A3B Q4)'],
+    [/^north-mini-code-1\.0:q4_k_m(?:-|$)/, 'North Mini Code 1.0 (30B-A3B Q4)'],
+    [/^llama3\.2:3b(?:-|$)/, 'Llama 3.2 (3B Param)']
   ]
   return known.find(([pattern]) => pattern.test(key))?.[1]
 }

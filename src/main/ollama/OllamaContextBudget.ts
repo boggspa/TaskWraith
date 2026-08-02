@@ -177,6 +177,9 @@ export function resolveOllamaContextBudget(
     case 'ornith_9b':
     case 'lfm2_5_8b':
     case 'ministral_3_14b':
+    case 'llama3_1_8b':
+    case 'deepseek_r1_8b':
+    case 'rnj_1_8b':
       return midCodingBudget(trimmedModelId, measured)
     case 'qwen3_6_35b':
     case 'ornith_35b':
@@ -184,9 +187,12 @@ export function resolveOllamaContextBudget(
     case 'granite4_1_30b':
     case 'nemotron3_33b':
     case 'devstral_small_2_24b':
+    case 'glm_4_7_flash':
+    case 'north_mini_code_1_0':
       return largeCodingBudget(trimmedModelId, measured)
     case 'minicpm_v45_8b':
     case 'granite4_1_3b':
+    case 'llama3_2_3b':
       return compactToolBudget(trimmedModelId, measured)
     case 'gemma4_12b':
       return multimodalBudget(trimmedModelId, measured)

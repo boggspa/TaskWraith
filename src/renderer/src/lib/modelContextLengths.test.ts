@@ -172,6 +172,32 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('128k')
   })
 
+  it('ollama group carries all six verified labels and daemon windows', () => {
+    const ollama = buildModelContextLengthGroups({ includeOllama: true }).find(
+      (group) => group.provider === 'ollama'
+    )
+    const byId = new Map(ollama?.models.map((model) => [model.modelId, model]))
+
+    expect(byId.get('llama3.1:8b')).toMatchObject({
+      label: 'Llama 3.1 (8B Param)',
+      contextWindow: 131_072
+    })
+    expect(byId.get('deepseek-r1:8b')).toMatchObject({
+      label: 'DeepSeek R1 (8B Param)',
+      contextWindow: 131_072
+    })
+    expect(byId.get('rnj-1')).toMatchObject({ contextWindow: 32_768, formatted: '33k' })
+    expect(byId.get('glm-4.7-flash:q4_K_M')).toMatchObject({
+      contextWindow: 202_752,
+      formatted: '203k'
+    })
+    expect(byId.get('north-mini-code-1.0:q4_K_M')).toMatchObject({
+      contextWindow: 500_000,
+      formatted: '500k'
+    })
+    expect(byId.get('llama3.2:3b')).toMatchObject({ contextWindow: 131_072 })
+  })
+
   it("{ excludeProviders: ['gemini'] }: drops the gemini group, keeps the rest", () => {
     const groups = buildModelContextLengthGroups({ excludeProviders: ['gemini'] })
     const providerIds = groups.map((g) => g.provider)

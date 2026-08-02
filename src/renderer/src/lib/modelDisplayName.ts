@@ -165,7 +165,15 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
   // `devstral-small` row above — same brand, different runtime.
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
-  'ministral-3:14b': 'Ministral 3 (14B Param)'
+  'ministral-3:14b': 'Ministral 3 (14B Param)',
+  'llama3.1:8b': 'Llama 3.1 (8B Param)',
+  'deepseek-r1:8b': 'DeepSeek R1 (8B Param)',
+  'rnj-1': 'Rnj-1 (8B Param)',
+  'rnj-1:latest': 'Rnj-1 (8B Param)',
+  'rnj-1:8b': 'Rnj-1 (8B Param)',
+  'glm-4.7-flash:q4_k_m': 'GLM-4.7-Flash (30B-A3B Q4)',
+  'north-mini-code-1.0:q4_k_m': 'North Mini Code 1.0 (30B-A3B Q4)',
+  'llama3.2:3b': 'Llama 3.2 (3B Param)'
 }
 
 const STALE_GEMINI_PLACEHOLDER_MODEL_IDS = new Set([
@@ -279,6 +287,9 @@ export function canonicalModelIdForProvider(
     if (key === 'lfm2.5' || key === 'lfm2.5:latest') {
       return 'lfm2.5:8b'
     }
+    if (key === 'rnj-1:latest' || key === 'rnj-1:8b') {
+      return 'rnj-1'
+    }
   }
   return trimmed
 }
@@ -338,6 +349,21 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('llama3.1:8b-')) {
+    return 'Llama 3.1 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('deepseek-r1:8b-')) {
+    return 'DeepSeek R1 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('glm-4.7-flash:q4_k_m-')) {
+    return 'GLM-4.7-Flash (30B-A3B Q4)'
+  }
+  if (provider === 'ollama' && key.startsWith('north-mini-code-1.0:q4_k_m-')) {
+    return 'North Mini Code 1.0 (30B-A3B Q4)'
+  }
+  if (provider === 'ollama' && key.startsWith('llama3.2:3b-')) {
+    return 'Llama 3.2 (3B Param)'
   }
   // Both Grok CLI models run permanently in Fast mode. The canonicaliser has
   // collapsed every Grok reasoning id to 'grok-4.5' by here, so label the Grok

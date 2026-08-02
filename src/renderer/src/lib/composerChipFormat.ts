@@ -214,6 +214,27 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'ministral-3:14b' || id.startsWith('ministral-3:14b-')) {
       return 'Ministral 3 (14B Param)'
     }
+    if (id === 'llama3.1:8b' || id.startsWith('llama3.1:8b-')) {
+      return 'Llama 3.1 (8B Param)'
+    }
+    if (id === 'deepseek-r1:8b' || id.startsWith('deepseek-r1:8b-')) {
+      return 'DeepSeek R1 (8B Param)'
+    }
+    if (id === 'rnj-1' || id === 'rnj-1:latest' || id === 'rnj-1:8b') {
+      return 'Rnj-1 (8B Param)'
+    }
+    if (id === 'glm-4.7-flash:q4_k_m' || id.startsWith('glm-4.7-flash:q4_k_m-')) {
+      return 'GLM-4.7-Flash (30B-A3B Q4)'
+    }
+    if (
+      id === 'north-mini-code-1.0:q4_k_m' ||
+      id.startsWith('north-mini-code-1.0:q4_k_m-')
+    ) {
+      return 'North Mini Code 1.0 (30B-A3B Q4)'
+    }
+    if (id === 'llama3.2:3b' || id.startsWith('llama3.2:3b-')) {
+      return 'Llama 3.2 (3B Param)'
+    }
   }
 
   return label

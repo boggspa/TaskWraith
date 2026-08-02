@@ -759,6 +759,66 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes:
           'Mistral Ministral 3 14B running through local Ollama. TaskWraith does not charge per token for local inference.',
         confidence: 'baked-in'
+      },
+      {
+        modelId: 'llama3.1:8b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Llama 3.1 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'deepseek-r1:8b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'DeepSeek R1 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'rnj-1',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Essential AI Rnj-1 8B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'glm-4.7-flash:q4_K_M',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Z.ai GLM-4.7-Flash 30B-A3B Q4 running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'north-mini-code-1.0:q4_K_M',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Cohere North Mini Code 1.0 30B-A3B Q4 running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
+        modelId: 'llama3.2:3b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Meta Llama 3.2 3B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
       }
     ]
   },

@@ -18,6 +18,22 @@ const polishCss = readFileSync(
   join(process.cwd(), 'src/renderer/src/assets/css/05-polish-fx-layouts.css'),
   'utf8'
 )
+const composerCss = readFileSync(
+  join(process.cwd(), 'src/renderer/src/assets/css/03-composer-welcome-activity.css'),
+  'utf8'
+)
+const settingsCss = readFileSync(
+  join(process.cwd(), 'src/renderer/src/assets/css/04-settings-controls.css'),
+  'utf8'
+)
+const pickerCss = readFileSync(
+  join(process.cwd(), 'src/renderer/src/assets/css/08-theme-picker-overrides.css'),
+  'utf8'
+)
+const ensembleCss = readFileSync(
+  join(process.cwd(), 'src/renderer/src/assets/css/09-ensemble-work-session.css'),
+  'utf8'
+)
 
 const STATIC_PROVIDER_COLORS = {
   gemini: '#346EEC',
@@ -33,6 +49,9 @@ const STATIC_PROVIDER_COLORS = {
   'deep-reinforce': '#BE5809',
   ibm: '#3079BC',
   liquid: '#D72D82',
+  meta: '#1671EA',
+  cohere: '#5E7C6F',
+  essential: '#8462CA',
   nvidia: '#538200',
   openbmb: '#E22B17',
   poolside: '#0C8194',
@@ -69,6 +88,9 @@ const IOS_PROVIDER_CASES = [
   ['case "deep-reinforce", "ornith"', '#BE5809'],
   ['case "ibm"', '#3079BC'],
   ['case "liquid"', '#D72D82'],
+  ['case "meta"', '#1671EA'],
+  ['case "cohere"', '#5E7C6F'],
+  ['case "essential"', '#8462CA'],
   ['case "nvidia"', '#538200'],
   ['case "openbmb"', '#E22B17'],
   ['case "poolside"', '#0C8194']
@@ -167,6 +189,22 @@ describe('provider palette contrast', () => {
       expect(polishCss).toMatch(
         new RegExp(`\\.fx-provider-${provider} \\{[^}]*--agent-aura-rgb: ${rgb};`, 's')
       )
+    }
+  })
+
+  it('wires every new Ollama upstream hue through each renderer consumer', () => {
+    for (const provider of ['meta', 'cohere', 'essential']) {
+      expect(transcriptCss).toContain(`.message-meta.provider-${provider}`)
+      expect(transcriptCss).toContain(`.participant-health-chip.provider-${provider}`)
+      expect(composerCss).toContain(`.welcome-usage-model-dot.provider-${provider}`)
+      expect(composerCss).toContain(`.activity-yield-target.provider-${provider}`)
+      expect(settingsCss).toContain(`.settings-model-comparison-dot.provider-${provider}`)
+      expect(settingsCss).toContain(`.run-card-provider.provider-${provider}`)
+      expect(ensembleCss).toContain(`.ensemble-above-chip.provider-${provider}`)
+      expect(pickerCss).toContain(`data-ollama-provider-class="${provider}"`)
+    }
+    for (const reusedProvider of ['deepseek', 'zai']) {
+      expect(pickerCss).toContain(`data-ollama-provider-class="${reusedProvider}"`)
     }
   })
 

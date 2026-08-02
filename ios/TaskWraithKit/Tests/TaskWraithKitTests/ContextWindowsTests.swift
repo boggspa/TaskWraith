@@ -21,6 +21,16 @@ struct ContextWindowsTests {
             ContextWindows.resolve(provider: "ollama", model: "devstral-small-2:24b") == 393_216)
         #expect(ContextWindows.resolve(provider: "ollama", model: "ministral-3:14b") == 262_144)
         #expect(ContextWindows.resolve(provider: "ollama", model: "lfm2.5:8b") == 128_000)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.1:8b") == 131_072)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "deepseek-r1:8b") == 131_072)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "rnj-1") == 32_768)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "rnj-1:latest") == 32_768)
+        #expect(
+            ContextWindows.resolve(provider: "ollama", model: "glm-4.7-flash:q4_K_M") == 202_752)
+        #expect(
+            ContextWindows.resolve(provider: "ollama", model: "north-mini-code-1.0:q4_K_M")
+                == 500_000)
+        #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.2:3b") == 131_072)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.5") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)

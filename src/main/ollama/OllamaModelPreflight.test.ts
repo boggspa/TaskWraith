@@ -33,7 +33,51 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('qwen3.5:4b')).toBe('qwen3_5_4b')
     expect(resolveOllamaModelFamily('devstral-small-2:24b')).toBe('devstral_small_2_24b')
     expect(resolveOllamaModelFamily('ministral-3:14b')).toBe('ministral_3_14b')
-    expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('unknown')
+    expect(resolveOllamaModelFamily('llama3.1:8b')).toBe('llama3_1_8b')
+    expect(resolveOllamaModelFamily('deepseek-r1:8b')).toBe('deepseek_r1_8b')
+    expect(resolveOllamaModelFamily('rnj-1')).toBe('rnj_1_8b')
+    expect(resolveOllamaModelFamily('rnj-1:latest')).toBe('rnj_1_8b')
+    expect(resolveOllamaModelFamily('glm-4.7-flash:q4_K_M')).toBe('glm_4_7_flash')
+    expect(resolveOllamaModelFamily('north-mini-code-1.0:q4_K_M')).toBe(
+      'north_mini_code_1_0'
+    )
+    expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('llama3_2_3b')
+  })
+
+  it('recognizes live daemon architectures for the new families', () => {
+    expect(
+      resolveOllamaModelFamily('custom-glm:latest', {
+        id: 'custom-glm:latest',
+        label: 'Custom GLM',
+        family: 'glm4moelite',
+        parameterSize: '29.9B'
+      })
+    ).toBe('glm_4_7_flash')
+    expect(
+      resolveOllamaModelFamily('custom-north:latest', {
+        id: 'custom-north:latest',
+        label: 'Custom North',
+        family: 'cohere2moe',
+        parameterSize: '30.5B'
+      })
+    ).toBe('north_mini_code_1_0')
+    expect(
+      resolveOllamaModelFamily('custom-llama:latest', {
+        id: 'custom-llama:latest',
+        label: 'Custom Llama',
+        family: 'llama',
+        parameterSize: '3.2B',
+        show: { model_info: { 'general.basename': 'Llama-3.2' } }
+      })
+    ).toBe('llama3_2_3b')
+    expect(
+      resolveOllamaModelFamily('custom-legacy-llama:latest', {
+        id: 'custom-legacy-llama:latest',
+        label: 'Custom legacy Llama',
+        family: 'llama',
+        parameterSize: '7B'
+      })
+    ).toBe('unknown')
   })
 
   it('keeps the two 3.5 sizes on separate families', () => {
@@ -264,6 +308,55 @@ describe('evaluateOllamaModelPreflight', () => {
     expect(result.guidance).toContain('long-context')
     expect(result.guidance).toContain('macOS/Metal')
     expect(result.checks.find((c) => c.id === 'tools')?.ok).toBe(true)
+  })
+
+  it('surfaces verified version and capability guidance for Rnj, GLM, and North', () => {
+    const cases = [
+      {
+        modelId: 'rnj-1',
+        modelLabel: 'Rnj-1 (8B Param)',
+        parameterSize: '8.3B',
+        capabilities: ['completion', 'tools'],
+        family: 'rnj_1_8b',
+        guidance: 'Ollama 0.13.3'
+      },
+      {
+        modelId: 'glm-4.7-flash:q4_K_M',
+        modelLabel: 'GLM-4.7-Flash (30B-A3B Q4)',
+        parameterSize: '29.9B',
+        capabilities: ['completion', 'tools', 'thinking'],
+        family: 'glm_4_7_flash',
+        guidance: 'Ollama 0.15.0'
+      },
+      {
+        modelId: 'north-mini-code-1.0:q4_K_M',
+        modelLabel: 'North Mini Code 1.0 (30B-A3B Q4)',
+        parameterSize: '30.5B',
+        capabilities: ['completion', 'tools', 'thinking'],
+        family: 'north_mini_code_1_0',
+        guidance: 'Ollama 0.30.10'
+      }
+    ] as const
+
+    for (const entry of cases) {
+      const result = evaluateOllamaModelPreflight({
+        modelId: entry.modelId,
+        modelLabel: entry.modelLabel,
+        modelInfo: {
+          id: entry.modelId,
+          label: entry.modelLabel,
+          parameterSize: entry.parameterSize,
+          quantizationLevel: 'Q4_K_M',
+          capabilities: [...entry.capabilities]
+        },
+        installedModelIds: [entry.modelId === 'rnj-1' ? 'rnj-1:latest' : entry.modelId],
+        totalMemoryBytes: 96 * GB
+      })
+      expect(result.family).toBe(entry.family)
+      expect(result.guidance).toContain(entry.guidance)
+      expect(result.checks.find((check) => check.id === 'installed')?.ok).toBe(true)
+      expect(result.checks.find((check) => check.id === 'tools')?.ok).toBe(true)
+    }
   })
 
   it('warns when the model tag is missing or RAM is tight', () => {

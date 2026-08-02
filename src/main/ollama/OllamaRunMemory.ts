@@ -143,6 +143,7 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'qwen3_4b':
     case 'qwen3_5_4b':
     case 'granite4_1_3b':
+    case 'llama3_2_3b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 420,
         contextShare: 0.018,
@@ -161,6 +162,9 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'gpt_oss_20b':
     case 'granite4_1_30b':
     case 'ministral_3_14b':
+    case 'llama3_1_8b':
+    case 'deepseek_r1_8b':
+    case 'rnj_1_8b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 760,
         contextShare: 0.035,
@@ -171,6 +175,8 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
     case 'laguna_xs_2_1':
     case 'nemotron3_33b':
     case 'devstral_small_2_24b':
+    case 'glm_4_7_flash':
+    case 'north_mini_code_1_0':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 1200,
         contextShare: 0.045,

@@ -722,6 +722,27 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
   }
+  if (key === 'llama3.1:8b' || key.startsWith('llama3.1:8b-')) {
+    return 'Llama 3.1 (8B Param)'
+  }
+  if (key === 'deepseek-r1:8b' || key.startsWith('deepseek-r1:8b-')) {
+    return 'DeepSeek R1 (8B Param)'
+  }
+  if (key === 'rnj-1' || key === 'rnj-1:latest' || key === 'rnj-1:8b') {
+    return 'Rnj-1 (8B Param)'
+  }
+  if (key === 'glm-4.7-flash:q4_k_m' || key.startsWith('glm-4.7-flash:q4_k_m-')) {
+    return 'GLM-4.7-Flash (30B-A3B Q4)'
+  }
+  if (
+    key === 'north-mini-code-1.0:q4_k_m' ||
+    key.startsWith('north-mini-code-1.0:q4_k_m-')
+  ) {
+    return 'North Mini Code 1.0 (30B-A3B Q4)'
+  }
+  if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) {
+    return 'Llama 3.2 (3B Param)'
+  }
   return id
     .split(':')
     .map((part) => part.trim())
@@ -2642,7 +2663,7 @@ export async function runOllamaProvider(
       deps.sendAgentCompatError(
         event.sender,
         'ollama',
-        'Ollama is reachable, but no local model is installed. Pull a model with `ollama pull qwen3:4b-instruct`, `ollama pull qwen3.5:9b`, `ollama pull gemma4:12b`, `ollama pull ornith:9b`, `ollama pull laguna-xs-2.1:q8_0`, or `ollama pull gpt-oss`, then refresh models.',
+        'Ollama is reachable, but no local model is installed. Open Settings → Providers → Ollama models for the verified pull/run commands (or start with `ollama pull llama3.2:3b`), then refresh models.',
         route
       )
       deps.sendAgentCompatExit(event.sender, 'ollama', 1, route)

@@ -34,6 +34,11 @@ export function ollamaModelIdAliases(modelId?: string | null): string[] {
     aliases.add('lfm2.5:latest')
     aliases.add('lfm2.5:8b')
   }
+  if (key === 'rnj-1' || key === 'rnj-1:latest' || key === 'rnj-1:8b') {
+    aliases.add('rnj-1')
+    aliases.add('rnj-1:latest')
+    aliases.add('rnj-1:8b')
+  }
   return [...aliases]
 }
 

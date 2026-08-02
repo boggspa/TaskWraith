@@ -58,6 +58,13 @@ describe('resolveContextWindow', () => {
     // upstream Mistral API tier — Devstral Small 2 is 384k locally.
     expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(393_216)
     expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'llama3.1:8b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'deepseek-r1:8b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'rnj-1')).toBe(32_768)
+    expect(resolveContextWindow('ollama', 'rnj-1:latest')).toBe(32_768)
+    expect(resolveContextWindow('ollama', 'glm-4.7-flash:q4_K_M')).toBe(202_752)
+    expect(resolveContextWindow('ollama', 'north-mini-code-1.0:q4_K_M')).toBe(500_000)
+    expect(resolveContextWindow('ollama', 'llama3.2:3b')).toBe(131_072)
   })
 
   it('prefers live Ollama context_length from /api/tags over static table', () => {

@@ -48,6 +48,25 @@ describe('resolveOllamaContextBudget', () => {
     )
   })
 
+  it('sizes the six verified tags by their tuned families', () => {
+    const unknown = resolveOllamaContextBudget('unknown-local:latest')
+    for (const modelId of ['llama3.1:8b', 'deepseek-r1:8b']) {
+      expect(resolveOllamaContextBudget(modelId).maxBlockChars).toBeGreaterThan(
+        unknown.maxBlockChars
+      )
+    }
+    expect(resolveOllamaContextBudget('rnj-1').maxTurns).toBeGreaterThan(unknown.maxTurns)
+    expect(resolveOllamaContextBudget('llama3.2:3b').maxCharsPerTurn).toBeGreaterThan(
+      unknown.maxCharsPerTurn
+    )
+    expect(resolveOllamaContextBudget('glm-4.7-flash:q4_K_M').maxBlockChars).toBeGreaterThan(
+      resolveOllamaContextBudget('deepseek-r1:8b').maxBlockChars
+    )
+    expect(
+      resolveOllamaContextBudget('north-mini-code-1.0:q4_K_M').maxBlockChars
+    ).toBeGreaterThanOrEqual(30_000)
+  })
+
   it('keeps unknown local tags conservative until live model metadata is known', () => {
     const unknown = resolveOllamaContextBudget('unknown-local:latest')
     expect(unknown.maxTurns).toBe(8)

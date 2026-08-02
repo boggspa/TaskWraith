@@ -129,6 +129,34 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toBe(true)
     expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(true)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
+    expect(state.ollamaModelCommands).toEqual(
+      expect.arrayContaining([
+        {
+          id: 'llama3.1:8b',
+          label: 'Llama 3.1 (8B Param)',
+          command: 'ollama run llama3.1:8b'
+        },
+        {
+          id: 'deepseek-r1:8b',
+          label: 'DeepSeek R1 (8B Param)',
+          command: 'ollama run deepseek-r1:8b'
+        },
+        expect.objectContaining({ id: 'rnj-1', command: 'ollama run rnj-1' }),
+        expect.objectContaining({
+          id: 'glm-4.7-flash:q4_K_M',
+          command: 'ollama run glm-4.7-flash:q4_K_M'
+        }),
+        expect.objectContaining({
+          id: 'north-mini-code-1.0:q4_K_M',
+          command: 'ollama run north-mini-code-1.0:q4_K_M'
+        }),
+        {
+          id: 'llama3.2:3b',
+          label: 'Llama 3.2 (3B Param)',
+          command: 'ollama run llama3.2:3b'
+        }
+      ])
+    )
     expect(state.providerCards.find((card) => card.id === 'mistral')).toMatchObject({
       setupHint: expect.stringContaining('vibe --setup')
     })

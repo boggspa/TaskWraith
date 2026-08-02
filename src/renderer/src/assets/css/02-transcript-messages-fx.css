@@ -5058,6 +5058,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .message-meta.provider-liquid {
   color: var(--provider-liquid-color) !important;
 }
+.message-meta.provider-meta {
+  color: var(--provider-meta-color) !important;
+}
+.message-meta.provider-cohere {
+  color: var(--provider-cohere-color) !important;
+}
+.message-meta.provider-essential {
+  color: var(--provider-essential-color) !important;
+}
 .message-meta.provider-nvidia {
   color: var(--provider-nvidia-color) !important;
 }
@@ -5143,6 +5152,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .message-group:has(.message-meta.provider-liquid) {
   --message-working-accent: var(--provider-liquid-color);
+}
+.message-group:has(.message-meta.provider-meta) {
+  --message-working-accent: var(--provider-meta-color);
+}
+.message-group:has(.message-meta.provider-cohere) {
+  --message-working-accent: var(--provider-cohere-color);
+}
+.message-group:has(.message-meta.provider-essential) {
+  --message-working-accent: var(--provider-essential-color);
 }
 .message-group:has(.message-meta.provider-nvidia) {
   --message-working-accent: var(--provider-nvidia-color);
@@ -6126,6 +6144,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 .participant-health-chip.provider-liquid {
   color: var(--provider-liquid-color, var(--text-primary));
+}
+.participant-health-chip.provider-meta {
+  color: var(--provider-meta-color, var(--text-primary));
+}
+.participant-health-chip.provider-cohere {
+  color: var(--provider-cohere-color, var(--text-primary));
+}
+.participant-health-chip.provider-essential {
+  color: var(--provider-essential-color, var(--text-primary));
 }
 .participant-health-chip.provider-nvidia {
   color: var(--provider-nvidia-color, var(--text-primary));

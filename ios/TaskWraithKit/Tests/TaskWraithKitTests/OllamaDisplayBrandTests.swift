@@ -37,6 +37,16 @@ struct OllamaDisplayBrandTests {
         // `ministral` carries its own needle — 'mistral' is NOT a substring of it.
         #expect(
             OllamaDisplayBrands.resolve(modelId: "ministral-3:14b")?.providerClass == "mistral")
+        #expect(OllamaDisplayBrands.resolve(modelId: "llama3.1:8b")?.providerClass == "meta")
+        #expect(OllamaDisplayBrands.resolve(modelId: "llama3.2:3b")?.providerLabel == "Meta")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "deepseek-r1:8b")?.providerClass == "deepseek")
+        #expect(OllamaDisplayBrands.resolve(modelId: "rnj-1")?.providerLabel == "Essential AI")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "glm-4.7-flash:q4_K_M")?.providerClass == "zai")
+        #expect(
+            OllamaDisplayBrands.resolve(modelId: "north-mini-code-1.0:q4_K_M")?.providerClass
+                == "cohere")
     }
 
     @Test("returns nil for unbranded / empty models")
@@ -55,8 +65,8 @@ struct OllamaDisplayBrandTests {
     func explicitOrder() {
         #expect(
             OllamaDisplayBrands.all.map(\.id) == [
-                "alibaba", "deep-reinforce", "google", "ibm", "liquid", "mistral", "nvidia",
-                "openai", "openbmb", "poolside",
+                "alibaba", "cohere", "deepseek", "deep-reinforce", "essential", "google", "ibm",
+                "liquid", "meta", "mistral", "nvidia", "openai", "openbmb", "poolside", "zai",
             ])
     }
 
@@ -73,6 +83,9 @@ struct OllamaDisplayBrandTests {
             OllamaDisplayBrands.providerHueClass(
                 provider: "ollama", modelId: "devstral-small-2:24b") == "mistral")
         #expect(
+            OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "llama3.2:3b")
+                == "meta")
+        #expect(
             OllamaDisplayBrands.providerHueClass(provider: "ollama", modelId: "mystery") == "ollama")
         #expect(
             OllamaDisplayBrands.providerHueClass(provider: "claude", modelId: "claude-opus-4-8")
@@ -86,6 +99,9 @@ struct OllamaDisplayBrandTests {
         #expect(
             OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "laguna-xs-2.1:q8_0")
                 == "Poolside")
+        #expect(
+            OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "rnj-1")
+                == "Essential AI")
         #expect(OllamaDisplayBrands.brandLabel(provider: "ollama", modelId: "mystery") == nil)
         #expect(OllamaDisplayBrands.brandLabel(provider: "claude", modelId: "claude-opus-4-8") == nil)
     }

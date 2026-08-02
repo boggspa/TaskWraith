@@ -26,6 +26,12 @@ describe('OllamaEnsembleContext', () => {
     expect(resolveOllamaContextTokenLimit('minicpm-v4.5:8b')).toBe(40_960)
     expect(resolveOllamaContextTokenLimit('granite4.1:30b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('nemotron3:33b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('llama3.1:8b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('deepseek-r1:8b')).toBe(131_072)
+    expect(resolveOllamaContextTokenLimit('rnj-1')).toBe(32_768)
+    expect(resolveOllamaContextTokenLimit('glm-4.7-flash:q4_K_M')).toBe(202_752)
+    expect(resolveOllamaContextTokenLimit('north-mini-code-1.0:q4_K_M')).toBe(500_000)
+    expect(resolveOllamaContextTokenLimit('llama3.2:3b')).toBe(131_072)
     expect(resolveOllamaContextTokenLimit('custom-local', 300_000)).toBe(300_000)
   })
 
@@ -35,6 +41,16 @@ describe('OllamaEnsembleContext', () => {
     expect(hasKnownOllamaContextTokenLimit('ornith:35b')).toBe(true)
     expect(hasKnownOllamaContextTokenLimit('laguna-xs-2.1:q8_0')).toBe(true)
     expect(hasKnownOllamaContextTokenLimit('lfm2.5:8b')).toBe(true)
+    for (const modelId of [
+      'llama3.1:8b',
+      'deepseek-r1:8b',
+      'rnj-1',
+      'glm-4.7-flash:q4_K_M',
+      'north-mini-code-1.0:q4_K_M',
+      'llama3.2:3b'
+    ]) {
+      expect(hasKnownOllamaContextTokenLimit(modelId)).toBe(true)
+    }
   })
 
   it('keeps the default shared-history budget for known large-context Ollama models', () => {

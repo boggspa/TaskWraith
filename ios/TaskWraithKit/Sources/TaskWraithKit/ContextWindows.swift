@@ -136,6 +136,16 @@ public enum ContextWindows {
         "nemotron3:33b": 131_072,
         "devstral-small-2:24b": 393_216,
         "ministral-3:14b": 262_144,
+        // Exact GGUF metadata (`*.context_length`) from the Ollama registry /
+        // local daemon on 2026-08-02. GLM/North's pages round to 198K/488K.
+        "llama3.1:8b": 131_072,
+        "deepseek-r1:8b": 131_072,
+        "rnj-1": 32_768,
+        "rnj-1:latest": 32_768,
+        "rnj-1:8b": 32_768,
+        "glm-4.7-flash:q4_K_M": 202_752,
+        "north-mini-code-1.0:q4_K_M": 500_000,
+        "llama3.2:3b": 131_072,
     ]
 
     /// Provider id (lowercased) → fallback window. Mirrors

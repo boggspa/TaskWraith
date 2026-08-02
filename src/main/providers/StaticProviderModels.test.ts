@@ -232,12 +232,19 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       'ornith:35b',
       'laguna-xs-2.1:q8_0',
       'gpt-oss:20b',
+      'lfm2.5:8b',
       'minicpm-v4.5:8b',
       'granite4.1:3b',
       'granite4.1:30b',
       'nemotron3:33b',
       'devstral-small-2:24b',
       'ministral-3:14b',
+      'llama3.1:8b',
+      'deepseek-r1:8b',
+      'rnj-1',
+      'glm-4.7-flash:q4_K_M',
+      'north-mini-code-1.0:q4_K_M',
+      'llama3.2:3b',
       'custom'
     ])
   })

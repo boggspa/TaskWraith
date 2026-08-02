@@ -71,6 +71,38 @@ export function ollamaModelFamilyPromptLines(
           ? 'Report findings and a short plan rather than attempting broad changes.'
           : 'Make small localized edits directly and note what you verified; slice anything multi-file.'
       ]
+    case 'llama3_1_8b':
+      return [
+        'Model profile (Llama 3.1 8B): general tool-capable local model; search before reading and keep tool payloads focused.',
+        'Use the long context for grounded review, but split broad implementation into small verified edits.'
+      ]
+    case 'deepseek_r1_8b':
+      return [
+        'Model profile (DeepSeek R1 8B): compact reasoning model with native tools and thinking support; search/read before acting.',
+        'Keep each tool step concrete and preserve supplied thinking content across turns rather than restarting the reasoning trace.'
+      ]
+    case 'rnj_1_8b':
+      return [
+        'Model profile (Rnj-1 8B): agentic-coding model; search for the target, read the relevant file, then make a focused verified edit.',
+        'Its context window is 32K, so keep tool results compact and slice multi-file work explicitly.'
+      ]
+    case 'glm_4_7_flash':
+      return [
+        'Model profile (GLM-4.7-Flash 30B-A3B): long-context reasoning model with native tools and thinking support.',
+        'Use its context for grounded review, keep each tool payload focused, and state verification gaps before release-sensitive edits.'
+      ]
+    case 'north_mini_code_1_0':
+      return [
+        'Model profile (North Mini Code 1.0 30B-A3B): agentic software-engineering model with native tools and interleaved thinking.',
+        'Carry supplied thinking content between turns, search before reading, and tie every tool action to the current implementation step.'
+      ]
+    case 'llama3_2_3b':
+      return [
+        'Model profile (Llama 3.2 3B): lightweight tool-capable local model; search first, read one relevant file at a time, and answer concisely.',
+        normalizedTier === 'read_only'
+          ? 'Avoid broad edits; hand off a short plan when the task grows beyond targeted local investigation.'
+          : 'Make small localized edits directly and summarize progress instead of guessing across broad refactors.'
+      ]
     case 'minicpm_v45_8b':
       return [
         'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read with a concrete intent and use native tools when available.',

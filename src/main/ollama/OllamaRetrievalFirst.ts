@@ -16,7 +16,13 @@ const RETRIEVAL_FIRST_FAMILIES = new Set([
   'granite4_1_30b',
   'nemotron3_33b',
   'devstral_small_2_24b',
-  'ministral_3_14b'
+  'ministral_3_14b',
+  'llama3_1_8b',
+  'deepseek_r1_8b',
+  'rnj_1_8b',
+  'glm_4_7_flash',
+  'north_mini_code_1_0',
+  'llama3_2_3b'
 ])
 
 const EXEMPT_READ_PATHS = new Set([

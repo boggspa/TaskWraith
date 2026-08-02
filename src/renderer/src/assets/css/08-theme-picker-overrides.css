@@ -9657,6 +9657,14 @@
   --composer-ollama-brand-color: var(--provider-alibaba-color);
 }
 
+.composer-combined-picker-provider-row[data-ollama-provider-class="cohere"] {
+  --composer-ollama-brand-color: var(--provider-cohere-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="deepseek"] {
+  --composer-ollama-brand-color: var(--provider-deepseek-color);
+}
+
 .composer-combined-picker-provider-row[data-ollama-provider-class="deep-reinforce"] {
   --composer-ollama-brand-color: var(--provider-deep-reinforce-color);
 }
@@ -9671,6 +9679,14 @@
 
 .composer-combined-picker-provider-row[data-ollama-provider-class="liquid"] {
   --composer-ollama-brand-color: var(--provider-liquid-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="essential"] {
+  --composer-ollama-brand-color: var(--provider-essential-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="meta"] {
+  --composer-ollama-brand-color: var(--provider-meta-color);
 }
 
 /* Local Devstral / Ministral tags spoof the Mistral brand, reusing the
@@ -9693,6 +9709,10 @@
 
 .composer-combined-picker-provider-row[data-ollama-provider-class="poolside"] {
   --composer-ollama-brand-color: var(--provider-poolside-color);
+}
+
+.composer-combined-picker-provider-row[data-ollama-provider-class="zai"] {
+  --composer-ollama-brand-color: var(--provider-zai-color);
 }
 
 .composer-combined-picker-provider-row.is-selected,

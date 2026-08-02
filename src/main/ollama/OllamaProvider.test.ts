@@ -3030,7 +3030,16 @@ describe('normalizeOllamaModels', () => {
     expect(humanizeOllamaModelId('nemotron3:33b')).toBe(
       'Nemotron 3 Nano Omni (33B Param)'
     )
-    expect(humanizeOllamaModelId('llama3.2:3b')).toBe('llama3.2:3b')
+    expect(humanizeOllamaModelId('llama3.1:8b')).toBe('Llama 3.1 (8B Param)')
+    expect(humanizeOllamaModelId('deepseek-r1:8b')).toBe('DeepSeek R1 (8B Param)')
+    expect(humanizeOllamaModelId('rnj-1:latest')).toBe('Rnj-1 (8B Param)')
+    expect(humanizeOllamaModelId('glm-4.7-flash:q4_K_M')).toBe(
+      'GLM-4.7-Flash (30B-A3B Q4)'
+    )
+    expect(humanizeOllamaModelId('north-mini-code-1.0:q4_K_M')).toBe(
+      'North Mini Code 1.0 (30B-A3B Q4)'
+    )
+    expect(humanizeOllamaModelId('llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
   })
 
   it('deduplicates models and marks the configured default', () => {

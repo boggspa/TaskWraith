@@ -4,6 +4,23 @@ import type { TaskWraithPluginActivatedProviderSetup } from '../../../shared/plu
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 
 describe('ProviderInstallCommands', () => {
+  it('renders all six verified Ollama model commands with version guidance', () => {
+    const html = renderToStaticMarkup(<ProviderInstallCommands providerSetup={[]} />)
+
+    for (const command of [
+      'ollama run llama3.1:8b',
+      'ollama run deepseek-r1:8b',
+      'ollama run rnj-1',
+      'ollama run glm-4.7-flash:q4_K_M',
+      'ollama run north-mini-code-1.0:q4_K_M',
+      'ollama run llama3.2:3b'
+    ]) {
+      expect(html).toContain(command)
+    }
+    expect(html).toContain('Ollama 0.15.0+')
+    expect(html).toContain('Ollama 0.30.10+')
+  })
+
   it('lists the official Mistral Vibe installer for the first-class Vibe seat', () => {
     const html = renderToStaticMarkup(<ProviderInstallCommands providerSetup={[]} />)
 

@@ -66,6 +66,15 @@ describe('OllamaRunMemory', () => {
     expect(resolveOllamaWorkingMemoryLimits('qwen3.5:4b').workingMemoryMaxChars).toBeGreaterThan(
       resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
     )
+    expect(resolveOllamaWorkingMemoryLimits('llama3.2:3b').workingMemoryMaxChars).toBeGreaterThan(
+      resolveOllamaWorkingMemoryLimits('unknown-local:latest').workingMemoryMaxChars
+    )
+    expect(resolveOllamaWorkingMemoryLimits('deepseek-r1:8b').toolResultMaxChars).toBe(760)
+    expect(resolveOllamaWorkingMemoryLimits('rnj-1').toolResultMaxChars).toBe(760)
+    expect(resolveOllamaWorkingMemoryLimits('glm-4.7-flash:q4_K_M').toolResultMaxChars).toBe(1200)
+    expect(
+      resolveOllamaWorkingMemoryLimits('north-mini-code-1.0:q4_K_M').workingMemoryMaxChars
+    ).toBeGreaterThan(10_000)
 
     const output = 'A'.repeat(1600)
     const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('ornith:35b'), {

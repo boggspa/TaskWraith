@@ -17,10 +17,10 @@ describe('resolveHealthEntryPresentation', () => {
     })
   })
 
-  it('uses generic Ollama presentation when the model is unbranded', () => {
+  it('freezes Meta presentation for Llama models', () => {
     expect(resolveHealthEntryPresentation('ollama', 'llama3.2', 'Ollama')).toEqual({
-      displayProviderLabel: 'Ollama',
-      displayHueClass: 'ollama'
+      displayProviderLabel: 'Meta',
+      displayHueClass: 'meta'
     })
   })
 
@@ -73,5 +73,17 @@ describe('matchOllamaBrand', () => {
       displayProviderLabel: 'Mistral',
       displayHueClass: 'mistral'
     })
+  })
+
+  it('matches the six new tags to their five upstream brands', () => {
+    expect(matchOllamaBrand('llama3.1:8b')).toMatchObject({
+      providerLabel: 'Meta',
+      providerClass: 'meta'
+    })
+    expect(matchOllamaBrand('llama3.2:3b')?.providerClass).toBe('meta')
+    expect(matchOllamaBrand('deepseek-r1:8b')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('rnj-1')?.providerLabel).toBe('Essential AI')
+    expect(matchOllamaBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
+    expect(matchOllamaBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
   })
 })

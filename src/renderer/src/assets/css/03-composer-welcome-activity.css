@@ -3087,6 +3087,15 @@
 .welcome-usage-model-dot.provider-liquid,
 .welcome-usage-model-meter-fill.provider-liquid,
 .welcome-usage-bar-segment.provider-liquid { color: var(--provider-liquid-color); }
+.welcome-usage-model-dot.provider-meta,
+.welcome-usage-model-meter-fill.provider-meta,
+.welcome-usage-bar-segment.provider-meta { color: var(--provider-meta-color); }
+.welcome-usage-model-dot.provider-cohere,
+.welcome-usage-model-meter-fill.provider-cohere,
+.welcome-usage-bar-segment.provider-cohere { color: var(--provider-cohere-color); }
+.welcome-usage-model-dot.provider-essential,
+.welcome-usage-model-meter-fill.provider-essential,
+.welcome-usage-bar-segment.provider-essential { color: var(--provider-essential-color); }
 .welcome-usage-model-dot.provider-nvidia,
 .welcome-usage-model-meter-fill.provider-nvidia,
 .welcome-usage-bar-segment.provider-nvidia { color: var(--provider-nvidia-color); }
@@ -12946,6 +12955,9 @@ button.diff-file-row {
 .activity-yield-target.provider-google { --provider-tint: var(--provider-google-color); }
 .activity-yield-target.provider-ibm { --provider-tint: var(--provider-ibm-color); }
 .activity-yield-target.provider-liquid { --provider-tint: var(--provider-liquid-color); }
+.activity-yield-target.provider-meta { --provider-tint: var(--provider-meta-color); }
+.activity-yield-target.provider-cohere { --provider-tint: var(--provider-cohere-color); }
+.activity-yield-target.provider-essential { --provider-tint: var(--provider-essential-color); }
 .activity-yield-target.provider-nvidia { --provider-tint: var(--provider-nvidia-color); }
 .activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
 .activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
@@ -14050,6 +14062,15 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-liquid {
   color: var(--provider-liquid-color, #d72d82);
+}
+.notification-newadditions-model.provider-meta {
+  color: var(--provider-meta-color, #1671ea);
+}
+.notification-newadditions-model.provider-cohere {
+  color: var(--provider-cohere-color, #5e7c6f);
+}
+.notification-newadditions-model.provider-essential {
+  color: var(--provider-essential-color, #8462ca);
 }
 .notification-newadditions-model.provider-poolside {
   color: var(--provider-poolside-color, #0c8194);
