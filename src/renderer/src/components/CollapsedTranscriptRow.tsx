@@ -19,6 +19,7 @@ export function CollapsedTranscriptRow({
   header,
   metaLabel,
   label,
+  labelContent,
   labelParts,
   icons,
   errored,
@@ -32,6 +33,8 @@ export function CollapsedTranscriptRow({
   /** Optional muted inline prefix (e.g. "System") when no block header. */
   metaLabel?: string
   label: string
+  /** Optional rich visual label. `label` remains the accessible/tooltip text. */
+  labelContent?: ReactNode
   /** Segmented form of `label` (activity summaries). When present, failed
    * segments paint their leading verb — "Ran" when a command exited
    * non-zero — in the user's diff-deletion red instead of tinting the whole
@@ -69,24 +72,26 @@ export function CollapsedTranscriptRow({
         {icons}
         {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
         <span className="collapsed-activity-stack-label">
-          {labelParts
-            ? labelParts.map((part, index) => {
-                const prefix = index > 0 ? ' · ' : ''
-                if (!part.failed) {
-                  return <Fragment key={index}>{`${prefix}${part.text}`}</Fragment>
-                }
-                // Accent the leading verb ("Ran"); parts without one (the
-                // error tally) accent whole.
-                const accent = part.verb && part.text.startsWith(part.verb) ? part.verb : part.text
-                return (
-                  <Fragment key={index}>
-                    {prefix}
-                    <span className="collapsed-activity-stack-verb is-failed">{accent}</span>
-                    {part.text.slice(accent.length)}
-                  </Fragment>
-                )
-              })
-            : label}
+          {labelContent ??
+            (labelParts
+              ? labelParts.map((part, index) => {
+                  const prefix = index > 0 ? ' · ' : ''
+                  if (!part.failed) {
+                    return <Fragment key={index}>{`${prefix}${part.text}`}</Fragment>
+                  }
+                  // Accent the leading verb ("Ran"); parts without one (the
+                  // error tally) accent whole.
+                  const accent =
+                    part.verb && part.text.startsWith(part.verb) ? part.verb : part.text
+                  return (
+                    <Fragment key={index}>
+                      {prefix}
+                      <span className="collapsed-activity-stack-verb is-failed">{accent}</span>
+                      {part.text.slice(accent.length)}
+                    </Fragment>
+                  )
+                })
+              : label)}
         </span>
       </button>
       {expanded ? children : null}

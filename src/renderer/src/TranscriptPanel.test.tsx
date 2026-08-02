@@ -564,6 +564,86 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Actions for fan-out result')
   })
 
+  it('keeps a stage-aware fan-out viewport handle when a completed round is collapsed', () => {
+    const roundId = 'round-persisted-fanout'
+    const roundMessages: ChatMessage[] = [
+      {
+        id: 'persisted-prompt',
+        role: 'user',
+        content: 'Scout the renderer.',
+        timestamp: '2026-08-02T12:00:00.000Z',
+        metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+      },
+      {
+        id: 'persisted-dispatch',
+        role: 'system',
+        content: 'Scout fan-out · 1 read-only participants dispatched concurrently.',
+        timestamp: '2026-08-02T12:00:01.000Z',
+        metadata: { kind: 'ensembleRoundStatus', ensembleRoundId: roundId }
+      },
+      {
+        id: 'persisted-lane',
+        role: 'assistant',
+        content: 'PERSISTED_LANE_MARKER',
+        timestamp: '2026-08-02T12:00:02.000Z',
+        runId: 'persisted-lane-run',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleRoundId: roundId,
+          ensembleParticipantId: 'pi-scout',
+          ensembleLaneId: 'lane-persisted-scout',
+          ensembleLaneIntent: 'read',
+          ensembleProvider: 'pi',
+          ensembleRole: 'Scout',
+          ensembleStageRole: 'scout',
+          ensembleModel: 'mistral/devstral-2512',
+          ensembleOrder: 1
+        }
+      },
+      {
+        id: 'persisted-closeout',
+        role: 'system',
+        content: 'Round complete.',
+        timestamp: '2026-08-02T12:00:03.000Z',
+        metadata: {
+          kind: TASKWRAITH_CLOSEOUT_KIND,
+          closeoutScope: 'ensembleRound',
+          closeoutRoundId: roundId
+        }
+      }
+    ]
+    const roundChat = {
+      appChatId: 'persisted-fanout-chat',
+      title: 'Persisted fan-out',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: roundMessages,
+      runs: [],
+      ensemble: { enabled: true, maxParticipants: 2, participants: [] }
+    } as ChatRecord
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          collapseOlderRounds: true,
+          currentChat: roundChat,
+          messages: roundMessages
+        })}
+      />
+    )
+
+    expect(html).toContain('ensemble-fanout-viewport-header')
+    expect(html).toContain('Fan-out viewport')
+    expect(html).toContain('Scout')
+    expect(html).toContain('Mistral / Scout')
+    expect(html).toContain('provider-mistral')
+    expect(html).not.toContain('PERSISTED_LANE_MARKER')
+  })
+
   it('ignores legacy completion-claim support metadata in the transcript', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

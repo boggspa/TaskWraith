@@ -7,6 +7,7 @@ import {
   type ChatPopoutRoundExpansionSnapshot
 } from '../../../shared/chatPopoutTransfer'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
+import { buildCollapsedEnsembleFanoutViewportRanges } from './ensembleFanoutViewportGroups'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
 /**
@@ -25,7 +26,9 @@ import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGroup
  *     before each COMPLETED round's body. It carries everything the
  *     header card needs in `metadata.ensembleRoundHeader`.
  *   - When a round is collapsed, its body messages are dropped from the
- *     list entirely (only the header remains). Expanding re-inserts them.
+ *     list. Its round header remains, plus one compact fan-out disclosure per
+ *     durable parallel pass; expanding either disclosure re-inserts only the
+ *     lane-card rows it owns.
  *
  * Because the output is still a flat `ChatMessage[]`, the virtualiser,
  * row cache, run-boundary map, and user gutter all keep working unchanged.
@@ -292,6 +295,8 @@ export interface BuildEnsembleRoundCardRowsInput {
   collapseOlderRounds: boolean
   /** Per-round manual expand/collapse overrides (true = expanded). */
   manualRoundExpansion: ReadonlyMap<string, boolean>
+  /** Completed-round fan-out disclosures opened independently of the round. */
+  expandedFanoutViewportIds?: ReadonlySet<string>
   /**
    * Pane-level live run evidence. Used defensively when `activeRound` is stale
    * or missing after cancel/re-seat churn: the latest round must stay flat
@@ -333,6 +338,7 @@ export function buildEnsembleRoundCardRowsWithRanges(
     displayMessages,
     collapseOlderRounds,
     manualRoundExpansion,
+    expandedFanoutViewportIds = new Set<string>(),
     hasLiveRunEvidence = false
   } = input
   if (!chat || chat.chatKind !== 'ensemble' || !collapseOlderRounds) {
@@ -426,6 +432,16 @@ export function buildEnsembleRoundCardRowsWithRanges(
           endIndex: groupStartIndex + index + 1
         })
       }
+    } else {
+      out.push(
+        ...buildCollapsedEnsembleFanoutViewportRanges({
+          chatId: chat.appChatId,
+          roundId,
+          messages,
+          sourceOffset: groupStartIndex,
+          expandedViewportIds: expandedFanoutViewportIds
+        })
+      )
     }
     sourceIndex = groupEndIndex
   }

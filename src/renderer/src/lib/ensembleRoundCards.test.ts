@@ -16,6 +16,10 @@ import {
 } from './ensembleRoundCards'
 import type { ChatMessage, ChatRecord } from '../../../main/store/types'
 import { TASKWRAITH_CLOSEOUT_KIND } from '../../../shared/taskWraithCloseout'
+import {
+  isEnsembleFanoutViewportHeaderMessage,
+  readEnsembleFanoutViewportHeader
+} from './ensembleFanoutViewportGroups'
 
 function message(
   id: string,
@@ -259,6 +263,72 @@ describe('buildEnsembleRoundCardRows', () => {
 
     expect(result.map((m) => m.id)).toEqual([ensembleRoundHeaderId('r1'), 'closeout-r1'])
     expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
+  })
+
+  it('retains completed-round fan-out lanes behind their own expandable viewport row', () => {
+    const roundId = 'r-fanout'
+    const fanoutLane = message('fanout-lane', {
+      roundId,
+      runId: 'run-fanout-lane',
+      ensembleParticipantId: 'scout-1',
+      ensembleProvider: 'codex',
+      ensembleRole: 'Scout',
+      ensembleModel: 'gpt-5.6-sol',
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleLaneId: 'lane-r-fanout-scout-1',
+        ensembleLaneIntent: 'read',
+        ensembleStageRole: 'scout'
+      }
+    })
+    const display = [
+      userPrompt('u-fanout', roundId),
+      message('fanout-dispatch', {
+        roundId,
+        role: 'system',
+        content: 'Scout fan-out · 1 read-only participants dispatched concurrently.',
+        metadata: { kind: 'ensembleRoundStatus' }
+      }),
+      fanoutLane,
+      closeout('closeout-fanout', roundId)
+    ]
+    const roundChat = chat({
+      ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+    })
+
+    const collapsed = buildEnsembleRoundCardRows({
+      chat: roundChat,
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+    expect(collapsed).toHaveLength(3)
+    expect(collapsed[0].id).toBe(ensembleRoundHeaderId(roundId))
+    expect(isEnsembleFanoutViewportHeaderMessage(collapsed[1])).toBe(true)
+    expect(readEnsembleFanoutViewportHeader(collapsed[1])).toMatchObject({
+      roundId,
+      stage: 'scout',
+      expanded: false,
+      laneMessageIds: ['fanout-lane']
+    })
+    expect(collapsed[2].id).toBe('closeout-fanout')
+    expect(collapsed.some((entry) => entry.id === fanoutLane.id)).toBe(false)
+
+    const viewportId = collapsed[1].id
+    const restored = buildEnsembleRoundCardRows({
+      chat: roundChat,
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES,
+      expandedFanoutViewportIds: new Set([viewportId])
+    })
+    expect(restored.map((entry) => entry.id)).toEqual([
+      ensembleRoundHeaderId(roundId),
+      viewportId,
+      fanoutLane.id,
+      'closeout-fanout'
+    ])
+    expect(readEnsembleFanoutViewportHeader(restored[1])?.expanded).toBe(true)
   })
 
   it('honours a manual expand override on an otherwise-collapsed round', () => {

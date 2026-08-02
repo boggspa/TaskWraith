@@ -111,6 +111,7 @@ import {
   setSessionRoundExpanded,
   subscribeSessionRoundExpansion
 } from '../lib/ensembleRoundCards'
+import { isEnsembleFanoutViewportHeaderMessage } from '../lib/ensembleFanoutViewportGroups'
 import {
   createTranscriptScrollAnimator,
   type TranscriptScrollAnimator
@@ -122,6 +123,7 @@ import {
   CollapsedTranscriptRow
 } from './CollapsedTranscriptRow'
 import { EnsembleRoundCardHeader } from './EnsembleRoundCardHeader'
+import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   isEnsembleFanoutLaneWorking,
@@ -813,6 +815,7 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
   return (
     msg.role === 'system' &&
     !isEnsembleRoundHeaderMessage(msg) &&
+    !isEnsembleFanoutViewportHeaderMessage(msg) &&
     !isHumanCollaboratorComment(msg) &&
     // A DELIVERED contribution is a person's words, not app chrome. Left in,
     // it folds to an anonymous "System" one-liner and — next to any other
@@ -2483,6 +2486,20 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Completed rounds keep one durable summary row per fan-out dispatch wave.
+    // Opening one re-inserts only its lane-card rows into the flat virtual list;
+    // the rest of the round can stay collapsed.
+    const [expandedFanoutViewports, setExpandedFanoutViewports] = useState<Set<string>>(
+      new Set()
+    )
+    const setFanoutViewportExpanded = useCallback((viewportId: string, expanded: boolean) => {
+      setExpandedFanoutViewports((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(viewportId)
+        else next.delete(viewportId)
+        return next
+      })
+    }, [])
     // 1.0.7 — lifted live-viewport expansion (the collapsed tool/thinking
     // viewport's Expand toggle). Held here — NOT inside ActivityStack — for
     // the same survival reason as `activityExpansionByRow`, but keyed by
@@ -2633,6 +2650,10 @@ export const TranscriptPanel = memo(
       () => booleanMapSignature(manualRoundExpansion),
       [manualRoundExpansion]
     )
+    const fanoutViewportExpansionKey = useMemo(
+      () => Array.from(expandedFanoutViewports).sort().join('\u0000'),
+      [expandedFanoutViewports]
+    )
     const activeRoundProjectionKey = useMemo(
       () => ensembleActiveRoundProjectionKey(roundCardChat?.ensemble?.activeRound),
       [roundCardChat?.ensemble?.activeRound]
@@ -2651,10 +2672,12 @@ export const TranscriptPanel = memo(
           activeRoundProjectionKey,
           roundCardChat?.ensemble?.lastRoundSummary || '',
           roundSummariesKey,
-          manualRoundExpansionKey
+          manualRoundExpansionKey,
+          fanoutViewportExpansionKey
         ].join('\u0001'),
       [
         activeRoundProjectionKey,
+        fanoutViewportExpansionKey,
         isThinking,
         manualRoundExpansionKey,
         roundCardChat?.appChatId,
@@ -2671,9 +2694,16 @@ export const TranscriptPanel = memo(
           displayMessages: messages as ChatMessage[],
           collapseOlderRounds: roundCardCollapseEnabled,
           manualRoundExpansion,
+          expandedFanoutViewportIds: expandedFanoutViewports,
           hasLiveRunEvidence: isThinking
         }),
-      [isThinking, manualRoundExpansion, roundCardChat, roundCardCollapseEnabled]
+      [
+        expandedFanoutViewports,
+        isThinking,
+        manualRoundExpansion,
+        roundCardChat,
+        roundCardCollapseEnabled
+      ]
     )
     // Ensemble round cards: completed rounds collapse into expandable
     // header rows (older collapsed by default). The range-based path keeps
@@ -3633,6 +3663,7 @@ export const TranscriptPanel = memo(
             const isContextCompaction = msg.metadata?.kind === 'contextCompaction'
             const isTaskWraithCloseout = msg.metadata?.kind === TASKWRAITH_CLOSEOUT_KIND
             const isRoundHeader = isEnsembleRoundHeaderMessage(msg)
+            const isFanoutViewportHeader = isEnsembleFanoutViewportHeaderMessage(msg)
             const collaboratorMeta = isCollaboratorComment ? humanCollaboratorMetadata(msg) : null
             const boundaryRun = displayRunBoundaryByMessageId.get(msg.id)
             const isSideChatSeedMessage = Boolean(
@@ -3708,6 +3739,7 @@ export const TranscriptPanel = memo(
                 )
               : !isDelegationCard &&
                   !isReturnCard &&
+                  !isFanoutViewportHeader &&
                   !isToolActivityStack &&
                   !isParticipantHealth &&
                   !isProviderRunFailure &&
@@ -3717,6 +3749,8 @@ export const TranscriptPanel = memo(
                 : undefined
             const footerLabel = isRoundHeader
               ? 'round transcript'
+              : isFanoutViewportHeader
+                ? 'fan-out viewport'
               : msg.role === 'user'
                 ? 'user message'
                 : isThreadMessageCard
@@ -3968,7 +4002,9 @@ export const TranscriptPanel = memo(
                 ? Array.from(activityExpansionIds).sort().join('\u0000')
                 : '',
               subThreadExpanded: expandedSubThreadResults.has(rowKey),
-              fanoutExpanded: expandedFanoutResults.has(rowKey),
+              fanoutExpanded: isFanoutViewportHeader
+                ? expandedFanoutViewports.has(msg.id)
+                : expandedFanoutResults.has(rowKey),
               liveViewportExpanded,
               collapsedStackKey,
               superGroupKey,
@@ -4007,6 +4043,7 @@ export const TranscriptPanel = memo(
                 setActivityExpansionForRow,
                 setSubThreadResultExpanded,
                 setFanoutResultExpanded,
+                setFanoutViewportExpanded,
                 setLiveViewportExpandedForStack,
                 setCollapsedStackExpanded,
                 setSuperGroupExpanded,
@@ -4082,6 +4119,12 @@ export const TranscriptPanel = memo(
                     key={msg.id}
                     message={msg}
                     onSetExpanded={setRoundExpanded}
+                  />
+                ) : isFanoutViewportHeader ? (
+                  <EnsembleFanoutViewportHeader
+                    key={msg.id}
+                    message={msg}
+                    onSetExpanded={setFanoutViewportExpanded}
                   />
                 ) : isDelegationCard || isReturnCard ? (
                   <div

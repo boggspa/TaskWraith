@@ -4840,3 +4840,44 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Completed-round fan-out disclosure. The durable lane cards remain ordinary
+ * virtual rows; this satellite one-liner is the compact round-level handle
+ * that re-inserts them without opening the rest of the round. */
+.ensemble-fanout-viewport-header {
+  width: 100%;
+  margin: 2px 0 8px;
+}
+
+.ensemble-fanout-viewport-header .collapsed-activity-stack-label {
+  min-width: 0;
+}
+
+.ensemble-fanout-viewport-stage {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.ensemble-fanout-viewport-count {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ensemble-fanout-viewport-providers {
+  min-width: 0;
+  color: var(--text-tertiary);
+}
+
+.ensemble-fanout-viewport-provider {
+  color: color-mix(
+    in srgb,
+    var(--ensemble-fanout-viewport-provider-accent, var(--accent)) 82%,
+    var(--text-primary)
+  );
+  font-weight: 650;
+}
+
+.ensemble-fanout-viewport-provider-overflow {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
