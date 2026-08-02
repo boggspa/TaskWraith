@@ -10,8 +10,8 @@ import {
  *
  * ⚠️ SAFETY INVARIANT — this set may contain ONLY host-safe non-mutating tools
  * plus explicit chat-local coordination updates (`todo_write`, goal lifecycle
- * updates, `blackboard_post`, and the audited ensemble participation tools —
- * poll vote/propose + `ensemble_send`).
+ * updates, `blackboard_post`, `scout_brief`, and the audited ensemble
+ * participation tools — poll vote/propose + `ensemble_send`).
  * Being a member makes a tool SKIP the host-side approval gate
  * (`requestAgenticServiceApproval`), so any mutating tool added here would
  * execute even under the `read_only` preset. Writes / shell / patch tools and
@@ -81,6 +81,13 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // and the message renders inline for the user. Stays in
   // MCP_APP_STATE_MUTATION_TOOLS so route/workspace-lineage guards are unchanged.
   'ensemble_send',
+  // A Scout returning its bounded findings is the completion step of an
+  // already-authorized fan-out lane, not a new host action. The handler accepts
+  // this only from a tracked participant in the active Scout pass, performs no
+  // workspace or network I/O, and rejects every out-of-lane call. Auto-allowing
+  // it also advertises the handoff to read_only Scouts instead of making them
+  // ask permission to finish their assigned lane.
+  'scout_brief',
   // QMOD (1.0.3): asking the user a question is the inverse of the
   // user prompting the agent — it's a focus-shift, not a state mutation.
   // The renderer modal IS the approval surface, so a second confirm

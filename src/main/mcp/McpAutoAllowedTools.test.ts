@@ -40,7 +40,8 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
       'web_fetch',
       'github_ci_status',
       'blackboard_post',
-      'blackboard_read'
+      'blackboard_read',
+      'scout_brief'
     ] as const) {
       expect(autoAllowedTools.has(tool)).toBe(true)
     }
@@ -96,6 +97,13 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     }
   })
 
+  it('lets read-only Scouts return their bounded fan-out brief without approval', () => {
+    // Runtime validation remains in ScoutBrief: callers outside the active
+    // Scout pass receive a structured rejection rather than mutating state.
+    expect(autoAllowedTools.has('scout_brief')).toBe(true)
+    expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain('scout_brief')
+  })
+
   it('auto-allows the fixed-argv repo reads (git_diff / git_log) but keeps show/blame gated', () => {
     // 2026-07-25 user decision: diff + log join status (bounded, fixed-argv
     // executors). git_show (arbitrary-object reads) and git_blame stay gated.
@@ -143,6 +151,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
       'web_fetch',
       'github_ci_status',
       'blackboard_post',
+      'scout_brief',
       'blackboard_read'
     ] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
