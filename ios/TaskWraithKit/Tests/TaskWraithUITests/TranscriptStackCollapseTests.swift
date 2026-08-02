@@ -79,7 +79,7 @@ struct TranscriptStackCollapseTests {
         #expect(summary.errorCount == 1)
     }
 
-    @Test func plainSystemNoticesCollapseButSpecialSystemSurfacesDoNot() throws {
+    @Test func plainSystemNoticesAndCompactionRecordsCollapseButCardsDoNot() throws {
         let notice = try row(
             #"{"id":"s1","role":"system","preview":"@-mention: extra turn appended for kimi."}"#)
         #expect(twIsPlainSystemNoticeRow(notice))
@@ -90,7 +90,15 @@ struct TranscriptStackCollapseTests {
 
         let compaction = try row(
             #"{"id":"s2","role":"system","preview":"Context compacted: 80% -> 20%"}"#)
-        #expect(!twIsPlainSystemNoticeRow(compaction))
+        // Electron treats settled context-compaction records as ordinary
+        // collapsed notices; expanding the iOS one-liner restores the card.
+        #expect(twIsPlainSystemNoticeRow(compaction))
+        let compactionFailure = try row(
+            #"{"id":"s2-failed","role":"system","preview":"Context compaction failed · retry"}"#)
+        #expect(twIsPlainSystemNoticeRow(compactionFailure))
+        let question = try row(
+            #"{"id":"q1","role":"system","preview":"Pick one","agentQuestion":{"promptId":"p1","question":"Pick one"}}"#)
+        #expect(!twIsPlainSystemNoticeRow(question))
         let empty = try row(#"{"id":"s3","role":"system"}"#)
         #expect(!twIsPlainSystemNoticeRow(empty))
         let assistant = try row(#"{"id":"a1","role":"assistant","preview":"hello"}"#)
