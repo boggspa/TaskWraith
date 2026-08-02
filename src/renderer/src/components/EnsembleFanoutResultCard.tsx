@@ -138,7 +138,14 @@ function FanoutContentPart({
       : content
   return (
     <div className="ensemble-fanout-result-preview" aria-label="Collapsed fan-out result preview">
-      <pre>{preview}</pre>
+      <MarkdownMessage
+        content={preview}
+        chat={chat}
+        mediaRefs={mediaRefs}
+        workspacePath={workspacePath}
+        onPreviewImage={onPreviewImage}
+        streamRunId={streamRunId}
+      />
       <div className="ensemble-fanout-result-preview-note">
         Full lane output is rendered when expanded.
       </div>

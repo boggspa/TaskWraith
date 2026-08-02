@@ -217,8 +217,8 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('Fanout note 39')
   })
 
-  it('keeps huge collapsed fan-out markdown as a cheap preview until expanded', () => {
-    const hugeContent = `START\n${'x'.repeat(8_000)}\nUNRENDERED_FANOUT_TAIL`
+  it('keeps huge collapsed fan-out markdown bounded and Markdown-rendered until expanded', () => {
+    const hugeContent = `## CursorScout recon\n\n**Objective:** Verify Markdown preview.\n\n- Preserve viewport sizing\n\n${'x'.repeat(8_000)}\nUNRENDERED_FANOUT_TAIL`
     const message = fanoutMessage({ content: hugeContent })
 
     const collapsedHtml = renderToStaticMarkup(
@@ -232,6 +232,9 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(collapsedHtml).toContain('Collapsed fan-out result preview')
     expect(collapsedHtml).toContain('Full lane output is rendered when expanded.')
+    expect(collapsedHtml).toContain('<h2>CursorScout recon</h2>')
+    expect(collapsedHtml).toContain('<strong>Objective:</strong> Verify Markdown preview.')
+    expect(collapsedHtml).toContain('<li>Preserve viewport sizing</li>')
     expect(collapsedHtml).not.toContain('UNRENDERED_FANOUT_TAIL')
 
     const expandedHtml = renderToStaticMarkup(
