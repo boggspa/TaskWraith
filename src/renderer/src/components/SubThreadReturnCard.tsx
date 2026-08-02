@@ -135,7 +135,7 @@ export function SubThreadReturnCard({
                 className="subthread-return-preview"
                 aria-label="Collapsed sub-thread result preview"
               >
-                <pre>{previewBody}</pre>
+                <MarkdownMessage content={previewBody} chat={chat} />
                 <div className="subthread-return-preview-note">
                   Full result is rendered when expanded.
                 </div>

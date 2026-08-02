@@ -80,8 +80,8 @@ describe('SubThreadReturnCard', () => {
     expect(html).toContain('Collapse result')
   })
 
-  it('keeps huge collapsed return bodies as a cheap preview until expanded', () => {
-    const hugeBody = `START\n${'x'.repeat(8_000)}\nUNRENDERED_TAIL`
+  it('keeps huge collapsed return bodies bounded and Markdown-rendered until expanded', () => {
+    const hugeBody = `## GrokScout result\n\n**Objective:** Verify Markdown preview.\n\n- Preserve viewport sizing\n\n${'x'.repeat(8_000)}\nUNRENDERED_TAIL`
     const collapsedHtml = renderToStaticMarkup(
       <SubThreadReturnCard
         message={subThreadMessage({
@@ -94,6 +94,9 @@ describe('SubThreadReturnCard', () => {
 
     expect(collapsedHtml).toContain('Collapsed sub-thread result preview')
     expect(collapsedHtml).toContain('Full result is rendered when expanded.')
+    expect(collapsedHtml).toContain('<h2>GrokScout result</h2>')
+    expect(collapsedHtml).toContain('<strong>Objective:</strong> Verify Markdown preview.')
+    expect(collapsedHtml).toContain('<li>Preserve viewport sizing</li>')
     expect(collapsedHtml).not.toContain('UNRENDERED_TAIL')
 
     const expandedHtml = renderToStaticMarkup(
