@@ -4,11 +4,14 @@ Official or first-party artwork collected to evaluate a secondary provider
 identity direction alongside [`../provider-glyphs`](../provider-glyphs/).
 
 The files in this directory remain the source/provenance catalogue rather than
-an application resource path. Byte-identical runtime copies are vendored under
+an application resource path. Canonical-provider assets have byte-identical
+runtime copies vendored under
 `src/renderer/src/assets/provider-logos/` and
 `ios/TaskWraithKit/Sources/TaskWraithUI/Resources/`; the desktop and iOS apps use
-those copies only as identity marks beside provider or model names. The
-catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
+those copies only as identity marks beside provider or model names. Supplemental
+upstream-brand assets remain design-only until a separate runtime integration
+lands. The catalogue SVG reviews the canonical-provider PNGs here rather than
+embedding or re-encoding them.
 
 ## Selection rules
 
@@ -30,6 +33,9 @@ catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
   assurance. Canonical identity still does not imply runtime admission:
   structurally admitted Kimi runs without a reviewed roster tuple are labelled
   `unattested-development`.
+- Supplemental upstream-brand files may sit alongside the canonical provider
+  set for design evaluation. They do not create provider identities, affect
+  admission, or imply that their marks are bundled at runtime.
 - Omit Ensemble: it is a TaskWraith orchestration concept, not an external
   provider with an official provider logo.
 
@@ -58,37 +64,46 @@ The Ollama dark-mode file uses the same recorded RGB-inversion treatment. This
 makes the black line art white without filling or changing its transparent
 canvas.
 
+Cerebras supplies transparent black- and white-wordmark PNGs in its official
+press kit. DeepSeek's official repository publishes the equivalent full-colour
+mark as SVG rather than a press-kit PNG, so the unmodified SVG is retained and
+the catalogue PNG is an explicitly recorded transparent rasterisation.
+
 ## Files
 
 - `provider-logos.catalog.svg` — light, dark, and checkerboard review sheet.
 - `provider-logos.manifest.json` — source URLs, archive members, dimensions,
   hashes, alpha checks, status, and rights notes.
 - `png/*.png` — first-party PNG bytes plus explicitly labelled Pi and Ollama
-  derivatives.
-- `svg/provider-logo-pi.svg` — byte-identical first-party Pi press-kit source.
+  derivatives and the DeepSeek SVG rasterisation.
+- `svg/provider-logo-pi.svg` and `svg/provider-logo-deepseek.svg` —
+  byte-identical first-party source SVGs retained for recorded derivatives.
 
 `on-light` and `on-dark` describe the intended surface. The runtime maps them to
 the actual light/dark app surface while preserving the sourced pixels.
 
 ## Source map
 
-| Provider id   | Selected official artwork                                        | First-party source                                                                                                                                                           | Guidance / rights reference                                                                                                                               |
-| ------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `gemini`      | Gemini Spark, full colour                                        | [Google Image Library](https://blog.google/image-library/)                                                                                                                   | [Google brand guidance](https://about.google/brand-resource-center/guidance/); credit `Source: Google`                                                    |
-| `codex`       | Untiled Codex banner/cloud icon                                  | [Official transparent PNG](https://developers.openai.com/images/codex/codex-banner-icon.png) and [OpenAI docs usage](https://learn.chatgpt.com/docs/windows/windows-sandbox) | [OpenAI Design Guidelines](https://openai.com/brand/); not included in the public logo pack                                                               |
-| `claude`      | Claude Spark, Clay                                               | [Anthropic press kit](https://www.anthropic.com/press-kit)                                                                                                                   | [Anthropic newsroom](https://www.anthropic.com/news)                                                                                                      |
-| `kimi`        | Rounded-corner icon without wordmark                             | [KIMI Brand Guidelines](https://moonshotai.github.io/Branding-Guide/)                                                                                                        | [First-party `icon-without-kimi` assets](https://github.com/MoonshotAI/Branding-Guide/tree/main/scenarios/03-icon-without-kimi)                           |
-| `antigravity` | Antigravity icon, full colour                                    | [Google Antigravity press assets](https://antigravity.google/press?app=antigravity)                                                                                          | Official press-download PNG, preserved unmodified for provider identification                                                                             |
-| `cursor`      | Cursor 2D Cube, light + dark                                     | [Cursor brand pack](https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip)                                                            | [Cursor Brand Guidelines](https://cursor.com/en-US/brand)                                                                                                 |
-| `grok`        | Grok logomark, dark + light                                      | [xAI logo pack](https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip)                                                                                                            | [xAI Brand Guidelines](https://x.ai/legal/brand-guidelines)                                                                                               |
-| `ollama`      | Transparent Ollama llama + recorded RGB-inverted dark derivative | [Ollama repository PNG](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png)                                                      | [Ollama terms](https://ollama.com/terms) and [repository licence](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/LICENSE) |
-| `pi`          | Transparent P+i primary mark, rendered as black/white PNGs       | [Pi press kit](https://pi.dev/press-kit) and [official SVG](https://pi.dev/logo.svg)                                                                                         | [Pi press kit](https://pi.dev/press-kit); project is MIT licensed                                                                                         |
-| `mistral`     | Mistral gradient pixel-cat icon                                  | [Mistral brand page](https://mistral.ai/brand/) and [first-party PNG proxy](https://mistral.ai/cms-media/api/documents/file/Mistral-Icon-Gradient-RGB.png)                   | [Mistral brand guidance](https://mistral.ai/brand/)                                                                                                       |
+| Provider / upstream id  | Selected official artwork                                        | First-party source                                                                                                                                                           | Guidance / rights reference                                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gemini`                | Gemini Spark, full colour                                        | [Google Image Library](https://blog.google/image-library/)                                                                                                                   | [Google brand guidance](https://about.google/brand-resource-center/guidance/); credit `Source: Google`                                                    |
+| `codex`                 | Untiled Codex banner/cloud icon                                  | [Official transparent PNG](https://developers.openai.com/images/codex/codex-banner-icon.png) and [OpenAI docs usage](https://learn.chatgpt.com/docs/windows/windows-sandbox) | [OpenAI Design Guidelines](https://openai.com/brand/); not included in the public logo pack                                                               |
+| `claude`                | Claude Spark, Clay                                               | [Anthropic press kit](https://www.anthropic.com/press-kit)                                                                                                                   | [Anthropic newsroom](https://www.anthropic.com/news)                                                                                                      |
+| `kimi`                  | Rounded-corner icon without wordmark                             | [KIMI Brand Guidelines](https://moonshotai.github.io/Branding-Guide/)                                                                                                        | [First-party `icon-without-kimi` assets](https://github.com/MoonshotAI/Branding-Guide/tree/main/scenarios/03-icon-without-kimi)                           |
+| `antigravity`           | Antigravity icon, full colour                                    | [Google Antigravity press assets](https://antigravity.google/press?app=antigravity)                                                                                          | Official press-download PNG, preserved unmodified for provider identification                                                                             |
+| `cursor`                | Cursor 2D Cube, light + dark                                     | [Cursor brand pack](https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip)                                                            | [Cursor Brand Guidelines](https://cursor.com/en-US/brand)                                                                                                 |
+| `grok`                  | Grok logomark, dark + light                                      | [xAI logo pack](https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip)                                                                                                            | [xAI Brand Guidelines](https://x.ai/legal/brand-guidelines)                                                                                               |
+| `ollama`                | Transparent Ollama llama + recorded RGB-inverted dark derivative | [Ollama repository PNG](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png)                                                      | [Ollama terms](https://ollama.com/terms) and [repository licence](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/LICENSE) |
+| `pi`                    | Transparent P+i primary mark, rendered as black/white PNGs       | [Pi press kit](https://pi.dev/press-kit) and [official SVG](https://pi.dev/logo.svg)                                                                                         | [Pi press kit](https://pi.dev/press-kit); project is MIT licensed                                                                                         |
+| `mistral`               | Mistral gradient pixel-cat icon                                  | [Mistral brand page](https://mistral.ai/brand/) and [first-party PNG proxy](https://mistral.ai/cms-media/api/documents/file/Mistral-Icon-Gradient-RGB.png)                   | [Mistral brand guidance](https://mistral.ai/brand/)                                                                                                       |
+| `cerebras` _(upstream)_ | Orange-C lockup, black + white wordmarks                         | [Cerebras press kit](https://www.cerebras.ai/company/press-kit)                                                                                                              | Retained unmodified; [Cerebras terms](https://cloud.cerebras.ai/terms) govern external use                                                                |
+| `deepseek` _(upstream)_ | Blue whale + wordmark, transparent PNG derived from source SVG   | [Official DeepSeek repository source](https://github.com/deepseek-ai/DeepSeek-V2/blob/ec98ee3cbffc32104cd55dba8af884b3d772602a/figures/logo.svg)                             | Source SVG retained; [DeepSeek User Agreement](https://platform.deepseek.com/downloads/DeepSeek%20User%20Agreement.pdf) governs external use              |
 
 The original seven-provider set was retrieved and verified on **2026-07-18**.
 The Antigravity press asset was added on **2026-07-23** and reverified against
 Google's press download on **2026-07-24**. Pi and Mistral were added from their
-official press/brand pages on **2026-07-27**.
+official press/brand pages on **2026-07-27**. Cerebras press-kit PNGs and the
+DeepSeek official-repository SVG/PNG derivative were added on **2026-08-02**.
 
 ## Trademark and repository boundary
 

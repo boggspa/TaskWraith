@@ -1,6 +1,6 @@
 {
-  "catalogVersion": 2,
-  "retrievedAt": "2026-07-27",
+  "catalogVersion": 3,
+  "retrievedAt": "2026-08-02",
   "purpose": "provider-identity-reference-and-runtime-source",
   "runtimeIntegrated": true,
   "catalogueFilesLoadedAtRuntime": false,
@@ -395,6 +395,97 @@
             "transparentPixels": 291904,
             "partialAlphaPixels": 0,
             "opaquePixels": 128000
+          }
+        }
+      ]
+    }
+  ],
+  "supplementalBrandAssets": [
+    {
+      "id": "cerebras",
+      "label": "Cerebras",
+      "kind": "upstream-brand",
+      "relationship": "Pi upstream / model-comparison display brand",
+      "owner": "Cerebras Systems, Inc.",
+      "runtimeIntegrated": false,
+      "artwork": "Cerebras orange-C lockup with dark and light wordmarks",
+      "sourcePage": "https://www.cerebras.ai/company/press-kit",
+      "terms": "https://cloud.cerebras.ai/terms",
+      "downloadUrl": "https://cdn.sanity.io/files/e4qjo92p/production/047798c0db861ade2a18320e534c00f05883a180.zip",
+      "archiveSha256": "caf4ce29dc66931605eaa9600459435efc3e587b6af2dfc7f3b54b1f6670ce5e",
+      "rightsNote": "Exact transparent PNGs from Cerebras' official downloadable press kit. Retain unmodified for design reference and factual identification; Cerebras' current terms and any required owner permission govern external or public reuse.",
+      "assets": [
+        {
+          "role": "on-light",
+          "file": "png/provider-logo-cerebras-on-light.png",
+          "originalFilename": "Cerebras Logo Black.png",
+          "archiveMember": "Cerebras Logo Black.png",
+          "dimensions": { "width": 2403, "height": 1058 },
+          "bytes": 84355,
+          "sha256": "7c74d4d522af0513ac5c7eaf3bbb1c9f4ec2953d948b66bab72957266c7b1f25",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 1895368,
+            "partialAlphaPixels": 19158,
+            "opaquePixels": 627848
+          }
+        },
+        {
+          "role": "on-dark",
+          "file": "png/provider-logo-cerebras-on-dark.png",
+          "originalFilename": "Cerebras Logo White.png",
+          "archiveMember": "Cerebras Logo White.png",
+          "dimensions": { "width": 2403, "height": 1058 },
+          "bytes": 65507,
+          "sha256": "0e975ddbf280a49bf76901bdb9e7ee5e47a3a7178921a8f86beaf99757d22ba4",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 1895368,
+            "partialAlphaPixels": 8917,
+            "opaquePixels": 638089
+          }
+        }
+      ]
+    },
+    {
+      "id": "deepseek",
+      "label": "DeepSeek",
+      "kind": "upstream-brand",
+      "relationship": "Pi upstream / model-comparison display brand",
+      "owner": "Hangzhou DeepSeek Artificial Intelligence Co., Ltd.",
+      "runtimeIntegrated": false,
+      "artwork": "DeepSeek blue whale and wordmark",
+      "sourcePage": "https://github.com/deepseek-ai/DeepSeek-V2",
+      "terms": "https://platform.deepseek.com/downloads/DeepSeek%20User%20Agreement.pdf",
+      "rightsNote": "The official DeepSeek repository publishes this source SVG; a public official PNG press-kit file was not available. The source SVG is retained byte-identically and the PNG derivative is only for design reference. DeepSeek's User Agreement restricts independent use of its logos, so do not vendor, publish, or otherwise reuse it without appropriate owner permission.",
+      "sourceAsset": {
+        "file": "svg/provider-logo-deepseek.svg",
+        "originalFilename": "logo.svg",
+        "repositoryPath": "deepseek-ai/DeepSeek-V2/figures/logo.svg",
+        "sourceCommit": "ec98ee3cbffc32104cd55dba8af884b3d772602a",
+        "downloadUrl": "https://raw.githubusercontent.com/deepseek-ai/DeepSeek-V2/ec98ee3cbffc32104cd55dba8af884b3d772602a/figures/logo.svg",
+        "viewBox": "0 0 195 41.3594",
+        "bytes": 10656,
+        "sha256": "ac13bdc805820c46bf0faf053aa5d31f72b051794abfe1dd72a682f09de2966b"
+      },
+      "assets": [
+        {
+          "role": "full-colour-derived",
+          "file": "png/provider-logo-deepseek.png",
+          "derivedFrom": "svg/provider-logo-deepseek.svg",
+          "transformation": "rasterize the unmodified official SVG on a transparent canvas with its aspect ratio preserved, maximum dimension 1024 px",
+          "transformationTool": "macOS sips-316 SVG-to-PNG",
+          "dimensions": { "width": 1024, "height": 217 },
+          "bytes": 38227,
+          "sha256": "4abbb507f20a6f674ea916d3135467edbaffc534883c5c6fc8ef594d9afcb62b",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 156966,
+            "partialAlphaPixels": 6355,
+            "opaquePixels": 58887
           }
         }
       ]
