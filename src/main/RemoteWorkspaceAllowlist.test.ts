@@ -28,9 +28,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       const entry = allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/Users/foo/projects/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       expect(entry.workspaceId).toBe('ws-1')
       expect(entry.createdAt).toBe(1000)
@@ -44,22 +42,18 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-only',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-only'
       })
       clock = 2000
       const updated = allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       expect(updated.createdAt).toBe(1000)
       expect(updated.updatedAt).toBe(2000)
       expect(updated.mode).toBe('read-write')
-      expect(updated.allowedProviders).toEqual(['gemini', 'codex'])
+      expect(updated.capabilities).toEqual(READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES)
     })
 
     it('removes an entry and reports whether it existed', () => {
@@ -67,9 +61,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       expect(allowlist.remove('ws-1')).toBe(true)
       expect(allowlist.remove('ws-1')).toBe(false)
@@ -81,16 +73,12 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       allowlist.upsert({
         workspaceId: 'ws-2',
         path: '/b',
-        mode: 'read-only',
-        allowedProviders: ['claude'],
-        allowedApprovalModes: ['default']
+        mode: 'read-only'
       })
       allowlist.clear()
       expect(allowlist.size()).toBe(0)
@@ -103,9 +91,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -125,42 +111,26 @@ describe('RemoteWorkspaceAllowlist', () => {
       expect(decision.allowed).toBe(true)
     })
 
-    it('denies a listed workspace when its provider is not allowed', () => {
+    it('applies one workspace grant to every provider identity', () => {
       const allowlist = seed()
-      const decision = allowlist.evaluate({ workspaceId: 'ws-1', provider: 'claude' })
-      expect(decision.allowed).toBe(false)
-      if (!decision.allowed) {
-        expect(decision.reason).toMatch(/provider "claude"/i)
+      for (const provider of ['claude', 'codex', 'pi', 'antigravity', 'future-provider']) {
+        expect(allowlist.evaluate({ workspaceId: 'ws-1', provider }).allowed).toBe(true)
       }
     })
 
-    it('allows a listed workspace when the provider is allowed', () => {
+    it('keeps every thread approval posture independent from the workspace grant', () => {
       const allowlist = seed()
-      const decision = allowlist.evaluate({ workspaceId: 'ws-1', provider: 'gemini' })
-      expect(decision.allowed).toBe(true)
-    })
-
-    it('denies a listed workspace when approvalMode is not allowed', () => {
-      const allowlist = seed()
-      const decision = allowlist.evaluate({
-        workspaceId: 'ws-1',
-        provider: 'gemini',
-        approvalMode: 'allow-all'
-      })
-      expect(decision.allowed).toBe(false)
-      if (!decision.allowed) {
-        expect(decision.reason).toMatch(/approval mode "allow-all"/i)
+      for (const approvalMode of ['plan', 'read-only', 'default', 'auto-edit', 'allow-all']) {
+        expect(allowlist.evaluate({ workspaceId: 'ws-1', approvalMode }).allowed).toBe(true)
       }
     })
 
-    it('treats an omitted workspace approvalMode as default for allowlist checks', () => {
+    it('does not require a thread approval posture on workspace checks', () => {
       const allowlist = new RemoteWorkspaceAllowlist()
       allowlist.upsert({
         workspaceId: 'ws-plan-only',
         path: '/a',
-        mode: 'read-only',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['plan']
+        mode: 'read-only'
       })
 
       const decision = allowlist.evaluate({
@@ -168,10 +138,7 @@ describe('RemoteWorkspaceAllowlist', () => {
         provider: 'gemini'
       })
 
-      expect(decision.allowed).toBe(false)
-      if (!decision.allowed) {
-        expect(decision.reason).toMatch(/approval mode "default"/i)
-      }
+      expect(decision.allowed).toBe(true)
     })
 
     it('maps legacy read-only mode to monitor + approve capabilities', () => {
@@ -179,9 +146,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-readonly',
         path: '/a',
-        mode: 'read-only',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-only'
       })
       expect(capabilitiesForRemoteWorkspaceMode('read-only')).toEqual(
         READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES
@@ -247,6 +212,11 @@ describe('RemoteWorkspaceAllowlist', () => {
         allowlist.evaluate({ workspaceId: 'ws-1', capability: 'externalPublish' }).allowed
       ).toBe(false)
       expect(allowlist.evaluate({ workspaceId: 'ws-1', capability: 'yolo' }).allowed).toBe(false)
+      const migrated = JSON.parse(readFileSync(storagePath, 'utf-8'))
+      expect(migrated.version).toBe(2)
+      expect(migrated.entries[0]).not.toHaveProperty('allowedProviders')
+      expect(migrated.entries[0]).not.toHaveProperty('allowedApprovalModes')
+      rmSync(dir, { recursive: true, force: true })
     })
 
     it('keeps external publishing, pin, and yolo as explicit admin-only capabilities outside defaults', () => {
@@ -273,9 +243,7 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-admin',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve', 'externalPublish', 'pin', 'yolo'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'approve', 'externalPublish', 'pin', 'yolo']
       })
 
       expect(
@@ -293,9 +261,7 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-custom',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'approve']
       })
       expect(capabilitiesForRemoteWorkspaceEntry(entry)).toEqual(['monitor', 'approve'])
       expect(allowlist.evaluate({ workspaceId: 'ws-custom', capability: 'approve' }).allowed).toBe(
@@ -313,8 +279,6 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-1',
         path: '/a',
         mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default'],
         expiresAt: 5000
       })
       // Within window.
@@ -342,17 +306,13 @@ describe('RemoteWorkspaceAllowlist', () => {
         path: '/b',
         mode: 'read-only',
         capabilities: ['approve', 'monitor'],
-        allowedProviders: ['claude', 'codex'],
-        allowedApprovalModes: ['plan'],
         expiresAt: 5000
       })
       allowlist.upsert({
         workspaceId: 'ws-a',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['startTurn', 'approve', 'monitor'],
-        allowedProviders: ['codex'],
-        allowedApprovalModes: ['default', 'plan']
+        capabilities: ['startTurn', 'approve', 'monitor']
       })
       return allowlist
     }
@@ -369,17 +329,13 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-a',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['monitor', 'startTurn', 'approve'],
-        allowedProviders: ['codex'],
-        allowedApprovalModes: ['plan', 'default']
+        capabilities: ['monitor', 'startTurn', 'approve']
       })
       right.upsert({
         workspaceId: 'ws-b',
         path: '/b',
         mode: 'read-only',
         capabilities: ['monitor', 'approve'],
-        allowedProviders: ['codex', 'claude'],
-        allowedApprovalModes: ['plan'],
         expiresAt: 5000
       })
 
@@ -389,25 +345,12 @@ describe('RemoteWorkspaceAllowlist', () => {
     it('changes when effective allowlist powers change', () => {
       const base = seedPolicy().fingerprint()
 
-      const providerChanged = seedPolicy()
-      providerChanged.upsert({
-        workspaceId: 'ws-a',
-        path: '/a',
-        mode: 'read-write',
-        capabilities: ['startTurn', 'approve', 'monitor'],
-        allowedProviders: ['codex', 'claude'],
-        allowedApprovalModes: ['default', 'plan']
-      })
-      expect(providerChanged.fingerprint()).not.toBe(base)
-
       const capabilityChanged = seedPolicy()
       capabilityChanged.upsert({
         workspaceId: 'ws-a',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['approve', 'monitor'],
-        allowedProviders: ['codex'],
-        allowedApprovalModes: ['default', 'plan']
+        capabilities: ['approve', 'monitor']
       })
       expect(capabilityChanged.fingerprint()).not.toBe(base)
 
@@ -417,8 +360,6 @@ describe('RemoteWorkspaceAllowlist', () => {
         path: '/b',
         mode: 'read-only',
         capabilities: ['approve', 'monitor'],
-        allowedProviders: ['claude', 'codex'],
-        allowedApprovalModes: ['plan'],
         expiresAt: 6000
       })
       expect(expiryChanged.fingerprint()).not.toBe(base)
@@ -429,8 +370,6 @@ describe('RemoteWorkspaceAllowlist', () => {
         path: '/b',
         mode: 'read-write',
         capabilities: ['approve', 'monitor'],
-        allowedProviders: ['claude', 'codex'],
-        allowedApprovalModes: ['plan'],
         expiresAt: 5000
       })
       expect(modeChanged.fingerprint()).not.toBe(base)
@@ -456,17 +395,13 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-1',
         path: '/a',
         mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default', 'plan'],
         expiresAt: 9999
       })
       a.upsert({
         workspaceId: 'ws-2',
         path: '/b',
         mode: 'read-only',
-        capabilities: ['monitor', 'approve'],
-        allowedProviders: ['claude'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'approve']
       })
 
       // Reload via a fresh instance pointed at the same path.
@@ -484,9 +419,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       a.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       const reloaded = new RemoteWorkspaceAllowlist({ storagePath: deepPath })
       expect(reloaded.size()).toBe(1)
@@ -498,10 +431,36 @@ describe('RemoteWorkspaceAllowlist', () => {
       expect(allowlist.size()).toBe(0)
     })
 
-    it('starts empty when version is unknown', () => {
-      writeFileSync(storagePath, JSON.stringify({ version: 999, entries: [] }), 'utf-8')
+    it('rewrites an empty recognized v1 policy to the universal v2 schema', () => {
+      writeFileSync(storagePath, JSON.stringify({ version: 1, entries: [] }), 'utf-8')
       const allowlist = new RemoteWorkspaceAllowlist({ storagePath })
       expect(allowlist.size()).toBe(0)
+      expect(JSON.parse(readFileSync(storagePath, 'utf-8'))).toEqual({
+        version: 2,
+        entries: []
+      })
+    })
+
+    it('fails closed without overwriting an unknown future schema', () => {
+      const futurePolicy = JSON.stringify({ version: 999, entries: [{ future: true }] })
+      writeFileSync(storagePath, futurePolicy, 'utf-8')
+      const allowlist = new RemoteWorkspaceAllowlist({ storagePath })
+      expect(allowlist.size()).toBe(0)
+      expect(() =>
+        allowlist.upsert({ workspaceId: 'ws-1', path: '/a', mode: 'read-write' })
+      ).toThrow(/unknown schema version 999/i)
+      expect(readFileSync(storagePath, 'utf-8')).toBe(futurePolicy)
+    })
+
+    it('preserves an unknown future schema even when its entries shape changed', () => {
+      const futurePolicy = JSON.stringify({ version: 999, entries: { indexedById: true } })
+      writeFileSync(storagePath, futurePolicy, 'utf-8')
+      const allowlist = new RemoteWorkspaceAllowlist({ storagePath })
+      expect(allowlist.size()).toBe(0)
+      expect(() =>
+        allowlist.upsert({ workspaceId: 'ws-1', path: '/a', mode: 'read-write' })
+      ).toThrow(/unknown schema version 999/i)
+      expect(readFileSync(storagePath, 'utf-8')).toBe(futurePolicy)
     })
 
     it('skips invalid entries when loading', () => {
@@ -534,13 +493,13 @@ describe('RemoteWorkspaceAllowlist', () => {
       a.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       const onDisk = JSON.parse(readFileSync(storagePath, 'utf-8'))
-      expect(onDisk.version).toBe(1)
+      expect(onDisk.version).toBe(2)
       expect(onDisk.entries).toHaveLength(1)
+      expect(onDisk.entries[0]).not.toHaveProperty('allowedProviders')
+      expect(onDisk.entries[0]).not.toHaveProperty('allowedApprovalModes')
       // tmp file should be gone (renamed away)
       let tmpExists = false
       try {
@@ -563,9 +522,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       a.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
 
       // Windows has no POSIX owner-only mode bits; skip the 0o600 assertion there.
@@ -580,9 +537,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       a.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       // A second instance with no path sees nothing.
       const b = new RemoteWorkspaceAllowlist()
@@ -596,9 +551,7 @@ describe('RemoteWorkspaceAllowlist', () => {
       allowlist.upsert({
         workspaceId: 'ws-1',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       return allowlist
     }

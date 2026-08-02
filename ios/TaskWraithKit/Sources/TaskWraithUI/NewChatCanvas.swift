@@ -13,6 +13,9 @@ struct NewChatBootstrapView: View {
     @State private var createdThreadId: String?
     @State private var requestedKey: String?
     @State private var createFailed = false
+    @State private var showWorkspaceAccessConsent = false
+    @State private var workspaceAccessBusy = false
+    @State private var locallyGrantedWorkspaceIds: Set<String> = []
 
     private var targetWorkspaceId: String? {
         switch mode {
@@ -32,6 +35,27 @@ struct NewChatBootstrapView: View {
         case .global: return "global"
         case .workflow: return "workflow"
         }
+    }
+
+    private var targetWorkspace: WorkspaceSummary? {
+        guard let targetWorkspaceId else { return nil }
+        return model.workspaces.first { $0.workspaceId == targetWorkspaceId }
+    }
+
+    private var initialProvider: String? {
+        let catalogs = twOfferedProviderCatalogs(model.providerModels)
+        return catalogs.first { $0.provider.lowercased() == "claude" }?.provider
+            ?? catalogs.first?.provider
+    }
+
+    private func workspaceCanStartThread(_ workspace: WorkspaceSummary) -> Bool {
+        if locallyGrantedWorkspaceIds.contains(workspace.workspaceId) { return true }
+        if workspace.remoteAccessGranted == false { return false }
+        if let canStart = workspace.capabilities?.startTurn { return canStart }
+        // Older hosts projected only already-granted workspaces and omitted the
+        // additive access fields, so presence itself remains the compatibility
+        // signal for those releases.
+        return workspace.remoteAccessGranted != true || workspace.remoteAccessMode != "read-only"
     }
 
     var body: some View {
@@ -56,6 +80,14 @@ struct NewChatBootstrapView: View {
                 }
             }
         }
+        .sheet(isPresented: $showWorkspaceAccessConsent) {
+            WorkspaceAccessConsentSheet(
+                workspaceName: targetWorkspace?.displayName ?? "this workspace",
+                isBusy: workspaceAccessBusy,
+                onDecline: declineWorkspaceAccess,
+                onAllow: allowWorkspaceAccess)
+            .twSheetLiquidGlass(detents: [.medium, .large])
+        }
     }
 
     @ViewBuilder
@@ -79,12 +111,12 @@ struct NewChatBootstrapView: View {
     private var statusText: String {
         switch mode {
         case .workspace:
-            return targetWorkspaceId == nil
+            return targetWorkspaceId == nil || targetWorkspace == nil
                 ? "Syncing workspaces from your Mac…" : "Creating chat…"
         case .global:
             return "Creating general chat…"
         case .workflow:
-            return targetWorkspaceId == nil
+            return targetWorkspaceId == nil || targetWorkspace == nil
                 ? "Syncing workspaces from your Mac…" : "Creating workflow…"
         }
     }
@@ -129,6 +161,16 @@ struct NewChatBootstrapView: View {
 
     private func createIfReady() {
         guard createdThreadId == nil, let workspaceId = targetWorkspaceId else { return }
+        if mode != .global {
+            // The summary is the Mac-authored proof that this is a registered
+            // workspace. Never fall through to a provider-default create while
+            // its grant state is still hydrating.
+            guard let workspace = targetWorkspace else { return }
+            if !workspaceCanStartThread(workspace) {
+                showWorkspaceAccessConsent = true
+                return
+            }
+        }
         let key = "\(variant):\(workspaceId)"
         guard requestedKey != key else { return }
         requestedKey = key
@@ -136,6 +178,7 @@ struct NewChatBootstrapView: View {
         model.createEmptyThread(
             workspaceId: workspaceId,
             variant: variant,
+            provider: initialProvider,
             title: mode == .workflow ? "New Workflow" : "New Chat"
         ) { threadId in
             guard let threadId else {
@@ -147,5 +190,78 @@ struct NewChatBootstrapView: View {
             }
             createdThreadId = threadId
         }
+    }
+
+    private func allowWorkspaceAccess() {
+        guard let workspaceId = targetWorkspaceId, !workspaceAccessBusy else { return }
+        workspaceAccessBusy = true
+        model.setRemoteWorkspaceAccess(workspaceId: workspaceId, enabled: true) { granted in
+            workspaceAccessBusy = false
+            showWorkspaceAccessConsent = false
+            guard granted else {
+                requestedKey = nil
+                createFailed = true
+                return
+            }
+            locallyGrantedWorkspaceIds.insert(workspaceId)
+            createIfReady()
+        }
+    }
+
+    private func declineWorkspaceAccess() {
+        guard let workspaceId = targetWorkspaceId, !workspaceAccessBusy else { return }
+        workspaceAccessBusy = true
+        model.setRemoteWorkspaceAccess(workspaceId: workspaceId, enabled: false) { _ in
+            workspaceAccessBusy = false
+            showWorkspaceAccessConsent = false
+            requestedKey = nil
+            createFailed = true
+        }
+    }
+}
+
+private struct WorkspaceAccessConsentSheet: View {
+    let workspaceName: String
+    let isBusy: Bool
+    let onDecline: () -> Void
+    let onAllow: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Image(systemName: "folder.badge.gearshape")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(TWTheme.chroma1)
+            Text("Allow workspace access?")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+            Text(
+                "Creating the first chat in \(workspaceName) lets paired iOS companions use that workspace with every provider currently admitted by your Mac. AntiGravity appears only after its own quota-risk consent and Gemini API setup are active."
+            )
+            .font(.callout)
+            .foregroundStyle(TWTheme.textSecondary)
+            Text(
+                "The grant persists until you revoke it in Settings → Environments/Workspaces. Thread permissions—Plan, Read-Only/Recon, Default Approval, Workspace Write, and Trusted Session—remain separate. External publishing remains separately controlled."
+            )
+            .font(.footnote)
+            .foregroundStyle(TWTheme.textMuted)
+            Spacer(minLength: 0)
+            HStack {
+                Button("Not Now", action: onDecline)
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+                Spacer()
+                Button(action: onAllow) {
+                    if isBusy {
+                        ProgressView()
+                    } else {
+                        Text("Allow & Create")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TWTheme.chroma1)
+                .disabled(isBusy)
+            }
+        }
+        .padding(24)
     }
 }

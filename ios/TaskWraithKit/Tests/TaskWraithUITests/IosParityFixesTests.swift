@@ -227,6 +227,120 @@ struct IosParityFixesTests {
     }
 
     @MainActor
+    @Test func workspaceGrantRevocationPurgesOnlyThatWorkspacesCachedContent() throws {
+        let model = makeRemoteSessionModel()
+        let initiallyGranted = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":true},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(initiallyGranted)
+
+        let snapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {"projections":[
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-1","workspaceId":"ws-1","threadId":"thread-1",
+                "payload":{"id":"thread-1","threadId":"thread-1","title":"One","provider":"codex","workspaceId":"ws-1"}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"threadSnapshot",
+                "envelopeId":"thread:thread-1","workspaceId":"ws-1","threadId":"thread-1",
+                "payload":{"taskId":"thread-1","threadId":"thread-1","workspaceId":"ws-1","provider":"codex","rows":[]}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-2","workspaceId":"ws-2","threadId":"thread-2",
+                "payload":{"id":"thread-2","threadId":"thread-2","title":"Two","provider":"claude","workspaceId":"ws-2"}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"threadSnapshot",
+                "envelopeId":"thread:thread-2","workspaceId":"ws-2","threadId":"thread-2",
+                "payload":{"taskId":"thread-2","threadId":"thread-2","workspaceId":"ws-2","provider":"claude","rows":[]}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"approvalCard",
+                "envelopeId":"approval:thread-1","workspaceId":"ws-1","threadId":"thread-1",
+                "payload":{"toolCallId":"approval-1","workspaceId":"ws-1","threadId":"thread-1","status":"pending"}
+              }
+            ]}
+            """)
+        model.applySnapshot(snapshot)
+
+        let oneRevoked = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":false},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(oneRevoked)
+
+        #expect(model.taskCards.map(\.id) == ["thread-2"])
+        #expect(model.threadSnapshots["thread-1"] == nil)
+        #expect(model.threadSnapshots["thread-2"] != nil)
+        #expect(model.remoteScopeForThread("thread-1") == nil)
+        #expect(model.remoteScopeForThread("thread-2") == "ws-2")
+        #expect(model.approvals.isEmpty)
+
+        // A full snapshot decoded before the revocation may apply afterwards.
+        // Its revoked task/transcript/approval content must stay tombstoned.
+        model.applySnapshot(snapshot)
+        #expect(model.taskCards.map(\.id) == ["thread-2"])
+        #expect(model.threadSnapshots["thread-1"] == nil)
+        #expect(model.approvals.isEmpty)
+
+        // Some delayed deltas omit workspaceId and carry only the thread alias.
+        // The revocation tombstone must still reject them until an explicit
+        // workspace regrant clears it.
+        let aliasOnlyLateSnapshot = try decode(
+            RemoteProjectionSnapshot.self,
+            """
+            {"projections":[
+              {
+                "schemaVersion":1,"source":"mac","kind":"taskCard",
+                "envelopeId":"task-card:thread-1","threadId":"thread-1",
+                "payload":{"id":"thread-1","threadId":"thread-1","title":"Late One","provider":"codex"}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"threadSnapshot",
+                "envelopeId":"thread:thread-1","threadId":"thread-1",
+                "payload":{"taskId":"thread-1","threadId":"thread-1","provider":"codex","rows":[]}
+              },
+              {
+                "schemaVersion":1,"source":"mac","kind":"approvalCard",
+                "envelopeId":"approval:thread-1","threadId":"thread-1",
+                "payload":{"toolCallId":"approval-late","threadId":"thread-1","status":"pending"}
+              }
+            ]}
+            """)
+        model.applySnapshot(aliasOnlyLateSnapshot)
+        #expect(model.taskCards.map(\.id) == ["thread-2"])
+        #expect(model.threadSnapshots["thread-1"] == nil)
+        #expect(model.approvals.isEmpty)
+
+        let regranted = try decode(
+            WorkspaceListMessage.self,
+            """
+            {"workspaces":[
+              {"workspaceId":"ws-1","displayName":"One","path":"/one","remoteAccessGranted":true},
+              {"workspaceId":"ws-2","displayName":"Two","path":"/two","remoteAccessGranted":true}
+            ]}
+            """)
+        model.applyWorkspaceListForTesting(regranted)
+        model.applySnapshot(snapshot)
+        #expect(Set(model.taskCards.map(\.id)) == Set(["thread-1", "thread-2"]))
+        #expect(model.threadSnapshots["thread-1"] != nil)
+        #expect(model.approvals.map(\.toolCallId) == ["approval-1"])
+    }
+
+    @MainActor
     @Test func threadSnapshotRequestWaitsForTaskCardScope() async throws {
         let model = makeRemoteSessionModel()
 

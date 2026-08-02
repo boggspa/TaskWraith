@@ -493,12 +493,18 @@ struct RosterPermissionSidecarPicker: View {
     @Binding var permissionPresetId: String?
     var accent: Color = TWTheme.chroma1
     var onChanged: () -> Void = {}
+    var trustedSessionEnabled = false
+    var requestTrustedSessionChange: ((Bool, @escaping (Bool) -> Void) -> Void)? = nil
 
     @State private var isPresented = false
+    @State private var locallyTrusted = false
+    @State private var showTrustedSessionConsent = false
+    @State private var trustedSessionAcknowledged = false
+    @State private var trustedSessionBusy = false
 
     // Desktop permission colour-coding (08-theme-picker-overrides.css,
     // shell-agnostic block): Plan / Read-only → blue, Default → neutral,
-    // Workspace Write → amber, Full access → dark red. The selected
+    // Workspace Write → amber, Trusted Session → dark red. The selected
     // checkmark and the closed trigger adopt the same tier tint so the
     // colour identity reads across closed + open states.
     private static let tierBlue = Color(hex: 0x6FB6FF)
@@ -516,27 +522,27 @@ struct RosterPermissionSidecarPicker: View {
 
     private static let tiers: [Tier] = [
         Tier(
-            id: "read_only", short: "Read", label: "Read-Only/Recon",
-            systemImage: "lock.shield", tint: tierBlue),
-        Tier(
             id: "plan", short: "Plan", label: "Plan workflow",
             systemImage: "list.clipboard", tint: tierBlue),
+        Tier(
+            id: "read_only", short: "Read", label: "Read-Only/Recon",
+            systemImage: "lock.shield", tint: tierBlue),
         Tier(
             id: "default", short: "Ask", label: "Default approval",
             systemImage: "checkmark.shield"),
         Tier(
-            id: "full_access", short: "Full", label: "Full access",
+            id: "workspace_write", short: "Write", label: "Workspace Write",
+            systemImage: "pencil.and.outline", tint: tierAmber),
+        Tier(
+            id: "full_access", short: "Trust", label: "Trusted Session",
             systemImage: "bolt.shield", tint: tierRed),
     ]
 
-    private static let legacyWorkspaceWrite = Tier(
-        id: "workspace_write", short: "Write", label: "Workspace write (legacy)",
-        systemImage: "pencil.and.outline", tint: tierAmber)
-
     private var selectedId: String { permissionPresetId ?? "default" }
+    private var hasTrustedSession: Bool { trustedSessionEnabled || locallyTrusted }
 
     private var selectedTier: Tier {
-        Self.tiers.first { $0.id == selectedId } ?? Self.legacyWorkspaceWrite
+        Self.tiers.first { $0.id == selectedId } ?? Self.tiers[2]
     }
 
     var body: some View {
@@ -585,13 +591,6 @@ struct RosterPermissionSidecarPicker: View {
                 ForEach(Self.tiers) { tier in
                     tierRow(tier)
                 }
-                // 'Workspace write' (contained auto-edit) was coalesced into
-                // Full access on iOS. A participant already stored on it keeps
-                // showing its real value — never silently escalated — and can
-                // switch to a tier above. New selections use the four tiers.
-                if permissionPresetId == "workspace_write" {
-                    tierRow(Self.legacyWorkspaceWrite)
-                }
             }
             // Inset the rows from the glass edge so the panel's rounded
             // corners never sweep the first/last row's text.
@@ -602,12 +601,43 @@ struct RosterPermissionSidecarPicker: View {
             .presentationCompactAdaptation(.popover)
             .presentationBackground(.clear)
         }
+        .sheet(isPresented: $showTrustedSessionConsent) {
+            TrustedSessionConsentSheet(
+                acknowledged: $trustedSessionAcknowledged,
+                isBusy: trustedSessionBusy,
+                onCancel: {
+                    showTrustedSessionConsent = false
+                    trustedSessionAcknowledged = false
+                },
+                onConfirm: confirmTrustedSession)
+            .twSheetLiquidGlass(detents: [.medium, .large])
+        }
     }
 
     @ViewBuilder
     private func tierRow(_ tier: Tier) -> some View {
         let selected = tier.id == selectedId
         Button {
+            if tier.id == "full_access", !hasTrustedSession {
+                guard requestTrustedSessionChange != nil else { return }
+                isPresented = false
+                trustedSessionAcknowledged = false
+                showTrustedSessionConsent = true
+                return
+            }
+            if tier.id != "full_access", hasTrustedSession {
+                guard let requestTrustedSessionChange, !trustedSessionBusy else { return }
+                isPresented = false
+                trustedSessionBusy = true
+                requestTrustedSessionChange(false) { success in
+                    trustedSessionBusy = false
+                    guard success else { return }
+                    locallyTrusted = false
+                    permissionPresetId = tier.id
+                    onChanged()
+                }
+                return
+            }
             // Store the literal tier id — including "default" — so the bridge
             // SENDS it and the Mac applies a downgrade (a nil would be omitted
             // from the roster update and the old preset would survive).
@@ -636,6 +666,25 @@ struct RosterPermissionSidecarPicker: View {
             .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
+        .disabled(
+            tier.id == "full_access" && !hasTrustedSession
+                && requestTrustedSessionChange == nil)
+    }
+
+    private func confirmTrustedSession() {
+        guard trustedSessionAcknowledged, !trustedSessionBusy,
+            let requestTrustedSessionChange
+        else { return }
+        trustedSessionBusy = true
+        requestTrustedSessionChange(true) { success in
+            trustedSessionBusy = false
+            guard success else { return }
+            locallyTrusted = true
+            permissionPresetId = "full_access"
+            onChanged()
+            trustedSessionAcknowledged = false
+            showTrustedSessionConsent = false
+        }
     }
 }
 
@@ -660,6 +709,9 @@ struct RosterParticipantEditorPopover: View {
     let onRemove: () -> Void
     /// Thread-wide Auto Approvals pill state + toggle (nil hides the pill).
     var autoApprovals: RosterAutoApprovalsConfig? = nil
+    var requestTrustedSessionChange: ((
+        Bool, RemoteSessionModel.RosterDraftEntry, @escaping (Bool) -> Void
+    ) -> Void)? = nil
     /// Vertical room the HOST measured for this balloon on the side it opens
     /// toward (see `TWPopoverSpace.availableHeight(anchor:arrowEdge:…)`). A
     /// popover neither scrolls nor shrinks to fit, so an unbounded panel is
@@ -685,6 +737,9 @@ struct RosterParticipantEditorPopover: View {
         onApply: @escaping (RemoteSessionModel.RosterDraftEntry) -> Void,
         onRemove: @escaping () -> Void,
         autoApprovals: RosterAutoApprovalsConfig? = nil,
+        requestTrustedSessionChange: ((
+            Bool, RemoteSessionModel.RosterDraftEntry, @escaping (Bool) -> Void
+        ) -> Void)? = nil,
         spaceBudget: CGFloat? = nil,
         onDismissRequest: @escaping () -> Void = {}
     ) {
@@ -693,6 +748,7 @@ struct RosterParticipantEditorPopover: View {
         self.onApply = onApply
         self.onRemove = onRemove
         self.autoApprovals = autoApprovals
+        self.requestTrustedSessionChange = requestTrustedSessionChange
         self.spaceBudget = spaceBudget
         self.onDismissRequest = onDismissRequest
         self._entry = State(initialValue: entry)
@@ -736,7 +792,16 @@ struct RosterParticipantEditorPopover: View {
             sidecarAccessory: AnyView(
                 RosterPermissionSidecarPicker(
                     permissionPresetId: $entry.permissionPresetId,
-                    accent: TWTheme.providerAccent(entry.provider, modelId: entry.model))),
+                    accent: TWTheme.providerAccent(entry.provider, modelId: entry.model),
+                    trustedSessionEnabled: entry.trustedSessionEnabled,
+                    requestTrustedSessionChange: requestTrustedSessionChange.map { request in
+                        { enabled, completion in
+                            request(enabled, entry) { success in
+                                if success { entry.trustedSessionEnabled = enabled }
+                                completion(success)
+                            }
+                        }
+                    })),
             onDismissRequest: onDismissRequest
         ) {
             RosterParticipantConfigFields(

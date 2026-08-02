@@ -25,8 +25,6 @@ function makeAllowlistEntry(overrides: Partial<RemoteWorkspaceEntry> = {}): Remo
     workspaceId: 'workspace-1',
     path: '/repo',
     mode: 'read-write',
-    allowedProviders: ['gemini', 'codex'],
-    allowedApprovalModes: ['default', 'plan'],
     createdAt: 1,
     updatedAt: 2,
     ...overrides
@@ -226,15 +224,13 @@ describe('WorkspaceService', () => {
     })
   })
 
-  it('validates and upserts remote allowlist entries with the original shape', () => {
+  it('validates and upserts universal remote workspace grants', () => {
     const { deps, allowlist } = makeDeps()
     const service = new WorkspaceService(deps)
     const result = service.upsertRemoteAllowlist({
       workspaceId: 'workspace-1',
       path: '/repo',
       mode: 'read-only',
-      allowedProviders: ['gemini'],
-      allowedApprovalModes: ['default'],
       expiresAt: 100
     })
     expect(result.mode).toBe('read-only')
@@ -242,8 +238,6 @@ describe('WorkspaceService', () => {
       workspaceId: 'workspace-1',
       path: '/repo',
       mode: 'read-only',
-      allowedProviders: ['gemini'],
-      allowedApprovalModes: ['default'],
       expiresAt: 100
     })
   })
@@ -255,17 +249,13 @@ describe('WorkspaceService', () => {
       workspaceId: 'workspace-1',
       path: '/repo',
       mode: 'read-only',
-      capabilities: ['monitor', 'approve'],
-      allowedProviders: ['gemini'],
-      allowedApprovalModes: ['default']
+      capabilities: ['monitor', 'approve']
     })
     expect(allowlist.upsert).toHaveBeenCalledWith({
       workspaceId: 'workspace-1',
       path: '/repo',
       mode: 'read-only',
       capabilities: ['monitor', 'approve'],
-      allowedProviders: ['gemini'],
-      allowedApprovalModes: ['default'],
       expiresAt: undefined
     })
   })
@@ -277,9 +267,7 @@ describe('WorkspaceService', () => {
       service.upsertRemoteAllowlist({
         workspaceId: 'workspace-1',
         path: '/repo',
-        mode: 'bad' as 'read-only',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'bad' as 'read-only'
       })
     ).toThrow("bridge-allowlist-upsert: mode must be 'read-only' or 'read-write' (got 'bad')")
     expect(() =>
@@ -287,9 +275,7 @@ describe('WorkspaceService', () => {
         workspaceId: 'workspace-1',
         path: '/repo',
         mode: 'read-only',
-        capabilities: ['not-real' as never],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['not-real' as never]
       })
     ).toThrow('bridge-allowlist-upsert: capabilities must be RemoteWorkspaceCapability[]')
     expect(() =>
@@ -297,8 +283,6 @@ describe('WorkspaceService', () => {
         workspaceId: 'workspace-1',
         path: '/repo',
         mode: 'read-only',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default'],
         expiresAt: 0
       })
     ).toThrow('bridge-allowlist-upsert: expiresAt must be a positive number (ms since epoch)')
@@ -339,9 +323,7 @@ describe('WorkspaceService', () => {
     ): Parameters<WorkspaceService['upsertRemoteAllowlist']>[0] => ({
       workspaceId,
       path,
-      mode: 'read-write',
-      allowedProviders: ['gemini'],
-      allowedApprovalModes: ['default']
+      mode: 'read-write'
     })
 
     it('resolves a quoted path + display-name id to the real workspace uuid', () => {
@@ -379,7 +361,6 @@ describe('WorkspaceService', () => {
         makeAllowlistEntry({
           workspaceId: 'Test 1',
           path: "'/Users/x/Test 1'",
-          allowedProviders: ['gemini', 'claude'],
           expiresAt: 999
         }),
         makeAllowlistEntry({ workspaceId: 'uuid-2', path: '/Users/x/Test 2' }),
@@ -404,8 +385,6 @@ describe('WorkspaceService', () => {
           'diffReview',
           'steer'
         ],
-        allowedProviders: ['gemini', 'claude'],
-        allowedApprovalModes: ['default', 'plan'],
         expiresAt: 999
       })
       expect(log).toHaveBeenCalledWith(expect.stringContaining("'Test 1' → uuid-1"))

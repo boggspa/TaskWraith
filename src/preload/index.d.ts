@@ -1344,8 +1344,6 @@ declare global {
         path: string
         mode: 'read-only' | 'read-write'
         capabilities?: RemoteWorkspaceCapability[]
-        allowedProviders: string[]
-        allowedApprovalModes: string[]
         expiresAt?: number
       }) => Promise<RemoteWorkspaceEntry>
       bridgeAllowlistRemove: (workspaceId: string) => Promise<boolean>

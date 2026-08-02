@@ -71,6 +71,11 @@ struct Composer: View {
     @Binding var text: String
 
     @State private var approvalMode = "default"
+    @State private var trustedSessionEnabled = false
+    @State private var trustedSessionProviders: Set<String> = []
+    @State private var showTrustedSessionConsent = false
+    @State private var trustedSessionAcknowledged = false
+    @State private var trustedSessionBusy = false
     /// Drives compact (idle) vs full composer — focusing the field expands it.
     /// Plain `@State` (not `@FocusState`): on iOS the input is the UIKit-backed
     /// `MentionTextView`, which owns first-responder status and mirrors it back
@@ -93,11 +98,7 @@ struct Composer: View {
             return "plan"
         case "default":
             return nil
-        case "full_access":
-            // Full access runs auto_edit; the Mac gates it against the workspace
-            // allowlist (permissionPresetId → auto_edit in approvalModeFromPayload)
-            // and re-signs the full_access posture. Paired with
-            // bridgePermissionPresetId below.
+        case "workspace_write", "full_access":
             return "auto_edit"
         default:
             return approvalMode
@@ -106,16 +107,20 @@ struct Composer: View {
     private var bridgeWorkflowMode: String? {
         !isGlobalChat && approvalMode == "plan" ? "plan" : nil
     }
-    /// The composer's single "Full access" tier maps to the signed `full_access`
-    /// preset on the Mac (single-provider parity with the ensemble roster). Only
-    /// emitted for a non-global workspace chat; nil otherwise.
+    /// Literal desktop preset id. The workspace allowlist is a separate outer
+    /// gate and does not filter these five thread-level choices.
     private var bridgePermissionPresetId: String? {
-        !isGlobalChat && approvalMode == "full_access" ? "full_access" : nil
+        !isGlobalChat ? approvalMode : nil
+    }
+    private var projectedPermissionSignature: String {
+        [card.approvalMode ?? "", card.workflowMode ?? "", card.permissionPresetId ?? ""]
+            .joined(separator: "\u{0}")
     }
     private var approvalIconName: String {
         switch approvalMode {
         case "plan": return "list.bullet.clipboard"
         case "read_only": return "eye"
+        case "workspace_write": return "pencil.and.outline"
         case "full_access": return "bolt.fill"
         default: return "checkmark.shield"
         }
@@ -124,8 +129,9 @@ struct Composer: View {
         switch approvalMode {
         case "plan": return "Plan"
         case "read_only": return "Read-Only/Recon"
-        case "full_access": return "Full Access"
-        default: return "Default"
+        case "workspace_write": return "Workspace Write"
+        case "full_access": return "Trusted Session"
+        default: return "Default Approval"
         }
     }
     @State private var selectedProvider: String = "claude"
@@ -315,8 +321,7 @@ struct Composer: View {
     private var catalogs: [ProviderModelCatalog] {
         twOfferedProviderCatalogs(
             model.providerModels,
-            including: [card.provider, selectedProvider].compactMap { $0 },
-            allowedProviders: model.allowedProvidersForWorkspace(card.workspaceId))
+            including: [card.provider, selectedProvider].compactMap { $0 })
     }
 
     private var dynamicallySelectableProviderIds: Set<String> {
@@ -398,6 +403,16 @@ struct Composer: View {
         }
         .onChange(of: selectedProvider) { _, newValue in
             providerEcho?.wrappedValue = newValue
+            trustedSessionEnabled = trustedSessionProviders.contains(newValue.lowercased())
+            if approvalMode == "full_access", !trustedSessionEnabled {
+                approvalMode = "workspace_write"
+            }
+        }
+        .onChange(of: card.trustedSessionEnabled) { _, _ in
+            syncProjectedTrustedSession()
+        }
+        .onChange(of: projectedPermissionSignature) { _, _ in
+            resyncPermissionToThread()
         }
         .onChange(of: runModel) { _, newValue in
             // The on-demand snapshot usually lands AFTER the composer appears
@@ -423,6 +438,17 @@ struct Composer: View {
                     scheduleCurrent(runAt: runAt)
                 }
             )
+            .twSheetLiquidGlass(detents: [.medium, .large])
+        }
+        .sheet(isPresented: $showTrustedSessionConsent) {
+            TrustedSessionConsentSheet(
+                acknowledged: $trustedSessionAcknowledged,
+                isBusy: trustedSessionBusy,
+                onCancel: {
+                    showTrustedSessionConsent = false
+                    trustedSessionAcknowledged = false
+                },
+                onConfirm: enableTrustedSession)
             .twSheetLiquidGlass(detents: [.medium, .large])
         }
     }
@@ -607,11 +633,20 @@ struct Composer: View {
             .foregroundStyle(TWTheme.textSecondary)
         } else {
             Menu {
-                Picker("Approval", selection: $approvalMode) {
-                    Label("Read-Only/Recon", systemImage: "eye").tag("read_only")
-                    Label("Default Approval", systemImage: "checkmark.shield").tag("default")
-                    Label("Plan workflow", systemImage: "list.bullet.clipboard").tag("plan")
-                    Label("Full Access", systemImage: "bolt.fill").tag("full_access")
+                Button { selectPermissionPreset("plan") } label: {
+                    Label("Plan", systemImage: "list.bullet.clipboard")
+                }
+                Button { selectPermissionPreset("read_only") } label: {
+                    Label("Read-Only/Recon", systemImage: "eye")
+                }
+                Button { selectPermissionPreset("default") } label: {
+                    Label("Default Approval", systemImage: "checkmark.shield")
+                }
+                Button { selectPermissionPreset("workspace_write") } label: {
+                    Label("Workspace Write", systemImage: "pencil.and.outline")
+                }
+                Button { selectPermissionPreset("full_access") } label: {
+                    Label("Trusted Session", systemImage: "bolt.fill")
                 }
             } label: {
                 HStack(spacing: 3) {
@@ -1058,7 +1093,79 @@ struct Composer: View {
         selectedReasoningEffort = cardReasoningEffort
         selectedFastMode = cardFastMode
         selectedKimiThinking = cardKimiThinking
+        syncProjectedTrustedSession()
+        resyncPermissionToThread()
         providerEcho?.wrappedValue = selectedProvider
+    }
+
+    private func syncProjectedTrustedSession() {
+        guard let provider = card.provider?.lowercased(), !provider.isEmpty else { return }
+        if card.trustedSessionEnabled == true {
+            trustedSessionProviders.insert(provider)
+        } else {
+            trustedSessionProviders.remove(provider)
+        }
+        trustedSessionEnabled = trustedSessionProviders.contains(selectedProvider.lowercased())
+        if approvalMode == "full_access", !trustedSessionEnabled {
+            approvalMode = "workspace_write"
+        }
+    }
+
+    private func resyncPermissionToThread() {
+        let projectedPreset = card.permissionPresetId ?? {
+            if card.workflowMode == "plan" { return "plan" }
+            if card.approvalMode == "plan" { return "read_only" }
+            if card.approvalMode == "auto_edit" { return "workspace_write" }
+            return "default"
+        }()
+        approvalMode =
+            projectedPreset == "full_access" && !trustedSessionEnabled
+            ? "workspace_write" : projectedPreset
+    }
+
+    private func selectPermissionPreset(_ presetId: String) {
+        if presetId == "full_access" {
+            if trustedSessionEnabled {
+                approvalMode = "full_access"
+            } else {
+                trustedSessionAcknowledged = false
+                showTrustedSessionConsent = true
+            }
+            return
+        }
+        guard trustedSessionEnabled else {
+            approvalMode = presetId
+            return
+        }
+        guard !trustedSessionBusy else { return }
+        trustedSessionBusy = true
+        model.setTrustedSession(
+            card, enabled: false, provider: selectedProvider,
+            runtimeProfileId: card.runtimeProfileId
+        ) { success in
+            trustedSessionBusy = false
+            guard success else { return }
+            trustedSessionEnabled = false
+            trustedSessionProviders.remove(selectedProvider.lowercased())
+            approvalMode = presetId
+        }
+    }
+
+    private func enableTrustedSession() {
+        guard trustedSessionAcknowledged, !trustedSessionBusy else { return }
+        trustedSessionBusy = true
+        model.setTrustedSession(
+            card, enabled: true, provider: selectedProvider,
+            runtimeProfileId: card.runtimeProfileId
+        ) { enabled in
+            trustedSessionBusy = false
+            guard enabled else { return }
+            trustedSessionEnabled = true
+            trustedSessionProviders.insert(selectedProvider.lowercased())
+            approvalMode = "full_access"
+            trustedSessionAcknowledged = false
+            showTrustedSessionConsent = false
+        }
     }
 
     private func nonEmpty(_ value: String?) -> String? {
@@ -1293,5 +1400,52 @@ struct Composer: View {
             return "Ask the Ensemble"
         }
         return "Ask \(providerName) anything…"
+    }
+}
+
+struct TrustedSessionConsentSheet: View {
+    @Binding var acknowledged: Bool
+    let isBusy: Bool
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Image(systemName: "bolt.shield.fill")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(Color(hex: 0xDC2626))
+            Text("Start a Trusted Session?")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+            Text(
+                "This is the highest local authority for this exact chat lane. Where the provider supports it, the agent may use shell commands outside the workspace, signing or Keychain tools, and files outside the workspace."
+            )
+            .font(.callout)
+            .foregroundStyle(TWTheme.textSecondary)
+            Text(
+                "Other chats and Ensemble lanes are unchanged. Publishing externally and other separately governed actions still require their own permission. The grant lasts for this Mac process only."
+            )
+            .font(.footnote)
+            .foregroundStyle(TWTheme.textMuted)
+            Toggle(
+                "I understand this lane receives Trusted Session authority",
+                isOn: $acknowledged
+            )
+            .font(.footnote.weight(.medium))
+            Spacer(minLength: 0)
+            HStack {
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
+                Spacer()
+                Button(action: onConfirm) {
+                    if isBusy { ProgressView() } else { Text("Start Trusted Session") }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(hex: 0xDC2626))
+                .disabled(!acknowledged || isBusy)
+            }
+        }
+        .padding(24)
     }
 }

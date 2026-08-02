@@ -1,39 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
   ADMIN_REMOTE_WORKSPACE_CAPABILITIES,
-  APPROVAL_MODE_OPTIONS,
   FILE_REMOTE_WORKSPACE_CAPABILITIES,
   LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
-  PROVIDER_OPTIONS,
   READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES,
-  REMOTE_GRANTABLE_PROVIDER_IDS,
   READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   capabilitiesForRemoteWorkspaceMode,
   isAdminRemoteWorkspaceCapability
 } from './remoteWorkspaceDefaults'
 
 // Drift guard: capability arrays must stay byte-identical to
-// src/main/RemoteWorkspaceAllowlist.ts. Active provider defaults are pinned here.
+// src/main/RemoteWorkspaceAllowlist.ts. Provider admission is intentionally separate.
 describe('remoteWorkspaceDefaults', () => {
-  it('pins active providers and mirrors approval-mode options', () => {
-    expect([...PROVIDER_OPTIONS]).toEqual([
-      'codex',
-      'claude',
-      'kimi',
-      'cursor',
-      'grok',
-      'ollama',
-      'pi',
-      'mistral'
-    ])
-    expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
-  })
-
-  it('keeps AntiGravity grantable without widening the static default grant', () => {
-    expect([...REMOTE_GRANTABLE_PROVIDER_IDS]).toEqual([...PROVIDER_OPTIONS, 'antigravity'])
-    expect(PROVIDER_OPTIONS).not.toContain('antigravity')
-  })
-
   it('mirrors the capability sets exactly', () => {
     expect([...READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES]).toEqual(['monitor', 'approve'])
     expect([...LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES]).toEqual([

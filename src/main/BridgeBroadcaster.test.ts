@@ -62,9 +62,7 @@ function makeAllowlist(workspaceIds: string[]): RemoteWorkspaceAllowlist {
     allowlist.upsert({
       workspaceId,
       path: `/tmp/projects/${workspaceId}`,
-      mode: 'read-write',
-      allowedProviders: ['gemini', 'codex', 'claude', 'kimi'],
-      allowedApprovalModes: ['default', 'plan']
+      mode: 'read-write'
     })
   }
   return allowlist
@@ -865,7 +863,7 @@ describe('BridgeBroadcaster', () => {
     ])
   })
 
-  it('filters workspace and thread lists through the remote allowlist', () => {
+  it('projects registered workspace stubs while keeping ungranted thread content hidden', () => {
     const notify = vi.fn()
     const store = makeFakeStore(
       [
@@ -891,7 +889,15 @@ describe('BridgeBroadcaster', () => {
     expect(notify).toHaveBeenNthCalledWith(1, BRIDGE_BROADCAST_METHODS.workspaceList, {
       workspaces: [
         expect.objectContaining({
-          workspaceId: 'ws-visible'
+          workspaceId: 'ws-visible',
+          remoteAccessGranted: true
+        }),
+        expect.objectContaining({
+          workspaceId: 'ws-hidden',
+          remoteAccessGranted: false,
+          path: '',
+          chatCount: 0,
+          runningChatCount: 0
         })
       ]
     })
@@ -929,7 +935,7 @@ describe('BridgeBroadcaster', () => {
     expect(notify).toHaveBeenCalledWith(BRIDGE_BROADCAST_METHODS.threadList, { threads: [] })
   })
 
-  it('skips single update broadcasts for disallowed workspaces and chats', () => {
+  it('broadcasts an ungranted workspace stub but still suppresses its chat update', () => {
     const notify = vi.fn()
     const store = makeFakeStore(
       [makeWorkspace({ id: 'ws-hidden' })],
@@ -945,7 +951,16 @@ describe('BridgeBroadcaster', () => {
     broadcaster.broadcastWorkspaceUpdated('ws-hidden')
     broadcaster.broadcastThreadUpdated('chat-hidden')
 
-    expect(notify).not.toHaveBeenCalled()
+    expect(notify).toHaveBeenCalledTimes(1)
+    expect(notify).toHaveBeenCalledWith(BRIDGE_BROADCAST_METHODS.workspaceUpdated, {
+      workspace: expect.objectContaining({
+        workspaceId: 'ws-hidden',
+        remoteAccessGranted: false,
+        path: '',
+        chatCount: 0,
+        runningChatCount: 0
+      })
+    })
   })
 
   it('swallows notify errors and clears the throttle so the next attempt can retry', () => {
@@ -1037,7 +1052,7 @@ describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
     expect(notify).toHaveBeenCalledTimes(1)
   })
 
-  it('applies the same visibility filtering as the periodic broadcast', () => {
+  it('applies the same workspace-stub and content filtering as the periodic broadcast', () => {
     const notify = vi.fn()
     const sink = vi.fn()
     const store = makeFakeStore(
@@ -1058,8 +1073,15 @@ describe('BridgeBroadcaster.emitSnapshotTo (Slice 1 targeted resync)', () => {
     })
     broadcaster.emitSnapshotTo(sink)
     const wsCall = sink.mock.calls.find((c) => c[0] === BRIDGE_BROADCAST_METHODS.workspaceList)
-    const workspaces = (wsCall?.[1] as { workspaces: Array<{ workspaceId: string }> }).workspaces
-    expect(workspaces.map((w) => w.workspaceId)).toEqual(['ws-visible'])
+    const workspaces = (
+      wsCall?.[1] as {
+        workspaces: Array<{ workspaceId: string; remoteAccessGranted?: boolean }>
+      }
+    ).workspaces
+    expect(workspaces).toEqual([
+      expect.objectContaining({ workspaceId: 'ws-visible', remoteAccessGranted: true }),
+      expect.objectContaining({ workspaceId: 'ws-hidden', remoteAccessGranted: false })
+    ])
   })
 
   it('oversized projection fans EACH envelope to the sink (never the daemon)', () => {

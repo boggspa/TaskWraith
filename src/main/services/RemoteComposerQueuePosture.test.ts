@@ -142,7 +142,7 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
     )
   })
 
-  it('ignores non-top-tier permissionPresetIds from queued remote prompts', () => {
+  it('freezes Workspace Write exactly for queued remote prompts', () => {
     const signRunPermissionPosture = vi.fn(() => 'e'.repeat(64))
 
     const snapshot = buildRemoteComposerQueuePermissionPosture({
@@ -159,8 +159,13 @@ describe('buildRemoteComposerQueuePermissionPosture', () => {
       signRunPermissionPosture
     })
 
-    expect(snapshot.presetId).toBeUndefined()
-    expect(snapshot.approvalMode).toBe('default')
+    expect(snapshot.presetId).toBe('workspace_write')
+    expect(snapshot.approvalMode).toBe('auto_edit')
+    expect(signRunPermissionPosture).toHaveBeenCalledWith(
+      'auto_edit',
+      expect.objectContaining({ presetId: 'workspace_write', readOnly: false }),
+      expect.objectContaining({ workflowMode: 'normal' })
+    )
   })
 
   it('forces global queued prompts to a signed read-only posture', () => {

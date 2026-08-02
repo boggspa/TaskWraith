@@ -1416,8 +1416,6 @@ const api = {
     path: string
     mode: 'read-only' | 'read-write'
     capabilities?: string[]
-    allowedProviders: string[]
-    allowedApprovalModes: string[]
     expiresAt?: number
   }) => ipcRenderer.invoke('bridge-allowlist-upsert', entry),
   bridgeAllowlistRemove: (workspaceId: string) =>

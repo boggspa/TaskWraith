@@ -545,9 +545,17 @@ public final class RemoteSessionModel: ObservableObject {
     // `public private(set)`: setter stays internal, but the projected publisher
     // must be observable by ThreadTranscriptStore's re-render gate.
     @Published public private(set) var repliedProposedPlanIds: Set<String> = []
-    /// Allowlist-visible workspaces (the compose surface). Empty until the Mac
-    /// has at least one entry in Settings → Devices → workspace access.
+    /// Every Mac-registered workspace (the compose surface). Ungranted entries
+    /// are redacted consent stubs with `remoteAccessGranted == false`.
     @Published public private(set) var workspaces: [WorkspaceSummary] = []
+    /// Host-authoritative deny wall learned from registered workspace stubs.
+    /// Once a workspace is denied, delayed/coalesced projections for it are
+    /// discarded until a later workspace-list grant (or grant ack) reopens it.
+    private var deniedRemoteWorkspaceIds: Set<String> = []
+    /// Thread aliases retained only as revocation tombstones. The readable
+    /// threadWorkspaceHints cache is purged, but these ids let us reject a late
+    /// ensemble/diff/run-event projection that carries no workspace id itself.
+    private var revokedThreadWorkspaceHints: [String: String] = [:]
     /// Task-card ids currently synthesized from `bridge.broadcastThreadList`.
     /// Cleared when an authoritative projection snapshot replaces them.
     private var fallbackThreadListCardIds: Set<String> = []
@@ -2220,6 +2228,8 @@ public final class RemoteSessionModel: ObservableObject {
         workspaceBoards = []
         ensemblePresets = []
         threadWorkspaceHints = [:]
+        deniedRemoteWorkspaceIds = []
+        revokedThreadWorkspaceHints = [:]
         demoFileEdits = [:]
         // Expanded transcript row bodies hold verbatim message/tool content —
         // wiping snapshots without these would leave a host's transcript text
@@ -3255,15 +3265,7 @@ public final class RemoteSessionModel: ObservableObject {
                 print("[tw] DECODE FAILED: workspace list")
                 return
             }
-            // Non-destructive: an empty list while we HOLD workspaces is
-            // far more likely a settling-Mac snapshot than a real
-            // revocation — keep state, the rehydrate re-seed corrects it.
-            if message.workspaces.isEmpty, !workspaces.isEmpty {
-                print("[tw] ignoring empty workspace list (have \(workspaces.count))")
-            } else {
-                workspaces = message.workspaces
-            }
-            if !message.workspaces.isEmpty { markProjectionContentHydrated() }
+            applyWorkspaceList(message)
         case "bridge.broadcastThreadList":
             guard let message = try? JSONDecoder().decode(ThreadListMessage.self, from: params)
             else {
@@ -3416,6 +3418,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// (and arm a deferred clear against B's bubble). An exit for a run other
     /// than the live one is a no-op; a nil exitRunId keeps legacy behavior.
     private func markStreamingTerminal(threadId: String, exitRunId: String? = nil) {
+        guard remoteThreadContentIsAllowed(keys: [threadId]) else { return }
         if let exitRunId, let live = streamingRunIds[threadId], live != exitRunId {
             return
         }
@@ -3449,6 +3452,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func appendStreamingDeltas(
         threadId: String, runId: String?, provider: String?, data: String
     ) {
+        guard remoteThreadContentIsAllowed(keys: [threadId]) else { return }
         var staging = streamingPublishGate.staging(
             for: threadId,
             fallbackSegments: streamingSegments[threadId] ?? [streamingTexts[threadId] ?? ""],
@@ -3650,7 +3654,9 @@ public final class RemoteSessionModel: ObservableObject {
     /// most once. This is the compatibility path for old hosts without explicit
     /// batch metadata and for genuine low-latency one-off deltas.
     private func mergeDecodedProjections(_ projections: [DecodedProjection]) {
-        var existingCards = taskCards
+        var existingCards = taskCards.filter {
+            remoteThreadContentIsAllowed(workspaceId: $0.workspaceId, keys: keys(for: $0))
+        }
         var insertedCards: [RemoteTaskCard] = []
         var existingCardIndexByKey: [String: Int] = [:]
         var insertedCardIndexByKey: [String: Int] = [:]
@@ -3674,6 +3680,10 @@ public final class RemoteSessionModel: ObservableObject {
             case .taskCard(let decodedCard, let embedded, let envelopeThreadId):
                 let card = cardResolvingPendingThreadTitle(decodedCard)
                 let cardKeys = keys(for: card)
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: cardKeys)
+                else { continue }
+                markRemoteThreadContentAllowed(for: card)
                 if let index = cardKeys.compactMap({ insertedCardIndexByKey[$0] }).max() {
                     let oldCard = insertedCards[index]
                     for key in keys(for: oldCard) where insertedCardIndexByKey[key] == index {
@@ -3712,12 +3722,17 @@ public final class RemoteSessionModel: ObservableObject {
                     for key in cardKeys { nextEnsembleStates[key] = nil }
                 }
             case .workflow(let workflow):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: workflow.workspaceId,
+                    keys: projectionKeys(workflow.threadId))
+                else { continue }
                 if let index = nextWorkflows.firstIndex(where: { $0.id == workflow.id }) {
                     nextWorkflows[index] = workflow
                 } else {
                     nextWorkflows.append(workflow)
                 }
             case .workspaceBoard(let board):
+                guard remoteContentIsAllowed(workspaceId: board.workspaceId) else { continue }
                 if let index = nextBoards.firstIndex(where: { $0.id == board.id }) {
                     nextBoards[index] = board
                 } else {
@@ -3730,22 +3745,33 @@ public final class RemoteSessionModel: ObservableObject {
                     nextPresets.append(preset)
                 }
             case .approval(let card):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: projectionKeys(card.threadId))
+                else { continue }
                 mergeApprovalCard(card, into: &nextApprovals)
             case .question(let card):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: projectionKeys(card.threadId))
+                else { continue }
                 mergeQuestionCard(card, into: &nextQuestions)
             case .threadSnapshot(let snapshot, let fallbackKey):
                 if let fallbackKey {
                     mergeThreadSnapshot(snapshot, key: fallbackKey, into: &nextThreadSnapshots)
                 }
             case .ensembleState(let state, let envelopeThreadId):
-                for key in keys(for: state, envelopeThreadId: envelopeThreadId) {
+                let stateKeys = keys(for: state, envelopeThreadId: envelopeThreadId)
+                guard remoteThreadContentIsAllowed(keys: stateKeys) else { continue }
+                for key in stateKeys {
                     nextEnsembleStates[key] = state
                 }
             case .diffSummary(let diff, let envelopeThreadId):
-                for key in keys(for: diff, envelopeThreadId: envelopeThreadId) {
+                let diffKeys = keys(for: diff, envelopeThreadId: envelopeThreadId)
+                guard remoteThreadContentIsAllowed(keys: diffKeys) else { continue }
+                for key in diffKeys {
                     nextDiffSummaries[key] = diff
                 }
             case .gitSnapshot(let snapshot, let workspaceId):
+                guard remoteContentIsAllowed(workspaceId: workspaceId) else { continue }
                 nextGitSnapshots[workspaceId] = snapshot
             case .shellAppearance(let appearance):
                 shellAppearances.append(appearance)
@@ -3797,6 +3823,9 @@ public final class RemoteSessionModel: ObservableObject {
 
     private func mergeThreadSnapshot(_ incoming: RemoteThreadSnapshot, key: String) {
         let aliasKeys = keys(for: incoming, fallbackKey: key)
+        guard remoteThreadContentIsAllowed(
+            workspaceId: incoming.workspaceId, keys: aliasKeys)
+        else { return }
         if threadSnapshotIsExactlyCurrent(incoming, aliasKeys: aliasKeys, in: threadSnapshots) {
             reconcileThreadSnapshotAliases(incoming, aliasKeys: aliasKeys)
             return
@@ -3840,6 +3869,9 @@ public final class RemoteSessionModel: ObservableObject {
         into snapshots: inout [String: RemoteThreadSnapshot]
     ) {
         let aliasKeys = keys(for: incoming, fallbackKey: key)
+        guard remoteThreadContentIsAllowed(
+            workspaceId: incoming.workspaceId, keys: aliasKeys)
+        else { return }
         guard let primaryKey = aliasKeys.first else { return }
         if threadSnapshotIsExactlyCurrent(incoming, aliasKeys: aliasKeys, in: snapshots) {
             reconcileThreadSnapshotAliases(incoming, aliasKeys: aliasKeys)
@@ -4439,6 +4471,33 @@ public final class RemoteSessionModel: ObservableObject {
         return keys
     }
 
+    private func remoteContentIsAllowed(workspaceId: String?) -> Bool {
+        guard let workspaceId, !workspaceId.isEmpty, workspaceId != "global" else { return true }
+        return !deniedRemoteWorkspaceIds.contains(workspaceId)
+    }
+
+    private func remoteThreadContentIsAllowed(keys: [String]) -> Bool {
+        !keys.contains { key in
+            guard let workspaceId = revokedThreadWorkspaceHints[key] ?? threadWorkspaceHints[key]
+            else { return false }
+            return deniedRemoteWorkspaceIds.contains(workspaceId)
+        }
+    }
+
+    private func remoteThreadContentIsAllowed(
+        workspaceId: String?, keys: [String]
+    ) -> Bool {
+        remoteContentIsAllowed(workspaceId: workspaceId)
+            && remoteThreadContentIsAllowed(keys: keys)
+    }
+
+    private func markRemoteThreadContentAllowed(for card: RemoteTaskCard) {
+        let cardKeys = keys(for: card)
+        guard remoteThreadContentIsAllowed(workspaceId: card.workspaceId, keys: cardKeys)
+        else { return }
+        for key in cardKeys { revokedThreadWorkspaceHints[key] = nil }
+    }
+
     private func keys(for card: RemoteTaskCard) -> [String] {
         projectionKeys(card.id, card.threadId)
     }
@@ -4460,8 +4519,12 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func rememberWorkspace(for card: RemoteTaskCard) {
+        let cardKeys = keys(for: card)
+        guard remoteThreadContentIsAllowed(workspaceId: card.workspaceId, keys: cardKeys)
+        else { return }
+        markRemoteThreadContentAllowed(for: card)
         let workspaceId = card.workspaceId?.isEmpty == false ? card.workspaceId! : "global"
-        for key in keys(for: card) {
+        for key in cardKeys {
             rememberThreadWorkspace(key, workspaceId: workspaceId)
         }
     }
@@ -4823,6 +4886,7 @@ public final class RemoteSessionModel: ObservableObject {
     /// ack. `@Published` emits even for an equal dictionary subscript write, so
     /// every ack-side cache update must pass through this equality gate.
     private func cacheGitSnapshot(_ snapshot: GitWorkspaceSnapshot, workspaceId: String) {
+        guard remoteContentIsAllowed(workspaceId: workspaceId) else { return }
         guard gitSnapshots[workspaceId] != snapshot else { return }
         gitSnapshots[workspaceId] = snapshot
     }
@@ -5130,9 +5194,10 @@ public final class RemoteSessionModel: ObservableObject {
         public var role: String
         public var brief: String
         public var enabled: Bool
-        /// Per-participant approval preset (read_only | plan | default | full_access;
-        /// legacy workspace_write is tolerated but no longer offered for new picks).
+        /// Per-participant desktop permission preset.
         public var permissionPresetId: String?
+        public var runtimeProfileId: String?
+        public var trustedSessionEnabled: Bool
         /// Per-participant reasoning effort. Kimi uses `on` for K2.7 Coding and
         /// Low/High/Max for K3; `thinkingEnabled` remains a compatibility field.
         public var reasoningEffort: String?
@@ -5150,7 +5215,8 @@ public final class RemoteSessionModel: ObservableObject {
             permissionPresetId: String? = nil, reasoningEffort: String? = nil,
             fastModeEnabled: Bool = false, thinkingEnabled: Bool = false,
             stageRole: String? = nil,
-            isBossman: Bool = false, isSecondInCommand: Bool = false
+            isBossman: Bool = false, isSecondInCommand: Bool = false,
+            runtimeProfileId: String? = nil, trustedSessionEnabled: Bool = false
         ) {
             self.id = id
             self.provider = provider
@@ -5159,6 +5225,8 @@ public final class RemoteSessionModel: ObservableObject {
             self.brief = brief
             self.enabled = enabled
             self.permissionPresetId = permissionPresetId
+            self.runtimeProfileId = runtimeProfileId
+            self.trustedSessionEnabled = trustedSessionEnabled
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
@@ -5760,6 +5828,8 @@ public final class RemoteSessionModel: ObservableObject {
     private var threadWorkspaceHints: [String: String] = [:]
 
     public func rememberThreadWorkspace(_ threadId: String, workspaceId: String) {
+        guard remoteContentIsAllowed(workspaceId: workspaceId) else { return }
+        revokedThreadWorkspaceHints[threadId] = nil
         threadWorkspaceHints[threadId] = workspaceId
     }
 
@@ -5840,14 +5910,21 @@ public final class RemoteSessionModel: ObservableObject {
     }
 
     private func applyThreadList(_ message: ThreadListMessage) {
-        if message.threads.isEmpty, !taskCards.isEmpty {
+        let visibleThreads = message.threads.filter {
+            remoteThreadContentIsAllowed(
+                workspaceId: $0.workspaceId, keys: projectionKeys($0.chatId))
+        }
+        let visibleExistingCards = taskCards.filter {
+            remoteThreadContentIsAllowed(workspaceId: $0.workspaceId, keys: keys(for: $0))
+        }
+        if visibleThreads.isEmpty, !visibleExistingCards.isEmpty {
             print("[tw] ignoring empty thread list (have \(taskCards.count) cards)")
             return
         }
         let merged = ThreadListFallback.mergeTaskCards(
-            existing: taskCards,
+            existing: visibleExistingCards,
             fallbackCardIds: fallbackThreadListCardIds,
-            threads: message.threads)
+            threads: visibleThreads)
         taskCards = merged.cards
         fallbackThreadListCardIds = merged.fallbackCardIds
         for card in merged.cards {
@@ -5857,6 +5934,164 @@ public final class RemoteSessionModel: ObservableObject {
             markProjectionContentHydrated()
         }
     }
+
+    /// Apply the Mac's complete workspace registry projection. Registered but
+    /// ungranted workspaces remain visible as consent stubs; a transition to an
+    /// explicit denied stub is also the authoritative cache-revocation signal.
+    /// This keeps the reconnect settling guard below without leaving readable
+    /// task content behind after Settings removes a grant.
+    private func applyWorkspaceList(_ message: WorkspaceListMessage) {
+        // Non-destructive: a completely empty list while we HOLD workspaces is
+        // far more likely a settling-Mac snapshot than a real removal. A real
+        // grant revocation projects the registered workspace with
+        // remoteAccessGranted=false, so it never relies on this ambiguous case.
+        if message.workspaces.isEmpty, !workspaces.isEmpty {
+            print("[tw] ignoring empty workspace list (have \(workspaces.count))")
+            return
+        }
+
+        let previousById = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, $0) })
+        let incomingIds = Set(message.workspaces.map(\.id))
+        var revokedWorkspaceIds = Set(previousById.keys.filter { !incomingIds.contains($0) })
+        for workspace in message.workspaces where workspace.remoteAccessGranted == false {
+            revokedWorkspaceIds.insert(workspace.id)
+        }
+        let grantedWorkspaceIds = Set(
+            message.workspaces
+                .filter { $0.remoteAccessGranted != false }
+                .map(\.id))
+
+        deniedRemoteWorkspaceIds.formUnion(revokedWorkspaceIds)
+        deniedRemoteWorkspaceIds.subtract(grantedWorkspaceIds)
+        if !grantedWorkspaceIds.isEmpty {
+            revokedThreadWorkspaceHints = revokedThreadWorkspaceHints.filter {
+                !grantedWorkspaceIds.contains($0.value)
+            }
+        }
+
+        if !revokedWorkspaceIds.isEmpty {
+            purgeRemoteContent(forWorkspaceIds: revokedWorkspaceIds)
+        }
+        workspaces = message.workspaces
+        if !message.workspaces.isEmpty { markProjectionContentHydrated() }
+    }
+
+    private func markRemoteWorkspaceGrantedFromAck(_ workspaceId: String) {
+        deniedRemoteWorkspaceIds.remove(workspaceId)
+        revokedThreadWorkspaceHints = revokedThreadWorkspaceHints.filter { $0.value != workspaceId }
+        workspaces = workspaces.map { current in
+            guard current.id == workspaceId else { return current }
+            var granted = current
+            granted.remoteAccessGranted = true
+            granted.remoteAccessMode = "read-write"
+            return granted
+        }
+    }
+
+    /// Remove only content belonging to a workspace whose remote grant was
+    /// revoked. Provider catalogs and other still-granted workspaces remain
+    /// intact; subsequent authoritative thread/projection broadcasts refill
+    /// anything still visible.
+    private func purgeRemoteContent(forWorkspaceIds workspaceIds: Set<String>) {
+        guard !workspaceIds.isEmpty else { return }
+
+        var revokedThreadKeys = Set(
+            taskCards
+                .filter { card in
+                    guard let workspaceId = card.workspaceId else { return false }
+                    return workspaceIds.contains(workspaceId)
+                }
+                .flatMap { keys(for: $0) })
+        for (key, workspaceId) in threadWorkspaceHints where workspaceIds.contains(workspaceId) {
+            revokedThreadKeys.insert(key)
+        }
+        for (key, snapshot) in threadSnapshots
+        where snapshot.workspaceId.map(workspaceIds.contains) == true
+        {
+            revokedThreadKeys.formUnion(keys(for: snapshot, fallbackKey: key))
+        }
+        for key in revokedThreadKeys {
+            if let workspaceId = taskCards.first(where: { keys(for: $0).contains(key) })?.workspaceId,
+                workspaceIds.contains(workspaceId)
+            {
+                revokedThreadWorkspaceHints[key] = workspaceId
+            } else if let workspaceId = threadWorkspaceHints[key], workspaceIds.contains(workspaceId)
+            {
+                revokedThreadWorkspaceHints[key] = workspaceId
+            } else if let workspaceId = threadSnapshots[key]?.workspaceId,
+                workspaceIds.contains(workspaceId)
+            {
+                revokedThreadWorkspaceHints[key] = workspaceId
+            }
+        }
+
+        taskCards.removeAll { card in
+            card.workspaceId.map(workspaceIds.contains) == true
+                || !Set(keys(for: card)).isDisjoint(with: revokedThreadKeys)
+        }
+        fallbackThreadListCardIds.subtract(revokedThreadKeys)
+        approvals.removeAll { card in
+            card.workspaceId.map(workspaceIds.contains) == true
+                || card.threadId.map(revokedThreadKeys.contains) == true
+        }
+        questions.removeAll { card in
+            card.workspaceId.map(workspaceIds.contains) == true
+                || card.threadId.map(revokedThreadKeys.contains) == true
+        }
+        workflows.removeAll { workflow in
+            workflow.workspaceId.map(workspaceIds.contains) == true
+                || workflow.threadId.map(revokedThreadKeys.contains) == true
+        }
+        workspaceBoards.removeAll { board in
+            board.workspaceId.map(workspaceIds.contains) == true
+        }
+        threadSnapshots = threadSnapshots.filter { key, snapshot in
+            !revokedThreadKeys.contains(key)
+                && snapshot.workspaceId.map(workspaceIds.contains) != true
+        }
+        ensembleStates = ensembleStates.filter { key, _ in
+            !revokedThreadKeys.contains(key)
+        }
+        diffSummaries = diffSummaries.filter { key, _ in
+            !revokedThreadKeys.contains(key)
+        }
+        gitSnapshots = gitSnapshots.filter { key, _ in
+            !workspaceIds.contains(key)
+        }
+
+        for threadKey in revokedThreadKeys {
+            streamingTexts[threadKey] = nil
+            streamingSegments[threadKey] = nil
+            streamingRunIds[threadKey] = nil
+            streamingProviders[threadKey] = nil
+            streamingItemIds[threadKey] = nil
+            streamingTerminalThreads.remove(threadKey)
+            streamingPublishGate.reset(threadId: threadKey)
+            threadWorkspaceHints[threadKey] = nil
+            rowExpansions[threadKey] = nil
+            hiddenRunSummaryFingerprintsByThread[threadKey] = nil
+            wakeRefreshGeneration[threadKey] = nil
+            inspectorTabByThread[threadKey] = nil
+            pendingThreadSnapshotScopeWait.remove(threadKey)
+            loadingThreadSnapshots.remove(threadKey)
+            loadingPreviousThreadRows.remove(threadKey)
+            pendingThreadRefresh[threadKey]?.cancel()
+            pendingThreadRefresh[threadKey] = nil
+        }
+
+        if selectedTaskId.map(revokedThreadKeys.contains) == true { selectedTaskId = nil }
+        if navigationTarget.map(revokedThreadKeys.contains) == true { navigationTarget = nil }
+        if visibleThreadId.map(revokedThreadKeys.contains) == true { visibleThreadId = nil }
+        if pendingDeepLinkThreadId.map(revokedThreadKeys.contains) == true {
+            pendingDeepLinkThreadId = nil
+        }
+    }
+
+    #if DEBUG
+        func applyWorkspaceListForTesting(_ message: WorkspaceListMessage) {
+            applyWorkspaceList(message)
+        }
+    #endif
 
     /// Synchronous compatibility seam for direct model tests and locally built
     /// snapshots. Relay snapshots use `applyDecodedSnapshot` after their entire
@@ -5881,6 +6116,10 @@ public final class RemoteSessionModel: ObservableObject {
             switch projection {
             case .taskCard(let decodedCard, let embedded, let envelopeThreadId):
                 let card = cardResolvingPendingThreadTitle(decodedCard)
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: keys(for: card))
+                else { continue }
+                markRemoteThreadContentAllowed(for: card)
                 tasks.append(card)
                 if let state = embedded?.ensembleState {
                     for key in keys(
@@ -5897,28 +6136,48 @@ public final class RemoteSessionModel: ObservableObject {
                     }
                 }
             case .workflow(let workflow):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: workflow.workspaceId,
+                    keys: projectionKeys(workflow.threadId))
+                else { continue }
                 workflowCards.append(workflow)
             case .workspaceBoard(let board):
+                guard remoteContentIsAllowed(workspaceId: board.workspaceId) else { continue }
                 boardCards.append(board)
             case .ensemblePreset(let preset):
                 presetCards.append(preset)
             case .approval(let card):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: projectionKeys(card.threadId))
+                else { continue }
                 approvalCards.append(card)
             case .question(let card):
+                guard remoteThreadContentIsAllowed(
+                    workspaceId: card.workspaceId, keys: projectionKeys(card.threadId))
+                else { continue }
                 questionCards.append(card)
             case .threadSnapshot(let thread, let fallbackKey):
-                if let fallbackKey {
+                if let fallbackKey,
+                    remoteThreadContentIsAllowed(
+                        workspaceId: thread.workspaceId,
+                        keys: keys(for: thread, fallbackKey: fallbackKey))
+                {
                     snapshots.append((thread, fallbackKey))
                 }
             case .ensembleState(let state, let envelopeThreadId):
-                for key in keys(for: state, envelopeThreadId: envelopeThreadId) {
+                let stateKeys = keys(for: state, envelopeThreadId: envelopeThreadId)
+                guard remoteThreadContentIsAllowed(keys: stateKeys) else { continue }
+                for key in stateKeys {
                     ensembleSnapshots[key] = state
                 }
             case .diffSummary(let diff, let envelopeThreadId):
-                for key in keys(for: diff, envelopeThreadId: envelopeThreadId) {
+                let diffKeys = keys(for: diff, envelopeThreadId: envelopeThreadId)
+                guard remoteThreadContentIsAllowed(keys: diffKeys) else { continue }
+                for key in diffKeys {
                     diffSnapshots[key] = diff
                 }
             case .gitSnapshot(let git, let workspaceId):
+                guard remoteContentIsAllowed(workspaceId: workspaceId) else { continue }
                 incomingGitSnapshots[workspaceId] = git
             case .shellAppearance(let appearance):
                 shellAppearances.append(appearance)
@@ -6214,19 +6473,6 @@ public final class RemoteSessionModel: ObservableObject {
             phase = newPhase
         }
     #endif
-
-    /// The workspace allowlist's provider grant as the host projects it
-    /// (WorkspaceSummary.capabilities.allowedProviders). nil = no signal —
-    /// callers must offer their full roster, never hide on nil.
-    public func allowedProvidersForWorkspace(_ workspaceId: String?) -> [String]? {
-        guard let workspaceId, !workspaceId.isEmpty else { return nil }
-        guard
-            let allowed = workspaces.first(where: { $0.workspaceId == workspaceId })?
-                .capabilities?.allowedProviders,
-            !allowed.isEmpty
-        else { return nil }
-        return allowed
-    }
 
     public func answer(_ card: MobileQuestionCard, _ text: String, isCustom: Bool = true) {
         guard let promptId = card.resolvedId,
@@ -6583,6 +6829,84 @@ public final class RemoteSessionModel: ObservableObject {
                 if !accepted { onCreated?(nil) }
             }
         )
+    }
+
+    /// Record the first-thread workspace decision on the Mac. Granting creates
+    /// a persistent universal workspace entry; declining leaves any existing
+    /// entry untouched and returns `false`.
+    public func setRemoteWorkspaceAccess(
+        workspaceId: String, enabled: Bool, completion: @escaping (Bool) -> Void
+    ) {
+        if isDemo {
+            completion(enabled)
+            return
+        }
+        send(
+            BridgeAction.setRemoteWorkspaceAccess(
+                workspaceId: workspaceId, enabled: enabled),
+            timeoutMs: 12_000,
+            successLabel: enabled ? "Workspace access allowed." : "Workspace access not allowed.",
+            navigateOnAck: false,
+            onAckResult: { [weak self] accepted, ack in
+                guard accepted, let data = ack?.result,
+                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                else {
+                    completion(false)
+                    return
+                }
+                let granted = result.data?.granted == true
+                if granted { self?.markRemoteWorkspaceGrantedFromAck(workspaceId) }
+                completion(granted)
+            })
+    }
+
+    /// Grant/revoke the exact Mac-side Trusted Session lane. The completion is
+    /// host-authoritative; callers must not switch their UI to full_access until
+    /// it returns true.
+    public func setTrustedSession(
+        _ card: RemoteTaskCard, enabled: Bool,
+        ensembleParticipantId: String? = nil, provider: String? = nil,
+        runtimeProfileId: String? = nil,
+        completion: @escaping (Bool) -> Void
+    ) {
+        guard let workspaceId = card.workspaceId, let threadId = card.threadId,
+            let resolvedProvider = provider ?? card.provider
+        else {
+            completion(false)
+            return
+        }
+        if isDemo {
+            completion(true)
+            return
+        }
+        let resolvedRuntimeProfileId: String?
+        if ensembleParticipantId != nil {
+            resolvedRuntimeProfileId = runtimeProfileId
+        } else if resolvedProvider.caseInsensitiveCompare(card.provider ?? "") == .orderedSame {
+            resolvedRuntimeProfileId = runtimeProfileId ?? card.runtimeProfileId
+        } else {
+            // A changed solo provider must let the Mac resolve that provider's
+            // own profile; the projected card profile belongs to the old lane.
+            resolvedRuntimeProfileId = nil
+        }
+        send(
+            BridgeAction.setTrustedSession(
+                workspaceId: workspaceId, threadId: threadId,
+                provider: resolvedProvider, enabled: enabled,
+                ensembleParticipantId: ensembleParticipantId,
+                runtimeProfileId: resolvedRuntimeProfileId),
+            timeoutMs: 12_000,
+            successLabel: enabled ? "Trusted Session enabled." : "Trusted Session disabled.",
+            navigateOnAck: false,
+            onAckResult: { accepted, ack in
+                guard accepted, let data = ack?.result,
+                    let result = try? JSONDecoder().decode(BridgeActionAck.self, from: data)
+                else {
+                    completion(false)
+                    return
+                }
+                completion(result.data?.enabled == enabled)
+            })
     }
 
     /// Create an empty ensemble chat, optionally queue the first prompt.

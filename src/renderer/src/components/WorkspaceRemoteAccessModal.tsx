@@ -14,9 +14,11 @@ import { PillButton } from './PillButton'
  * Three options. "This Computer Only" is the default + safe choice. For a fresh
  * folder it means "no allowlist entry"; on RE-ADD of an already-allowlisted
  * folder it REVOKES the existing entry (so it never silently leaves remote
- * access on while the UI says local-only). Read / Read/Write grant access;
- * Read/Write shows an inline warning (file writes + git push). Cancel, Escape,
- * or backdrop = This Computer Only WITHOUT mutating (so dismissing is a true
+ * access on while the UI says local-only). Read / Read/Write grant access
+ * universally across the Mac-admitted provider set; Read/Write shows an inline
+ * warning (file writes + local commits). Thread permission presets and external
+ * publication remain separate. Cancel, Escape, or backdrop = This Computer Only
+ * WITHOUT mutating (so dismissing is a true
  * no-op, never an accidental revoke). Selection is staged; nothing is written
  * until "Grant access" / "Turn off remote".
  */
@@ -37,7 +39,7 @@ const OPTIONS: ReadonlyArray<{ value: ModalChoice; label: string; hint: string }
   {
     value: 'read-write',
     label: 'Remote · Read/Write',
-    hint: 'Paired devices can edit files and run git commit/push.'
+    hint: 'Paired devices can edit files and create local commits.'
   }
 ]
 
@@ -214,7 +216,8 @@ export function WorkspaceRemoteAccessModal({
         </h2>
         <p id={DESC_ID} className="creative-approval-modal-description">
           Can your paired iPhone / iPad reach this workspace? You can change this anytime in
-          Settings → Workspaces.
+          Settings → Workspaces. The choice applies to every provider this Mac currently admits;
+          each thread&apos;s permission preset remains separate.
         </p>
 
         <div className="workspace-remote-access-options" role="radiogroup" aria-label="Remote access">
@@ -247,7 +250,8 @@ export function WorkspaceRemoteAccessModal({
 
         {selected === 'read-write' && (
           <p id={WARN_WRITE_ID} role="alert" className="workspace-remote-access-warning">
-            Read/Write lets the phone edit files and run git commit/push over the network.
+            Read/Write lets the phone edit files and create local commits. Git push and other
+            external publishing remain separately controlled.
           </p>
         )}
         {isFirstGrant && selected !== 'local' && (

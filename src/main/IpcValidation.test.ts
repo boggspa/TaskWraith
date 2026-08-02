@@ -768,9 +768,7 @@ describe('IpcValidation', () => {
         {
           workspaceId: 'Gemini Smoke',
           path: '/Users/example/Desktop/gemini-workbench',
-          mode: 'read-write',
-          allowedProviders: ['gemini', 'codex', 'claude', 'kimi'],
-          allowedApprovalModes: ['default', 'plan']
+          mode: 'read-write'
         }
       ])
     ).not.toThrow()

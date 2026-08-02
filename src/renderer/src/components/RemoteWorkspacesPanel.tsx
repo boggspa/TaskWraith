@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import {
-  PROVIDER_OPTIONS,
-  REMOTE_GRANTABLE_PROVIDER_IDS
-} from '../../../shared/remoteWorkspaceDefaults'
 import { PillButton } from './PillButton'
-import { buildAllowlistUpsertForProviders } from './workspaceRemoteAccess'
 
 /**
  * RemoteWorkspacesPanel — Phase C4 admin UI for the iOS remote allowlist.
@@ -20,12 +15,12 @@ import { buildAllowlistUpsertForProviders } from './workspaceRemoteAccess'
  * mutation — the list is small (typically < 20 entries), so the cost
  * is negligible and the code stays trivially correct.
  *
- * UX shape (deliberately minimal for v1):
- *   - List of current entries with mode/providers/expiry inline
+ * UX shape:
+ *   - List of current entries with mode/capabilities/expiry inline
  *   - One-form "Add entry" inline at the top: a PICKER over the user's
  *     actual registered workspaces (id + path filled from the selection —
  *     free-text ids matched nothing because visibility keys on the store's
- *     workspace uuid) + mode/provider/approval checkboxes
+ *     workspace uuid) + mode/capability controls
  *   - Per-row "Remove" action
  *   - "Clear all" footer action with confirm
  *
@@ -39,8 +34,6 @@ interface RemoteWorkspaceEntry {
   path: string
   mode: 'read-only' | 'read-write'
   capabilities?: RemoteWorkspaceCapability[]
-  allowedProviders: string[]
-  allowedApprovalModes: string[]
   expiresAt?: number
   createdAt: number
   updatedAt: number
@@ -61,7 +54,6 @@ type RemoteWorkspaceCapability =
   | 'pin'
   | 'yolo'
 
-const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 const LEGACY_READ_WRITE_CAPABILITIES: RemoteWorkspaceCapability[] = [
   'monitor',
   'approve',
@@ -116,9 +108,9 @@ export function RemoteWorkspacesPanel(): ReactElement {
         <span className="remote-workspaces-count">{entries.length} allowed</span>
       </header>
       <div className="settings-hint remote-workspaces-hint">
-        Workspaces a paired iOS device may initiate runs against. Empty list = all iOS-initiated
-        turns are denied. Per-action revalidation is enforced — removing an entry takes effect on
-        the next iOS request.
+        Workspaces a paired iOS device may use. A grant applies to every provider currently
+        admitted by this Mac; each thread&apos;s permission preset remains separate. Empty list denies
+        workspace access. Removing an entry takes effect on the next iOS request.
       </div>
 
       {error && <div className="settings-error remote-workspaces-error">{error}</div>}
@@ -143,20 +135,12 @@ export function RemoteWorkspacesPanel(): ReactElement {
               <EntryRow
                 key={entry.workspaceId}
                 entry={entry}
-                onUpdateProviders={async (providers) => {
-                  await window.api.bridgeAllowlistUpsert(
-                    buildAllowlistUpsertForProviders(entry, providers)
-                  )
-                  await refresh()
-                }}
                 onEnableFiles={async () => {
                   await window.api.bridgeAllowlistUpsert({
                     workspaceId: entry.workspaceId,
                     path: entry.path,
                     mode: entry.mode,
                     capabilities: withFileEditingCapabilities(entry),
-                    allowedProviders: entry.allowedProviders,
-                    allowedApprovalModes: entry.allowedApprovalModes,
                     expiresAt: entry.expiresAt
                   })
                   await refresh()
@@ -169,8 +153,6 @@ export function RemoteWorkspacesPanel(): ReactElement {
                     capabilities: entryCanPublishExternally(entry)
                       ? withoutExternalPublishCapability(entry)
                       : withExternalPublishCapability(entry),
-                    allowedProviders: entry.allowedProviders,
-                    allowedApprovalModes: entry.allowedApprovalModes,
                     expiresAt: entry.expiresAt
                   })
                   await refresh()
@@ -206,54 +188,20 @@ export function RemoteWorkspacesPanel(): ReactElement {
 
 function EntryRow({
   entry,
-  onUpdateProviders,
   onEnableFiles,
   onTogglePublish,
   onRemove
 }: {
   entry: RemoteWorkspaceEntry
-  onUpdateProviders: (providers: string[]) => void | Promise<void>
   onEnableFiles: () => void | Promise<void>
   onTogglePublish: () => void | Promise<void>
   onRemove: () => void | Promise<void>
 }): ReactElement {
-  const [editingProviders, setEditingProviders] = useState(false)
-  const [providerDraft, setProviderDraft] = useState<Set<string>>(
-    () => new Set(entry.allowedProviders)
-  )
-  const [providerEditBusy, setProviderEditBusy] = useState(false)
-  const [providerEditError, setProviderEditError] = useState<string | null>(null)
   const expiresLabel =
     entry.expiresAt !== undefined ? new Date(entry.expiresAt).toLocaleString() : '—'
   const filesEnabled = workspaceEntryCanEditFiles(entry)
   const publishEnabled = entryCanPublishExternally(entry)
   const canEnableFiles = entry.mode === 'read-write' && !filesEnabled
-
-  useEffect(() => {
-    if (!editingProviders) setProviderDraft(new Set(entry.allowedProviders))
-  }, [editingProviders, entry.allowedProviders])
-
-  const toggleProvider = (provider: string): void => {
-    setProviderDraft((current) => {
-      const next = new Set(current)
-      if (next.has(provider)) next.delete(provider)
-      else next.add(provider)
-      return next
-    })
-  }
-
-  const saveProviders = async (): Promise<void> => {
-    setProviderEditBusy(true)
-    setProviderEditError(null)
-    try {
-      await onUpdateProviders(Array.from(providerDraft))
-      setEditingProviders(false)
-    } catch (error) {
-      setProviderEditError(error instanceof Error ? error.message : String(error))
-    } finally {
-      setProviderEditBusy(false)
-    }
-  }
 
   return (
     <li className="remote-workspaces-entry-card">
@@ -281,88 +229,15 @@ function EntryRow({
           <div className="remote-workspaces-meta">
             <div className="remote-workspaces-meta-group">
               <span className="remote-workspaces-meta-label">Providers</span>
-              <ChipList values={entry.allowedProviders} emptyLabel="None" />
-            </div>
-            <div className="remote-workspaces-meta-group">
-              <span className="remote-workspaces-meta-label">Approval</span>
-              <ChipList values={entry.allowedApprovalModes} emptyLabel="None" />
+              <span className="remote-workspaces-chip">All admitted providers</span>
             </div>
             <div className="remote-workspaces-meta-group">
               <span className="remote-workspaces-meta-label">Expires</span>
               <span className="remote-workspaces-chip">{expiresLabel}</span>
             </div>
           </div>
-          {editingProviders ? (
-            <fieldset className="remote-workspaces-fieldset">
-              <legend>Providers allowed from iOS</legend>
-              <div className="remote-workspaces-toggle-grid">
-                {REMOTE_GRANTABLE_PROVIDER_IDS.map((provider) => (
-                  <label
-                    key={provider}
-                    className={`remote-workspaces-toggle-chip ${
-                      providerDraft.has(provider) ? 'active' : ''
-                    }`}
-                    title={
-                      provider === 'antigravity'
-                        ? 'This grants paired-device use only after AntiGravity also passes its independent consent, credential, and authenticated-catalog gates.'
-                        : undefined
-                    }
-                  >
-                    <input
-                      type="checkbox"
-                      checked={providerDraft.has(provider)}
-                      onChange={() => toggleProvider(provider)}
-                      disabled={providerEditBusy}
-                    />
-                    <span>{provider}</span>
-                  </label>
-                ))}
-              </div>
-              <small className="remote-workspaces-field-hint">
-                AntiGravity remains unavailable unless its API-key or AGY consent setup is active on
-                this Mac.
-              </small>
-            </fieldset>
-          ) : null}
-          {providerEditError ? (
-            <div className="settings-error remote-workspaces-error">{providerEditError}</div>
-          ) : null}
         </div>
         <div className="remote-workspaces-entry-actions">
-          {editingProviders ? (
-            <>
-              <PillButton
-                size="compact"
-                variant="primary"
-                onClick={() => void saveProviders()}
-                disabled={providerEditBusy}
-              >
-                {providerEditBusy ? 'Saving…' : 'Save providers'}
-              </PillButton>
-              <PillButton
-                size="compact"
-                onClick={() => {
-                  setProviderDraft(new Set(entry.allowedProviders))
-                  setProviderEditError(null)
-                  setEditingProviders(false)
-                }}
-                disabled={providerEditBusy}
-              >
-                Cancel
-              </PillButton>
-            </>
-          ) : (
-            <PillButton
-              size="compact"
-              onClick={() => {
-                setProviderDraft(new Set(entry.allowedProviders))
-                setProviderEditError(null)
-                setEditingProviders(true)
-              }}
-            >
-              Edit providers
-            </PillButton>
-          )}
           {canEnableFiles ? (
             <PillButton
               size="compact"
@@ -434,22 +309,6 @@ function withoutExternalPublishCapability(entry: RemoteWorkspaceEntry): RemoteWo
   )
 }
 
-function ChipList({ values, emptyLabel }: { values: string[]; emptyLabel: string }): ReactElement {
-  const chips = values.length > 0 ? values : [emptyLabel]
-  return (
-    <span className="remote-workspaces-chip-list">
-      {chips.map((value) => (
-        <span
-          key={value}
-          className={`remote-workspaces-chip ${values.length === 0 ? 'is-empty' : ''}`}
-        >
-          {value}
-        </span>
-      ))}
-    </span>
-  )
-}
-
 interface WorkspacePickerOption {
   id: string
   displayName?: string
@@ -462,15 +321,6 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
   const [path, setPath] = useState('')
   const [mode, setMode] = useState<'read-only' | 'read-write'>('read-only')
   const [publishExternally, setPublishExternally] = useState(false)
-  // Default-select EVERY provider + both approval modes so granting a
-  // workspace is one tap — the per-provider gate stays available (untick
-  // chips) but is no longer the default friction. The phone's compose
-  // picker offers all providers; the Mac still enforces whatever subset
-  // is saved here on every action.
-  const [providers, setProviders] = useState<Set<string>>(new Set(PROVIDER_OPTIONS))
-  const [approvalModes, setApprovalModes] = useState<Set<string>>(
-    new Set(APPROVAL_MODE_OPTIONS)
-  )
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
@@ -495,13 +345,6 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
     setPath(workspace?.path ?? '')
   }
 
-  const toggle = (set: Set<string>, value: string, setter: (s: Set<string>) => void): void => {
-    const next = new Set(set)
-    if (next.has(value)) next.delete(value)
-    else next.add(value)
-    setter(next)
-  }
-
   const submit = async (): Promise<void> => {
     setFormError(null)
     if (!workspaceId.trim() || !path.trim()) {
@@ -514,16 +357,12 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
         workspaceId: workspaceId.trim(),
         path: path.trim(),
         mode,
-        capabilities: capabilitiesForMode(mode, publishExternally),
-        allowedProviders: Array.from(providers),
-        allowedApprovalModes: Array.from(approvalModes)
+        capabilities: capabilitiesForMode(mode, publishExternally)
       })
       setWorkspaceId('')
       setPath('')
       setMode('read-only')
       setPublishExternally(false)
-      setProviders(new Set(PROVIDER_OPTIONS))
-      setApprovalModes(new Set(APPROVAL_MODE_OPTIONS))
       await onAdded()
     } catch (err) {
       setFormError(err instanceof Error ? err.message : String(err))
@@ -616,45 +455,11 @@ function AddEntryForm({ onAdded }: { onAdded: () => void | Promise<void> }): Rea
         </small>
       </fieldset>
 
-      <fieldset className="remote-workspaces-fieldset">
-        <legend>Providers</legend>
-        <div className="remote-workspaces-toggle-grid">
-          {PROVIDER_OPTIONS.map((provider) => (
-            <label
-              key={provider}
-              className={`remote-workspaces-toggle-chip ${providers.has(provider) ? 'active' : ''}`}
-            >
-              <input
-                type="checkbox"
-                checked={providers.has(provider)}
-                onChange={() => toggle(providers, provider, setProviders)}
-                disabled={submitting}
-              />
-              <span>{provider}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
-      <fieldset className="remote-workspaces-fieldset">
-        <legend>Approval modes</legend>
-        <div className="remote-workspaces-toggle-grid">
-          {APPROVAL_MODE_OPTIONS.map((approvalMode) => (
-            <label
-              key={approvalMode}
-              className={`remote-workspaces-toggle-chip ${approvalModes.has(approvalMode) ? 'active' : ''}`}
-            >
-              <input
-                type="checkbox"
-                checked={approvalModes.has(approvalMode)}
-                onChange={() => toggle(approvalModes, approvalMode, setApprovalModes)}
-                disabled={submitting}
-              />
-              <span>{approvalMode}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <div className="settings-hint remote-workspaces-field-hint">
+        This grant follows Electron&apos;s live provider projection, including conditionally admitted
+        providers such as AntiGravity after their own consent and credential gates pass. Thread
+        permission presets are chosen per chat.
+      </div>
 
       {formError && <div className="settings-error remote-workspaces-error">{formError}</div>}
 

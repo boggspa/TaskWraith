@@ -1,15 +1,13 @@
-import { ANTIGRAVITY_PROVIDER_ID, LIVE_SELECTABLE_PROVIDER_IDS } from './retiredProviders'
-
 /**
- * Node-builtin-FREE mirror of the remote-workspace allowlist capability/provider
+ * Node-builtin-FREE mirror of the remote-workspace allowlist capability
  * constants that live in `src/main/RemoteWorkspaceAllowlist.ts`.
  *
  * The main module imports `fs` + `path`, so the renderer must NOT import its
  * VALUE exports (that would pull node builtins into the renderer bundle and
  * blank the window — see MEMORY.md). The renderer imports these copies instead.
  * Keep the capability arrays byte-identical to the main module's; the test in
- * `remoteWorkspaceDefaults.test.ts` is a drift guard. The provider list below is
- * the active remote-default set used for new grants.
+ * `remoteWorkspaceDefaults.test.ts` is a drift guard. Provider admission and
+ * per-thread approval posture deliberately live outside this workspace gate.
  */
 
 export type RemoteWorkspaceMode = 'read-only' | 'read-write'
@@ -41,32 +39,10 @@ export interface RemoteWorkspaceEntry {
   path: string
   mode: RemoteWorkspaceMode
   capabilities?: RemoteWorkspaceCapability[]
-  allowedProviders: string[]
-  allowedApprovalModes: string[]
   expiresAt?: number
   createdAt: number
   updatedAt: number
 }
-
-/** Active providers for new remote-workspace grants — the canonical
- * live-selectable set (Path-B Cursor included). Retired providers such as
- * Gemini remain readable through compatibility/history paths, but are not
- * granted for new phone-origin remote actions. */
-export const PROVIDER_OPTIONS = LIVE_SELECTABLE_PROVIDER_IDS
-
-/**
- * Providers a remote-workspace grant may explicitly authorize. This is wider
- * than the static live offer set only for conditionally admitted providers:
- * granting AntiGravity here never offers or runs it by itself — the independent
- * AGY consent / Gemini API credential + authenticated-catalog gates still apply
- * at picker projection and every dispatch.
- */
-export const REMOTE_GRANTABLE_PROVIDER_IDS = [
-  ...LIVE_SELECTABLE_PROVIDER_IDS,
-  ANTIGRAVITY_PROVIDER_ID
-] as const
-
-export const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 
 export const READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
   'monitor',

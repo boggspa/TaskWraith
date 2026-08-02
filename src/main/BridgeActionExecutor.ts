@@ -57,6 +57,8 @@ import type {
   BridgeFullProjectionResyncAction,
   BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
+  BridgeSetRemoteWorkspaceAccessAction,
+  BridgeSetTrustedSessionAction,
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
   BridgeSetChatArchivedAction,
@@ -121,6 +123,7 @@ export interface BridgeActionExecutionResult {
 export type BridgeActionExecutionReasonCode =
   | 'approvalAlreadyResolved'
   | 'approvalDispatchFailed'
+  | 'userDeclined'
 
 export interface BridgeActionExecutor {
   executeApprovalReply(action: BridgeApprovalReplyAction): Promise<BridgeActionExecutionResult>
@@ -246,6 +249,12 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeSetWatchedThread(action: BridgeSetWatchedThreadAction): Promise<BridgeActionExecutionResult>
   executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult>
+  executeSetRemoteWorkspaceAccess(
+    action: BridgeSetRemoteWorkspaceAccessAction
+  ): Promise<BridgeActionExecutionResult>
+  executeSetTrustedSession(
+    action: BridgeSetTrustedSessionAction
+  ): Promise<BridgeActionExecutionResult>
   executeTogglePinChat(action: BridgeTogglePinChatAction): Promise<BridgeActionExecutionResult>
   executeTogglePinWorkspace(
     action: BridgeTogglePinWorkspaceAction
@@ -548,6 +557,16 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
   async executeSetYoloMode(action: BridgeSetYoloModeAction): Promise<BridgeActionExecutionResult> {
     return notWired('setYoloMode', String(action.enabled))
+  }
+  async executeSetRemoteWorkspaceAccess(
+    action: BridgeSetRemoteWorkspaceAccessAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setRemoteWorkspaceAccess', action.workspaceId)
+  }
+  async executeSetTrustedSession(
+    action: BridgeSetTrustedSessionAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('setTrustedSession', action.threadId)
   }
   async executeTogglePinChat(
     action: BridgeTogglePinChatAction
@@ -871,6 +890,14 @@ export interface MainProcessActionExecutorDependencies {
   setYoloModeFn?: (enabled: boolean) => Promise<{
     enabled: boolean
     managedBlocked?: boolean
+    reason?: string
+  }>
+  setRemoteWorkspaceAccessFn?: (action: BridgeSetRemoteWorkspaceAccessAction) => Promise<{
+    granted: boolean
+    reason?: string
+  }>
+  setTrustedSessionFn?: (action: BridgeSetTrustedSessionAction) => Promise<{
+    enabled: boolean
     reason?: string
   }>
   togglePinChatFn?: (action: BridgeTogglePinChatAction) => Promise<{
@@ -2361,6 +2388,57 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] setYoloMode failed: ${errMessage}`)
       return { executed: false, message: `YOLO mode update failed: ${errMessage}` }
+    }
+  }
+
+  async executeSetRemoteWorkspaceAccess(
+    action: BridgeSetRemoteWorkspaceAccessAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setRemoteWorkspaceAccessFn) {
+      return notWired('setRemoteWorkspaceAccess', action.workspaceId)
+    }
+    try {
+      const result = await this.deps.setRemoteWorkspaceAccessFn(action)
+      return {
+        executed: true,
+        message:
+          result.reason ??
+          (result.granted
+            ? 'Workspace access granted for paired iOS companions.'
+            : 'Workspace access was not granted.'),
+        ...(!action.enabled && !result.granted ? { reasonCode: 'userDeclined' as const } : {}),
+        data: { workspaceId: action.workspaceId, granted: result.granted }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Workspace access update failed: ${message}` }
+    }
+  }
+
+  async executeSetTrustedSession(
+    action: BridgeSetTrustedSessionAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.setTrustedSessionFn) {
+      return notWired('setTrustedSession', action.threadId)
+    }
+    try {
+      const result = await this.deps.setTrustedSessionFn(action)
+      if (result.reason) return { executed: false, message: result.reason }
+      return {
+        executed: true,
+        message: `Trusted Session ${result.enabled ? 'enabled' : 'disabled'} for this lane.`,
+        data: {
+          threadId: action.threadId,
+          provider: action.provider,
+          enabled: result.enabled,
+          ...(action.ensembleParticipantId
+            ? { ensembleParticipantId: action.ensembleParticipantId }
+            : {})
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      return { executed: false, message: `Trusted Session update failed: ${message}` }
     }
   }
 

@@ -190,8 +190,6 @@ describe('authorizeRemoteComposerQueueDispatch', () => {
           workspaceId: 'workspace-1',
           path: '/repo',
           mode: 'read-write',
-          allowedProviders: ['gemini'],
-          allowedApprovalModes: ['plan'],
           createdAt: 1,
           updatedAt: 1
         }

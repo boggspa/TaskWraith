@@ -120,9 +120,7 @@ function makeMacSide(): MacSide {
   allowlist.upsert({
     workspaceId: 'ws-allowed',
     path: '/tmp/e2e-ws-allowed',
-    mode: 'read-write',
-    allowedProviders: ['claude', 'gemini'],
-    allowedApprovalModes: ['default', 'plan']
+    mode: 'read-write'
   })
 
   const router = new BridgeActionRouter({

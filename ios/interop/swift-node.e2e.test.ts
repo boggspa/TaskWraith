@@ -113,9 +113,7 @@ describe.skipIf(!enabled)('Swift ↔ Node live interop', () => {
     allowlist.upsert({
       workspaceId: 'ws-allowed',
       path: '/tmp/interop-ws',
-      mode: 'read-write',
-      allowedProviders: ['claude'],
-      allowedApprovalModes: ['default', 'plan']
+      mode: 'read-write'
     })
     const router = new BridgeActionRouter({ allowlist, executor, log: () => {} })
     const envelope = buildRemoteProjectionEnvelope({

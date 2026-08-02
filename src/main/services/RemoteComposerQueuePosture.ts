@@ -41,7 +41,10 @@ export function buildRemoteComposerQueuePermissionPosture(
       ? 'plan'
       : workflowMode === 'plan'
         ? 'plan'
-        : normalizeApprovalMode(input.approvalMode)
+        : input.permissionPresetId === 'workspace_write' ||
+            input.permissionPresetId === 'full_access'
+          ? 'auto_edit'
+          : normalizeApprovalMode(input.approvalMode)
   const permissionPresetId = remoteComposerQueuePermissionPresetId(
     approvalMode,
     workflowMode,
@@ -88,6 +91,7 @@ function remoteComposerQueuePermissionPresetId(
   if (permissionPresetId === 'full_access') {
     return trustedSessionGranted ? 'full_access' : 'workspace_write'
   }
+  if (permissionPresetId === 'workspace_write') return 'workspace_write'
   return undefined
 }
 

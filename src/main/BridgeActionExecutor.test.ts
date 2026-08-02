@@ -20,6 +20,8 @@ import type {
   BridgeFullProjectionResyncAction,
   BridgeSetWatchedThreadAction,
   BridgeSetYoloModeAction,
+  BridgeSetRemoteWorkspaceAccessAction,
+  BridgeSetTrustedSessionAction,
   BridgeThreadMediaFetchAction,
   BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
@@ -154,6 +156,20 @@ const sample = {
     workspaceId: 'ws-1',
     enabled: true
   } satisfies BridgeSetYoloModeAction,
+  setRemoteWorkspaceAccess: {
+    kind: 'setRemoteWorkspaceAccess',
+    workspaceId: 'ws-1',
+    enabled: true
+  } satisfies BridgeSetRemoteWorkspaceAccessAction,
+  setTrustedSession: {
+    kind: 'setTrustedSession',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    provider: 'codex',
+    enabled: true,
+    ensembleParticipantId: 'participant-1',
+    runtimeProfileId: 'profile-1'
+  } satisfies BridgeSetTrustedSessionAction,
   threadSnapshotRequest: {
     kind: 'threadSnapshotRequest',
     workspaceId: 'ws-1',
@@ -326,6 +342,8 @@ describe('NoopActionExecutor', () => {
       executor.executeEnsembleSteer(sample.ensembleSteer),
       executor.executeRegisterApnsToken(sample.registerApnsToken),
       executor.executeSetYoloMode(sample.setYoloMode),
+      executor.executeSetRemoteWorkspaceAccess(sample.setRemoteWorkspaceAccess),
+      executor.executeSetTrustedSession(sample.setTrustedSession),
       executor.executeGoalUpdate(sample.goalUpdate),
       executor.executeTogglePinChat(sample.togglePinChat),
       executor.executeTogglePinWorkspace(sample.togglePinWorkspace),
@@ -361,19 +379,21 @@ describe('NoopActionExecutor', () => {
     expect(results[10].message).toContain('t-1')
     expect(results[11].message).toContain('pair-1')
     expect(results[12].message).toContain('true')
-    expect(results[13].message).toContain('t-1')
-    expect(results[14].message).toContain('chat-1')
-    expect(results[15].message).toContain('ws-1')
-    expect(results[16].message).toContain('ws-1')
-    expect(results[17].message).toContain('README.md')
-    expect(results[18].message).toContain('README.md')
+    expect(results[13].message).toContain('ws-1')
+    expect(results[14].message).toContain('t-1')
+    expect(results[15].message).toContain('t-1')
+    expect(results[16].message).toContain('chat-1')
+    expect(results[17].message).toContain('ws-1')
+    expect(results[18].message).toContain('ws-1')
     expect(results[19].message).toContain('README.md')
-    expect(results[20].message).toContain('ws-1')
-    expect(results[21].message).toContain('media-1')
-    expect(results[22].message).toContain('oracle')
-    expect(results[23].message).toContain('t-1')
-    expect(results[25].message).toContain('wf-1')
-    expect(results[26].message).toContain('wf-1')
+    expect(results[20].message).toContain('README.md')
+    expect(results[21].message).toContain('README.md')
+    expect(results[22].message).toContain('ws-1')
+    expect(results[23].message).toContain('media-1')
+    expect(results[24].message).toContain('oracle')
+    expect(results[25].message).toContain('t-1')
+    expect(results[27].message).toContain('wf-1')
+    expect(results[28].message).toContain('wf-1')
   })
 })
 
@@ -961,6 +981,57 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeSetYoloMode(sample.setYoloMode)
     expect(result.executed).toBe(false)
     expect(result.message).toMatch(/session store unavailable/)
+  })
+
+  it('updates universal workspace access through setRemoteWorkspaceAccessFn', async () => {
+    const setRemoteWorkspaceAccessFn = vi.fn().mockResolvedValue({ granted: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setRemoteWorkspaceAccessFn })
+    const result = await executor.executeSetRemoteWorkspaceAccess(sample.setRemoteWorkspaceAccess)
+    expect(setRemoteWorkspaceAccessFn).toHaveBeenCalledWith(sample.setRemoteWorkspaceAccess)
+    expect(result).toMatchObject({
+      executed: true,
+      data: { workspaceId: 'ws-1', granted: true }
+    })
+  })
+
+  it('classifies a successful first-thread decline without pretending a grant occurred', async () => {
+    const action = { ...sample.setRemoteWorkspaceAccess, enabled: false }
+    const setRemoteWorkspaceAccessFn = vi.fn().mockResolvedValue({ granted: false })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setRemoteWorkspaceAccessFn })
+    const result = await executor.executeSetRemoteWorkspaceAccess(action)
+
+    expect(result).toMatchObject({
+      executed: true,
+      reasonCode: 'userDeclined',
+      data: { workspaceId: 'ws-1', granted: false }
+    })
+  })
+
+  it('updates a lane-scoped Trusted Session receipt through setTrustedSessionFn', async () => {
+    const setTrustedSessionFn = vi.fn().mockResolvedValue({ enabled: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setTrustedSessionFn })
+    const result = await executor.executeSetTrustedSession(sample.setTrustedSession)
+    expect(setTrustedSessionFn).toHaveBeenCalledWith(sample.setTrustedSession)
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        threadId: 't-1',
+        provider: 'codex',
+        enabled: true,
+        ensembleParticipantId: 'participant-1'
+      }
+    })
+  })
+
+  it('does not claim a Trusted Session update when the Mac rejects its lane', async () => {
+    const setTrustedSessionFn = vi.fn().mockResolvedValue({
+      enabled: false,
+      reason: 'Trusted Session provider does not match this lane.'
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, setTrustedSessionFn })
+    const result = await executor.executeSetTrustedSession(sample.setTrustedSession)
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(/does not match this lane/i)
   })
 
   it('updates a thread goal through goalUpdateFn', async () => {

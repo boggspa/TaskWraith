@@ -22,7 +22,10 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 > It is a **Mac companion** — it pairs with TaskWraith on macOS over an
 > end-to-end-encrypted connection to monitor runs, approve actions, and reply
 > from the phone; it is not a standalone AI app. Remote actions are governed by
-> the Mac's workspace allowlists and approval policy. Relay/APNs infrastructure
+> the Mac's universal per-workspace remote-access grants and each thread's
+> independent approval policy. A workspace grant applies to every provider the
+> Mac currently admits; it does not elevate any thread's permission preset.
+> Relay/APNs infrastructure
 > may see routing/status metadata (including aggregate added/deleted line
 > counts), not plaintext prompts, commands, diff contents or hunks, or model
 > output. Live Activities are the explicit exception to the ordinary encrypted

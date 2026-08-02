@@ -33,9 +33,11 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
 - **Ensemble parity matters**: panel messages carry the SAME
   participant identity as the desktop transcript tag (`Provider / Role
   (Model)`) via the `speaker` field on thread rows (Mac commit e44f56cd).
-- **Providers are not gated per-workspace by default** anymore — the Mac's
-  allowlist add-form preselects every provider + both approval modes (one-tap
-  grant). The gate still exists for users who want it.
+- **Remote workspace access is provider-agnostic** — one durable grant exposes
+  the workspace to every provider the Mac currently admits. Provider admission
+  remains dynamic (including consent/credential-gated AntiGravity), while the
+  thread's Plan / Read-Only / Default Approval / Workspace Write / Trusted
+  Session posture stays a separate per-thread choice.
 
 ## Current state (iOS 0.1.0 build 82; desktop 1.8.8 baseline)
 
@@ -93,8 +95,9 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   sub-threads nested under parents (`parentChatId`, "↳ Sub-thread" chip),
   workspace chat-count badges.
 - Composer: approval-mode menu (Default / Plan) folded into a compact pill;
-  denied acks surface inline above the composer (note: allowlist entries
-  must include 'plan' in allowedApprovalModes or Plan sends are denied).
+  denied acks surface inline above the composer. Historical note: at this point
+  the remote workspace allowlist also carried approval modes; the universal
+  grant migration below removed that coupling.
 - Ghost masthead asset = ClearLight variant (visible on dark chrome).
 
 ## v0.5 additions
@@ -1142,6 +1145,26 @@ folder like the desktop above-row. Repo segment only, never `owner/repo`.
 `watchingPr` is projected onto the remote task card (presence only, descriptor
 stays Mac-side) so the toggle opens in the right state instead of reading "off"
 every time.
+
+## v0.47 — universal remote workspace grants + approval parity (2026-08-01)
+
+- The persisted remote-workspace schema is universal: a grant carries path,
+  access mode, capabilities, and optional expiry — never provider ids or thread
+  approval modes. Existing schema-v1 entries migrate in place; unknown future
+  schemas fail closed without being overwritten.
+- The Mac projects every registered workspace as a summary stub. An ungranted
+  stub contains no chat content and drives the iOS first-thread consent sheet;
+  accepting writes the same durable grant managed in desktop Settings, while
+  declining creates neither a grant nor a thread. Desktop revocation projects
+  an explicit denied stub and iOS purges that workspace's cached content.
+- Provider availability is derived from the Mac projection, independently of
+  workspace access. AntiGravity is offered only when the Mac projects its live
+  model catalog after quota-risk consent and Gemini API setup; it is not added
+  to the static provider set.
+- Solo and Ensemble permission controls expose the desktop's exact five tiers:
+  Plan, Read-Only/Recon, Default Approval, Workspace Write, and Trusted Session.
+  Trusted Session remains a separate process-lifetime, exact-lane receipt with
+  its own acknowledgement and confirmation; a workspace grant never mints it.
 
 ## Current follow-ups
 

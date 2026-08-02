@@ -17,9 +17,9 @@ public struct RemoteProjectionSnapshot: Codable, Sendable {
     public let projections: [RemoteProjectionEnvelope]
 }
 
-/// `bridge.broadcastWorkspaceList` params — the allowlist-visible workspaces.
-/// This is the compose surface: a paired phone may start tasks ONLY against
-/// workspaces the Mac's iOS Remote Workspace Allowlist exposes.
+/// `bridge.broadcastWorkspaceList` params — every registered workspace. A
+/// workspace without a remote grant is a redacted consent stub; the phone may
+/// start tasks only after the Mac projects or acknowledges a live grant.
 public struct WorkspaceListMessage: Codable, Sendable {
     public let workspaces: [WorkspaceSummary]
 }
@@ -518,6 +518,8 @@ public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
     public let chatCount: Int?
     public let runningChatCount: Int?
     public let capabilities: RemoteTaskCapabilities?
+    public var remoteAccessGranted: Bool? = nil
+    public var remoteAccessMode: String? = nil
     public var id: String { workspaceId }
 }
 
@@ -672,6 +674,11 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public var kimiFastMode: Bool? = nil
     public var kimiReasoningEffort: String? = nil
     public var kimiThinkingEnabled: Bool? = nil
+    public var approvalMode: String? = nil
+    public var workflowMode: String? = nil
+    public var permissionPresetId: String? = nil
+    public var runtimeProfileId: String? = nil
+    public var trustedSessionEnabled: Bool? = nil
     /// Slice B: a provider (and optional model/reasoning) switch queued by the
     /// Mac while a run is active (`readPendingProviderChange`). PRESENT only
     /// while a switch is pending, ABSENT otherwise — the composer reflects it as
@@ -891,10 +898,6 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileRead: Bool?
     public let fileWrite: Bool?
     public let externalPublish: Bool?
-    /// The workspace allowlist's provider grant (which providers the Mac
-    /// will accept a send for in this workspace). nil/absent = no signal
-    /// (older host) — surfaces must NOT hide providers on absence.
-    public let allowedProviders: [String]?
 }
 
 /// Nested `result` inside a successful `bridge.ack` for action requests.
@@ -950,6 +953,7 @@ public struct BridgeActionAckData: Codable, Sendable {
     /// the materialized scheduled task + workflow execution ids.
     public let workflowId: String?
     public let enabled: Bool?
+    public let granted: Bool?
     public let scheduledTaskId: String?
     public let workflowExecutionId: String?
 }
@@ -1322,6 +1326,8 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
         /// Per-participant approval preset + reasoning (desktop parity). Optional
         /// so older Mac builds (which didn't project them) still decode.
         public let permissionPresetId: String?
+        public let runtimeProfileId: String?
+        public let trustedSessionEnabled: Bool?
         public let reasoningEffort: String?
         public let fastModeEnabled: Bool?
         public let thinkingEnabled: Bool?
@@ -1339,7 +1345,9 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
             fastModeEnabled: Bool? = nil, thinkingEnabled: Bool? = nil,
             stageRole: String? = nil,
             contextTokens: Int? = nil, isBossman: Bool? = nil,
-            isSecondInCommand: Bool? = nil
+            isSecondInCommand: Bool? = nil,
+            runtimeProfileId: String? = nil,
+            trustedSessionEnabled: Bool? = nil
         ) {
             self.id = id
             self.provider = provider
@@ -1349,6 +1357,8 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
             self.model = model
             self.brief = brief
             self.permissionPresetId = permissionPresetId
+            self.runtimeProfileId = runtimeProfileId
+            self.trustedSessionEnabled = trustedSessionEnabled
             self.reasoningEffort = reasoningEffort
             self.fastModeEnabled = fastModeEnabled
             self.thinkingEnabled = thinkingEnabled
@@ -2897,6 +2907,39 @@ public enum BridgeAction {
         }
         if let body, !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             payload["body"] = body
+        }
+        return encode(payload)
+    }
+
+    /// First-thread workspace consent. The Mac accepts this only from the
+    /// authenticated pair and resolves `workspaceId` against its own registry.
+    public static func setRemoteWorkspaceAccess(
+        workspaceId: String, enabled: Bool,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "setRemoteWorkspaceAccess", "actionId": actionId,
+            "workspaceId": workspaceId, "enabled": enabled,
+        ])
+    }
+
+    /// Grant/revoke the Mac's process-lifetime Trusted Session receipt for one
+    /// exact solo or Ensemble participant lane.
+    public static func setTrustedSession(
+        workspaceId: String, threadId: String, provider: String, enabled: Bool,
+        ensembleParticipantId: String? = nil, runtimeProfileId: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "setTrustedSession", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "provider": provider, "enabled": enabled,
+        ]
+        if let ensembleParticipantId, !ensembleParticipantId.isEmpty {
+            payload["ensembleParticipantId"] = ensembleParticipantId
+        }
+        if let runtimeProfileId, !runtimeProfileId.isEmpty {
+            payload["runtimeProfileId"] = runtimeProfileId
         }
         return encode(payload)
     }

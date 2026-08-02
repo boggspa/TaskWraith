@@ -1517,6 +1517,68 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload.kind).toBe('unknown')
     })
 
+    it('decodes pair-scoped workspace consent without workspace gating', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'setRemoteWorkspaceAccess',
+          workspaceId: 'ws-1',
+          enabled: true
+        })
+      )
+      expect(payload).toEqual({
+        kind: 'setRemoteWorkspaceAccess',
+        workspaceId: 'ws-1',
+        enabled: true
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(false)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('decodes lane-scoped Trusted Session updates', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'setTrustedSession',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          provider: 'antigravity',
+          enabled: true,
+          ensembleParticipantId: 'participant-1',
+          runtimeProfileId: 'profile-1'
+        })
+      )
+      expect(payload).toMatchObject({
+        kind: 'setTrustedSession',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        provider: 'antigravity',
+        enabled: true,
+        ensembleParticipantId: 'participant-1',
+        runtimeProfileId: 'profile-1'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects incomplete workspace-consent and Trusted Session updates', () => {
+      expect(
+        decodeBridgeActionPayload(
+          encode({ kind: 'setRemoteWorkspaceAccess', workspaceId: 'ws-1' })
+        ).payload.kind
+      ).toBe('unknown')
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'setTrustedSession',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            enabled: true
+          })
+        ).payload.kind
+      ).toBe('unknown')
+    })
+
     it('decodes togglePinChat', () => {
       const wire = encode({
         kind: 'togglePinChat',
@@ -1809,6 +1871,14 @@ describe('decodeBridgeActionPayload', () => {
           runId: 'run-1'
         },
         { kind: 'setYoloMode', workspaceId: 'ws-1', enabled: true },
+        { kind: 'setRemoteWorkspaceAccess', workspaceId: 'ws-1', enabled: true },
+        {
+          kind: 'setTrustedSession',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          provider: 'codex',
+          enabled: true
+        },
         { kind: 'setThreadTitle', workspaceId: 'ws-1', threadId: 't-1', title: 'Rename me' },
         {
           kind: 'setChatKind',
@@ -2502,6 +2572,13 @@ describe('payloadRequiresWorkspaceGating', () => {
       { kind: 'workflowSetEnabled', workflowId: 'wf', enabled: true },
       { kind: 'workflowRunNow', workflowId: 'wf' },
       { kind: 'setYoloMode', workspaceId: 'w', enabled: false },
+      {
+        kind: 'setTrustedSession',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'codex',
+        enabled: true
+      },
       { kind: 'setThreadTitle', workspaceId: 'w', threadId: 't', title: 'Rename' },
       {
         kind: 'setChatKind',
@@ -2555,6 +2632,16 @@ describe('payloadRequiresWorkspaceGating', () => {
     expect(payloadRequiresWorkspaceGating({ kind: 'setWatchedThread', appChatId: null })).toBe(
       false
     )
+  })
+
+  it('returns false only for the pair-scoped workspace-consent mutation', () => {
+    expect(
+      payloadRequiresWorkspaceGating({
+        kind: 'setRemoteWorkspaceAccess',
+        workspaceId: 'w',
+        enabled: true
+      })
+    ).toBe(false)
   })
 
   it('returns true defensively for unknown variants', () => {
@@ -2627,6 +2714,18 @@ describe('payloadIsMutating', () => {
 
   it('classifies session and pin controls as mutating', () => {
     expect(payloadIsMutating({ kind: 'setYoloMode', workspaceId: 'w', enabled: true })).toBe(true)
+    expect(
+      payloadIsMutating({ kind: 'setRemoteWorkspaceAccess', workspaceId: 'w', enabled: true })
+    ).toBe(true)
+    expect(
+      payloadIsMutating({
+        kind: 'setTrustedSession',
+        workspaceId: 'w',
+        threadId: 't',
+        provider: 'codex',
+        enabled: true
+      })
+    ).toBe(true)
     expect(
       payloadIsMutating({
         kind: 'goalUpdate',

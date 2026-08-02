@@ -133,31 +133,25 @@ struct ComposerProviderAdmissionTests {
     }
 
     @MainActor
-    @Test func workspaceAllowlistIntersectsTheOffer() {
-        // Non-empty grant: only allowed providers survive the static union…
-        let narrowed = twOfferedProviderCatalogs(
-            [:], allowedProviders: ["claude", " Ollama "])
-        #expect(Set(narrowed.map(\.provider)) == ["claude", "ollama"])
+    @Test func providerOfferIsWorkspaceAgnosticAndMacProjected() {
+        let withoutDynamicAdmission = twOfferedProviderCatalogs([:])
+        #expect(
+            Set(withoutDynamicAdmission.map(\.provider))
+                == TWTheme.liveSelectableProviderIds)
 
-        // …except a referenced provider (the chat's current binding), which
-        // must stay visible so an existing thread can display itself.
-        let withReferenced = twOfferedProviderCatalogs(
-            [:], including: ["codex"], allowedProviders: ["claude"])
-        #expect(Set(withReferenced.map(\.provider)) == ["claude", "codex"])
+        let model = ModelOption(id: "gemini-api:gemini-3.1-pro", isDefault: true)
+        let withAntiGravity = twOfferedProviderCatalogs([
+            "antigravity": [model]
+        ])
+        #expect(
+            Set(withAntiGravity.map(\.provider))
+                == TWTheme.liveSelectableProviderIds.union(["antigravity"]))
 
-        // nil or empty grant = no signal (older host / global scope): the
-        // full anti-lockout union stands.
-        let noSignal = twOfferedProviderCatalogs([:], allowedProviders: nil)
-        #expect(Set(noSignal.map(\.provider)) == TWTheme.liveSelectableProviderIds)
-        let emptySignal = twOfferedProviderCatalogs([:], allowedProviders: [])
-        #expect(Set(emptySignal.map(\.provider)) == TWTheme.liveSelectableProviderIds)
-
-        // The grant cannot revive a provider the offer rules exclude —
-        // antigravity stays catalog-backed even when a stale allowlist
-        // entry names it.
-        let staleGrant = twOfferedProviderCatalogs(
-            [:], allowedProviders: ["claude", "antigravity"])
-        #expect(Set(staleGrant.map(\.provider)) == ["claude"])
+        // A historical binding can remain visible, but it cannot make a
+        // retired provider selectable for a new run.
+        let withHistoricalGemini = twOfferedProviderCatalogs(
+            [:], including: ["gemini"])
+        #expect(!withHistoricalGemini.map(\.provider).contains("gemini"))
     }
 
     @Test func ensembleParticipantOfferUsesExplicitDynamicAdmission() {

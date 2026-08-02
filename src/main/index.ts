@@ -402,6 +402,7 @@ import {
   type RemoteWorkflow,
   type RemoteWorkspaceBoard
 } from './RemoteTaskProjection'
+import { resolveRemoteSoloRuntimeProfileId } from './RemoteRuntimeProfileSelection'
 import {
   fitRemoteThreadSnapshotToByteBudget,
   projectRemoteThread,
@@ -442,6 +443,8 @@ import type {
 import {
   RemoteWorkspaceAllowlist,
   capabilitiesForRemoteWorkspaceEntry,
+  isAdminRemoteWorkspaceCapability,
+  READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
   GLOBAL_REMOTE_SCOPE,
   GLOBAL_REMOTE_SCOPE_CAPABILITIES,
   type RemoteWorkspaceCapability
@@ -2792,7 +2795,8 @@ function getSessionYoloMode(): {
 }
 
 function resolveTrustedSessionScope(
-  rawScope: TrustedSessionScope
+  rawScope: TrustedSessionScope,
+  options: { requireProviderAdmission?: boolean } = {}
 ): { ok: true; scope: TrustedSessionScope } | { ok: false; error: string } {
   const chatId =
     typeof rawScope?.chatId === 'string' && rawScope.chatId.trim() ? rawScope.chatId.trim() : ''
@@ -2816,14 +2820,45 @@ function resolveTrustedSessionScope(
 
   let provider: ProviderId
   try {
-    provider = assertLiveProviderId(
+    const candidate = assertProviderId(
       participant ? participant.provider : rawScope?.provider || chat.provider || DEFAULT_PROVIDER
     )
+    if (options.requireProviderAdmission === false) {
+      provider = candidate
+    } else if (candidate === ANTIGRAVITY_PROVIDER_ID) {
+      const settings = AppStore.getSettings()
+      if (
+        !isAuthenticatedAntigravityConfiguredProvider(
+          settings,
+          managedRunConfiguredProviderDiscovery.statusSnapshot(settings),
+          managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
+        )
+      ) {
+        return { ok: false, error: 'AntiGravity setup is not currently active.' }
+      }
+      provider = candidate
+    } else {
+      provider = assertLiveProviderId(candidate)
+    }
   } catch {
     return { ok: false, error: 'Trusted Session provider is not available.' }
   }
   if (rawScope?.provider && rawScope.provider !== provider) {
     return { ok: false, error: 'Trusted Session provider does not match this lane.' }
+  }
+  const runtimeProfileId = participant
+    ? participant.runtimeProfileId || undefined
+    : resolveRemoteSoloRuntimeProfileId({
+        chat,
+        provider,
+        runtimeProfiles: AppStore.getRuntimeProfiles(provider)
+      })
+  const requestedRuntimeProfileId =
+    typeof rawScope?.runtimeProfileId === 'string' && rawScope.runtimeProfileId.trim()
+      ? rawScope.runtimeProfileId.trim()
+      : undefined
+  if (requestedRuntimeProfileId && requestedRuntimeProfileId !== runtimeProfileId) {
+    return { ok: false, error: 'Trusted Session runtime profile does not match this lane.' }
   }
 
   return {
@@ -2837,23 +2872,21 @@ function resolveTrustedSessionScope(
         typeof rawScope?.ensembleLaneId === 'string' && rawScope.ensembleLaneId.trim()
           ? rawScope.ensembleLaneId.trim()
           : null,
-      runtimeProfileId: participant
-        ? participant.runtimeProfileId || null
-        : typeof rawScope?.runtimeProfileId === 'string' && rawScope.runtimeProfileId.trim()
-          ? rawScope.runtimeProfileId.trim()
-          : null
+      runtimeProfileId: runtimeProfileId ?? null
     }
   }
 }
 
 function getTrustedSession(scope: TrustedSessionScope): TrustedSessionSetResult {
-  const resolved = resolveTrustedSessionScope(scope)
+  const resolved = resolveTrustedSessionScope(scope, { requireProviderAdmission: false })
   if (!resolved.ok) return { enabled: false, error: resolved.error }
   return trustedSessionGrants.get(resolved.scope)
 }
 
 function setTrustedSession(scope: TrustedSessionScope, enabled: boolean): TrustedSessionSetResult {
-  const resolved = resolveTrustedSessionScope(scope)
+  const resolved = resolveTrustedSessionScope(scope, {
+    requireProviderAdmission: enabled
+  })
   if (!resolved.ok) return { enabled: false, error: resolved.error }
   return enabled
     ? trustedSessionGrants.grant(resolved.scope)
@@ -7634,6 +7667,8 @@ const remoteComposerInternalDispatches = new WeakMap<
       width: number
       height: number
     }>
+    /** Mac-resolved runtime profile frozen when this queued prompt was created. */
+    runtimeProfileId?: string
   }
 >()
 
@@ -39789,6 +39824,7 @@ if (isGeminiMcpBridgeProcess) {
         remoteComposerInternalDispatches.set(action, {
           appRunId: dispatch.appRunId,
           queueRunId: dispatch.queueRunId,
+          ...(leased.runtimeProfileId ? { runtimeProfileId: leased.runtimeProfileId } : {}),
           ...(leased.request?.remoteComposer?.imagePaths?.length
             ? {
                 imagePaths: leased.request.remoteComposer.imagePaths,
@@ -40011,7 +40047,7 @@ if (isGeminiMcpBridgeProcess) {
         }
         const schedule = normalizeRemoteComposerScheduledRunAt(action.scheduledRunAt)
         if (schedule.reason) return { ok: false, reason: schedule.reason }
-        const provider = assertLiveProviderId(action.provider)
+        const provider = assertPairedDeviceProviderId(action.provider)
         const scope = chatScope(chat)
         const workspace =
           scope === 'global'
@@ -40020,6 +40056,11 @@ if (isGeminiMcpBridgeProcess) {
         if (scope !== 'global' && !workspace) {
           return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
         }
+        const resolvedRuntimeProfileId = resolveRemoteSoloRuntimeProfileId({
+          chat,
+          provider,
+          runtimeProfiles: AppStore.getRuntimeProfiles(provider)
+        })
         const allowlistDecision = bridgeAllowlist.evaluate({
           workspaceId: action.workspaceId,
           provider,
@@ -40091,6 +40132,15 @@ if (isGeminiMcpBridgeProcess) {
         const queueKimiFastMode = provider === 'kimi' ? action.kimiFastMode : undefined
         const queueKimiReasoningEffort = provider === 'kimi' ? action.reasoningEffort : undefined
         const queueKimiThinkingEnabled = provider === 'kimi' ? true : undefined
+        const trustedSessionGranted =
+          action.permissionPresetId === 'full_access' &&
+          scope !== 'global' &&
+          trustedSessionGrants.isGranted({
+            chatId: chat.appChatId,
+            provider,
+            workspacePath: workspace?.path,
+            runtimeProfileId: resolvedRuntimeProfileId
+          })
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
           scope,
@@ -40101,6 +40151,7 @@ if (isGeminiMcpBridgeProcess) {
           approvalMode,
           workflowMode,
           permissionPresetId: action.permissionPresetId,
+          trustedSessionGranted,
           settings: AppStore.getSettings(),
           signRunPermissionPosture: signRunPosture
         })
@@ -40116,6 +40167,7 @@ if (isGeminiMcpBridgeProcess) {
           status: 'queued' as const,
           promptPreview: text,
           permissionPosture,
+          ...(resolvedRuntimeProfileId ? { runtimeProfileId: resolvedRuntimeProfileId } : {}),
           request: {
             scope,
             prompt: text,
@@ -40126,6 +40178,7 @@ if (isGeminiMcpBridgeProcess) {
             workflowMode,
             sessionTrust: false,
             imageAttachments: [],
+            ...(resolvedRuntimeProfileId ? { runtimeProfileId: resolvedRuntimeProfileId } : {}),
             ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
             ...(queueCodexReasoning !== undefined
               ? { codexReasoningEffort: queueCodexReasoning }
@@ -40161,7 +40214,8 @@ if (isGeminiMcpBridgeProcess) {
               // Preserve the user's top-tier request for audit/projection; the
               // signed permissionPosture above clamps it to workspace_write unless
               // a live Trusted Session receipt exists at queue time.
-              ...(action.permissionPresetId === 'full_access'
+              ...(action.permissionPresetId === 'full_access' ||
+              action.permissionPresetId === 'workspace_write'
                 ? { permissionPresetId: action.permissionPresetId }
                 : {}),
               ...(action.model ? { model: action.model } : {}),
@@ -40483,6 +40537,67 @@ if (isGeminiMcpBridgeProcess) {
             ...(state.managedBlocked ? { managedBlocked: true } : {}),
             ...(state.managedReason ? { reason: state.managedReason } : {})
           }
+        },
+        setRemoteWorkspaceAccessFn: async (action) => {
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
+          if (!workspace) {
+            throw new Error(`Workspace id "${action.workspaceId}" is not registered`)
+          }
+          if (!action.enabled) {
+            return {
+              granted: false,
+              reason: 'Workspace access was not granted. You can allow it later from Settings.'
+            }
+          }
+          const existing = bridgeAllowlist.get(workspace.id)
+          const existingDecision = bridgeAllowlist.evaluate({ workspaceId: workspace.id })
+          const preservedAdminCapabilities =
+            existing && existingDecision.allowed
+              ? capabilitiesForRemoteWorkspaceEntry(existing).filter(
+                  isAdminRemoteWorkspaceCapability
+                )
+              : []
+          workspaceService.upsertRemoteAllowlist({
+            workspaceId: workspace.id,
+            path: workspace.path,
+            mode: 'read-write',
+            capabilities: [
+              ...READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES,
+              ...preservedAdminCapabilities
+            ]
+          })
+          broadcastWorkspaceUpdate(workspace.id)
+          broadcastWorkspaceList()
+          broadcastThreadList()
+          return { granted: true }
+        },
+        setTrustedSessionFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { enabled: false, reason: 'Trusted Session chat was not found.' }
+          const chatWorkspaceId = canonicalRemoteWorkspaceId(chat.workspaceId)
+          if (chatWorkspaceId !== action.workspaceId) {
+            return {
+              enabled: false,
+              reason: 'Trusted Session chat does not belong to the requested workspace.'
+            }
+          }
+          const result = setTrustedSession(
+            {
+              chatId: action.threadId,
+              // Scope resolution validates exact lane identity and applies the
+              // live admission gate only when enabling. Revocation must remain
+              // available after a conditional provider's setup is withdrawn.
+              provider: assertProviderId(action.provider),
+              ensembleParticipantId: action.ensembleParticipantId,
+              runtimeProfileId: action.runtimeProfileId
+            },
+            action.enabled
+          )
+          if (result.error) return { enabled: false, reason: result.error }
+          broadcastThreadUpdate(action.threadId)
+          return { enabled: result.enabled }
         },
         togglePinWorkspaceFn: async (action) => {
           const workspaceRecord = AppStore.getWorkspaces().find(
@@ -42698,19 +42813,15 @@ if (isGeminiMcpBridgeProcess) {
           // Grok hitting an ACP path its CLI rejects with 'Method not found').
           // Live Cursor Path-B follows the same profile inheritance; its
           // sandbox/broker containment is established later by runCursorProvider.
-          // Inherit the most recent run's profile; for fresh iOS chats use
-          // the first builtin workspace-scoped profile for the provider —
-          // the same one the desktop picker shows by default.
-          const inheritedProfileId = [...(chat.runs ?? [])]
-            .reverse()
-            .find((run) => run.provider === provider && run.runtimeProfileId)?.runtimeProfileId
-          const defaultProfileId =
-            inheritedProfileId || isGlobalScope
-              ? undefined
-              : AppStore.getRuntimeProfiles(provider).find(
-                  (profile) => profile.builtin && profile.scope === 'workspace'
-                )?.id
-          const resolvedProfileId = inheritedProfileId ?? defaultProfileId
+          // Resolve the desktop's remembered selection, then prior-run/default
+          // fallbacks. Queued prompts carry the profile frozen at enqueue time.
+          const resolvedProfileId =
+            internalQueueDispatch?.runtimeProfileId ??
+            resolveRemoteSoloRuntimeProfileId({
+              chat,
+              provider,
+              runtimeProfiles: AppStore.getRuntimeProfiles(provider)
+            })
           // Gemini runs also carry an auth-profile selection on desktop; it
           // IS persisted per-run, so continuations inherit it. (Claude fast
           // mode / Kimi thinking are renderer-state only — not inheritable.)
@@ -42831,6 +42942,8 @@ if (isGeminiMcpBridgeProcess) {
           // RemoteTaskProjection reads) so a phone-originated toggle survives to
           // the next projection instead of resyncing to stale state.
           const composerSelectionPatch: Record<string, unknown> = {
+            ...(effectiveApprovalMode ? { approvalMode: effectiveApprovalMode } : {}),
+            ...(action.permissionPresetId ? { permissionPresetId: action.permissionPresetId } : {}),
             ...(inheritedCursorFastMode !== undefined
               ? { cursorFastMode: inheritedCursorFastMode }
               : {}),
@@ -42865,6 +42978,7 @@ if (isGeminiMcpBridgeProcess) {
           chat = {
             ...chat,
             runs: [...(chat.runs || []).filter((entry) => entry.runId !== runId), run],
+            workflowMode: effectiveWorkflowMode,
             ...(Object.keys(composerSelectionPatch).length > 0
               ? {
                   providerMetadata: {
@@ -43523,6 +43637,34 @@ if (isGeminiMcpBridgeProcess) {
         chatId: canonicalChat.appChatId,
         statuses: ['queued']
       }).filter((job) => job.request?.remoteComposer)
+      const soloRuntimeProfileId = resolveRemoteSoloRuntimeProfileId({
+        chat: canonicalChat,
+        provider: canonicalChat.provider ?? DEFAULT_PROVIDER,
+        runtimeProfiles: AppStore.getRuntimeProfiles(canonicalChat.provider ?? DEFAULT_PROVIDER)
+      })
+      const trustedSessionEnabled =
+        !canonicalChat.ensemble &&
+        Boolean(canonicalChat.workspacePath) &&
+        trustedSessionGrants.isGranted({
+          chatId: canonicalChat.appChatId,
+          provider: canonicalChat.provider ?? DEFAULT_PROVIDER,
+          workspacePath: canonicalChat.workspacePath,
+          runtimeProfileId: soloRuntimeProfileId
+        })
+      const trustedSessionParticipantIds = new Set<string>()
+      for (const participant of canonicalChat.ensemble?.participants ?? []) {
+        if (
+          trustedSessionGrants.isGranted({
+            chatId: canonicalChat.appChatId,
+            provider: participant.provider,
+            workspacePath: canonicalChat.workspacePath,
+            ensembleParticipantId: participant.id,
+            runtimeProfileId: participant.runtimeProfileId
+          })
+        ) {
+          trustedSessionParticipantIds.add(participant.id)
+        }
+      }
       return {
         chat: canonicalChat,
         taskCard: buildRemoteTaskCard(canonicalChat, {
@@ -43532,9 +43674,12 @@ if (isGeminiMcpBridgeProcess) {
           capabilities,
           agentIdentity: remoteAgentIdentityForChat(canonicalChat),
           queuedComposerJobs,
+          trustedSessionEnabled,
+          trustedSessionParticipantIds,
           openCanvases: canvasService.list({ chatId: canonicalChat.appChatId }),
           isShared: Boolean(collaborationShare),
-          sharedMode: collaborationShare?.mode
+          sharedMode: collaborationShare?.mode,
+          runtimeProfileId: soloRuntimeProfileId
         })
       }
     }

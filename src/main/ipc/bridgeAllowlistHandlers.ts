@@ -7,8 +7,6 @@ interface RemoteAllowlistEntryInput {
   path: string
   mode: 'read-only' | 'read-write'
   capabilities?: RemoteWorkspaceCapability[]
-  allowedProviders: string[]
-  allowedApprovalModes: string[]
   expiresAt?: number
 }
 

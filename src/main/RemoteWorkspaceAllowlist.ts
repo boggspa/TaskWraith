@@ -16,14 +16,18 @@ import { dirname } from 'path'
  *
  * **Default policy: closed.** A workspace is NOT remote-accessible until the
  * user explicitly adds an entry. There is no "everything is read-only by
- * default" mode — the iOS device only sees workspaces the user has opted in.
+ * default" mode. An ungranted registered workspace may be projected as a
+ * redacted consent stub, but its path, chats, and actions remain unavailable
+ * until the user grants access.
  *
  * **Per-action revalidation** (per the C4 plan): `evaluate(...)` is called on
  * every iOS-initiated request, not just once at session open. A workspace
  * entry can carry an `expiresAt` so a paired phone can be granted access
- * for a bounded window (e.g. "next 2 hours") without manual revocation. We
- * also re-check provider + approvalMode on every call, because both might
- * have been tightened on the desktop between iOS requests.
+ * for a bounded window (e.g. "next 2 hours") without manual revocation.
+ * Provider admission and per-thread approval posture are intentionally NOT
+ * encoded here. A workspace grant applies to every provider Electron currently
+ * admits, while each thread keeps its own permission preset. Provider admission
+ * is revalidated independently at dispatch time.
  *
  * **Persistence** is best-effort JSON via atomic tmp-and-rename. When no
  * `storagePath` is provided the allowlist is purely in-memory (used by
@@ -120,7 +124,7 @@ export const GLOBAL_REMOTE_SCOPE_CAPABILITIES: readonly RemoteWorkspaceCapabilit
 ]
 
 /** The virtual entry `evaluate` returns for the global scope. The phone may
- * use any provider, but the ONLY approval mode is `plan` — a phone-origin
+ * use any admitted provider, but the ONLY approval mode is `plan` — a phone-origin
  * turn in a global chat always runs read-only (no file mutation). */
 function globalRemoteScopeEntry(): RemoteWorkspaceEntry {
   return {
@@ -128,8 +132,6 @@ function globalRemoteScopeEntry(): RemoteWorkspaceEntry {
     path: '',
     mode: 'read-only',
     capabilities: [...GLOBAL_REMOTE_SCOPE_CAPABILITIES],
-    allowedProviders: [],
-    allowedApprovalModes: ['plan'],
     createdAt: 0,
     updatedAt: 0
   }
@@ -239,14 +241,6 @@ export interface RemoteWorkspaceEntry {
    * capability sets above so existing allowlist entries keep working until
    * the persisted store and renderer grow first-class capability controls. */
   capabilities?: RemoteWorkspaceCapability[]
-  /** Provider IDs (e.g. `'gemini'`, `'codex'`, `'claude'`, `'kimi'`) that the
-   * iOS client may select for this workspace. Empty array = no providers
-   * allowed (the workspace is read-only-watch in practice). */
-  allowedProviders: string[]
-  /** Approval modes (`'default'`, `'plan'`, `'allow-all'`) the iOS client
-   * may select. Typically `['default', 'plan']` for phone clients; we leave
-   * `'allow-all'` out by default since that's a desktop-only escalation. */
-  allowedApprovalModes: string[]
   /** Optional auto-revoke timestamp (ms since epoch). The desktop UI can
    * surface "expires in N minutes". After this point the entry is treated
    * as denied without being deleted (a grace period for renewal). */
@@ -257,10 +251,11 @@ export interface RemoteWorkspaceEntry {
 
 export interface PrepareStartTurnEvaluation {
   workspaceId: string
-  /** Optional — the iOS prepare-start-turn payload may not always include a
-   * provider hint. When omitted, only workspace + expiry + mode are checked. */
+  /** Provider admission is evaluated by RemoteProviderAdmission. Retained on
+   * this input so callers can pass one policy context to both gates. */
   provider?: string
-  /** Same caveat as `provider`. */
+  /** Per-thread posture is independent of real-workspace grants. The global
+   * synthetic scope still clamps phone-origin turns to plan. */
   approvalMode?: string
   /** Optional fine-grained capability required by the action being evaluated. */
   capability?: RemoteWorkspaceCapability
@@ -282,16 +277,22 @@ export interface RemoteWorkspaceAllowlistOptions {
 
 interface PersistedShape {
   version: number
-  entries: RemoteWorkspaceEntry[]
+  entries: unknown[]
 }
 
-const SCHEMA_VERSION = 1
+interface LegacyRemoteWorkspaceEntry extends RemoteWorkspaceEntry {
+  allowedProviders: string[]
+  allowedApprovalModes: string[]
+}
+
+const SCHEMA_VERSION = 2
 
 export class RemoteWorkspaceAllowlist {
   private readonly entries = new Map<string, RemoteWorkspaceEntry>()
   private readonly storagePath?: string
   private readonly now: () => number
   private readonly log: (line: string) => void
+  private persistenceBlockReason: string | null = null
 
   constructor(options: RemoteWorkspaceAllowlistOptions = {}) {
     this.storagePath = options.storagePath
@@ -309,16 +310,20 @@ export class RemoteWorkspaceAllowlist {
 
   /** Add or replace an entry. Timestamps are managed internally. */
   upsert(entry: Omit<RemoteWorkspaceEntry, 'createdAt' | 'updatedAt'>): RemoteWorkspaceEntry {
+    this.assertWritable()
     const now = this.now()
     const existing = this.entries.get(entry.workspaceId)
     const merged: RemoteWorkspaceEntry = {
-      ...entry,
+      workspaceId: entry.workspaceId,
+      path: entry.path,
+      mode: entry.mode,
       // Materialize capabilities EXPLICITLY at write time: new/updated
       // grants get the full current default for their mode, so only
       // entries persisted before this change (no explicit list) count as
       // legacy — and those deliberately exclude later-added powers (the
       // file-editing trio). Callers passing an explicit list keep it.
       capabilities: entry.capabilities ?? [...capabilitiesForRemoteWorkspaceMode(entry.mode)],
+      ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     }
@@ -332,6 +337,7 @@ export class RemoteWorkspaceAllowlist {
 
   /** Remove an entry. Returns whether anything was removed. */
   remove(workspaceId: string): boolean {
+    this.assertWritable()
     const had = this.entries.delete(workspaceId)
     if (had) {
       this.persist()
@@ -352,7 +358,7 @@ export class RemoteWorkspaceAllowlist {
       globalScope: {
         enabled: this.entries.size > 0,
         capabilities: [...GLOBAL_REMOTE_SCOPE_CAPABILITIES].sort(),
-        allowedApprovalModes: ['plan']
+        approvalMode: 'plan'
       },
       entries: Array.from(this.entries.values())
         .map((entry) => ({
@@ -360,8 +366,6 @@ export class RemoteWorkspaceAllowlist {
           path: entry.path,
           mode: entry.mode,
           capabilities: [...capabilitiesForRemoteWorkspaceEntry(entry)].sort(),
-          allowedProviders: [...entry.allowedProviders].sort(),
-          allowedApprovalModes: [...entry.allowedApprovalModes].sort(),
           ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {})
         }))
         .sort((a, b) => a.workspaceId.localeCompare(b.workspaceId))
@@ -376,6 +380,7 @@ export class RemoteWorkspaceAllowlist {
   /** Drop every entry. Useful for tests and the future admin "revoke all"
    * action. Persists immediately. */
   clear(): void {
+    this.assertWritable()
     if (this.entries.size === 0) return
     this.entries.clear()
     this.persist()
@@ -432,19 +437,6 @@ export class RemoteWorkspaceAllowlist {
         reason: `Workspace "${check.workspaceId}" allowlist entry expired at ${new Date(entry.expiresAt).toISOString()}`
       }
     }
-    if (check.provider !== undefined && !entry.allowedProviders.includes(check.provider)) {
-      return {
-        allowed: false,
-        reason: `Provider "${check.provider}" is not allowed for workspace "${check.workspaceId}"`
-      }
-    }
-    const approvalMode = check.approvalMode ?? 'default'
-    if (!entry.allowedApprovalModes.includes(approvalMode)) {
-      return {
-        allowed: false,
-        reason: `Approval mode "${approvalMode}" is not allowed for workspace "${check.workspaceId}"`
-      }
-    }
     if (
       check.capability !== undefined &&
       !capabilitiesForRemoteWorkspaceEntry(entry).includes(check.capability)
@@ -462,6 +454,10 @@ export class RemoteWorkspaceAllowlist {
 
   private persist(): void {
     if (!this.storagePath) return
+    if (this.persistenceBlockReason) {
+      this.log(`[RemoteWorkspaceAllowlist] persist blocked: ${this.persistenceBlockReason}`)
+      return
+    }
     try {
       mkdirSync(dirname(this.storagePath), { recursive: true })
       const data: PersistedShape = {
@@ -485,23 +481,38 @@ export class RemoteWorkspaceAllowlist {
     try {
       const raw = readFileSync(this.storagePath, 'utf-8')
       const parsed = JSON.parse(raw) as unknown
+      const parsedVersion = persistedSchemaVersion(parsed)
+      if (
+        parsedVersion !== null &&
+        parsedVersion !== 1 &&
+        parsedVersion !== SCHEMA_VERSION
+      ) {
+        this.persistenceBlockReason = `unknown schema version ${parsedVersion} at ${this.storagePath}; policy is closed and the file will not be overwritten`
+        this.log(`[RemoteWorkspaceAllowlist] ${this.persistenceBlockReason}`)
+        return
+      }
       if (!isPersistedShape(parsed)) {
         this.log(
           `[RemoteWorkspaceAllowlist] discarded malformed allowlist file at ${this.storagePath}`
         )
         return
       }
-      if (parsed.version !== SCHEMA_VERSION) {
-        // Future migration hook lands here. For now: drop unknown versions.
-        this.log(
-          `[RemoteWorkspaceAllowlist] unknown schema version ${parsed.version} — starting empty`
-        )
-        return
-      }
+      const migrated = parsed.version === 1
       for (const entry of parsed.entries) {
-        if (isValidEntry(entry)) {
-          this.entries.set(entry.workspaceId, entry)
+        if (parsed.version === 1) {
+          if (!isValidLegacyEntry(entry)) continue
+          const universal = universalRemoteWorkspaceEntry(entry)
+          this.entries.set(universal.workspaceId, universal)
+        } else if (isValidEntry(entry)) {
+          const universal = universalRemoteWorkspaceEntry(entry)
+          this.entries.set(universal.workspaceId, universal)
         }
+      }
+      if (migrated) {
+        this.persist()
+        this.log(
+          `[RemoteWorkspaceAllowlist] migrated ${this.entries.size} universal workspace grants from schema 1 to ${SCHEMA_VERSION}`
+        )
       }
       this.log(
         `[RemoteWorkspaceAllowlist] loaded ${this.entries.size} entries from ${this.storagePath}`
@@ -511,6 +522,23 @@ export class RemoteWorkspaceAllowlist {
         `[RemoteWorkspaceAllowlist] load failed (starting empty): ${err instanceof Error ? err.message : String(err)}`
       )
     }
+  }
+
+  private assertWritable(): void {
+    if (!this.persistenceBlockReason) return
+    throw new Error(`Remote workspace grants cannot be changed: ${this.persistenceBlockReason}`)
+  }
+}
+
+function universalRemoteWorkspaceEntry(entry: RemoteWorkspaceEntry): RemoteWorkspaceEntry {
+  return {
+    workspaceId: entry.workspaceId,
+    path: entry.path,
+    mode: entry.mode,
+    ...(entry.capabilities !== undefined ? { capabilities: [...entry.capabilities] } : {}),
+    ...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt
   }
 }
 
@@ -569,6 +597,12 @@ function isPersistedShape(value: unknown): value is PersistedShape {
   return typeof v.version === 'number' && Array.isArray(v.entries)
 }
 
+function persistedSchemaVersion(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null
+  const version = (value as Record<string, unknown>).version
+  return typeof version === 'number' && Number.isFinite(version) ? version : null
+}
+
 function isValidEntry(value: unknown): value is RemoteWorkspaceEntry {
   if (!value || typeof value !== 'object') return false
   const v = value as Record<string, unknown>
@@ -579,13 +613,20 @@ function isValidEntry(value: unknown): value is RemoteWorkspaceEntry {
     (v.capabilities === undefined ||
       (Array.isArray(v.capabilities) &&
         (v.capabilities as unknown[]).every(isRemoteWorkspaceCapability))) &&
-    Array.isArray(v.allowedProviders) &&
-    (v.allowedProviders as unknown[]).every((p) => typeof p === 'string') &&
-    Array.isArray(v.allowedApprovalModes) &&
-    (v.allowedApprovalModes as unknown[]).every((p) => typeof p === 'string') &&
     typeof v.createdAt === 'number' &&
     typeof v.updatedAt === 'number' &&
     (v.expiresAt === undefined || typeof v.expiresAt === 'number')
+  )
+}
+
+function isValidLegacyEntry(value: unknown): value is LegacyRemoteWorkspaceEntry {
+  if (!isValidEntry(value)) return false
+  const v = value as unknown as Record<string, unknown>
+  return (
+    Array.isArray(v.allowedProviders) &&
+    (v.allowedProviders as unknown[]).every((provider) => typeof provider === 'string') &&
+    Array.isArray(v.allowedApprovalModes) &&
+    (v.allowedApprovalModes as unknown[]).every((mode) => typeof mode === 'string')
   )
 }
 

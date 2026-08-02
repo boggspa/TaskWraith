@@ -14,7 +14,7 @@ import type {
 } from './remote/RemoteDeviceAuditLedger'
 import type { BridgeActionPayload } from './BridgeActionPayload'
 
-describe('approvalModeFromPayload — auto-edit preset allowlist gating', () => {
+describe('approvalModeFromPayload — effective run posture classification', () => {
   const payload = (extra: Record<string, unknown>): BridgeActionPayload =>
     ({
       kind: 'composerPrompt',
@@ -26,8 +26,8 @@ describe('approvalModeFromPayload — auto-edit preset allowlist gating', () => 
     }) as unknown as BridgeActionPayload
 
   it('normalizes top-level auto-edit presets to auto_edit regardless of approvalMode', () => {
-    // Escalation-prevention: a low approvalMode must NOT let auto-edit slip past
-    // the workspace allowlist (allowedApprovalModes) — it is gated as auto_edit.
+    // A low raw approvalMode must not disguise an auto-edit preset from
+    // downstream posture enforcement (including the global-scope clamp).
     expect(
       approvalModeFromPayload(payload({ approvalMode: 'default', permissionPresetId: 'full_access' }))
     ).toBe('auto_edit')
@@ -49,8 +49,7 @@ describe('approvalModeFromPayload — auto-edit preset allowlist gating', () => 
 
   // ---- Ensemble roster path: the preset is nested per-participant with NO
   // top-level approvalMode, so without the roster branch it would gate as the
-  // 'default' fallback and slip an auto-edit seat past a workspace that grants
-  // `steer` + `default` but not `auto_edit`. ----
+  // 'default' fallback and disguise an auto-edit participant posture. ----
   const roster = (participants: Array<Record<string, unknown>>): BridgeActionPayload =>
     ({
       kind: 'ensembleRosterUpdate',
@@ -347,6 +346,14 @@ function makeStubExecutor(
       data: { sentEnvelopes: 3 }
     }),
     executeSetYoloMode: make('executeSetYoloMode', { executed: true, message: 'setYoloMode done' }),
+    executeSetRemoteWorkspaceAccess: make('executeSetRemoteWorkspaceAccess', {
+      executed: true,
+      message: 'setRemoteWorkspaceAccess done'
+    }),
+    executeSetTrustedSession: make('executeSetTrustedSession', {
+      executed: true,
+      message: 'setTrustedSession done'
+    }),
     executeTogglePinChat: make('executeTogglePinChat', {
       executed: true,
       message: 'togglePinChat done'
@@ -511,9 +518,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-allowed',
         path: '/Users/test/projects/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -522,9 +527,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-antigravity',
         path: '/Users/test/projects/antigravity',
-        mode: 'read-write',
-        allowedProviders: ['antigravity'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -543,7 +546,8 @@ describe('BridgeActionRouter', () => {
     it('audits prepareStartTurn decisions by device id', async () => {
       const allowlist = seedAllowlist()
       const { ledger, records } = makeAuditLedger()
-      const router = new BridgeActionRouter({ allowlist, auditLedger: ledger })
+      const { executor } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, auditLedger: ledger, executor })
 
       const result = (await router.route('bridge.requestPrepareStartTurnAck', {
         pairID: 'ipad-1',
@@ -575,7 +579,7 @@ describe('BridgeActionRouter', () => {
       expect(result.message).toMatch(/not on the remote allowlist/i)
     })
 
-    it('denies prepareStartTurn when provider is not allowed for the workspace', async () => {
+    it('keeps provider selection independent from the workspace grant', async () => {
       const allowlist = seedAllowlist()
       const router = new BridgeActionRouter({ allowlist })
       const result = (await router.route('bridge.requestPrepareStartTurnAck', {
@@ -583,11 +587,10 @@ describe('BridgeActionRouter', () => {
         workspaceID: 'ws-allowed',
         provider: 'claude'
       })) as { accepted: boolean; message?: string }
-      expect(result.accepted).toBe(false)
-      expect(result.message).toMatch(/provider "claude"/i)
+      expect(result.accepted).toBe(true)
     })
 
-    it('denies prepareStartTurn when approval mode is not allowed', async () => {
+    it('keeps thread approval posture independent from a real-workspace grant', async () => {
       const allowlist = seedAllowlist()
       const router = new BridgeActionRouter({ allowlist })
       const result = (await router.route('bridge.requestPrepareStartTurnAck', {
@@ -595,8 +598,7 @@ describe('BridgeActionRouter', () => {
         workspaceID: 'ws-allowed',
         approvalMode: 'allow-all'
       })) as { accepted: boolean; message?: string }
-      expect(result.accepted).toBe(false)
-      expect(result.message).toMatch(/approval mode "allow-all"/i)
+      expect(result.accepted).toBe(true)
     })
 
     it('denies prepareStartTurn when allowlist entry has expired', async () => {
@@ -606,8 +608,6 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-expiring',
         path: '/Users/test/a',
         mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default'],
         expiresAt: 5000
       })
       const router = new BridgeActionRouter({ allowlist })
@@ -652,9 +652,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-late-add',
         path: '/Users/test/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
 
       // Next call sees the new entry — no router restart needed.
@@ -692,6 +690,145 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/no workspace allowlist/i)
+    })
+
+    it('allows pair-authenticated first-thread workspace consent before a grant exists', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ executor })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'setRemoteWorkspaceAccess',
+            workspaceId: 'ws-new',
+            enabled: true
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; executed?: boolean }
+
+      expect(result).toMatchObject({ accepted: true, executed: true })
+      expect(calls).toEqual([
+        expect.objectContaining({
+          method: 'executeSetRemoteWorkspaceAccess',
+          payload: expect.objectContaining({ workspaceId: 'ws-new', enabled: true })
+        })
+      ])
+    })
+
+    it('audits a completed first-thread decline as denied while acknowledging the choice', async () => {
+      const { ledger, records } = makeAuditLedger()
+      const { executor } = makeStubExecutor({
+        executeSetRemoteWorkspaceAccess: async () => ({
+          executed: true,
+          reasonCode: 'userDeclined',
+          message: 'Workspace access was not granted.',
+          data: { workspaceId: 'ws-new', granted: false }
+        })
+      })
+      const router = new BridgeActionRouter({ executor, auditLedger: ledger })
+      const wire = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'setRemoteWorkspaceAccess',
+            workspaceId: 'ws-new',
+            enabled: false
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: wire
+      })) as { accepted: boolean; executed?: boolean; reasonCode?: string }
+
+      expect(result).toMatchObject({
+        accepted: true,
+        executed: true,
+        reasonCode: 'userDeclined'
+      })
+      expect(records.at(-1)).toMatchObject({
+        decision: 'denied',
+        reasonCode: 'userDeclined'
+      })
+    })
+
+    it('workspace-gates Trusted Session independently from thread posture', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedAllowlist(), executor })
+      const trusted = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'setTrustedSession',
+            workspaceId: 'ws-allowed',
+            threadId: 't-1',
+            provider: 'codex',
+            enabled: true
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: trusted
+      })) as { accepted: boolean; executed?: boolean }
+
+      expect(result).toMatchObject({ accepted: true, executed: true })
+      expect(calls[0]).toMatchObject({ method: 'executeSetTrustedSession' })
+
+      const ungranted = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'setTrustedSession',
+            workspaceId: 'ws-missing',
+            threadId: 't-2',
+            provider: 'codex',
+            enabled: true
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+      const denied = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: ungranted
+      })) as { accepted: boolean; reasonCode?: string }
+      expect(denied).toMatchObject({ accepted: false, reasonCode: 'workspaceDenied' })
+      expect(calls).toHaveLength(1)
+    })
+
+    it('always permits a gated conditional-provider Trusted Session revocation', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({
+        allowlist: seedAllowlist(),
+        executor,
+        isConditionallyDispatchableProvider: () => false
+      })
+      const revoke = Buffer.from(
+        JSON.stringify(
+          withReplayMeta({
+            kind: 'setTrustedSession',
+            workspaceId: 'ws-allowed',
+            threadId: 't-1',
+            provider: 'antigravity',
+            enabled: false
+          })
+        ),
+        'utf-8'
+      ).toString('base64')
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-1',
+        payloadBase64: revoke
+      })) as { accepted: boolean; executed?: boolean }
+
+      expect(result).toMatchObject({ accepted: true, executed: true })
+      expect(calls[0]).toMatchObject({ method: 'executeSetTrustedSession' })
     })
 
     it('actionAck accepts when payload targets an allowlisted workspace', async () => {
@@ -786,7 +923,7 @@ describe('BridgeActionRouter', () => {
       expect(result.reasonCode).toBe('accepted')
     })
 
-    it('keeps the workspace provider grant independent from conditional admission', async () => {
+    it('lets conditional admission apply across every granted workspace', async () => {
       const router = new BridgeActionRouter({
         allowlist: seedAllowlist(),
         isConditionallyDispatchableProvider: (provider) => provider === 'antigravity'
@@ -809,9 +946,8 @@ describe('BridgeActionRouter', () => {
         pairID: 'pair-1',
         payloadBase64: wire
       })) as { accepted: boolean; reasonCode?: string; message?: string }
-      expect(result.accepted).toBe(false)
-      expect(result.reasonCode).toBe('workspaceDenied')
-      expect(result.message).toMatch(/provider "antigravity" is not allowed/i)
+      expect(result.accepted).toBe(true)
+      expect(result.reasonCode).toBe('accepted')
     })
 
     it('reevaluates conditional provider admission on every prepareStartTurn', async () => {
@@ -858,7 +994,8 @@ describe('BridgeActionRouter', () => {
     it('audits accepted capability-gated actionAck decisions by device id', async () => {
       const allowlist = seedAllowlist()
       const { ledger, records } = makeAuditLedger()
-      const router = new BridgeActionRouter({ allowlist, auditLedger: ledger })
+      const { executor } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, auditLedger: ledger, executor })
       const wire = Buffer.from(
         JSON.stringify(withReplayMeta({
           kind: 'composerPrompt',
@@ -944,7 +1081,7 @@ describe('BridgeActionRouter', () => {
       ])
     })
 
-    it('actionAck denies when provider is disallowed for the workspace', async () => {
+    it('actionAck accepts any statically admitted provider for a granted workspace', async () => {
       const allowlist = seedAllowlist()
       const router = new BridgeActionRouter({ allowlist })
       const wire = Buffer.from(
@@ -953,15 +1090,14 @@ describe('BridgeActionRouter', () => {
           workspaceId: 'ws-allowed',
           threadId: 't-1',
           text: 'hi',
-          provider: 'claude' // not in allowed list (gemini, codex)
+          provider: 'claude'
         })),
         'utf-8'
       ).toString('base64')
       const result = (await router.route('bridge.requestActionAck', {
         payloadBase64: wire
       })) as { accepted: boolean; message?: string }
-      expect(result.accepted).toBe(false)
-      expect(result.message).toMatch(/provider "claude"/i)
+      expect(result.accepted).toBe(true)
     })
 
     it('actionAck denies malformed base64', async () => {
@@ -1095,9 +1231,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-canonical',
         path: '/workspace',
         mode: 'read-write',
-        capabilities,
-        allowedProviders: ['codex'],
-        allowedApprovalModes: ['plan', 'default']
+        capabilities
       })
       return allowlist
     }
@@ -1242,7 +1376,7 @@ describe('BridgeActionRouter', () => {
       expect(disable).toMatchObject({ accepted: false, reasonCode: 'capabilityDenied' })
     })
 
-    it('does not silently downgrade a verified posture the allowlist rejects', async () => {
+    it('passes a verified thread posture independently of the workspace grant', async () => {
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({
         allowlist: workflowAllowlist(),
@@ -1258,9 +1392,8 @@ describe('BridgeActionRouter', () => {
         payloadBase64: encodeWorkflow({ kind: 'workflowRunNow', workflowId: 'wf-elevated' })
       })) as Record<string, unknown>
 
-      expect(result).toMatchObject({ accepted: false, workspaceId: 'ws-canonical' })
-      expect(String(result.message)).toMatch(/approval mode/i)
-      expect(calls).toHaveLength(0)
+      expect(result).toMatchObject({ accepted: true, workspaceId: 'ws-canonical' })
+      expect(calls).toHaveLength(1)
     })
   })
 
@@ -1270,9 +1403,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-allowed',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -1393,9 +1524,7 @@ describe('BridgeActionRouter', () => {
           'steer',
           'pin',
           'yolo'
-        ],
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        ]
       })
       return allowlist
     }
@@ -2000,9 +2129,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-ensemble',
         path: '/ensemble',
         mode: 'read-write',
-        capabilities,
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities
       })
       return allowlist
     }
@@ -2177,16 +2304,12 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-readonly',
         path: '/a',
-        mode: 'read-only',
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-only'
       })
       allowlist.upsert({
         workspaceId: 'ws-readwrite',
         path: '/b',
-        mode: 'read-write',
-        allowedProviders: ['gemini', 'codex'],
-        allowedApprovalModes: ['default', 'plan']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -2320,9 +2443,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-custom',
         path: '/c',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve', 'startTurn'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'approve', 'startTurn']
       })
       const router = new BridgeActionRouter({ allowlist })
       const wire = encodeAction({
@@ -2434,9 +2555,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-admin',
         path: '/admin',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve', 'pin', 'yolo'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'approve', 'pin', 'yolo']
       })
       const router = new BridgeActionRouter({ allowlist, executor })
       const pinResult = (await router.route('bridge.requestActionAck', {
@@ -2502,9 +2621,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-allowed',
         path: '/a',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       return allowlist
     }
@@ -2602,9 +2719,7 @@ describe('BridgeActionRouter', () => {
       allowlist.upsert({
         workspaceId: 'ws-files',
         path: '/files',
-        mode: 'read-write',
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        mode: 'read-write'
       })
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
@@ -2646,9 +2761,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-files',
         path: '/files',
         mode: 'read-write',
-        capabilities: ['monitor', 'fileBrowse', 'fileRead'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'fileBrowse', 'fileRead']
       })
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
@@ -2674,9 +2787,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-files',
         path: '/files',
         mode: 'read-write',
-        capabilities: ['monitor', 'fileBrowse', 'fileRead'],
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        capabilities: ['monitor', 'fileBrowse', 'fileRead']
       })
       const { executor, calls } = makeStubExecutor()
       const router = new BridgeActionRouter({ allowlist, executor })
@@ -2713,9 +2824,7 @@ describe('BridgeActionRouter', () => {
         workspaceId: 'ws-git',
         path: '/repo',
         mode: 'read-write',
-        ...(capabilities ? { capabilities: capabilities as never } : {}),
-        allowedProviders: ['gemini'],
-        allowedApprovalModes: ['default']
+        ...(capabilities ? { capabilities: capabilities as never } : {})
       })
     }
 

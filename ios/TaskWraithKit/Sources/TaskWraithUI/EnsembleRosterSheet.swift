@@ -62,11 +62,13 @@ public struct EnsembleRosterSheet: View {
     }
 
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
+    private var taskCard: RemoteTaskCard? {
+        model.taskCards.first { $0.id == threadId || $0.threadId == threadId }
+    }
 
     private var catalogs: [ProviderModelCatalog] {
         twOfferedProviderCatalogs(
-            model.providerModels,
-            allowedProviders: model.allowedProvidersForWorkspace(workspaceId))
+            model.providerModels)
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {
@@ -93,7 +95,9 @@ public struct EnsembleRosterSheet: View {
                         entry.provider.lowercased() == "kimi" ? true : (entry.thinkingEnabled ?? false),
                     stageRole: entry.stageRole,
                     isBossman: entry.isBossman ?? false,
-                    isSecondInCommand: entry.isSecondInCommand ?? false
+                    isSecondInCommand: entry.isSecondInCommand ?? false,
+                    runtimeProfileId: entry.runtimeProfileId,
+                    trustedSessionEnabled: entry.trustedSessionEnabled == true
                 )
             }
     }
@@ -460,6 +464,18 @@ public struct EnsembleRosterSheet: View {
                             onApply: { applyLiveEdit($0) },
                             onRemove: { removeParticipant(id: entry.id) },
                             autoApprovals: autoApprovalsConfig,
+                            requestTrustedSessionChange: { enabled, updated, completion in
+                                guard let taskCard else {
+                                    completion(false)
+                                    return
+                                }
+                                model.setTrustedSession(
+                                    taskCard, enabled: enabled,
+                                    ensembleParticipantId: updated.id,
+                                    provider: updated.provider,
+                                    runtimeProfileId: updated.runtimeProfileId,
+                                    completion: completion)
+                            },
                             onDismissRequest: { editingEntry = nil }
                         )
                         .presentationCompactAdaptation(.popover)

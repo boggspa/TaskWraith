@@ -318,6 +318,13 @@ export interface RemoteTaskCard {
   kimiFastMode?: boolean
   kimiReasoningEffort?: string
   kimiThinkingEnabled?: boolean
+  /** Host-authoritative composer permission selection. The workspace grant is
+   * a separate outer gate; these fields describe this thread/lane only. */
+  approvalMode?: string
+  workflowMode?: string
+  permissionPresetId?: string
+  runtimeProfileId?: string
+  trustedSessionEnabled?: boolean
   /** Slice B (provider unlock): a provider/model/reasoning switch queued while
    *  a run is active, applied at turn end. Remote composers show a "switching at
    *  turn end" pill and reflect the queued target instead of snapping the picker
@@ -402,11 +409,6 @@ export interface RemoteTaskCapabilities {
   externalPublish?: boolean
   pin?: boolean
   yolo?: boolean
-  /** The workspace allowlist's provider grant, so the phone's picker can
-   * reflect what a send will actually be accepted for instead of learning
-   * it from a post-send denial toast. Absent = no signal (older host or no
-   * allowlist entry) — the phone must NOT hide providers on absence. */
-  allowedProviders?: string[]
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean
@@ -556,6 +558,8 @@ export interface RemoteEnsembleRosterEntry {
   /** Per-participant approval preset + reasoning, so the remote chip editor can
    * display and round-trip them (iOS parity with the desktop participant editor). */
   permissionPresetId?: string
+  runtimeProfileId?: string
+  trustedSessionEnabled?: boolean
   reasoningEffort?: string
   fastModeEnabled?: boolean
   thinkingEnabled?: boolean
@@ -713,6 +717,10 @@ export interface BuildRemoteTaskCardOptions {
   openCanvases?: ReadonlyArray<CanvasSessionSummary>
   isShared?: boolean
   sharedMode?: string
+  /** Mac-resolved profile the next phone-origin solo turn will use. */
+  runtimeProfileId?: string
+  trustedSessionEnabled?: boolean
+  trustedSessionParticipantIds?: ReadonlySet<string>
 }
 
 export interface BuildRemoteTaskFeedSnapshotInput {
@@ -1236,6 +1244,21 @@ export function buildRemoteTaskCard(
   if (typeof providerMetadata.kimiThinkingEnabled === 'boolean') {
     card.kimiThinkingEnabled = providerMetadata.kimiThinkingEnabled
   }
+  if (isString(providerMetadata.approvalMode)) {
+    card.approvalMode = providerMetadata.approvalMode
+  } else if (isString(latestRun?.approvalMode)) {
+    card.approvalMode = latestRun.approvalMode
+  }
+  if (isString(chat.workflowMode)) card.workflowMode = chat.workflowMode
+  if (isString(providerMetadata.permissionPresetId)) {
+    card.permissionPresetId = providerMetadata.permissionPresetId
+  }
+  if (isString(options.runtimeProfileId)) {
+    card.runtimeProfileId = options.runtimeProfileId
+  } else if (isString(providerMetadata.runtimeProfileId)) {
+    card.runtimeProfileId = providerMetadata.runtimeProfileId
+  }
+  if (options.trustedSessionEnabled) card.trustedSessionEnabled = true
   const pendingProviderChange = readPendingProviderChange(chat)
   if (pendingProviderChange) {
     const pendingMeta = pendingProviderChange.providerMetadata ?? {}
@@ -1276,7 +1299,9 @@ export function buildRemoteTaskCard(
   if (diffSummary) card.diffSummary = compactDiffSummaryForTaskCard(diffSummary)
   const additionalWorkspaces = buildRemoteAdditionalWorkspaces(chat)
   if (additionalWorkspaces.length > 0) card.additionalWorkspaces = additionalWorkspaces
-  const ensembleState = buildRemoteEnsembleState(chat)
+  const ensembleState = buildRemoteEnsembleState(chat, {
+    trustedSessionParticipantIds: options.trustedSessionParticipantIds
+  })
   if (ensembleState) card.ensembleState = ensembleState
   const queuedComposerPrompts = buildRemoteQueuedComposerPrompts(options.queuedComposerJobs)
   if (queuedComposerPrompts.length > 0) card.queuedComposerPrompts = queuedComposerPrompts
@@ -1551,7 +1576,10 @@ function workingParticipantIdsForRound(
   return [...ids].sort()
 }
 
-export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState | undefined {
+export function buildRemoteEnsembleState(
+  chat: ChatRecord,
+  options: { trustedSessionParticipantIds?: ReadonlySet<string> } = {}
+): RemoteEnsembleState | undefined {
   const ensemble = chat.ensemble
   if (!ensemble) return undefined
   const activeRound = ensemble.activeRound
@@ -1625,6 +1653,12 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
             : {}),
           ...(participant.permissionPresetId
             ? { permissionPresetId: participant.permissionPresetId }
+            : {}),
+          ...(participant.runtimeProfileId
+            ? { runtimeProfileId: participant.runtimeProfileId }
+            : {}),
+          ...(options.trustedSessionParticipantIds?.has(participant.id)
+            ? { trustedSessionEnabled: true }
             : {}),
           ...(participant.reasoningEffort ? { reasoningEffort: participant.reasoningEffort } : {}),
           ...(participant.fastModeEnabled ? { fastModeEnabled: true } : {}),

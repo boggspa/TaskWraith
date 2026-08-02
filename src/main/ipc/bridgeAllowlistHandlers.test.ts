@@ -103,9 +103,7 @@ describe('registerBridgeAllowlistHandlers', () => {
     const entry = {
       workspaceId: 'ws-1',
       path: '/tmp/ws',
-      mode: 'read-only' as const,
-      allowedProviders: ['codex'],
-      allowedApprovalModes: ['default']
+      mode: 'read-only' as const
     }
 
     expect(handlerFor('bridge-allowlist-upsert')({}, entry)).toEqual({ ok: true, entry })

@@ -123,18 +123,6 @@ export class WorkspaceService {
       )
     }
     if (
-      !Array.isArray(entry.allowedProviders) ||
-      !entry.allowedProviders.every((p) => typeof p === 'string')
-    ) {
-      throw new Error('bridge-allowlist-upsert: allowedProviders must be string[]')
-    }
-    if (
-      !Array.isArray(entry.allowedApprovalModes) ||
-      !entry.allowedApprovalModes.every((p) => typeof p === 'string')
-    ) {
-      throw new Error('bridge-allowlist-upsert: allowedApprovalModes must be string[]')
-    }
-    if (
       entry.expiresAt !== undefined &&
       (typeof entry.expiresAt !== 'number' || entry.expiresAt <= 0)
     ) {
@@ -154,8 +142,6 @@ export class WorkspaceService {
       path: target.path,
       mode: entry.mode,
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
-      allowedProviders: entry.allowedProviders,
-      allowedApprovalModes: entry.allowedApprovalModes,
       expiresAt: entry.expiresAt
     })
   }
@@ -214,8 +200,6 @@ export class WorkspaceService {
         path: target.path,
         mode: entry.mode,
         capabilities: [...capabilitiesForRemoteWorkspaceEntry(entry)],
-        allowedProviders: entry.allowedProviders,
-        allowedApprovalModes: entry.allowedApprovalModes,
         expiresAt: entry.expiresAt
       })
       repaired++

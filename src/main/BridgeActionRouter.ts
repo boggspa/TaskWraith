@@ -85,6 +85,7 @@ export type BridgeActionAckReasonCode =
   | 'actionReplayed'
   | 'approvalAlreadyResolved'
   | 'approvalDispatchFailed'
+  | 'userDeclined'
 
 export type BridgeActionAckActionKind = BridgeActionPayload['kind'] | 'prepareStartTurn'
 
@@ -681,6 +682,7 @@ export class BridgeActionRouter {
     }
 
     const dispatch = await this.dispatch(payload, dispatchContext)
+    const userDeclined = dispatch.reasonCode === 'userDeclined'
     const workspaceIdForLog = resolvedWorkspaceId ?? workspaceIdFromPayload(payload) ?? 'null'
     this.log(
       `[BridgeActionRouter] ACCEPT actionAck pairID=${pairID} kind=${payload.kind} ws=${workspaceIdForLog} executed=${dispatch.executed}`
@@ -689,8 +691,8 @@ export class BridgeActionRouter {
       pairID,
       payload,
       capability: capabilityForPayload(payload),
-      decision: 'allowed',
-      reasonCode: dispatch.reasonCode ?? 'accepted',
+      decision: userDeclined ? 'denied' : 'allowed',
+      reasonCode: userDeclined ? 'userDeclined' : (dispatch.reasonCode ?? 'accepted'),
       reason: dispatch.message || 'accepted',
       ...(resolvedWorkspaceId ? { metadata: { workspaceId: resolvedWorkspaceId } } : {})
     })
@@ -830,6 +832,10 @@ export class BridgeActionRouter {
         return this.executor.executeSetWatchedThread(payload)
       case 'setYoloMode':
         return this.executor.executeSetYoloMode(payload)
+      case 'setRemoteWorkspaceAccess':
+        return this.executor.executeSetRemoteWorkspaceAccess(payload)
+      case 'setTrustedSession':
+        return this.executor.executeSetTrustedSession(payload)
       case 'togglePinChat':
         return this.executor.executeTogglePinChat(payload)
       case 'togglePinWorkspace':
@@ -1311,6 +1317,7 @@ function pairIdFromParams(params: unknown): string {
 }
 
 function providerFromPayload(payload: BridgeActionPayload): string | undefined {
+  if (payload.kind === 'setTrustedSession' && !payload.enabled) return undefined
   return 'provider' in payload && typeof payload.provider === 'string'
     ? payload.provider
     : undefined
@@ -1323,7 +1330,7 @@ function providerFromPayload(payload: BridgeActionPayload): string | undefined {
 // without being listed here, so a future preset can't silently slip the roster
 // gate below. `full_access` additionally drops the OS sandbox; `workspace_write`
 // stays contained — but both auto-edit, so both must clear an auto_edit-gated
-// workspace allowlist.
+// signed run posture.
 export const AUTO_EDIT_TIER_PRESET_IDS: ReadonlySet<string> = new Set([
   'workspace_write',
   'full_access'
@@ -1332,8 +1339,8 @@ export const AUTO_EDIT_TIER_PRESET_IDS: ReadonlySet<string> = new Set([
 export function approvalModeFromPayload(payload: BridgeActionPayload): string | undefined {
   // A composer auto-edit-tier run may carry permissionPresetId:'workspace_write'
   // or :'full_access' and resolves to auto_edit on the Mac. Gate it as auto_edit
-  // here so it can't slip past the workspace allowlist (allowedApprovalModes) by
-  // riding a lower approvalMode such as 'default'. Downstream, full_access still
+  // here so downstream posture resolution sees the real authority tier rather
+  // than a lower approvalMode such as 'default'. Downstream, full_access still
   // needs a scoped Trusted Session receipt before host sandboxing is dropped.
   if (
     'permissionPresetId' in payload &&
@@ -1472,6 +1479,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'proposedPlanDecision':
     case 'canvasAction':
     case 'createSideChat':
+    case 'setTrustedSession':
       return 'startTurn'
     // Admin-only capabilities: these are intentionally NOT included in the
     // read-write task-console default set. A workspace entry must list them
@@ -1496,6 +1504,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'discoverTailnetHosts':
     case 'fullProjectionResync':
     case 'setWatchedThread':
+    case 'setRemoteWorkspaceAccess':
     case 'unknown':
       return null
   }

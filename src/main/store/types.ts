@@ -2006,7 +2006,7 @@ export interface ProviderAdapterCapabilityCaveat {
  * unknown fields but new required fields would break older clients. */
 export interface ProviderAdapterCapabilities {
   /** Approval modes the provider's runtime accepts. iOS composer
-   * filters this against `RemoteWorkspaceEntry.allowedApprovalModes`
+   * keeps this posture separate from the paired-device workspace grant
    * to produce the final picker contents. */
   approvalModes: Array<'default' | 'plan' | 'allow-all'>
   /** Whether the run payload's `reasoningEffort` field has any effect

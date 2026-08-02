@@ -66,6 +66,11 @@ export interface WorkspaceSummary {
   /** ISO8601. Omitted when AppStore has no timestamp for the row. */
   lastActivityAt?: string
   pinned?: boolean
+  /** Whether paired iOS companions currently have a live outer workspace grant.
+   * Ungranted registered workspaces are still projected so iOS can request the
+   * first-thread grant without learning any of their chat contents. */
+  remoteAccessGranted?: boolean
+  remoteAccessMode?: 'read-only' | 'read-write'
   capabilities?: RemoteTaskCapabilities
 }
 
@@ -196,8 +201,11 @@ export const BRIDGE_BROADCAST_METHODS = {
 export function workspaceRecordToSummary(
   workspace: WorkspaceRecord,
   chats: ChatRecord[],
-  capabilities?: RemoteTaskCapabilities
+  capabilities?: RemoteTaskCapabilities,
+  remoteAccessGranted?: boolean,
+  remoteAccessMode?: 'read-only' | 'read-write'
 ): WorkspaceSummary {
+  const isConsentStub = remoteAccessGranted === false
   const scopedChats = chats.filter((chat) => chat.workspaceId === workspace.id)
   const runningChatCount = scopedChats.filter(isChatRunning).length
   // `lastOpenedAt` is the closest proxy AppStore exposes to "last
@@ -206,16 +214,24 @@ export function workspaceRecordToSummary(
   const lastActivityAt = msToIsoOrUndefined(workspace.lastOpenedAt)
   const summary: WorkspaceSummary = {
     workspaceId: workspace.id,
-    displayName: workspace.displayName || workspace.path,
-    path: workspace.path,
+    displayName: workspace.displayName || (isConsentStub ? 'Workspace' : workspace.path),
+    // An authenticated pairing may learn that a registered workspace exists so
+    // it can ask for consent, but host-local paths remain behind the grant.
+    path: isConsentStub ? '' : workspace.path,
     chatCount: scopedChats.length,
-    runningChatCount,
-    pinned: Boolean(workspace.pinned)
+    runningChatCount
   }
+  if (!isConsentStub) summary.pinned = Boolean(workspace.pinned)
   if (capabilities !== undefined) {
     summary.capabilities = capabilities
   }
-  if (lastActivityAt !== undefined) {
+  if (remoteAccessGranted !== undefined) {
+    summary.remoteAccessGranted = remoteAccessGranted
+  }
+  if (remoteAccessMode !== undefined) {
+    summary.remoteAccessMode = remoteAccessMode
+  }
+  if (!isConsentStub && lastActivityAt !== undefined) {
     summary.lastActivityAt = lastActivityAt
   }
   return summary
@@ -459,10 +475,11 @@ export class BridgeBroadcaster {
       this.logErr(`failed to load workspaces/chats for ${method}`, err)
       return null
     }
-    const visibleWorkspaces = this.visibleWorkspaces(workspaces)
-    const visibleWorkspaceIds = new Set(visibleWorkspaces.map((ws) => ws.id))
+    const visibleWorkspaceIds = new Set(
+      workspaces.filter((workspace) => this.isWorkspaceVisible(workspace.id)).map((ws) => ws.id)
+    )
     const visibleChats = this.visibleChats(chats, visibleWorkspaceIds)
-    const summaries = visibleWorkspaces.map((ws) => this.workspaceRecordToSummary(ws, visibleChats))
+    const summaries = workspaces.map((ws) => this.workspaceRecordToSummary(ws, visibleChats))
     return { workspaces: summaries }
   }
 
@@ -503,11 +520,13 @@ export class BridgeBroadcaster {
       this.log?.(`[BridgeBroadcaster] ${method} skipped — workspace ${workspaceId} not found`)
       return
     }
-    if (!this.isWorkspaceVisible(workspace.id)) {
-      this.log?.(`[BridgeBroadcaster] ${method} skipped — workspace ${workspaceId} not allowed`)
-      return
-    }
-    const summary = this.workspaceRecordToSummary(workspace, chats)
+    const visibleWorkspaceIds = new Set(
+      workspaces.filter((entry) => this.isWorkspaceVisible(entry.id)).map((entry) => entry.id)
+    )
+    const summary = this.workspaceRecordToSummary(
+      workspace,
+      this.visibleChats(chats, visibleWorkspaceIds)
+    )
     this.sendNotify(method, { workspace: summary })
   }
 
@@ -755,11 +774,6 @@ export class BridgeBroadcaster {
     return true
   }
 
-  private visibleWorkspaces(workspaces: WorkspaceRecord[]): WorkspaceRecord[] {
-    if (!this.allowlist) return workspaces
-    return workspaces.filter((workspace) => this.isWorkspaceVisible(workspace.id))
-  }
-
   private visibleWorkspaceIdsFromChats(chats: ChatRecord[]): Set<string> {
     if (!this.allowlist) {
       return new Set(
@@ -780,8 +794,8 @@ export class BridgeBroadcaster {
     if (!this.allowlist) return chats
     // T71 — scope-global chats (no workspaceId) pass through READ-ONLY when
     // the synthetic global scope is live (≥1 real workspace allowlisted).
-    // The allowlist's virtual entry grants only `monitor`, so every action
-    // beyond viewing stays denied at the router.
+    // The allowlist's virtual entry grants conversation capabilities only;
+    // file, diff, and admin actions remain denied at the router.
     const globalVisible = this.isWorkspaceVisible(GLOBAL_REMOTE_SCOPE)
     return chats.filter((chat) =>
       chat.workspaceId && chat.workspaceId.length > 0
@@ -802,7 +816,15 @@ export class BridgeBroadcaster {
   }
 
   private workspaceRecordToSummary(workspace: WorkspaceRecord, chats: ChatRecord[]): WorkspaceSummary {
-    return workspaceRecordToSummary(workspace, chats, this.remoteCapabilitiesForWorkspace(workspace.id))
+    const decision = this.allowlist?.evaluate({ workspaceId: workspace.id })
+    const granted = decision?.allowed ?? true
+    return workspaceRecordToSummary(
+      workspace,
+      chats,
+      this.remoteCapabilitiesForWorkspace(workspace.id),
+      granted,
+      decision?.allowed ? decision.entry.mode : undefined
+    )
   }
 
   private remoteCapabilitiesForWorkspace(workspaceId: string): RemoteTaskCapabilities | undefined {
@@ -810,14 +832,7 @@ export class BridgeBroadcaster {
     const decision = this.allowlist.evaluate({ workspaceId, capability: 'monitor' })
     if (!decision.allowed) return undefined
     const capabilities = new Set(capabilitiesForRemoteWorkspaceEntry(decision.entry))
-    // Project the provider grant only when the entry actually narrows one:
-    // the synthetic global-scope entry carries an empty array, and an empty
-    // list on the wire would read as "nothing allowed" and blank the picker.
-    const allowedProviders = decision.entry?.allowedProviders?.filter(
-      (provider) => typeof provider === 'string' && provider.trim().length > 0
-    )
     return {
-      ...(allowedProviders && allowedProviders.length > 0 ? { allowedProviders } : {}),
       monitor: capabilities.has('monitor'),
       approve: capabilities.has('approve'),
       answer: capabilities.has('answer'),

@@ -18,8 +18,6 @@ function entry(overrides: Partial<RemoteWorkspaceEntry> = {}): RemoteWorkspaceEn
     workspaceId: 'ws-1',
     path: '/Users/me/Documents/Repo',
     mode: 'read-only',
-    allowedProviders: ['claude'],
-    allowedApprovalModes: ['plan'],
     createdAt: 1,
     updatedAt: 1,
     ...overrides

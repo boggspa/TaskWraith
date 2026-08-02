@@ -929,6 +929,28 @@ export interface BridgeSetYoloModeAction extends BridgeActionMetadata {
   enabled: boolean
 }
 
+/** Pair-authenticated first-thread workspace consent. This deliberately
+ * bypasses the workspace gate it creates, but can only name a workspace that
+ * Electron already has in its registry. `enabled:false` records no grant and
+ * never revokes an existing one; revocation remains a Settings action. */
+export interface BridgeSetRemoteWorkspaceAccessAction extends BridgeActionMetadata {
+  kind: 'setRemoteWorkspaceAccess'
+  workspaceId: string
+  enabled: boolean
+}
+
+/** Lane-scoped Trusted Session grant/revoke. The Mac resolves the canonical
+ * chat/workspace/provider lane before touching its in-memory receipt store. */
+export interface BridgeSetTrustedSessionAction extends BridgeActionMetadata {
+  kind: 'setTrustedSession'
+  workspaceId: string
+  threadId: string
+  provider: string
+  enabled: boolean
+  ensembleParticipantId?: string
+  runtimeProfileId?: string
+}
+
 export interface BridgeTogglePinChatAction extends BridgeActionMetadata {
   kind: 'togglePinChat'
   workspaceId: string
@@ -1035,6 +1057,8 @@ export type BridgeActionPayload =
   | BridgeFullProjectionResyncAction
   | BridgeSetWatchedThreadAction
   | BridgeSetYoloModeAction
+  | BridgeSetRemoteWorkspaceAccessAction
+  | BridgeSetTrustedSessionAction
   | BridgeTogglePinChatAction
   | BridgeTogglePinWorkspaceAction
   | BridgeSetChatArchivedAction
@@ -1171,6 +1195,8 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'proposedPlanDecision':
     case 'canvasAction':
     case 'setYoloMode':
+    case 'setRemoteWorkspaceAccess':
+    case 'setTrustedSession':
     case 'togglePinChat':
     case 'togglePinWorkspace':
     case 'setChatArchived':
@@ -1258,6 +1284,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'proposedPlanDecision':
     case 'canvasAction':
     case 'setYoloMode':
+    case 'setTrustedSession':
     case 'togglePinChat':
     case 'togglePinWorkspace':
     case 'setChatArchived':
@@ -1276,6 +1303,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'discoverTailnetHosts':
     case 'fullProjectionResync':
     case 'setWatchedThread':
+    case 'setRemoteWorkspaceAccess':
       return false
     case 'unknown':
       // Unknown variants are rejected upstream; the gating question
@@ -1347,6 +1375,8 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'proposedPlanDecision':
     case 'canvasAction':
     case 'setYoloMode':
+    case 'setRemoteWorkspaceAccess':
+    case 'setTrustedSession':
     case 'togglePinChat':
     case 'togglePinWorkspace':
     case 'setChatArchived':
@@ -1631,6 +1661,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isSetYoloMode(parsed)
         ? (parsed as unknown as BridgeSetYoloModeAction)
         : { kind: 'unknown', rawKind: 'setYoloMode', raw: parsed }
+    case 'setRemoteWorkspaceAccess':
+      return isSetRemoteWorkspaceAccess(parsed)
+        ? (parsed as unknown as BridgeSetRemoteWorkspaceAccessAction)
+        : { kind: 'unknown', rawKind: 'setRemoteWorkspaceAccess', raw: parsed }
+    case 'setTrustedSession':
+      return isSetTrustedSession(parsed)
+        ? (parsed as unknown as BridgeSetTrustedSessionAction)
+        : { kind: 'unknown', rawKind: 'setTrustedSession', raw: parsed }
     case 'togglePinChat':
       return isTogglePinChat(parsed)
         ? (parsed as unknown as BridgeTogglePinChatAction)
@@ -2499,6 +2537,32 @@ function isEnsembleSteer(v: Record<string, unknown>): boolean {
 function isSetYoloMode(v: Record<string, unknown>): boolean {
   return (
     hasValidActionMetadata(v) && typeof v.workspaceId === 'string' && typeof v.enabled === 'boolean'
+  )
+}
+
+function isSetRemoteWorkspaceAccess(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    v.workspaceId.length > 0 &&
+    typeof v.enabled === 'boolean'
+  )
+}
+
+function isSetTrustedSession(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    v.workspaceId.length > 0 &&
+    typeof v.threadId === 'string' &&
+    v.threadId.length > 0 &&
+    typeof v.provider === 'string' &&
+    v.provider.length > 0 &&
+    typeof v.enabled === 'boolean' &&
+    (v.ensembleParticipantId === undefined ||
+      (typeof v.ensembleParticipantId === 'string' && v.ensembleParticipantId.length > 0)) &&
+    (v.runtimeProfileId === undefined ||
+      (typeof v.runtimeProfileId === 'string' && v.runtimeProfileId.length > 0))
   )
 }
 

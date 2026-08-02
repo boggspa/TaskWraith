@@ -24,33 +24,25 @@ describe('assertRemoteProviderGrant', () => {
       workspaceId: 'ws-1',
       path: '/repo',
       mode: 'read-write',
-      capabilities: ['monitor', 'startTurn', 'steer'],
-      allowedProviders: ['pi', 'antigravity'],
-      allowedApprovalModes: ['default']
+      capabilities: ['monitor', 'startTurn', 'steer']
     })
     return value
   }
 
-  it('accepts a nested participant covered by the workspace provider grant', () => {
-    expect(() =>
-      assertRemoteProviderGrant({
-        allowlist: allowlist(),
-        workspaceId: 'ws-1',
-        provider: 'antigravity',
-        capability: 'steer'
-      })
-    ).not.toThrow()
+  it('keeps nested provider admission independent from the universal workspace grant', () => {
+    for (const provider of ['pi', 'claude', 'antigravity']) {
+      expect(() =>
+        assertRemoteProviderGrant({
+          allowlist: allowlist(),
+          workspaceId: 'ws-1',
+          provider,
+          capability: 'steer'
+        })
+      ).not.toThrow()
+    }
   })
 
-  it('rejects nested providers and capabilities outside the workspace grant', () => {
-    expect(() =>
-      assertRemoteProviderGrant({
-        allowlist: allowlist(),
-        workspaceId: 'ws-1',
-        provider: 'claude',
-        capability: 'steer'
-      })
-    ).toThrow(/provider "claude"/i)
+  it('still rejects capabilities outside the workspace grant', () => {
     expect(() =>
       assertRemoteProviderGrant({
         allowlist: allowlist(),

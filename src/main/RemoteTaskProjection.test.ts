@@ -398,6 +398,38 @@ describe('RemoteTaskProjection', () => {
     })
   })
 
+  it('projects Mac-authoritative thread permission and Trusted Session state', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        workflowMode: 'plan',
+        providerMetadata: {
+          approvalMode: 'auto_edit',
+          permissionPresetId: 'workspace_write',
+          runtimeProfileId: 'profile-1'
+        }
+      }),
+      { trustedSessionEnabled: true }
+    )
+
+    expect(card).toMatchObject({
+      approvalMode: 'auto_edit',
+      workflowMode: 'plan',
+      permissionPresetId: 'workspace_write',
+      runtimeProfileId: 'profile-1',
+      trustedSessionEnabled: true
+    })
+    expect(buildRemoteTaskCard(chat()).trustedSessionEnabled).toBeUndefined()
+  })
+
+  it('projects the Mac-resolved next-run profile over stale metadata', () => {
+    const card = buildRemoteTaskCard(
+      chat({ providerMetadata: { runtimeProfileId: 'stale-profile' } }),
+      { runtimeProfileId: 'effective-profile' }
+    )
+
+    expect(card.runtimeProfileId).toBe('effective-profile')
+  })
+
   it('keeps a task card non-terminal while a remote composer follow-up is queued', () => {
     const card = buildRemoteTaskCard(
       chat({
@@ -1356,7 +1388,15 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
       ensemble: {
         participants: [
           { id: 'p1', provider: 'claude', role: 'Architect', enabled: true, order: 0, model: 'claude-opus-4-8' },
-          { id: 'p2', provider: 'codex', role: 'Builder', enabled: true, order: 1, model: 'gpt-5.5' }
+          {
+            id: 'p2',
+            provider: 'codex',
+            role: 'Builder',
+            enabled: true,
+            order: 1,
+            model: 'gpt-5.5',
+            runtimeProfileId: 'profile-2'
+          }
         ]
       },
       runs: [
@@ -1372,6 +1412,19 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
       ['p1', 123_000], // latest p1 run (120k+3k), not 40k+1k+120k+3k
       ['p2', 31_000]
     ])
+  })
+
+  it('projects participant runtime profile and live Trusted Session receipt separately', () => {
+    const source = ensembleChat()
+    const state = buildRemoteEnsembleState(source, {
+      trustedSessionParticipantIds: new Set(['p2'])
+    })
+
+    expect(state?.roster?.find((entry) => entry.id === 'p1')?.trustedSessionEnabled).toBeUndefined()
+    expect(state?.roster?.find((entry) => entry.id === 'p2')).toMatchObject({
+      runtimeProfileId: 'profile-2',
+      trustedSessionEnabled: true
+    })
   })
 
   it('omits contextTokens for a participant with no runs', () => {

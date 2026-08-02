@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RemoteWorkspaceEntry } from '../../../shared/remoteWorkspaceDefaults'
 import {
-  buildAllowlistUpsertForProviders,
   buildAllowlistUpsertForSegment,
   deriveWorkspaceRemoteSegment,
   entryCanPublishExternally,
@@ -14,8 +13,6 @@ function entry(overrides: Partial<RemoteWorkspaceEntry> = {}): RemoteWorkspaceEn
     workspaceId: 'ws-1',
     path: '/repo',
     mode: 'read-only',
-    allowedProviders: ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'],
-    allowedApprovalModes: ['default', 'plan'],
     createdAt: 1,
     updatedAt: 1,
     ...overrides
@@ -32,73 +29,6 @@ describe('deriveWorkspaceRemoteSegment', () => {
     expect(deriveWorkspaceRemoteSegment(entry({ mode: 'read-write', expiresAt: 200 }), 100)).toBe(
       'read-write'
     )
-  })
-})
-
-describe('buildAllowlistUpsertForProviders', () => {
-  it('adds Pi and AntiGravity without changing any other workspace authority', () => {
-    const existing = entry({
-      workspaceId: 'ws-legacy',
-      path: '/repo/legacy',
-      mode: 'read-write',
-      capabilities: ['monitor', 'steer', 'fileBrowse', 'fileRead', 'fileWrite', 'pin'],
-      allowedProviders: ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'],
-      allowedApprovalModes: ['plan'],
-      expiresAt: 4102444800000
-    })
-
-    expect(
-      buildAllowlistUpsertForProviders(existing, [
-        'codex',
-        'claude',
-        'kimi',
-        'cursor',
-        'grok',
-        'ollama',
-        'pi',
-        'antigravity',
-        'unknown-provider'
-      ])
-    ).toEqual({
-      workspaceId: 'ws-legacy',
-      path: '/repo/legacy',
-      mode: 'read-write',
-      capabilities: ['monitor', 'steer', 'fileBrowse', 'fileRead', 'fileWrite', 'pin'],
-      allowedProviders: [
-        'gemini',
-        'codex',
-        'claude',
-        'kimi',
-        'cursor',
-        'grok',
-        'ollama',
-        'pi',
-        'antigravity'
-      ],
-      allowedApprovalModes: ['plan'],
-      expiresAt: 4102444800000
-    })
-  })
-
-  it('preserves legacy effective capabilities and retired provider ids', () => {
-    const existing = entry({
-      mode: 'read-write',
-      capabilities: undefined,
-      allowedProviders: ['gemini', 'codex', 'claude']
-    })
-    const out = buildAllowlistUpsertForProviders(existing, [' Pi ', 'pi'])
-
-    expect(out.capabilities).toEqual([
-      'monitor',
-      'approve',
-      'answer',
-      'cancel',
-      'startTurn',
-      'diffReview',
-      'steer'
-    ])
-    expect(out.allowedProviders).toEqual(['gemini', 'pi'])
-    expect(out.expiresAt).toBeUndefined()
   })
 })
 
@@ -159,9 +89,7 @@ describe('buildAllowlistUpsertForSegment', () => {
       workspaceId: 'ws-9',
       path: '/repo/nine',
       mode: 'read-only',
-      capabilities: ['monitor', 'approve'],
-      allowedProviders: ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'],
-      allowedApprovalModes: ['default', 'plan']
+      capabilities: ['monitor', 'approve']
     })
     expect(read.expiresAt).toBeUndefined()
 
@@ -172,21 +100,16 @@ describe('buildAllowlistUpsertForSegment', () => {
     expect(rw.capabilities).toContain('fileRead')
   })
 
-  it('read-modify-write PRESERVES a narrowed entry on a mode flip', () => {
+  it('read-modify-write preserves expiry on a mode flip', () => {
     const existing = entry({
       workspaceId: 'ws-9',
       path: '/repo/nine',
       mode: 'read-only',
-      allowedProviders: ['claude'],
-      allowedApprovalModes: ['plan'],
       expiresAt: 4102444800000,
       capabilities: ['monitor', 'approve']
     })
     const out = buildAllowlistUpsertForSegment(ws, 'read-write', existing)
     expect(out.mode).toBe('read-write')
-    // Providers/approval/expiry are NOT widened or erased.
-    expect(out.allowedProviders).toEqual(['claude'])
-    expect(out.allowedApprovalModes).toEqual(['plan'])
     expect(out.expiresAt).toBe(4102444800000)
     expect(out.workspaceId).toBe('ws-9')
   })
@@ -196,25 +119,13 @@ describe('buildAllowlistUpsertForSegment', () => {
       workspaceId: 'ws-9',
       path: '/repo/nine',
       mode: 'read-write',
-      allowedProviders: ['claude'],
-      allowedApprovalModes: ['plan'],
       expiresAt: 50,
       capabilities: ['monitor', 'approve']
     })
     // now=100 > expiresAt=50 → the UI shows this as Off, so re-granting must NOT
-    // copy the dead timestamp forward or keep the narrowed providers.
+    // copy the dead timestamp forward.
     const out = buildAllowlistUpsertForSegment({ id: 'ws-9', path: '/repo/nine' }, 'read', expired, 100)
     expect(out.expiresAt).toBeUndefined()
-    expect(out.allowedProviders).toEqual([
-      'codex',
-      'claude',
-      'kimi',
-      'cursor',
-      'grok',
-      'ollama',
-      'pi',
-      'mistral'
-    ])
     expect(out.mode).toBe('read-only')
   })
 
