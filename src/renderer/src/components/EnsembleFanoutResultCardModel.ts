@@ -1,4 +1,5 @@
-import type { ChatMessage } from '../../../main/store/types'
+import type { ChatMessage, ToolActivity } from '../../../main/store/types'
+import { shouldAutoCollapseActivityStack } from '../lib/collapsedActivityStack'
 // The lane-result predicate, part type, and parts reader live in shared/ so
 // the remote projection folds fan-out lanes exactly the way this card renders
 // them. Re-exported to keep this model the card's single import surface.
@@ -7,6 +8,31 @@ export {
   readEnsembleFanoutTranscriptParts
 } from '../../../shared/fanoutLaneGrouping'
 export type { EnsembleFanoutTranscriptPart } from '../../../shared/fanoutLaneGrouping'
+
+const FANOUT_ACTIVITY_PART_EXPANSION_PREFIX = 'fanout-activity-part:'
+
+/** Stable synthetic id stored alongside ordinary expanded activity ids. */
+export function fanoutActivityPartExpansionId(partId: string): string {
+  return `${FANOUT_ACTIVITY_PART_EXPANSION_PREFIX}${partId}`
+}
+
+/**
+ * Earlier settled tool groups fold while a lane is still working; once the
+ * lane itself settles, its final settled group folds too. Running/pending
+ * activity always wins and remains visible.
+ */
+export function shouldCollapseFanoutActivityPart(input: {
+  activities: readonly ToolActivity[]
+  isLatestPart: boolean
+  laneWorking: boolean
+}): boolean {
+  const isCurrentLivePart = input.laneWorking && input.isLatestPart
+  return shouldAutoCollapseActivityStack({
+    activities: input.activities,
+    isLiveRow: isCurrentLivePart,
+    isLastRow: isCurrentLivePart
+  })
+}
 
 /**
  * The seat this fan-out card belongs to.

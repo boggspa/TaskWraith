@@ -6714,6 +6714,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   padding-left: 14px;
 }
 
+/* Settled nested tool groups use the transcript's ordinary one-line fold.
+   Align its summary with the full timeline it replaces; when re-expanded,
+   ActivityStack keeps owning the existing 14px body inset above. */
+.ensemble-fanout-result-tools
+  > .collapsed-activity-stack
+  > .collapsed-activity-stack-summary {
+  padding-left: 14px;
+}
+
 .ensemble-fanout-tools-viewport {
   margin: 0;
   --live-activity-edge-fade-size: 36px;

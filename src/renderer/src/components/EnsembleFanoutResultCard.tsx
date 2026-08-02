@@ -1,20 +1,24 @@
-import { useMemo, type CSSProperties } from 'react'
+import { useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
   DiffFileSummary,
-  ProviderId
+  ProviderId,
+  ToolActivity
 } from '../../../main/store/types'
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { ActivityStack, type ThinkingTraceActionsConfig } from './ActivityStack'
+import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } from './ChatMediaPanel'
 import {
   ensembleFanoutLaneIntent,
+  fanoutActivityPartExpansionId,
+  shouldCollapseFanoutActivityPart,
   type EnsembleFanoutTranscriptPart,
   readEnsembleFanoutTranscriptParts
 } from './EnsembleFanoutResultCardModel'
@@ -231,6 +235,75 @@ export function EnsembleFanoutResultCard({
   const toolViewportLabel = `${role} fan-out tool calls`
   const controlledToolViewportExpanded = onExpandedChange ? expandedResult : undefined
   const collapsedResult = !expandedResult
+  const [localExpandedPartIds, setLocalExpandedPartIds] = useState<Set<string>>(() => new Set())
+  const effectiveExpandedActivityIds = expandedActivityIds ?? localExpandedPartIds
+  const latestDisplayablePartId = [...renderedTranscriptParts]
+    .reverse()
+    .find(
+      (part) =>
+        (part.kind === 'content' && part.content.trim()) ||
+        (part.kind === 'tools' && part.toolActivities.length > 0)
+    )?.id
+
+  const setActivityPartExpanded = (partId: string, nextExpanded: boolean): void => {
+    const expansionId = fanoutActivityPartExpansionId(partId)
+    const next = new Set(effectiveExpandedActivityIds)
+    if (nextExpanded) next.add(expansionId)
+    else next.delete(expansionId)
+    if (onExpandedActivityIdsChange) onExpandedActivityIdsChange(next)
+    else setLocalExpandedPartIds(next)
+  }
+
+  const renderActivityPart = (
+    partId: string,
+    partActivities: ToolActivity[],
+    isLatestPart: boolean
+  ): ReactElement => {
+    const activityStack = (
+      <ActivityStack
+        activities={partActivities}
+        workspacePath={workspacePath}
+        provider={provider}
+        chatId={chat?.appChatId}
+        runId={streamRunId || message.runId}
+        chat={chat}
+        compactDensity={compactDensity}
+        liveActivityViewport
+        liveActivityViewportClassName="ensemble-fanout-tools-viewport"
+        liveActivityViewportCollapsedMaxHeight={COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT}
+        liveActivityViewportLabel={toolViewportLabel}
+        liveActivityViewportExpandLabel="Expand tool calls"
+        liveActivityViewportCollapseLabel="Collapse tool calls"
+        liveActivityViewportJumpLabel="Jump to latest tool call"
+        liveActivityViewportExpanded={controlledToolViewportExpanded}
+        onLiveActivityViewportExpandedChange={onExpandedChange}
+        expandedActivityIds={expandedActivityIds}
+        onExpandedActivityIdsChange={onExpandedActivityIdsChange}
+        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+        thinkingTraceActions={thinkingTraceActions}
+      />
+    )
+    if (
+      !shouldCollapseFanoutActivityPart({
+        activities: partActivities,
+        isLatestPart,
+        laneWorking: working
+      })
+    ) {
+      return activityStack
+    }
+    const expansionId = fanoutActivityPartExpansionId(partId)
+    return (
+      <CollapsedActivityStackRow
+        header={null}
+        activities={partActivities}
+        expanded={effectiveExpandedActivityIds.has(expansionId)}
+        onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
+      >
+        {activityStack}
+      </CollapsedActivityStackRow>
+    )
+  }
 
   return (
     <article
@@ -309,30 +382,11 @@ export function EnsembleFanoutResultCard({
                       key={part.id}
                       className="ensemble-fanout-result-part ensemble-fanout-result-tools"
                     >
-                      <ActivityStack
-                        activities={part.toolActivities}
-                        workspacePath={workspacePath}
-                        provider={provider}
-                        chatId={chat?.appChatId}
-                        runId={streamRunId || message.runId}
-                        chat={chat}
-                        compactDensity={compactDensity}
-                        liveActivityViewport
-                        liveActivityViewportClassName="ensemble-fanout-tools-viewport"
-                        liveActivityViewportCollapsedMaxHeight={
-                          COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT
-                        }
-                        liveActivityViewportLabel={toolViewportLabel}
-                        liveActivityViewportExpandLabel="Expand tool calls"
-                        liveActivityViewportCollapseLabel="Collapse tool calls"
-                        liveActivityViewportJumpLabel="Jump to latest tool call"
-                        liveActivityViewportExpanded={controlledToolViewportExpanded}
-                        onLiveActivityViewportExpandedChange={onExpandedChange}
-                        expandedActivityIds={expandedActivityIds}
-                        onExpandedActivityIdsChange={onExpandedActivityIdsChange}
-                        onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                        thinkingTraceActions={thinkingTraceActions}
-                      />
+                      {renderActivityPart(
+                        part.id,
+                        part.toolActivities,
+                        part.id === latestDisplayablePartId
+                      )}
                     </div>
                   ) : null
                 )}
@@ -354,28 +408,7 @@ export function EnsembleFanoutResultCard({
               </div>
             ) : activities.length > 0 ? (
               <div className="ensemble-fanout-result-part ensemble-fanout-result-tools">
-                <ActivityStack
-                  activities={activities}
-                  workspacePath={workspacePath}
-                  provider={provider}
-                  chatId={chat?.appChatId}
-                  runId={streamRunId || message.runId}
-                  chat={chat}
-                  compactDensity={compactDensity}
-                  liveActivityViewport
-                  liveActivityViewportClassName="ensemble-fanout-tools-viewport"
-                  liveActivityViewportCollapsedMaxHeight={COLLAPSED_FANOUT_TOOL_VIEWPORT_HEIGHT}
-                  liveActivityViewportLabel={toolViewportLabel}
-                  liveActivityViewportExpandLabel="Expand tool calls"
-                  liveActivityViewportCollapseLabel="Collapse tool calls"
-                  liveActivityViewportJumpLabel="Jump to latest tool call"
-                  liveActivityViewportExpanded={controlledToolViewportExpanded}
-                  onLiveActivityViewportExpandedChange={onExpandedChange}
-                  expandedActivityIds={expandedActivityIds}
-                  onExpandedActivityIdsChange={onExpandedActivityIdsChange}
-                  onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
-                  thinkingTraceActions={thinkingTraceActions}
-                />
+                {renderActivityPart(message.id, activities, true)}
               </div>
             ) : (
               !hasDisplayableParts && (

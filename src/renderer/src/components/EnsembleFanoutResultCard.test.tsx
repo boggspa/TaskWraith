@@ -6,9 +6,11 @@ import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import {
   ensembleFanoutLaneIntent,
   ensembleFanoutParticipantId,
+  fanoutActivityPartExpansionId,
   isEnsembleFanoutLaneWorking,
   isEnsembleFanoutResultMessage,
-  readEnsembleFanoutTranscriptParts
+  readEnsembleFanoutTranscriptParts,
+  shouldCollapseFanoutActivityPart
 } from './EnsembleFanoutResultCardModel'
 
 function fanoutMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -144,7 +146,7 @@ describe('EnsembleFanoutResultCard', () => {
     expect(html).toContain('Writer')
   })
 
-  it('renders grouped fan-out tool activity inside the bounded result card', () => {
+  it('collapses settled grouped fan-out tools to a re-expandable one-liner', () => {
     const activity = toolActivity()
     const message = fanoutMessage({
       id: 'fanout-group-1',
@@ -182,14 +184,97 @@ describe('EnsembleFanoutResultCard', () => {
 
     expect(readEnsembleFanoutTranscriptParts(message)).toHaveLength(3)
     expect(html).toContain('ensemble-fanout-result-viewport')
-    expect(html.split('live-activity-viewport').length - 1).toBeGreaterThanOrEqual(2)
-    expect(html).toContain('ensemble-fanout-tools-viewport')
-    expect(html).toContain('Expand tool calls')
     expect(html).toContain('ensemble-fanout-result-tools')
-    expect(html).toContain('activity-timeline')
-    expect(html).toContain('Read file')
+    expect(html).toContain('collapsed-activity-stack-summary')
+    expect(html).toContain('aria-label="Expand 1 activity step: Read ×1"')
+    expect(html).not.toContain('activity-timeline')
+    expect(html).not.toContain('Read file')
     expect(html).toContain('First note.')
     expect(html).toContain('Second note.')
+
+    const expandedHtml = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={message}
+        expandedActivityIds={new Set([fanoutActivityPartExpansionId('tool-1')])}
+        onExpandedActivityIdsChange={() => {}}
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(expandedHtml).toContain('aria-label="Collapse 1 activity step: Read ×1"')
+    expect(expandedHtml).toContain('ensemble-fanout-tools-viewport')
+    expect(expandedHtml).toContain('Expand tool calls')
+    expect(expandedHtml).toContain('activity-timeline')
+    expect(expandedHtml).toContain('Read file')
+  })
+
+  it('folds completed history while keeping the current fan-out activity visible', () => {
+    const completed = toolActivity({
+      id: 'completed-read',
+      displayName: 'Completed historical read',
+      status: 'success'
+    })
+    const current = toolActivity({
+      id: 'current-shell',
+      toolName: 'shell',
+      displayName: 'Current live command',
+      category: 'shell',
+      status: 'running'
+    })
+    const message = fanoutMessage({
+      content: '',
+      toolActivities: [completed, current],
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: ['old-tools', 'checkpoint', 'live-tools'],
+        groupedToolMessageIds: ['old-tools', 'live-tools'],
+        ensembleFanoutTranscriptParts: [
+          {
+            kind: 'tools',
+            id: 'old-tools',
+            messageIds: ['old-tools'],
+            toolActivities: [completed]
+          },
+          {
+            kind: 'content',
+            id: 'checkpoint',
+            messageIds: ['checkpoint'],
+            content: 'Checkpoint reached.'
+          },
+          {
+            kind: 'tools',
+            id: 'live-tools',
+            messageIds: ['live-tools'],
+            toolActivities: [current]
+          }
+        ]
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutResultCard message={message} working onPreviewImage={() => {}} />
+    )
+
+    expect(html).toContain('aria-label="Expand 1 activity step: Read ×1"')
+    expect(html).not.toContain('Completed historical read')
+    expect(html).toContain('Current live command')
+    expect(html).toContain('Checkpoint reached.')
+  })
+
+  it('never folds running work, even if the lane-working signal has already cleared', () => {
+    expect(
+      shouldCollapseFanoutActivityPart({
+        activities: [toolActivity({ status: 'running' })],
+        isLatestPart: true,
+        laneWorking: false
+      })
+    ).toBe(false)
+    expect(
+      shouldCollapseFanoutActivityPart({
+        activities: [toolActivity({ status: 'success' })],
+        isLatestPart: true,
+        laneWorking: false
+      })
+    ).toBe(true)
   })
 
   it('bounds collapsed grouped fan-out parts to the latest entries', () => {
