@@ -154,6 +154,85 @@ describe('WorkspaceLockAuthority', () => {
     authority.dispose()
   })
 
+  it('contains untrusted presentation before WAL preparation without weakening owner ids', async () => {
+    const h = harness()
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: h.dependencies
+    })
+    const acquired = await authority.acquire(
+      owner({
+        lockOwnerId: 'display-owner',
+        runId: 'display-run',
+        displayName: 'Sol\n\0Boss',
+        chatTitle: '# 1.9.3 bounded work program\n\n...'
+      }),
+      {
+        workspacePath: h.workspace,
+        kind: 'file',
+        targetPath: path.join(h.workspace, 'src', 'a.ts')
+      }
+    )
+
+    expect(acquired).toMatchObject({
+      ok: true,
+      leases: [
+        {
+          owner: {
+            lockOwnerId: 'display-owner',
+            runId: 'display-run',
+            displayName: 'Sol Boss',
+            chatTitle: '# 1.9.3 bounded work program ...'
+          }
+        }
+      ]
+    })
+    expect(
+      decodeWorkspaceLockWal(h.persistence.readEvents().raw).activeLeases[0]?.owner
+    ).toMatchObject({
+      lockOwnerId: 'display-owner',
+      runId: 'display-run',
+      displayName: 'Sol Boss',
+      chatTitle: '# 1.9.3 bounded work program ...'
+    })
+
+    const beforeInvalidIdentity = h.persistence.readEvents().raw
+    expect(
+      await authority.acquire(
+        owner({
+          lockOwnerId: 'invalid-identity-owner',
+          runId: 'invalid-identity-run',
+          chatId: 'chat\nforgery',
+          pid: 202,
+          processBirthIdentity: 'owner-b-birth'
+        }),
+        {
+          workspacePath: h.workspace,
+          kind: 'file',
+          targetPath: path.join(h.workspace, 'src', 'b.ts')
+        }
+      )
+    ).toMatchObject({ ok: false, reason: 'invalid_request' })
+    expect(h.persistence.readEvents().raw).toBe(beforeInvalidIdentity)
+
+    expect(
+      await authority.acquire(
+        owner({
+          lockOwnerId: 'next-owner',
+          runId: 'next-run',
+          pid: 202,
+          processBirthIdentity: 'owner-b-birth'
+        }),
+        {
+          workspacePath: h.workspace,
+          kind: 'file',
+          targetPath: path.join(h.workspace, 'src', 'b.ts')
+        }
+      )
+    ).toMatchObject({ ok: true })
+    authority.dispose()
+  })
+
   it('allows disjoint same-baseline hunks but rejects overlap and baseline drift', async () => {
     const h = harness()
     const authority = await WorkspaceLockAuthority.open({

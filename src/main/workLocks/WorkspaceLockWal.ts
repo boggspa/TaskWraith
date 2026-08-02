@@ -5,6 +5,7 @@ import type {
   WorkspaceLockClaimStatus,
   WorkspaceLockLease
 } from './WorkspaceLockTypes'
+import { isWorkspaceLockOpaqueId, isWorkspaceLockOwnerDisplayText } from './WorkspaceLockTypes'
 import { workspaceLockRuntimeMarkerFilename } from './WorkspaceLockMarkerProjection'
 import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
 
@@ -813,8 +814,11 @@ function validateOwner(value: unknown): WorkspaceLockLease['owner'] {
   }
   if (!positiveSafeInteger(owner.pid)) throw new Error('invalid lease owner pid')
   opaqueId(owner.processBirthIdentity, 'lease owner process identity')
-  for (const key of ['laneId', 'chatId', 'provider', 'participantId', 'displayName', 'chatTitle']) {
+  for (const key of ['laneId', 'chatId', 'provider', 'participantId']) {
     if (owner[key] !== undefined) opaqueId(owner[key], `lease owner ${key}`)
+  }
+  for (const key of ['displayName', 'chatTitle']) {
+    if (owner[key] !== undefined) displayText(owner[key], `lease owner ${key}`)
   }
   return { ...owner } as unknown as WorkspaceLockLease['owner']
 }
@@ -1138,7 +1142,7 @@ function assertState(state: WorkspaceLockWalState): void {
     state.events.length !== state.sequence ||
     (state.sequence === 0
       ? state.lastDigest !== '' || state.lastTransitionId !== ''
-      : !digest(state.lastDigest) || !isOpaqueId(state.lastTransitionId))
+      : !digest(state.lastDigest) || !isWorkspaceLockOpaqueId(state.lastTransitionId))
   ) {
     throw new Error('invalid workspace-lock WAL state')
   }
@@ -1223,16 +1227,11 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
 }
 
 function opaqueId(value: unknown, label: string): asserts value is string {
-  if (!isOpaqueId(value)) throw new Error(`invalid ${label}`)
+  if (!isWorkspaceLockOpaqueId(value)) throw new Error(`invalid ${label}`)
 }
 
-function isOpaqueId(value: unknown): value is string {
-  return (
-    typeof value === 'string' &&
-    value.length > 0 &&
-    value.length <= 512 &&
-    !(value.includes('\0') || value.includes('\r') || value.includes('\n'))
-  )
+function displayText(value: unknown, label: string): asserts value is string {
+  if (!isWorkspaceLockOwnerDisplayText(value)) throw new Error(`invalid ${label}`)
 }
 
 function pathString(value: unknown, label: string): asserts value is string {

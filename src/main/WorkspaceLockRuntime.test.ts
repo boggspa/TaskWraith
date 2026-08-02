@@ -217,6 +217,46 @@ describe('WorkspaceLockRuntime', () => {
     expect(optionsArg).toMatchObject({ transitionId: expect.any(String) })
   })
 
+  it('normalizes untrusted owner presentation before durable lock admission', async () => {
+    const { runtime, authority } = harness()
+
+    const result = await runtime.acquire({
+      owner: {
+        lockOwnerId: 'run-display',
+        runId: 'run-display',
+        provider: 'codex',
+        displayName: 'Sol\n\0Boss',
+        chatTitle: '# 1.9.3 bounded work program\n\n...'
+      },
+      mutation: {
+        workspacePath: '/workspace',
+        action: 'write_file',
+        args: { path: 'src/new.ts', content: 'x' }
+      }
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      owner: {
+        lockOwnerId: 'run-display',
+        runId: 'run-display',
+        provider: 'codex',
+        displayName: 'Sol Boss',
+        chatTitle: '# 1.9.3 bounded work program ...'
+      }
+    })
+    expect(authority.acquireMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        lockOwnerId: 'run-display',
+        runId: 'run-display',
+        displayName: 'Sol Boss',
+        chatTitle: '# 1.9.3 bounded work program ...'
+      }),
+      expect.any(Array),
+      expect.any(Object)
+    )
+  })
+
   it('atomically acquires and replaces an explicit combined claim set', async () => {
     const { runtime, authority } = harness()
     const claims = [

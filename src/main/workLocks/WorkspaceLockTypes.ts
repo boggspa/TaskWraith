@@ -26,6 +26,74 @@ export interface WorkspaceLockOwner {
   processBirthIdentity: string
 }
 
+/**
+ * Every owner field is persisted inside one JSONL WAL frame. Authority-bearing
+ * identifiers keep the strict scalar contract below. Human-facing labels are
+ * normalized separately so a title or role can never become lock authority or
+ * make an otherwise valid acquisition fail after durable preparation begins.
+ */
+export const WORKSPACE_LOCK_OPAQUE_ID_MAX_LENGTH = 512
+export const WORKSPACE_LOCK_OWNER_DISPLAY_TEXT_MAX_LENGTH = 512
+
+export function isWorkspaceLockOpaqueId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= WORKSPACE_LOCK_OPAQUE_ID_MAX_LENGTH &&
+    !(value.includes('\0') || value.includes('\r') || value.includes('\n'))
+  )
+}
+
+export function isWorkspaceLockOwnerDisplayText(value: unknown): value is string {
+  // Keep this independent from opaque-id policy. Security hardening may narrow
+  // identifier syntax later; human labels must retain their own safe framing
+  // contract instead of silently becoming authority-bearing identifiers again.
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= WORKSPACE_LOCK_OWNER_DISPLAY_TEXT_MAX_LENGTH &&
+    !(value.includes('\0') || value.includes('\r') || value.includes('\n'))
+  )
+}
+
+export function normalizeWorkspaceLockOwnerDisplayText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  let normalized = ''
+  let pendingSpace = false
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)!
+    const isControl =
+      (codePoint >= 0 && codePoint <= 0x1f) || (codePoint >= 0x7f && codePoint <= 0x9f)
+    if (isControl || /\s/u.test(character)) {
+      pendingSpace = normalized.length > 0
+      continue
+    }
+    const separator = pendingSpace ? ' ' : ''
+    if (
+      normalized.length + separator.length + character.length >
+      WORKSPACE_LOCK_OWNER_DISPLAY_TEXT_MAX_LENGTH
+    ) {
+      break
+    }
+    normalized += `${separator}${character}`
+    pendingSpace = false
+  }
+  return normalized || undefined
+}
+
+export function normalizeWorkspaceLockOwnerPresentation(
+  owner: WorkspaceLockOwner
+): WorkspaceLockOwner {
+  const { displayName: rawDisplayName, chatTitle: rawChatTitle, ...identity } = owner
+  const displayName = normalizeWorkspaceLockOwnerDisplayText(rawDisplayName)
+  const chatTitle = normalizeWorkspaceLockOwnerDisplayText(rawChatTitle)
+  return {
+    ...identity,
+    ...(displayName ? { displayName } : {}),
+    ...(chatTitle ? { chatTitle } : {})
+  }
+}
+
 export interface WorkspaceLockHunk {
   /** Content digest for the file version whose coordinates these are. */
   baseline: string

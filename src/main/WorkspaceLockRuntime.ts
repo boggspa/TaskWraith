@@ -27,6 +27,7 @@ import {
   WorkspaceMutationCommitFence,
   type WorkspaceMutationCommitFenceOwner
 } from './workLocks/WorkspaceMutationCommitFence'
+import { normalizeWorkspaceLockOwnerPresentation } from './workLocks/WorkspaceLockTypes'
 import type {
   WorkspaceLockAcquireResult,
   WorkspaceLockAuthorityFence,
@@ -874,7 +875,7 @@ export class WorkspaceLockRuntime {
     }
     return {
       ok: true,
-      owner: {
+      owner: normalizeWorkspaceLockOwnerPresentation({
         lockOwnerId: input.lockOwnerId,
         runId: input.runId,
         ...(input.lifecycle ? { lifecycle: input.lifecycle } : {}),
@@ -886,7 +887,7 @@ export class WorkspaceLockRuntime {
         ...(input.chatTitle ? { chatTitle: input.chatTitle } : {}),
         pid,
         processBirthIdentity: observation.processBirthIdentity
-      }
+      })
     }
   }
 

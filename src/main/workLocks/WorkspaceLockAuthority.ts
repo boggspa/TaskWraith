@@ -27,7 +27,12 @@ import type {
   WorkspaceLockSnapshot,
   WorkspaceLockToken
 } from './WorkspaceLockTypes'
-import { workspaceLockToken } from './WorkspaceLockTypes'
+import {
+  isWorkspaceLockOpaqueId,
+  isWorkspaceLockOwnerDisplayText,
+  normalizeWorkspaceLockOwnerPresentation,
+  workspaceLockToken
+} from './WorkspaceLockTypes'
 import {
   appendWorkspaceLockWalEvent,
   decodeWorkspaceLockWal,
@@ -173,6 +178,7 @@ export class WorkspaceLockAuthority {
     requests: readonly WorkspaceLockClaimRequest[],
     options: WorkspaceLockAcquireOptions = {}
   ): Promise<WorkspaceLockAcquireResult> {
+    owner = normalizeWorkspaceLockOwnerPresentation(owner)
     const ownerError = validateOwner(owner)
     if (ownerError) return invalidAcquire('invalid_request', ownerError)
     if (!requests.length) {
@@ -328,6 +334,7 @@ export class WorkspaceLockAuthority {
     requests: readonly WorkspaceLockClaimRequest[],
     options: WorkspaceLockAcquireOptions = {}
   ): Promise<WorkspaceLockAcquireResult> {
+    owner = normalizeWorkspaceLockOwnerPresentation(owner)
     const ownerError = validateOwner(owner)
     if (ownerError) return invalidAcquire('invalid_request', ownerError)
     if (!previousAcquiredTransitionId?.trim() || !requests.length) {
@@ -504,6 +511,8 @@ export class WorkspaceLockAuthority {
     nextOwner: WorkspaceLockOwner,
     options: WorkspaceLockAcquireOptions = {}
   ): Promise<WorkspaceLockAcquireResult> {
+    previousOwner = normalizeWorkspaceLockOwnerPresentation(previousOwner)
+    nextOwner = normalizeWorkspaceLockOwnerPresentation(nextOwner)
     const previousError = validateOwner(previousOwner)
     const nextError = validateOwner(nextOwner)
     if (previousError || nextError) {
@@ -725,6 +734,7 @@ export class WorkspaceLockAuthority {
     owner: WorkspaceLockOwner,
     acquiredTransitionId: string
   ): Promise<WorkspaceLockMutationVerificationResult> {
+    owner = normalizeWorkspaceLockOwnerPresentation(owner)
     const ownerError = validateOwner(owner)
     if (ownerError) {
       return { ok: false, reason: 'invalid_request', message: ownerError }
@@ -1786,13 +1796,15 @@ function validateInstance(dependencies: WorkspaceLockAuthorityDependencies): voi
 }
 
 function validateOwner(owner: WorkspaceLockOwner): string | null {
-  if (!owner?.lockOwnerId?.trim()) return 'Workspace-lock owner lockOwnerId is required.'
-  if (!owner?.runId?.trim()) return 'Workspace-lock owner runId is required.'
+  if (!isWorkspaceLockOpaqueId(owner?.lockOwnerId)) {
+    return 'Workspace-lock owner lockOwnerId is invalid.'
+  }
+  if (!isWorkspaceLockOpaqueId(owner?.runId)) return 'Workspace-lock owner runId is invalid.'
   if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0) {
     return 'Workspace-lock owner PID must be a positive safe integer.'
   }
-  if (!owner.processBirthIdentity?.trim()) {
-    return 'Workspace-lock owner process-birth identity is required.'
+  if (!isWorkspaceLockOpaqueId(owner.processBirthIdentity)) {
+    return 'Workspace-lock owner process-birth identity is invalid.'
   }
   if (
     owner.lifecycle !== undefined &&
@@ -1801,6 +1813,24 @@ function validateOwner(owner: WorkspaceLockOwner): string | null {
     owner.lifecycle !== 'child'
   ) {
     return 'Workspace-lock owner lifecycle must be run, launching-child, or child when provided.'
+  }
+  for (const [label, value] of [
+    ['laneId', owner.laneId],
+    ['chatId', owner.chatId],
+    ['provider', owner.provider],
+    ['participantId', owner.participantId]
+  ] as const) {
+    if (value !== undefined && !isWorkspaceLockOpaqueId(value)) {
+      return `Workspace-lock owner ${label} is invalid.`
+    }
+  }
+  for (const [label, value] of [
+    ['displayName', owner.displayName],
+    ['chatTitle', owner.chatTitle]
+  ] as const) {
+    if (value !== undefined && !isWorkspaceLockOwnerDisplayText(value)) {
+      return `Workspace-lock owner ${label} is invalid.`
+    }
   }
   return null
 }

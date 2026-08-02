@@ -163,6 +163,67 @@ describe('WorkspaceLockWal', () => {
     ).toThrow(/duplicate lease id/i)
   })
 
+  it('keeps WAL framing strict for identity and presentation fields', () => {
+    const first = append(createEmptyWorkspaceLockWalState(), boot())
+    const displayLease = {
+      ...lease('lease-display'),
+      acquiredTransitionId: 'acquire-display',
+      owner: {
+        ...lease('lease-display').owner,
+        displayName: 'Sol Boss',
+        chatTitle: '# 1.9.3 bounded work program ...'
+      }
+    }
+    expect(
+      append(first.nextState, {
+        transitionId: 'acquire-display',
+        timestamp: laterTimestamp,
+        authority,
+        kind: 'acquire',
+        payload: { leases: [displayLease] }
+      }).nextState.activeLeases[0]?.owner
+    ).toMatchObject({
+      displayName: 'Sol Boss',
+      chatTitle: '# 1.9.3 bounded work program ...'
+    })
+
+    const invalidTitleLease = {
+      ...lease('lease-invalid-title'),
+      acquiredTransitionId: 'acquire-invalid-title',
+      owner: {
+        ...lease('lease-invalid-title').owner,
+        chatTitle: '# 1.9.3 bounded work program\n\n...'
+      }
+    }
+    expect(() =>
+      append(first.nextState, {
+        transitionId: 'acquire-invalid-title',
+        timestamp: laterTimestamp,
+        authority,
+        kind: 'acquire',
+        payload: { leases: [invalidTitleLease] }
+      })
+    ).toThrow(/invalid lease owner chatTitle/i)
+
+    const invalidChatIdLease = {
+      ...lease('lease-invalid-chat'),
+      acquiredTransitionId: 'acquire-invalid-chat',
+      owner: {
+        ...lease('lease-invalid-chat').owner,
+        chatId: 'chat\nforgery'
+      }
+    }
+    expect(() =>
+      append(first.nextState, {
+        transitionId: 'acquire-invalid-chat',
+        timestamp: laterTimestamp,
+        authority,
+        kind: 'acquire',
+        payload: { leases: [invalidChatIdLease] }
+      })
+    ).toThrow(/invalid lease owner chatId/i)
+  })
+
   it('replaces an acquisition atomically in one chained WAL record', () => {
     const first = append(createEmptyWorkspaceLockWalState(), boot())
     const acquired = append(first.nextState, {
