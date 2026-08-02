@@ -4,10 +4,10 @@
 // these helpers, but the loop itself lives in App.tsx because it needs to
 // invoke the existing `refreshUsageSummary` closure.
 
-import type { ProviderId } from '../../../main/store/types'
+import type { ModelUsageProviderId } from './usageAggregateTypes'
 
 export interface UsageSummaryLike {
-  provider: ProviderId
+  provider: ModelUsageProviderId
   model: string
   planName?: string
   runs?: number
@@ -32,6 +32,9 @@ export interface UsageSummaryLike {
     usedPercent?: number
     remainingPercent?: number
     limitWindowSeconds?: number
+    valueText?: string
+    unit?: string
+    windowKind?: string
   }>
   balances?: Array<{
     id: string
@@ -81,7 +84,10 @@ export function fingerprintUsageSummary(summary: ReadonlyArray<UsageSummaryLike>
       trackingOnly: windowEntry.trackingOnly ?? null,
       usedPercent: windowEntry.usedPercent ?? null,
       remainingPercent: windowEntry.remainingPercent ?? null,
-      limitWindowSeconds: windowEntry.limitWindowSeconds ?? null
+      limitWindowSeconds: windowEntry.limitWindowSeconds ?? null,
+      valueText: windowEntry.valueText || '',
+      unit: windowEntry.unit || '',
+      windowKind: windowEntry.windowKind || ''
     })),
     balances: (entry.balances || []).map((balance) => ({
       id: balance.id,

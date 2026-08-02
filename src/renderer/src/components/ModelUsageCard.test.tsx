@@ -110,6 +110,39 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>Pro<')
   })
 
+  it('renders API-credit usage as money while retaining its quota fill', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'deepseek',
+            planName: 'API Credits',
+            windows: [
+              {
+                id: 'deepseek-credit',
+                label: 'Credit used',
+                runs: 0,
+                totalTokens: 0,
+                limitLabel: '$0.92 of $10.00',
+                usedPercent: 9.2,
+                remainingPercent: 90.8,
+                valueText: '$0.92',
+                unit: 'USD'
+              }
+            ]
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('DeepSeek')
+    expect(html).toContain('>API Credits<')
+    expect(html).toContain('Credit used')
+    expect(html).toContain('>$0.92<')
+    expect(html).toContain('$0.92 of $10.00')
+    expect(html).toContain('width:9.20%')
+  })
+
   it('shows a connected AntiGravity quota probe failure as unavailable without inventing a meter', () => {
     const html = renderToStaticMarkup(
       <ModelUsageCard
@@ -465,6 +498,51 @@ describe('ModelUsageCard', () => {
     expect(html).not.toMatch(/>\d+%<\/td>/)
   })
 
+  it('shows Pi upstream API-credit and PAYG meters alongside the existing Mistral meter', () => {
+    const financialWindow = (
+      id: string,
+      label: string,
+      valueText: string,
+      limitLabel: string,
+      usedPercent: number
+    ) => ({
+      id,
+      label,
+      runs: 0,
+      totalTokens: 0,
+      limitLabel,
+      usedPercent,
+      valueText,
+      unit: label === 'This billing period' ? 'GBP' : 'USD'
+    })
+    const html = renderToStaticMarkup(
+      <CompactModelUsageGrid
+        quotaEntries={[
+          quotaEntry({
+            provider: 'deepseek',
+            windows: [
+              financialWindow('deepseek-credit', 'Credit used', '$0.92', '$0.92 of $10.00', 9.2)
+            ]
+          }),
+          quotaEntry({
+            provider: 'cerebras',
+            windows: [
+              financialWindow('cerebras-credit', 'Credit used', '$1.36', '$1.36 of $10.00', 13.6)
+            ]
+          })
+        ]}
+        mistralQuota={{ snapshot: mistralSnapshot(8), loading: false }}
+      />
+    )
+
+    expect(html).toContain('>Mistral</th>')
+    expect(html).toContain('>DeepSeek</th>')
+    expect(html).toContain('>Cerebras</th>')
+    expect(html).toContain('>~$8.00</td>')
+    expect(html).toContain('>$0.92</td>')
+    expect(html).toContain('>$1.36</td>')
+  })
+
   it('renders the compact Mistral figure in the display currency', () => {
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
@@ -508,9 +586,8 @@ describe('ModelUsageCard', () => {
         ]}
       />
     )
-    // Manual-only doctrine: the column exists because a manual /usage probe
-    // produced a snapshot. The Gemini pool's two sub-limits land on 5H and WK
-    // by label predicate, with the panel truth carried in each cell's title.
+    // The hook-backed Gemini pool's two sub-limits land on 5H and WK by label
+    // predicate, with the normalized snapshot truth carried in each title.
     expect(withAgy).toContain('>AGY</th>')
     expect(withAgy).toContain('Gemini Weekly')
     expect(withAgy).toContain('Gemini 5H')
@@ -520,9 +597,8 @@ describe('ModelUsageCard', () => {
   })
 
   it('shows the AGY column with the reason when the lane is configured but has no windows', () => {
-    // The agy meter is blank far more often than populated (manual-only probe
-    // + 5-minute clamp). With the column omitted entirely, "press refresh",
-    // "rate-limited" and "not signed in" were one indistinguishable absence.
+    // A caller-provided reason keeps an explicitly unavailable lane
+    // distinguishable from a lane that simply has no hook entry.
     const html = renderToStaticMarkup(
       <CompactModelUsageGrid
         quotaEntries={[

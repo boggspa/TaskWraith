@@ -43,6 +43,7 @@ public struct ModelUsageMessage: Codable, Sendable {
 
     public struct ProviderUsage: Codable, Sendable, Identifiable {
         public let provider: String
+        public let planName: String?
         public let windows: [Window]
         public var id: String { provider }
     }
@@ -52,6 +53,7 @@ public struct ModelUsageMessage: Codable, Sendable {
         public let label: String
         public let usedPercent: Int
         public let limitLabel: String
+        public let valueText: String?
         public let resetAt: String?
     }
 

@@ -61,6 +61,7 @@ function createDeps() {
       fetchClaudeUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchKimiUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchCursorUsageSnapshot: vi.fn(async (): Promise<any> => null),
+      fetchQuotaSnapshotHook: vi.fn(async (): Promise<any[]> => []),
       getProviderCapabilityContract: vi.fn(async () => null as any),
       getCurrentFxRates: vi.fn(() => ({ rates: { USD: 1 }, source: 'live' })),
       refreshFxRates: vi.fn(async (force: boolean) => ({ refreshed: force })),
@@ -102,6 +103,7 @@ describe('registerUsageRatesHandlers', () => {
     expect(handlerFor('record-usage')).toBeTypeOf('function')
     expect(handlerFor('get-usage')).toBeTypeOf('function')
     expect(handlerFor('get-external-usage')).toBeTypeOf('function')
+    expect(handlerFor('quota-snapshot-hook:get')).toBeTypeOf('function')
     expect(handlerFor('fx-rates:get')).toBeTypeOf('function')
     expect(handlerFor('fx-rates:refresh')).toBeTypeOf('function')
     expect(handlerFor('providerRates:get')).toBeTypeOf('function')
@@ -264,6 +266,31 @@ describe('registerUsageRatesHandlers', () => {
     expect(deps.getExternalUsageCached).not.toHaveBeenCalled()
   })
 
+  it('serves the credential-free quota hook only to the main renderer', async () => {
+    const { deps } = createDeps()
+    const snapshot = {
+      provider: 'deepseek' as const,
+      source: 'limit-counter-sanitized-cache' as const,
+      configured: true as const,
+      fetchedAt: '2026-08-02T01:54:22.000Z',
+      stale: false,
+      windows: [],
+      balances: []
+    }
+    deps.fetchQuotaSnapshotHook.mockResolvedValue([snapshot])
+    registerUsageRatesHandlers(deps)
+
+    await expect(handlerFor('quota-snapshot-hook:get')({})).resolves.toEqual([snapshot])
+    expect(deps.assertMainRendererSender).toHaveBeenCalledOnce()
+
+    deps.assertMainRendererSender.mockImplementation(() => {
+      throw new Error('Only the main renderer can read the quota hook.')
+    })
+    expect(() => handlerFor('quota-snapshot-hook:get')({})).toThrow(
+      'Only the main renderer can read the quota hook.'
+    )
+  })
+
   it('proxies FX rate and provider rate handlers with the current coercion behavior', async () => {
     const { deps } = createDeps()
     registerUsageRatesHandlers(deps)
@@ -322,6 +349,79 @@ describe('registerUsageRatesHandlers', () => {
     await flushAsyncTasks()
 
     expect(deps.broadcastModelUsage).toHaveBeenCalledTimes(1)
+  })
+
+  it('adds sanitized AntiGravity and API-credit hook meters to the iOS projection', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+
+    deps.fetchQuotaSnapshotHook.mockResolvedValue([
+      {
+        provider: 'antigravity',
+        source: 'limit-counter-sanitized-cache',
+        configured: true,
+        fetchedAt: '2026-08-02T01:54:22.000Z',
+        stale: false,
+        planType: 'Google AI Pro',
+        windows: [
+          {
+            id: 'agy-weekly',
+            label: 'Gemini Weekly',
+            usedPercent: 0.03235,
+            remainingPercent: 99.96765,
+            limitLabel: '99.97% remaining',
+            resetAt: '2026-08-08T17:20:35.000Z'
+          }
+        ],
+        balances: []
+      },
+      {
+        provider: 'deepseek',
+        source: 'limit-counter-sanitized-cache',
+        configured: true,
+        fetchedAt: '2026-08-02T01:54:22.000Z',
+        stale: false,
+        planType: 'API Credits',
+        windows: [
+          {
+            id: 'deepseek-credit',
+            label: 'Credit used',
+            usedPercent: 9.2,
+            remainingPercent: 90.8,
+            limitLabel: '$0.92 of $10.00',
+            valueText: '$0.92',
+            unit: 'USD'
+          }
+        ],
+        balances: []
+      }
+    ])
+
+    callbacks.triggerUsageModel()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastModelUsage).toHaveBeenCalledWith({
+      usage: expect.objectContaining({
+        providers: [
+          expect.objectContaining({
+            provider: 'antigravity',
+            planName: 'Google AI Pro',
+            windows: [expect.objectContaining({ label: 'Gemini Weekly', usedPercent: 0 })]
+          }),
+          expect.objectContaining({
+            provider: 'deepseek',
+            planName: 'API Credits',
+            windows: [
+              expect.objectContaining({
+                label: 'Credit used',
+                valueText: '$0.92',
+                usedPercent: 9
+              })
+            ]
+          })
+        ]
+      })
+    })
   })
 
   it('adds spend and AntiGravity budget fields without changing quota providers', async () => {

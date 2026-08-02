@@ -182,6 +182,7 @@ import type {
   UsageWindowAggregate,
   UsageBalanceAggregate
 } from './lib/usageAggregateTypes'
+import { buildQuotaSnapshotHookAggregates } from './lib/quotaSnapshotHook'
 import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import { openInteractiveProviderLogin } from './lib/providerLoginRefresh'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
@@ -8553,7 +8554,7 @@ function App(): React.JSX.Element {
     // Usage records route through the shared renderer cache (30s TTL,
     // in-flight dedup) so the settings table / API-spend view join this
     // fetch instead of issuing their own identical IPC calls.
-    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, antigravitySnap, allUsageRecords] =
+    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, hookSnapshots, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
           ? loadQuotaInBackground(() => window.api.getCodexUsageSnapshot(quotaRefreshOptions))
@@ -8561,9 +8562,9 @@ function App(): React.JSX.Element {
         loadQuotaInBackground(() => window.api.getAgentRateLimits('claude', quotaRefreshOptions)),
         loadQuotaInBackground(() => window.api.getAgentRateLimits('kimi', quotaRefreshOptions)),
         loadQuotaInBackground(() => window.api.getAgentRateLimits('cursor', quotaRefreshOptions)),
-        loadQuotaInBackground(() =>
-          window.api.getAgentRateLimits('antigravity', quotaRefreshOptions)
-        ),
+        typeof window.api.getQuotaSnapshotHook === 'function'
+          ? loadQuotaInBackground(() => window.api.getQuotaSnapshotHook())
+          : Promise.resolve([]),
         loadUsageRecordsPromise
       ])
 
@@ -8772,24 +8773,11 @@ function App(): React.JSX.Element {
       ordered.push(buildQuotaAggregate('cursor', cursorWindows, cursorSnap))
     }
 
-    // AntiGravity — only the authenticated configured-provider snapshot can
-    // reach this transport. Do not reuse an old quota window after a failed
-    // official `/usage` probe: every timeout, unsupported panel, or error is
-    // shown as quota unavailable rather than stale or inferred usage.
-    const antigravityFresh = (Array.isArray(antigravitySnap?.windows)
-      ? antigravitySnap.windows
-      : []
-    )
-      .map((windowEntry: any, index: number) =>
-        normalizeQuotaWindow('antigravity', windowEntry, `antigravity-quota-${index}`)
-      )
-      .filter((windowEntry): windowEntry is UsageWindowAggregate => Boolean(windowEntry))
-    if (
-      antigravityFresh.length > 0 ||
-      hasUsageBalances(antigravitySnap?.balances) ||
-      (antigravitySnap?.configured === true && Boolean(antigravitySnap?.error))
-    ) {
-      ordered.push(buildQuotaAggregate('antigravity', antigravityFresh, antigravitySnap))
+    // AntiGravity plus Pi's API-credit/PAYG upstreams arrive through Limit
+    // Counter's credential-free normalized cache. TaskWraith never opens the
+    // AGY session, Pi key store, provider keychain entries, or raw responses.
+    if (Array.isArray(hookSnapshots)) {
+      ordered.push(...buildQuotaSnapshotHookAggregates(hookSnapshots))
     }
 
     const inferUsageProvider = (model: string): ProviderId => {

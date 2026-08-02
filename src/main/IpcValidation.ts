@@ -511,6 +511,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'clear-codex-usage-credential': [],
   'get-codex-usage-snapshot': ['optionalObject'],
   'get-external-usage': ['optionalObject'],
+  'quota-snapshot-hook:get': [],
   'get-workspace-activity': ['workspacePath', 'optionalNumber'],
   'grok-usage:probe': [],
   'mistral-quota:get': [],

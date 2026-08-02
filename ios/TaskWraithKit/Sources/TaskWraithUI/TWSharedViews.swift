@@ -10994,6 +10994,7 @@ struct UsagePanel: View {
 
     private static let providerOrder = [
         "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "antigravity", "ollama",
+        "deepseek", "cerebras",
     ]
 
     private enum UsagePanelView: String, CaseIterable, Identifiable {
@@ -11147,6 +11148,13 @@ struct UsagePanel: View {
                 Text(TWTheme.providerLabel(entry.provider))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(TWTheme.textPrimary)
+                if let planName = entry.planName,
+                    !planName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    Text(planName)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(accent)
+                }
                 Spacer()
             }
             ForEach(entry.windows) { window in
@@ -11276,7 +11284,7 @@ struct UsagePanel: View {
                         .foregroundStyle(TWTheme.textTertiary)
                 }
                 Spacer()
-                Text("\(window.usedPercent)%")
+                Text(window.valueText ?? "\(window.usedPercent)%")
                     .font(.caption.monospacedDigit().weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)
             }

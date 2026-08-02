@@ -144,7 +144,7 @@ import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { HostCliToolCard, useHostCliToolStatus } from './HostCliToolInstall'
 import { CliPathDirectoriesEditor } from './CliPathDirectoriesEditor'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
-import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
+import type { ModelUsageAggregate, ModelUsageProviderId } from '../lib/usageAggregateTypes'
 import {
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
@@ -11125,12 +11125,18 @@ export function SettingsPanel({
             const telemetryEntries = quotaEntries.filter(
               (entry) => (entry.windows?.length || 0) > 0 || (entry.balances?.length || 0) > 0
             )
-            const providerLabel = (provider: ProviderId): string => {
+            const providerLabel = (provider: ModelUsageProviderId): string => {
               if (provider === 'codex') return 'Codex'
               if (provider === 'claude') return 'Claude'
               if (provider === 'kimi') return 'Kimi'
               if (provider === 'grok') return 'Grok'
               if (provider === 'cursor') return 'Cursor'
+              if (provider === 'ollama') return 'Ollama'
+              if (provider === 'antigravity') return 'AntiGravity'
+              if (provider === 'pi') return 'Pi'
+              if (provider === 'mistral') return 'Mistral'
+              if (provider === 'deepseek') return 'DeepSeek'
+              if (provider === 'cerebras') return 'Cerebras'
               return 'Gemini'
             }
             // Rough cost estimate gated on whether the per-row stats

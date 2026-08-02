@@ -82,6 +82,7 @@ import {
   MemoryProposal,
   MemoryProposalPack
 } from '../main/store/types'
+import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
 import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
@@ -713,6 +714,7 @@ declare global {
       clearCodexUsageCredential: () => Promise<boolean>
       getCodexUsageSnapshot: (options?: { force?: boolean }) => Promise<any>
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
+      getQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
       /** Locally accumulated Mistral burn estimate; null until the seat has run. */
       getMistralQuotaEstimate: () => Promise<MistralQuotaSnapshot | null>

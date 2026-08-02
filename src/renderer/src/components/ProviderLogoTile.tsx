@@ -5,11 +5,10 @@
  * component name remains because settings and usage surfaces share this seam.
  */
 import type { ReactElement } from 'react'
-import type { ProviderId } from '../../../main/store/types'
 import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 interface ProviderLogoTileProps {
-  provider: ProviderId | undefined
+  provider: string | undefined
   /** Tile edge in px. Defaults to 22 — sized to sit comfortably
    * next to a ~13px text label in the Model Usage Card header. */
   size?: number

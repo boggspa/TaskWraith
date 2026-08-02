@@ -29,7 +29,11 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import type { ProviderId, UsageRecord, ChatListItem } from '../../../main/store/types'
-import type { ModelUsageAggregate, UsageWindowAggregate } from '../lib/usageAggregateTypes'
+import type {
+  ModelUsageAggregate,
+  ModelUsageProviderId,
+  UsageWindowAggregate
+} from '../lib/usageAggregateTypes'
 import {
   API_SPEND_WINDOW_ORDER,
   buildApiSpendByProvider,
@@ -115,7 +119,7 @@ interface ModelUsageCardProps {
 /** Row sort order for the quota view. `sortByProvider` maps an unlisted id to
  *  99, so omissions land at the end in undefined relative order rather than
  *  their intended slot — keep every provider that can produce a row here. */
-const PROVIDER_ORDER: ProviderId[] = [
+const PROVIDER_ORDER: ModelUsageProviderId[] = [
   'gemini',
   'codex',
   'claude',
@@ -124,6 +128,8 @@ const PROVIDER_ORDER: ProviderId[] = [
   'cursor',
   'ollama',
   'antigravity',
+  'deepseek',
+  'cerebras',
   'pi'
 ]
 
@@ -161,14 +167,16 @@ const SIDEBAR_USAGE_MIN_HEIGHT = 220
 const SIDEBAR_USAGE_MAX_HEIGHT = 1400
 const SIDEBAR_USAGE_RESIZE_STEP = 24
 const COMPACT_USAGE_BASE_PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok']
-const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ProviderId, string>> = {
+const COMPACT_USAGE_PROVIDER_LABELS: Partial<Record<ModelUsageProviderId, string>> = {
   codex: 'Codex',
   claude: 'Claude',
   kimi: 'Kimi',
   cursor: 'Cursor',
   grok: 'Grok',
   antigravity: 'AGY',
-  mistral: 'Mistral'
+  mistral: 'Mistral',
+  deepseek: 'DeepSeek',
+  cerebras: 'Cerebras'
 }
 const COMPACT_USAGE_ROWS = [
   { key: 'fiveHour', label: '5H' },
@@ -221,19 +229,25 @@ function ProviderLabel({
   provider,
   planName
 }: {
-  provider: ProviderId | undefined
+  provider: ModelUsageProviderId | undefined
   planName?: string
 }) {
   const providerName = provider || 'gemini'
   return (
     <span className={`sidebar-provider-label provider-${providerName}`}>
       <ProviderLogoTile provider={provider} />
-      <span className="model-usage-provider-name">{getProviderName(provider)}</span>
+      <span className="model-usage-provider-name">{modelUsageProviderName(provider)}</span>
       {planName && planName.trim() && (
         <span className="model-usage-tier-badge">{planName.trim()}</span>
       )}
     </span>
   )
+}
+
+function modelUsageProviderName(provider?: ModelUsageProviderId): string {
+  if (provider === 'deepseek') return 'DeepSeek'
+  if (provider === 'cerebras') return 'Cerebras'
+  return getProviderName(provider)
 }
 
 /**
@@ -267,20 +281,21 @@ function normaliseQuotaWindowText(windowEntry: UsageWindowAggregate): string {
 }
 
 function compactWindowCell(
-  provider: ProviderId,
+  provider: ModelUsageProviderId,
   windowEntry: UsageWindowAggregate
 ): CompactQuotaCell {
   const fraction = fillFractionForWindow(windowEntry)
   const percentText = `${Math.round(fraction * 100)}%`
+  const valueText = windowEntry.valueText || percentText
   const resetText = formatResetShort({ resetAt: windowEntry.resetAt })
   const title = [
-    `${getProviderName(provider)} ${windowEntry.label}: ${percentText}`,
+    `${modelUsageProviderName(provider)} ${windowEntry.label}: ${valueText}`,
     windowEntry.limitLabel,
     resetText ? `resets ${resetText}` : ''
   ]
     .filter(Boolean)
     .join(' · ')
-  return { value: percentText, fraction, title }
+  return { value: valueText, fraction, title }
 }
 
 function findCompactWindow(
@@ -321,7 +336,7 @@ function quotaReasonOnlyText(entry: ModelUsageAggregate | undefined): string | n
 }
 
 function compactCellsForEntry(
-  provider: ProviderId,
+  provider: ModelUsageProviderId,
   entry: ModelUsageAggregate | undefined
 ): Partial<Record<CompactUsageRowKey, CompactQuotaCell>> {
   const cells: Partial<Record<CompactUsageRowKey, CompactQuotaCell>> = {}
@@ -392,6 +407,11 @@ function compactCellsForEntry(
       'weekly',
       findCompactWindow(entry, (text) => isWeeklyWindow(text) || text.includes('credits'))
     )
+    return cells
+  }
+
+  if (provider === 'deepseek' || provider === 'cerebras') {
+    assign('extraOne', entry?.windows?.[0])
   }
   return cells
 }
@@ -490,25 +510,23 @@ export function CompactModelUsageGrid({
   currency?: DisplayCurrency
   locale?: string
 }) {
-  const mistralCell = compactMistralCell(mistralQuota, currency, locale)
   const entriesByProvider = new Map(quotaEntries.map((entry) => [entry.provider, entry]))
-  // The AGY column appears once a manual quota refresh has produced a snapshot
-  // (the agy /usage probe is manual-only by doctrine — the heartbeat serves
-  // cache), OR once the lane has a REASON to report. The reason case matters:
-  // the agy meter is blank far more often than it is populated, and with the
-  // column omitted entirely a user cannot tell "press refresh" from
-  // "rate-limited" from "not signed in" from "this lane does not exist". A
-  // non-opted-in lane still contributes no entry at all, so it stays absent.
+  const mistralCell = compactMistralCell(mistralQuota, currency, locale)
+  // The AGY column appears once the credential-free snapshot hook has produced
+  // quota data, OR when a caller has an explicit reason to report an empty
+  // lane. A non-configured lane contributes no entry and stays absent.
   const antigravityCells = compactCellsForEntry(
     'antigravity',
     entriesByProvider.get('antigravity')
   )
   const hasAntigravityCells = Object.keys(antigravityCells).length > 0
   const antigravityReason = quotaReasonOnlyText(entriesByProvider.get('antigravity'))
-  const providers = [
+  const providers: ModelUsageProviderId[] = [
     ...COMPACT_USAGE_BASE_PROVIDERS,
     ...(hasAntigravityCells || antigravityReason ? (['antigravity'] as const) : []),
-    ...(mistralCell ? (['mistral'] as const) : [])
+    ...(mistralCell ? (['mistral'] as const) : []),
+    ...(entriesByProvider.has('deepseek') ? (['deepseek'] as const) : []),
+    ...(entriesByProvider.has('cerebras') ? (['cerebras'] as const) : [])
   ]
   const rows = COMPACT_USAGE_ROWS
   const cellsByProvider = new Map(
@@ -581,7 +599,7 @@ function UsageWindowRow({
   provider,
   windowEntry
 }: {
-  provider: ProviderId
+  provider: ModelUsageProviderId
   windowEntry: UsageWindowAggregate
 }) {
   const fraction = fillFractionForWindow(windowEntry)
@@ -599,7 +617,7 @@ function UsageWindowRow({
       <div className="model-usage-window-row">
         <span className="model-usage-window-label">{windowEntry.label}</span>
         {windowReset && <span className="model-usage-window-reset">resets {windowReset}</span>}
-        <span className="model-usage-window-percent">{percentText}</span>
+        <span className="model-usage-window-percent">{windowEntry.valueText || percentText}</span>
       </div>
       <QuotaProgressBar
         fraction={fraction}

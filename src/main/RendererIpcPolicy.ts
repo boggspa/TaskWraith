@@ -289,6 +289,10 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'pi:set-upstream-key',
   'pi:clear-upstream-key',
   'pi:clear-all-keys',
+  // This hook is credential-free, but it projects machine-wide quota and
+  // billing readings from another local app. Only the primary Model Usage
+  // surface may request that account-level telemetry.
+  'quota-snapshot-hook:get',
 
   // Declaring the Mistral plan and anchoring the quota meter to a console
   // reading are Settings-level acts that rewrite how every seat's burn is

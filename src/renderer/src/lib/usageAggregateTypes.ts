@@ -1,4 +1,12 @@
 import type { ProviderId } from '../../../main/store/types'
+import type { QuotaSnapshotHookProviderId } from '../../../shared/quotaSnapshotHook'
+
+/**
+ * Provider identities that can appear on the display-only Model Usage surface.
+ * DeepSeek and Cerebras are Pi upstream billing meters, not TaskWraith runtime
+ * seats, so they deliberately do not widen the governed ProviderId union.
+ */
+export type ModelUsageProviderId = ProviderId | QuotaSnapshotHookProviderId
 
 // Phase L6 slice 1 — exported so `ModelUsageCard` (and the related
 // per-provider block + heatmap) can type their props off the same
@@ -12,7 +20,7 @@ import type { ProviderId } from '../../../main/store/types'
 // ModelUsageCard renders the badge pill only when this field is
 // present + non-empty, so undefined values are visually inert.
 export interface ModelUsageAggregate {
-  provider: ProviderId
+  provider: ModelUsageProviderId
   model: string
   planName?: string
   runs: number
@@ -46,6 +54,9 @@ export interface UsageWindowAggregate {
   usedPercent?: number
   remainingPercent?: number
   limitWindowSeconds?: number
+  valueText?: string
+  unit?: string
+  windowKind?: string
 }
 
 export interface UsageBalanceAggregate {

@@ -1,4 +1,5 @@
-import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
+import type { ProviderId } from '../../../main/store/types'
+import type { ModelUsageAggregate, ModelUsageProviderId } from '../lib/usageAggregateTypes'
 import { humaniseModelId } from '../lib/modelDisplayName'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { formatTokenCount } from '../lib/UsageHeatmap'
@@ -8,6 +9,10 @@ function tokenCell(value: number): string {
   return value > 0 ? `${formatTokenCount(value)} tok` : '—'
 }
 
+function isRuntimeProvider(provider: ModelUsageProviderId): provider is ProviderId {
+  return provider !== 'deepseek' && provider !== 'cerebras'
+}
+
 export function SettingsModelComparisonsTable({
   entries
 }: {
@@ -15,9 +20,12 @@ export function SettingsModelComparisonsTable({
 }): React.JSX.Element | null {
   if (entries.length === 0) return null
 
-  const sortedEntries = [...entries].sort(
-    (a, b) => b.totalTokens - a.totalTokens || b.runs - a.runs
-  )
+  const sortedEntries = entries
+    .filter((entry): entry is ModelUsageAggregate & { provider: ProviderId } =>
+      isRuntimeProvider(entry.provider)
+    )
+    .sort((a, b) => b.totalTokens - a.totalTokens || b.runs - a.runs)
+  if (sortedEntries.length === 0) return null
   const tokenTotal = sortedEntries.reduce(
     (sum, entry) => sum + Math.max(0, entry.totalTokens || 0),
     0

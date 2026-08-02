@@ -619,6 +619,7 @@ const api = {
     ipcRenderer.invoke('get-codex-usage-snapshot', options),
   getExternalUsage: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('get-external-usage', options),
+  getQuotaSnapshotHook: () => ipcRenderer.invoke('quota-snapshot-hook:get'),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
   // Mistral's estimated monthly burn. Not a probe and not a vendor figure:
   // Mistral publishes no quota and exposes no usage endpoint, so this reads the

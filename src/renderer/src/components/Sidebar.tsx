@@ -52,6 +52,7 @@ import {
 } from '../lib/sidebarSectionOrder'
 import { AppShellStatsToolbar } from './AppShellStatsToolbar'
 import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard'
+import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
@@ -150,32 +151,7 @@ interface SidebarProps {
   focusSearchRequestId?: number
   /** Compact display label for the currently configured workspace-search shortcut. */
   searchShortcutHint?: string
-  usageSummary: Array<{
-    provider: ProviderId
-    model: string
-    runs: number
-    inputTokens: number
-    outputTokens: number
-    totalTokens: number
-    durationMs: number
-    inputTokenLimit?: number
-    outputTokenLimit?: number
-    totalTokenLimit?: number
-    resetAt?: string
-    resetText?: string
-    windows?: Array<{
-      id: string
-      label: string
-      runs: number
-      totalTokens: number
-      runLimitMax?: number
-      limitLabel: string
-      resetAt?: string
-      trackingOnly?: boolean
-      usedPercent?: number
-      remainingPercent?: number
-    }>
-  }>
+  usageSummary: ModelUsageAggregate[]
   runningChatIds?: string[]
   pluginWorkflowTemplates?: TaskWraithPluginActivatedWorkflowTemplate[]
   workflows?: WorkflowDefinition[]

@@ -19,6 +19,7 @@ import { buildExternalUsageRollup } from '../ExternalProviderActivity'
 import { projectRemoteModelUsageExtras } from '../RemoteModelUsageProjection'
 import type { RemoteWorkspaceCapability } from '../RemoteWorkspaceAllowlist'
 import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
+import type { QuotaSnapshotHookSnapshot } from '../../shared/quotaSnapshotHook'
 
 type UsageWorkspaceSummary = {
   id: string
@@ -90,6 +91,7 @@ export interface UsageRatesHandlerDeps {
   fetchClaudeUsageSnapshot: UsageSnapshotFetcher
   fetchKimiUsageSnapshot: UsageSnapshotFetcher
   fetchCursorUsageSnapshot: UsageSnapshotFetcher
+  fetchQuotaSnapshotHook: () => Promise<QuotaSnapshotHookSnapshot[]>
   getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
   getPluginActivationSnapshot?: () => TaskWraithPluginActivationSnapshot
   getCurrentFxRates: () => unknown
@@ -198,6 +200,11 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
     return deps.getExternalUsageCached(options?.force === true ? { maxAgeMs: 0 } : {})
   })
 
+  ipcMain.handle('quota-snapshot-hook:get', (event) => {
+    deps.assertMainRendererSender(event)
+    return deps.fetchQuotaSnapshotHook().catch(() => [])
+  })
+
   ipcMain.handle('fx-rates:get', () => deps.getCurrentFxRates())
   ipcMain.handle('fx-rates:refresh', async (_event, force: boolean = false) =>
     deps.refreshFxRates(Boolean(force))
@@ -253,34 +260,57 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
         ['cursor', deps.fetchCursorUsageSnapshot]
       ]
 
-      const entries = await Promise.all(
-        providerFetchers.map(async ([provider, fetcher]) => {
-          try {
-            const snapshot = await fetcher()
-            const windows = (snapshot?.windows ?? [])
-              .filter((window) => typeof window?.usedPercent === 'number')
-              .slice(0, 8)
-              .map((window) => ({
-                id: String(window?.id || ''),
-                label: String(window?.label || ''),
-                usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent as number))),
-                limitLabel: window?.limitLabel,
-                ...(window?.resetAt ? { resetAt: window.resetAt } : {})
-              }))
-            return windows.length > 0 ? { provider, windows } : null
-          } catch {
-            return null
-          }
-        })
-      )
+      const [entries, hookSnapshots] = await Promise.all([
+        Promise.all(
+          providerFetchers.map(async ([provider, fetcher]) => {
+            try {
+              const snapshot = await fetcher()
+              const windows = (snapshot?.windows ?? [])
+                .filter((window) => typeof window?.usedPercent === 'number')
+                .slice(0, 8)
+                .map((window) => ({
+                  id: String(window?.id || ''),
+                  label: String(window?.label || ''),
+                  usedPercent: Math.max(
+                    0,
+                    Math.min(100, Math.round(window.usedPercent as number))
+                  ),
+                  limitLabel: window?.limitLabel,
+                  ...(window?.resetAt ? { resetAt: window.resetAt } : {})
+                }))
+              return windows.length > 0 ? { provider, windows } : null
+            } catch {
+              return null
+            }
+          })
+        ),
+        deps.fetchQuotaSnapshotHook().catch(() => [])
+      ])
 
-      const providers = entries.filter(
+      const providers: unknown[] = entries.filter(
         (entry): entry is NonNullable<(typeof entries)[number]> => Boolean(entry)
       )
-      // Quota windows remain the persisted provider-usage-snapshots.json
-      // projection above. Spend and the AntiGravity soft budget are additive
-      // companion detail: older iOS builds ignore them and retain this exact
-      // quota-only view.
+      for (const snapshot of hookSnapshots) {
+        const windows = snapshot.windows.slice(0, 8).map((window) => ({
+          id: window.id,
+          label: window.label,
+          usedPercent: Math.max(0, Math.min(100, Math.round(window.usedPercent))),
+          limitLabel: window.limitLabel,
+          ...(window.valueText ? { valueText: window.valueText } : {}),
+          ...(window.resetAt ? { resetAt: window.resetAt } : {})
+        }))
+        if (windows.length > 0) {
+          providers.push({
+            provider: snapshot.provider,
+            ...(snapshot.planType ? { planName: snapshot.planType } : {}),
+            windows
+          })
+        }
+      }
+      // Native quota windows plus the credential-free helper projection form
+      // the provider list above. Spend and the AntiGravity soft budget are
+      // additive companion detail: older iOS builds ignore those fields and
+      // retain the quota-only view.
       const extras = projectRemoteModelUsageExtras({
         records: deps.getUsage(),
         settings: deps.getSettings(),
