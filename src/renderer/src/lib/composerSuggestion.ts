@@ -7,13 +7,11 @@
  * testable without jsdom (this repo's renderer tests run against
  * `renderToStaticMarkup` or pure logic — there is no DOM environment).
  *
- * Deliberately zero inference in v1. Every trigger below fires on a
- * state the app already knows exactly, and fills a template whose
- * target is verifiable — "rerun lane 2" either names a lane that
- * failed or it doesn't. A generative predictor can earn its way in
- * later, pointed at whichever trigger the acceptance log shows is dry
- * (see `composerSuggestionLog.ts`); shipping generation first would
- * mean tuning suggestion quality with no baseline to beat.
+ * Display wording remains template-only: every trigger below fires on state
+ * the app already knows exactly, and fills a template whose target is
+ * verifiable — "rerun lane 2" either names a lane that failed or it doesn't.
+ * An optional on-device model may only rank the finite host-approved set; it
+ * never receives display text or invents a new suggestion.
  *
  * One class of suggestion is deliberately absent: replying to a
  * question the agent just asked. The natural template there is "yes,
@@ -23,7 +21,16 @@
  * keystroke. Suggest actions, never agreement.
  */
 
-export type ComposerSuggestionTrigger = 'picker-dismissed' | 'lane-failed' | 'uncommitted-changes'
+import {
+  isComposerContinuationHardBlocked,
+  type ComposerContinuationCheckpoint
+} from './composerContinuationCheckpoint'
+
+export type ComposerSuggestionTrigger =
+  | 'picker-dismissed'
+  | 'task-continuation'
+  | 'lane-failed'
+  | 'uncommitted-changes'
 
 export interface ComposerSuggestion {
   /**
@@ -35,6 +42,22 @@ export interface ComposerSuggestion {
   trigger: ComposerSuggestionTrigger
   /** The literal string Tab commits into the draft. */
   text: string
+  /** Human-readable source explanation; absent for legacy templates. */
+  explanation?: string
+  /** Source class, never a transcript or telemetry-derived value. */
+  provenance?: 'user-confirmed-active-goal'
+}
+
+/**
+ * A finite, host-approved candidate. Personalization and an on-device model
+ * may rank these candidates, but may never create a candidate of their own.
+ */
+export interface ComposerSuggestionCandidate {
+  suggestion: ComposerSuggestion
+  /** Baseline score before local preference evidence is applied. */
+  baselineScore: number
+  /** Cannot be outranked by learned preference or a model proposal. */
+  hard: boolean
 }
 
 export interface ComposerSuggestionModel {
@@ -92,6 +115,8 @@ export interface ComposerSuggestionContext {
   selectedModelKey: string | null
   /** Lanes that failed in the most recent settled ensemble round. */
   failedLanes: readonly ComposerSuggestionLane[]
+  /** Narrow host-owned checkpoint; it deliberately excludes transcript prose. */
+  continuationCheckpoint?: ComposerContinuationCheckpoint | null
   /** Changed-file count from the primary git snapshot. */
   uncommittedFileCount: number
   /** Current branch name, for the commit template's phrasing. */
@@ -109,33 +134,80 @@ export interface ComposerSuggestionContext {
 export function deriveComposerSuggestion(
   ctx: ComposerSuggestionContext
 ): ComposerSuggestion | null {
-  if (ctx.draft.trim().length > 0) return null
-  if (ctx.busy) return null
+  return deriveComposerSuggestionCandidates(ctx)[0]?.suggestion ?? null
+}
 
-  for (const candidate of candidatesInPriorityOrder(ctx)) {
-    if (candidate && !ctx.dismissedIds.has(candidate.id)) return candidate
+/**
+ * Return every currently eligible candidate in deterministic fallback order.
+ * The hook may apply bounded local personalization to the soft candidates;
+ * callers that do not need personalization can continue using
+ * `deriveComposerSuggestion()` above.
+ */
+export function deriveComposerSuggestionCandidates(
+  ctx: ComposerSuggestionContext
+): ComposerSuggestionCandidate[] {
+  if (ctx.draft.trim().length > 0) return []
+  if (ctx.busy) return []
+
+  return candidatesInPriorityOrder(ctx).filter(
+    (candidate): candidate is ComposerSuggestionCandidate =>
+      Boolean(candidate) && !ctx.dismissedIds.has(candidate.suggestion.id)
+  )
+}
+
+function candidatesInPriorityOrder(
+  ctx: ComposerSuggestionContext
+): (ComposerSuggestionCandidate | null)[] {
+  const picker = pickerDismissed(ctx)
+  const continuation = taskContinuation(ctx)
+  const failure = laneFailed(ctx)
+  const hygiene = uncommittedChanges(ctx)
+
+  // When every attempted seat failed, diagnosis is a genuine blocker. With a
+  // partial-success round, however, an active user goal is a better default
+  // than repeatedly asking about the failures that did not stop the work.
+  if (isComposerContinuationHardBlocked(ctx.continuationCheckpoint)) {
+    return [picker, failure, continuation, hygiene]
   }
-  return null
+  return [picker, continuation, failure, hygiene]
 }
 
-function candidatesInPriorityOrder(ctx: ComposerSuggestionContext): (ComposerSuggestion | null)[] {
-  return [pickerDismissed(ctx), laneFailed(ctx), uncommittedChanges(ctx)]
-}
-
-function pickerDismissed(ctx: ComposerSuggestionContext): ComposerSuggestion | null {
+function pickerDismissed(ctx: ComposerSuggestionContext): ComposerSuggestionCandidate | null {
   const considered = ctx.consideredModel
   if (!considered || !ctx.hasPriorTurn) return null
   // Backing out of the picker on the row that's already active is a
   // no-op gesture, not an escalation signal.
   if (considered.key === ctx.selectedModelKey) return null
   return {
-    id: `picker-dismissed:${considered.key}`,
-    trigger: 'picker-dismissed',
-    text: `Retry that last turn on ${considered.label}`
+    suggestion: {
+      id: `picker-dismissed:${considered.key}`,
+      trigger: 'picker-dismissed',
+      text: `Retry that last turn on ${considered.label}`
+    },
+    baselineScore: 400,
+    hard: true
   }
 }
 
-function laneFailed(ctx: ComposerSuggestionContext): ComposerSuggestion | null {
+function taskContinuation(ctx: ComposerSuggestionContext): ComposerSuggestionCandidate | null {
+  if (!ctx.hasPriorTurn) return null
+  const checkpoint = ctx.continuationCheckpoint
+  const action = checkpoint?.action
+  if (!checkpoint || !action) return null
+  return {
+    suggestion: {
+      id: `task-continuation:${checkpoint.id}:${action.id}`,
+      trigger: 'task-continuation',
+      text: action.text,
+      explanation: action.explanation,
+      provenance: action.provenance
+    },
+    baselineScore: 260,
+    hard: false
+  }
+}
+
+function laneFailed(ctx: ComposerSuggestionContext): ComposerSuggestionCandidate | null {
   if (!ctx.hasPriorTurn) return null
   if (ctx.failedLanes.length === 0) return null
 
@@ -145,18 +217,26 @@ function laneFailed(ctx: ComposerSuggestionContext): ComposerSuggestion | null {
   const errored = ctx.failedLanes.filter((lane) => lane.kind === 'failed')
   if (errored.length === 1) {
     return {
-      id: `lane-failed:${errored[0].id}`,
-      trigger: 'lane-failed',
-      text: `Rerun ${errored[0].label}`
+      suggestion: {
+        id: `lane-failed:${errored[0].id}`,
+        trigger: 'lane-failed',
+        text: `Rerun ${errored[0].label}`
+      },
+      baselineScore: isComposerContinuationHardBlocked(ctx.continuationCheckpoint) ? 360 : 210,
+      hard: isComposerContinuationHardBlocked(ctx.continuationCheckpoint)
     }
   }
   // With several down, the useful ask is what went wrong — naming one
   // to rerun would be a coin flip presented as a recommendation.
   if (errored.length > 1) {
     return {
-      id: `lane-failed:multi:${errored.map((lane) => lane.id).join(',')}`,
-      trigger: 'lane-failed',
-      text: `Why did ${errored.length} seats fail?`
+      suggestion: {
+        id: `lane-failed:multi:${errored.map((lane) => lane.id).join(',')}`,
+        trigger: 'lane-failed',
+        text: `Why did ${errored.length} seats fail?`
+      },
+      baselineScore: isComposerContinuationHardBlocked(ctx.continuationCheckpoint) ? 360 : 210,
+      hard: isComposerContinuationHardBlocked(ctx.continuationCheckpoint)
     }
   }
 
@@ -164,25 +244,37 @@ function laneFailed(ctx: ComposerSuggestionContext): ComposerSuggestion | null {
   if (unreachable.length === 1) {
     const lane = unreachable[0]
     return {
-      id: `lane-unreachable:${lane.id}`,
-      trigger: 'lane-failed',
-      text: `${lane.label} was never reached — is ${lane.provider} running?`
+      suggestion: {
+        id: `lane-unreachable:${lane.id}`,
+        trigger: 'lane-failed',
+        text: `${lane.label} was never reached — is ${lane.provider} running?`
+      },
+      baselineScore: isComposerContinuationHardBlocked(ctx.continuationCheckpoint) ? 360 : 210,
+      hard: isComposerContinuationHardBlocked(ctx.continuationCheckpoint)
     }
   }
   return {
-    id: `lane-unreachable:multi:${unreachable.map((lane) => lane.id).join(',')}`,
-    trigger: 'lane-failed',
-    text: `Why were ${unreachable.length} seats unreachable?`
+    suggestion: {
+      id: `lane-unreachable:multi:${unreachable.map((lane) => lane.id).join(',')}`,
+      trigger: 'lane-failed',
+      text: `Why were ${unreachable.length} seats unreachable?`
+    },
+    baselineScore: isComposerContinuationHardBlocked(ctx.continuationCheckpoint) ? 360 : 210,
+    hard: isComposerContinuationHardBlocked(ctx.continuationCheckpoint)
   }
 }
 
-function uncommittedChanges(ctx: ComposerSuggestionContext): ComposerSuggestion | null {
+function uncommittedChanges(ctx: ComposerSuggestionContext): ComposerSuggestionCandidate | null {
   if (!ctx.hasPriorTurn) return null
   if (ctx.uncommittedFileCount <= 0) return null
   const branch = ctx.branch?.trim()
   return {
-    id: `uncommitted-changes:${branch || 'detached'}:${ctx.uncommittedFileCount}`,
-    trigger: 'uncommitted-changes',
-    text: branch ? `Commit the working changes on ${branch}` : 'Commit the working changes'
+    suggestion: {
+      id: `uncommitted-changes:${branch || 'detached'}:${ctx.uncommittedFileCount}`,
+      trigger: 'uncommitted-changes',
+      text: branch ? `Commit the working changes on ${branch}` : 'Commit the working changes'
+    },
+    baselineScore: 160,
+    hard: false
   }
 }

@@ -295,6 +295,8 @@ interface SettingsPanelProps {
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
   /** Settings → General toggle for on-device AI close-out summaries. */
   closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
+  /** Settings → General toggle for the bounded on-device continuation ranker. */
+  composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
@@ -430,6 +432,8 @@ interface SettingsPanelProps {
     showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
     /** Settings → General toggle for on-device AI close-out summaries. */
     closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
+    /** Settings → General toggle for the bounded on-device continuation ranker. */
+    composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
@@ -3811,6 +3815,7 @@ export function SettingsPanel({
   currencyOverestimatePercent,
   showRunCompleteSummary,
   closeoutAiSummaryEnabled,
+  composerContinuationAiEnabled,
   hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
   dashboardStatPrefs,
@@ -6373,6 +6378,23 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   Controls the Final Summary / Task Complete section after a run finishes. Turning
                   this off hides the completion card while keeping the transcript and run telemetry.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={composerContinuationAiEnabled !== false}
+                    onChange={(e) => onChange({ composerContinuationAiEnabled: e.target.checked })}
+                  />
+                  <span>Prioritize safe composer suggestions with Foundation Models</span>
+                </label>
+                <p className="settings-hint">
+                  Lets on-device Apple Foundation Models rank only host-approved suggestion
+                  categories and opaque IDs. It never receives prompt text, transcripts, agent
+                  output, tool output, telemetry, or suggestion wording. Turning this off keeps
+                  deterministic task continuity and local aggregate preference ranking.
                 </p>
               </div>
 

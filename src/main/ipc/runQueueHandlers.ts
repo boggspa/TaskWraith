@@ -4,6 +4,11 @@ import {
   normalizeCloseoutSummaryResult,
   sanitizeCloseoutSummaryRequest
 } from '../CloseoutSummarizer'
+import {
+  buildContinuationProposalUnavailableSnapshot,
+  normalizeContinuationProposalResult,
+  sanitizeContinuationProposalRequest
+} from '../ContinuationProposal'
 import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
@@ -119,6 +124,7 @@ export interface RunQueueHandlersDeps {
 
 const RUN_ANALYST_TIMEOUT_MS = 45_000
 const CLOSEOUT_SUMMARY_TIMEOUT_MS = 30_000
+const CONTINUATION_PROPOSAL_TIMEOUT_MS = 10_000
 
 function scopedChatFilter<T extends { chatId?: string }>(
   scope: RunQueueSenderScope,
@@ -339,6 +345,34 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       return buildCloseoutSummaryUnavailableSnapshot(request, reason)
+    }
+  })
+
+  // On-device continuation ranking is deliberately narrower than close-out
+  // summarization: sanitizeContinuationProposalRequest accepts only enum
+  // state + host-generated opaque candidate ids. The model can suggest an id,
+  // but cannot mint prompt text or consume telemetry through this channel.
+  ipcMain.handle('continuation:propose', async (event, input: unknown) => {
+    const scope = deps.resolveSenderRunQueueScope(event)
+    const request = sanitizeContinuationProposalRequest(input)
+    if (scope.kind === 'chat' && request.chatId !== scope.chatId) {
+      throw new Error('Renderer cannot request continuation ranking for another chat.')
+    }
+    const daemon = deps.getBridgeDaemon()
+    if (!daemon?.status().running) {
+      return buildContinuationProposalUnavailableSnapshot(
+        request,
+        'TaskWraith bridge daemon is not running.'
+      )
+    }
+    try {
+      const result = await daemon.request('continuation.propose', request, {
+        timeoutMs: CONTINUATION_PROPOSAL_TIMEOUT_MS
+      })
+      return normalizeContinuationProposalResult(request, result, new Date().toISOString())
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      return buildContinuationProposalUnavailableSnapshot(request, reason)
     }
   })
 }

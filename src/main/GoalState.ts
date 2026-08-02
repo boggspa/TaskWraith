@@ -1,6 +1,7 @@
 import type {
   ActiveGoal,
   ActiveGoalMode,
+  ActiveGoalObjectiveSource,
   ActiveGoalStatus,
   GoalRuntimeLedger,
   GoalRuntimeLedgerInterval,
@@ -161,6 +162,9 @@ export function createActiveGoal(
     claudeNativeAvailable?: boolean
     grokNativeAvailable?: boolean
     allowProviderNative?: boolean
+    /** Omit for legacy/unknown callers. Callers that accept a human's goal
+     * text must label it `user`; agent control actions must label it `agent`. */
+    objectiveSource?: ActiveGoalObjectiveSource
   } = {}
 ): ActiveGoal {
   const now = options.now || new Date()
@@ -172,6 +176,7 @@ export function createActiveGoal(
   return {
     id: `goal-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
     objective: normalizedObjective,
+    ...(options.objectiveSource ? { objectiveSource: options.objectiveSource } : {}),
     status: 'active',
     mode: resolveActiveGoalMode(provider, {
       codexNativeAvailable: options.codexNativeAvailable,

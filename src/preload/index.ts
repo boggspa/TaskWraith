@@ -11,6 +11,8 @@ import type {
   RunAnalystSnapshot,
   CloseoutSummaryRequest,
   CloseoutSummarySnapshot,
+  ContinuationProposalRequest,
+  ContinuationProposalSnapshot,
   CapabilityLedgerSnapshot,
   EvidencePackRecord,
   RepoConventionIndexSnapshot,
@@ -2146,6 +2148,8 @@ const api = {
     ipcRenderer.invoke('run-analyst:analyze', request) as Promise<RunAnalystSnapshot>,
   summarizeCloseout: (request: CloseoutSummaryRequest) =>
     ipcRenderer.invoke('closeout:summarize', request) as Promise<CloseoutSummarySnapshot>,
+  proposeContinuation: (request: ContinuationProposalRequest) =>
+    ipcRenderer.invoke('continuation:propose', request) as Promise<ContinuationProposalSnapshot>,
   getApprovalLedger: (filter: any = {}) => ipcRenderer.invoke('get-approval-ledger', filter),
   recordApprovalElevationAck: (input: {
     provider: string

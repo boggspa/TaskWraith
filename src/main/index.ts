@@ -41027,6 +41027,7 @@ if (isGeminiMcpBridgeProcess) {
               activeGoal = {
                 ...updateActiveGoalLifecycle(activeGoal, 'active', action.reason, now),
                 objective,
+                objectiveSource: 'user',
                 provider,
                 mode: resolveActiveGoalMode(provider, {
                   codexNativeAvailable: Boolean(
@@ -41050,7 +41051,8 @@ if (isGeminiMcpBridgeProcess) {
                   allowProviderNativeGoal && chat.providerMetadata?.claudeGoalNativeAvailable
                 ),
                 grokNativeAvailable: allowProviderNativeGoal && provider === 'grok',
-                allowProviderNative: allowProviderNativeGoal
+                allowProviderNative: allowProviderNativeGoal,
+                objectiveSource: 'user'
               })
             }
           } else {

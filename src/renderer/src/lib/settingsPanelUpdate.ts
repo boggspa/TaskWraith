@@ -46,6 +46,8 @@ export type SettingsPanelUpdate = {
   showRunCompleteSummary?: AppSettings['showRunCompleteSummary']
   /** Settings → General toggle for on-device AI close-out summaries. */
   closeoutAiSummaryEnabled?: AppSettings['closeoutAiSummaryEnabled']
+  /** Settings → General toggle for the bounded on-device continuation ranker. */
+  composerContinuationAiEnabled?: AppSettings['composerContinuationAiEnabled']
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']

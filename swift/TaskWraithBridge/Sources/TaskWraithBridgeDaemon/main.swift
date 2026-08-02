@@ -187,6 +187,13 @@ dispatcher.register("closeout.summarize") { params in
     return try CloseoutSummarizer.summarize(params)
 }
 
+/// `continuation.propose` — bounded on-device ranking for composer prefill.
+/// The request carries host-owned round enums and opaque candidate IDs only;
+/// there is no transcript or telemetry on this control-plane route.
+dispatcher.register("continuation.propose") { params in
+    return try ContinuationProposer.propose(params)
+}
+
 // MARK: - Attached window RPCs (scoped consent leases)
 
 let attachedWindowStore = AttachedWindowStore()

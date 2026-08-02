@@ -131,6 +131,7 @@ describe('registerRunQueueHandlers', () => {
     expect(handlerFor('get-run-event-replay')).toBeTypeOf('function')
     expect(handlerFor('run-analyst:analyze')).toBeTypeOf('function')
     expect(handlerFor('closeout:summarize')).toBeTypeOf('function')
+    expect(handlerFor('continuation:propose')).toBeTypeOf('function')
   })
 
   it('keeps a chat popout scoped to its own jobs, recovery, events, and run actions', async () => {
@@ -178,6 +179,17 @@ describe('registerRunQueueHandlers', () => {
       kind: 'ensemble-round',
       targetId: 'round-1'
     })
+
+    await handlerFor('continuation:propose')(event, {
+      chatId: 'chat-1',
+      checkpointId: 'continuation:chat-1:goal-1:partial-success',
+      phase: 'working',
+      roundState: 'partial-success',
+      candidates: [
+        { id: 'task-continuation:goal-1', kind: 'task-continuation' },
+        { id: 'lane-failed:seat-2', kind: 'lane-failed' }
+      ]
+    })
   })
 
   it('rejects Test 1 popout access to Test 3 run state before side effects', async () => {
@@ -219,6 +231,16 @@ describe('registerRunQueueHandlers', () => {
       () => handlerFor('closeout:summarize')(event, {
         targetId: 'round-3',
         scope: 'ensembleRound'
+      }),
+      () => handlerFor('continuation:propose')(event, {
+        chatId: 'chat-3',
+        checkpointId: 'continuation:chat-3:goal-1:partial-success',
+        phase: 'working',
+        roundState: 'partial-success',
+        candidates: [
+          { id: 'task-continuation:goal-1', kind: 'task-continuation' },
+          { id: 'lane-failed:seat-2', kind: 'lane-failed' }
+        ]
       })
     ]
 
@@ -653,6 +675,43 @@ describe('registerRunQueueHandlers', () => {
       { runId: 'run-1' },
       'daemon failure'
     )
+  })
+
+  it('sends only a sanitized continuation choice set to the local bridge', async () => {
+    const deps = createDeps()
+    const bridgeRequest = vi.fn(async () => ({
+      candidateId: 'task-continuation:goal-1',
+      model: 'Apple Foundation Models',
+      explanation: 'this must not reach the renderer'
+    }))
+    deps.getBridgeDaemon = vi.fn(() => ({
+      status: () => ({ running: true }),
+      request: bridgeRequest
+    }))
+    registerRunQueueHandlers(deps)
+
+    const request = {
+      chatId: 'chat-1',
+      checkpointId: 'continuation:chat-1:goal-1:partial-success',
+      phase: 'working',
+      roundState: 'partial-success',
+      candidates: [
+        { id: 'task-continuation:goal-1', kind: 'task-continuation' },
+        { id: 'lane-failed:seat-2', kind: 'lane-failed' }
+      ]
+    }
+    const snapshot = await handlerFor('continuation:propose')({}, request)
+
+    expect(bridgeRequest).toHaveBeenCalledWith('continuation.propose', request, {
+      timeoutMs: 10_000
+    })
+    expect(snapshot).toMatchObject({
+      checkpointId: request.checkpointId,
+      status: 'ready',
+      candidateId: 'task-continuation:goal-1',
+      model: 'Apple Foundation Models'
+    })
+    expect(JSON.stringify(snapshot)).not.toContain('this must not reach the renderer')
   })
 
   it('delegates run events and replay through injected read APIs', async () => {

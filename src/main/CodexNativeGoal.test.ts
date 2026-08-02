@@ -13,6 +13,7 @@ import type { ActiveGoal } from './store/types'
 const baseGoal: ActiveGoal = {
   id: 'goal-1',
   objective: 'Ship the native goal bridge',
+  objectiveSource: 'user',
   status: 'active',
   mode: 'taskwraith_steered',
   provider: 'codex',
@@ -106,10 +107,24 @@ describe('CodexNativeGoal', () => {
 
     expect(goal.id).toBe('goal-1')
     expect(goal.objective).toBe('Finish from Codex')
+    expect(goal.objectiveSource).toBe('agent')
     expect(goal.status).toBe('blocked')
     expect(goal.mode).toBe('codex_native')
     expect(goal.blockedReason).toBe('Codex reported a goal budget limit.')
     expect(goal.createdAt).toBe('2024-06-13T12:00:00.000Z')
+  })
+
+  it('retains user provenance when a native status refresh preserves the exact objective', () => {
+    const goal = activeGoalFromCodexThreadGoal(
+      {
+        threadId: 'thread-1',
+        objective: baseGoal.objective,
+        status: 'active'
+      },
+      baseGoal
+    )
+
+    expect(goal.objectiveSource).toBe('user')
   })
 
   it('detects method-not-found errors as unsupported native goal control', () => {

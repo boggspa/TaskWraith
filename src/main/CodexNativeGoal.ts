@@ -111,9 +111,18 @@ export function activeGoalFromCodexThreadGoal(
   const createdAt = codexGoalTimestamp(nativeGoal.createdAt) || existingGoal?.createdAt || nowIso()
   const updatedAt = codexGoalTimestamp(nativeGoal.updatedAt) || existingGoal?.updatedAt || nowIso()
   const objective = String(nativeGoal.objective || existingGoal?.objective || '').trim()
+  // A native provider may report a changed objective that came from its own
+  // session/agent surface. Preserve a human source only when the exact
+  // user-confirmed wording survives the round trip; otherwise require the
+  // person to re-confirm it before it can steer composer prefill.
+  const objectiveSource =
+    existingGoal?.objectiveSource === 'user' && objective !== existingGoal.objective.trim()
+      ? 'agent'
+      : existingGoal?.objectiveSource
   const goal: ActiveGoal = {
     id: existingGoal?.id || `codex-goal-${nativeGoal.threadId}`,
     objective,
+    ...(objectiveSource ? { objectiveSource } : {}),
     status,
     mode: 'codex_native',
     provider: 'codex',

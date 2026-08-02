@@ -4,6 +4,7 @@ import {
   type ComposerSuggestionContext,
   type ComposerSuggestionLane
 } from './composerSuggestion'
+import type { ComposerContinuationCheckpoint } from './composerContinuationCheckpoint'
 
 function ctx(overrides: Partial<ComposerSuggestionContext> = {}): ComposerSuggestionContext {
   return {
@@ -28,6 +29,23 @@ const lane = (
   kind: 'failed' | 'unreachable' = 'failed',
   provider = 'codex'
 ): ComposerSuggestionLane => ({ id, label, provider, kind })
+
+function checkpoint(
+  roundState: ComposerContinuationCheckpoint['roundState']
+): ComposerContinuationCheckpoint {
+  return {
+    schemaVersion: 1,
+    id: `checkpoint:${roundState}`,
+    phase: roundState === 'all-failed' ? 'blocked' : 'working',
+    roundState,
+    action: {
+      id: 'active-goal:goal-1',
+      text: 'Continue with: Add retry-path coverage',
+      explanation: 'Based on this thread’s active goal, not run telemetry or agent output.',
+      provenance: 'user-confirmed-active-goal'
+    }
+  }
+}
 
 describe('deriveComposerSuggestion — suppression', () => {
   it('suggests nothing once the user has typed', () => {
@@ -152,6 +170,33 @@ describe('deriveComposerSuggestion — failed lanes', () => {
       })
     )
     expect(suggestion?.text).toBe('Why were 2 seats unreachable?')
+  })
+
+  it('continues the active task after a partial-success round instead of over-focusing on failures', () => {
+    const suggestion = deriveComposerSuggestion(
+      ctx({
+        failedLanes: [lane('lane-1', 'Researcher'), lane('lane-2', 'Reviewer')],
+        continuationCheckpoint: checkpoint('partial-success')
+      })
+    )
+
+    expect(suggestion).toMatchObject({
+      trigger: 'task-continuation',
+      text: 'Continue with: Add retry-path coverage',
+      provenance: 'user-confirmed-active-goal'
+    })
+  })
+
+  it('keeps a genuine all-seat failure ahead of task continuation', () => {
+    const suggestion = deriveComposerSuggestion(
+      ctx({
+        failedLanes: [lane('lane-1', 'Researcher'), lane('lane-2', 'Reviewer')],
+        continuationCheckpoint: checkpoint('all-failed')
+      })
+    )
+
+    expect(suggestion?.trigger).toBe('lane-failed')
+    expect(suggestion?.text).toBe('Why did 2 seats fail?')
   })
 })
 

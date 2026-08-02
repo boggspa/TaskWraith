@@ -47,6 +47,19 @@ describe('shouldMintFreshGoalIdentity (C2 P2 — fresh goal identity)', () => {
 })
 
 describe('GoalState', () => {
+  it('retains an explicit objective source without guessing for legacy callers', () => {
+    const userGoal = createActiveGoal('codex', 'Ship the safe continuation checkpoint', {
+      now: new Date('2026-08-02T10:00:00Z'),
+      objectiveSource: 'user'
+    })
+    const legacyGoal = createActiveGoal('codex', 'Legacy goal', {
+      now: new Date('2026-08-02T10:00:00Z')
+    })
+
+    expect(userGoal.objectiveSource).toBe('user')
+    expect(legacyGoal.objectiveSource).toBeUndefined()
+  })
+
   it('creates provider-aware goals without treating todos as the objective', () => {
     const goal = createActiveGoal('ollama', 'Fix the failing parser test', {
       now: new Date('2026-06-13T12:00:00Z')

@@ -7551,6 +7551,7 @@ export class EnsembleOrchestrator {
               {
                 ...priorGoal,
                 objective,
+                objectiveSource: 'agent',
                 provider: caller.provider,
                 mode: 'taskwraith_steered'
               },
@@ -7560,7 +7561,8 @@ export class EnsembleOrchestrator {
             )
           : createActiveGoal(caller.provider, objective, {
               now: new Date(nowIso),
-              allowProviderNative: false
+              allowProviderNative: false,
+              objectiveSource: 'agent'
             })
       this.saveChatWithCheckpoint(
         {

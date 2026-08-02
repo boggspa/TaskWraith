@@ -6534,6 +6534,7 @@ Next action:
     })
     const goalId = harness.chat.activeGoal?.id
     expect(goalId).toBeTruthy()
+    expect(harness.chat.activeGoal?.objectiveSource).toBe('agent')
 
     await harness.orchestrator.bossmanControlForRun(runId, {
       action: 'set_review_gate',

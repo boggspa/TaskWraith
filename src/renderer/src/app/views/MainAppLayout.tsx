@@ -1473,6 +1473,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               currencyOverestimatePercent={overestimatePercent}
               showRunCompleteSummary={settings?.showRunCompleteSummary}
               closeoutAiSummaryEnabled={settings?.closeoutAiSummaryEnabled}
+              composerContinuationAiEnabled={settings?.composerContinuationAiEnabled}
               hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
               ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
               dashboardStatPrefs={settings?.dashboardStatPrefs}

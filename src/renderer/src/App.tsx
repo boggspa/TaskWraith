@@ -7112,6 +7112,9 @@ function App(): React.JSX.Element {
     if (next.closeoutAiSummaryEnabled !== undefined) {
       settingsPatch.closeoutAiSummaryEnabled = next.closeoutAiSummaryEnabled
     }
+    if (next.composerContinuationAiEnabled !== undefined) {
+      settingsPatch.composerContinuationAiEnabled = next.composerContinuationAiEnabled
+    }
     if (next.hostAutoCompactEnabled !== undefined) {
       settingsPatch.hostAutoCompactEnabled = next.hostAutoCompactEnabled
     }
@@ -18045,11 +18048,13 @@ function App(): React.JSX.Element {
               currentGoalAllowProviderNative &&
               Boolean(currentChat?.providerMetadata?.claudeGoalNativeAvailable),
             grokNativeAvailable: currentGoalAllowProviderNative && currentProvider === 'grok',
-            allowProviderNative: currentGoalAllowProviderNative
+            allowProviderNative: currentGoalAllowProviderNative,
+            objectiveSource: 'user'
           })
         : {
             ...updateActiveGoalLifecycle(existingGoal, 'active', undefined, now),
             objective,
+            objectiveSource: 'user',
             provider: currentProvider,
             mode,
             updatedAt: now.toISOString()

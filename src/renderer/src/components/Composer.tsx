@@ -36,6 +36,7 @@ import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
 import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
 import type { ComposerSuggestionModel } from '../lib/composerSuggestion'
+import { buildComposerContinuationCheckpoint } from '../lib/composerContinuationCheckpoint'
 import { failedLanesFromChat } from '../lib/composerSuggestionInputs'
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
 import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
@@ -1037,6 +1038,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     [currentChat]
   )
 
+  // A narrow, host-owned replacement checkpoint. It reads the active goal and
+  // structured round state only — never transcript, tool output, telemetry,
+  // participant prose, or Foundation Models summaries.
+  const composerContinuationCheckpoint = useMemo(
+    () => buildComposerContinuationCheckpoint(currentChat),
+    [currentChat]
+  )
+
   /** v1 prefill: template-driven ghost text into an EMPTY composer only. */
   const composerSuggestion = useComposerSuggestion({
     chatId: currentComposerChatId,
@@ -1048,10 +1057,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     consideredModel,
     selectedModelKey: contextModelId ? `${currentProvider}:${contextModelId}` : null,
     failedLanes: composerFailedLanes,
+    continuationCheckpoint: composerContinuationCheckpoint,
+    requestContinuationProposal:
+      settings?.composerContinuationAiEnabled === false
+        ? undefined
+        : window.api.proposeContinuation,
     uncommittedFileCount: primaryGitSnapshot?.counts?.changed ?? 0,
     branch: primaryGitSnapshot?.detached ? null : (primaryGitSnapshot?.branch ?? null)
   })
   const composerGhostText = composerSuggestion.ghostText
+  const composerSuggestionTitle = composerSuggestion.explanation
+    ? `${composerSuggestion.explanation} Press Tab to accept or Escape to dismiss.`
+    : undefined
 
   const buildPickerModelOptions = (
     targetProvider: ProviderId,
@@ -2959,6 +2976,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         className={`composer-textarea${composerRichActive ? ' has-mention-overlay' : ''}`}
                         ref={bindComposerTextareaRef}
                         value={prompt}
+                        title={composerSuggestionTitle}
                         onContextMenu={composerContextMenu.handleContextMenu}
                         onPaste={(event) => {
                           void handleComposerPaste(event)
@@ -3180,6 +3198,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               (e.metaKey || e.ctrlKey)
                                 ? effectiveSelectedParticipantId
                                 : undefined)
+                            composerSuggestion.observeSentDraft(prompt)
                             handleRun(
                               undefined,
                               undefined,
@@ -4854,6 +4873,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   (event.metaKey || event.ctrlKey)
                                     ? effectiveSelectedParticipantId
                                     : undefined)
+                                composerSuggestion.observeSentDraft(prompt)
                                 handleRun(
                                   undefined,
                                   undefined,

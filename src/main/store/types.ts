@@ -364,6 +364,10 @@ export interface AgentThreadForkResult {
   caveats?: string[]
 }
 export type ActiveGoalStatus = 'active' | 'paused' | 'blocked' | 'completed'
+/** Who last explicitly supplied the goal objective. Unknown/legacy goals are
+ * deliberately omitted rather than guessed; control-plane features treat only
+ * `user` as safe display text. */
+export type ActiveGoalObjectiveSource = 'user' | 'agent'
 export type ActiveGoalMode =
   | 'codex_native'
   | 'claude_native'
@@ -393,6 +397,8 @@ export interface GoalRuntimeLedger {
 export interface ActiveGoal {
   id: string
   objective: string
+  /** Provenance of `objective`, not of its lifecycle/status fields. */
+  objectiveSource?: ActiveGoalObjectiveSource
   status: ActiveGoalStatus
   mode: ActiveGoalMode
   provider: ProviderId
@@ -2378,6 +2384,12 @@ export interface AppSettings {
    * Defaults to true; requires the bridge daemon + macOS 26 Foundation
    * Models, so on older hosts it is silently inert. */
   closeoutAiSummaryEnabled?: boolean
+  /** Settings → General toggle for the optional, on-device ranker used by
+   * safe composer continuation suggestions. It receives only host-owned round
+   * enums and opaque candidate ids — never prompt text, transcripts, agent
+   * output, tool output, telemetry, or candidate wording. Defaults to true;
+   * turning it off preserves deterministic + local aggregate ranking. */
+  composerContinuationAiEnabled?: boolean
   /** Settings → General toggle for evidence-gated host auto-compaction.
    * Generic run input/output is advisory and cannot authorize a session reset;
    * automatic maintenance requires provider-semantic occupancy, classified
@@ -3572,6 +3584,41 @@ export interface CloseoutSummarySnapshot {
   status: 'ready' | 'unavailable' | 'error'
   /** Single prose paragraph. Empty when status is not 'ready'. */
   summary: string
+  model?: string
+  error?: string
+}
+
+/**
+ * A strictly bounded on-device ranking request for composer continuation.
+ * It deliberately carries no transcript, tool output, telemetry, agent prose,
+ * prompt text, or candidate text. The model may select only one of the host
+ * generated opaque ids below; the renderer validates it again before use.
+ */
+export type ContinuationProposalCandidateKind =
+  | 'picker-dismissed'
+  | 'task-continuation'
+  | 'lane-failed'
+  | 'uncommitted-changes'
+
+export interface ContinuationProposalRequest {
+  /** Used by the main process to keep a secondary renderer in its own chat. */
+  chatId: string
+  /** Host-created replacement checkpoint identity, not a transcript digest. */
+  checkpointId: string
+  phase: 'none' | 'working' | 'blocked'
+  roundState: 'none' | 'completed' | 'partial-success' | 'all-failed'
+  candidates: Array<{
+    id: string
+    kind: ContinuationProposalCandidateKind
+  }>
+}
+
+export interface ContinuationProposalSnapshot {
+  checkpointId: string
+  generatedAt: string
+  status: 'ready' | 'unavailable' | 'error'
+  /** Present only when it exactly matches a candidate id in the request. */
+  candidateId?: string
   model?: string
   error?: string
 }
