@@ -72,6 +72,7 @@ import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
 import { GitMergeBadge, GitSyncChip } from '../components/GitStatusChips'
 import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
+import { WorkspaceLockPill } from '../components/WorkspaceLockPill'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
@@ -5769,21 +5770,29 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 startedAt={composerRunTimecodeStartedAt}
                 cumulativeBaseMs={cumulativeRunBaseMs}
                 center={
-                  // GitHub PR/CI satellite pill — centred between the Turn and
-                  // Total-thread timecodes (it renders null without a remote +
-                  // PR/CI worth surfacing; the hover popover opens upward from
-                  // here over the composer).
+                  // GitHub PR/CI and workspace-edit satellites sit together
+                  // between the Turn and Total-thread timecodes. The edit
+                  // details panel is portaled from here so it cannot be clipped
+                  // by the dense workspace rows above the composer.
                   currentWorkspace && showWorkspaceGitAboveRows ? (
-                    <GitHubSatelliteRow
-                      pr={primaryPr}
-                      ci={primaryCi}
-                      snapshot={primaryGitSnapshot}
-                      onNotify={onNotifyThreadOfCi}
-                      isWatching={isWatchingPr}
-                      onToggleWatch={onToggleWatchPr}
-                      watchDisabledReason={watchPrDisabledReason}
-                      watchStatusMessage={watchPrStatusMessage}
-                    />
+                    <div className="composer-thread-timecode-satellites">
+                      <GitHubSatelliteRow
+                        pr={primaryPr}
+                        ci={primaryCi}
+                        snapshot={primaryGitSnapshot}
+                        onNotify={onNotifyThreadOfCi}
+                        isWatching={isWatchingPr}
+                        onToggleWatch={onToggleWatchPr}
+                        watchDisabledReason={watchPrDisabledReason}
+                        watchStatusMessage={watchPrStatusMessage}
+                      />
+                      <WorkspaceLockPill
+                        workspacePath={currentWorkspace.path}
+                        effectiveWorkspacePath={
+                          composerWorktreeSelection?.effectiveWorkspacePath || currentWorkspace.path
+                        }
+                      />
+                    </div>
                   ) : undefined
                 }
               />

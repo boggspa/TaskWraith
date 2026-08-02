@@ -5222,8 +5222,8 @@
 .composer-thread-timecodes {
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
-  /* 1fr/auto/1fr grid keeps the centre slot (GitHub PR/CI satellite pill)
-   * truly centred regardless of the turn/total labels' unequal widths. */
+  /* 1fr/auto/1fr grid keeps the centre satellite group (PR/CI plus active
+   * edits) truly centred regardless of the turn/total labels' unequal widths. */
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -5256,9 +5256,16 @@
   align-items: center;
   min-width: 0;
 }
-/* The satellite pill keeps its own chrome; strip the row spacing it carried
- * when it lived as a standalone row above the composer. */
-.composer-thread-timecodes-center .github-satellite-row {
+.composer-thread-timecode-satellites {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+/* Strip the spacing the GitHub row carried when it lived independently above
+ * the composer. The active-edit control is intentionally bare at rest, like
+ * the adjacent PR/CI satellites. */
+.composer-thread-timecode-satellites .github-satellite-row {
   padding: 0;
   flex-wrap: nowrap;
 }

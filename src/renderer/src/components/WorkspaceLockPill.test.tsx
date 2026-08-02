@@ -7,6 +7,7 @@ import {
   type WorkLockProjectionSource
 } from '../../../shared/workLockProjection'
 import { WorkspaceLockPillView } from './WorkspaceLockPill'
+import { resolveWorkspaceLockPopoverPosition } from '../lib/workspaceLockPopoverPosition'
 
 function lock(overrides: Partial<WorkLockProjectionSource> = {}): WorkLockProjectionSource {
   return {
@@ -43,7 +44,7 @@ function lock(overrides: Partial<WorkLockProjectionSource> = {}): WorkLockProjec
 }
 
 describe('WorkspaceLockPillView', () => {
-  it('renders compact active count and complete human-readable lock details', () => {
+  it('renders a compact satellite trigger for active workspace edits', () => {
     const snapshot = createWorkLockProjectionSnapshot({
       generation: 2,
       sampledAt: '2026-07-29T15:10:00.000Z',
@@ -58,12 +59,10 @@ describe('WorkspaceLockPillView', () => {
     )
 
     expect(html).toContain('1 active edit')
-    expect(html).toContain('src/app.ts · lines 18–29')
-    expect(html).toContain('Builder · Codex · Ship 1.9.2 · lane lane-1')
-    expect(html).toContain('Worktree builder · current · codex/lock-ui')
-    expect(html).toContain('/worktrees/builder')
-    expect(html).toContain('Based on repo · /repo')
-    expect(html).toContain('10m')
+    expect(html).toContain('workspace-lock-trigger')
+    expect(html).toContain('aria-haspopup="dialog"')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('<details')
     expect(html).not.toContain('8821')
     expect(html).not.toContain('private-birth')
   })
@@ -87,12 +86,7 @@ describe('WorkspaceLockPillView', () => {
     )
 
     expect(html).toContain('1 active edit')
-    expect(html).toContain('1 recovered')
-    expect(html).toContain('Recovery paused')
-    expect(html).toContain('Recovered safely')
-    expect(html).toContain('kept this edit protected')
-    expect(html).toContain('Review force release…')
-    expect(html).toContain('Recovery requires a restart.')
+    expect(html).toContain('workspace-lock-trigger')
     expect(html.toLowerCase()).not.toContain('conflict')
   })
 
@@ -117,9 +111,34 @@ describe('WorkspaceLockPillView', () => {
     expect(html).toBe('')
   })
 
-  it('is mounted beside the composer worktree trigger with bounded popover CSS', () => {
+  it('uses the available viewport space above the composer before falling below the trigger', () => {
+    expect(
+      resolveWorkspaceLockPopoverPosition({
+        triggerRect: { left: 490, top: 620, bottom: 640, width: 80 },
+        viewportWidth: 1_000,
+        viewportHeight: 800
+      })
+    ).toEqual({ left: 338, top: 612, width: 384, maxHeight: 400, placement: 'above' })
+    expect(
+      resolveWorkspaceLockPopoverPosition({
+        triggerRect: { left: 2, top: 120, bottom: 140, width: 20 },
+        viewportWidth: 320,
+        viewportHeight: 300
+      })
+    ).toEqual({ left: 8, top: 148, width: 304, maxHeight: 144, placement: 'below' })
+  })
+
+  it('is mounted beside PR/CI in the timecode bar with a portaled, satellite-style popover', () => {
     const composer = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/Composer.tsx'),
+      'utf8'
+    )
+    const worktreePopover = readFileSync(
       join(process.cwd(), 'src/renderer/src/components/ComposerBranchWorktreePopover.tsx'),
+      'utf8'
+    )
+    const lockPill = readFileSync(
+      join(process.cwd(), 'src/renderer/src/components/WorkspaceLockPill.tsx'),
       'utf8'
     )
     const css = readFileSync(
@@ -128,8 +147,15 @@ describe('WorkspaceLockPillView', () => {
     )
 
     expect(composer).toContain('<WorkspaceLockPill')
-    expect(composer).toContain('composerWorktreeSelection?.effectiveWorkspacePath || workspacePath')
-    expect(css).toMatch(/\.workspace-lock-popover\s*\{[^}]*position: absolute;/s)
+    expect(composer).toContain('composer-thread-timecode-satellites')
+    expect(composer).toContain(
+      'composerWorktreeSelection?.effectiveWorkspacePath || currentWorkspace.path'
+    )
+    expect(worktreePopover).not.toContain('<WorkspaceLockPill')
+    expect(lockPill).toContain('createPortal')
+    expect(lockPill).toContain('document.body')
+    expect(css).toMatch(/\.workspace-lock-popover\s*\{[^}]*position: fixed;/s)
+    expect(css).toMatch(/\.workspace-lock-trigger\s*\{[^}]*border: 0;/s)
     expect(css).toMatch(/max-height: min\(25rem, calc\(100vh - 2rem\)\);/)
     expect(css).toMatch(/width: min\(24rem, calc\(100vw - 1\.5rem\)\);/)
   })
