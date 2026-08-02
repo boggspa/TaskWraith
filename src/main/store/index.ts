@@ -298,6 +298,10 @@ import {
 } from '../ThreadMessageLedger'
 import type { ThreadMessageEvent, ThreadMessageInbox } from '../../shared/threadMessage'
 import {
+  appendThreadMessageTranscriptProjection,
+  mergeMissingThreadMessageTranscriptProjections
+} from '../ThreadMessageTranscriptProjection'
+import {
   isTerminalWorkflowExecutionStatus,
   nextLocalDayBoundaryIso,
   normalizeWorkflowTrigger,
@@ -6077,8 +6081,18 @@ export class AppStore {
       fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
       ...rendererOwnedChat
     } = chat
+    const rendererMessages = chat.messages || []
+    const reconciledMessages =
+      previousChatForFeedback &&
+      chatPersistenceRevision(chat) < chatPersistenceRevision(previousChatForFeedback)
+        ? mergeMissingThreadMessageTranscriptProjections(
+            rendererMessages,
+            previousChatForFeedback.messages || []
+          )
+        : rendererMessages
     const chatWithMainOwnedFields: ChatRecord = {
       ...rendererOwnedChat,
+      messages: reconciledMessages,
       ...(previousChatForFeedback?.threadWorktreeBinding
         ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
         : {}),
@@ -7292,11 +7306,9 @@ export class AppStore {
     writeSubThreadMailboxLedger(ledger)
   }
 
-  // Durable peer thread-to-thread inbox, keyed by RECEIVING chat. Held outside
-  // ChatRecord for the same reason as the sub-thread mailbox — bodies must not
-  // inflate chat-list projections — and additionally because a main-owned chat
-  // field that misses `saveChat`'s strip-and-remerge is erased by the next
-  // renderer save without an error.
+  // Durable peer thread-to-thread inbox, keyed by RECEIVING chat. Delivery
+  // authority stays outside ChatRecord like the sub-thread mailbox; an accepted
+  // event also gets a projection-only ChatMessage for visible transcript history.
   static getThreadMessageInbox(chatId: string): ThreadMessageInbox {
     return threadMessageInboxFor(readThreadMessageLedger(), chatId)
   }
@@ -7324,11 +7336,16 @@ export class AppStore {
       ]
     })
     const ledger = readThreadMessageLedger()
-    if (!this.getChat(event.toChatId)) {
+    const targetChat = this.getChat(event.toChatId)
+    if (!targetChat) {
       return { outcome: 'unknown-target', inbox: threadMessageInboxFor(ledger, event.toChatId) }
     }
     const result = enqueueThreadMessageInLedger(ledger, event)
-    if (result.outcome === 'accepted') writeThreadMessageLedger(result.ledger)
+    if (result.outcome === 'accepted') {
+      writeThreadMessageLedger(result.ledger)
+      const projection = appendThreadMessageTranscriptProjection(targetChat, event)
+      if (projection.inserted) this.saveChat(projection.chat)
+    }
     return { outcome: result.outcome, inbox: result.inbox }
   }
 

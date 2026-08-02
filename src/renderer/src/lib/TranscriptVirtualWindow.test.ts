@@ -105,6 +105,15 @@ describe('TranscriptVirtualWindow', () => {
       expect(classifyRowType(m)).toBe('return')
     })
 
+    it('classifies a peer-message projection before the plain tool fallback', () => {
+      const m = msg({
+        id: 'peer',
+        role: 'tool',
+        metadata: { kind: 'threadMessage', providerContextVisibility: 'projection-only' }
+      })
+      expect(classifyRowType(m)).toBe('threadMessage')
+    })
+
     it('classifies a plain tool message with activities as a tool row', () => {
       expect(
         classifyRowType(
@@ -280,7 +289,7 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('return', false, 2000)).toBe(Math.round(2000 * CONTENT_PX_PER_CHAR))
     })
 
-    it('caps a fan-out result estimate at the viewport-clamped ceiling', () => {
+    it('caps single-viewport card estimates at the viewport-clamped ceiling', () => {
       // A READ-heavy Cursor fan-out lane accumulates thousands of chars of tool
       // output, but the ENTIRE card body renders inside one 240px-capped
       // LiveActivityViewport — so its off-screen height must NOT balloon toward
@@ -291,12 +300,15 @@ describe('TranscriptVirtualWindow', () => {
         VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
       )
       expect(estimatedHeightFor('fanoutResult', false, 100000)).toBeLessThan(CONTENT_SCALE_CAP_PX)
+      expect(estimatedHeightFor('threadMessage', false, 100000)).toBe(
+        VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
+      )
       // A small fan-out card still floors at its flat per-type base estimate.
       expect(estimatedHeightFor('fanoutResult', false, 0)).toBe(
         ESTIMATED_ROW_HEIGHT_PX.fanoutResult
       )
       // tool rows are multi-segment (no single outer cap) and keep scaling —
-      // only the hard-clamped fan-out card body is capped.
+      // only cards with one hard-clamped outer viewport are capped.
       expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 

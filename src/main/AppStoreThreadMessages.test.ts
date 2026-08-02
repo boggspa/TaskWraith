@@ -3,7 +3,11 @@ import fs from 'fs'
 import { join } from 'path'
 import { AppStore, HistoryDeletionMutationBlockedError } from './store'
 import type { ChatRecord } from './store/types'
-import { createThreadMessageEvent, type ThreadMessageEvent } from '../shared/threadMessage'
+import {
+  createThreadMessageEvent,
+  THREAD_MESSAGE_TRANSCRIPT_KIND,
+  type ThreadMessageEvent
+} from '../shared/threadMessage'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-thread-messages-test-${process.pid}`)
 
@@ -60,21 +64,58 @@ describe('AppStore thread message inbox', () => {
     saveChat('chat-b')
   })
 
-  it('persists an inbound message in its own ledger, not in the chat record', () => {
+  it('keeps delivery in its own ledger and projects the inbound message into the transcript', () => {
     expect(send().outcome).toBe('accepted')
 
     expect(AppStore.getThreadMessageInbox('chat-b').pending.map((event) => event.id)).toEqual([
       'msg-1'
     ])
     expect(fs.existsSync(ledgerPath)).toBe(true)
-    // The whole point of the separate ledger: a renderer save of either chat must
-    // not be able to touch the inbox.
-    expect(JSON.stringify(AppStore.getChat('chat-b'))).not.toContain('msg-1')
+    const projections = AppStore.getChat('chat-b')?.messages.filter(
+      (entry) => entry.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND
+    )
+    expect(projections).toHaveLength(1)
+    expect(projections?.[0]).toMatchObject({
+      id: 'thread-message-msg-1',
+      role: 'tool',
+      content: 'Byte budget assertion is red on master.',
+      metadata: {
+        providerContextVisibility: 'projection-only',
+        threadMessageId: 'msg-1',
+        threadMessageFromChatTitle: 'Sender',
+        threadMessageTrust: 'untrusted-thread-message'
+      }
+    })
   })
 
-  it('survives a renderer save of the receiving chat', () => {
+  it('survives a stale renderer save of the receiving chat', () => {
     send()
     saveChat('chat-b')
+    expect(AppStore.getThreadMessageInbox('chat-b').pending).toHaveLength(1)
+    expect(
+      AppStore.getChat('chat-b')?.messages.filter(
+        (entry) => entry.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND
+      )
+    ).toHaveLength(1)
+  })
+
+  it('allows a current renderer revision to delete the transcript projection', () => {
+    send()
+    const current = AppStore.getChat('chat-b')
+    if (!current) throw new Error('missing recipient fixture')
+
+    AppStore.saveChat({
+      ...current,
+      messages: current.messages.filter(
+        (entry) => entry.metadata?.kind !== THREAD_MESSAGE_TRANSCRIPT_KIND
+      )
+    })
+
+    expect(
+      AppStore.getChat('chat-b')?.messages.some(
+        (entry) => entry.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND
+      )
+    ).toBe(false)
     expect(AppStore.getThreadMessageInbox('chat-b').pending).toHaveLength(1)
   })
 
@@ -82,6 +123,11 @@ describe('AppStore thread message inbox', () => {
     send()
     expect(send().outcome).toBe('duplicate')
     expect(AppStore.getThreadMessageInbox('chat-b').pending).toHaveLength(1)
+    expect(
+      AppStore.getChat('chat-b')?.messages.filter(
+        (entry) => entry.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND
+      )
+    ).toHaveLength(1)
   })
 
   // A message queued for a chat that does not exist can never be delivered or
@@ -96,6 +142,11 @@ describe('AppStore thread message inbox', () => {
     const acknowledged = AppStore.acknowledgeThreadMessages('chat-b', ['msg-1'])
     expect(acknowledged.acknowledgedIds).toEqual(['msg-1'])
     expect(AppStore.getThreadMessageInbox('chat-b').pending).toEqual([])
+    expect(
+      AppStore.getChat('chat-b')?.messages.some(
+        (entry) => entry.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND
+      )
+    ).toBe(true)
     expect(send().outcome).toBe('already-delivered')
   })
 

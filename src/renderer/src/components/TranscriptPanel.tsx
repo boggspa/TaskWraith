@@ -141,6 +141,8 @@ import { SubThreadDelegationCard } from './SubThreadDelegationCard'
 import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
+import { ThreadMessageTranscriptCard } from './ThreadMessageTranscriptCard'
+import { isThreadMessageTranscriptMessage } from './ThreadMessageTranscriptCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
 import {
   ContextCompactionCard,
@@ -3610,6 +3612,7 @@ export const TranscriptPanel = memo(
           {renderedRows.map(({ msg, rowKey }) => {
             const isDelegationCard = isSubThreadDelegationMessage(msg)
             const isReturnCard = isSubThreadReturnMessage(msg)
+            const isThreadMessageCard = isThreadMessageTranscriptMessage(msg)
             const isFanoutResultCard = isEnsembleFanoutResultMessage(msg)
             const isGuestReply = isGuestParticipantReplyMessage(msg)
             const isCollaboratorComment = isHumanCollaboratorComment(msg)
@@ -3716,6 +3719,8 @@ export const TranscriptPanel = memo(
               ? 'round transcript'
               : msg.role === 'user'
                 ? 'user message'
+                : isThreadMessageCard
+                  ? 'peer thread message'
                 : isFanoutResultCard
                   ? 'fan-out result'
                 : isGuestReply
@@ -4127,6 +4132,22 @@ export const TranscriptPanel = memo(
                         }
                       />
                     )}
+                  </div>
+                ) : isThreadMessageCard ? (
+                  <div
+                    key={msg.id}
+                    className="message-group thread-message-transcript-message"
+                    onContextMenu={(event) =>
+                      openMessageContextMenu(
+                        event,
+                        msg,
+                        msg.content || '',
+                        'peer thread message',
+                        { copySource: 'static' }
+                      )
+                    }
+                  >
+                    <ThreadMessageTranscriptCard message={msg} />
                   </div>
                 ) : isFanoutResultCard ? (
                   <div

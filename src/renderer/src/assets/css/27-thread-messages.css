@@ -49,6 +49,16 @@
   gap: 10px;
 }
 
+/* Transcript projection: occupy the row like a fan-out lane while keeping the
+ * card itself at the same readable maximum width as adjacent result cards. */
+.thread-message-transcript-message {
+  width: 100%;
+}
+
+.thread-message-transcript-message .thread-message-card {
+  width: min(100%, 860px);
+}
+
 /* A wake request is the one state worth pulling the eye: something may run if
  * policy allows it. Keep the peer identity in the rim while mixing in warning. */
 .thread-message-card[data-wake='true'] {

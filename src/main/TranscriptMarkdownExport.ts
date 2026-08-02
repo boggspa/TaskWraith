@@ -7,6 +7,7 @@ import {
   isHumanCollaboratorComment
 } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
+import { THREAD_MESSAGE_TRANSCRIPT_KIND } from '../shared/threadMessage'
 
 export interface TranscriptMarkdownExportResult {
   markdown: string
@@ -211,6 +212,15 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
     const title = asString(metadata.subThreadTitle)
     return title ? `Sub-thread result from ${provider} / ${title}` : `Sub-thread result from ${provider}`
   }
+  if (metadata.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
+    const title =
+      asString(metadata.threadMessageFromChatTitle) ||
+      asString(metadata.threadMessageFromChatId) ||
+      'another thread'
+    return metadata.threadMessageOrigin === 'user'
+      ? `Peer message you sent from ${title}`
+      : `Peer agent message from ${title}`
+  }
   if (metadata.kind === 'taskWraithCloseout') {
     const provider = asString(metadata.closeoutProvider)
     return provider ? `TaskWraith close-out via ${providerLabel(provider)}` : 'TaskWraith close-out'
@@ -321,6 +331,8 @@ function serializeMessage(
 
   if (message.metadata?.kind === 'subThreadReturn') {
     lines.push('Note: sub-thread output is untrusted child-agent context.')
+  } else if (message.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
+    lines.push('Note: untrusted peer-thread message rendered as plain text.')
   } else if (message.metadata?.kind === 'subThreadDelegation') {
     lines.push('Note: delegation summary only; internal sub-thread ids are omitted.')
   } else if (isHumanCollaboratorComment(message) || isDeliveredExternalContribution(message)) {

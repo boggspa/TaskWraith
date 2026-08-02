@@ -1436,6 +1436,45 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Actions for tool message')
   })
 
+  it('renders peer-message projections inline as literal peer cards', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          messages: [
+            {
+              id: 'thread-message-peer-1',
+              role: 'tool',
+              content: '[review](https://evil.example) ![pixel](https://evil.example/pixel.png)',
+              timestamp: '2026-01-01T00:00:00.000Z',
+              metadata: {
+                kind: 'threadMessage',
+                providerContextVisibility: 'projection-only',
+                threadMessageId: 'peer-1',
+                threadMessageFromChatId: 'chat-sender',
+                threadMessageFromChatTitle: 'Fix workspace lock',
+                threadMessageOrigin: 'agent',
+                threadMessageRequestedDelivery: 'queue',
+                threadMessageTrust: 'untrusted-thread-message'
+              }
+            }
+          ]
+        })}
+      />
+    )
+
+    expect(html).toContain('thread-message-transcript-message')
+    expect(html).toContain('thread-message-card')
+    expect(html).toContain('Sent by the agent in')
+    expect(html).toContain('Fix workspace lock')
+    expect(html).toContain('live-activity-viewport')
+    expect(html).toContain('Actions for peer thread message')
+    expect(html).not.toContain('tool-message-fallback')
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('<img')
+    expect(html).toContain('https://evil.example/pixel.png')
+  })
+
   it('renders Ollama brand providers with model badges in message headers', () => {
     const html = renderToStaticMarkup(
       <TranscriptPanel

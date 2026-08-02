@@ -25,6 +25,7 @@ import { isGuestParticipantReplyMessage } from '../components/GuestParticipantRe
 import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
 import { isSubThreadDelegationMessage } from '../components/SubThreadDelegationCardModel'
 import { isSubThreadReturnMessage } from '../components/SubThreadReturnCardModel'
+import { isThreadMessageTranscriptMessage } from '../components/ThreadMessageTranscriptCardModel'
 import {
   isDeliveredExternalContribution,
   isHumanCollaboratorComment
@@ -44,6 +45,7 @@ export type VirtualRowType =
   | 'participantHealth'
   | 'delegation'
   | 'return'
+  | 'threadMessage'
   | 'fanoutResult'
   | 'guestReply'
   | 'collaborator'
@@ -102,6 +104,7 @@ export const ESTIMATED_ROW_HEIGHT_PX: Record<VirtualRowType, number> = {
   participantHealth: 132,
   delegation: 104,
   return: 148,
+  threadMessage: 300,
   fanoutResult: 320,
   guestReply: 220,
   collaborator: 132
@@ -154,6 +157,7 @@ export function widthBucket(clientWidth: number, step: number = WIDTH_BUCKET_PX)
 export function classifyRowType(message: ChatMessage): VirtualRowType {
   if (isSubThreadDelegationMessage(message)) return 'delegation'
   if (isSubThreadReturnMessage(message)) return 'return'
+  if (isThreadMessageTranscriptMessage(message)) return 'threadMessage'
   if (isEnsembleFanoutResultMessage(message)) return 'fanoutResult'
   if (isGuestParticipantReplyMessage(message)) return 'guestReply'
   if (isHumanCollaboratorComment(message)) return 'collaborator'
@@ -261,6 +265,7 @@ const CONTENT_SCALED_TYPES: ReadonlySet<VirtualRowType> = new Set([
   'error',
   'tool',
   'return',
+  'threadMessage',
   'fanoutResult',
   'guestReply',
   'collaborator'
@@ -271,6 +276,9 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
  * Tighter scale ceiling for row types whose ENTIRE body renders inside a single
  * height-clamped `LiveActivityViewport`, so their off-screen (collapsed) height
  * is bounded no matter how much content accumulates.
+ *
+ * `threadMessage`: the peer card body is capped at 220px; its identity header
+ * and card chrome bring the resting row to roughly 300px.
  *
  * `fanoutResult`: `EnsembleFanoutResultCard` wraps the whole card body in one
  * viewport capped at 240px (`collapsedMaxHeight={240}`); with the header + chrome
@@ -291,7 +299,10 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
  * count and the generic scale is appropriate.
  */
 export const VIEWPORT_CLAMPED_ESTIMATE_CAP_PX = 360
-const VIEWPORT_CLAMPED_TYPES: ReadonlySet<VirtualRowType> = new Set(['fanoutResult'])
+const VIEWPORT_CLAMPED_TYPES: ReadonlySet<VirtualRowType> = new Set([
+  'threadMessage',
+  'fanoutResult'
+])
 
 /**
  * Per-activity ceiling on how many output characters feed a row's height

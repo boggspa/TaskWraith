@@ -95,6 +95,28 @@ describe('transcriptRowRenderCache', () => {
     ).toBe(false)
   })
 
+  it('invalidates when peer-message attribution metadata changes', () => {
+    const first: ChatMessage = {
+      ...message,
+      role: 'tool',
+      metadata: {
+        kind: 'threadMessage',
+        providerContextVisibility: 'projection-only',
+        threadMessageId: 'peer-1',
+        threadMessageFromChatId: 'chat-sender',
+        threadMessageFromChatTitle: 'Original peer'
+      }
+    }
+    const changed: ChatMessage = {
+      ...first,
+      metadata: { ...first.metadata, threadMessageFromChatTitle: 'Renamed peer' }
+    }
+
+    expect(transcriptMessageRenderSignature(changed)).not.toBe(
+      transcriptMessageRenderSignature(first)
+    )
+  })
+
   it('invalidates when the lifted live-viewport expansion toggles', () => {
     expect(
       transcriptRowRenderSignatureEqual(

@@ -5215,7 +5215,11 @@ const threadMessageToolExecutors = createThreadMessageToolExecutors({
   mintThreadMessageId: (fromChatId, toChatId, nonce) =>
     createThreadMessageId(fromChatId, toChatId, nonce),
   now: () => Date.now(),
-  notifyThreadMessageQueued: () => sweepThreadMessageWakes()
+  notifyThreadMessageQueued: (event) => {
+    const targetChat = AppStore.getChat(event.toChatId)
+    if (targetChat) broadcastChatUpdated(targetChat)
+    sweepThreadMessageWakes()
+  }
 })
 
 const recallToolExecutors = createRecallToolExecutors({

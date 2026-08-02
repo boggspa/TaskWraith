@@ -28,6 +28,9 @@
 
 export const THREAD_MESSAGE_SCHEMA_VERSION = 1 as const
 
+/** Synthetic transcript-row discriminator; delivery still lives in the ledger. */
+export const THREAD_MESSAGE_TRANSCRIPT_KIND = 'threadMessage' as const
+
 /** Matches MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS so both inbound paths clamp alike. */
 export const MAX_THREAD_MESSAGE_CHARS = 12_000
 
