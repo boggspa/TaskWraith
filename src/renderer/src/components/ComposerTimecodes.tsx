@@ -273,9 +273,9 @@ export function ComposerThreadTimecodeBar({
   running: boolean
   startedAt?: string | null
   cumulativeBaseMs: number
-  /** Optional centred slot between the two timecodes (the GitHub PR/CI
-   * satellite pill). Rendered even when empty so the bar's 1fr/auto/1fr
-   * grid keeps the turn/total columns stable. */
+  /** Optional centred slot between the two timecodes (PR/CI and workspace-edit
+   * satellites). Rendered even when empty so the bar's 1fr/auto/1fr grid
+   * keeps the turn/total columns stable. */
   center?: ReactNode
 }) {
   const now = useTimecodeNow(running, startedAt)
@@ -297,7 +297,7 @@ export function ComposerThreadTimecodeBar({
         <span className="composer-thread-timecode-label">Turn</span>
         <span className="composer-thread-timecode-value">{turnLabel}</span>
       </span>
-      <span className="composer-thread-timecodes-center">{center}</span>
+      <div className="composer-thread-timecodes-center">{center}</div>
       <span
         className="composer-thread-timecode composer-thread-timecode--total"
         title="Total thread wall time"

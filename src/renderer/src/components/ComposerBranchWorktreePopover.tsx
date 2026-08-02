@@ -23,7 +23,6 @@ import {
   resolveWorktreeSelectionFromSnapshot,
   type ComposerWorktreeSelection
 } from '../lib/composerWorktreeSelection'
-import { WorkspaceLockPill } from './WorkspaceLockPill'
 import './ComposerBranchWorktreePopover.css'
 
 export interface ComposerBranchWorktreePopoverProps {
@@ -430,15 +429,6 @@ export function ComposerBranchWorktreePopover({
       >
         {triggerLabel}
       </button>
-      {workspacePath && (
-        <WorkspaceLockPill
-          workspacePath={workspacePath}
-          effectiveWorkspacePath={
-            composerWorktreeSelection?.effectiveWorkspacePath || workspacePath
-          }
-          chatId={chatId}
-        />
-      )}
       {popover}
     </>
   )

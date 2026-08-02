@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useWorkspaceLocks } from '../hooks/useWorkspaceLocks'
 import {
   buildWorkLockDisplayRows,
@@ -7,6 +8,10 @@ import {
 } from '../lib/workLockProjection'
 import type { WorkLockProjectionSnapshot } from '../../../shared/workLockProjection'
 import { getProviderLabel } from '../lib/providerLabels'
+import {
+  resolveWorkspaceLockPopoverPosition,
+  type WorkspaceLockPopoverPosition
+} from '../lib/workspaceLockPopoverPosition'
 import './WorkspaceLockPill.css'
 
 export interface WorkspaceLockPillProps {
@@ -106,6 +111,65 @@ export function WorkspaceLockPillView({
     effectiveWorkspacePath,
     nowMs: referenceNowMs
   })
+  const activeCount = countActiveWorkLocks(snapshot)
+  const recoveredCount = rows.length - activeCount
+  const label =
+    activeCount > 0
+      ? `${activeCount} active edit${activeCount === 1 ? '' : 's'}`
+      : `${recoveredCount} edit${recoveredCount === 1 ? '' : 's'} recovered`
+  const attention = rows.some((row) => row.tone === 'attention')
+
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const popoverRef = useRef<HTMLDivElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState<WorkspaceLockPopoverPosition | null>(null)
+  const popoverOpen = open && rows.length > 0
+
+  useEffect(() => {
+    if (!popoverOpen) return
+
+    const updatePosition = (): void => {
+      const trigger = triggerRef.current
+      if (!trigger) return
+      setPosition(
+        resolveWorkspaceLockPopoverPosition({
+          triggerRect: trigger.getBoundingClientRect(),
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight
+        })
+      )
+    }
+
+    updatePosition()
+    window.addEventListener('scroll', updatePosition, true)
+    window.addEventListener('resize', updatePosition)
+    return () => {
+      window.removeEventListener('scroll', updatePosition, true)
+      window.removeEventListener('resize', updatePosition)
+    }
+  }, [popoverOpen])
+
+  useEffect(() => {
+    if (!popoverOpen) return
+    const closeWhenOutside = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (popoverRef.current?.contains(target) || triggerRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const closeWithEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setOpen(false)
+      triggerRef.current?.focus()
+    }
+    document.addEventListener('mousedown', closeWhenOutside, true)
+    document.addEventListener('keydown', closeWithEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeWhenOutside, true)
+      document.removeEventListener('keydown', closeWithEscape)
+    }
+  }, [popoverOpen])
+
   if (rows.length === 0) {
     return recoveryMessage ? (
       <p
@@ -117,44 +181,68 @@ export function WorkspaceLockPillView({
     ) : null
   }
 
-  const activeCount = countActiveWorkLocks(snapshot)
-  const recoveredCount = rows.length - activeCount
-  const label =
-    activeCount > 0
-      ? `${activeCount} active edit${activeCount === 1 ? '' : 's'}`
-      : `${recoveredCount} edit${recoveredCount === 1 ? '' : 's'} recovered`
-  const attention = rows.some((row) => row.tone === 'attention')
+  const togglePopover = (): void => {
+    setPosition(null)
+    setOpen((current) => !current)
+  }
 
   return (
-    <details
-      className={`workspace-lock-pill${attention ? ' has-recovery-attention' : ''}`}
-      data-active-lock-count={activeCount}
-    >
-      <summary aria-label={`${label}. Show workspace edit coordination details.`}>
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`workspace-lock-pill workspace-lock-trigger${attention ? ' has-recovery-attention' : ''}`}
+        data-active-lock-count={activeCount}
+        aria-label={`${label}. ${popoverOpen ? 'Hide' : 'Show'} workspace edit coordination details.`}
+        aria-haspopup="dialog"
+        aria-expanded={popoverOpen}
+        onClick={togglePopover}
+      >
         <span className="workspace-lock-pill-dot" aria-hidden="true" />
         <span>{label}</span>
-      </summary>
-      <div className="workspace-lock-popover" role="status" aria-live="polite">
-        <div className="workspace-lock-popover-header">
-          <strong>{activeCount > 0 ? 'Active workspace edits' : 'Workspace edit recovery'}</strong>
-          <span>
-            {activeCount} active
-            {recoveredCount > 0 ? ` · ${recoveredCount} recovered` : ''}
-          </span>
-        </div>
-        <ul>
-          {rows.map((row) => (
-            <LockRow
-              key={row.lock.lockId}
-              row={row}
-              onForceRelease={onForceRelease}
-              recoveringLockId={recoveringLockId}
-            />
-          ))}
-        </ul>
-        {recoveryMessage && <p className="workspace-lock-recovery-result">{recoveryMessage}</p>}
-      </div>
-    </details>
+      </button>
+      {popoverOpen && position && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={popoverRef}
+              className={`workspace-lock-popover workspace-lock-popover--${position.placement}`}
+              role="dialog"
+              aria-label="Workspace edit coordination details"
+              style={{
+                left: `${position.left}px`,
+                top: `${position.top}px`,
+                width: `${position.width}px`,
+                maxHeight: `${position.maxHeight}px`,
+                transform: position.placement === 'above' ? 'translateY(-100%)' : undefined
+              }}
+            >
+              <div className="workspace-lock-popover-header">
+                <strong>
+                  {activeCount > 0 ? 'Active workspace edits' : 'Workspace edit recovery'}
+                </strong>
+                <span>
+                  {activeCount} active
+                  {recoveredCount > 0 ? ` · ${recoveredCount} recovered` : ''}
+                </span>
+              </div>
+              <ul>
+                {rows.map((row) => (
+                  <LockRow
+                    key={row.lock.lockId}
+                    row={row}
+                    onForceRelease={onForceRelease}
+                    recoveringLockId={recoveringLockId}
+                  />
+                ))}
+              </ul>
+              {recoveryMessage && (
+                <p className="workspace-lock-recovery-result">{recoveryMessage}</p>
+              )}
+            </div>,
+            document.body
+          )
+        : null}
+    </>
   )
 }
 
