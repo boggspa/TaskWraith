@@ -125,6 +125,47 @@ describe('RunCoordinator', () => {
     expect(spies.sendError).not.toHaveBeenCalled()
   })
 
+  it('acknowledges adapter invocation before the provider operation settles', async () => {
+    let settleAdapter!: () => void
+    const adapterPending = new Promise<void>((resolve) => {
+      settleAdapter = resolve
+    })
+    const { deps, adapter } = makeDeps()
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockReturnValue(adapterPending)
+    const onAdapterInvoked = vi.fn()
+    let dispatchSettled = false
+
+    const dispatch = new RunCoordinator(deps)
+      .dispatch(samplePayload, makeFakeEvent(), undefined, { onAdapterInvoked })
+      .finally(() => {
+        dispatchSettled = true
+      })
+
+    await vi.waitFor(() => expect(onAdapterInvoked).toHaveBeenCalledOnce())
+    expect(onAdapterInvoked).toHaveBeenCalledWith({
+      provider: 'gemini',
+      appRunId: 'run-fixed',
+      effectiveWorkspacePath: '/tmp/ws'
+    })
+    expect(dispatchSettled).toBe(false)
+
+    settleAdapter()
+    await expect(dispatch).resolves.toMatchObject({ dispatched: true, appRunId: 'run-fixed' })
+  })
+
+  it('keeps a throwing dispatch observer observational', async () => {
+    const { deps, adapter } = makeDeps()
+
+    await expect(
+      new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent(), undefined, {
+        onAdapterInvoked: () => {
+          throw new Error('observer failed')
+        }
+      })
+    ).resolves.toMatchObject({ dispatched: true })
+    expect(adapter.run).toHaveBeenCalledOnce()
+  })
+
   it('returns the workspace resolved by main preflight on successful dispatch', async () => {
     const { deps, spies } = makeDeps()
     spies.ensureProviderRunPreflight.mockImplementation(async (_sender, payload) => {

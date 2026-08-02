@@ -1,5 +1,5 @@
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
-import type { AgentRunPayload } from './AgentRunTypes'
+import type { AgentRunPayload, RunDispatchObserver } from './AgentRunTypes'
 import type { RunCoordinator } from '../services/RunCoordinator'
 import type { WorkflowBudgetRegistry } from '../WorkflowBudgetRegistry'
 import type { FailoverRunSnapshot } from '../services/ProviderAutoFailover'
@@ -81,7 +81,8 @@ export interface RunDispatchFacadeDeps {
 export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
   return async (
     payload: AgentRunPayload,
-    event: IpcMainInvokeEvent | { sender: WebContents }
+    event: IpcMainInvokeEvent | { sender: WebContents },
+    observer?: RunDispatchObserver
   ): Promise<{ dispatched: boolean; appRunId: string }> => {
     // This MUST be the first operation at the outer dispatch boundary. Config
     // repair and PDF expansion both await; a history clear during either wait
@@ -228,11 +229,14 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         }
       }
     }
-    const dispatchResult = await deps.runCoordinator.dispatch(
-      routedPayload,
-      event,
-      dispatchReservation
-    )
+    const dispatchResult = observer
+      ? await deps.runCoordinator.dispatch(
+          routedPayload,
+          event,
+          dispatchReservation,
+          observer
+        )
+      : await deps.runCoordinator.dispatch(routedPayload, event, dispatchReservation)
     // Snapshot the dispatched request so a later quota wall can re-run it.
     // A provider-native `/compact` dispatch is excluded: failing it over
     // would send the literal slash text to a DIFFERENT provider as prose.

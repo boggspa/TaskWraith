@@ -22,6 +22,21 @@ export interface AgentRunRoute {
   appChatId?: string
 }
 
+export interface RunAdapterInvocationReceipt {
+  provider: ProviderId
+  appRunId: string
+  effectiveWorkspacePath?: string
+}
+
+/**
+ * Observes the exact point after main preflight succeeds and the provider
+ * adapter has been invoked. It is intentionally observational: callback
+ * failures must never alter provider lifecycle ownership or dispatch outcome.
+ */
+export interface RunDispatchObserver {
+  onAdapterInvoked?: (receipt: RunAdapterInvocationReceipt) => void
+}
+
 export interface RuntimeWorktreeIntent {
   requested: boolean
   /**

@@ -781,6 +781,7 @@ import {
   type TrustedSessionScope,
   type TrustedSessionSetResult
 } from './TrustedSessionGrants'
+import { reconcileTrustedSessionRuntimeProfile } from '../shared/trustedSessionRuntimeProfile'
 import { canAutoApproveTrustedSessionExternalWrite } from './TrustedSessionExternalWritePolicy'
 import { buildScheduledTaskPermissionPosture } from './services/ScheduledTaskPosture'
 import { isCanonicalWorkflowScheduledTask } from './ScheduledTaskRendererAuthority'
@@ -1004,7 +1005,7 @@ import {
   SubThreadWorkerEvent,
   UserMcpServerConfig
 } from './store/types'
-import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
+import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from './run/AgentRunTypes'
 import { ThreadWorktreeAllocator } from './run/ThreadWorktreeBinding'
 import { applyPendingProviderChangeOnFinalize, applyProviderChange } from './providerChangeQueue'
 import {
@@ -1912,6 +1913,7 @@ import {
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
 import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
 import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
+import { WorkspaceLockGatedProviderLaunch } from './WorkspaceLockGatedProviderLaunch'
 import { WorkspaceExternalMutationAuthorityIssuer } from './WorkspaceExternalMutationAuthority'
 import { WorkspaceLockProcessIdentityService } from './WorkspaceLockProcessIdentity'
 import { waitForWorkspaceLockProcessTreeExit } from './WorkspaceLockProcessTree'
@@ -2808,18 +2810,18 @@ function resolveTrustedSessionScope(
   if (rawScope?.provider && rawScope.provider !== provider) {
     return { ok: false, error: 'Trusted Session provider does not match this lane.' }
   }
-  const runtimeProfileId = participant
+  const authoritativeRuntimeProfileId = participant
     ? participant.runtimeProfileId || undefined
     : resolveRemoteSoloRuntimeProfileId({
         chat,
         provider,
         runtimeProfiles: AppStore.getRuntimeProfiles(provider)
       })
-  const requestedRuntimeProfileId =
-    typeof rawScope?.runtimeProfileId === 'string' && rawScope.runtimeProfileId.trim()
-      ? rawScope.runtimeProfileId.trim()
-      : undefined
-  if (requestedRuntimeProfileId && requestedRuntimeProfileId !== runtimeProfileId) {
+  const runtimeProfile = reconcileTrustedSessionRuntimeProfile({
+    authoritativeRuntimeProfileId,
+    requestedRuntimeProfileId: rawScope?.runtimeProfileId
+  })
+  if (!runtimeProfile.ok) {
     return { ok: false, error: 'Trusted Session runtime profile does not match this lane.' }
   }
 
@@ -2834,7 +2836,7 @@ function resolveTrustedSessionScope(
         typeof rawScope?.ensembleLaneId === 'string' && rawScope.ensembleLaneId.trim()
           ? rawScope.ensembleLaneId.trim()
           : null,
-      runtimeProfileId: runtimeProfileId ?? null
+      runtimeProfileId: runtimeProfile.runtimeProfileId
     }
   }
 }
@@ -9288,7 +9290,8 @@ function recoverPendingSubThreadMailboxes(): void {
 
 type ParentRunDispatch = (
   payload: AgentRunPayload,
-  event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents }
+  event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents },
+  observer?: RunDispatchObserver
 ) => Promise<{ dispatched: boolean; appRunId: string }>
 
 /** Attach pending child results to the next ordinary parent turn. This is the
@@ -9303,7 +9306,8 @@ type ParentRunDispatch = (
 async function dispatchParentRunWithPendingSubThreadMailbox(
   payload: AgentRunPayload,
   event: Electron.IpcMainInvokeEvent | { sender: Electron.WebContents },
-  dispatch: ParentRunDispatch
+  dispatch: ParentRunDispatch,
+  observer?: RunDispatchObserver
 ): Promise<{ dispatched: boolean; appRunId: string }> {
   const parentChatId = payload.appChatId
   const parentPrompt =
@@ -9315,14 +9319,14 @@ async function dispatchParentRunWithPendingSubThreadMailbox(
     parentPrompt.trimStart().startsWith('/') ||
     parentPrompt.includes('<subthread_mailbox_event ')
   ) {
-    return dispatch(payload, event)
+    return dispatch(payload, event, observer)
   }
   const parent = AppStore.getChat(parentChatId)
-  if (!parent || parent.chatKind === 'ensemble') return dispatch(payload, event)
+  if (!parent || parent.chatKind === 'ensemble') return dispatch(payload, event, observer)
 
   const pending = pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId))
   if (pending.length === 0 || pending.some((mailboxEvent) => mailboxEvent.deliveryRunId)) {
-    return dispatch(payload, event)
+    return dispatch(payload, event, observer)
   }
 
   const originalPostureWasValid = verifyRunPosture(
@@ -9333,7 +9337,7 @@ async function dispatchParentRunWithPendingSubThreadMailbox(
   )
   const deliveryRunId = routeWithRunId(payload.provider, payload).appRunId
   if (!deliveryRunId || subThreadMailboxDeliveriesInFlight.has(deliveryRunId)) {
-    return dispatch(payload, event)
+    return dispatch(payload, event, observer)
   }
 
   const batch = pending.slice(0, SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT)
@@ -9344,7 +9348,7 @@ async function dispatchParentRunWithPendingSubThreadMailbox(
   })
   if (claimed.events.length === 0) {
     subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
-    return dispatch(payload, event)
+    return dispatch(payload, event, observer)
   }
 
   const mailboxPrompt = buildSubThreadMailboxContinuationPrompt(claimed.events)
@@ -9362,7 +9366,7 @@ async function dispatchParentRunWithPendingSubThreadMailbox(
   }
 
   try {
-    const result = await dispatch(mailboxPayload, event)
+    const result = await dispatch(mailboxPayload, event, observer)
     if (result.dispatched) {
       AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
       if (pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId)).length > 0) {
@@ -18712,11 +18716,19 @@ async function runCliProviderProcess(
         }
       } else {
         try {
-          console.error(
+          console.warn(
             `[${provider}] workspace-lock child ${child.pid} closed without proven process-tree quiescence; retaining acquisition ${boundWorkspaceLockAdmission.transitionId}.`
           )
-        } catch {
-          // The durable acquisition remains the visible quarantine.
+          await workspaceLockProviderCoordinator.quarantineChildForRecovery(
+            workspaceLockAdmissionKey,
+            boundWorkspaceLockAdmission
+          )
+        } catch (error) {
+          poisonWorkspaceLockMutationAdmission(
+            `${providerDisplayName(provider)} child acquisition could not enter recovery quarantine: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
         }
       }
     }
@@ -21145,6 +21157,46 @@ const grokSeatSessionRegistry = new GrokSeatSessionRegistry()
 
 async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('grok', payload)
+  const workspaceLockAdmissionKey: WorkspaceLockProviderAdmissionKey = {
+    runId: route.appRunId!,
+    ...(payload.ensembleRun?.laneId ? { laneId: payload.ensembleRun.laneId } : {}),
+    ...(payload.ensembleRun?.participantId
+      ? { participantId: payload.ensembleRun.participantId }
+      : {})
+  }
+  const grokWorkspaceLockLaunch = providerRunRequiresCoarseWorkspaceLock(payload)
+    ? new WorkspaceLockGatedProviderLaunch(workspaceLockAdmissionKey, 'Grok', {
+        getAdmission: (key) => workspaceLockProviderCoordinator.get(key),
+        beginLifecycleOperation: (runId) => workspaceLockRunLifecycle.begin(runId),
+        transferToChild: (key, executionPid) =>
+          workspaceLockProviderCoordinator.transferToChild(key, executionPid),
+        releaseSetupFailure: (key, admission) =>
+          workspaceLockProviderCoordinator.releaseSetupFailure(key, admission),
+        releaseChild: (key, admission) =>
+          workspaceLockProviderCoordinator.releaseChild(key, admission),
+        quarantineChildForRecovery: (key, admission) =>
+          workspaceLockProviderCoordinator.quarantineChildForRecovery(key, admission),
+        onIntegrityFailure: poisonWorkspaceLockMutationAdmission
+      })
+    : null
+  try {
+    await runGrokAcpProviderAfterWorkspaceLockAdmission(
+      event,
+      payload,
+      route,
+      grokWorkspaceLockLaunch
+    )
+  } finally {
+    await grokWorkspaceLockLaunch?.releaseIfUnspawned()
+  }
+}
+
+async function runGrokAcpProviderAfterWorkspaceLockAdmission(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload,
+  route: AgentRunRoute,
+  grokWorkspaceLockLaunch: WorkspaceLockGatedProviderLaunch | null
+): Promise<void> {
   const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
   if (!providerTransportLaunchAuthorized('grok', payload, route)) {
     settleDeniedProviderTransportLaunch(route)
@@ -21402,7 +21454,9 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   })
 
   const grokSpawnAcpProcess = (): AcpChildProcess => {
-    const child = spawn(binaryPath, grokAcpArgs, {
+    const processSpec = {
+      command: binaryPath,
+      args: grokAcpArgs,
       cwd: payload.workspace!,
       shell: false,
       detached: process.platform !== 'win32',
@@ -21420,7 +21474,15 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         },
         binaryPath
       )
-    })
+    }
+    const child = grokWorkspaceLockLaunch
+      ? grokWorkspaceLockLaunch.spawn(processSpec)
+      : spawn(processSpec.command, processSpec.args, {
+          cwd: processSpec.cwd,
+          shell: processSpec.shell,
+          detached: processSpec.detached,
+          env: processSpec.env
+        })
     // NOTE: do NOT end stdin — ACP keeps the stdio channel open for requests.
     return child as unknown as AcpChildProcess
   }
@@ -21702,6 +21764,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     }
     finishGrokAcpTurn(null, false, 'failed')
     settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')
+    await grokWorkspaceLockLaunch?.awaitChildSettlement()
     await grokTransportOperation
     return
   }
@@ -21710,6 +21773,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // the real child close. History deletion may begin before the transport
   // operation is published above; its adapter join must cover that setup race.
   await grokAcpHandle.closed
+  await grokWorkspaceLockLaunch?.awaitChildSettlement()
   await grokTransportOperation
 }
 
@@ -51084,7 +51148,7 @@ if (isGeminiMcpBridgeProcess) {
       wasDurableScheduledRunIdObserved
     }
     const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
-    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event) => {
+    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event, observer) => {
       if (historyClearBlocksRunPayload(payload)) {
         return Promise.reject(
           new Error('TaskWraith is clearing all history; new runs are temporarily blocked.')
@@ -51109,11 +51173,12 @@ if (isGeminiMcpBridgeProcess) {
       return dispatchParentRunWithPendingSubThreadMailbox(
         payload,
         event,
-        baseDispatchRunWithProviderPause
+        baseDispatchRunWithProviderPause,
+        observer
       )
     }
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
-    const dispatchMainOwnedScheduledOccurrence: ParentRunDispatch = (payload, event) => {
+    const dispatchMainOwnedScheduledOccurrence: ParentRunDispatch = (payload, event, observer) => {
       if (historyClearBlocksRunPayload(payload)) {
         return Promise.reject(
           new Error('TaskWraith is clearing all history; scheduled runs are temporarily blocked.')
@@ -51121,7 +51186,8 @@ if (isGeminiMcpBridgeProcess) {
       }
       return baseDispatchRunWithProviderPause(
         authorizeMainOwnedScheduledOccurrenceDispatch(payload),
-        event
+        event,
+        observer
       )
     }
     dispatchMainOwnedScheduledOccurrenceRef = dispatchMainOwnedScheduledOccurrence
@@ -51184,7 +51250,7 @@ if (isGeminiMcpBridgeProcess) {
           appRunId,
           attachments
         ),
-      dispatch: async (payload, event) => {
+      dispatch: async (payload, event, observer) => {
         // Mid-run steering delivery bookkeeping: a participant dispatched
         // after an interjection arrived carries it inside its hop prompt's
         // delta transcript. Snapshot the exact entries that existed when the
@@ -51219,7 +51285,7 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             throw new Error('Scheduled ensemble ownership ended before participant dispatch.')
           }
-          dispatchResult = await dispatchRunWithProviderPause(payload, event)
+          dispatchResult = await dispatchRunWithProviderPause(payload, event, observer)
         } else {
           const childRunId = requireNonEmptyString(
             payload.appRunId,
@@ -51236,7 +51302,7 @@ if (isGeminiMcpBridgeProcess) {
             scheduledRoundId,
             payload.provider
           )
-          dispatchResult = await dispatchMainOwnedScheduledOccurrence(payload, event)
+          dispatchResult = await dispatchMainOwnedScheduledOccurrence(payload, event, observer)
         }
         if (
           dispatchResult.dispatched &&

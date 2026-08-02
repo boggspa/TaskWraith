@@ -244,7 +244,7 @@ function makeDiscordSnapshot(content = 'CI failed on linux.'): DiscordContextSna
 function makeHarness(
   options: {
     initialChat?: ChatRecord
-    dispatch?: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+    dispatch?: EnsembleOrchestratorDeps['dispatch']
     beforeSaveChat?: (chat: ChatRecord) => void
     allocateFanoutLaneWorktree?: EnsembleOrchestratorDeps['allocateFanoutLaneWorktree']
     settleFanoutLaneWorktree?: EnsembleOrchestratorDeps['settleFanoutLaneWorktree']
@@ -328,10 +328,14 @@ function makeHarness(
     : makeChat()
   let counter = 0
   const dispatched: AgentRunPayload[] = []
-  const dispatch = vi.fn(async (payload: AgentRunPayload) => {
+  const dispatch = vi.fn(async (
+    payload: AgentRunPayload,
+    event: Parameters<EnsembleOrchestratorDeps['dispatch']>[1],
+    observer?: Parameters<EnsembleOrchestratorDeps['dispatch']>[2]
+  ) => {
     dispatched.push(payload)
     return options.dispatch
-      ? options.dispatch(payload)
+      ? options.dispatch(payload, event, observer)
       : { dispatched: true, appRunId: payload.appRunId || '' }
   })
   const cancelRun = vi.fn(options.cancelRun ?? (async () => true))
@@ -15714,6 +15718,75 @@ Next action:
         )
       ).toBe(true)
     )
+  })
+
+  it('returns from fan-out when the adapter is invoked even if dispatch settles at child close', async () => {
+    const laneDispatch = deferred<{ dispatched: boolean; appRunId: string }>()
+    let laneDispatchSettled = false
+    void laneDispatch.promise.finally(() => {
+      laneDispatchSettled = true
+    })
+    const harness = makeHarness({
+      dispatch: async (payload, _event, observer) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        observer?.onAdapterInvoked?.({
+          provider: payload.provider,
+          appRunId: payload.appRunId || '',
+          ...(payload.workspace ? { effectiveWorkspacePath: payload.workspace } : {})
+        })
+        return laneDispatch.promise
+      }
+    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Worker starts, peer fans out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Inspect the workspace and emit a brief.'
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'dispatched',
+      participantIds: ['claude']
+    })
+    expect(laneDispatchSettled).toBe(false)
+
+    const lanePayload = harness.dispatched[1]
+    harness.orchestrator.handleProviderOutput(
+      lanePayload.provider,
+      { appRunId: lanePayload.appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    laneDispatch.resolve({ dispatched: true, appRunId: lanePayload.appRunId || '' })
+    await vi.waitFor(() => expect(laneDispatchSettled).toBe(true))
   })
 
   it('dispatches explicit ensemble_fanout targets up to the participant cap', async () => {

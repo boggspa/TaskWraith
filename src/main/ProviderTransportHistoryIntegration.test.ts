@@ -370,6 +370,8 @@ describe('one-shot provider transport history join', () => {
     expect(terminalExit).toBeLessThan(terminalFinish)
     expect(launcher).toContain('effectiveExitCode !== 0 || state.terminalResultFailed === true')
     expect(launcher).toContain("state.terminalResultStatus ?? 'completed'")
+    expect(launcher).toContain('workspaceLockProviderCoordinator.releaseChild(')
+    expect(launcher).toContain('workspaceLockProviderCoordinator.quarantineChildForRecovery(')
 
     const claudeProvider = between('async function runClaudeProvider(', '// Managed Grok runs')
     expect(claudeProvider).toContain(
@@ -493,6 +495,10 @@ describe('one-shot provider transport history join', () => {
     expect(provider).toContain(
       "settleProviderRunWithoutTransport(runManager, route.appRunId!, 'failed')"
     )
+    expect(provider).toContain('new WorkspaceLockGatedProviderLaunch(')
+    expect(provider).toContain('grokWorkspaceLockLaunch.spawn(processSpec)')
+    expect(provider).toContain('await grokWorkspaceLockLaunch?.awaitChildSettlement()')
+    expect(provider).toContain('await grokWorkspaceLockLaunch?.releaseIfUnspawned()')
   })
 
   it('pre-registers Kimi close authority and waits through async cleanup projection', () => {

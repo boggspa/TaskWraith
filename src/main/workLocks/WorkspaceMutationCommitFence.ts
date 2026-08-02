@@ -2,12 +2,35 @@ import { randomUUID } from 'node:crypto'
 import * as nodeFs from 'node:fs'
 import { join, resolve } from 'node:path'
 
+import { isWorkspaceLockOpaqueId, isWorkspaceLockOwnerDisplayText } from './WorkspaceLockTypes'
+
 export const WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY = 'workspace-mutation-commit-fence'
 export const WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME = 'fence.json'
 export const WORKSPACE_MUTATION_COMMIT_RECLAIM_GUARD_FILENAME = 'reclaim-guard.json'
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
+const FENCE_RECORD_KEYS = [
+  'acquiredAt',
+  'fenceId',
+  'lockOwnerId',
+  'pid',
+  'processBirthIdentity',
+  'runId'
+] as const
+const LEGACY_FENCE_PRESENTATION_KEYS = [
+  'chatId',
+  'chatTitle',
+  'displayName',
+  'laneId',
+  'lifecycle',
+  'participantId',
+  'provider'
+] as const
+const LEGACY_FENCE_RECORD_KEYS = new Set<string>([
+  ...FENCE_RECORD_KEYS,
+  ...LEGACY_FENCE_PRESENTATION_KEYS
+])
 
 export interface WorkspaceMutationCommitFenceIdentity {
   readonly lockOwnerId: string
@@ -198,7 +221,10 @@ export class WorkspaceMutationCommitFence {
     validateIdentity(owner)
     await this.assertProspectiveOwnerIsLive(owner)
     const contender = freezeFence({
-      ...owner,
+      lockOwnerId: owner.lockOwnerId,
+      runId: owner.runId,
+      pid: owner.pid,
+      processBirthIdentity: owner.processBirthIdentity,
       fenceId: this.issueId('fence'),
       acquiredAt: this.issueTimestamp()
     })
@@ -642,16 +668,7 @@ export class WorkspaceMutationCommitFence {
 
 function parseFence(raw: string, path: string): WorkspaceMutationCommitFenceOwner {
   const value = parseJsonRecord(raw, path, 'fence')
-  assertExactKeys(value, [
-    'acquiredAt',
-    'fenceId',
-    'lockOwnerId',
-    'pid',
-    'processBirthIdentity',
-    'runId'
-  ])
-  validateFence(value as unknown as WorkspaceMutationCommitFenceOwner)
-  return freezeFence(value as unknown as WorkspaceMutationCommitFenceOwner)
+  return canonicalizeFenceRecord(value, path)
 }
 
 function parseReclaimGuard(raw: string, path: string): WorkspaceMutationCommitReclaimGuard {
@@ -666,21 +683,61 @@ function parseReclaimGuard(raw: string, path: string): WorkspaceMutationCommitRe
   ) {
     throw new Error(`Workspace mutation reclaim guard is corrupt: ${path}`)
   }
-  const contender = value.contender as Record<string, unknown>
-  assertExactKeys(contender, [
-    'acquiredAt',
-    'fenceId',
-    'lockOwnerId',
-    'pid',
-    'processBirthIdentity',
-    'runId'
-  ])
-  validateFence(contender as unknown as WorkspaceMutationCommitFenceOwner)
+  const contender = canonicalizeFenceRecord(value.contender as Record<string, unknown>, path)
   return Object.freeze({
     guardId: value.guardId,
     expectedFenceId: value.expectedFenceId,
-    contender: freezeFence(contender as unknown as WorkspaceMutationCommitFenceOwner)
+    contender
   })
+}
+
+function canonicalizeFenceRecord(
+  value: Record<string, unknown>,
+  path: string
+): WorkspaceMutationCommitFenceOwner {
+  const keys = Object.keys(value).sort()
+  const canonical = keysMatch(keys, FENCE_RECORD_KEYS)
+  if (!canonical) {
+    const hasEveryAuthorityField = FENCE_RECORD_KEYS.every((key) => hasOwn(value, key))
+    const hasLegacyPresentation = LEGACY_FENCE_PRESENTATION_KEYS.some((key) => hasOwn(value, key))
+    const hasOnlyKnownFields = keys.every((key) => LEGACY_FENCE_RECORD_KEYS.has(key))
+    if (!hasEveryAuthorityField || !hasLegacyPresentation || !hasOnlyKnownFields) {
+      throw new Error('Workspace mutation authority record has an unexpected schema.')
+    }
+    validateLegacyFencePresentation(value, path)
+  }
+
+  const owner = {
+    lockOwnerId: value.lockOwnerId,
+    runId: value.runId,
+    pid: value.pid,
+    processBirthIdentity: value.processBirthIdentity,
+    fenceId: value.fenceId,
+    acquiredAt: value.acquiredAt
+  } as unknown as WorkspaceMutationCommitFenceOwner
+  validateFence(owner)
+  return freezeFence(owner)
+}
+
+function validateLegacyFencePresentation(value: Record<string, unknown>, path: string): void {
+  if (
+    hasOwn(value, 'lifecycle') &&
+    value.lifecycle !== 'run' &&
+    value.lifecycle !== 'launching-child' &&
+    value.lifecycle !== 'child'
+  ) {
+    throw new Error(`Workspace mutation legacy fence metadata is corrupt: ${path}`)
+  }
+  for (const key of ['chatId', 'laneId', 'participantId', 'provider'] as const) {
+    if (hasOwn(value, key) && !isWorkspaceLockOpaqueId(value[key])) {
+      throw new Error(`Workspace mutation legacy fence metadata is corrupt: ${path}`)
+    }
+  }
+  for (const key of ['chatTitle', 'displayName'] as const) {
+    if (hasOwn(value, key) && !isWorkspaceLockOwnerDisplayText(value[key])) {
+      throw new Error(`Workspace mutation legacy fence metadata is corrupt: ${path}`)
+    }
+  }
 }
 
 function parseJsonRecord(raw: string, path: string, label: string): Record<string, unknown> {
@@ -758,9 +815,17 @@ function sameGuard(
 
 function assertExactKeys(value: Record<string, unknown>, expected: readonly string[]): void {
   const keys = Object.keys(value).sort()
-  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) {
+  if (!keysMatch(keys, expected)) {
     throw new Error('Workspace mutation authority record has an unexpected schema.')
   }
+}
+
+function keysMatch(actual: readonly string[], expected: readonly string[]): boolean {
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index])
+}
+
+function hasOwn(value: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
 }
 
 function isOpaqueString(value: unknown, _label: string): value is string {

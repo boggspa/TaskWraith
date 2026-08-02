@@ -1,7 +1,11 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import { statsAreEstimated } from '../../shared/tokenEstimate'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../../shared/ensembleLimits'
-import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import type {
+  AgentRunPayload,
+  AgentRunRoute,
+  RunDispatchObserver
+} from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   unattendedElevationPresetId,
@@ -448,7 +452,8 @@ export interface EnsembleOrchestratorDeps {
    *  failure. Without it a skipped seat can only say "dispatch failed". */
   dispatch: (
     payload: AgentRunPayload,
-    event: EnsembleDispatchEvent
+    event: EnsembleDispatchEvent,
+    observer?: RunDispatchObserver
   ) => Promise<{ dispatched: boolean; appRunId: string; failureMessage?: string }>
   /**
    * Fan-out worktree isolation (fanoutIsolation === 'worktree'). Allocates
@@ -10236,7 +10241,7 @@ export class EnsembleOrchestrator {
         .map((acceptedRun) => acceptedRun.laneId)
         .filter((laneId): laneId is string => Boolean(laneId))
       if (acceptedTargets.length === 0) {
-        const message = `${label} was not dispatched: no target provider accepted a lane. The target remains eligible for serial rotation.`
+        const message = `${label} was not dispatched: no target passed preflight and reached provider-adapter invocation. The target remains eligible for serial rotation.`
         if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
         return {
           ok: false,
@@ -10269,7 +10274,7 @@ export class EnsembleOrchestrator {
         status: 'dispatched',
         laneIds,
         participantIds: acceptedTargets.map((participant) => participant.id),
-        message: `${label} dispatched: ${laneIds.length} lane(s) started.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+        message: `${label} dispatched: ${laneIds.length} lane(s) entered provider setup.${rejectedCount > 0 ? ` ${rejectedCount} target(s) were rejected before adapter invocation and remain eligible for serial rotation.` : ''} Results and any asynchronous setup failures will appear in the transcript; this tool returns after adapter invocation so the caller does not time out while lanes are working.`
       }
     } catch (error) {
       const message =
@@ -15301,77 +15306,118 @@ export class EnsembleOrchestrator {
             }
           }
 
-          let dispatched: Awaited<ReturnType<EnsembleOrchestratorDeps['dispatch']>>
           run.transportDispatchState = 'pending'
-          try {
-            dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
-            run.transportDispatchState = dispatched.dispatched ? 'accepted' : 'rejected'
-          } catch (error) {
-            run.transportDispatchState = 'unknown'
-            if (dispatchWasCancelled()) {
-              // Dispatch may have crossed into the provider adapter before it
-              // rejected. Repeat cancellation against the now-known run id.
+          await new Promise<void>((resolveDispatchStart) => {
+            let dispatchStartSettled = false
+            let adapterInvoked = false
+            const settleDispatchStart = (): void => {
+              if (dispatchStartSettled) return
+              dispatchStartSettled = true
+              resolveDispatchStart()
+            }
+            const acceptAdapterInvocation = (): void => {
+              if (adapterInvoked) return
+              adapterInvoked = true
+              try {
+                run.transportDispatchState = 'accepted'
+                if (!dispatchWasCancelled()) {
+                  acceptedLaneRuns.push(run)
+                  options.acceptedRuns?.push(run)
+                  this.startCursorCompletionWatchdog(run)
+                  // The lane becomes a candidate once main has passed every
+                  // preflight and invoked its provider adapter. Provider setup and
+                  // terminal outcome remain asynchronous transcript evidence.
+                  run.promptShellStamp = promptShellStamp
+                  run.promptDynamicStateVersion = dynamicStateSnapshot.version
+                  run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+                }
+              } finally {
+                settleDispatchStart()
+              }
+            }
+            const handleDispatchRejection = async (error: unknown): Promise<void> => {
+              run.transportDispatchState = 'unknown'
+              if (dispatchWasCancelled()) {
+                // Dispatch may have crossed into the provider adapter before it
+                // rejected. Repeat cancellation against the now-known run id.
+                await this.requestExactRunCancellation(run).catch(() => false)
+                if (this.runsByRunId.get(run.runId) === run) {
+                  this.finalizeRun(
+                    run,
+                    'cancelled',
+                    runtime.cancelled
+                      ? 'Round cancelled during fan-out dispatch.'
+                      : 'Owning participant was skipped during fan-out dispatch.'
+                  )
+                }
+                return
+              }
+              // A thrown dispatch can occur after adapter entry. Exact cancellation
+              // is safe even when preflight rejected before any transport existed.
               await this.requestExactRunCancellation(run).catch(() => false)
               if (this.runsByRunId.get(run.runId) === run) {
-                this.finalizeRun(
-                  run,
-                  'cancelled',
-                  runtime.cancelled
-                    ? 'Round cancelled during fan-out dispatch.'
-                    : 'Owning participant was skipped during fan-out dispatch.'
-                )
+                const reason = classifyDispatchError(error)
+                const note = formatDispatchFailureNote(participant, reason)
+                this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+                this.finalizeRun(run, 'failed', note)
               }
+            }
+            const handleDispatchResult = async (
+              dispatched: Awaited<ReturnType<EnsembleOrchestratorDeps['dispatch']>>
+            ): Promise<void> => {
+              if (dispatched.dispatched) {
+                acceptAdapterInvocation()
+              } else if (!adapterInvoked) {
+                run.transportDispatchState = 'rejected'
+              }
+              if (dispatchWasCancelled()) {
+                if (dispatched.dispatched || adapterInvoked) {
+                  // A Stop/Skip may have called cancel before the dispatch facade
+                  // registered the provider run. Repeat against the accepted id.
+                  await this.requestExactRunCancellation(run).catch(() => false)
+                }
+                if (this.runsByRunId.get(run.runId) === run) {
+                  this.finalizeRun(
+                    run,
+                    'cancelled',
+                    runtime.cancelled
+                      ? 'Round cancelled during fan-out dispatch.'
+                      : 'Owning participant was skipped during fan-out dispatch.'
+                  )
+                }
+                return
+              }
+
+              if (!dispatched.dispatched) {
+                if (this.runsByRunId.get(run.runId) === run) {
+                  const note = dispatched.failureMessage
+                    ? formatDispatchFailureNote(
+                        participant,
+                        classifyDispatchError(new Error(dispatched.failureMessage))
+                      )
+                    : formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
+                  this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+                  this.finalizeRun(run, 'failed', note)
+                }
+                return
+              }
+            }
+
+            let dispatchOperation: ReturnType<EnsembleOrchestratorDeps['dispatch']>
+            try {
+              dispatchOperation = this.deps.dispatch(
+                payload,
+                { sender: runtime.sender },
+                { onAdapterInvoked: acceptAdapterInvocation }
+              )
+            } catch (error) {
+              void handleDispatchRejection(error).finally(settleDispatchStart)
               return
             }
-            // A thrown dispatch can occur after adapter entry. Exact cancellation
-            // is safe even when preflight rejected before any transport existed.
-            await this.requestExactRunCancellation(run).catch(() => false)
-            if (this.runsByRunId.get(run.runId) === run) {
-              const reason = classifyDispatchError(error)
-              const note = formatDispatchFailureNote(participant, reason)
-              this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-              this.finalizeRun(run, 'failed', note)
-            }
-            return
-          }
-
-          if (dispatchWasCancelled()) {
-            if (dispatched.dispatched) {
-              // A Stop/Skip may have called cancel before the dispatch facade
-              // registered the provider run. The accepted receipt closes that
-              // gap: cancel again before treating the lane as accepted.
-              await this.requestExactRunCancellation(run).catch(() => false)
-            }
-            if (this.runsByRunId.get(run.runId) === run) {
-              this.finalizeRun(
-                run,
-                'cancelled',
-                runtime.cancelled
-                  ? 'Round cancelled during fan-out dispatch.'
-                  : 'Owning participant was skipped during fan-out dispatch.'
-              )
-            }
-            return
-          }
-
-          if (!dispatched.dispatched) {
-            if (this.runsByRunId.get(run.runId) === run) {
-              const note = formatDispatchFailureNote(participant, { kind: 'unknown', message: '' })
-              this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
-              this.finalizeRun(run, 'failed', note)
-            }
-            return
-          }
-
-          acceptedLaneRuns.push(run)
-          options.acceptedRuns?.push(run)
-          this.startCursorCompletionWatchdog(run)
-          // Candidate only after the adapter confirms it accepted the
-          // prompt. flushRun persists it only after an eligible terminal
-          // response, matching the serial dispatch contract.
-          run.promptShellStamp = promptShellStamp
-          run.promptDynamicStateVersion = dynamicStateSnapshot.version
-          run.ensemblePromptUsageTelemetry = promptUsageTelemetry
+            void dispatchOperation
+              .then(handleDispatchResult, handleDispatchRejection)
+              .finally(settleDispatchStart)
+          })
         })()
       )
       return completion

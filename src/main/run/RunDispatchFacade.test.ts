@@ -163,6 +163,20 @@ beforeEach(() => {
 })
 
 describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)', () => {
+  it('forwards the adapter-invocation observer through the facade reservation', async () => {
+    const deps = makeDeps([])
+    const observer = { onAdapterInvoked: vi.fn() }
+
+    await createRunDispatchFacade(deps)(payload(), senderEvent, observer)
+
+    expect(deps.runCoordinator.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ appRunId: 'run-1' }),
+      senderEvent,
+      expect.objectContaining({ id: 'dispatch-reservation' }),
+      observer
+    )
+  })
+
   it('runs the ordinary reroute and failover-snapshot sequence in order', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

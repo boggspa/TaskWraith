@@ -393,6 +393,113 @@ describe('WorkspaceMutationCommitFence', () => {
     expect(seed.readFence()).toEqual(staleFence)
   })
 
+  it('persists only the authority fields from a presentation-rich runtime owner', async () => {
+    const root = temporaryRoot()
+    const owner = {
+      ...identity('canonical-owner', 1171),
+      lifecycle: 'child' as const,
+      laneId: 'ensemble-participant-1',
+      chatId: 'chat-1',
+      provider: 'codex',
+      participantId: 'ensemble-participant-1',
+      displayName: 'SolBoss',
+      chatTitle: '# bounded work program'
+    }
+    const store = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: () => live(owner.processBirthIdentity),
+      nextId: idSource('canonical'),
+      nowIso: () => '2026-07-29T16:09:00.000Z'
+    })
+
+    const acquired = await store.acquire(owner)
+    expect(acquired).toEqual({
+      lockOwnerId: owner.lockOwnerId,
+      runId: owner.runId,
+      pid: owner.pid,
+      processBirthIdentity: owner.processBirthIdentity,
+      fenceId: 'canonical-fence-1',
+      acquiredAt: '2026-07-29T16:09:00.000Z'
+    })
+    const path = join(
+      root,
+      WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY,
+      WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME
+    )
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(acquired)
+    expect(store.release(acquired)).toBe(true)
+  })
+
+  it('reclaims the exact presentation-rich fence schema emitted by older builds', async () => {
+    const root = temporaryRoot()
+    const staleOwner = identity('legacy-owner', 1181)
+    const contender = identity('legacy-replacement', 1182)
+    const observations = new Map<number, WorkspaceMutationCommitFenceProcessObservation>([
+      [staleOwner.pid, live(staleOwner.processBirthIdentity)],
+      [contender.pid, live(contender.processBirthIdentity)]
+    ])
+    const seed = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: (pid) => observations.get(pid) || { state: 'dead' },
+      nextId: idSource('legacy-seed'),
+      nowIso: () => '2026-07-29T16:09:30.000Z'
+    })
+    const staleFence = await seed.acquire(staleOwner)
+    observations.set(staleOwner.pid, { state: 'dead' })
+    const path = join(
+      root,
+      WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY,
+      WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME
+    )
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        ...staleFence,
+        chatId: 'chat-legacy',
+        chatTitle: '# legacy title',
+        displayName: 'Legacy Boss',
+        laneId: 'lane-legacy',
+        lifecycle: 'child',
+        participantId: 'participant-legacy',
+        provider: 'codex'
+      })}\n`
+    )
+    expect(seed.readFence()).toEqual(staleFence)
+
+    const recovering = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: (pid) => observations.get(pid) || { state: 'dead' },
+      nextId: idSource('legacy-replacement'),
+      nowIso: () => '2026-07-29T16:09:31.000Z'
+    })
+    const replacement = await recovering.acquire(contender)
+    expect(replacement).toMatchObject(contender)
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual(replacement)
+    expect(recovering.release(replacement)).toBe(true)
+  })
+
+  it('keeps rejecting unknown or malformed fields in legacy fence envelopes', async () => {
+    const root = temporaryRoot()
+    const owner = identity('strict-legacy', 1191)
+    const store = new WorkspaceMutationCommitFence({
+      userDataRoot: root,
+      observeProcess: () => live(owner.processBirthIdentity),
+      nextId: idSource('strict-legacy')
+    })
+    const acquired = await store.acquire(owner)
+    const path = join(
+      root,
+      WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY,
+      WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME
+    )
+
+    writeFileSync(path, `${JSON.stringify({ ...acquired, attackerField: 'ignored?' })}\n`)
+    expect(() => store.readFence()).toThrow(/unexpected schema/i)
+
+    writeFileSync(path, `${JSON.stringify({ ...acquired, chatTitle: null })}\n`)
+    expect(() => store.readFence()).toThrow(/legacy fence metadata is corrupt/i)
+  })
+
   it('creates private fsynced artefacts and rejects a substituted symlink', async () => {
     const root = temporaryRoot()
     const owner = identity('private', 1201)

@@ -1,5 +1,6 @@
 import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AGENTIC_SERVICE_LABELS } from '../../../shared/agenticServiceLabels'
+import { trustedSessionRuntimeProfileForRequest } from '../../../shared/trustedSessionRuntimeProfile'
 import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
@@ -1285,8 +1286,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         provider: targetParticipant?.provider || currentProvider,
         workspacePath: currentWorkspacePath || currentChat.workspacePath || null,
         ensembleParticipantId: targetParticipant?.id || null,
-        runtimeProfileId:
-          targetParticipant?.runtimeProfileId || selectedRuntimeProfileId || null
+        runtimeProfileId: trustedSessionRuntimeProfileForRequest({
+          targetIsParticipant: Boolean(targetParticipant),
+          participantRuntimeProfileId: targetParticipant?.runtimeProfileId,
+          selectedRuntimeProfileId
+        })
       },
       true
     )
@@ -4593,10 +4597,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   workspacePath:
                                     currentWorkspacePath || currentChat.workspacePath || null,
                                   ensembleParticipantId: ensembleBinding?.id || null,
-                                  runtimeProfileId:
-                                    ensembleBinding?.runtimeProfileId ||
-                                    selectedRuntimeProfileId ||
-                                    null
+                                  runtimeProfileId: trustedSessionRuntimeProfileForRequest({
+                                    targetIsParticipant: Boolean(ensembleBinding),
+                                    participantRuntimeProfileId: ensembleBinding?.runtimeProfileId,
+                                    selectedRuntimeProfileId
+                                  })
                                 },
                                 false
                               )

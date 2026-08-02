@@ -1,6 +1,6 @@
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
-import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import type { AgentRunPayload, AgentRunRoute, RunDispatchObserver } from '../run/AgentRunTypes'
 
 /**
  * RunCoordinator — Phase B1 extraction.
@@ -184,7 +184,8 @@ export class RunCoordinator {
   async dispatch(
     payload: AgentRunPayload,
     event: RunDispatchEvent,
-    outerDispatchReservation?: object
+    outerDispatchReservation?: object,
+    observer?: RunDispatchObserver
   ): Promise<DispatchResult> {
     const ownsDispatchReservation = outerDispatchReservation === undefined
     const dispatchReservation = outerDispatchReservation ?? this.deps.reserveDispatch?.(payload)
@@ -283,11 +284,21 @@ export class RunCoordinator {
           throw error
         }
         if (lifecycleCancelled()) return declinedResult()
-        if (this.deps.runAdapter) {
-          await this.deps.runAdapter(adapter, event, normalizedPayload)
-        } else {
-          await adapter.run({ event, payload: normalizedPayload })
+        const adapterOperation = this.deps.runAdapter
+          ? this.deps.runAdapter(adapter, event, normalizedPayload)
+          : adapter.run({ event, payload: normalizedPayload })
+        try {
+          observer?.onAdapterInvoked?.({
+            provider: normalizedPayload.provider,
+            appRunId: normalizedPayload.appRunId ?? '',
+            ...(normalizedPayload.workspace
+              ? { effectiveWorkspacePath: normalizedPayload.workspace }
+              : {})
+          })
+        } catch {
+          // Observers acknowledge dispatch; they never own or alter it.
         }
+        await adapterOperation
         return {
           dispatched: true,
           appRunId: normalizedPayload.appRunId ?? '',
