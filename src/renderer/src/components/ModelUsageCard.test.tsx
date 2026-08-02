@@ -141,6 +141,9 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>$0.92<')
     expect(html).toContain('$0.92 of $10.00')
     expect(html).toContain('width:9.20%')
+    expect(html).toContain('data-provider-logo="deepseek"')
+    expect(html).toContain('provider-logo-deepseek.png')
+    expect(html).not.toContain('provider-glyph-deepseek')
   })
 
   it('shows a connected AntiGravity quota probe failure as unavailable without inventing a meter', () => {

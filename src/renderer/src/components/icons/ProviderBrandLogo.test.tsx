@@ -11,15 +11,18 @@ import {
 const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity', 'mistral'] as const
 const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama', 'pi'] as const
 const KNOWN_PROVIDERS = [...STATIC_PROVIDERS, ...THEMED_PROVIDERS] as const
+const SUPPLEMENTAL_UPSTREAM_BRANDS = ['deepseek', 'cerebras'] as const
+const KNOWN_BRAND_IDS = [...KNOWN_PROVIDERS, ...SUPPLEMENTAL_UPSTREAM_BRANDS] as const
 
 describe('ProviderBrandLogo', () => {
-  it('renders official raster artwork for all ten tracked providers', () => {
-    for (const provider of KNOWN_PROVIDERS) {
+  it('renders official artwork for all tracked providers and integrated upstream brands', () => {
+    for (const provider of KNOWN_BRAND_IDS) {
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
       // The source map stays Partial so Ensemble and future providers can use
-      // ProviderGlyph. Every current provider with sourced artwork belongs in
-      // this list, so a missing entry here is a real regression.
+      // ProviderGlyph. The two supplemental upstream marks do not extend
+      // ProviderId, but they do belong in this list so model usage never
+      // silently falls back to the neutral terminal glyph.
       const bundled = PROVIDER_BRAND_LOGO_SOURCES[provider]
       expect(bundled, `${provider} is listed as known but has no bundled logo`).toBeDefined()
 
@@ -32,7 +35,7 @@ describe('ProviderBrandLogo', () => {
   })
 
   it('uses one static image for marks that do not need a theme variant', () => {
-    for (const provider of STATIC_PROVIDERS) {
+    for (const provider of [...STATIC_PROVIDERS, 'deepseek'] as const) {
       const source = resolveProviderBrandLogoSource(provider)
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
@@ -47,7 +50,7 @@ describe('ProviderBrandLogo', () => {
   })
 
   it('renders paired light- and dark-surface artwork for theme-sensitive marks', () => {
-    for (const provider of THEMED_PROVIDERS) {
+    for (const provider of [...THEMED_PROVIDERS, 'cerebras'] as const) {
       const source = PROVIDER_BRAND_LOGO_SOURCES[provider]
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
@@ -126,7 +129,18 @@ describe('ProviderBrandLogo', () => {
         'provider-logo-pi-on-dark.png',
         'provider-logo-pi-on-dark.png'
       ],
-      ['provider-logo-mistral.png', 'provider-logo-mistral.png', 'provider-logo-mistral.png']
+      ['provider-logo-mistral.png', 'provider-logo-mistral.png', 'provider-logo-mistral.png'],
+      ['provider-logo-deepseek.png', 'provider-logo-deepseek.png', 'provider-logo-deepseek.png'],
+      [
+        'provider-logo-cerebras-on-light.png',
+        'provider-logo-cerebras-on-light.png',
+        'provider-logo-cerebras-on-light.png'
+      ],
+      [
+        'provider-logo-cerebras-on-dark.png',
+        'provider-logo-cerebras-on-dark.png',
+        'provider-logo-cerebras-on-dark.png'
+      ]
     ] as const
 
     for (const [designName, desktopName, iosName] of copies) {

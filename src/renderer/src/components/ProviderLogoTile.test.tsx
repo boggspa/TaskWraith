@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { ProviderLogoTile } from './ProviderLogoTile'
 
 describe('ProviderLogoTile', () => {
-  it('renders official PNG marks for all ten tracked providers', () => {
+  it('renders official artwork for tracked providers and integrated upstream brands', () => {
     for (const provider of [
       'gemini',
       'codex',
@@ -14,7 +14,9 @@ describe('ProviderLogoTile', () => {
       'ollama',
       'antigravity',
       'pi',
-      'mistral'
+      'mistral',
+      'deepseek',
+      'cerebras'
     ] as const) {
       const html = renderToStaticMarkup(<ProviderLogoTile provider={provider} />)
       expect(html).toContain(`provider-logo-tile provider-${provider}`)

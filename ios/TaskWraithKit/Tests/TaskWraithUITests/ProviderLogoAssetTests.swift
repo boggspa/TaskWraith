@@ -75,8 +75,8 @@ struct ProviderLogoAssetTests {
         #endif
     }
 
-    @Test func fullColourProvidersUseOneAssetAcrossAppearances() {
-        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral"] {
+    @Test func fullColourMarksUseOneAssetAcrossAppearances() {
+        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek"] {
             let expected = "provider-logo-\(provider)"
             #expect(
                 ProviderLogoAssetResolver.assetName(
@@ -87,8 +87,8 @@ struct ProviderLogoAssetTests {
         }
     }
 
-    @Test func monochromeProvidersChooseTheSurfaceSpecificAsset() {
-        for provider in ["cursor", "grok", "ollama", "pi"] {
+    @Test func monochromeMarksChooseTheSurfaceSpecificAsset() {
+        for provider in ["cursor", "grok", "ollama", "pi", "cerebras"] {
             #expect(
                 ProviderLogoAssetResolver.assetName(
                     for: provider, darkBackground: false)
@@ -137,6 +137,9 @@ struct ProviderLogoAssetTests {
             "provider-logo-pi-on-light",
             "provider-logo-pi-on-dark",
             "provider-logo-mistral",
+            "provider-logo-deepseek",
+            "provider-logo-cerebras-on-light",
+            "provider-logo-cerebras-on-dark",
         ]
         let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 

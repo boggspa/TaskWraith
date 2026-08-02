@@ -4150,9 +4150,9 @@ enum ProviderLogoAssetResolver {
         else { return nil }
 
         switch provider {
-        case "gemini", "codex", "claude", "kimi", "antigravity", "mistral":
+        case "gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek":
             return "provider-logo-\(provider)"
-        case "cursor", "grok", "ollama", "pi":
+        case "cursor", "grok", "ollama", "pi", "cerebras":
             return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
         default:
             return nil
@@ -11137,14 +11137,7 @@ struct UsagePanel: View {
         let accent = TWTheme.providerAccent(entry.provider)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(accent.opacity(0.18))
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Image(systemName: "cpu")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(accent)
-                    )
+                ProviderLogoIcon(provider: entry.provider, size: 20)
                 Text(TWTheme.providerLabel(entry.provider))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(TWTheme.textPrimary)
@@ -11187,17 +11180,9 @@ struct UsagePanel: View {
 
     @ViewBuilder
     private func spendProviderSection(_ entry: ModelUsageMessage.SpendProvider) -> some View {
-        let accent = TWTheme.providerAccent(entry.provider)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(accent.opacity(0.18))
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Image(systemName: "dollarsign.circle")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(accent)
-                    )
+                ProviderLogoIcon(provider: entry.provider, size: 20)
                 Text(TWTheme.providerLabel(entry.provider))
                     .font(.caption.weight(.bold))
                     .foregroundStyle(TWTheme.textPrimary)

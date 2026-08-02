@@ -4,14 +4,15 @@ Official or first-party artwork collected to evaluate a secondary provider
 identity direction alongside [`../provider-glyphs`](../provider-glyphs/).
 
 The files in this directory remain the source/provenance catalogue rather than
-an application resource path. Canonical-provider assets have byte-identical
-runtime copies vendored under
+an application resource path. Canonical-provider assets, plus the integrated
+DeepSeek and Cerebras upstream-brand marks, have byte-identical runtime copies vendored under
 `src/renderer/src/assets/provider-logos/` and
 `ios/TaskWraithKit/Sources/TaskWraithUI/Resources/`; the desktop and iOS apps use
-those copies only as identity marks beside provider or model names. Supplemental
-upstream-brand assets remain design-only until a separate runtime integration
-lands. The catalogue SVG reviews the canonical-provider PNGs here rather than
-embedding or re-encoding them.
+those copies only as identity marks beside provider or model names. These upstream
+marks do not create a TaskWraith provider identity or affect admission. Any future
+supplemental upstream-brand assets remain design-only until a separate runtime
+integration lands. The catalogue SVG reviews the canonical-provider PNGs here
+rather than embedding or re-encoding them.
 
 ## Selection rules
 
@@ -34,8 +35,9 @@ embedding or re-encoding them.
   structurally admitted Kimi runs without a reviewed roster tuple are labelled
   `unattested-development`.
 - Supplemental upstream-brand files may sit alongside the canonical provider
-  set for design evaluation. They do not create provider identities, affect
-  admission, or imply that their marks are bundled at runtime.
+  set for design evaluation. Those marked `runtimeIntegrated` may be bundled
+  solely for factual identity beside their own upstream/model-usage labels;
+  they do not create provider identities or affect admission.
 - Omit Ensemble: it is a TaskWraith orchestration concept, not an external
   provider with an official provider logo.
 
@@ -113,9 +115,9 @@ affiliation, endorsement, sponsorship, or a transferable licence. Provider
 brand terms remain controlling, can change, and may require separate approval
 for public redistribution or product use.
 
-The app now vendors byte-identical copies for factual, nominative provider
-identification. `design-assets/**` itself remains excluded from application
-bundles, and the manifest records the exact relationship between every runtime
-copy and its sourced or explicitly derived catalogue file. Public distribution
-still needs to follow the owners' current brand terms and the project's release
-review process.
+The app now vendors byte-identical copies for factual, nominative provider and
+integrated-upstream identification. `design-assets/**` itself remains excluded
+from application bundles, and the manifest records the exact relationship
+between every runtime copy and its sourced or explicitly derived catalogue file.
+Public distribution still needs to follow the owners' current brand terms and
+the project's release review process.

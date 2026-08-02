@@ -2,7 +2,9 @@
 
 Byte-identical runtime copies of the sourced or recorded derivative PNGs documented in
 [`design-assets/provider-logos`](../../../../../design-assets/provider-logos/).
-They are used only as provider identity marks beside provider or model names.
+They are used only as provider identity marks beside provider or model names,
+including the integrated DeepSeek and Cerebras upstream/model-usage marks. Those
+two upstream identities do not extend the selectable provider roster.
 
 TaskWraith's original `ProviderGlyph` artwork remains only for Ensemble; unknown
 providers receive a neutral terminal fallback. Generic identity icon pickers
