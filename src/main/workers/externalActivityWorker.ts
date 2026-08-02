@@ -2,9 +2,9 @@
  * External-activity scan worker (Electron utilityProcess entry).
  *
  * The 90-day provider-log walk is tens of GB cold; run on the main process it
- * pegged the event loop for minutes even duty-cycled (the 2026-07 launch
- * stall). Here it runs in its own OS process at full speed — 'immediate'
- * yield mode only drains parentPort messages between batches.
+ * pegged the event loop for minutes (the 2026-07 launch stall). Process
+ * isolation keeps Electron main responsive, while duty cycling keeps this
+ * background job from monopolising a CPU core and the system page cache.
  *
  * Protocol (all messages are structured-clone JSON):
  *  in:  { type: 'scan', request: ExternalScanRequest }
@@ -26,7 +26,7 @@ import {
 
 const parentPort = process.parentPort
 
-setExternalScanYieldMode('immediate')
+setExternalScanYieldMode('duty-cycle')
 setCursorRecordsForwarder((records) => {
   parentPort?.postMessage({ type: 'cursor-records', records })
 })

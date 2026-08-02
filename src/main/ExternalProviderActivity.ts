@@ -11,13 +11,17 @@ import {
   externalActivityRecordTokens,
   externalActivityWindowBounds
 } from '../shared/usageAccounting'
-import { aggregateExternalUsageRecords } from '../shared/externalUsageBuckets'
+import {
+  ExternalUsageBucketAccumulator,
+  aggregateExternalUsageRecords
+} from '../shared/externalUsageBuckets'
 import {
   loadCursorIdeUsageEvents,
   setCursorExternalActivityUpdateListener
 } from './cursor/CursorExternalActivity'
 import { CURSOR_TRANSCRIPT_CHUNK_SIZE } from './cursor/CursorExternalActivityCache'
 import {
+  type ExternalActivityFileCacheEvent,
   ensureExternalActivityFileCacheLoaded,
   getCachedExternalFileEvents,
   persistExternalActivityFileCacheIfDirty,
@@ -25,6 +29,7 @@ import {
   setCachedExternalFileEvents
 } from './ExternalActivityFileCache'
 import { isTaskWraithCodexRolloutOriginator } from './codex/CodexHome'
+import { loadExternalUsageSnapshot, persistExternalUsageSnapshot } from './ExternalUsageSnapshot'
 
 type ExternalActivityProvider = Extract<
   ProviderId,
@@ -44,16 +49,8 @@ export interface ExternalProviderActivityOptions {
   externalFileCachePath?: string
 }
 
-interface ExternalUsageEvent {
+interface ExternalUsageEvent extends ExternalActivityFileCacheEvent {
   provider: ExternalActivityProvider
-  timestamp: number
-  model: string
-  inputTokens?: number
-  outputTokens?: number
-  totalTokens: number
-  cacheReadInputTokens?: number
-  cacheCreationInputTokens?: number
-  sourceKey: string
   /** Cross-file dedupe key (claude/gemini). Stored with cached per-file
    * events so assembly-time dedupe survives the incremental cache. */
   dedupeKey?: string
@@ -83,6 +80,7 @@ const MAX_CODEX_SQLITE_MARKERS_PER_BUCKET = 8
 
 const EXTERNAL_USAGE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
 const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
+const EXTERNAL_USAGE_SNAPSHOT_FILENAME = 'external-activity-snapshot.json'
 
 // ── Main-thread duty cycle ──────────────────────────────────────────────────
 // Streaming keeps any single read short, but the scan AS A WHOLE is the
@@ -104,10 +102,9 @@ const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 const SCAN_SLICE_MS = 25
 const SCAN_YIELD_MS = 40
 
-/** 'duty-cycle' bounds the scan's share of the event loop (required when the
- * scan runs on the Electron main process). 'immediate' only drains pending
- * events between batches — full speed, for the utility-process worker where
- * there is no UI to starve but parentPort messages must still be serviced. */
+/** 'duty-cycle' bounds the scan's share of its process and therefore its
+ * system-wide CPU/disk contention. 'immediate' is retained for isolated tests
+ * and diagnostics only; production workers must remain duty-cycled. */
 let scanYieldMode: 'duty-cycle' | 'immediate' = 'duty-cycle'
 
 export function setExternalScanYieldMode(mode: 'duty-cycle' | 'immediate'): void {
@@ -197,6 +194,10 @@ export function buildExternalUsageRollup(
 
 let externalUsageCache: { records: UsageRecord[]; scannedAt: number } | null = null
 let cursorCacheListenerInstalled = false
+let automaticScanAdmissionOpen = true
+let externalUsageSnapshotPath: string | null = null
+let snapshotHydrated = false
+let snapshotHydrationInFlight: Promise<void> | null = null
 
 /** How a 90-day scan is executed. Production installs a utility-process
  * driver at startup; this front door deliberately has no main-process
@@ -236,13 +237,51 @@ export function setExternalUsageUpdateListener(listener: ExternalUsageUpdateList
   externalUsageUpdateListener = listener
 }
 
-function commitExternalUsageRecords(records: UsageRecord[]): void {
-  externalUsageCache = { records, scannedAt: Date.now() }
+function commitExternalUsageRecords(records: UsageRecord[], scannedAt: number = Date.now()): void {
+  externalUsageCache = { records, scannedAt }
   try {
     externalUsageUpdateListener?.(records)
   } catch {
     // Listener failures must never poison the scan pipeline.
   }
+}
+
+async function hydrateConfiguredExternalUsageSnapshot(): Promise<void> {
+  if (snapshotHydrated) return
+  if (snapshotHydrationInFlight) return snapshotHydrationInFlight
+  const snapshotPath = externalUsageSnapshotPath
+  if (!snapshotPath) {
+    snapshotHydrated = true
+    return
+  }
+  snapshotHydrationInFlight = (async () => {
+    const snapshot = await loadExternalUsageSnapshot(snapshotPath)
+    if (snapshot && (!externalUsageCache || snapshot.scannedAt > externalUsageCache.scannedAt)) {
+      commitExternalUsageRecords(snapshot.records, snapshot.scannedAt)
+    }
+    snapshotHydrated = true
+  })().finally(() => {
+    snapshotHydrationInFlight = null
+  })
+  return snapshotHydrationInFlight
+}
+
+/**
+ * Startup admission fence. Renderer reads may ask for external usage on their
+ * first animation frame; those reads serve the compact last-good snapshot but
+ * cannot launch the heavyweight refresh before the main process explicitly
+ * calls {@link prewarmExternalUsageCache} after the interactive settle gap.
+ */
+export function initializeExternalUsageCacheForStartup(
+  snapshotPath: string = resolveExternalUsageSnapshotPath()
+): Promise<void> {
+  automaticScanAdmissionOpen = false
+  if (externalUsageSnapshotPath !== snapshotPath) {
+    externalUsageSnapshotPath = snapshotPath
+    snapshotHydrated = false
+    snapshotHydrationInFlight = null
+  }
+  return hydrateConfiguredExternalUsageSnapshot()
 }
 
 function resolveCursorExternalCachePath(override?: string): string {
@@ -343,7 +382,12 @@ function startExternalScan(
 
   const runWith = async (driver: ExternalScanDriver): Promise<UsageRecord[]> => {
     const full = await driver(request, commit)
-    commit(full)
+    const scannedAt = Date.now()
+    commitExternalUsageRecords(full, scannedAt)
+    settleFirst(full)
+    if (externalUsageSnapshotPath) {
+      await persistExternalUsageSnapshot(externalUsageSnapshotPath, { records: full, scannedAt })
+    }
     return full
   }
 
@@ -394,6 +438,10 @@ export function resetExternalUsageFrontDoorForTests(): void {
   externalScanDriver = null
   externalUsageUpdateListener = null
   cursorRecordsForwarder = null
+  automaticScanAdmissionOpen = true
+  externalUsageSnapshotPath = null
+  snapshotHydrated = false
+  snapshotHydrationInFlight = null
 }
 
 export async function getExternalUsageCached(
@@ -407,6 +455,7 @@ export async function getExternalUsageCached(
   }
 
   const force = options.force === true || options.maxAgeMs === 0
+  if (!force && !automaticScanAdmissionOpen) return cached?.records ?? []
   // Stale-while-revalidate with a deliberately non-blocking cold path. A
   // renderer must never wait for disk-history hydration: kick the worker and
   // show empty stats until its pushed cache upgrade arrives.
@@ -417,12 +466,23 @@ export async function getExternalUsageCached(
 /** Kick off a background external-usage hydrate at app launch. The worker
  * owns every provider scan, including Cursor's incremental cache work. */
 export function prewarmExternalUsageCache(): void {
-  void getExternalUsageCached()
+  void hydrateConfiguredExternalUsageSnapshot().finally(() => {
+    automaticScanAdmissionOpen = true
+    // The snapshot makes first paint immediate, but launch should still
+    // revalidate provider files incrementally. A 1ms age bound requests that
+    // refresh without the stronger `force` semantics (which reset Cursor's
+    // own incremental path when maxAgeMs is exactly zero).
+    void getExternalUsageCached({ maxAgeMs: 1 })
+  })
 }
 
 function resolveExternalFileCachePath(override?: string): string {
   if (override) return override
   return join(app.getPath('userData'), EXTERNAL_FILE_CACHE_FILENAME)
+}
+
+function resolveExternalUsageSnapshotPath(): string {
+  return join(app.getPath('userData'), EXTERNAL_USAGE_SNAPSHOT_FILENAME)
 }
 
 /** Default persisted-cache locations. Resolved in MAIN (the utility process
@@ -431,10 +491,12 @@ function resolveExternalFileCachePath(override?: string): string {
 export function defaultExternalActivityCachePaths(): {
   externalFileCachePath: string
   cursorCachePath: string
+  externalUsageSnapshotPath: string
 } {
   return {
     externalFileCachePath: resolveExternalFileCachePath(),
-    cursorCachePath: resolveCursorExternalCachePath()
+    cursorCachePath: resolveCursorExternalCachePath(),
+    externalUsageSnapshotPath: resolveExternalUsageSnapshotPath()
   }
 }
 
@@ -442,10 +504,10 @@ export function defaultExternalActivityCachePaths(): {
  * are unchanged; otherwise parse and cache. Parse failures are not cached so
  * a transient error retries on the next scan.
  *
- * SCHEMA LANDMINE: cached events are opaque JSON keyed only by
- * (provider, path, mtime, size). If you change what any parse*File fn emits
- * (new fields, changed semantics), bump EXTERNAL_ACTIVITY_FILE_CACHE_VERSION
- * or existing installs will serve old-shape events until files churn. */
+ * SCHEMA LANDMINE: cached events are keyed only by (provider, path, mtime,
+ * size). If you change what any parse*File fn emits (new fields, changed
+ * semantics), bump EXTERNAL_ACTIVITY_FILE_CACHE_VERSION or existing installs
+ * will serve old-shape events until files churn. */
 async function readFileEventsThroughCache(
   provider: ExternalActivityProvider,
   file: CollectedSessionFile,
@@ -475,13 +537,16 @@ export async function loadExternalProviderUsageRecords(
   const fileCachePath = resolveExternalFileCachePath(options.externalFileCachePath)
   await ensureExternalActivityFileCacheLoaded(fileCachePath)
 
-  const readers = [
+  const readers: Array<
+    (homeDir: string, sinceMs: number, nowMs: number) => Promise<UsageRecord[]>
+  > = [
     readCodexActivity,
     readClaudeActivity,
     readGeminiActivity,
     readKimiActivity,
     readGrokActivity,
-    (homeDir: string, sinceMs: number) => readCursorActivity(homeDir, sinceMs, options)
+    (homeDir: string, sinceMs: number, nowMs: number) =>
+      readCursorActivity(homeDir, sinceMs, nowMs, options)
   ]
   // Persist as each provider lands, not only once all of them have.
   //
@@ -498,35 +563,37 @@ export async function loadExternalProviderUsageRecords(
   // across process restarts" (codex totalTokens undefined) after
   // resetExternalActivityFileCacheForTests(). Serial read+checkpoint avoids
   // that wipe race without changing ExternalActivityFileCache.
-  const nested: ExternalUsageEvent[][] = []
+  const nested: UsageRecord[][] = []
   for (const reader of readers) {
-    nested.push(await safeRead(reader, homeDir, sinceMs))
+    nested.push(await safeRead(reader, homeDir, sinceMs, now.getTime()))
     await persistExternalActivityFileCacheIfDirty(fileCachePath)
   }
-  const byId = new Map<string, UsageRecord>()
-  for (const event of nested.flat()) {
-    const record = eventToUsageRecord(event)
-    if (record) byId.set(record.id, record)
-  }
   // Collapse per-turn records into wall-clock buckets BEFORE they leave the
-  // scan. This is the choke point both drivers share, so the worker's
-  // postMessage payload, main's cached record set, the get-external-usage IPC
-  // response, and the renderer's contextBridge copy all shrink from ~1.4M
-  // records to a few thousand — the unaggregated array was the launch-stall
-  // (see shared/externalUsageBuckets.ts).
-  return aggregateExternalUsageRecords([...byId.values()], now.getTime())
+  // scan. Each provider already feeds a streaming accumulator so `nested`
+  // contains only compact buckets; this final idempotent fold merges buckets
+  // that happen to meet across reader seams.
+  return aggregateExternalUsageRecords(nested.flat(), now.getTime())
 }
 
 async function safeRead(
-  reader: (homeDir: string, sinceMs: number) => Promise<ExternalUsageEvent[]>,
+  reader: (homeDir: string, sinceMs: number, nowMs: number) => Promise<UsageRecord[]>,
   homeDir: string,
-  sinceMs: number
-): Promise<ExternalUsageEvent[]> {
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   try {
-    return await reader(homeDir, sinceMs)
+    return await reader(homeDir, sinceMs, nowMs)
   } catch {
     return []
   }
+}
+
+function addExternalUsageEvent(
+  accumulator: ExternalUsageBucketAccumulator,
+  event: ExternalUsageEvent
+): void {
+  const record = eventToUsageRecord(event)
+  if (record) accumulator.add(record)
 }
 
 function eventToUsageRecord(event: ExternalUsageEvent): UsageRecord | null {
@@ -559,7 +626,10 @@ function eventToUsageRecord(event: ExternalUsageEvent): UsageRecord | null {
     totalTokens,
     ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
     ...(cacheCreationInputTokens > 0 ? { cacheCreationInputTokens } : {}),
-    durationMs: 0
+    durationMs: 0,
+    ...(Number.isFinite(event.runCount) && Number(event.runCount) > 1
+      ? { runCount: Math.trunc(Number(event.runCount)) }
+      : {})
   }
 }
 
@@ -586,7 +656,11 @@ function extractCodexSessionModel(json: Record<string, unknown>): string | null 
   return null
 }
 
-async function readCodexActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+async function readCodexActivity(
+  homeDir: string,
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   const codexRoot = join(homeDir, '.codex')
   // A newest-file cap silently drops still-in-window sessions once enough
   // newer ones exist, which makes long-window totals move backwards: a 90-day
@@ -608,18 +682,22 @@ async function readCodexActivity(homeDir: string, sinceMs: number): Promise<Exte
     ))
   ]
   pruneExternalActivityFileCache('codex', new Set(files.map((file) => file.path)))
-  const events: ExternalUsageEvent[] = []
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
   for (const file of files) {
     const fileEvents = await readFileEventsThroughCache('codex', file, () =>
       parseCodexSessionFile(file.path)
     )
     for (const event of fileEvents) {
-      if (event.timestamp >= sinceMs) events.push(event)
+      if (event.timestamp >= sinceMs) addExternalUsageEvent(accumulator, event)
     }
   }
-  events.push(...(await readCodexSessionIndexActivity(codexRoot, sinceMs)))
-  events.push(...(await readCodexSqliteActivity(codexRoot, sinceMs)))
-  return events
+  for (const event of await readCodexSessionIndexActivity(codexRoot, sinceMs)) {
+    addExternalUsageEvent(accumulator, event)
+  }
+  for (const event of await readCodexSqliteActivity(codexRoot, sinceMs)) {
+    addExternalUsageEvent(accumulator, event)
+  }
+  return accumulator.finish()
 }
 
 /** Parse one Codex session file into events. No window filtering here — the
@@ -716,7 +794,11 @@ async function parseCodexSessionFile(filePath: string): Promise<ExternalUsageEve
   return events
 }
 
-async function readClaudeActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+async function readClaudeActivity(
+  homeDir: string,
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   const root = join(homeDir, '.claude', 'projects')
   const files = await collectFiles(
     root,
@@ -729,7 +811,7 @@ async function readClaudeActivity(homeDir: string, sinceMs: number): Promise<Ext
     null
   )
   pruneExternalActivityFileCache('claude', new Set(files.map((file) => file.path)))
-  const events: ExternalUsageEvent[] = []
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
   const seen = new Set<string>()
   for (const file of files) {
     const fileEvents = await readFileEventsThroughCache('claude', file, () =>
@@ -741,10 +823,10 @@ async function readClaudeActivity(homeDir: string, sinceMs: number): Promise<Ext
         if (seen.has(event.dedupeKey)) continue
         seen.add(event.dedupeKey)
       }
-      events.push(event)
+      addExternalUsageEvent(accumulator, event)
     }
   }
-  return events
+  return accumulator.finish()
 }
 
 /** Parse one Claude session file into events. No window filtering or
@@ -790,7 +872,11 @@ async function parseClaudeSessionFile(filePath: string): Promise<ExternalUsageEv
   return events
 }
 
-async function readGeminiActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+async function readGeminiActivity(
+  homeDir: string,
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   const root = join(homeDir, '.gemini', 'tmp')
   const files = await collectFiles(
     root,
@@ -799,7 +885,7 @@ async function readGeminiActivity(homeDir: string, sinceMs: number): Promise<Ext
     MAX_GEMINI_SESSION_FILES
   )
   pruneExternalActivityFileCache('gemini', new Set(files.map((file) => file.path)))
-  const events: ExternalUsageEvent[] = []
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
   const seen = new Set<string>()
   for (const file of files) {
     const fileEvents = await readFileEventsThroughCache('gemini', file, () =>
@@ -811,10 +897,10 @@ async function readGeminiActivity(homeDir: string, sinceMs: number): Promise<Ext
         if (seen.has(event.dedupeKey)) continue
         seen.add(event.dedupeKey)
       }
-      events.push(event)
+      addExternalUsageEvent(accumulator, event)
     }
   }
-  return events
+  return accumulator.finish()
 }
 
 /** Parse one Gemini session file into events. Keeps the 128MB tail cap —
@@ -935,20 +1021,24 @@ async function readCodexSqliteActivity(
 // credential-path fix in ProviderAuthUsage now reaches. This reader stays on
 // the legacy ~/.kimi/sessions root purely to surface any pre-migration
 // StatusUpdate history that still parses; it is not the live meter.
-async function readKimiActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+async function readKimiActivity(
+  homeDir: string,
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   const root = join(homeDir, '.kimi', 'sessions')
   const files = await collectFiles(root, isKimiWireActivityPath, sinceMs)
   pruneExternalActivityFileCache('kimi', new Set(files.map((file) => file.path)))
-  const events: ExternalUsageEvent[] = []
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
   for (const file of files) {
     const fileEvents = await readFileEventsThroughCache('kimi', file, () =>
       parseKimiWireFile(file.path)
     )
     for (const event of fileEvents) {
-      if (event.timestamp >= sinceMs) events.push(event)
+      if (event.timestamp >= sinceMs) addExternalUsageEvent(accumulator, event)
     }
   }
-  return events
+  return accumulator.finish()
 }
 
 /** Parse one Kimi wire file into events. No window filtering here — cached
@@ -990,7 +1080,11 @@ async function parseKimiWireFile(filePath: string): Promise<ExternalUsageEvent[]
  * completed turn emits a `shell.turn.inference_done` line carrying that turn's
  * counts. The chip existed here long before this reader did, so Grok read as a
  * flat zero rather than as "not measurable". */
-async function readGrokActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+async function readGrokActivity(
+  homeDir: string,
+  sinceMs: number,
+  nowMs: number
+): Promise<UsageRecord[]> {
   const logPath = join(homeDir, '.grok', 'logs', 'unified.jsonl')
   let stat: Awaited<ReturnType<typeof fs.stat>>
   try {
@@ -1006,7 +1100,11 @@ async function readGrokActivity(homeDir: string, sinceMs: number): Promise<Exter
     { path: logPath, mtimeMs: stat.mtimeMs, size: stat.size },
     () => parseGrokUnifiedLog(logPath)
   )
-  return events.filter((event) => event.timestamp >= sinceMs)
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
+  for (const event of events) {
+    if (event.timestamp >= sinceMs) addExternalUsageEvent(accumulator, event)
+  }
+  return accumulator.finish()
 }
 
 /** Lines that can carry Grok activity: the turn records themselves, plus the
@@ -1061,8 +1159,9 @@ async function parseGrokUnifiedLog(filePath: string): Promise<ExternalUsageEvent
 async function readCursorActivity(
   homeDir: string,
   sinceMs: number,
+  nowMs: number,
   options: ExternalProviderActivityOptions = {}
-): Promise<ExternalUsageEvent[]> {
+): Promise<UsageRecord[]> {
   ensureCursorCacheListener()
   const force = options.force === true
   const cursorOptions = {
@@ -1078,7 +1177,10 @@ async function readCursorActivity(
         ? 400
         : CURSOR_TRANSCRIPT_CHUNK_SIZE * 2
   }
-  return loadCursorIdeUsageEvents(cursorOptions)
+  const events = await loadCursorIdeUsageEvents(cursorOptions)
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
+  for (const event of events) addExternalUsageEvent(accumulator, event)
+  return accumulator.finish()
 }
 
 async function runSqliteQuery(dbPath: string, query: string): Promise<string[]> {

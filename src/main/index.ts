@@ -829,6 +829,7 @@ import {
 } from './ProviderRunStats'
 import {
   getExternalUsageCached,
+  initializeExternalUsageCacheForStartup,
   prewarmExternalUsageCache,
   setExternalScanDriver,
   setExternalUsageUpdateListener
@@ -37729,7 +37730,7 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
  * The scan now runs in a utilityProcess, so this is no longer protecting the
  * main event loop — just keeping disk I/O out of the renderer's first-frame
  * window (chat list hydration, theme, dock restore). */
-const EXTERNAL_USAGE_PREWARM_SETTLE_MS = 3_000
+const EXTERNAL_USAGE_PREWARM_SETTLE_MS = 15_000
 
 /** Backstop for when no window ever paints (headless/CI, or a window that
  * fails to show): paired remote devices still expect a usage rollup, so the
@@ -37749,6 +37750,7 @@ function installExternalUsageScanPipeline(): void {
   setExternalScanDriver(
     createExternalActivityWorkerDriver(join(__dirname, 'externalActivityWorker.js'))
   )
+  void initializeExternalUsageCacheForStartup()
   setExternalUsageUpdateListener(() => {
     if (externalUsageUpdatePingTimer) return
     externalUsageUpdatePingTimer = setTimeout(() => {

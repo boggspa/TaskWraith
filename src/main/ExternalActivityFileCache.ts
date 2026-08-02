@@ -1,46 +1,46 @@
+import { createHash } from 'crypto'
 import { createReadStream, createWriteStream } from 'fs'
 import { promises as fs } from 'fs'
 import { dirname } from 'path'
 import { createInterface } from 'readline'
+import type { UsageRecord } from './store/types'
+import { ExternalUsageBucketAccumulator } from '../shared/externalUsageBuckets'
 
 /**
  * Per-file incremental cache for the External Activity scan.
  *
- * The 90-day external scan used to re-read and re-parse every in-window
- * session file for codex/claude/gemini/kimi on every refresh — multi-GB of
- * disk reads and JSON parsing per scan on a busy machine. This module keeps
- * the parsed per-file events keyed by (provider, path) and validated by
- * mtime+size, so a refresh only re-parses files that actually changed.
+ * The original format persisted every parsed provider turn as a verbose JSON
+ * object. On a busy install that grew to 524 MB / 1.4M events. Every new
+ * utility process then parsed the entire file into a Map before it could
+ * discover that the underlying session files were unchanged, consuming a CPU
+ * core and more than 600 MB of resident memory during startup.
  *
- * Design constraints (deliberate — see perf-drain hunt 2026-07):
- * - Events are stored UNFILTERED by the scan window and filtered by the
- *   caller at assembly time. The cache is therefore never keyed by a
- *   `sinceMs` value; a forward-moving 90-day window keeps every entry valid.
- *   (Keying the whole cache by exact sinceMs is the bug that silently
- *   defeated the Cursor incremental cache.)
- * - The disk format is JSONL (header line + one line per file entry) so
- *   loading and persisting stream line-by-line instead of materializing one
- *   giant JSON.stringify on the main process.
- * - All disk IO is best-effort: a missing/corrupt cache file simply means a
- *   full re-parse, never a broken usage surface.
+ * v6 keeps the same exact mtime+size invalidation contract while making the
+ * payload compact:
+ * - providers that do not need cross-file dedupe are pre-aggregated into the
+ *   same minute/hour buckets used by the renderer;
+ * - Claude/Gemini calls retain one compact tuple per dedupe identity, with a
+ *   fixed-size digest instead of repeated request/message ids;
+ * - models are interned once per source file and source paths are never
+ *   repeated inside event rows.
+ *
+ * v5 is migrated in place, one JSONL row at a time. That one-time read remains
+ * background work, but raw event arrays are released after each row instead
+ * of being retained for the whole scan.
  */
 
-// Bump whenever a provider parse function changes shape or semantics: entries
-// are keyed on (provider, path, mtime, size), so an unchanged file would
-// otherwise keep serving events produced by the previous parser forever.
-// v3: Codex parses whole files (was: last 8MB only) and derives per-turn
-// deltas from the cumulative advance (was: summing possibly-repeated deltas).
-// v4: Claude dedupes on requestId+messageId (was: keyed on timestamp too,
-// which never matched across the per-content-block rows of one message).
-// v5: Codex excludes shared-home rollouts created by TaskWraith; those runs
-// now come from TaskWraith's own usage journal after CODEX_HOME isolation.
-export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 5
+// v6: compact packed rows + per-file time buckets. v5 verbose rows are the
+// only legacy shape worth migrating: older versions have parser semantics
+// that cannot safely be reused.
+export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 6
+const MIGRATABLE_CACHE_VERSION = 5
 
-// Bound cache-load CPU the same way the scan duty-cycle does: a warm install
-// can hold multi-MB of JSONL, and parsing it synchronously freezes main.
+// Cache loading runs inside the utility process in production, but it still
+// competes for system CPU, disk and page cache. Check after every JSONL row:
+// live caches contain multi-megabyte lines, so a line-count batch lets one
+// slice run for seconds before yielding.
 const CACHE_LOAD_SLICE_MS = 25
 const CACHE_LOAD_YIELD_MS = 40
-const CACHE_LOAD_CHECK_LINES = 64
 let cacheLoadDeadlineMs = 0
 
 async function yieldCacheLoadSlice(): Promise<void> {
@@ -52,8 +52,52 @@ async function yieldCacheLoadSlice(): Promise<void> {
   cacheLoadDeadlineMs = Date.now() + CACHE_LOAD_SLICE_MS
 }
 
+export interface ExternalActivityFileCacheEvent {
+  provider: string
+  timestamp: number
+  model: string
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens: number
+  cacheReadInputTokens?: number
+  cacheCreationInputTokens?: number
+  sourceKey: string
+  dedupeKey?: string
+  runCount?: number
+}
 
-interface ExternalActivityFileCacheEntry {
+type PackedExternalActivityEvent = [
+  timestamp: number,
+  modelIndex: number,
+  totalTokens: number,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadInputTokens: number,
+  cacheCreationInputTokens: number,
+  runCount: number,
+  dedupeKey: string
+]
+
+interface PackedExternalActivityFileCacheEntry {
+  provider: string
+  path: string
+  mtimeMs: number
+  size: number
+  models: string[]
+  events: PackedExternalActivityEvent[]
+}
+
+interface ExternalActivityFileCacheEntryRef {
+  provider: string
+  path: string
+  mtimeMs: number
+  size: number
+  /** Keep compact rows serialized between lookups. Hundreds of thousands of
+   * tiny JS tuple arrays cost far more heap than their 16 MB JSON encoding. */
+  serializedLine: string
+}
+
+interface LegacyExternalActivityFileCacheEntry {
   provider: string
   path: string
   mtimeMs: number
@@ -65,7 +109,7 @@ interface CacheHeaderLine {
   version: number
 }
 
-let entriesByKey: Map<string, ExternalActivityFileCacheEntry> | null = null
+let entriesByKey: Map<string, ExternalActivityFileCacheEntryRef> | null = null
 let loadedPath: string | null = null
 let dirty = false
 
@@ -73,23 +117,232 @@ function entryKey(provider: string, path: string): string {
   return `${provider}\u0000${path}`
 }
 
+function finiteNonNegative(value: unknown): number {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0
+}
+
+function normalizeCacheEvent(
+  value: unknown,
+  provider: string,
+  index: number
+): ExternalActivityFileCacheEvent | null {
+  if (!value || typeof value !== 'object') return null
+  const event = value as Partial<ExternalActivityFileCacheEvent>
+  const timestamp = Number(event.timestamp)
+  const totalTokens = Number(event.totalTokens)
+  if (!Number.isFinite(timestamp) || !Number.isFinite(totalTokens)) return null
+  const model = typeof event.model === 'string' ? event.model : ''
+  if (!model || model.length > 512) return null
+  const dedupeKey = typeof event.dedupeKey === 'string' ? event.dedupeKey : ''
+  return {
+    provider,
+    timestamp,
+    model,
+    inputTokens: finiteNonNegative(event.inputTokens),
+    outputTokens: finiteNonNegative(event.outputTokens),
+    totalTokens: Math.max(0, totalTokens),
+    cacheReadInputTokens: finiteNonNegative(event.cacheReadInputTokens),
+    cacheCreationInputTokens: finiteNonNegative(event.cacheCreationInputTokens),
+    sourceKey:
+      typeof event.sourceKey === 'string' && event.sourceKey
+        ? event.sourceKey
+        : `legacy-cache:${provider}:${index}`,
+    ...(dedupeKey ? { dedupeKey } : {}),
+    ...(finiteNonNegative(event.runCount) > 1
+      ? { runCount: Math.trunc(finiteNonNegative(event.runCount)) }
+      : {})
+  }
+}
+
+function compactDedupeKey(value: string): string {
+  return createHash('sha256').update(value).digest('base64url').slice(0, 22)
+}
+
+function usageRecordForCacheEvent(event: ExternalActivityFileCacheEvent): UsageRecord {
+  return {
+    id: event.sourceKey,
+    provider: event.provider as UsageRecord['provider'],
+    workspaceId: 'external',
+    chatId: `external-${event.provider}`,
+    runId: `external-${event.provider}`,
+    usageKind: 'run',
+    model: event.model,
+    inputTokens: finiteNonNegative(event.inputTokens),
+    outputTokens: finiteNonNegative(event.outputTokens),
+    totalTokens: finiteNonNegative(event.totalTokens),
+    ...(finiteNonNegative(event.cacheReadInputTokens) > 0
+      ? { cacheReadInputTokens: finiteNonNegative(event.cacheReadInputTokens) }
+      : {}),
+    ...(finiteNonNegative(event.cacheCreationInputTokens) > 0
+      ? { cacheCreationInputTokens: finiteNonNegative(event.cacheCreationInputTokens) }
+      : {}),
+    durationMs: 0,
+    timestamp: event.timestamp,
+    ...(finiteNonNegative(event.runCount) > 1
+      ? { runCount: Math.trunc(finiteNonNegative(event.runCount)) }
+      : {})
+  }
+}
+
+function packEvents(
+  provider: string,
+  values: unknown[],
+  nowMs: number
+): Pick<PackedExternalActivityFileCacheEntry, 'models' | 'events'> {
+  const dedupedEvents: Array<ExternalActivityFileCacheEvent & { dedupeKey: string }> = []
+  const seenDedupeKeys = new Set<string>()
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
+
+  for (let index = 0; index < values.length; index += 1) {
+    const event = normalizeCacheEvent(values[index], provider, index)
+    if (!event) continue
+    if (event.dedupeKey) {
+      if (seenDedupeKeys.has(event.dedupeKey)) continue
+      seenDedupeKeys.add(event.dedupeKey)
+      dedupedEvents.push({ ...event, dedupeKey: compactDedupeKey(event.dedupeKey) })
+      continue
+    }
+    accumulator.add(usageRecordForCacheEvent(event))
+  }
+
+  const compactedEvents: ExternalActivityFileCacheEvent[] = [
+    ...dedupedEvents,
+    ...accumulator.finish().map((record) => ({
+      provider,
+      timestamp: record.timestamp,
+      model: record.model,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      totalTokens: record.totalTokens,
+      cacheReadInputTokens: record.cacheReadInputTokens,
+      cacheCreationInputTokens: record.cacheCreationInputTokens,
+      sourceKey: record.id,
+      runCount: record.runCount
+    }))
+  ]
+
+  const models: string[] = []
+  const modelIndexes = new Map<string, number>()
+  const packed: PackedExternalActivityEvent[] = []
+  for (const event of compactedEvents) {
+    let modelIndex = modelIndexes.get(event.model)
+    if (modelIndex === undefined) {
+      modelIndex = models.length
+      models.push(event.model)
+      modelIndexes.set(event.model, modelIndex)
+    }
+    packed.push([
+      event.timestamp,
+      modelIndex,
+      finiteNonNegative(event.totalTokens),
+      finiteNonNegative(event.inputTokens),
+      finiteNonNegative(event.outputTokens),
+      finiteNonNegative(event.cacheReadInputTokens),
+      finiteNonNegative(event.cacheCreationInputTokens),
+      Math.max(1, Math.trunc(finiteNonNegative(event.runCount) || 1)),
+      event.dedupeKey || ''
+    ])
+  }
+
+  return { models, events: packed }
+}
+
+function isPackedEvent(value: unknown, modelCount: number): value is PackedExternalActivityEvent {
+  if (!Array.isArray(value) || value.length !== 9) return false
+  const [timestamp, modelIndex, total, input, output, cacheRead, cacheCreation, runCount, dedupe] =
+    value
+  return (
+    Number.isFinite(timestamp) &&
+    Number.isInteger(modelIndex) &&
+    modelIndex >= 0 &&
+    modelIndex < modelCount &&
+    [total, input, output, cacheRead, cacheCreation].every(
+      (entry) => Number.isFinite(entry) && entry >= 0
+    ) &&
+    Number.isInteger(runCount) &&
+    runCount >= 1 &&
+    typeof dedupe === 'string' &&
+    dedupe.length <= 128
+  )
+}
+
+function normalizePackedEntry(value: unknown): PackedExternalActivityFileCacheEntry | null {
+  if (!value || typeof value !== 'object') return null
+  const entry = value as Partial<PackedExternalActivityFileCacheEntry>
+  if (
+    typeof entry.provider !== 'string' ||
+    !entry.provider ||
+    typeof entry.path !== 'string' ||
+    !entry.path ||
+    !Number.isFinite(entry.mtimeMs) ||
+    !Number.isFinite(entry.size) ||
+    !Array.isArray(entry.models) ||
+    entry.models.length > 2_048 ||
+    !entry.models.every(
+      (model) => typeof model === 'string' && model.length > 0 && model.length <= 512
+    ) ||
+    !Array.isArray(entry.events) ||
+    entry.events.length > 1_000_000 ||
+    !entry.events.every((event) => isPackedEvent(event, entry.models!.length))
+  ) {
+    return null
+  }
+  return entry as PackedExternalActivityFileCacheEntry
+}
+
+function migrateLegacyEntry(value: unknown): PackedExternalActivityFileCacheEntry | null {
+  if (!value || typeof value !== 'object') return null
+  const entry = value as Partial<LegacyExternalActivityFileCacheEntry>
+  if (
+    typeof entry.provider !== 'string' ||
+    !entry.provider ||
+    typeof entry.path !== 'string' ||
+    !entry.path ||
+    !Number.isFinite(entry.mtimeMs) ||
+    !Number.isFinite(entry.size) ||
+    !Array.isArray(entry.events)
+  ) {
+    return null
+  }
+  return {
+    provider: entry.provider,
+    path: entry.path,
+    mtimeMs: entry.mtimeMs as number,
+    size: entry.size as number,
+    ...packEvents(entry.provider, entry.events, Date.now())
+  }
+}
+
+function entryRef(
+  entry: PackedExternalActivityFileCacheEntry,
+  serializedLine: string = JSON.stringify(entry)
+): ExternalActivityFileCacheEntryRef {
+  return {
+    provider: entry.provider,
+    path: entry.path,
+    mtimeMs: entry.mtimeMs,
+    size: entry.size,
+    serializedLine
+  }
+}
+
 /** Load the cache file into memory once per path; subsequent calls no-op.
  * Passing a different path (tests) reloads from that path. */
 export async function ensureExternalActivityFileCacheLoaded(cachePath: string): Promise<void> {
   if (entriesByKey && loadedPath === cachePath) return
-  const entries = new Map<string, ExternalActivityFileCacheEntry>()
+  const entries = new Map<string, ExternalActivityFileCacheEntryRef>()
   entriesByKey = entries
   loadedPath = cachePath
   dirty = false
-  let sawValidHeader = false
+  cacheLoadDeadlineMs = Date.now() + CACHE_LOAD_SLICE_MS
+  let diskVersion: number | null = null
   try {
     const input = createReadStream(cachePath, { encoding: 'utf8' })
     const lines = createInterface({ input, crlfDelay: Infinity })
     try {
-      let lineCount = 0
       for await (const line of lines) {
-        lineCount += 1
-        if (lineCount % CACHE_LOAD_CHECK_LINES === 0) await yieldCacheLoadSlice()
+        await yieldCacheLoadSlice()
         const trimmed = line.trim()
         if (!trimmed) continue
         let parsed: unknown
@@ -98,23 +351,27 @@ export async function ensureExternalActivityFileCacheLoaded(cachePath: string): 
         } catch {
           continue
         }
-        if (!sawValidHeader) {
+        if (diskVersion === null) {
           const header = parsed as CacheHeaderLine
-          if (header?.version !== EXTERNAL_ACTIVITY_FILE_CACHE_VERSION) return
-          sawValidHeader = true
+          if (
+            header?.version !== EXTERNAL_ACTIVITY_FILE_CACHE_VERSION &&
+            header?.version !== MIGRATABLE_CACHE_VERSION
+          ) {
+            return
+          }
+          diskVersion = header.version
+          if (diskVersion === MIGRATABLE_CACHE_VERSION) dirty = true
           continue
         }
-        const entry = parsed as ExternalActivityFileCacheEntry
-        if (
-          typeof entry?.provider !== 'string' ||
-          typeof entry?.path !== 'string' ||
-          !Number.isFinite(entry?.mtimeMs) ||
-          !Number.isFinite(entry?.size) ||
-          !Array.isArray(entry?.events)
-        ) {
-          continue
-        }
-        entries.set(entryKey(entry.provider, entry.path), entry)
+        const entry =
+          diskVersion === MIGRATABLE_CACHE_VERSION
+            ? migrateLegacyEntry(parsed)
+            : normalizePackedEntry(parsed)
+        if (!entry) continue
+        entries.set(
+          entryKey(entry.provider, entry.path),
+          entryRef(entry, diskVersion === MIGRATABLE_CACHE_VERSION ? undefined : trimmed)
+        )
       }
     } finally {
       lines.close()
@@ -130,11 +387,43 @@ export function getCachedExternalFileEvents(
   path: string,
   mtimeMs: number,
   size: number
-): unknown[] | null {
+): ExternalActivityFileCacheEvent[] | null {
   const entry = entriesByKey?.get(entryKey(provider, path))
   if (!entry) return null
   if (entry.mtimeMs !== mtimeMs || entry.size !== size) return null
-  return entry.events
+  let packed: PackedExternalActivityFileCacheEntry | null = null
+  try {
+    packed = normalizePackedEntry(JSON.parse(entry.serializedLine))
+  } catch {
+    return null
+  }
+  if (!packed) return null
+  return packed.events.map((event, index) => {
+    const [
+      timestamp,
+      modelIndex,
+      totalTokens,
+      inputTokens,
+      outputTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      runCount,
+      dedupeKey
+    ] = event
+    return {
+      provider,
+      timestamp,
+      model: packed.models[modelIndex],
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      cacheReadInputTokens,
+      cacheCreationInputTokens,
+      sourceKey: `compact-cache:${provider}:${mtimeMs}:${index}`,
+      ...(dedupeKey ? { dedupeKey } : {}),
+      ...(runCount > 1 ? { runCount } : {})
+    }
+  })
 }
 
 export function setCachedExternalFileEvents(
@@ -142,10 +431,17 @@ export function setCachedExternalFileEvents(
   path: string,
   mtimeMs: number,
   size: number,
-  events: unknown[]
+  events: ExternalActivityFileCacheEvent[]
 ): void {
   if (!entriesByKey) return
-  entriesByKey.set(entryKey(provider, path), { provider, path, mtimeMs, size, events })
+  const entry: PackedExternalActivityFileCacheEntry = {
+    provider,
+    path,
+    mtimeMs,
+    size,
+    ...packEvents(provider, events, Date.now())
+  }
+  entriesByKey.set(entryKey(provider, path), entryRef(entry))
   dirty = true
 }
 
@@ -190,7 +486,7 @@ export async function persistExternalActivityFileCacheIfDirty(cachePath: string)
     try {
       await writeLine(JSON.stringify({ version: EXTERNAL_ACTIVITY_FILE_CACHE_VERSION }))
       for (const entry of entriesByKey.values()) {
-        await writeLine(JSON.stringify(entry))
+        await writeLine(entry.serializedLine)
       }
       await new Promise<void>((resolve, reject) => {
         stream.end((err?: Error | null) => (err ? reject(err) : resolve()))

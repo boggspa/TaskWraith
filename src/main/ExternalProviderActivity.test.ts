@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, utimes, open } from 'fs/promises'
+import { mkdtemp, mkdir, open, readFile, rm, utimes, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,7 +13,9 @@ import {
   applyCursorUsageRecords,
   buildExternalUsageRollup,
   getExternalUsageCached,
+  initializeExternalUsageCacheForStartup,
   loadExternalProviderUsageRecords,
+  prewarmExternalUsageCache,
   resetExternalUsageFrontDoorForTests,
   settleExternalScansForTests,
   setExternalScanDriver,
@@ -21,6 +23,7 @@ import {
   type ExternalScanRequest
 } from './ExternalProviderActivity'
 import { resetExternalActivityFileCacheForTests } from './ExternalActivityFileCache'
+import { loadExternalUsageSnapshot, persistExternalUsageSnapshot } from './ExternalUsageSnapshot'
 import { buildHeatmapGrid } from '../renderer/src/lib/UsageHeatmap'
 import type { UsageRecord } from './store/types'
 
@@ -1085,6 +1088,104 @@ describe('external activity per-file incremental cache', () => {
       await rm(homeDir, { recursive: true, force: true })
     }
   })
+
+  it('persists repeated turns as one compact bucket with an exact run count', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-compact-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      const sessionPath = join(sessionDir, 'rollout.jsonl')
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      await mkdir(sessionDir, { recursive: true })
+      const lines = Array.from({ length: 100 }, (_, index) =>
+        JSON.stringify({
+          timestamp: `2026-05-31T09:${String(Math.floor(index / 2)).padStart(2, '0')}:${
+            index % 2 ? '30' : '00'
+          }.000Z`,
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { total_tokens: (index + 1) * 12 },
+              last_token_usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12 }
+            }
+          }
+        })
+      )
+      const content = lines.join('\n')
+      await writeFile(sessionPath, content)
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-06-10T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      const cacheText = await readFile(cachePath, 'utf8')
+      const [headerLine, entryLine] = cacheText.trim().split('\n')
+      const entry = JSON.parse(entryLine)
+
+      expect(JSON.parse(headerLine)).toEqual({ version: 6 })
+      expect(entry.events).toHaveLength(1)
+      expect(entry.events[0][7]).toBe(100)
+      expect(cacheText.length).toBeLessThan(content.length / 5)
+      expect(records.find((record) => record.provider === 'codex')).toMatchObject({
+        totalTokens: 1_200,
+        runCount: 100
+      })
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('migrates a v5 verbose entry without reparsing its unchanged source file', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-filecache-v5-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      const sessionPath = join(sessionDir, 'rollout.jsonl')
+      const cachePath = join(homeDir, 'external-file-cache.jsonl')
+      const mtime = new Date('2026-05-31T09:30:00.000Z')
+      await mkdir(sessionDir, { recursive: true })
+      const source = JSON.stringify({ intentionally: 'unparseable-as-usage' })
+      await writeFile(sessionPath, source)
+      await utimes(sessionPath, mtime, mtime)
+      await writeFile(
+        cachePath,
+        [
+          JSON.stringify({ version: 5 }),
+          JSON.stringify({
+            provider: 'codex',
+            path: sessionPath,
+            mtimeMs: mtime.getTime(),
+            size: Buffer.byteLength(source),
+            events: [
+              {
+                provider: 'codex',
+                timestamp: Date.parse('2026-05-31T09:00:00.000Z'),
+                model: 'gpt-5.6',
+                inputTokens: 10,
+                outputTokens: 7,
+                totalTokens: 17,
+                sourceKey: `${sessionPath}:1`
+              }
+            ]
+          })
+        ].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z'),
+        externalFileCachePath: cachePath
+      })
+      const [headerLine, entryLine] = (await readFile(cachePath, 'utf8')).trim().split('\n')
+      const entry = JSON.parse(entryLine)
+
+      expect(records.find((record) => record.provider === 'codex')?.totalTokens).toBe(17)
+      expect(JSON.parse(headerLine)).toEqual({ version: 6 })
+      expect(Array.isArray(entry.events[0])).toBe(true)
+      expect(entry.events[0][2]).toBe(17)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('getExternalUsageCached front door', () => {
@@ -1103,6 +1204,38 @@ describe('getExternalUsageCached front door', () => {
       durationMs: 0,
       timestamp
     }) as UsageRecord
+
+  it('serves the last-good snapshot without letting a cold renderer read bypass admission', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'taskwraith-external-frontdoor-snapshot-'))
+    const snapshotPath = join(directory, 'external-activity-snapshot.json')
+    try {
+      const stale = usageRecord('snapshot', 'codex', Date.now() - 8 * 60 * 60 * 1_000)
+      await persistExternalUsageSnapshot(snapshotPath, {
+        scannedAt: Date.now() - 100,
+        records: [stale]
+      })
+      const requests: ExternalScanRequest[] = []
+      const fresh = usageRecord('fresh', 'codex', Date.now())
+      setExternalScanDriver(async (request) => {
+        requests.push(request)
+        return [fresh]
+      })
+
+      await initializeExternalUsageCacheForStartup(snapshotPath)
+      await expect(getExternalUsageCached()).resolves.toEqual([stale])
+      expect(requests).toHaveLength(0)
+
+      prewarmExternalUsageCache()
+      await vi.waitFor(() => expect(requests).toHaveLength(1))
+      await settleExternalScansForTests()
+      await expect(getExternalUsageCached()).resolves.toEqual([fresh])
+      await expect(loadExternalUsageSnapshot(snapshotPath)).resolves.toMatchObject({
+        records: [fresh]
+      })
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 
   it('serves an empty cold cache immediately and upgrades in the background', async () => {
     const partial = [usageRecord('p1', 'codex', Date.now())]

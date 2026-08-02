@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { UsageRecord } from '../main/store/types'
 import {
   EXTERNAL_USAGE_MINUTE_BUCKET_WINDOW_MS,
+  ExternalUsageBucketAccumulator,
   aggregateExternalUsageRecords,
   usageRecordRunCount
 } from './externalUsageBuckets'
@@ -219,6 +220,18 @@ describe('aggregateExternalUsageRecords', () => {
         NOW
       )
     expect(make().map((r) => r.id)).toEqual(make().map((r) => r.id))
+  })
+
+  it('matches the array helper when records arrive incrementally', () => {
+    const records = [
+      record({ timestamp: NOW - 30 * 60_000, model: 'recent', totalTokens: 3 }),
+      record({ timestamp: NOW - 30 * 60_000 + 500, model: 'recent', totalTokens: 4 }),
+      record({ timestamp: NOW - 5 * 24 * 60 * 60_000, model: 'old', totalTokens: 5 })
+    ]
+    const accumulator = new ExternalUsageBucketAccumulator(NOW)
+    for (const entry of records) accumulator.add(entry)
+
+    expect(accumulator.finish()).toEqual(aggregateExternalUsageRecords(records, NOW))
   })
 })
 

@@ -6,6 +6,7 @@
  * permits the same scan to run on Electron main.
  */
 import { utilityProcess } from 'electron'
+import { constants as osConstants, setPriority } from 'os'
 import type { UsageRecord } from './store/types'
 import {
   applyCursorUsageRecords,
@@ -30,11 +31,20 @@ export function createExternalActivityWorkerDriver(workerModulePath: string): Ex
       let child: Electron.UtilityProcess
       try {
         child = utilityProcess.fork(workerModulePath, [], {
-          serviceName: 'taskwraith-external-activity-scan'
+          serviceName: 'taskwraith-external-activity-scan',
+          execArgv: ['--max-old-space-size=256']
         })
       } catch (error) {
         reject(error)
         return
+      }
+      try {
+        if (typeof child.pid === 'number' && child.pid > 0) {
+          setPriority(child.pid, osConstants.priority.PRIORITY_BELOW_NORMAL)
+        }
+      } catch {
+        // Best-effort: duty cycling still bounds contention on platforms that
+        // reject priority changes for utility processes.
       }
 
       let settled = false

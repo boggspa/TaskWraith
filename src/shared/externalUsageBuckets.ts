@@ -49,7 +49,7 @@ export function usageRecordRunCount(record: Pick<UsageRecord, 'runCount'>): numb
 
 /** Start of the local-minute (recent) or local-hour (older) bucket containing
  * `timestamp`. Local-field construction keeps buckets inside one local day. */
-function bucketStartMs(timestamp: number, nowMs: number): number {
+export function externalUsageBucketStartMs(timestamp: number, nowMs: number): number {
   const date = new Date(timestamp)
   const recent = nowMs - timestamp <= EXTERNAL_USAGE_MINUTE_BUCKET_WINDOW_MS
   return new Date(
@@ -85,6 +85,86 @@ interface BucketAccumulator {
 }
 
 /**
+ * Streaming form of {@link aggregateExternalUsageRecords}. External activity
+ * scans can encounter more than a million provider turns, so callers must be
+ * able to fold one record at a time without retaining that raw corpus in
+ * memory. `finish()` returns the same stable, newest-first representation as
+ * the array helper below.
+ */
+export class ExternalUsageBucketAccumulator {
+  private readonly passthrough: UsageRecord[] = []
+  private readonly buckets = new Map<string, BucketAccumulator>()
+
+  constructor(private readonly nowMs: number) {}
+
+  add(record: UsageRecord): void {
+    if (!record) return
+    if ((record.usageKind ?? 'run') !== 'run' || !Number.isFinite(record.timestamp)) {
+      this.passthrough.push(record)
+      return
+    }
+    const effectiveTokens = externalActivityRecordTokens(record)
+    const bucketStart = externalUsageBucketStartMs(record.timestamp, this.nowMs)
+    const key = [
+      record.provider ?? '',
+      record.model ?? '',
+      record.workspaceId ?? '',
+      record.chatId ?? '',
+      record.runId ?? '',
+      effectiveTokens > 0 ? 't' : 'z',
+      bucketStart
+    ].join('|')
+
+    let bucket = this.buckets.get(key)
+    if (!bucket) {
+      bucket = {
+        first: record,
+        bucketStart,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        durationMs: 0,
+        runCount: 0
+      }
+      this.buckets.set(key, bucket)
+    }
+    bucket.inputTokens += Math.max(0, record.inputTokens || 0)
+    bucket.outputTokens += Math.max(0, record.outputTokens || 0)
+    bucket.totalTokens += effectiveTokens
+    bucket.cacheReadInputTokens += Math.max(0, record.cacheReadInputTokens || 0)
+    bucket.cacheCreationInputTokens += Math.max(0, record.cacheCreationInputTokens || 0)
+    bucket.durationMs += Math.max(0, record.durationMs || 0)
+    bucket.runCount += usageRecordRunCount(record)
+  }
+
+  finish(): UsageRecord[] {
+    const aggregated: UsageRecord[] = [...this.passthrough]
+    for (const [key, bucket] of this.buckets) {
+      aggregated.push({
+        ...bucket.first,
+        id: `external-agg-${bucket.first.provider ?? 'unknown'}-${bucketHash(key)}`,
+        timestamp: bucket.bucketStart,
+        inputTokens: bucket.inputTokens,
+        outputTokens: bucket.outputTokens,
+        totalTokens: bucket.totalTokens,
+        ...(bucket.cacheReadInputTokens > 0
+          ? { cacheReadInputTokens: bucket.cacheReadInputTokens }
+          : {}),
+        ...(bucket.cacheCreationInputTokens > 0
+          ? { cacheCreationInputTokens: bucket.cacheCreationInputTokens }
+          : {}),
+        durationMs: bucket.durationMs,
+        runCount: bucket.runCount
+      })
+    }
+
+    return aggregated.sort((a, b) => b.timestamp - a.timestamp || (a.id < b.id ? -1 : 1))
+  }
+}
+
+/**
  * Collapse external usage records into wall-clock buckets per
  * (provider, model, synthetic ids, zero-marker flag).
  *
@@ -110,70 +190,7 @@ export function aggregateExternalUsageRecords(
   records: UsageRecord[],
   nowMs: number
 ): UsageRecord[] {
-  const passthrough: UsageRecord[] = []
-  const buckets = new Map<string, BucketAccumulator>()
-
-  for (const record of records) {
-    if (!record) continue
-    if ((record.usageKind ?? 'run') !== 'run' || !Number.isFinite(record.timestamp)) {
-      passthrough.push(record)
-      continue
-    }
-    const effectiveTokens = externalActivityRecordTokens(record)
-    const bucketStart = bucketStartMs(record.timestamp, nowMs)
-    const key = [
-      record.provider ?? '',
-      record.model ?? '',
-      record.workspaceId ?? '',
-      record.chatId ?? '',
-      record.runId ?? '',
-      effectiveTokens > 0 ? 't' : 'z',
-      bucketStart
-    ].join('|')
-
-    let bucket = buckets.get(key)
-    if (!bucket) {
-      bucket = {
-        first: record,
-        bucketStart,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        cacheReadInputTokens: 0,
-        cacheCreationInputTokens: 0,
-        durationMs: 0,
-        runCount: 0
-      }
-      buckets.set(key, bucket)
-    }
-    bucket.inputTokens += Math.max(0, record.inputTokens || 0)
-    bucket.outputTokens += Math.max(0, record.outputTokens || 0)
-    bucket.totalTokens += effectiveTokens
-    bucket.cacheReadInputTokens += Math.max(0, record.cacheReadInputTokens || 0)
-    bucket.cacheCreationInputTokens += Math.max(0, record.cacheCreationInputTokens || 0)
-    bucket.durationMs += Math.max(0, record.durationMs || 0)
-    bucket.runCount += usageRecordRunCount(record)
-  }
-
-  const aggregated: UsageRecord[] = passthrough
-  for (const [key, bucket] of buckets) {
-    aggregated.push({
-      ...bucket.first,
-      id: `external-agg-${bucket.first.provider ?? 'unknown'}-${bucketHash(key)}`,
-      timestamp: bucket.bucketStart,
-      inputTokens: bucket.inputTokens,
-      outputTokens: bucket.outputTokens,
-      totalTokens: bucket.totalTokens,
-      ...(bucket.cacheReadInputTokens > 0
-        ? { cacheReadInputTokens: bucket.cacheReadInputTokens }
-        : {}),
-      ...(bucket.cacheCreationInputTokens > 0
-        ? { cacheCreationInputTokens: bucket.cacheCreationInputTokens }
-        : {}),
-      durationMs: bucket.durationMs,
-      runCount: bucket.runCount
-    })
-  }
-
-  return aggregated.sort((a, b) => b.timestamp - a.timestamp || (a.id < b.id ? -1 : 1))
+  const accumulator = new ExternalUsageBucketAccumulator(nowMs)
+  for (const record of records) accumulator.add(record)
+  return accumulator.finish()
 }
