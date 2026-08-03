@@ -8,7 +8,7 @@
  *   --targetPath=...
  *   --runId=...
  *   --lockOwnerId=...
- *   --holdMs=200          (holder only; safety cap before releaseAllForRun)
+ *   --holdMs=200          (holder only; fail-closed parent-signal deadline)
  *   --retryTimeoutMs=5000 (contender only)
  *   --identityRegistry=...  shared JSON map pid → processBirthIdentity
  *
@@ -141,18 +141,21 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function waitForParentReleaseOrTimeout(holdMs: number): Promise<'signal' | 'timeout'> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      cleanup()
-      resolve('timeout')
-    }, Math.max(50, holdMs))
+function waitForParentRelease(holdMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => {
+        cleanup()
+        reject(new Error(`holder timed out waiting for parent release signal (${holdMs}ms)`))
+      },
+      Math.max(50, holdMs)
+    )
 
     const onMessage = (raw: unknown) => {
       const message = raw as { type?: string }
       if (message && message.type === 'release') {
         cleanup()
-        resolve('signal')
+        resolve()
       }
     }
 
@@ -278,18 +281,12 @@ async function runHolder(args: WorkerArgs, processBirthIdentity: string): Promis
       transitionId: acquired.transitionId
     })
 
-    // Hold until parent signals release after contender conflict, or holdMs safety cap.
-    await waitForParentReleaseOrTimeout(args.holdMs)
-
-    // Peer contender open reclassifies the still-live lease as orphan_live. The
-    // issuing authority can still release by exact token (production path),
-    // which appends kind=release. releaseAllForRun without forceOrphaned is
-    // intentionally blocked while status !== held and the owner is still live.
-    // For the audit contract we prefer release_run via forceOrphaned — same as
-    // multi-instance terminal cleanup of a live orphan for this runId.
-    const released = await authority.releaseAllForRun(args.runId, {
-      transitionId: `holder-release-${args.runId}`,
-      forceOrphaned: true
+    // Fail closed unless the parent explicitly signals after observing the
+    // contender conflict. The issuing authority releases its own exact token;
+    // no human-only orphan-force path is exercised by this smoke.
+    await waitForParentRelease(args.holdMs)
+    const released = await authority.release(acquired.tokens[0], {
+      transitionId: `holder-release-${args.runId}`
     })
     if (!released.ok) {
       send({
@@ -377,6 +374,28 @@ async function runContender(args: WorkerArgs, processBirthIdentity: string): Pro
     })
 
     const deadline = Date.now() + Math.max(500, args.retryTimeoutMs)
+    let holderReleased = false
+    while (Date.now() < deadline) {
+      const snapshot = authority.snapshot()
+      if (!snapshot.leases.some((lease) => lease.owner.runId !== args.runId)) {
+        holderReleased = true
+        break
+      }
+      await sleep(25)
+    }
+
+    if (!holderReleased) {
+      send({
+        type: 'error',
+        role: 'contender',
+        runId: args.runId,
+        pid: process.pid,
+        message: `contender timed out waiting for live lock state to become free (${args.retryTimeoutMs}ms)`
+      })
+      process.exitCode = 1
+      return
+    }
+
     let attempt = 0
     let resumed: WorkspaceLockAcquireResult | null = null
     while (Date.now() < deadline) {
@@ -388,7 +407,7 @@ async function runContender(args: WorkerArgs, processBirthIdentity: string): Pro
         resumed = result
         break
       }
-      if (result.reason !== 'conflict' && result.reason !== 'authority_busy') {
+      if (result.reason !== 'authority_busy') {
         send({
           type: 'error',
           role: 'contender',
@@ -408,7 +427,7 @@ async function runContender(args: WorkerArgs, processBirthIdentity: string): Pro
         role: 'contender',
         runId: args.runId,
         pid: process.pid,
-        message: `contender timed out waiting to resume after holder release (${args.retryTimeoutMs}ms)`
+        message: `contender timed out acquiring after live state became free (${args.retryTimeoutMs}ms)`
       })
       process.exitCode = 1
       return

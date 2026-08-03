@@ -196,6 +196,37 @@ describe('NodeWorkspaceLockPersistence', () => {
     expect(staleContender.readInstanceFence()).toBeNull()
   })
 
+  it('accepts a fresh contender fence installed immediately after exact release', () => {
+    const root = mkdtempSync(join(tmpdir(), 'taskwraith-work-lock-release-race-'))
+    temporaryRoots.push(root)
+    const original = fence('fence-release-owner', 1)
+    const replacement = fence('fence-next-contender', 2)
+    const fencePath = join(
+      root,
+      WORKSPACE_LOCK_AUTHORITY_DIRECTORY,
+      WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME
+    )
+    const baseFs = nodeFs as unknown as NodeWorkspaceLockPersistenceFs
+    let installReplacement = true
+    const racingFs: NodeWorkspaceLockPersistenceFs = {
+      ...baseFs,
+      unlinkSync: (target) => {
+        baseFs.unlinkSync(target)
+        if (installReplacement && target === fencePath) {
+          installReplacement = false
+          writeFileSync(fencePath, `${JSON.stringify(replacement)}\n`, { mode: 0o600 })
+        }
+      }
+    }
+    const owner = new NodeWorkspaceLockPersistence({ userDataRoot: root })
+    const releaser = new NodeWorkspaceLockPersistence({ userDataRoot: root, fs: racingFs })
+
+    expect(owner.acquireInstanceFence(original)).toEqual({ ok: true })
+    expect(releaser.releaseInstanceFence(original.fenceId)).toBe(true)
+    expect(owner.readInstanceFence()).toEqual(replacement)
+    expect(owner.releaseInstanceFence(replacement.fenceId)).toBe(true)
+  })
+
   it('quarantines only the observed stale guard and never unlinks a replacement pathname', async () => {
     const { root, store } = createStore()
     store.readEvents()

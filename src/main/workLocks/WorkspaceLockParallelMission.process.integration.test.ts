@@ -4,7 +4,7 @@
  * Complements WorkspaceLockParallelMission.integration.test.ts (in-process
  * async closures) with real OS processes sharing one durable WAL:
  *   holder acquire → WAL-visible handshake → contender conflict →
- *   holder release_run → contender resume acquire → ordered audit trail.
+ *   holder release → contender resume acquire → ordered audit trail.
  *
  * Success is state-driven (WAL / IPC results), not sleep-based timing.
  */
@@ -91,10 +91,7 @@ function walKinds(persistence: NodeWorkspaceLockPersistence): string[] {
   return decodeWorkspaceLockWal(persistence.readEvents().raw).events.map((event) => event.kind)
 }
 
-function walHasAcquireForRun(
-  persistence: NodeWorkspaceLockPersistence,
-  runId: string
-): boolean {
+function walHasAcquireForRun(persistence: NodeWorkspaceLockPersistence, runId: string): boolean {
   const state = decodeWorkspaceLockWal(persistence.readEvents().raw)
   return state.events.some((event) => {
     if (event.kind !== 'acquire') return false
@@ -129,7 +126,11 @@ function forkWorker(input: {
   identityRegistry: string
   holdMs?: number
   retryTimeoutMs?: number
-}): { child: ChildProcess; messages: WorkerIpcMessage[]; waitFor: (type: WorkerIpcMessage['type'], timeoutMs?: number) => Promise<WorkerIpcMessage> } {
+}): {
+  child: ChildProcess
+  messages: WorkerIpcMessage[]
+  waitFor: (type: WorkerIpcMessage['type'], timeoutMs?: number) => Promise<WorkerIpcMessage>
+} {
   const argv = [
     `--role=${input.role}`,
     `--userDataRoot=${input.userDataRoot}`,
@@ -201,10 +202,7 @@ function forkWorker(input: {
     }
   })
 
-  function waitFor(
-    type: WorkerIpcMessage['type'],
-    timeoutMs = 10_000
-  ): Promise<WorkerIpcMessage> {
+  function waitFor(type: WorkerIpcMessage['type'], timeoutMs = 10_000): Promise<WorkerIpcMessage> {
     const existing = messages.find((message) => message.type === type)
     if (existing) return Promise.resolve(existing)
     return new Promise<WorkerIpcMessage>((resolve, reject) => {
@@ -226,74 +224,74 @@ function forkWorker(input: {
 }
 
 describe('WorkspaceLockParallelMission process integration', () => {
-  it('forks holder then contender against durable WAL: conflict, release, resume, ordered audit',
-    async () => {
-      const h = makeHarness()
-      const holderRunId = 'run-process-holder'
-      const contenderRunId = 'run-process-contender'
+  it('forks holder then contender against durable WAL: conflict, release, resume, ordered audit', async () => {
+    const h = makeHarness()
+    const holderRunId = 'run-process-holder'
+    const contenderRunId = 'run-process-contender'
 
-      // 1) Fork holder; handshake = WAL-visible acquire (not sleep).
-      const holder = forkWorker({
-        role: 'holder',
-        userDataRoot: h.userData,
-        workspacePath: h.workspace,
-        targetPath: h.targetPath,
-        runId: holderRunId,
-        lockOwnerId: 'process-holder',
-        identityRegistry: h.identityRegistry,
-        // Safety cap only; parent signals release after contender conflict.
-        holdMs: 15_000
-      })
+    // 1) Fork holder; handshake = WAL-visible acquire (not sleep).
+    const holder = forkWorker({
+      role: 'holder',
+      userDataRoot: h.userData,
+      workspacePath: h.workspace,
+      targetPath: h.targetPath,
+      runId: holderRunId,
+      lockOwnerId: 'process-holder',
+      identityRegistry: h.identityRegistry,
+      // Safety cap only; parent signals release after contender conflict.
+      holdMs: 15_000
+    })
 
-      await holder.waitFor('ready')
-      await waitForWalAcquire(h.persistence, holderRunId)
-      const holderAcquired = await holder.waitFor('acquired')
-      expect(holderAcquired.ok).toBe(true)
+    const holderReady = await holder.waitFor('ready')
+    await waitForWalAcquire(h.persistence, holderRunId)
+    const holderAcquired = await holder.waitFor('acquired')
+    expect(holderAcquired.ok).toBe(true)
 
-      // 2) Contender first acquire must conflict with holder runId.
-      const contender = forkWorker({
-        role: 'contender',
-        userDataRoot: h.userData,
-        workspacePath: h.workspace,
-        targetPath: h.targetPath,
-        runId: contenderRunId,
-        lockOwnerId: 'process-contender',
-        identityRegistry: h.identityRegistry,
-        retryTimeoutMs: 8_000
-      })
+    // 2) Contender first acquire must conflict with holder runId.
+    const contender = forkWorker({
+      role: 'contender',
+      userDataRoot: h.userData,
+      workspacePath: h.workspace,
+      targetPath: h.targetPath,
+      runId: contenderRunId,
+      lockOwnerId: 'process-contender',
+      identityRegistry: h.identityRegistry,
+      retryTimeoutMs: 8_000
+    })
 
-      await contender.waitFor('ready')
-      const conflict = await contender.waitFor('conflict')
-      expect(conflict.reason).toBe('conflict')
-      expect(conflict.holderRunIds).toEqual(expect.arrayContaining([holderRunId]))
+    const contenderReady = await contender.waitFor('ready')
+    expect(holderReady.pid).toEqual(expect.any(Number))
+    expect(contenderReady.pid).toEqual(expect.any(Number))
+    expect(contenderReady.pid).not.toBe(holderReady.pid)
+    const conflict = await contender.waitFor('conflict')
+    expect(conflict.reason).toBe('conflict')
+    expect(conflict.holderRunIds).toEqual(expect.arrayContaining([holderRunId]))
 
-      // 3) Signal holder to release (state-driven; holdMs is only a safety cap).
-      holder.child.send({ type: 'release' })
-      await holder.waitFor('released')
-      const contenderAcquired = await contender.waitFor('acquired')
-      expect(contenderAcquired.ok).toBe(true)
+    // 3) Signal holder to release (state-driven; holdMs is only a safety cap).
+    holder.child.send({ type: 'release' })
+    await holder.waitFor('released')
+    const contenderAcquired = await contender.waitFor('acquired')
+    expect(contenderAcquired.ok).toBe(true)
 
-      await holder.waitFor('done')
-      await contender.waitFor('done')
+    await holder.waitFor('done')
+    await contender.waitFor('done')
 
-      // 4) WAL audit: boot + ordered acquire → release_run → acquire.
-      const kinds = walKinds(h.persistence)
-      expect(kinds).toEqual(expect.arrayContaining(['boot', 'acquire', 'release_run']))
+    // 4) WAL audit: boot + ordered acquire → release → acquire.
+    const kinds = walKinds(h.persistence)
+    expect(kinds).toEqual(expect.arrayContaining(['boot', 'acquire', 'release']))
 
-      const firstAcquire = kinds.indexOf('acquire')
-      const releaseRun = kinds.indexOf('release_run', firstAcquire + 1)
-      const secondAcquire = kinds.indexOf('acquire', releaseRun + 1)
-      expect(firstAcquire).toBeGreaterThanOrEqual(0)
-      expect(releaseRun).toBeGreaterThan(firstAcquire)
-      expect(secondAcquire).toBeGreaterThan(releaseRun)
+    const firstAcquire = kinds.indexOf('acquire')
+    const release = kinds.indexOf('release', firstAcquire + 1)
+    const secondAcquire = kinds.indexOf('acquire', release + 1)
+    expect(firstAcquire).toBeGreaterThanOrEqual(0)
+    expect(release).toBeGreaterThan(firstAcquire)
+    expect(secondAcquire).toBeGreaterThan(release)
 
-      // Confirm acquire events bind to the expected owners in order.
-      const acquireRunIds = decodeWorkspaceLockWal(h.persistence.readEvents().raw)
-        .events.filter((event) => event.kind === 'acquire')
-        .flatMap((event) => event.payload.leases.map((lease) => lease.owner.runId))
-      expect(acquireRunIds[0]).toBe(holderRunId)
-      expect(acquireRunIds).toContain(contenderRunId)
-    },
-    30_000
-  )
+    // Confirm acquire events bind to the expected owners in order.
+    const acquireRunIds = decodeWorkspaceLockWal(h.persistence.readEvents().raw)
+      .events.filter((event) => event.kind === 'acquire')
+      .flatMap((event) => event.payload.leases.map((lease) => lease.owner.runId))
+    expect(acquireRunIds[0]).toBe(holderRunId)
+    expect(acquireRunIds).toContain(contenderRunId)
+  }, 30_000)
 })

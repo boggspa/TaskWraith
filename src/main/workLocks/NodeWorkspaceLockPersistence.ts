@@ -408,7 +408,11 @@ export class NodeWorkspaceLockPersistence {
     if (rechecked.fenceId !== expectedFenceId) return false
     this.fs.unlinkSync(path)
     this.fsyncDirectory(this.authorityDirectory)
-    if (this.readOptionalRegularFile(path)) {
+    // Another authority may legitimately acquire a fresh fence immediately
+    // after the unlink. That is not a failed release of this exact fence;
+    // only the same fence id surviving/reappearing would violate the CAS.
+    const replacement = this.readInstanceFence()
+    if (replacement?.fenceId === expectedFenceId) {
       throw new Error('Workspace-lock fence release could not be verified.')
     }
     return true
