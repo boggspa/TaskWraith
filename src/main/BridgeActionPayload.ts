@@ -829,6 +829,16 @@ export interface BridgeToggleMessagePinAction extends BridgeActionMetadata {
   pinned: boolean
 }
 
+export interface BridgeToggleMessageFeedbackAction extends BridgeActionMetadata {
+  kind: 'toggleMessageFeedback'
+  workspaceId: string
+  threadId: string
+  messageId: string
+  vote: 'up' | 'down'
+  reason?: string
+  note?: string
+}
+
 /** Promote a queued Human People comment into a host-owned composer draft.
  * The phone sends identity only; the Mac re-reads and frames canonical content. */
 export interface BridgePromoteCollaboratorCommentAction extends BridgeActionMetadata {
@@ -1066,6 +1076,7 @@ export type BridgeActionPayload =
   | BridgeGoalUpdateAction
   | BridgeBlackboardPostAction
   | BridgeToggleMessagePinAction
+  | BridgeToggleMessageFeedbackAction
   | BridgePromoteCollaboratorCommentAction
   | BridgeProposedPlanDecisionAction
   | BridgeCanvasActionAction
@@ -1212,6 +1223,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'goalUpdate':
     case 'blackboardPost':
     case 'toggleMessagePin':
+    case 'toggleMessageFeedback':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1303,6 +1315,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'goalUpdate':
     case 'blackboardPost':
     case 'toggleMessagePin':
+    case 'toggleMessageFeedback':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1396,6 +1409,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'goalUpdate':
     case 'blackboardPost':
     case 'toggleMessagePin':
+    case 'toggleMessageFeedback':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1651,6 +1665,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isToggleMessagePin(parsed)
         ? (parsed as unknown as BridgeToggleMessagePinAction)
         : { kind: 'unknown', rawKind: 'toggleMessagePin', raw: parsed }
+    case 'toggleMessageFeedback':
+      return isToggleMessageFeedback(parsed)
+        ? (parsed as unknown as BridgeToggleMessageFeedbackAction)
+        : { kind: 'unknown', rawKind: 'toggleMessageFeedback', raw: parsed }
     case 'promoteCollaboratorComment':
       return isPromoteCollaboratorComment(parsed)
         ? (parsed as unknown as BridgePromoteCollaboratorCommentAction)
@@ -2429,6 +2447,17 @@ function isToggleMessagePin(v: Record<string, unknown>): boolean {
     typeof v.messageId === 'string' &&
     v.messageId.trim().length > 0 &&
     typeof v.pinned === 'boolean'
+  )
+}
+
+function isToggleMessageFeedback(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.messageId === 'string' &&
+    v.messageId.trim().length > 0 &&
+    (v.vote === 'up' || v.vote === 'down') &&
+    (v.reason === undefined || (typeof v.reason === 'string' && v.reason.length <= 80)) &&
+    (v.note === undefined || (typeof v.note === 'string' && v.note.length <= 1000))
   )
 }
 

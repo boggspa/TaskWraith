@@ -5668,6 +5668,32 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Toggle thumbs feedback on an assistant transcript row. The Mac applies
+    /// canonical toggle semantics, saves the chat, and writes the existing
+    /// attributed feedback receipt through AppStore.saveChat.
+    public func toggleMessageFeedback(
+        _ card: RemoteTaskCard,
+        request: AssistantMessageFeedbackRequest
+    ) {
+        guard !isDemo else {
+            lastActionMessage = "Message feedback needs a connected Mac."
+            return
+        }
+        guard let ws = card.workspaceId, let thread = card.threadId else { return }
+        send(
+            BridgeAction.toggleMessageFeedback(
+                workspaceId: ws,
+                threadId: thread,
+                messageId: request.messageId,
+                vote: request.vote.rawValue,
+                reason: request.details?.reason,
+                note: request.details?.note
+            ),
+            successLabel: "Feedback saved."
+        )
+        scheduleThreadRefreshAfterUserAction(thread)
+    }
+
     /// Promote a queued Human People contribution through the Mac canonical trust boundary.
     /// The host re-reads the message and returns framed text; the phone only appends
     /// that returned draft to the composer and never sends it.

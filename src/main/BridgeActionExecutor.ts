@@ -45,6 +45,7 @@ import type {
   BridgeGoalUpdateAction,
   BridgeBlackboardPostAction,
   BridgeToggleMessagePinAction,
+  BridgeToggleMessageFeedbackAction,
   BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
@@ -228,6 +229,9 @@ export interface BridgeActionExecutor {
   executeBlackboardPost(action: BridgeBlackboardPostAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
+  ): Promise<BridgeActionExecutionResult>
+  executeToggleMessageFeedback(
+    action: BridgeToggleMessageFeedbackAction
   ): Promise<BridgeActionExecutionResult>
   executePromoteCollaboratorComment(
     action: BridgePromoteCollaboratorCommentAction
@@ -521,6 +525,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeToggleMessagePinAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('toggleMessagePin', action.threadId)
+  }
+  async executeToggleMessageFeedback(
+    action: BridgeToggleMessageFeedbackAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('toggleMessageFeedback', action.threadId)
   }
   async executePromoteCollaboratorComment(
     action: BridgePromoteCollaboratorCommentAction
@@ -980,6 +989,7 @@ export interface MainProcessActionExecutorDependencies {
     entry?: unknown
   }>
   toggleMessagePinFn?: (action: BridgeToggleMessagePinAction) => Promise<unknown>
+  toggleMessageFeedbackFn?: (action: BridgeToggleMessageFeedbackAction) => Promise<unknown>
   promoteCollaboratorCommentFn?: (action: BridgePromoteCollaboratorCommentAction) => Promise<{
     ok: boolean
     draft?: string
@@ -2194,6 +2204,17 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       'toggleMessagePin',
       action.threadId,
       this.deps.toggleMessagePinFn,
+      action
+    )
+  }
+
+  async executeToggleMessageFeedback(
+    action: BridgeToggleMessageFeedbackAction
+  ): Promise<BridgeActionExecutionResult> {
+    return this.executeEnsembleAction(
+      'toggleMessageFeedback',
+      action.threadId,
+      this.deps.toggleMessageFeedbackFn,
       action
     )
   }

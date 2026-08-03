@@ -1598,6 +1598,17 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let insertedAsDraft: Bool?
         }
         public let peopleContribution: PeopleContribution?
+
+        /// User thumbs state for a rateable assistant row. The Mac applies the
+        /// toggle and writes durable receipts; this is render state only.
+        public struct MessageFeedback: Codable, Sendable, Equatable {
+            public let vote: String
+            public let at: Int64
+            public let reason: String?
+            public let note: String?
+        }
+        public let feedbackEligible: Bool?
+        public let feedback: MessageFeedback?
         /// Structured metadata for returned TaskWraith sub-thread output. The
         /// row `preview` carries the extracted child-agent body.
         public struct SubThreadReturn: Codable, Sendable, Equatable {
@@ -2427,6 +2438,21 @@ public enum BridgeAction {
             "workspaceId": workspaceId, "threadId": threadId,
             "messageId": messageId, "pinned": pinned,
         ])
+    }
+
+    public static func toggleMessageFeedback(
+        workspaceId: String, threadId: String, messageId: String, vote: String,
+        reason: String? = nil, note: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "toggleMessageFeedback", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "messageId": messageId, "vote": vote,
+        ]
+        if let reason, !reason.isEmpty { payload["reason"] = String(reason.prefix(80)) }
+        if let note, !note.isEmpty { payload["note"] = String(note.prefix(1000)) }
+        return encode(payload)
     }
 
     /// Ask the Mac to re-read and safely frame a queued People comment as a

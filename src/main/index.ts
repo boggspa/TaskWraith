@@ -417,6 +417,7 @@ import {
   type RemoteProjectionMode,
   type RemoteThreadSnapshot
 } from './RemoteThreadProjection'
+import { applyRemoteMessageFeedback } from './RemoteMessageFeedback'
 import { ensembleSpeakerForMessage } from './EnsemblePrompt'
 import { extractRunId, extractThreadId } from './BridgeRunEventSink'
 import { resolveCanonicalWorkspaceId } from './WorkspaceIdentity'
@@ -41851,6 +41852,30 @@ if (isGeminiMcpBridgeProcess) {
           } catch (err) {
             return { ok: false, reason: err instanceof Error ? err.message : String(err) }
           }
+        },
+        toggleMessageFeedbackFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, error: 'Thread not found' }
+          if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
+            return { ok: false, error: 'Thread does not belong to this workspace' }
+          }
+          const index = chat.messages.findIndex((message) => message.id === action.messageId)
+          if (index < 0) return { ok: false, error: 'Message not found' }
+          const nextMessage = applyRemoteMessageFeedback(
+            chat.messages[index],
+            { vote: action.vote, reason: action.reason, note: action.note },
+            Date.now()
+          )
+          if (!nextMessage) return { ok: false, error: 'Message cannot be rated' }
+          const messages = [...chat.messages]
+          messages[index] = nextMessage
+          const updated: ChatRecord = { ...chat, messages, updatedAt: Date.now() }
+          // saveChat invokes the existing attributed feedback-ledger hook.
+          AppStore.saveChat(updated)
+          broadcastChatUpdated(updated)
+          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
+          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          return { ok: true, feedback: nextMessage.metadata?.feedback ?? null }
         },
         toggleMessagePinFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)

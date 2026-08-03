@@ -311,6 +311,10 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
+    executeToggleMessageFeedback: make('executeToggleMessageFeedback', {
+      executed: true,
+      message: 'toggleMessageFeedback done'
+    }),
     executePromoteCollaboratorComment: make('executePromoteCollaboratorComment', {
       executed: true,
       message: 'promoteCollaboratorComment done'
@@ -2442,6 +2446,32 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/capability "startTurn"/i)
+    })
+
+    it('gates assistant feedback under startTurn and dispatches it on read-write', async () => {
+      const readOnlyRouter = new BridgeActionRouter({ allowlist: seedReadOnly() })
+      const payload = {
+        kind: 'toggleMessageFeedback',
+        threadId: 'chat-1',
+        messageId: 'assistant-1',
+        vote: 'down'
+      }
+      const denied = (await readOnlyRouter.route('bridge.requestActionAck', {
+        payloadBase64: encodeAction({ ...payload, workspaceId: 'ws-readonly' })
+      })) as { accepted: boolean; message?: string }
+      expect(denied.accepted).toBe(false)
+      expect(denied.message).toMatch(/capability "startTurn"/i)
+
+      const { executor, calls } = makeStubExecutor()
+      const readWriteRouter = new BridgeActionRouter({
+        allowlist: seedReadOnly(),
+        executor
+      })
+      const accepted = (await readWriteRouter.route('bridge.requestActionAck', {
+        payloadBase64: encodeAction({ ...payload, workspaceId: 'ws-readwrite' })
+      })) as { accepted: boolean }
+      expect(accepted.accepted).toBe(true)
+      expect(calls[0]?.method).toBe('executeToggleMessageFeedback')
     })
 
     it('accepts chatMarkdownTranscript against read-only workspace (monitor-tier read)', async () => {

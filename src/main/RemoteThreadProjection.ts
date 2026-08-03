@@ -764,6 +764,15 @@ export interface RemoteThreadRowMedia {
   thumbnail?: TranscriptMediaThumbnail
 }
 
+/** Assistant thumbs state. The Mac remains authoritative for toggling and
+ * durable ledger receipts; the phone receives only bounded render state. */
+export interface RemoteMessageFeedback {
+  vote: 'up' | 'down'
+  at: number
+  reason?: string
+  note?: string
+}
+
 export type RemotePooledAgentIdentity = PooledAgentIdentitySnapshot
 
 export interface RemoteThreadRow {
@@ -831,6 +840,10 @@ export interface RemoteThreadRow {
   threadMessage?: RemoteThreadMessageSummary
   /** Trust-aware framing for a Human People contribution. */
   peopleContribution?: RemotePeopleContributionSummary
+  /** True when the desktop offers thumbs on this assistant row. */
+  feedbackEligible?: true
+  /** User thumbs state for a rateable assistant row. */
+  feedback?: RemoteMessageFeedback
   /** Structured metadata for returned TaskWraith sub-thread output. */
   subThreadReturn?: RemoteSubThreadReturnSummary
   /** Structured metadata for a TaskWraith Agent Invocation card. */
@@ -2158,6 +2171,20 @@ function ensembleParticipantIdForMessage(message: ChatMessage): string | undefin
   return undefined
 }
 
+function buildMessageFeedback(message: ChatMessage): RemoteMessageFeedback | undefined {
+  if (message.role !== 'assistant' || message.metadata?.kind === 'channelInbound') return undefined
+  const raw = message.metadata?.feedback
+  if (!raw || (raw.vote !== 'up' && raw.vote !== 'down')) return undefined
+  const at = Number(raw.at)
+  if (!Number.isFinite(at) || at < 0) return undefined
+  const feedback: RemoteMessageFeedback = { vote: raw.vote, at }
+  const reason = stringField(raw.reason, 80)
+  const note = stringField(raw.note, 1000)
+  if (reason) feedback.reason = reason
+  if (note) feedback.note = note
+  return feedback
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
@@ -2172,6 +2199,7 @@ function buildRow(
   const subThreadReturn = buildSubThreadReturn(message)
   const subThreadDelegation = buildSubThreadDelegation(message, returnedSubThreadIds)
   const guestReply = buildGuestReply(message)
+  const feedback = buildMessageFeedback(message)
   const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
     id: message.id,
@@ -2287,6 +2315,10 @@ function buildRow(
     }
   }
   if (peopleContribution) row.peopleContribution = peopleContribution
+  if (message.role === 'assistant' && metadata?.kind !== 'channelInbound') {
+    row.feedbackEligible = true
+  }
+  if (feedback) row.feedback = feedback
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
   if (subThreadDelegation) row.subThreadDelegation = subThreadDelegation
   if (guestReply) {

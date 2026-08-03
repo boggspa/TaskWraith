@@ -4656,6 +4656,14 @@ struct ThreadRowView: View, Equatable {
                                 onTogglePin: { togglePin() },
                                 onOpenSideChat: { openSideChatFromMessage() }
                             )
+                            if let assistantFeedbackItem, let card = threadCard {
+                                AssistantMessageFeedbackBar(
+                                    item: assistantFeedbackItem,
+                                    onFeedback: { request in
+                                        model.toggleMessageFeedback(card, request: request)
+                                    }
+                                )
+                            }
                         }
                     }
                     .contextMenu {
@@ -4790,6 +4798,28 @@ struct ThreadRowView: View, Equatable {
             && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard && !isTool
             && (row.role == "user" || row.role == "assistant" || row.kind == "assistant"
                 || row.kind == "user" || row.kind == "message")
+    }
+
+    private var assistantFeedbackItem: AssistantMessageFeedbackItem? {
+        guard row.feedbackEligible == true else { return nil }
+        let current: AssistantMessageFeedbackState?
+        if let feedback = row.feedback,
+            let vote = AssistantMessageFeedbackVote(rawValue: feedback.vote)
+        {
+            current = AssistantMessageFeedbackState(
+                vote: vote,
+                at: feedback.at,
+                reason: feedback.reason,
+                note: feedback.note
+            )
+        } else {
+            current = nil
+        }
+        return AssistantMessageFeedbackItem(
+            messageId: row.id,
+            role: row.role ?? "assistant",
+            current: current
+        )
     }
 
     private var threadCard: RemoteTaskCard? {

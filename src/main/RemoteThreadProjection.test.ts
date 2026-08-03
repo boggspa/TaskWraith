@@ -1001,6 +1001,46 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('assistant feedback projection', () => {
+    it('projects bounded thumbs state only on rateable assistant rows', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'assistant-rated',
+          role: 'assistant',
+          content: 'Answer',
+          metadata: {
+            feedback: {
+              vote: 'down',
+              at: 123,
+              reason: 'wrong-approach',
+              note: 'Missed the edge case'
+            }
+          }
+        }),
+        msg(2, {
+          id: 'user-row',
+          role: 'user',
+          content: 'Prompt',
+          metadata: {
+            feedback: { vote: 'up', at: 456 }
+          }
+        })
+      ])
+
+      expect(snap.rows[0]).toMatchObject({
+        feedbackEligible: true,
+        feedback: {
+          vote: 'down',
+          at: 123,
+          reason: 'wrong-approach',
+          note: 'Missed the edge case'
+        }
+      })
+      expect(snap.rows[1].feedbackEligible).toBeUndefined()
+      expect(snap.rows[1].feedback).toBeUndefined()
+    })
+  })
+
   describe('proposedPlan', () => {
     const PLAN_BODY = '## Plan\n\n- Add a smoke test\n- Wire the button\n- Run the suite'
 

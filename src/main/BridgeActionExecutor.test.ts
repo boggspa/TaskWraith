@@ -41,6 +41,7 @@ import type {
   BridgeGoalUpdateAction,
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
+  BridgeToggleMessageFeedbackAction,
   BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
@@ -215,6 +216,14 @@ const sample = {
       order: 1
     }
   } satisfies BridgeSetChatKindAction,
+  toggleMessageFeedback: {
+    kind: 'toggleMessageFeedback',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    messageId: 'assistant-1',
+    vote: 'down',
+    reason: 'incomplete'
+  } satisfies BridgeToggleMessageFeedbackAction,
   promoteCollaboratorComment: {
     kind: 'promoteCollaboratorComment',
     workspaceId: 'ws-1',
@@ -1111,6 +1120,20 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     expect(result.message).toBe(
       'Chat mode was not changed: Cannot change chat mode while a turn is active'
     )
+  })
+
+  it('dispatches assistant feedback through the host mutation handler', async () => {
+    const toggleMessageFeedbackFn = vi.fn().mockResolvedValue({
+      ok: true,
+      feedback: { vote: 'down', at: 123, reason: 'incomplete' }
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, toggleMessageFeedbackFn })
+    const result = await executor.executeToggleMessageFeedback(sample.toggleMessageFeedback)
+    expect(toggleMessageFeedbackFn).toHaveBeenCalledWith(sample.toggleMessageFeedback)
+    expect(result).toMatchObject({
+      executed: true,
+      data: { actionKind: 'toggleMessageFeedback' }
+    })
   })
 
   it('returns only the Mac-framed collaborator draft', async () => {

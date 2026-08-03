@@ -1579,6 +1579,47 @@ describe('decodeBridgeActionPayload', () => {
       ).toBe('unknown')
     })
 
+    it('decodes bounded assistant feedback as a gated mutation', () => {
+      const wire = encode({
+        kind: 'toggleMessageFeedback',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'assistant-1',
+        vote: 'down',
+        reason: 'wrong-approach',
+        note: 'Missed the edge case'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toMatchObject({
+        kind: 'toggleMessageFeedback',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'assistant-1',
+        vote: 'down'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects invalid feedback votes and oversized notes', () => {
+      for (const invalid of [
+        { vote: 'sideways' },
+        { vote: 'down', note: 'n'.repeat(1001) }
+      ]) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({
+            kind: 'toggleMessageFeedback',
+            workspaceId: 'ws-1',
+            threadId: 'thread-1',
+            messageId: 'assistant-1',
+            ...invalid
+          })
+        )
+        expect(payload.kind).toBe('unknown')
+      }
+    })
+
     it('decodes promoteCollaboratorComment as an identity-only gated mutation', () => {
       const wire = encode({
         kind: 'promoteCollaboratorComment',
