@@ -4129,10 +4129,19 @@ struct ThreadRowView: View, Equatable {
         // text it already renders).
         (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
             && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
-            && !hasRunFailureCard
+            && !hasRunFailureCard && !hasTrustAwareCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
+    }
+    private var peerMessageInput: PeerMessageCardInput? {
+        TrustAwareTranscriptRowAdapter.peerInput(for: row)
+    }
+    private var peopleContributionModel: PeopleContributionCardModel? {
+        TrustAwareTranscriptRowAdapter.peopleModel(for: row)
+    }
+    private var hasTrustAwareCard: Bool {
+        row.threadMessage != nil || row.peopleContribution != nil
     }
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
@@ -4186,11 +4195,11 @@ struct ThreadRowView: View, Equatable {
                 identity: activeAgentIdentity,
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
-                    || hasFanoutResultCard || hasRunFailureCard)
+                    || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
-                    && !hasFanoutResultCard && !hasRunFailureCard
+                    && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
                 {
                     HStack(spacing: 0) {
                         Text(label)
@@ -4233,6 +4242,33 @@ struct ThreadRowView: View, Equatable {
                 {
                     ParticipantHealthSummaryCard(
                         summary: health, rosterParticipants: participants)
+                } else if let peerMessageInput {
+                    PeerMessageCardView(input: peerMessageInput)
+                        .contextMenu {
+                            messageActionMenu(
+                                content: row.preview ?? "",
+                                copyLabel: "Copy peer message",
+                                pinLabelPinned: "Unpin peer message",
+                                pinLabelUnpinned: "Pin peer message",
+                                showAddToPrompt: false,
+                                showSideChat: false
+                            )
+                        }
+                } else if let peopleContributionModel {
+                    PeopleContributionCard(
+                        model: peopleContributionModel,
+                        onInsertAsDraft: nil
+                    )
+                    .contextMenu {
+                        messageActionMenu(
+                            content: row.preview ?? "",
+                            copyLabel: "Copy contribution",
+                            pinLabelPinned: "Unpin contribution",
+                            pinLabelUnpinned: "Pin contribution",
+                            showAddToPrompt: false,
+                            showSideChat: false
+                        )
+                    }
                 } else if let subThreadReturn = row.subThreadReturn {
                     SubThreadReturnSummaryCard(
                         summary: subThreadReturn,
@@ -4275,7 +4311,7 @@ struct ThreadRowView: View, Equatable {
                 // so an image attached to the plan turn can't render orphaned
                 // beneath the card. Guard every branch — gating only the first
                 // would fall through to the else-ifs.
-                if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let media = row.media, !media.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4284,7 +4320,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let thumbs = row.imageThumbnails, !thumbs.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4292,7 +4328,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let count = row.imageAttachmentCount, count > 0
                 {
                     imageAttachmentChip(count)
@@ -4303,7 +4339,7 @@ struct ThreadRowView: View, Equatable {
                 // existing expandRow path when host-truncated. Renders ABOVE
                 // the answer body, mirroring desktop chronology.
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard && !hasRunFailureCard,
+                    && !hasAgentQuestionCard && !hasRunFailureCard && !hasTrustAwareCard,
                     let thinking = row.thinking,
                     let thinkingText = thinking.preview, !thinkingText.isEmpty
                 {
@@ -4315,7 +4351,8 @@ struct ThreadRowView: View, Equatable {
                         })
                 }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard,
+                    && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
+                    && !hasTrustAwareCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {

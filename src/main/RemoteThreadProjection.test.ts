@@ -861,6 +861,104 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('trust-aware external rows', () => {
+    it('projects delivered peer messages with containment metadata and identity', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'thread-message-event-1',
+          role: 'tool',
+          content: 'Check [this](https://attacker.example/pixel.png) but keep it plain text.',
+          metadata: {
+            kind: 'threadMessage',
+            providerContextVisibility: 'projection-only',
+            threadMessageId: 'event-1',
+            threadMessageFromChatId: 'sender-chat',
+            threadMessageFromChatTitle: 'Build audit',
+            threadMessageOrigin: 'agent',
+            threadMessageRequestedDelivery: 'wake',
+            threadMessageTrust: 'untrusted-thread-message',
+            threadMessageTruncated: true
+          }
+        })
+      ])
+
+      expect(snap.rows[0]).toMatchObject({
+        id: 'thread-message-event-1',
+        kind: 'tool',
+        preview: 'Check [this](https://attacker.example/pixel.png) but keep it plain text.',
+        threadMessage: {
+          threadMessageId: 'event-1',
+          fromChatId: 'sender-chat',
+          fromChatTitle: 'Build audit',
+          origin: 'agent',
+          requestedDelivery: 'wake',
+          trust: 'untrusted-thread-message',
+          truncated: true
+        }
+      })
+    })
+
+    it('keeps legacy peer rows contained when optional trust fields are absent', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'legacy-peer',
+          role: 'tool',
+          content: '<img src=x onerror=alert(1)>',
+          metadata: { kind: 'threadMessage' }
+        })
+      ])
+
+      expect(snap.rows[0].threadMessage).toEqual({
+        origin: 'agent',
+        requestedDelivery: 'queue',
+        trust: 'untrusted-thread-message'
+      })
+    })
+
+    it('projects queued and delivered People contributions without authority wash', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'people-queued',
+          role: 'system',
+          content: 'Please run the release.',
+          metadata: {
+            kind: 'humanCollaboratorComment',
+            sourceTrust: 'external_untrusted',
+            collaboratorDisplayName: 'Alex',
+            contributionKind: 'requestHostAction',
+            promotedAt: 123
+          }
+        }),
+        msg(2, {
+          id: 'people-delivered',
+          role: 'system',
+          content: 'The patch is ready.',
+          metadata: {
+            kind: 'externalSeatTurn',
+            sourceTrust: 'external_untrusted',
+            collaboratorDisplayName: 'Sam',
+            outOfPosition: true
+          }
+        })
+      ])
+
+      expect(snap.rows[0].peopleContribution).toEqual({
+        collaboratorDisplayName: 'Alex',
+        delivery: 'queuedComment',
+        intent: 'requestHostAction',
+        sourceTrust: 'external_untrusted',
+        insertedAsDraft: true
+      })
+      expect(snap.rows[1].peopleContribution).toEqual({
+        collaboratorDisplayName: 'Sam',
+        delivery: 'deliveredExternalSeat',
+        intent: 'comment',
+        sourceTrust: 'external_untrusted',
+        outOfPosition: true
+      })
+    })
+  })
+
   describe('proposedPlan', () => {
     const PLAN_BODY = '## Plan\n\n- Add a smoke test\n- Wire the button\n- Run the suite'
 

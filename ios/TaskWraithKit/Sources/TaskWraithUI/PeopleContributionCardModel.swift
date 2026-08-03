@@ -119,7 +119,7 @@ public enum PeopleContributionCardCopy {
     public static let insertAsDraftHint =
         "Insert this collaborator request into the composer as a draft you review before sending"
     public static let trustCaptionQueued =
-        "External contributor — not system or host authority."
+        "External contributor — no host authority."
     public static let trustCaptionActionRequest =
         "Action request for you. Insert as draft only creates a host-owned draft; nothing sends itself."
     public static let trustCaptionDelivered =

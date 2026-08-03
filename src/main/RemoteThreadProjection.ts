@@ -55,6 +55,10 @@ import {
 } from './services/TranscriptMediaService'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import {
+  EXTERNAL_SEAT_TURN_KIND,
+  HUMAN_COLLABORATOR_COMMENT_KIND
+} from './collaboration/HumanCollaboratorMessages'
+import {
   groupFanoutLaneMessages,
   isEnsembleFanoutResultMessage,
   readEnsembleFanoutTranscriptParts,
@@ -487,20 +491,38 @@ export interface RemoteParticipantHealthSummary {
   entries: RemoteParticipantHealthEntry[]
 }
 
-/**
- * Peer thread-message inbox, projected for a phone. Counts and sender NAMES only —
- * never bodies. A message body is untrusted prose another agent wrote, and the
- * phone has no equivalent of the desktop card's containment (plain-text rendering,
- * no markdown, escaped markup), so shipping bodies here would put unrendered
- * attacker-adjacent text on a surface that has not been built to hold it. The
- * phone shows that messages are waiting; reading them happens on the desktop.
- */
+/** Peer thread-message INBOX summary. It intentionally remains counts/names-only;
+ * delivered bodies travel separately as trust-aware transcript rows. */
 export interface RemoteThreadMessageInboxSummary {
   pendingCount: number
   hasWakeRequest: boolean
   /** Display titles of the sending threads, capped. */
   senders: string[]
   oldestPendingAt?: number
+}
+
+/** Structured containment metadata for a delivered peer thread message. The
+ * body remains in the row preview, while this summary prevents clients from
+ * laundering the untrusted prose through their generic tool/markdown path. */
+export interface RemoteThreadMessageSummary {
+  threadMessageId?: string
+  fromChatId?: string
+  fromChatTitle?: string
+  origin: 'user' | 'agent'
+  requestedDelivery: 'queue' | 'wake'
+  trust: 'untrusted-thread-message'
+  truncated?: boolean
+}
+
+/** Structured authority framing for Human People contributions. Queued comments
+ * may offer an explicit host-owned draft action; delivered seat turns never do. */
+export interface RemotePeopleContributionSummary {
+  collaboratorDisplayName?: string
+  delivery: 'queuedComment' | 'deliveredExternalSeat'
+  intent: 'comment' | 'requestHostAction'
+  sourceTrust: 'external_untrusted'
+  outOfPosition?: boolean
+  insertedAsDraft?: boolean
 }
 
 export interface RemoteSubThreadReturnSummary {
@@ -788,6 +810,10 @@ export interface RemoteThreadRow {
   thinking?: RemoteThinkingTrace
   /** Structured ensemble pre-flight participant reachability summary. */
   participantHealth?: RemoteParticipantHealthSummary
+  /** Trust-aware framing for a delivered peer thread message. */
+  threadMessage?: RemoteThreadMessageSummary
+  /** Trust-aware framing for a Human People contribution. */
+  peopleContribution?: RemotePeopleContributionSummary
   /** Structured metadata for returned TaskWraith sub-thread output. */
   subThreadReturn?: RemoteSubThreadReturnSummary
   /** Present for a mirrored guest-participant reply — the guest's identity so
@@ -1080,6 +1106,8 @@ function rowWithTransportSkeleton(row: RemoteThreadRow): RemoteThreadRow {
     role: row.role,
     kind: row.kind,
     ...(row.speaker ? { speaker: row.speaker } : {}),
+    ...(row.threadMessage ? { threadMessage: row.threadMessage } : {}),
+    ...(row.peopleContribution ? { peopleContribution: row.peopleContribution } : {}),
     ...(row.imageAttachmentCount ? { imageAttachmentCount: row.imageAttachmentCount } : {}),
     preview,
     truncated: row.truncated || preview.length < row.preview.length,
@@ -1532,6 +1560,49 @@ function subThreadReturnBody(content: string): string {
   if (!lines[0]?.startsWith('↩ Result from ')) return content
   const bodyStart = lines[1]?.trim() === '' ? 2 : 1
   return lines.slice(bodyStart).join('\n').trimStart()
+}
+
+function buildThreadMessage(
+  message: ChatMessage
+): RemoteThreadMessageSummary | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'threadMessage') return undefined
+  const summary: RemoteThreadMessageSummary = {
+    origin: metadata.threadMessageOrigin === 'user' ? 'user' : 'agent',
+    requestedDelivery: metadata.threadMessageRequestedDelivery === 'wake' ? 'wake' : 'queue',
+    trust: 'untrusted-thread-message'
+  }
+  const threadMessageId = stringField(metadata.threadMessageId, 160)
+  if (threadMessageId) summary.threadMessageId = threadMessageId
+  const fromChatId = stringField(metadata.threadMessageFromChatId, 160)
+  if (fromChatId) summary.fromChatId = fromChatId
+  const fromChatTitle = stringField(metadata.threadMessageFromChatTitle, 160)
+  if (fromChatTitle) summary.fromChatTitle = fromChatTitle
+  if (metadata.threadMessageTruncated === true) summary.truncated = true
+  return summary
+}
+
+function buildPeopleContribution(
+  message: ChatMessage
+): RemotePeopleContributionSummary | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  const isQueued = metadata?.kind === HUMAN_COLLABORATOR_COMMENT_KIND
+  const isDelivered = metadata?.kind === EXTERNAL_SEAT_TURN_KIND
+  if (!isQueued && !isDelivered) return undefined
+
+  const summary: RemotePeopleContributionSummary = {
+    delivery: isQueued ? 'queuedComment' : 'deliveredExternalSeat',
+    intent:
+      isQueued && metadata.contributionKind === 'requestHostAction'
+        ? 'requestHostAction'
+        : 'comment',
+    sourceTrust: 'external_untrusted'
+  }
+  const collaboratorDisplayName = stringField(metadata.collaboratorDisplayName, 120)
+  if (collaboratorDisplayName) summary.collaboratorDisplayName = collaboratorDisplayName
+  if (isDelivered && metadata.outOfPosition === true) summary.outOfPosition = true
+  if (isQueued && typeof metadata.promotedAt === 'number') summary.insertedAsDraft = true
+  return summary
 }
 
 function buildSubThreadReturn(
@@ -2037,6 +2108,8 @@ function buildRow(
   questionAnswers?: RemoteAgentQuestionAnswers,
   runProviderHueClasses?: ReadonlyMap<string, string>
 ): RemoteThreadRow {
+  const threadMessage = buildThreadMessage(message)
+  const peopleContribution = buildPeopleContribution(message)
   const subThreadReturn = buildSubThreadReturn(message)
   const guestReply = buildGuestReply(message)
   const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
@@ -2145,6 +2218,13 @@ function buildRow(
   if (thinking) row.thinking = thinking
   const participantHealth = buildParticipantHealth(message)
   if (participantHealth) row.participantHealth = participantHealth
+  if (threadMessage) {
+    row.threadMessage = {
+      ...threadMessage,
+      ...(threadMessage.truncated || truncated ? { truncated: true } : {})
+    }
+  }
+  if (peopleContribution) row.peopleContribution = peopleContribution
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
   if (guestReply) {
     row.guestReply = guestReply.summary

@@ -1570,6 +1570,31 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             }
         }
         public let participantHealth: ParticipantHealth?
+        /// Trust-aware metadata for a delivered peer thread message. The body
+        /// remains in `preview`; presence of this field selects plain-text
+        /// containment instead of the generic tool-markdown renderer.
+        public struct ThreadMessage: Codable, Sendable, Equatable {
+            public let threadMessageId: String?
+            public let fromChatId: String?
+            public let fromChatTitle: String?
+            public let origin: String?
+            public let requestedDelivery: String?
+            public let trust: String?
+            public let truncated: Bool?
+        }
+        public let threadMessage: ThreadMessage?
+
+        /// Human People authority framing. A queued comment may offer an
+        /// explicit host-owned draft action; a delivered seat turn never does.
+        public struct PeopleContribution: Codable, Sendable, Equatable {
+            public let collaboratorDisplayName: String?
+            public let delivery: String?
+            public let intent: String?
+            public let sourceTrust: String?
+            public let outOfPosition: Bool?
+            public let insertedAsDraft: Bool?
+        }
+        public let peopleContribution: PeopleContribution?
         /// Structured metadata for returned TaskWraith sub-thread output. The
         /// row `preview` carries the extracted child-agent body.
         public struct SubThreadReturn: Codable, Sendable, Equatable {
