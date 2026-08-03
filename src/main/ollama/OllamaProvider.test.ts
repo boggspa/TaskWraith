@@ -3,6 +3,7 @@ import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
 import { GATEWAY_V9_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { RunManager } from '../RunManager'
+import { TOKEN_COUNT_CONFIDENCE_KEY, TOKEN_COUNT_ESTIMATED } from '../../shared/tokenEstimate'
 import {
   buildOllamaOpeningMessages,
   humanizeOllamaModelId,
@@ -79,6 +80,12 @@ type SendExitCall = {
   provider: string
   code: number | null
   route: AgentRunRoute | null | undefined
+}
+
+type WorkingUsageCall = {
+  stats: Record<string, unknown>
+  ensembleRun: boolean
+  route: AgentRunRoute
 }
 
 const stubEvent = {
@@ -161,11 +168,13 @@ function makeProviderDeps(
   errors: SendErrorCall[]
   exits: SendExitCall[]
   finishes: Array<{ runId: string | undefined; status: string }>
+  workingUsage: WorkingUsageCall[]
 } {
   const lines: SendLineCall[] = []
   const errors: SendErrorCall[] = []
   const exits: SendExitCall[] = []
   const finishes: Array<{ runId: string | undefined; status: string }> = []
+  const workingUsage: WorkingUsageCall[] = []
   const fetchMock =
     overrides.fetchMock ||
     vi.fn(async (url: string) => {
@@ -228,6 +237,9 @@ function makeProviderDeps(
       sendAgentCompatExit: (_sender, provider, code, route) => {
         exits.push({ provider, code, route })
       },
+      reportWorkingTokenUsage: (stats, context) => {
+        workingUsage.push({ stats, ...context })
+      },
       runManager: {
         attachAbortController: vi.fn(),
         canAdmitTransport: vi.fn(overrides.canAdmitTransport || (() => true)),
@@ -247,7 +259,8 @@ function makeProviderDeps(
     lines,
     errors,
     exits,
-    finishes
+    finishes,
+    workingUsage
   }
 }
 
@@ -1361,7 +1374,7 @@ describe('runOllamaProvider streaming', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const { deps, lines } = makeProviderDeps({ fetchMock })
+    const { deps, lines, workingUsage } = makeProviderDeps({ fetchMock })
     const runPromise = runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
 
     await new Promise((resolve) => setImmediate(resolve))
@@ -1371,6 +1384,15 @@ describe('runOllamaProvider streaming', () => {
         .filter((line) => line.payload.type === 'content')
         .map((line) => line.payload.text)
       expect(contentTexts).toEqual(['This is a streamed Ollama answer '])
+      expect(workingUsage.at(-1)).toMatchObject({
+        stats: {
+          input_tokens: 0,
+          output_tokens: 9,
+          total_tokens: 9,
+          [TOKEN_COUNT_CONFIDENCE_KEY]: TOKEN_COUNT_ESTIMATED
+        },
+        route: baseRoute
+      })
     } catch (error) {
       assertionError = error
     } finally {
@@ -1382,11 +1404,73 @@ describe('runOllamaProvider streaming', () => {
     const finalContentTexts = lines
       .filter((line) => line.payload.type === 'content')
       .map((line) => line.payload.text)
-    expect(finalContentTexts).toEqual([
-      'This is a streamed Ollama answer ',
-      'with a second chunk.'
-    ])
+    expect(finalContentTexts).toEqual(['This is a streamed Ollama answer ', 'with a second chunk.'])
+    expect(workingUsage.at(-1)?.stats).toMatchObject({
+      input_tokens: 4,
+      output_tokens: 12,
+      total_tokens: 16
+    })
+    expect(workingUsage.at(-1)?.stats).not.toHaveProperty(TOKEN_COUNT_CONFIDENCE_KEY)
     expect(lines.at(-1)?.payload.type).toBe('result')
+  })
+
+  it('keeps reasoning-looking ordinary answer text in the answer channel', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools', 'thinking']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({
+          details: { family: 'qwen' },
+          capabilities: ['tools', 'thinking']
+        })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content: 'Thinking Process: this is provider-authored answer text.'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 12 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines } = makeProviderDeps({ fetchMock })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(
+      lines
+        .filter((line) => line.payload.type === 'content')
+        .map((line) => line.payload.text)
+        .join('')
+    ).toBe('Thinking Process: this is provider-authored answer text.')
+    expect(lines.some((line) => line.payload.tool_name === 'ollama_thinking')).toBe(false)
+  })
+
+  it('keeps working-telemetry projection failures outside the provider outcome', async () => {
+    const { deps, lines, exits, finishes } = makeProviderDeps()
+    deps.reportWorkingTokenUsage = () => {
+      throw new Error('working telemetry unavailable')
+    }
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(lines.at(-1)?.payload).toMatchObject({ type: 'result', status: 'success' })
+    expect(exits).toEqual([{ provider: 'ollama', code: 0, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'completed' })
   })
 
   it('fails the run for a valid Ollama error stream chunk', async () => {
@@ -2377,26 +2461,15 @@ describe('runOllamaProvider streaming', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const { deps, lines } = makeProviderDeps({ fetchMock })
+    const { deps, lines, workingUsage } = makeProviderDeps({ fetchMock })
 
     await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
 
-    const visibleThinking = lines
-      .filter(
-        (line) =>
-          line.payload.tool_name === 'ollama_thinking' &&
-          line.payload.type === 'tool_result' &&
-          line.payload.transcriptVisible !== false
-      )
-      .map((line) => line.payload.output)
-    expect(visibleThinking).toEqual([])
-    const hiddenThinking = lines.filter(
-      (line) =>
-        line.payload.tool_name === 'ollama_thinking' &&
-        line.payload.type === 'tool_result' &&
-        line.payload.transcriptVisible === false
-    )
-    expect(hiddenThinking.length).toBeGreaterThan(0)
+    expect(lines.filter((line) => line.payload.tool_name === 'ollama_thinking')).toEqual([])
+    expect(
+      workingUsage.some((call) => call.stats[TOKEN_COUNT_CONFIDENCE_KEY] === TOKEN_COUNT_ESTIMATED)
+    ).toBe(true)
+    expect(JSON.stringify(workingUsage)).not.toContain('inspect files internally')
   })
 
   it('does not stream thinking-only text that becomes the visible answer', async () => {

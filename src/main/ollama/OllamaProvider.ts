@@ -17,6 +17,7 @@ import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
+import { buildEstimatedStreamUsage, visiblePayloadChars } from '../../shared/tokenEstimate'
 import type {
   AppSettings,
   OllamaToolControlTier,
@@ -188,6 +189,10 @@ export interface OllamaProviderDeps {
     provider: 'ollama',
     code: number | null,
     route?: AgentRunRoute | null
+  ) => void
+  reportWorkingTokenUsage?: (
+    stats: Record<string, unknown>,
+    context: { ensembleRun: boolean; route: AgentRunRoute }
   ) => void
   runManager: Pick<
     RunManager<any>,
@@ -2438,6 +2443,7 @@ async function runOllamaChatTurn(input: {
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
   onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
+  onGeneratedOutputChars?: (chars: number) => void
 }): Promise<OllamaChatTurnResult> {
   const options: Record<string, unknown> = {
     temperature: input.temperature ?? 0.2
@@ -2499,6 +2505,12 @@ async function runOllamaChatTurn(input: {
       throw new Error(chunk.error)
     }
     const contentDelta = chunk.message?.content || ''
+    const thinkingDelta = chunk.message?.thinking || ''
+    const generatedOutputChars =
+      contentDelta.length + thinkingDelta.length + visiblePayloadChars(chunk.message?.tool_calls)
+    if (generatedOutputChars > 0) {
+      input.onGeneratedOutputChars?.(generatedOutputChars)
+    }
     content += contentDelta
     if (contentDelta && input.onContentDelta) {
       pendingStreamContent += contentDelta
@@ -2518,7 +2530,6 @@ async function runOllamaChatTurn(input: {
         input.onContentDelta({ delta, content, chunk })
       }
     }
-    const thinkingDelta = chunk.message?.thinking || ''
     thinking += thinkingDelta
     if (
       thinkingDelta &&
@@ -2608,6 +2619,16 @@ export async function runOllamaProvider(
   const launchAuthorized = (): boolean =>
     !controller.signal.aborted &&
     deps.runManager.canAdmitTransport(route.appRunId, true)
+  const reportWorkingTokenUsage = (stats: Record<string, unknown>): void => {
+    try {
+      deps.reportWorkingTokenUsage?.(stats, {
+        ensembleRun: Boolean(payload.ensembleRun),
+        route
+      })
+    } catch {
+      // Ephemeral display telemetry must never change the provider outcome.
+    }
+  }
 
   try {
     const launchPlan = await resolveOllamaFinalLaunchPlan(
@@ -2747,6 +2768,12 @@ export async function runOllamaProvider(
     let harnessState: OllamaHarnessRunState = createOllamaHarnessRunState()
     let lastDone: OllamaChatChunk | null = null
     let runUsageStats: Record<string, unknown> | undefined
+    let estimatedOutputChars = 0
+    const reportGeneratedOutputChars = (chars: number): void => {
+      if (!Number.isFinite(chars) || chars <= 0) return
+      estimatedOutputChars += chars
+      reportWorkingTokenUsage(buildEstimatedStreamUsage({ outputChars: estimatedOutputChars }))
+    }
     let toolCallCount = 0
     // Retry ceiling: a local model can get stuck emitting empty / malformed /
     // reasoning-only / arg-invalid turns and receive nudge after nudge forever
@@ -2832,7 +2859,6 @@ export async function runOllamaProvider(
           streamedThinkingStarted = true
         }
         streamedThinkingText = thinkingText
-        const visible = !toolProtocolEnabled && !looksLikeOllamaPromptRestatement(thinkingText)
         deps.sendAgentCompatLine(
           event.sender,
           'ollama',
@@ -2843,8 +2869,7 @@ export async function runOllamaProvider(
             status: 'success',
             output: thinkingText,
             provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER,
-            ...(visible ? {} : { transcriptVisible: false })
+            server: OLLAMA_LOCAL_TOOL_SERVER
           },
           route
         )
@@ -2891,7 +2916,8 @@ export async function runOllamaProvider(
         },
         onThinkingUpdate: ({ thinking }) => {
           emitOllamaThinkingUpdate(thinking)
-        }
+        },
+        onGeneratedOutputChars: reportGeneratedOutputChars
       })
       // A response body can resolve re-entrantly with Stop/history-clear
       // projection. Re-check the exact run before interpreting that resolved
@@ -2943,7 +2969,7 @@ export async function runOllamaProvider(
       const hasReasoningTrace = turn.thinking.trim().length > 0
       const reasoningIsVisibleAnswer = toolRequests.length === 0 && !turn.content.trim()
       const emitVisibleReasoning = shouldEmitOllamaReasoning(turn, toolRequests.length)
-      if (hasReasoningTrace && !reasoningIsVisibleAnswer) {
+      if (hasReasoningTrace && !reasoningIsVisibleAnswer && emitVisibleReasoning) {
         if (streamedThinkingStarted) {
           if (turn.thinking !== streamedThinkingText) {
             deps.sendAgentCompatLine(
@@ -2956,8 +2982,7 @@ export async function runOllamaProvider(
                 status: 'success',
                 output: turn.thinking,
                 provider: 'ollama',
-                server: OLLAMA_LOCAL_TOOL_SERVER,
-                ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+                server: OLLAMA_LOCAL_TOOL_SERVER
               },
               route
             )
@@ -2973,8 +2998,7 @@ export async function runOllamaProvider(
               kind: 'think',
               parameters: { title: 'Thinking' },
               provider: 'ollama',
-              server: OLLAMA_LOCAL_TOOL_SERVER,
-              ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+              server: OLLAMA_LOCAL_TOOL_SERVER
             },
             route
           )
@@ -2988,8 +3012,7 @@ export async function runOllamaProvider(
               status: 'success',
               output: turn.thinking,
               provider: 'ollama',
-              server: OLLAMA_LOCAL_TOOL_SERVER,
-              ...(emitVisibleReasoning ? {} : { transcriptVisible: false })
+              server: OLLAMA_LOCAL_TOOL_SERVER
             },
             route
           )
@@ -3336,6 +3359,9 @@ export async function runOllamaProvider(
     assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
     terminalStatus = 'completed'
     terminalProjectionStarted = true
+    if (runUsageStats) {
+      reportWorkingTokenUsage(runUsageStats)
+    }
     deps.sendAgentCompatLine(
       event.sender,
       'ollama',

@@ -48,4 +48,21 @@ describe('ParticipantWorkingTelemetry', () => {
     expect(html).toContain('digit-odometer__decimal')
     expect(html).toContain('285.1k tokens')
   })
+
+  it('renders unavailable instead of inventing a zero before telemetry arrives', () => {
+    const html = renderToStaticMarkup(
+      <MemoizedParticipantWorkingTelemetry
+        runId="ollama-run"
+        startedAt="2026-08-03T02:05:07.000Z"
+        tokenAccumulatorBase={0}
+        fallbackTargetTokens={0}
+        estimatedCurrentTurnTokens={0}
+      />
+    )
+
+    expect(html).toContain('current-run token usage unavailable')
+    expect(html).toContain('message-working-token-unavailable')
+    expect(html).toContain('— tokens')
+    expect(html).not.toContain('digit-odometer')
+  })
 })

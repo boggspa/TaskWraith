@@ -122,6 +122,7 @@ export interface OllamaMainRuntimeDependencies {
   sendAgentCompatLine: OllamaProviderDeps['sendAgentCompatLine']
   sendAgentCompatError: OllamaProviderDeps['sendAgentCompatError']
   sendAgentCompatExit: OllamaProviderDeps['sendAgentCompatExit']
+  reportWorkingTokenUsage?: OllamaProviderDeps['reportWorkingTokenUsage']
   runManager: RunManager<any>
   emitProviderCapabilityWarnings: NonNullable<OllamaProviderDeps['emitProviderCapabilityWarnings']>
   runProvider: (
@@ -646,6 +647,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         sendAgentCompatLine: deps.sendAgentCompatLine,
         sendAgentCompatError: deps.sendAgentCompatError,
         sendAgentCompatExit: deps.sendAgentCompatExit,
+        reportWorkingTokenUsage: deps.reportWorkingTokenUsage,
         runManager: deps.runManager,
         emitProviderCapabilityWarnings: deps.emitProviderCapabilityWarnings,
         executeTool: executeLocalTool,

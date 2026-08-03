@@ -75,26 +75,39 @@ function ParticipantWorkingTelemetry({
     !hasReportedUsage &&
     (Boolean(providerSnapshot?.estimated && providerSnapshot.totalTokens > 0) ||
       estimatedCurrentTurnTokens > 0)
+  const isUnavailable =
+    !providerSnapshot &&
+    displayedTokens <= 0 &&
+    fallbackTokens <= 0 &&
+    estimatedCurrentTurnTokens <= 0
   const source = hasReportedUsage
     ? 'live provider usage snapshot'
     : isEstimated
       ? 'live output estimate'
       : 'completed-turn accumulator'
-  const title = `${elapsed} elapsed · ${displayedTokens.toLocaleString()} accumulated tokens (${source})`
+  const title = isUnavailable
+    ? `${elapsed} elapsed · current-run token usage unavailable`
+    : `${elapsed} elapsed · ${displayedTokens.toLocaleString()} accumulated tokens (${source})`
 
   return (
     <span className="message-working-telemetry" title={title} aria-hidden="true">
       <span className="message-working-elapsed">{elapsed}</span>
       <span className="message-working-telemetry-separator">·</span>
       <span className="message-working-token-count">
-        {isEstimated && <span className="message-working-token-estimate">≈</span>}
-        <DigitOdometer
-          key={`${compactTokens.suffix}:${compactTokens.decimalPlaces}`}
-          value={compactTokens.value}
-          decimalPlaces={compactTokens.decimalPlaces}
-          ariaLabel={compactTokens.label}
-        />
-        <span className="message-working-token-suffix">{compactTokens.suffix}</span>
+        {isUnavailable ? (
+          <span className="message-working-token-unavailable">— tokens</span>
+        ) : (
+          <>
+            {isEstimated && <span className="message-working-token-estimate">≈</span>}
+            <DigitOdometer
+              key={`${compactTokens.suffix}:${compactTokens.decimalPlaces}`}
+              value={compactTokens.value}
+              decimalPlaces={compactTokens.decimalPlaces}
+              ariaLabel={compactTokens.label}
+            />
+            <span className="message-working-token-suffix">{compactTokens.suffix}</span>
+          </>
+        )}
       </span>
     </span>
   )

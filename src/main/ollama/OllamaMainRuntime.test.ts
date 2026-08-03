@@ -180,7 +180,8 @@ describe('createOllamaMainRuntime', () => {
   it('registers exact run state before invoking the provider transport', async () => {
     const registerRunSession = vi.fn(() => ({}))
     const runProvider = vi.fn<OllamaMainRuntimeDependencies['runProvider']>(async () => {})
-    const deps = dependencies({ registerRunSession, runProvider })
+    const reportWorkingTokenUsage = vi.fn()
+    const deps = dependencies({ registerRunSession, runProvider, reportWorkingTokenUsage })
     const runtime = createOllamaMainRuntime(deps)
     const sender = {} as Electron.WebContents
 
@@ -209,6 +210,7 @@ describe('createOllamaMainRuntime', () => {
       })
     )
     expect(runProvider).toHaveBeenCalledOnce()
+    expect(runProvider.mock.calls[0]?.[0].reportWorkingTokenUsage).toBe(reportWorkingTokenUsage)
     expect(runProvider.mock.calls[0]?.[3]).toEqual({
       appRunId: 'run-1',
       appChatId: 'chat-1'

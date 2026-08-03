@@ -30682,6 +30682,22 @@ const ollamaMainRuntime = createOllamaMainRuntime({
   sendAgentCompatLine,
   sendAgentCompatError,
   sendAgentCompatExit,
+  reportWorkingTokenUsage: (stats, { ensembleRun, route }) => {
+    ensembleOrchestratorRef?.reportParticipantTokenUsage(route.appRunId, stats, {
+      provider: 'ollama',
+      chatId: route.appChatId
+    })
+    if (!ensembleRun) {
+      const soloEvent = soloWorkingTokenTelemetry.report({
+        runId: route.appRunId,
+        chatId: route.appChatId,
+        provider: 'ollama',
+        stats,
+        nowMs: Date.now()
+      })
+      if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
+    }
+  },
   runManager,
   emitProviderCapabilityWarnings,
   runProvider: runOllamaProvider
