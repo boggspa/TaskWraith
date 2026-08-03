@@ -41819,6 +41819,26 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: err instanceof Error ? err.message : String(err) }
           }
         },
+        promoteCollaboratorCommentFn: async (action) => {
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, reason: 'Thread not found' }
+          if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
+            return { ok: false, reason: 'Thread does not belong to this workspace' }
+          }
+          try {
+            const result = chatService.promoteCollaboratorComment({
+              chatId: action.threadId,
+              messageId: action.messageId
+            })
+            broadcastChatUpdated(result.chat)
+            broadcastHumanCollaborationUpdate(result.chat.appChatId)
+            const canonical = canonicalRemoteWorkspaceId(result.chat.workspaceId)
+            if (canonical) pushRemoteThreadSnapshot(result.chat, canonical)
+            return { ok: true, draft: result.draft }
+          } catch (err) {
+            return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+          }
+        },
         toggleMessagePinFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }

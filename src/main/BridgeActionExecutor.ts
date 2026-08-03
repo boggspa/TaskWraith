@@ -45,6 +45,7 @@ import type {
   BridgeGoalUpdateAction,
   BridgeBlackboardPostAction,
   BridgeToggleMessagePinAction,
+  BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
   BridgeEnsembleWakeNowAction,
@@ -226,6 +227,9 @@ export interface BridgeActionExecutor {
   executeBlackboardPost(action: BridgeBlackboardPostAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
+  ): Promise<BridgeActionExecutionResult>
+  executePromoteCollaboratorComment(
+    action: BridgePromoteCollaboratorCommentAction
   ): Promise<BridgeActionExecutionResult>
   executeProposedPlanDecision(
     action: BridgeProposedPlanDecisionAction
@@ -513,6 +517,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeToggleMessagePinAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('toggleMessagePin', action.threadId)
+  }
+  async executePromoteCollaboratorComment(
+    action: BridgePromoteCollaboratorCommentAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('promoteCollaboratorComment', action.threadId)
   }
   async executeProposedPlanDecision(
     action: BridgeProposedPlanDecisionAction
@@ -958,6 +967,11 @@ export interface MainProcessActionExecutorDependencies {
     entry?: unknown
   }>
   toggleMessagePinFn?: (action: BridgeToggleMessagePinAction) => Promise<unknown>
+  promoteCollaboratorCommentFn?: (action: BridgePromoteCollaboratorCommentAction) => Promise<{
+    ok: boolean
+    draft?: string
+    reason?: string
+  }>
   proposedPlanDecisionFn?: (action: BridgeProposedPlanDecisionAction) => Promise<unknown>
   canvasActionFn?: (action: BridgeCanvasActionAction) => Promise<unknown>
   log?: (line: string) => void
@@ -2169,6 +2183,36 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       this.deps.toggleMessagePinFn,
       action
     )
+  }
+
+  async executePromoteCollaboratorComment(
+    action: BridgePromoteCollaboratorCommentAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.promoteCollaboratorCommentFn) {
+      return notWired('promoteCollaboratorComment', action.threadId)
+    }
+    try {
+      const result = await this.deps.promoteCollaboratorCommentFn(action)
+      if (!result.ok || !result.draft) {
+        return {
+          executed: false,
+          message: result.reason || 'Collaborator comment was not promoted'
+        }
+      }
+      return {
+        executed: true,
+        message: 'Inserted collaborator comment as a reviewed draft.',
+        data: {
+          threadId: action.threadId,
+          messageId: action.messageId,
+          draft: result.draft
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] promoteCollaboratorComment failed: ${errMessage}`)
+      return { executed: false, message: `Insert as draft failed: ${errMessage}` }
+    }
   }
 
   async executeProposedPlanDecision(

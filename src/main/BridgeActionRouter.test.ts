@@ -311,6 +311,10 @@ function makeStubExecutor(
       executed: true,
       message: 'ensembleSteer done'
     }),
+    executePromoteCollaboratorComment: make('executePromoteCollaboratorComment', {
+      executed: true,
+      message: 'promoteCollaboratorComment done'
+    }),
     executeProposedPlanDecision: make('executeProposedPlanDecision', {
       executed: true,
       message: 'proposedPlanDecision done'
@@ -2419,6 +2423,21 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean; message?: string }
       expect(result.accepted).toBe(false)
       expect(result.message).toMatch(/capability "pin"/i)
+    })
+
+    it('denies collaborator promotion against a read-only workspace', async () => {
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly() })
+      const wire = encodeAction({
+        kind: 'promoteCollaboratorComment',
+        workspaceId: 'ws-readonly',
+        threadId: 'chat-1',
+        messageId: 'people-1'
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean; message?: string }
+      expect(result.accepted).toBe(false)
+      expect(result.message).toMatch(/capability "startTurn"/i)
     })
 
     it('accepts chatMarkdownTranscript against read-only workspace (monitor-tier read)', async () => {

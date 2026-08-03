@@ -4257,7 +4257,11 @@ struct ThreadRowView: View, Equatable {
                 } else if let peopleContributionModel {
                     PeopleContributionCard(
                         model: peopleContributionModel,
-                        onInsertAsDraft: nil
+                        onInsertAsDraft: { messageId in
+                            model.promoteCollaboratorComment(
+                                threadId: threadId, messageId: messageId
+                            )
+                        }
                     )
                     .contextMenu {
                         messageActionMenu(

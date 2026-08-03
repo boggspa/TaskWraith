@@ -1579,6 +1579,36 @@ describe('decodeBridgeActionPayload', () => {
       ).toBe('unknown')
     })
 
+    it('decodes promoteCollaboratorComment as an identity-only gated mutation', () => {
+      const wire = encode({
+        kind: 'promoteCollaboratorComment',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'comment-1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toEqual({
+        kind: 'promoteCollaboratorComment',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'comment-1'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects promoteCollaboratorComment when a message id is absent', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'promoteCollaboratorComment',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1'
+        })
+      )
+      expect(payload.kind).toBe('unknown')
+    })
+
     it('decodes togglePinChat', () => {
       const wire = encode({
         kind: 'togglePinChat',

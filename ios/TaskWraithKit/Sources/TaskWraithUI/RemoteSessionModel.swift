@@ -5668,6 +5668,37 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Promote a queued Human People contribution through the Mac canonical trust boundary.
+    /// The host re-reads the message and returns framed text; the phone only appends
+    /// that returned draft to the composer and never sends it.
+    public func promoteCollaboratorComment(threadId: String, messageId: String) {
+        guard !isDemo else {
+            lastActionMessage = "Insert as draft needs a connected Mac."
+            return
+        }
+        guard
+            let card = taskCards.first(where: { item in
+                item.id == threadId || item.threadId == threadId
+            })
+        else { return }
+        let workspaceId = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        send(
+            BridgeAction.promoteCollaboratorComment(
+                workspaceId: workspaceId, threadId: threadId, messageId: messageId),
+            successLabel: "Inserted as draft.",
+            navigateOnAck: false,
+            onAckResult: { [weak self] accepted, ack in
+                guard accepted,
+                    let raw = ack?.result,
+                    let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any]
+                else { return }
+                let data = (object["data"] as? [String: Any]) ?? object
+                guard let draft = data["draft"] as? String, !draft.isEmpty else { return }
+                self?.requestComposerAppend(draft, threadId: threadId)
+                self?.scheduleThreadRefreshAfterUserAction(threadId)
+            })
+    }
+
     /// Rebuild a card with one boolean lifecycle flag flipped (pinned/archived)
     /// through the same Codable round-trip retitledCard uses, so unknown wire
     /// fields survive the local mutation.

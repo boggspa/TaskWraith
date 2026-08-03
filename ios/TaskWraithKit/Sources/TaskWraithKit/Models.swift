@@ -2414,6 +2414,19 @@ public enum BridgeAction {
         ])
     }
 
+    /// Ask the Mac to re-read and safely frame a queued People comment as a
+    /// host-owned composer draft. No external body crosses this action.
+    public static func promoteCollaboratorComment(
+        workspaceId: String, threadId: String, messageId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "promoteCollaboratorComment", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "messageId": messageId,
+        ])
+    }
+
     /// Pin or unpin a whole chat (home-list lifecycle; host action key is
     /// `appChatId`, NOT `threadId` — matches BridgeActionPayload.togglePinChat).
     public static func togglePinChat(

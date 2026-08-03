@@ -41,6 +41,7 @@ import type {
   BridgeGoalUpdateAction,
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
+  BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
   BridgeTogglePinChatAction,
@@ -213,6 +214,12 @@ const sample = {
       order: 1
     }
   } satisfies BridgeSetChatKindAction,
+  promoteCollaboratorComment: {
+    kind: 'promoteCollaboratorComment',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    messageId: 'people-1'
+  } satisfies BridgePromoteCollaboratorCommentAction,
   proposedPlanDecision: {
     kind: 'proposedPlanDecision',
     workspaceId: 'ws-1',
@@ -1098,6 +1105,27 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     expect(result.message).toBe(
       'Chat mode was not changed: Cannot change chat mode while a turn is active'
     )
+  })
+
+  it('returns only the Mac-framed collaborator draft', async () => {
+    const promoteCollaboratorCommentFn = vi
+      .fn()
+      .mockResolvedValue({ ok: true, draft: 'framed host draft' })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, promoteCollaboratorCommentFn })
+    const result = await executor.executePromoteCollaboratorComment(
+      sample.promoteCollaboratorComment
+    )
+    expect(promoteCollaboratorCommentFn).toHaveBeenCalledWith(
+      sample.promoteCollaboratorComment
+    )
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        threadId: 't-1',
+        messageId: 'people-1',
+        draft: 'framed host draft'
+      }
+    })
   })
 
   it('flips a proposed plan status through proposedPlanDecisionFn', async () => {
