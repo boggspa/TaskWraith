@@ -26,6 +26,10 @@ import {
   resolveForegroundSynthesizerParticipantId
 } from '../EnsemblePrompt'
 import { buildProviderShellRoutingPrompt } from '../ProviderShellRoutingPrompt'
+import {
+  ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON,
+  isAntigravityHeadlessPermissionNoOutput
+} from '../antigravity/AntigravityRunDiagnostics'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
 import type {
   ActiveGoal,
@@ -840,6 +844,12 @@ interface ActiveParticipantRun {
    * per-seat maintenance queue.
    */
   classifiedContextOverflow?: boolean
+  /**
+   * A provider-specific diagnostic observed before the terminal result. This
+   * is deliberately a fixed, narrow classification rather than raw stderr so
+   * a native provider cannot inject arbitrary terminal reason text.
+   */
+  providerDiagnostic?: string
   /**
    * Blackboard entry ids injected into THIS run's prompt (full board on a
    * full briefing; unseen-only on a slim resumed turn). flushRun merges the
@@ -12305,12 +12315,16 @@ export class EnsembleOrchestrator {
     routed: AgentRunRoute,
     text: string | undefined | null
   ): boolean {
-    if (!isHostSeatCompactionProvider(provider)) return false
     const runId = routed.appRunId
     if (!runId) return false
     const run = this.actionableRunForTool(runId)
     if (!run || run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
+    if (provider === 'antigravity' && isAntigravityHeadlessPermissionNoOutput(text)) {
+      run.providerDiagnostic = ANTIGRAVITY_HEADLESS_PERMISSION_NO_OUTPUT_REASON
+      return true
+    }
+    if (!isHostSeatCompactionProvider(provider)) return false
     if (!isContextOverflowErrorText(text)) return false
     run.classifiedContextOverflow = true
     return true
@@ -12330,11 +12344,12 @@ export class EnsembleOrchestrator {
       this.finalizeRun(run, 'answered')
       return true
     }
-    const status: EnsembleParticipantStatus = exitCode === 0 ? 'skipped' : 'failed'
+    const status: EnsembleParticipantStatus =
+      exitCode === 0 && !run.providerDiagnostic ? 'skipped' : 'failed'
     this.finalizeRun(
       run,
       status,
-      exitCode === 0 ? 'Exited without result.' : `Exited with code ${exitCode}.`
+      run.providerDiagnostic || (exitCode === 0 ? 'Exited without result.' : `Exited with code ${exitCode}.`)
     )
     return true
   }
@@ -12617,7 +12632,17 @@ export class EnsembleOrchestrator {
       ) {
         return true
       }
-      this.finalizeRun(run, failed ? 'failed' : run.content.trim() ? 'answered' : 'skipped')
+      const emptyAfterProviderDiagnostic =
+        Boolean(run.providerDiagnostic) && run.content.trim().length === 0
+      this.finalizeRun(
+        run,
+        failed || emptyAfterProviderDiagnostic
+          ? 'failed'
+          : run.content.trim()
+            ? 'answered'
+            : 'skipped',
+        failed || emptyAfterProviderDiagnostic ? run.providerDiagnostic : undefined
+      )
       return true
     }
     return true

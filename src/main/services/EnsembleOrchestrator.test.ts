@@ -732,6 +732,53 @@ describe('EnsembleOrchestrator', () => {
     }
   })
 
+  it('surfaces an AntiGravity headless read denial as a failed participant, not an ordinary skip', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble = {
+      ...initialChat.ensemble!,
+      participants: [
+        {
+          id: 'antigravity',
+          provider: 'antigravity',
+          enabled: true,
+          role: 'GemProWork',
+          instructions: 'Review the workspace.',
+          order: 1,
+          model: 'gemini-3.1-pro-high',
+          permissionPresetId: 'default'
+        }
+      ]
+    }
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review the current workspace.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1), { timeout: 1000 })
+
+    const payload = harness.dispatched[0]
+    const route = { appRunId: payload.appRunId, appChatId: 'ensemble-chat' }
+    expect(
+      harness.orchestrator.noteProviderFailureText(
+        'antigravity',
+        route,
+        'jetski: no output produced — a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied.'
+      )
+    ).toBe(true)
+    harness.orchestrator.handleProviderOutput('antigravity', route, {
+      type: 'result',
+      status: 'success'
+    })
+
+    const state = harness.chat.ensemble?.activeRound?.participants.find(
+      (participant) => participant.participantId === 'antigravity'
+    )
+    expect(state?.status).toBe('failed')
+    expect(state?.reason).toContain('headless mode auto-denied')
+    expect(state?.reason).toContain('read_file')
+  })
+
   it('rejects a fresh-only start while an interactive round owns the chat without queueing or mutation', () => {
     const harness = makeHarness()
     const prepareFreshChat = vi.fn((chat: ChatRecord) => chat)

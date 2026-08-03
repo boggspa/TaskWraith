@@ -82,6 +82,11 @@ import {
   conversationCompactionEligibleMessageIds,
   resolveBoundedCompactionPrefixMessageIds
 } from './PromptComposition'
+import {
+  buildAntigravityOfficialAgyPromptCapsule,
+  resolveEnsemblePromptTransportProfile,
+  type EnsemblePromptTransportProfile
+} from './antigravity/AntigravityEnsemblePromptProfile'
 
 // 1.0.4-AR2 — this ceiling originally mirrored a renderer-local
 // constant. It now comes from shared/ensembleLimits so a renderer/main
@@ -139,6 +144,12 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
   /** Run-scoped Boss/Captain routing checkpoint supplied by the orchestrator. */
   authorityRoutingCheckpoint?: EnsembleAuthorityRoutingCheckpoint
+  /**
+   * Transport-specific prompt projection. When omitted, the builder derives
+   * the profile from the participant provider/model so direct callers cannot
+   * accidentally send the full handoff to official agy.
+   */
+  promptTransportProfile?: EnsemblePromptTransportProfile
   /**
    * Pre-rendered tree-derived churn stanza (see `WorkspaceChurn` and
    * `DiffService.sampleWorkspaceChurn`) describing what the WORKSPACE holds
@@ -788,6 +799,9 @@ function permissionSurfaceRule(
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
+  const promptTransportProfile =
+    input.promptTransportProfile ??
+    resolveEnsemblePromptTransportProfile(input.participant.provider, input.participant.model)
   const grokMcpNamespace =
     typeof input.effectiveApprovalMode === 'string' &&
     input.effectiveApprovalMode.trim() !== '' &&
@@ -1061,6 +1075,50 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       ? { excludeEnsembleRoundPromptRoundId: input.roundId }
       : undefined
   )
+
+  if (promptTransportProfile === 'antigravity-official-agy') {
+    const allEntries = input.config.blackboard || []
+    const visibleBlackboard = selectBlackboardForRound(allEntries, input.roundId)
+    const blackboardSnapshot = formatBlackboardForPrompt(visibleBlackboard, {
+      allEntries,
+      headerOverride: 'In-scope host-owned Blackboard entries:'
+    })
+    const scoutBriefs =
+      input.scoutBriefs && input.scoutBriefs.length > 0
+        ? formatScoutBriefsForPrompt(input.scoutBriefs)
+        : undefined
+    const compactRoundPolicy =
+      orchestrationMode === 'continuous'
+        ? `Continuous round: follow the current assignment, then use a listed lifecycle handoff or complete the work; the bounded continuation budget is ${Math.max(0, maxContinuationHops - continuationHops)} hop(s).`
+        : 'Turn-bound round: answer this assignment once; route a specific remaining participant only through a listed lifecycle handoff or unique @Role/@Model mention.'
+    const compactParallelPolicy = activeConcurrentMode
+      ? hasWriteIntentLane
+        ? 'Parallel writer lanes require their host-approved exact scopes and TaskWraith mutation locks; report a conflict instead of retrying around it.'
+        : 'Parallel read-only lanes may run concurrently; preserve the assigned role and report findings concisely.'
+      : 'Use the normal panel rotation and do not invent an unavailable orchestration tool.'
+    return buildAntigravityOfficialAgyPromptCapsule({
+      participantLabel,
+      roundId: input.roundId,
+      stageRole: input.participant.stageRole,
+      roleInstructions: input.participant.instructions || 'Contribute a concise, useful response for your role.',
+      currentPrompt: sanitizeText(input.currentPrompt),
+      currentPromptLabel: input.currentPromptLabel,
+      roster,
+      authorityLines: authorityRoutingLines,
+      roleBoundaryLines,
+      roundPolicy: compactRoundPolicy,
+      parallelPolicy: compactParallelPolicy,
+      dynamicState: dynamicStateSnapshot.block,
+      workspaceStanza,
+      workspaceChurnStanza: input.workspaceChurnStanza,
+      scoutBriefs,
+      blackboardSnapshot,
+      seatSummary: seatSummaryBlock,
+      transcript,
+      permissionRule: permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
+      yieldExecutionCheck
+    })
+  }
 
   // Spike 5 — slim resumed-turn prompt. The caller has verified the seat's
   // provider session resumes AND its persisted promptShellVersion matches

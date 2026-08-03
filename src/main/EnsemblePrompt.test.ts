@@ -36,6 +36,7 @@ import type {
   ToolActivity
 } from './store/types'
 import { createActiveGoal } from './GoalState'
+import { ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS } from './antigravity/AntigravityEnsemblePromptProfile'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -280,6 +281,77 @@ describe('Ensemble prompt composition', () => {
     // same-provider disambiguation note — it's only relevant when
     // two participants share a provider.
     expect(prompt).not.toContain('multiple participants from the same provider')
+  })
+
+  it('uses a bounded official-agy capsule without inventing Blackboard tool calls', () => {
+    const antigravity: EnsembleParticipant = {
+      id: 'gempro',
+      provider: 'antigravity',
+      enabled: true,
+      role: 'GemProWork',
+      instructions: 'Review the current workspace evidence.',
+      order: 1,
+      model: 'gemini-3.1-pro-high',
+      permissionPresetId: 'default'
+    }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [
+        antigravity,
+        {
+          id: 'codex-worker',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Implement only the assigned change.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      ],
+      blackboard: [
+        {
+          id: 'bb-1',
+          chatId: 'chat-1',
+          roundId: 'round-agy',
+          participantId: 'codex-worker',
+          key: 'decision',
+          value: 'Use the exact broker path.',
+          category: 'decision',
+          scope: 'session',
+          createdAt: '2026-08-03T00:00:00.000Z'
+        }
+      ]
+    }
+    const shared = chat()
+    shared.ensemble = config
+    shared.messages = Array.from({ length: 40 }, (_, index) => ({
+      id: `history-${index}`,
+      role: 'assistant' as const,
+      content: `Historical panel detail ${index} ${'context '.repeat(240)}`,
+      timestamp: `2026-08-03T00:00:${String(index).padStart(2, '0')}.000Z`,
+      metadata: {
+        ensembleProvider: 'codex',
+        ensembleRole: 'Worker'
+      }
+    }))
+
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: shared,
+      config,
+      participant: antigravity,
+      currentPrompt: 'Review the exact dispatch state and report the next safe action.',
+      roundId: 'round-agy',
+      chatContextTurns: 40
+    })
+
+    expect(prompt.length).toBeLessThanOrEqual(ANTIGRAVITY_OFFICIAL_AGY_PROMPT_MAX_CHARS)
+    expect(prompt).toContain('AntiGravity official agy context capsule')
+    expect(prompt).toContain('Current assignment:')
+    expect(prompt).toContain('Host-owned Blackboard snapshot:')
+    expect(prompt).toContain('decision: Use the exact broker path.')
+    expect(prompt).toContain('outside-workspace path requires an explicit host grant/approval')
+    expect(prompt).not.toContain('call blackboard_read')
+    expect(prompt).not.toContain('Recent tagged transcript:')
   })
 
   it('C2 T5: the Review-gates prompt block goal-scopes (other-goal / superseded / passed gates disappear)', () => {
