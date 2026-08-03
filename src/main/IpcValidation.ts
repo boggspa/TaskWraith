@@ -384,6 +384,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'provider:open-kimi-upgrade-terminal': [],
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
+  'git:workspace-stats': ['optionalObject'],
   'git:subscribe-snapshot': ['optionalObject'],
   'git:unsubscribe-snapshot': ['optionalObject'],
   'git:invalidate-snapshot': ['optionalObject'],

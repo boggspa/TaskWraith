@@ -42,6 +42,7 @@ import { ProjectThreadGraphView } from '../../components/ProjectThreadGraphView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
 import { MainPaneActionPill } from '../../components/MainPaneActionPill'
+import { buildWorkspaceStatsContext } from '../../components/workspaceStatsContext'
 import { RightDockHome } from '../../components/RightDockHome'
 import { SettingsPanel } from '../../components/SettingsPanel'
 import { SettingsSidebar } from '../../components/SettingsSidebar'
@@ -1187,6 +1188,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     snapshotRemoteUrl: composerCtx?.primaryGitSnapshot?.remoteUrl
   })
   const mainPaneThreadTitle = currentChat?.title || mainPaneWorkspaceLabel || 'New chat'
+  const mainPaneWorkspaceStats = buildWorkspaceStatsContext({
+    chatId: currentChat?.appChatId,
+    baseWorkspacePath: currentWorkspace?.path || currentChat?.workspacePath,
+    worktreeSelection: composerCtx?.composerWorktreeSelection,
+    snapshot: composerCtx?.primaryGitSnapshot,
+    label: mainPaneWorkspaceLabel,
+    isGlobalChat: isCurrentGlobalChat
+  })
   const mainPaneProvider = isCurrentEnsembleChat
     ? 'ensemble'
     : currentChat?.provider || currentProvider
@@ -1938,6 +1947,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onToggleChangelog={handleOpenChangelogSheet}
                 onToggleFirstLaunch={() => setShowFirstLaunchSheet((current) => !current)}
                 onToggleBugReport={() => setShowBugReportSheet((current) => !current)}
+                workspaceStats={mainPaneWorkspaceStats}
                 popoutMenuOpen={popoutMenuOpen}
                 setPopoutMenuOpen={setPopoutMenuOpen}
                 popoutMenuRef={popoutMenuRef}

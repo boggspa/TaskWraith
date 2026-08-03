@@ -12,7 +12,7 @@ import {
 
 const noop = (): void => undefined
 
-function renderPill(popoutMenuOpen = false, idScope?: string): string {
+function renderPill(popoutMenuOpen = false, idScope?: string, workspace = true): string {
   return renderToStaticMarkup(
     <MainPaneActionPill
       idScope={idScope}
@@ -27,6 +27,17 @@ function renderPill(popoutMenuOpen = false, idScope?: string): string {
       onToggleChangelog={noop}
       onToggleFirstLaunch={noop}
       onToggleBugReport={noop}
+      workspaceStats={
+        workspace
+          ? {
+              chatId: 'chat-1',
+              baseWorkspacePath: '/repo',
+              workspacePath: '/repo',
+              label: 'repo',
+              snapshot: null
+            }
+          : undefined
+      }
       popoutMenuOpen={popoutMenuOpen}
       setPopoutMenuOpen={vi.fn()}
       popoutMenuRef={createRef<HTMLDivElement>()}
@@ -48,7 +59,7 @@ function renderPill(popoutMenuOpen = false, idScope?: string): string {
 }
 
 describe('MainPaneActionPill', () => {
-  it('renders exactly five primary actions in the requested order', () => {
+  it('renders exactly six primary actions for a workspace pane in the requested order', () => {
     const html = renderPill()
     const actionIds = Array.from(
       html.matchAll(/data-main-pane-action="([^"]+)"/g),
@@ -56,12 +67,24 @@ describe('MainPaneActionPill', () => {
     )
 
     expect(actionIds).toEqual([...MAIN_PANE_PRIMARY_ACTION_IDS])
-    expect(html.match(/<button/g)).toHaveLength(5)
+    expect(html.match(/<button/g)).toHaveLength(6)
     expect(html).toContain('aria-label="Choose visual effects"')
     expect(html).toContain('aria-label="Choose product information"')
+    expect(html).toContain('aria-label="Open Workspace Stats"')
     expect(html).toContain('aria-label="Open popout tools"')
     expect(html).toContain('aria-label="Run build or preview"')
     expect(html).toContain('aria-label="Toggle sidebar home"')
+  })
+
+  it('omits Workspace Stats from global or otherwise unbound panes', () => {
+    const html = renderPill(false, undefined, false)
+    const actionIds = Array.from(
+      html.matchAll(/data-main-pane-action="([^"]+)"/g),
+      (match) => match[1]
+    )
+
+    expect(actionIds).toEqual(['fx', 'info', 'popout', 'run', 'home'])
+    expect(html).not.toContain('aria-label="Open Workspace Stats"')
   })
 
   it('defines the exact FX and Info picker contents', () => {
@@ -99,6 +122,8 @@ describe('MainPaneActionPill', () => {
     expect(html).toContain('aria-controls="multiview-pane-2-fx-menu"')
     expect(html).toContain('id="multiview-pane-2-info-trigger"')
     expect(html).toContain('aria-controls="multiview-pane-2-info-menu"')
+    expect(html).toContain('id="multiview-pane-2-workspace-stats-trigger"')
+    expect(html).toContain('aria-controls="multiview-pane-2-workspace-stats-popover"')
     expect(html).not.toContain('id="chat-corner-fx-trigger"')
   })
 })

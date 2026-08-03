@@ -848,6 +848,27 @@ export function OverviewSymbolIcon() {
   )
 }
 
+/** Read-only repository facts: a small checkout window with a local trend. */
+export function WorkspaceStatsSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden
+      >
+        <rect x="2.2" y="2.5" width="11.6" height="11" rx="1.5" />
+        <path d="M2.2 5.3h11.6" />
+        <path d="M4.2 11.3V9.5M7.1 11.3V7.7M10 11.3V8.7M12 4h.1" />
+      </svg>
+    </span>
+  )
+}
+
 export function CommandSymbolIcon() {
   return (
     <span className="sf-symbol-icon composer-control-icon" aria-hidden>

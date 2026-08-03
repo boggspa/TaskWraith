@@ -40,6 +40,7 @@ import type {
   GitRepositorySnapshot,
   GitResult
 } from '../main/services/GitService'
+import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason,
@@ -652,6 +653,12 @@ const api = {
   refreshMistralAdminUsage: () => ipcRenderer.invoke('mistral-quota:refresh-admin'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
+  gitWorkspaceStats: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    worktreePath?: string
+    chatId?: string
+  }) => ipcRenderer.invoke('git:workspace-stats', payload) as Promise<GitResult<GitWorkspaceStats>>,
   gitSubscribeSnapshot: (
     payload: { workspacePath?: string; repoPath?: string; chatId?: string },
     callback: (payload: GitSnapshotChangedPayload) => void

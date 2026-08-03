@@ -79,6 +79,7 @@ describe('RendererIpcPolicy', () => {
     'audit-run:start',
     'get-diff',
     'git:snapshot',
+    'git:workspace-stats',
     'work-locks:list',
     'work-locks:subscribe',
     'work-locks:unsubscribe',

@@ -8,6 +8,7 @@ import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildCh
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { MainPaneActionPill } from './MainPaneActionPill'
+import { buildWorkspaceStatsContext } from './workspaceStatsContext'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
@@ -282,6 +283,14 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
   const chatId = props.chat?.appChatId ?? ''
   const title = props.chat?.title || props.welcomeWorkspaceName || 'New Chat'
   const workspaceLabel = props.welcomeIsGlobalChat ? null : props.welcomeWorkspaceName
+  const workspaceStats = buildWorkspaceStatsContext({
+    chatId,
+    baseWorkspacePath: props.currentWorkspacePath || props.chat?.workspacePath,
+    worktreeSelection: props.composerProps?.composerWorktreeSelection,
+    snapshot: props.composerProps?.primaryGitSnapshot,
+    label: workspaceLabel,
+    isGlobalChat: props.welcomeIsGlobalChat
+  })
   const defaultLeftAction: ChatViewPaneChromeAction = {
     id: 'pane-chat',
     title: 'Focus pane',
@@ -404,6 +413,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
           onToggleChangelog={() => invokeAction(changelogAction)}
           onToggleFirstLaunch={() => invokeAction(firstLaunchAction)}
           onToggleBugReport={() => invokeAction(bugReportAction)}
+          workspaceStats={workspaceStats}
           popoutMenuOpen={panePopoutMenuOpen}
           setPopoutMenuOpen={setPanePopoutMenuOpen}
           popoutMenuRef={panePopoutMenuRef}

@@ -79,6 +79,17 @@ function createDeps() {
         ok: true,
         data: { requestedPath: path } as any
       })),
+      workspaceStats: vi.fn<GitHandlersDeps['gitService']['workspaceStats']>(
+        async (path: string) => ({
+          ok: true,
+          data: {
+            repoRoot: path,
+            observedAt: '2026-08-03T19:00:00.000Z',
+            coherent: true,
+            totalCommits: 1
+          } as any
+        })
+      ),
       stage: vi.fn<GitHandlersDeps['gitService']['stage']>(async (input) => ({
         ok: true,
         data: input as any
@@ -186,6 +197,7 @@ describe('registerGitHandlers', () => {
     registerGitHandlers(createDeps().deps)
 
     expect(handlerFor('git:snapshot')).toBeTypeOf('function')
+    expect(handlerFor('git:workspace-stats')).toBeTypeOf('function')
     expect(handlerFor('git:subscribe-snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:unsubscribe-snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:invalidate-snapshot')).toBeTypeOf('function')
@@ -229,6 +241,18 @@ describe('registerGitHandlers', () => {
       data: { requestedPath: '/repo' }
     })
     await expect(
+      handlerFor('git:workspace-stats')({}, { workspacePath: '/repo', chatId: 'chat-1' })
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        repoRoot: '/repo',
+        observedAt: '2026-08-03T19:00:00.000Z',
+        coherent: true,
+        totalCommits: 1
+      }
+    })
+    expect(deps.gitService.workspaceStats).toHaveBeenCalledWith('/repo')
+    await expect(
       handlerFor('git:snapshot')({}, { workspacePath: '/workspace', repoPath: '  /preferred-repo  ' })
     ).resolves.toEqual({
       ok: true,
@@ -257,6 +281,42 @@ describe('registerGitHandlers', () => {
       expect.objectContaining({ repoPath: '/repo' }),
       'git-action'
     )
+  })
+
+  it('resolves Workspace Stats only to a linked worktree under an authorized workspace', async () => {
+    const { deps } = createDeps()
+    deps.findRegisteredWorkspace.mockImplementation((path: string) =>
+      path === '/repo' ? { id: 'ws-1' } : undefined
+    )
+    deps.gitService.listWorktrees.mockResolvedValue({
+      ok: true,
+      data: {
+        repoRoot: '/repo',
+        worktrees: [
+          { path: '/repo', branch: 'main', isCurrent: true },
+          { path: '/repo-worktrees/feature', branch: 'feature', isCurrent: false }
+        ]
+      }
+    })
+    registerGitHandlers(deps)
+
+    await handlerFor('git:workspace-stats')({}, {
+      workspacePath: '/repo',
+      worktreePath: '/repo-worktrees/feature'
+    })
+
+    expect(deps.gitService.listWorktrees).toHaveBeenCalledWith('/repo')
+    expect(deps.gitService.workspaceStats).toHaveBeenCalledWith('/repo-worktrees/feature')
+
+    await expect(
+      handlerFor('git:workspace-stats')({}, {
+        workspacePath: '/repo',
+        worktreePath: '/tmp/not-a-linked-worktree'
+      })
+    ).resolves.toEqual({
+      ok: false,
+      error: 'Selected path is not a linked worktree for this repository.'
+    })
   })
 
   it('exposes branch list and registered branch mutations', async () => {

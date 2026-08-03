@@ -13,12 +13,22 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   PreviewSymbolIcon,
-  SidebarCornerIcon
+  SidebarCornerIcon,
+  WorkspaceStatsSymbolIcon
 } from './AppChromeSymbols'
+import { WorkspaceStatsPopover } from './WorkspaceStatsPopover'
+import type { WorkspaceStatsContext } from './workspaceStatsContext'
 
-type MainPaneMenu = 'fx' | 'info' | null
+type MainPaneMenu = 'fx' | 'info' | 'workspace-stats' | null
 
-export const MAIN_PANE_PRIMARY_ACTION_IDS = ['fx', 'info', 'popout', 'run', 'home'] as const
+export const MAIN_PANE_PRIMARY_ACTION_IDS = [
+  'fx',
+  'info',
+  'workspace-stats',
+  'popout',
+  'run',
+  'home'
+] as const
 export const FX_MENU_ITEMS = [
   { id: 'sky', label: 'Weather/Sky' },
   { id: 'ghost', label: 'Ghost' }
@@ -48,6 +58,7 @@ export interface MainPaneActionPillProps {
   onToggleChangelog: () => void
   onToggleFirstLaunch: () => void
   onToggleBugReport: () => void
+  workspaceStats?: WorkspaceStatsContext
   popoutMenuOpen: boolean
   setPopoutMenuOpen: Dispatch<SetStateAction<boolean>>
   popoutMenuRef: RefObject<HTMLDivElement | null>
@@ -68,7 +79,7 @@ export interface MainPaneActionPillProps {
   onToggleHome: () => void
 }
 
-/** The shared pane glass pill intentionally exposes exactly five primary actions. */
+/** Workspace panes expose six primary actions; global panes omit Workspace Stats. */
 export function MainPaneActionPill({
   idScope = 'chat-corner',
   className,
@@ -84,6 +95,7 @@ export function MainPaneActionPill({
   onToggleChangelog,
   onToggleFirstLaunch,
   onToggleBugReport,
+  workspaceStats,
   popoutMenuOpen,
   setPopoutMenuOpen,
   popoutMenuRef,
@@ -108,11 +120,14 @@ export function MainPaneActionPill({
   const menuRef = useRef<HTMLDivElement>(null)
   const fxTriggerRef = useRef<HTMLButtonElement>(null)
   const infoTriggerRef = useRef<HTMLButtonElement>(null)
+  const workspaceStatsTriggerRef = useRef<HTMLButtonElement>(null)
   const popoutTriggerRef = useRef<HTMLButtonElement>(null)
   const fxTriggerId = `${idScope}-fx-trigger`
   const fxMenuId = `${idScope}-fx-menu`
   const infoTriggerId = `${idScope}-info-trigger`
   const infoMenuId = `${idScope}-info-menu`
+  const workspaceStatsTriggerId = `${idScope}-workspace-stats-trigger`
+  const workspaceStatsPopoverId = `${idScope}-workspace-stats-popover`
 
   useEffect(() => {
     if (!menu && !popoutMenuOpen) return
@@ -128,6 +143,7 @@ export function MainPaneActionPill({
       setPopoutMenuOpen(false)
       if (closingMenu === 'fx') fxTriggerRef.current?.focus()
       else if (closingMenu === 'info') infoTriggerRef.current?.focus()
+      else if (closingMenu === 'workspace-stats') workspaceStatsTriggerRef.current?.focus()
       else popoutTriggerRef.current?.focus()
     }
     document.addEventListener('mousedown', handlePointerDown)
@@ -141,10 +157,18 @@ export function MainPaneActionPill({
   useEffect(() => {
     if (!menu) return
     const id = window.setTimeout(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('[role^="menuitem"]')?.focus()
+      const selector =
+        menu === 'workspace-stats' ? '[data-workspace-stats-initial-focus]' : '[role^="menuitem"]'
+      menuRef.current?.querySelector<HTMLButtonElement>(selector)?.focus()
     }, 0)
     return () => window.clearTimeout(id)
   }, [menu])
+
+  useEffect(() => {
+    if (workspaceStats || menu !== 'workspace-stats') return
+    const timeout = window.setTimeout(() => setMenu(null), 0)
+    return () => window.clearTimeout(timeout)
+  }, [menu, workspaceStats])
 
   const toggleMenu = (next: Exclude<MainPaneMenu, null>): void => {
     setPopoutMenuOpen(false)
@@ -305,6 +329,26 @@ export function MainPaneActionPill({
         )}
       </div>
 
+      {workspaceStats && (
+        <div className="side-chat-menu-wrap chat-corner-picker-wrap">
+          <button
+            ref={workspaceStatsTriggerRef}
+            id={workspaceStatsTriggerId}
+            data-main-pane-action="workspace-stats"
+            className={`chat-corner-btn ${menu === 'workspace-stats' ? 'active' : ''}`}
+            type="button"
+            onClick={() => toggleMenu('workspace-stats')}
+            title="Open Workspace Stats"
+            aria-label="Open Workspace Stats"
+            aria-haspopup="dialog"
+            aria-controls={workspaceStatsPopoverId}
+            aria-expanded={menu === 'workspace-stats'}
+          >
+            <WorkspaceStatsSymbolIcon />
+          </button>
+        </div>
+      )}
+
       <div className="chat-popout-menu-wrap" ref={popoutMenuRef}>
         <button
           ref={popoutTriggerRef}
@@ -407,6 +451,21 @@ export function MainPaneActionPill({
       >
         <SidebarCornerIcon direction="right" isOpen={homeOpen} />
       </button>
+
+      {menu === 'workspace-stats' && workspaceStats && (
+        <div className="workspace-stats-popover-host">
+          <WorkspaceStatsPopover
+            context={workspaceStats}
+            containerRef={menuRef}
+            id={workspaceStatsPopoverId}
+            labelledBy={workspaceStatsTriggerId}
+            onClose={() => {
+              setMenu(null)
+              window.setTimeout(() => workspaceStatsTriggerRef.current?.focus(), 0)
+            }}
+          />
+        </div>
+      )}
     </div>
   )
 }

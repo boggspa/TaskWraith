@@ -27,8 +27,16 @@ import {
   repositoryLocalGitFilterKeys,
   unsafeRepositoryPushConfigKeys
 } from './GitCommandSecurity'
+import {
+  GIT_WORKSPACE_HISTORY_SAMPLE_LIMIT,
+  parseGitGrepTrackedLines,
+  parseNonNegativeGitCount,
+  summarizeGitCommitActivity,
+  type GitWorkspaceStats
+} from './GitWorkspaceStats'
 
 const DEFAULT_TIMEOUT_MS = 30_000
+const WORKSPACE_STATS_CACHE_TTL_MS = 30_000
 
 export interface GitCommandResult {
   stdout: string
@@ -335,6 +343,11 @@ export interface GitDeleteBranchInput {
 export class GitService {
   private run: GitCommandRunner
   private timeoutMs: number
+  private workspaceStatsCache = new Map<
+    string,
+    { expiresAt: number; data: GitWorkspaceStats }
+  >()
+  private workspaceStatsInFlight = new Map<string, Promise<GitWorkspaceStats>>()
 
   constructor(options: { run?: GitCommandRunner; timeoutMs?: number } = {}) {
     const runner = options.run || runCommand
@@ -346,6 +359,35 @@ export class GitService {
   async snapshot(inputPath: string): Promise<GitResult<GitRepositorySnapshot>> {
     try {
       return { ok: true, data: await this.buildSnapshot(inputPath) }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  async workspaceStats(inputPath: string): Promise<GitResult<GitWorkspaceStats>> {
+    try {
+      const repo = await this.resolveRepository(inputPath)
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
+      const now = Date.now()
+      const cached = this.workspaceStatsCache.get(repo.repoRoot)
+      if (cached && cached.expiresAt > now) return { ok: true, data: cached.data }
+
+      const existing = this.workspaceStatsInFlight.get(repo.repoRoot)
+      if (existing) return { ok: true, data: await existing }
+
+      const pending = (async (): Promise<GitWorkspaceStats> => {
+        let data = await this.collectWorkspaceStats(repo.repoRoot)
+        if (!data.coherent) data = await this.collectWorkspaceStats(repo.repoRoot)
+        if (data.coherent) {
+          this.workspaceStatsCache.set(repo.repoRoot, {
+            expiresAt: Date.now() + WORKSPACE_STATS_CACHE_TTL_MS,
+            data
+          })
+        }
+        return data
+      })().finally(() => this.workspaceStatsInFlight.delete(repo.repoRoot))
+      this.workspaceStatsInFlight.set(repo.repoRoot, pending)
+      return { ok: true, data: await pending }
     } catch (error) {
       return failure(error)
     }
@@ -1102,6 +1144,159 @@ export class GitService {
     })
   }
 
+  private async collectWorkspaceStats(repoRoot: string): Promise<GitWorkspaceStats> {
+    const before = await this.readWorkspaceStatsGeneration(repoRoot)
+    const historySampleCount = GIT_WORKSPACE_HISTORY_SAMPLE_LIMIT + 1
+    const [
+      totalCommitsResult,
+      historyResult,
+      branchResult,
+      worktreeResult,
+      trackedLinesResult,
+      latestCommitResult,
+      latestTagResult
+    ] = await Promise.all([
+      this.run('git', ['rev-list', '--count', 'HEAD'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run(
+        'git',
+        ['log', `--max-count=${historySampleCount}`, '--format=%as', 'HEAD'],
+        { cwd: repoRoot, timeoutMs: this.timeoutMs }
+      ),
+      this.run('git', ['for-each-ref', '--format=%(refname)', 'refs/heads'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run('git', ['worktree', 'list', '--porcelain'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run('git', ['grep', '-I', '-c', '-z', '-e', '', '--', '.'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run('git', ['log', '-1', '--format=%H%x00%as%x00%s', 'HEAD'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run('git', ['describe', '--tags', '--abbrev=0', 'HEAD'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      })
+    ])
+    const after = await this.readWorkspaceStatsGeneration(repoRoot)
+    const observedAt = new Date().toISOString()
+    const coherent =
+      before.valid &&
+      after.valid &&
+      before.head === after.head &&
+      before.status === after.status &&
+      before.numstat === after.numstat
+
+    const hasHead = before.head !== null
+    const totalCommits = hasHead
+      ? totalCommitsResult.code === 0
+        ? parseNonNegativeGitCount(totalCommitsResult.stdout)
+        : null
+      : 0
+    const history =
+      hasHead && historyResult.code !== 0
+        ? {
+            activeDays: null,
+            historySpanDays: null,
+            commitsPerActiveDay: null,
+            historyTruncated: false
+          }
+        : summarizeGitCommitActivity({
+            stdout: hasHead ? historyResult.stdout : '',
+            totalCommits,
+            observedAt
+          })
+    const latestTag = latestTagResult.code === 0 ? latestTagResult.stdout.trim() : ''
+    const commitsSinceLatestTagResult = latestTag
+      ? await this.run('git', ['rev-list', '--count', `${latestTag}..HEAD`, '--'], {
+          cwd: repoRoot,
+          timeoutMs: this.timeoutMs
+        })
+      : null
+    const latestCommitFields =
+      latestCommitResult.code === 0 ? latestCommitResult.stdout.trimEnd().split('\0') : []
+    const trackedLines =
+      trackedLinesResult.code === 0 || trackedLinesResult.code === 1
+        ? parseGitGrepTrackedLines(trackedLinesResult.stdout)
+        : null
+
+    return {
+      repoRoot,
+      observedAt,
+      coherent,
+      ...(!coherent
+        ? { coherenceReason: 'HEAD or working-tree state changed while local stats were sampled.' }
+        : {}),
+      totalCommits,
+      localBranchCount:
+        branchResult.code === 0 ? nonEmptyLineCount(branchResult.stdout) : null,
+      attachedWorktreeCount:
+        worktreeResult.code === 0
+          ? worktreeResult.stdout
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith('worktree ')).length
+          : null,
+      trackedLines,
+      activeDays: history.activeDays,
+      historySpanDays: history.historySpanDays,
+      commitsPerActiveDay: history.commitsPerActiveDay,
+      historyTruncated: history.historyTruncated,
+      ...(latestCommitFields.length >= 3
+        ? {
+            latestCommit: {
+              hash: latestCommitFields[0],
+              authoredOn: latestCommitFields[1],
+              subject: latestCommitFields.slice(2).join('\0')
+            }
+          }
+        : {}),
+      ...(latestTag ? { latestTag } : {}),
+      commitsSinceLatestTag:
+        commitsSinceLatestTagResult?.code === 0
+          ? parseNonNegativeGitCount(commitsSinceLatestTagResult.stdout)
+          : null
+    }
+  }
+
+  private async readWorkspaceStatsGeneration(repoRoot: string): Promise<{
+    head: string | null
+    status: string | null
+    numstat: string | null
+    valid: boolean
+  }> {
+    const [headResult, statusResult] = await Promise.all([
+      this.run('git', ['rev-parse', '--verify', 'HEAD'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      }),
+      this.run('git', ['status', '--porcelain=v1', '-z', '--untracked-files=all'], {
+        cwd: repoRoot,
+        timeoutMs: this.timeoutMs
+      })
+    ])
+    const head = headResult.code === 0 ? headResult.stdout.trim() : null
+    const numstatResult = head
+      ? await this.run('git', ['diff', '--no-ext-diff', '--no-textconv', '--numstat', 'HEAD'], {
+          cwd: repoRoot,
+          timeoutMs: this.timeoutMs
+        })
+      : null
+    return {
+      head,
+      status: statusResult.code === 0 ? statusResult.stdout : null,
+      numstat: numstatResult?.code === 0 ? numstatResult.stdout : null,
+      valid: statusResult.code === 0 && (!head || numstatResult?.code === 0)
+    }
+  }
+
   private async buildSnapshot(inputPath: string): Promise<GitRepositorySnapshot> {
     const repo = await this.resolveRepository(inputPath)
     await this.assertNoRepositoryLocalFilters(repo.repoRoot)
@@ -1511,6 +1706,10 @@ function classifyStatus(
   if (index === 'A' || workingTree === 'A') return 'created'
   if (index === 'D' || workingTree === 'D') return 'deleted'
   return 'modified'
+}
+
+function nonEmptyLineCount(value: string): number {
+  return value.split(/\r?\n/).filter((line) => line.trim().length > 0).length
 }
 
 async function pathBaseForRepoPaths(requestedPath: string): Promise<string> {

@@ -206,6 +206,7 @@ import type {
   GitWorktreeInfo,
   GitResult
 } from '../main/services/GitService'
+import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason
@@ -750,6 +751,12 @@ declare global {
         repoPath?: string
         chatId?: string
       }) => Promise<GitResult<GitRepositorySnapshot>>
+      gitWorkspaceStats: (payload: {
+        workspacePath?: string
+        repoPath?: string
+        worktreePath?: string
+        chatId?: string
+      }) => Promise<GitResult<GitWorkspaceStats>>
       gitSubscribeSnapshot: (
         payload: {
           workspacePath?: string

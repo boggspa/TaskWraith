@@ -19,6 +19,7 @@ import type {
   GitUnstageInput,
   GitWorktreeList
 } from '../services/GitService'
+import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
 import type {
   GitSnapshotInvalidationReason,
   GitSnapshotPublisher
@@ -32,6 +33,7 @@ import type {
 } from '../ExternalPublishReceiptLedger'
 
 type GitIpcPayload = { workspacePath?: string; repoPath?: string; chatId?: string }
+type GitWorkspaceStatsPayload = GitIpcPayload & { worktreePath?: string }
 type GitSnapshotSubscribePayload = GitIpcPayload & { subscriptionId?: string }
 type GitSnapshotInvalidatePayload = GitIpcPayload & { reason?: GitSnapshotInvalidationReason }
 type GitIpcScope = 'registered-workspace' | 'registered-or-granted-read' | 'registered-or-granted-write'
@@ -69,6 +71,7 @@ export interface GitHandlersDeps {
   gitService: Pick<
     GitService,
     | 'snapshot'
+    | 'workspaceStats'
     | 'stage'
     | 'unstage'
     | 'commit'
@@ -330,6 +333,30 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
     const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
     return repo.ok ? deps.gitService.snapshot(repo.path) : repo
   })
+
+  ipcMain.handle(
+    'git:workspace-stats',
+    async (
+      event,
+      payload?: GitWorkspaceStatsPayload
+    ): Promise<GitResult<GitWorkspaceStats> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
+      if (!repo.ok) return repo
+      const targetPath = String(payload?.worktreePath || '').trim()
+      if (!targetPath || targetPath.replace(/\/+$/, '') === repo.path.replace(/\/+$/, '')) {
+        return deps.gitService.workspaceStats(repo.path)
+      }
+      if (repo.source === 'external') {
+        return { ok: false, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
+      }
+      const worktrees = await deps.gitService.listWorktrees(repo.path)
+      if (!worktrees.ok) return worktrees
+      if (!worktreeListContainsPath(worktrees.data, targetPath)) {
+        return { ok: false, error: 'Selected path is not a linked worktree for this repository.' }
+      }
+      return deps.gitService.workspaceStats(targetPath)
+    }
+  )
 
   ipcMain.handle(
     'git:subscribe-snapshot',
