@@ -6,6 +6,15 @@
  * monotonic cursors within a generation, tombstones, and reconnect reads that
  * return full-resnapshot-required on previousCursor mismatch or retention gap.
  *
+ * This store is the sole durable Host generation/cursor authority. Generation
+ * reset is a durable envelope at cursor 1 of the new generation.
+ *
+ * Payload privacy is fail-closed: structured credential/secret/auth/token,
+ * hidden reasoning, unrestricted tool args/results, diff/patch bodies, and
+ * full transcript/message/file content keys are rejected before any journal or
+ * checkpoint persistence. Oversized safe payloads retain only
+ * {_truncated, byteLength, sha256} — never a raw prefix.
+ *
  * Reopen recovers generation, last cursor, tombstones, and retained deltas.
  * Truncated journal tails are dropped without inventing state; corrupt interior
  * records surface as explicit recovery warnings.
@@ -57,6 +66,70 @@ const MAX_ENTITY_ID = 512
 const MAX_REASON = 500
 const MAX_PAYLOAD_JSON = 8_000
 
+/** Stable typed error code when a delta payload is rejected for privacy. */
+export const HOST_DELTA_FORBIDDEN_PAYLOAD_CODE = 'host_delta_forbidden_payload' as const
+export type HostDeltaPayloadPrivacyCode = typeof HOST_DELTA_FORBIDDEN_PAYLOAD_CODE
+
+/**
+ * Exact structured key denylist after lowercasing and stripping `_`/`-`.
+ * Matches keys only — never innocent prose substrings in string values.
+ */
+const FORBIDDEN_PAYLOAD_KEYS = new Set([
+  'password',
+  'passwd',
+  'secret',
+  'secrets',
+  'token',
+  'tokens',
+  'credential',
+  'credentials',
+  'authorization',
+  'auth',
+  'apikey',
+  'accesstoken',
+  'refreshtoken',
+  'bearertoken',
+  'privatekey',
+  'clientsecret',
+  'sessiontoken',
+  'idtoken',
+  'thinking',
+  'reasoning',
+  'hiddenreasoning',
+  'rawthinking',
+  'chainofthought',
+  'toolinput',
+  'tooloutput',
+  'toolargs',
+  'toolarguments',
+  'toolresult',
+  'toolresults',
+  'rawarguments',
+  'rawoutput',
+  'rawinput',
+  'diff',
+  'patch',
+  'hunks',
+  'unifieddiff',
+  'patchbody',
+  'diffbody',
+  'rawdiff',
+  'rawpatch',
+  'transcript',
+  'messages',
+  'messagebody',
+  'messagecontent',
+  'filecontent',
+  'filecontents',
+  'rawcontent',
+  'filebody',
+  'rawfile'
+])
+
+export type HostDeltaPayloadPrepareResult =
+  | { ok: true; payload: unknown }
+  | { ok: false; code: HostDeltaPayloadPrivacyCode; detail: string }
+
 export type HostDeltaRecoveryState =
   | 'clean'
   | 'recovered-truncated-tail'
@@ -87,7 +160,12 @@ export type HostDeltaAppendResult =
   | { kind: 'duplicate'; record: HostDeltaStoredRecord; position: HostCursorPosition }
   | {
       kind: 'rejected'
-      reason: 'conflicting_duplicate' | 'invalid_envelope' | 'generation_discontinuity'
+      reason:
+        | 'conflicting_duplicate'
+        | 'invalid_envelope'
+        | 'generation_discontinuity'
+        | 'forbidden_payload'
+      code?: HostDeltaPayloadPrivacyCode
       detail?: string
       position: HostCursorPosition
     }
@@ -281,6 +359,21 @@ export class HostDeltaStore {
       return this.appendGenerationReset(input)
     }
 
+    let preparedPayload = input.payload
+    if (input.payload !== undefined) {
+      const prepared = prepareHostDeltaPayload(input.payload)
+      if (!prepared.ok) {
+        return {
+          kind: 'rejected',
+          reason: 'forbidden_payload',
+          code: prepared.code,
+          detail: prepared.detail,
+          position: this.getPosition()
+        }
+      }
+      preparedPayload = prepared.payload
+    }
+
     const previousCursor = this.cursor
     const nextCursor = this.cursor + 1
     const envelope = buildEnvelope({
@@ -290,7 +383,7 @@ export class HostDeltaStore {
       kind,
       family: input.family,
       entityId: input.entityId,
-      payload: input.payload,
+      payload: preparedPayload,
       tombstone: input.tombstone ?? kind === 'tombstone',
       at: input.at ?? this.now()
     })
@@ -470,6 +563,21 @@ export class HostDeltaStore {
   }
 
   private appendGenerationReset(input: HostDeltaAppendInput): HostDeltaAppendResult {
+    let preparedPayload = input.payload
+    if (input.payload !== undefined) {
+      const prepared = prepareHostDeltaPayload(input.payload)
+      if (!prepared.ok) {
+        return {
+          kind: 'rejected',
+          reason: 'forbidden_payload',
+          code: prepared.code,
+          detail: prepared.detail,
+          position: this.getPosition()
+        }
+      }
+      preparedPayload = prepared.payload
+    }
+
     const previousGeneration = this.generation
     const nextGeneration = this.generation + 1
     const at = input.at ?? this.now()
@@ -487,11 +595,11 @@ export class HostDeltaStore {
       previousGeneration,
       generation: nextGeneration,
       at,
-      ...(typeof input.payload === 'object' &&
-      input.payload &&
-      'reason' in (input.payload as object) &&
-      typeof (input.payload as { reason?: unknown }).reason === 'string'
-        ? { reason: truncateText((input.payload as { reason: string }).reason, MAX_REASON) }
+      ...(typeof preparedPayload === 'object' &&
+      preparedPayload &&
+      'reason' in (preparedPayload as object) &&
+      typeof (preparedPayload as { reason?: unknown }).reason === 'string'
+        ? { reason: truncateText((preparedPayload as { reason: string }).reason, MAX_REASON) }
         : {})
     })
 
@@ -504,7 +612,7 @@ export class HostDeltaStore {
       kind: 'generation-reset',
       family: input.family,
       entityId: input.entityId,
-      payload: input.payload,
+      payload: preparedPayload,
       tombstone: false,
       at
     })
@@ -869,7 +977,8 @@ function buildEnvelope(parts: {
     envelope.entityId = truncateText(parts.entityId, MAX_ENTITY_ID)
   }
   if (parts.payload !== undefined) {
-    envelope.payload = boundPayload(parts.payload)
+    // Caller must run prepareHostDeltaPayload before persistence paths.
+    envelope.payload = parts.payload
   }
   if (parts.tombstone) {
     envelope.tombstone = true
@@ -926,15 +1035,73 @@ function estimateBytes(envelope: HostDeltaEnvelope): number {
   }
 }
 
-function boundPayload(payload: unknown): unknown {
-  try {
-    const json = JSON.stringify(payload)
-    if (json === undefined) return null
-    if (json.length <= MAX_PAYLOAD_JSON) return payload
-    return { _truncated: true, preview: json.slice(0, MAX_PAYLOAD_JSON) }
-  } catch {
-    return { _unserializable: true }
+/**
+ * Fail-closed payload preparation for durable Host deltas.
+ * Rejects forbidden structured key paths; oversized safe payloads keep only
+ * length + digest metadata (never a raw prefix/preview).
+ */
+export function prepareHostDeltaPayload(payload: unknown): HostDeltaPayloadPrepareResult {
+  const forbiddenPath = findForbiddenPayloadKey(payload)
+  if (forbiddenPath) {
+    return {
+      ok: false,
+      code: HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
+      detail: `forbidden payload key path: ${forbiddenPath}`
+    }
   }
+
+  let json: string
+  try {
+    const serialized = JSON.stringify(payload)
+    if (serialized === undefined) {
+      return { ok: true, payload: null }
+    }
+    json = serialized
+  } catch {
+    return {
+      ok: false,
+      code: HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
+      detail: 'unserializable payload'
+    }
+  }
+
+  if (json.length <= MAX_PAYLOAD_JSON) {
+    return { ok: true, payload }
+  }
+
+  return {
+    ok: true,
+    payload: {
+      _truncated: true,
+      byteLength: Buffer.byteLength(json, 'utf8'),
+      sha256: createHash('sha256').update(json, 'utf8').digest('hex')
+    }
+  }
+}
+
+function normalizePayloadKey(key: string): string {
+  return key.toLowerCase().replace(/[_-]/g, '')
+}
+
+function findForbiddenPayloadKey(value: unknown, path: string[] = []): string | null {
+  if (value === null || value === undefined) return null
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const hit = findForbiddenPayloadKey(value[i], [...path, String(i)])
+      if (hit) return hit
+    }
+    return null
+  }
+  if (typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (FORBIDDEN_PAYLOAD_KEYS.has(normalizePayloadKey(key))) {
+        return [...path, key].join('.')
+      }
+      const hit = findForbiddenPayloadKey(child, [...path, key])
+      if (hit) return hit
+    }
+  }
+  return null
 }
 
 function normalizeStoredRecord(value: unknown): HostDeltaStoredRecord | null {

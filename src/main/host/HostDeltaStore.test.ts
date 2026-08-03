@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   HostDeltaStore,
   HOST_DELTA_CHECKPOINT_FILENAME,
-  HOST_DELTA_JOURNAL_FILENAME
+  HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
+  HOST_DELTA_JOURNAL_FILENAME,
+  prepareHostDeltaPayload
 } from './HostDeltaStore'
 
 describe('HostDeltaStore', () => {
@@ -265,18 +267,152 @@ describe('HostDeltaStore', () => {
     expect(reopened.getByCursor(5)?.envelope.entityId).toBe('t5')
   })
 
-  it('does not retain credentials or unrestricted transcript bodies in payloads', () => {
+  it('accepts compact metadata and rejects nested/case-variant forbidden keys before persist', () => {
     const store = openStore()
-    const result = store.append({
+    const ok = store.append({
       kind: 'upsert',
       family: 'thread',
       entityId: 't1',
-      payload: { title: 'ok', note: 'bounded' }
+      payload: {
+        title: 'ok',
+        note: 'mentions password token secret only in prose',
+        id: 'thread-1',
+        count: 2,
+        sha256: 'abc',
+        byteLength: 12,
+        filename: 'readme.md',
+        additions: 3,
+        deletions: 1
+      }
+    })
+    expect(ok.kind).toBe('appended')
+
+    const cases: Array<{ payload: unknown; needle: string }> = [
+      { payload: { API_KEY: 'sk-live' }, needle: 'API_KEY' },
+      { payload: { nested: { Authorization: 'Bearer x' } }, needle: 'Authorization' },
+      { payload: { meta: [{ Thinking: 'hidden' }] }, needle: 'Thinking' },
+      { payload: { toolOutput: { stdout: 'secret_token=1' } }, needle: 'toolOutput' },
+      { payload: { diff: '--- a\n+++ b\n' }, needle: 'diff' },
+      { payload: { patchBody: '@@ -1 +1 @@' }, needle: 'patchBody' },
+      { payload: { messages: [{ role: 'user', text: 'hi' }] }, needle: 'messages' },
+      { payload: { fileContent: 'FULL FILE' }, needle: 'fileContent' }
+    ]
+
+    for (const item of cases) {
+      const rejected = store.append({
+        kind: 'upsert',
+        family: 'thread',
+        entityId: 'forbidden',
+        payload: item.payload
+      })
+      expect(rejected.kind).toBe('rejected')
+      if (rejected.kind !== 'rejected') return
+      expect(rejected.reason).toBe('forbidden_payload')
+      expect(rejected.code).toBe(HOST_DELTA_FORBIDDEN_PAYLOAD_CODE)
+      expect(rejected.detail).toContain(item.needle)
+      expect(store.getPosition()).toEqual({ generation: 1, cursor: 1 })
+    }
+
+    const journal = readFileSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME), 'utf8')
+    expect(journal).not.toMatch(/sk-live|Bearer x|secret_token=1|FULL FILE|--- a/)
+    expect(existsSync(join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME))).toBe(false)
+
+    const prepared = prepareHostDeltaPayload({ nested: { access_token: 'x' } })
+    expect(prepared.ok).toBe(false)
+    if (prepared.ok) return
+    expect(prepared.code).toBe(HOST_DELTA_FORBIDDEN_PAYLOAD_CODE)
+  })
+
+  it('rejects under-limit forbidden payloads and never writes them to journal/checkpoint', () => {
+    const store = openStore({ compactAfterRecords: 1 })
+    const rejected = store.append({
+      kind: 'upsert',
+      family: 'warning',
+      entityId: 'w1',
+      payload: { credential: 'under-limit-secret' }
+    })
+    expect(rejected.kind).toBe('rejected')
+    if (rejected.kind !== 'rejected') return
+    expect(rejected.reason).toBe('forbidden_payload')
+    expect(store.getPosition().cursor).toBe(0)
+    expect(existsSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME))).toBe(false)
+
+    const ok = store.append({
+      kind: 'upsert',
+      family: 'warning',
+      entityId: 'w2',
+      payload: { title: 'safe' }
+    })
+    expect(ok.kind).toBe('appended')
+    store.compact()
+    const checkpoint = readFileSync(join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME), 'utf8')
+    expect(checkpoint).not.toMatch(/under-limit-secret/)
+    expect(checkpoint).not.toMatch(/"credential"/i)
+    // compact resets the journal; if a fresh journal exists it must stay clean too
+    const journalPath = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    if (existsSync(journalPath)) {
+      expect(readFileSync(journalPath, 'utf8')).not.toMatch(/under-limit-secret/)
+    }
+  })
+
+  it('persists oversized safe payloads as length+digest only and reopens without raw prefix', () => {
+    const store = openStore()
+    const bigNote = 'n'.repeat(9000)
+    const result = store.append({
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'big',
+      payload: { title: 'safe-oversize', note: bigNote }
     })
     expect(result.kind).toBe('appended')
     if (result.kind !== 'appended') return
-    const json = JSON.stringify(result.record)
-    expect(json).not.toMatch(/password|authorization|secret_token/i)
-    expect(result.record.contentFingerprint).toMatch(/^[a-f0-9]+$/)
+    const payload = result.record.envelope.payload as {
+      _truncated?: boolean
+      byteLength?: number
+      sha256?: string
+      preview?: string
+      note?: string
+    }
+    expect(payload).toEqual({
+      _truncated: true,
+      byteLength: expect.any(Number),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    expect(payload.preview).toBeUndefined()
+    expect(payload.note).toBeUndefined()
+    expect(JSON.stringify(result.record)).not.toContain(bigNote.slice(0, 64))
+
+    const reopened = openStore()
+    const again = reopened.getByCursor(1)?.envelope.payload as {
+      _truncated?: boolean
+      byteLength?: number
+      sha256?: string
+      preview?: string
+    }
+    expect(again).toEqual({
+      _truncated: true,
+      byteLength: payload.byteLength,
+      sha256: payload.sha256
+    })
+    expect(again.preview).toBeUndefined()
+    const durable = readFileSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME), 'utf8')
+    expect(durable).not.toContain(bigNote.slice(0, 64))
+    expect(durable).not.toMatch(/"preview"/)
+  })
+
+  it('rejects oversized payloads that also contain forbidden keys before any persist', () => {
+    const store = openStore()
+    const rejected = store.append({
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'big-forbidden',
+      payload: { transcript: 't'.repeat(9000) }
+    })
+    expect(rejected.kind).toBe('rejected')
+    if (rejected.kind !== 'rejected') return
+    expect(rejected.reason).toBe('forbidden_payload')
+    expect(rejected.code).toBe(HOST_DELTA_FORBIDDEN_PAYLOAD_CODE)
+    expect(store.getPosition().cursor).toBe(0)
+    expect(existsSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME))).toBe(false)
   })
 })
