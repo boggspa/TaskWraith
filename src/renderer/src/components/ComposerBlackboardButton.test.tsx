@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { BlackboardEntry, ChatRecord } from '../../../main/store/types'
@@ -6,8 +7,14 @@ import {
   ComposerBlackboardDeleteButton,
   ComposerBlackboardPostForm,
   BLACKBOARD_POST_SECTION_OPTIONS,
+  buildComposerBlackboardColumns,
   buildBlackboardGroups
 } from './ComposerBlackboardButton'
+
+const blackboardCss = readFileSync(
+  new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+  'utf8'
+)
 
 function entry(
   partial: Partial<BlackboardEntry> & Pick<BlackboardEntry, 'key' | 'value'>
@@ -60,6 +67,40 @@ describe('buildBlackboardGroups', () => {
     ])
     expect(groups).toHaveLength(1)
     expect(groups[0].entries.map((e) => e.key)).toEqual(['new', 'old'])
+  })
+})
+
+describe('buildComposerBlackboardColumns', () => {
+  it('keeps all five canonical columns stable while preserving grouped entry order', () => {
+    const columns = buildComposerBlackboardColumns([
+      entry({ key: 'note', value: 'Later', category: 'note' }),
+      entry({ key: 'decision', value: 'Ship it', category: 'decision' })
+    ])
+
+    expect(columns.map((column) => column.category)).toEqual([
+      'decision',
+      'fact',
+      'risk',
+      'do-not-repeat',
+      'note'
+    ])
+    expect(columns.find((column) => column.category === 'decision')?.entries[0]?.key).toBe(
+      'decision'
+    )
+    expect(columns.find((column) => column.category === 'fact')?.entries).toEqual([])
+    expect(columns.find((column) => column.category === 'note')?.entries[0]?.key).toBe('note')
+  })
+
+  it('keeps the browse area horizontal, each category vertical, and the compose shelf fixed below it', () => {
+    expect(blackboardCss).toMatch(
+      /\.composer-blackboard-list\s*\{[^}]*flex:\s*1 1 auto;[^}]*grid-auto-flow:\s*column;[^}]*grid-auto-columns:\s*clamp\(184px, 24vw, 232px\);[^}]*overflow-x:\s*auto;[^}]*overflow-y:\s*hidden;/s
+    )
+    expect(blackboardCss).toMatch(
+      /\.composer-blackboard-list > \.blackboard-group\s*\{[^}]*height:\s*100%;[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/s
+    )
+    expect(blackboardCss).toMatch(
+      /\.composer-blackboard-footer\s*\{[^}]*flex:\s*0 0 auto;[^}]*flex-direction:\s*column;[^}]*border-top:/s
+    )
   })
 })
 

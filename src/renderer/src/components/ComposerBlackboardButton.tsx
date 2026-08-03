@@ -19,16 +19,17 @@ import {
   BLACKBOARD_CATEGORY_LABELS,
   BLACKBOARD_CATEGORY_ORDER,
   BlackboardGroupedList,
-  buildBlackboardGroups
+  buildBlackboardGroups,
+  type BlackboardGroup
 } from './BlackboardEntryCard'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
- * telemetry icon row. Clicking it opens a small frosted popover (the same
+ * telemetry icon row. Clicking it opens a tall frosted workspace (the same
  * `.composer-combined-picker-popover` chrome the Multiview / model / context
- * pickers in this row use) that lets you post to and scroll the ensemble
- * Blackboard without opening the right-dock "Notes" pane. The "seen by" rail
- * stays in the full panel; entry deletion is available in both surfaces.
+ * pickers in this row use) with one horizontally scrollable column per
+ * Blackboard category and a compose shelf anchored at the bottom. The "seen
+ * by" rail stays in the full panel; entry deletion is available in both surfaces.
  * Entries render through the shared BlackboardEntryCard so the popover and
  * panel stay visually in lockstep (provider-hued author chips included).
  */
@@ -39,6 +40,21 @@ export const BLACKBOARD_POST_SECTION_OPTIONS = BLACKBOARD_CATEGORY_ORDER.map((ca
   category,
   label: BLACKBOARD_CATEGORY_LABELS[category]
 }))
+
+/**
+ * The full Notes panel omits empty category groups; the composer workspace keeps
+ * all five visible so their positions never jump as entries arrive or are
+ * deleted. This is a popover presentation decision only — entry filtering,
+ * ordering and card semantics remain owned by buildBlackboardGroups.
+ */
+export function buildComposerBlackboardColumns(entries: BlackboardEntry[]): BlackboardGroup[] {
+  const populated = new Map(
+    buildBlackboardGroups(entries).map((group) => [group.category, group] as const)
+  )
+  return BLACKBOARD_CATEGORY_ORDER.map(
+    (category) => populated.get(category) || { category, entries: [] }
+  )
+}
 
 /** Standing chalkboard glyph (easel legs + two chalk lines) — matches the
  * 16×16 / stroke-1.3 family used by the sibling composer-control icons. */
@@ -217,7 +233,7 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
     () => props.chat?.ensemble?.blackboard ?? [],
     [props.chat?.ensemble?.blackboard]
   )
-  const groups = useMemo(() => buildBlackboardGroups(entries), [entries])
+  const groups = useMemo(() => buildComposerBlackboardColumns(entries), [entries])
   const entryCount = useMemo(
     () => groups.reduce((total, group) => total + group.entries.length, 0),
     [groups]
@@ -326,7 +342,9 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
               left: `${position.left}px`,
               top: `${position.top}px`,
               width: `${position.width}px`,
+              height: `calc(${position.top}px - 8px)`,
               maxWidth: 'calc(100vw - 16px)',
+              maxHeight: 'calc(100vh - 16px)',
               transform: 'translateY(-100%)'
             }}
             role="dialog"
@@ -349,31 +367,31 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
                 </button>
               )}
             </div>
-            <ComposerBlackboardPostForm chat={props.chat} disabled={props.disabled} />
-            {deleteError && (
-              <small className="composer-blackboard-post-error" role="alert">
-                {deleteError}
-              </small>
-            )}
-            {entryCount === 0 ? (
-              <div className="composer-blackboard-popover-empty">No blackboard entries yet.</div>
-            ) : (
-              <div className="composer-blackboard-list" role="list">
-                <BlackboardGroupedList
-                  chat={props.chat}
-                  groups={groups}
-                  variant="popover"
-                  renderEntryActions={(entry) =>
-                    canDelete ? (
-                      <ComposerBlackboardDeleteButton
-                        entry={entry}
-                        deletingEntryId={deletingEntryId}
-                        clearingAll={clearingAll}
-                        onDelete={deleteEntry}
-                      />
-                    ) : null
-                  }
-                />
+            <div className="composer-blackboard-list" role="list">
+              <BlackboardGroupedList
+                chat={props.chat}
+                groups={groups}
+                variant="popover"
+                renderEntryActions={(entry) =>
+                  canDelete ? (
+                    <ComposerBlackboardDeleteButton
+                      entry={entry}
+                      deletingEntryId={deletingEntryId}
+                      clearingAll={clearingAll}
+                      onDelete={deleteEntry}
+                    />
+                  ) : null
+                }
+              />
+            </div>
+            {(canDelete || deleteError) && (
+              <div className="composer-blackboard-footer">
+                {deleteError && (
+                  <small className="composer-blackboard-post-error" role="alert">
+                    {deleteError}
+                  </small>
+                )}
+                <ComposerBlackboardPostForm chat={props.chat} disabled={props.disabled} />
               </div>
             )}
           </div>,

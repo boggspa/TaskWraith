@@ -10684,12 +10684,12 @@
 /* ============================================================
  * Blackboard quick-access — satellite icon button + popover.
  *
- * A quick post + glance surface for the ensemble Blackboard in the composer
+ * A tall browse + post surface for the ensemble Blackboard in the composer
  * telemetry icon row. The trigger is an icon-only "hint pill" (mirrors the
  * Copy / Goal / Plan siblings); the popover reuses the frosted
  * `.composer-combined-picker-popover` chrome + per-shell theme-immunity
- * (it carries that base class), with a compact user note form above the
- * scrollable category-grouped list. The existing card delete action is shared
+ * (it carries that base class), with five narrow category columns above a
+ * bottom-anchored user note form. The existing card delete action is shared
  * with the right-dock Notes pane; seen-by remains exclusive to the full panel.
  *
  * Co-located here (not in the 03 telemetry-button shard) so the whole
@@ -10750,18 +10750,23 @@
 
 .composer-blackboard-popover {
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   min-width: min(360px, calc(100vw - 16px));
   max-width: calc(100vw - 16px);
+  min-height: 0;
+  max-height: none;
   box-sizing: border-box;
   padding: 10px;
+  overflow: hidden;
 }
 
 .composer-blackboard-popover-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 2px;
+  flex: 0 0 auto;
+  padding: 0 2px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
   color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
   font-size: 10px;
   font-weight: 700;
@@ -10812,6 +10817,15 @@
   letter-spacing: 0;
 }
 
+.composer-blackboard-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+}
+
 .composer-blackboard-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -10821,15 +10835,14 @@
     'error error';
   column-gap: 6px;
   row-gap: 6px;
-  padding: 0 1px 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
+  padding: 0 1px;
 }
 
 .composer-blackboard-compose textarea {
   grid-area: entry;
   min-width: 0;
-  min-height: 88px;
-  max-height: 208px;
+  min-height: 72px;
+  max-height: 120px;
   resize: vertical;
   box-sizing: border-box;
   padding: 7px 8px;
@@ -10935,14 +10948,78 @@
 }
 
 .composer-blackboard-list {
+  flex: 1 1 auto;
+  width: 100%;
   min-height: 0;
-  max-height: min(52vh, 420px);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(184px, 24vw, 232px);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+  padding: 8px 2px 10px;
+  scrollbar-gutter: stable;
+}
+
+.composer-blackboard-list > .blackboard-group {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  align-content: flex-start;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-right: 2px;
+  padding: 0 4px 4px 0;
+  scrollbar-gutter: stable;
+}
+
+.composer-blackboard-list > .blackboard-group > .blackboard-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  min-height: 20px;
+  padding: 2px 4px 5px;
+  background: color-mix(in srgb, var(--tw-popover-glass-bg) 94%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.composer-blackboard-list > .blackboard-group:not(:has(.blackboard-card))::after {
+  content: 'No entries';
+  padding: 12px 7px;
+  border: 1px dashed color-mix(in srgb, var(--panel-border) 54%, transparent);
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--text-secondary) 56%, transparent);
+  font-size: 10px;
+  text-align: center;
+}
+
+.composer-blackboard-list .blackboard-card {
+  gap: 4px;
+  padding: 6px 7px;
+  border-radius: 7px;
+}
+
+.composer-blackboard-list .blackboard-card-head {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.composer-blackboard-list .blackboard-card-head-meta {
+  margin-left: auto;
+  gap: 4px;
+}
+
+.composer-blackboard-list .blackboard-card-key {
+  font-size: 10px;
+}
+
+.composer-blackboard-list .blackboard-card-body {
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 /* Entry cards render through the shared BlackboardEntryCard component —
@@ -10951,10 +11028,16 @@
 
 .composer-blackboard-list::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
-.composer-blackboard-list::-webkit-scrollbar-thumb {
+.composer-blackboard-list::-webkit-scrollbar-thumb,
+.composer-blackboard-list > .blackboard-group::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+
+.composer-blackboard-list > .blackboard-group::-webkit-scrollbar {
+  width: 6px;
 }
 
 /* ============================================================
