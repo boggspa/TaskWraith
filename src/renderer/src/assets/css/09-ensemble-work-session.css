@@ -4868,7 +4868,13 @@
 }
 
 .ensemble-fanout-viewport-header .collapsed-activity-stack-label {
+  display: -webkit-box;
   min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 /* Fan-out is an actioned transcript summary, not a low-priority system
