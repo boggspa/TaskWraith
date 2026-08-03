@@ -15,6 +15,7 @@ import {
   resolveWorkspaceLockPopoverPosition,
   type WorkspaceLockPopoverPosition
 } from '../lib/workspaceLockPopoverPosition'
+import { DigitOdometer } from './DigitOdometer'
 import './WorkspaceLockPill.css'
 
 export interface WorkspaceLockPillProps {
@@ -116,17 +117,15 @@ export function WorkspaceLockPillView({
   })
   const activeCount = countActiveWorkLocks(snapshot)
   const recoveredCount = rows.length - activeCount
-  const label =
-    activeCount > 0
-      ? `${activeCount} active edit${activeCount === 1 ? '' : 's'}`
-      : `${recoveredCount} edit${recoveredCount === 1 ? '' : 's'} recovered`
+  const label = `${activeCount} active edit${activeCount === 1 ? '' : 's'}`
   const attention = rows.some((row) => row.tone === 'attention')
+  const hasDetails = rows.length > 0
 
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<WorkspaceLockPopoverPosition | null>(null)
-  const popoverOpen = open && rows.length > 0
+  const popoverOpen = open && hasDetails
 
   useEffect(() => {
     if (!popoverOpen) return
@@ -173,18 +172,8 @@ export function WorkspaceLockPillView({
     }
   }, [popoverOpen])
 
-  if (rows.length === 0) {
-    return recoveryMessage ? (
-      <p
-        className="workspace-lock-recovery-result workspace-lock-recovery-result--standalone"
-        role="status"
-      >
-        {recoveryMessage}
-      </p>
-    ) : null
-  }
-
   const togglePopover = (): void => {
+    if (!hasDetails) return
     setPosition(null)
     setOpen((current) => !current)
   }
@@ -196,14 +185,30 @@ export function WorkspaceLockPillView({
         type="button"
         className={`workspace-lock-pill workspace-lock-trigger${attention ? ' has-recovery-attention' : ''}`}
         data-active-lock-count={activeCount}
-        aria-label={`${label}. ${popoverOpen ? 'Hide' : 'Show'} workspace edit coordination details.`}
-        aria-haspopup="dialog"
-        aria-expanded={popoverOpen}
+        aria-label={
+          hasDetails
+            ? `${label}. ${popoverOpen ? 'Hide' : 'Show'} workspace edit coordination details.`
+            : `${label}. No workspace edit coordination details.`
+        }
+        aria-haspopup={hasDetails ? 'dialog' : undefined}
+        aria-expanded={hasDetails ? popoverOpen : undefined}
+        disabled={!hasDetails}
         onClick={togglePopover}
       >
         <span className="workspace-lock-pill-dot" aria-hidden="true" />
-        <span>{label}</span>
+        <span>
+          <DigitOdometer value={activeCount} ariaLabel={String(activeCount)} />
+          <span aria-hidden="true"> active edit{activeCount === 1 ? '' : 's'}</span>
+        </span>
       </button>
+      {!hasDetails && recoveryMessage && (
+        <p
+          className="workspace-lock-recovery-result workspace-lock-recovery-result--standalone"
+          role="status"
+        >
+          {recoveryMessage}
+        </p>
+      )}
       {popoverOpen && position && typeof document !== 'undefined'
         ? createPortal(
             <div

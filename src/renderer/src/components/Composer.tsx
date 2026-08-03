@@ -5799,18 +5799,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   // between the Turn and Total-thread timecodes. The edit
                   // details panel is portaled from here so it cannot be clipped
                   // by the dense workspace rows above the composer.
-                  currentWorkspace && showWorkspaceGitAboveRows ? (
+                  currentWorkspace ? (
                     <div className="composer-thread-timecode-satellites">
-                      <GitHubSatelliteRow
-                        pr={primaryPr}
-                        ci={primaryCi}
-                        snapshot={primaryGitSnapshot}
-                        onNotify={onNotifyThreadOfCi}
-                        isWatching={isWatchingPr}
-                        onToggleWatch={onToggleWatchPr}
-                        watchDisabledReason={watchPrDisabledReason}
-                        watchStatusMessage={watchPrStatusMessage}
-                      />
+                      {showWorkspaceGitAboveRows && (
+                        <GitHubSatelliteRow
+                          pr={primaryPr}
+                          ci={primaryCi}
+                          snapshot={primaryGitSnapshot}
+                          onNotify={onNotifyThreadOfCi}
+                          isWatching={isWatchingPr}
+                          onToggleWatch={onToggleWatchPr}
+                          watchDisabledReason={watchPrDisabledReason}
+                          watchStatusMessage={watchPrStatusMessage}
+                        />
+                      )}
                       <WorkspaceLockPill
                         workspacePath={currentWorkspace.path}
                         effectiveWorkspacePath={

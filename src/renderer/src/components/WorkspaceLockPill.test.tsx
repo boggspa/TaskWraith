@@ -86,9 +86,11 @@ describe('WorkspaceLockPillView', () => {
     )
 
     expect(html).toContain('1 active edit')
+    expect(html).toContain('digit-odometer')
     expect(html).toContain('workspace-lock-trigger')
     expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('disabled=""')
     expect(html).not.toContain('<details')
     expect(html).not.toContain('8821')
     expect(html).not.toContain('private-birth')
@@ -133,9 +135,29 @@ describe('WorkspaceLockPillView', () => {
     expect(html).toContain('Restart TaskWraith.')
   })
 
-  it('renders nothing for an empty projection', () => {
+  it('keeps a zero-count odometer fixture visible for an empty projection', () => {
     const html = renderToStaticMarkup(<WorkspaceLockPillView snapshot={null} />)
-    expect(html).toBe('')
+
+    expect(html).toContain('0 active edits')
+    expect(html).toContain('digit-odometer')
+    expect(html).toContain('workspace-lock-trigger')
+    expect(html).toContain('disabled=""')
+    expect(html).not.toContain('aria-haspopup')
+  })
+
+  it('keeps recovered-only details inspectable while reporting zero active edits', () => {
+    const snapshot = createWorkLockProjectionSnapshot({
+      generation: 6,
+      sampledAt: '2026-07-29T15:10:00.000Z',
+      locks: [lock({ status: 'recovered' })]
+    })
+    const html = renderToStaticMarkup(
+      <WorkspaceLockPillView snapshot={snapshot} nowMs={Date.parse('2026-07-29T15:10:00.000Z')} />
+    )
+
+    expect(html).toContain('0 active edits')
+    expect(html).toContain('aria-haspopup="dialog"')
+    expect(html).not.toContain('disabled=""')
   })
 
   it('uses the available viewport space above the composer before falling below the trigger', () => {
@@ -175,6 +197,12 @@ describe('WorkspaceLockPillView', () => {
 
     expect(composer).toContain('<WorkspaceLockPill')
     expect(composer).toContain('composer-thread-timecode-satellites')
+    expect(composer).toContain(
+      'currentWorkspace ? (\n                    <div className="composer-thread-timecode-satellites">'
+    )
+    expect(composer).toContain(
+      '{showWorkspaceGitAboveRows && (\n                        <GitHubSatelliteRow'
+    )
     expect(composer).toContain(
       'composerWorktreeSelection?.effectiveWorkspacePath || currentWorkspace.path'
     )
