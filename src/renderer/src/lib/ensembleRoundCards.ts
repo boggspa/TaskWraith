@@ -7,7 +7,7 @@ import {
   type ChatPopoutRoundExpansionSnapshot
 } from '../../../shared/chatPopoutTransfer'
 import { groupEnsembleMessagesByRound } from './ensembleRoundGrouping'
-import { buildCollapsedEnsembleFanoutViewportRanges } from './ensembleFanoutViewportGroups'
+import { buildEnsembleFanoutViewportRanges } from './ensembleFanoutViewportGroups'
 import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGrouping'
 
 /**
@@ -25,18 +25,20 @@ import type { TranscriptGroupedMessageRange } from './transcriptToolMessageGroup
  *   - A synthetic `role: 'system'` "round header" message is injected
  *     before each COMPLETED round's body. It carries everything the
  *     header card needs in `metadata.ensembleRoundHeader`.
- *   - When a round is collapsed, its body messages are dropped from the
- *     list. Its round header remains, plus one compact fan-out disclosure per
- *     durable parallel pass; expanding either disclosure re-inserts only the
- *     lane-card rows it owns.
+ *   - When a round is collapsed, its body messages are dropped from the list
+ *     and only its round header remains.
+ *   - Inside a visible round, a fully settled fan-out wave folds to one compact
+ *     disclosure after later participant activity begins. Expanding that
+ *     disclosure re-inserts only the lane-card rows it owns.
  *
  * Because the output is still a flat `ChatMessage[]`, the virtualiser,
  * row cache, run-boundary map, and user gutter all keep working unchanged.
  *
  * Active-round handling: the round currently being produced
- * (`chat.ensemble.activeRound.roundId`) is rendered FLAT with no header —
- * it stays fully visible while it streams, so live output is never hidden
- * behind a collapsed card. Only completed rounds become cards.
+ * (`chat.ensemble.activeRound.roundId`) has no round header. Its current fan-out
+ * wave stays fully visible while it streams; only terminal earlier waves may
+ * fold after later same-round activity begins. Only completed rounds become
+ * round cards.
  *
  * Default collapse: when there is no active round the most-recent round
  * stays expanded until its TaskWraith close-out row exists; every older
@@ -295,7 +297,7 @@ export interface BuildEnsembleRoundCardRowsInput {
   collapseOlderRounds: boolean
   /** Per-round manual expand/collapse overrides (true = expanded). */
   manualRoundExpansion: ReadonlyMap<string, boolean>
-  /** Completed-round fan-out disclosures opened independently of the round. */
+  /** Settled fan-out disclosures opened independently inside a visible round. */
   expandedFanoutViewportIds?: ReadonlySet<string>
   /**
    * Pane-level live run evidence. Used defensively when `activeRound` is stale
@@ -392,17 +394,21 @@ export function buildEnsembleRoundCardRowsWithRanges(
     const { roundId, messages, summary } = item
     const groupStartIndex = sourceIndex
     const groupEndIndex = sourceIndex + messages.length
+    const visibleRoundRanges = (): TranscriptGroupedMessageRange[] =>
+      buildEnsembleFanoutViewportRanges({
+        chatId: chat.appChatId,
+        roundId,
+        messages,
+        runs: chat.runs || [],
+        sourceOffset: groupStartIndex,
+        expandedViewportIds: expandedFanoutViewportIds
+      })
 
-    // The active round is always rendered flat so streaming output is
-    // never hidden behind a collapsed card.
+    // The active round never gains a round header, but settled fan-out waves
+    // may still fold after the next turn begins. The current/live wave remains
+    // fully visible because the fan-out planner requires terminal lane state.
     if (roundId === liveActiveRoundId || roundId === liveFallbackRoundId) {
-      for (let index = 0; index < messages.length; index += 1) {
-        out.push({
-          message: messages[index],
-          startIndex: groupStartIndex + index,
-          endIndex: groupStartIndex + index + 1
-        })
-      }
+      out.push(...visibleRoundRanges())
       sourceIndex = groupEndIndex
       continue
     }
@@ -425,23 +431,7 @@ export function buildEnsembleRoundCardRowsWithRanges(
       endIndex: groupEndIndex
     })
     if (expanded) {
-      for (let index = 0; index < messages.length; index += 1) {
-        out.push({
-          message: messages[index],
-          startIndex: groupStartIndex + index,
-          endIndex: groupStartIndex + index + 1
-        })
-      }
-    } else {
-      out.push(
-        ...buildCollapsedEnsembleFanoutViewportRanges({
-          chatId: chat.appChatId,
-          roundId,
-          messages,
-          sourceOffset: groupStartIndex,
-          expandedViewportIds: expandedFanoutViewportIds
-        })
-      )
+      out.push(...visibleRoundRanges())
     }
     sourceIndex = groupEndIndex
   }

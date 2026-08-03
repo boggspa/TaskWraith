@@ -7,7 +7,7 @@ function viewportHeader(expanded = false): ChatMessage {
   return {
     id: 'ensemble-fanout-viewport-round-1-dispatch-1',
     role: 'system',
-    content: `Fan-out viewport|scout|${expanded ? 'expanded' : 'collapsed'}`,
+    content: `Fan-Out|scout|${expanded ? 'expanded' : 'collapsed'}`,
     timestamp: '2026-08-02T12:00:00.000Z',
     metadata: {
       kind: 'ensembleFanoutViewportHeader',
@@ -46,7 +46,8 @@ describe('EnsembleFanoutViewportHeader', () => {
       <EnsembleFanoutViewportHeader message={viewportHeader()} onSetExpanded={() => {}} />
     )
 
-    expect(html).toContain('Fan-out viewport')
+    expect(html).toContain('Fan-Out')
+    expect(html).not.toContain('Fan-out viewport')
     expect(html).toContain('Scout')
     expect(html).toContain('2 lanes')
     expect(html).toContain('Mistral / Scout')
@@ -56,7 +57,7 @@ describe('EnsembleFanoutViewportHeader', () => {
     expect(html).toContain('data-provider-hue="mistral"')
     expect(html).toContain('data-provider-hue="alibaba"')
     expect(html).toContain('aria-expanded="false"')
-    expect(html).toContain('Expand Scout fan-out viewport with 2 lanes')
+    expect(html).toContain('Expand Scout fan-out with 2 lanes')
   })
 
   it('keeps the disclosure open while its lane rows are materialized as siblings', () => {
@@ -65,7 +66,7 @@ describe('EnsembleFanoutViewportHeader', () => {
     )
 
     expect(html).toContain('aria-expanded="true"')
-    expect(html).toContain('Collapse Scout fan-out viewport with 2 lanes')
+    expect(html).toContain('Collapse Scout fan-out with 2 lanes')
     expect(html).toContain('collapsed-activity-stack is-expanded')
   })
 })

@@ -1053,6 +1053,24 @@ function ensembleRoundSummariesSignature(
     .join('\u0000')
 }
 
+function ensembleFanoutRunProjectionKey(runs: readonly ChatRun[] | null | undefined): string {
+  if (!runs) return ''
+  return runs
+    .filter((run) => typeof run.ensembleRoundId === 'string' && run.ensembleRoundId.length > 0)
+    .map((run) =>
+      [
+        run.runId,
+        run.ensembleRoundId || '',
+        run.ensembleLaneId || '',
+        run.startedAt || '',
+        run.status || '',
+        run.endedAt || '',
+        run.cancelled ? 'cancelled' : ''
+      ].join(':')
+    )
+    .join('\u0000')
+}
+
 function formatTranscriptMessageFooterTime(timestamp: string | undefined): {
   dateTime: string
   label: string
@@ -2486,9 +2504,9 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
-    // Completed rounds keep one durable summary row per fan-out dispatch wave.
-    // Opening one re-inserts only its lane-card rows into the flat virtual list;
-    // the rest of the round can stay collapsed.
+    // A settled fan-out wave folds once later round activity begins. Opening
+    // its durable summary re-inserts only that wave's lane-card rows while the
+    // rest of the visible round keeps its current disclosure state.
     const [expandedFanoutViewports, setExpandedFanoutViewports] = useState<Set<string>>(
       new Set()
     )
@@ -2642,7 +2660,8 @@ export const TranscriptPanel = memo(
         currentChat?.chatKind,
         currentChat?.ensemble?.activeRound,
         currentChat?.ensemble?.lastRoundSummary,
-        currentChat?.ensemble?.roundSummaries
+        currentChat?.ensemble?.roundSummaries,
+        currentChat?.runs
       ]
     )
     const roundCardCollapseEnabled = participantFilterActive ? false : collapseOlderRounds !== false
@@ -2662,6 +2681,10 @@ export const TranscriptPanel = memo(
       () => ensembleRoundSummariesSignature(roundCardChat?.ensemble?.roundSummaries),
       [roundCardChat?.ensemble?.roundSummaries]
     )
+    const fanoutRunProjectionKey = useMemo(
+      () => ensembleFanoutRunProjectionKey(roundCardChat?.runs),
+      [roundCardChat?.runs]
+    )
     const roundCardResetKey = useMemo(
       () =>
         [
@@ -2672,11 +2695,13 @@ export const TranscriptPanel = memo(
           activeRoundProjectionKey,
           roundCardChat?.ensemble?.lastRoundSummary || '',
           roundSummariesKey,
+          fanoutRunProjectionKey,
           manualRoundExpansionKey,
           fanoutViewportExpansionKey
         ].join('\u0001'),
       [
         activeRoundProjectionKey,
+        fanoutRunProjectionKey,
         fanoutViewportExpansionKey,
         isThinking,
         manualRoundExpansionKey,
@@ -3750,7 +3775,7 @@ export const TranscriptPanel = memo(
             const footerLabel = isRoundHeader
               ? 'round transcript'
               : isFanoutViewportHeader
-                ? 'fan-out viewport'
+                ? 'fan-out'
               : msg.role === 'user'
                 ? 'user message'
                 : isThreadMessageCard

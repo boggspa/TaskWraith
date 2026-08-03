@@ -265,7 +265,7 @@ describe('buildEnsembleRoundCardRows', () => {
     expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(false)
   })
 
-  it('retains completed-round fan-out lanes behind their own expandable viewport row', () => {
+  it('hides fan-out disclosures with the rest of a collapsed round', () => {
     const roundId = 'r-fanout'
     const fanoutLane = message('fanout-lane', {
       roundId,
@@ -278,7 +278,8 @@ describe('buildEnsembleRoundCardRows', () => {
         kind: 'ensembleParticipant',
         ensembleLaneId: 'lane-r-fanout-scout-1',
         ensembleLaneIntent: 'read',
-        ensembleStageRole: 'scout'
+        ensembleStageRole: 'scout',
+        ensembleStatus: 'answered'
       }
     })
     const display = [
@@ -302,17 +303,146 @@ describe('buildEnsembleRoundCardRows', () => {
       collapseOlderRounds: true,
       manualRoundExpansion: NO_OVERRIDES
     })
-    expect(collapsed).toHaveLength(3)
+    expect(collapsed).toHaveLength(2)
     expect(collapsed[0].id).toBe(ensembleRoundHeaderId(roundId))
+    expect(collapsed[1].id).toBe('closeout-fanout')
+    expect(collapsed.some(isEnsembleFanoutViewportHeaderMessage)).toBe(false)
+    expect(collapsed.some((entry) => entry.id === fanoutLane.id)).toBe(false)
+  })
+
+  it('restores an expanded round with its completed fan-out still folded', () => {
+    const roundId = 'r-expanded-fanout'
+    const display = [
+      userPrompt('u-expanded-fanout', roundId),
+      message('expanded-fanout-dispatch', {
+        roundId,
+        role: 'system',
+        content: 'Scout fan-out · 1 read-only participants dispatched concurrently.',
+        metadata: { kind: 'ensembleRoundStatus' }
+      }),
+      message('expanded-fanout-lane', {
+        roundId,
+        runId: 'run-expanded-fanout-lane',
+        ensembleParticipantId: 'scout-1',
+        ensembleProvider: 'codex',
+        ensembleRole: 'Scout',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleLaneId: 'lane-r-expanded-fanout-scout-1',
+          ensembleLaneIntent: 'read',
+          ensembleStageRole: 'scout',
+          ensembleStatus: 'answered'
+        }
+      }),
+      message('expanded-worker-turn', {
+        roundId,
+        runId: 'run-expanded-worker-turn',
+        ensembleParticipantId: 'worker-1',
+        ensembleProvider: 'claude',
+        ensembleRole: 'Worker',
+        metadata: { kind: 'ensembleParticipant', ensembleStatus: 'answered' }
+      }),
+      closeout('closeout-expanded-fanout', roundId)
+    ]
+    const result = buildEnsembleRoundCardRows({
+      chat: chat({
+        ensemble: { enabled: true, maxParticipants: 4, participants: [] } as never
+      }),
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: new Map([[roundId, true]])
+    })
+
+    expect(result.map((entry) => entry.id)).toEqual([
+      ensembleRoundHeaderId(roundId),
+      'u-expanded-fanout',
+      expect.stringContaining('ensemble-fanout-viewport-'),
+      'expanded-worker-turn',
+      'closeout-expanded-fanout'
+    ])
+    expect(readEnsembleRoundHeader(result[0])?.expanded).toBe(true)
+    expect(readEnsembleFanoutViewportHeader(result[2])?.expanded).toBe(false)
+    expect(result.some((entry) => entry.id === 'expanded-fanout-lane')).toBe(false)
+  })
+
+  it('folds a settled fan-out wave inside a live round after the next turn begins', () => {
+    const roundId = 'r-live-fanout'
+    const fanoutLane = message('live-fanout-lane', {
+      roundId,
+      runId: 'run-live-fanout-lane',
+      ensembleParticipantId: 'scout-1',
+      ensembleProvider: 'codex',
+      ensembleRole: 'Scout',
+      ensembleModel: 'gpt-5.6-sol',
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleLaneId: 'lane-r-live-fanout-scout-1',
+        ensembleLaneIntent: 'read',
+        ensembleStageRole: 'scout',
+        ensembleStatus: 'answered'
+      }
+    })
+    const nextTurn = message('worker-turn', {
+      roundId,
+      runId: 'run-worker-turn',
+      ensembleParticipantId: 'worker-1',
+      ensembleProvider: 'claude',
+      ensembleRole: 'Worker',
+      metadata: { kind: 'ensembleParticipant', ensembleStatus: 'running' }
+    })
+    const display = [
+      userPrompt('u-live-fanout', roundId),
+      message('live-fanout-dispatch', {
+        roundId,
+        role: 'system',
+        content: 'Scout fan-out · 1 read-only participants dispatched concurrently.',
+        metadata: { kind: 'ensembleRoundStatus' }
+      }),
+      fanoutLane,
+      nextTurn
+    ]
+    const roundChat = chat({
+      ensemble: {
+        enabled: true,
+        maxParticipants: 4,
+        participants: [],
+        activeRound: {
+          roundId,
+          status: 'running',
+          prompt: '',
+          startedAt: '',
+          activeParticipantId: 'worker-1',
+          participants: [
+            {
+              participantId: 'worker-1',
+              provider: 'claude',
+              role: 'Worker',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      } as never
+    })
+
+    const collapsed = buildEnsembleRoundCardRows({
+      chat: roundChat,
+      displayMessages: display,
+      collapseOlderRounds: true,
+      manualRoundExpansion: NO_OVERRIDES
+    })
+    expect(collapsed.map((entry) => entry.id)).toEqual([
+      'u-live-fanout',
+      expect.stringContaining('ensemble-fanout-viewport-'),
+      'worker-turn'
+    ])
     expect(isEnsembleFanoutViewportHeaderMessage(collapsed[1])).toBe(true)
     expect(readEnsembleFanoutViewportHeader(collapsed[1])).toMatchObject({
       roundId,
       stage: 'scout',
       expanded: false,
-      laneMessageIds: ['fanout-lane']
+      laneMessageIds: ['live-fanout-lane']
     })
-    expect(collapsed[2].id).toBe('closeout-fanout')
-    expect(collapsed.some((entry) => entry.id === fanoutLane.id)).toBe(false)
 
     const viewportId = collapsed[1].id
     const restored = buildEnsembleRoundCardRows({
@@ -323,10 +453,10 @@ describe('buildEnsembleRoundCardRows', () => {
       expandedFanoutViewportIds: new Set([viewportId])
     })
     expect(restored.map((entry) => entry.id)).toEqual([
-      ensembleRoundHeaderId(roundId),
+      'u-live-fanout',
       viewportId,
       fanoutLane.id,
-      'closeout-fanout'
+      'worker-turn'
     ])
     expect(readEnsembleFanoutViewportHeader(restored[1])?.expanded).toBe(true)
   })

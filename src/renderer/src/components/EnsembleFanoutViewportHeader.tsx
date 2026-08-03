@@ -49,7 +49,7 @@ export function EnsembleFanoutViewportHeader({
     >
       <CollapsedTranscriptRow
         header={null}
-        metaLabel="Fan-out viewport"
+        metaLabel="Fan-Out"
         label={accessibleLabel}
         labelContent={
           <>
@@ -98,7 +98,7 @@ export function EnsembleFanoutViewportHeader({
         compact
         expanded={data.expanded}
         onToggle={(expanded) => onSetExpanded(data.viewportId, expanded)}
-        ariaTargetLabel={`${stageLabel} fan-out viewport with ${laneLabel}`}
+        ariaTargetLabel={`${stageLabel} fan-out with ${laneLabel}`}
       />
     </div>
   )

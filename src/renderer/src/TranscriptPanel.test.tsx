@@ -564,7 +564,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Actions for fan-out result')
   })
 
-  it('keeps a stage-aware fan-out viewport handle when a completed round is collapsed', () => {
+  it('folds a settled fan-out wave to a stage-aware handle when the next turn begins', () => {
     const roundId = 'round-persisted-fanout'
     const roundMessages: ChatMessage[] = [
       {
@@ -597,18 +597,23 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
           ensembleRole: 'Scout',
           ensembleStageRole: 'scout',
           ensembleModel: 'mistral/devstral-2512',
+          ensembleStatus: 'answered',
           ensembleOrder: 1
         }
       },
       {
-        id: 'persisted-closeout',
-        role: 'system',
-        content: 'Round complete.',
+        id: 'persisted-worker-turn',
+        role: 'assistant',
+        content: 'The worker turn has begun.',
         timestamp: '2026-08-02T12:00:03.000Z',
+        runId: 'persisted-worker-run',
         metadata: {
-          kind: TASKWRAITH_CLOSEOUT_KIND,
-          closeoutScope: 'ensembleRound',
-          closeoutRoundId: roundId
+          kind: 'ensembleParticipant',
+          ensembleRoundId: roundId,
+          ensembleParticipantId: 'worker-1',
+          ensembleProvider: 'claude',
+          ensembleRole: 'Worker',
+          ensembleStatus: 'running'
         }
       }
     ]
@@ -622,7 +627,27 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
       archived: false,
       messages: roundMessages,
       runs: [],
-      ensemble: { enabled: true, maxParticipants: 2, participants: [] }
+      ensemble: {
+        enabled: true,
+        maxParticipants: 2,
+        participants: [],
+        activeRound: {
+          roundId,
+          status: 'running',
+          prompt: 'Scout the renderer.',
+          startedAt: '2026-08-02T12:00:00.000Z',
+          activeParticipantId: 'worker-1',
+          participants: [
+            {
+              participantId: 'worker-1',
+              provider: 'claude',
+              role: 'Worker',
+              order: 1,
+              status: 'running'
+            }
+          ]
+        }
+      }
     } as ChatRecord
 
     const html = renderToStaticMarkup(
@@ -637,11 +662,13 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     )
 
     expect(html).toContain('ensemble-fanout-viewport-header')
-    expect(html).toContain('Fan-out viewport')
+    expect(html).toContain('Fan-Out')
+    expect(html).not.toContain('Fan-out viewport')
     expect(html).toContain('Scout')
     expect(html).toContain('Mistral / Scout')
     expect(html).toContain('provider-mistral')
     expect(html).not.toContain('PERSISTED_LANE_MARKER')
+    expect(html).toContain('The worker turn has begun.')
   })
 
   it('ignores legacy completion-claim support metadata in the transcript', () => {
