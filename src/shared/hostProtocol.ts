@@ -34,6 +34,8 @@ export const HOST_PROTOCOL_MAX_COLLECTION = 2_000
 export const HOST_PROTOCOL_MAX_DELTAS = 500
 export const HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW = 2_000
 export const HOST_PROTOCOL_MAX_WARNING = 1_000
+/** Lowercase SHA-256 hex digest length for command fingerprints on the wire. */
+export const HOST_COMMAND_FINGERPRINT_HEX_LENGTH = 64
 
 export type HostProtocolVersion = typeof HOST_PROTOCOL_VERSION
 export type HostProjectionVersion = typeof HOST_PROJECTION_VERSION
@@ -455,14 +457,28 @@ export type HostAuthorityDecision =
   | { decision: 'deny'; reason: string }
   | { decision: 'ask'; reason?: string }
 
+/**
+ * Canonical receipt statuses — aligned with HostCommandReceiptStore semantics.
+ * No accepted/executed synonym fork: use pending → succeeded (or failed/denied/…).
+ */
 export type HostReceiptStatus =
-  | 'accepted'
-  | 'denied'
-  | 'executed'
-  | 'failed'
-  | 'cancelled'
-  | 'conflict'
   | 'pending'
+  | 'succeeded'
+  | 'failed'
+  | 'denied'
+  | 'cancelled'
+  | 'indeterminate'
+  | 'conflict'
+
+export const HOST_RECEIPT_STATUSES: readonly HostReceiptStatus[] = [
+  'pending',
+  'succeeded',
+  'failed',
+  'denied',
+  'cancelled',
+  'indeterminate',
+  'conflict'
+] as const
 
 /**
  * Durable command receipt — reconnect-safe lookup by commandId or idempotencyKey.
@@ -477,6 +493,11 @@ export interface HostCommandReceipt {
   actor: HostActorIdentity
   authority: HostAuthorityDecision
   status: HostReceiptStatus
+  /**
+   * Lowercase SHA-256 hex digest of the canonical command body.
+   * Required for idempotency replay/conflict; never raw args on the wire.
+   */
+  commandFingerprint: string
   /** Generation/cursor when the receipt became durable. */
   generation: HostGeneration
   cursor: HostCursor
@@ -926,15 +947,19 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   }
   const status = value.status
   if (
-    status !== 'accepted' &&
-    status !== 'denied' &&
-    status !== 'executed' &&
+    status !== 'pending' &&
+    status !== 'succeeded' &&
     status !== 'failed' &&
+    status !== 'denied' &&
     status !== 'cancelled' &&
-    status !== 'conflict' &&
-    status !== 'pending'
+    status !== 'indeterminate' &&
+    status !== 'conflict'
   ) {
     return { ok: false, error: 'receipt status is invalid' }
+  }
+  const commandFingerprint = normalizeHostCommandFingerprint(value.commandFingerprint)
+  if (!commandFingerprint) {
+    return { ok: false, error: 'commandFingerprint must be lowercase SHA-256 hex' }
   }
   if (!isNonNegativeInt(value.generation) || !isNonNegativeInt(value.cursor)) {
     return { ok: false, error: 'generation/cursor must be non-negative integers' }
@@ -981,6 +1006,7 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
       actor: actor.value,
       authority,
       status,
+      commandFingerprint,
       generation: value.generation,
       cursor: value.cursor,
       createdAt: value.createdAt,
@@ -1059,47 +1085,49 @@ export function applyHostDeltaCursor(
   }
 }
 
-/** Stable fingerprint for idempotency conflict detection (same key, different body). */
-export function hostCommandFingerprint(command: HostCommand): string {
-  const targetKeys = Object.keys(command.target).sort()
-  const argKeys = Object.keys(command.arguments).sort()
-  const target = targetKeys.map((key) => `${key}=${command.target[key]}`).join('&')
-  const args = argKeys.map((key) => `${key}=${stableJson(command.arguments[key])}`).join('&')
-  return `${command.name}|${target}|${args}|actor=${command.actor.actorId}`
+/**
+ * Normalize a wire command fingerprint to lowercase SHA-256 hex.
+ * Returns null when the value is not a bounded SHA-256 hex digest.
+ * Callers that need to *compute* digests must do so in a Node-capable Host
+ * module (e.g. HostCommandReceiptStore.hostCommandFingerprint) — this shared
+ * contract never treats a raw canonical string as a fingerprint.
+ */
+export function normalizeHostCommandFingerprint(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (normalized.length !== HOST_COMMAND_FINGERPRINT_HEX_LENGTH) return null
+  if (!/^[a-f0-9]+$/.test(normalized)) return null
+  return normalized
 }
 
-function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map((entry) => stableJson(entry)).join(',')}]`
-  const record = value as Record<string, unknown>
-  const keys = Object.keys(record).sort()
-  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`
+export function isHostCommandFingerprint(value: unknown): value is string {
+  return normalizeHostCommandFingerprint(value) !== null
 }
 
 /**
- * Compare a retry against a durable receipt. Same idempotency key with a different
- * fingerprint is a conflict; identical fingerprint is a reconnect-safe replay.
+ * Compare a retry against a durable receipt using the supplied SHA-256 hex
+ * fingerprint. Same idempotency key + identical fingerprint ⇒ reconnect-safe
+ * replay; same key + different fingerprint ⇒ conflict. commandId is never the
+ * equality signal (that footgun allowed same-key / different-body collisions).
  */
 export function evaluateHostIdempotencyReplay(
-  command: HostCommand,
+  next: { idempotencyKey: string; commandFingerprint: string },
   existing: HostCommandReceipt
 ): 'replay' | 'conflict' {
-  if (command.idempotencyKey !== existing.idempotencyKey) {
+  if (next.idempotencyKey !== existing.idempotencyKey) {
     return 'conflict'
   }
-  if (command.name !== existing.name) return 'conflict'
-  // Receipts do not store the full argument body; commandId match is the durable
-  // equality signal for reconnect lookup. Callers comparing a new commandId with
-  // a different body against the same key must supply fingerprints separately.
-  if (command.commandId === existing.commandId) return 'replay'
-  return 'conflict'
+  return evaluateHostIdempotencyFingerprints(next.commandFingerprint, existing.commandFingerprint)
 }
 
 export function evaluateHostIdempotencyFingerprints(
   nextFingerprint: string,
   existingFingerprint: string
 ): 'replay' | 'conflict' {
-  return nextFingerprint === existingFingerprint ? 'replay' : 'conflict'
+  const next = normalizeHostCommandFingerprint(nextFingerprint)
+  const existing = normalizeHostCommandFingerprint(existingFingerprint)
+  if (!next || !existing) return 'conflict'
+  return next === existing ? 'replay' : 'conflict'
 }
 
 /** Empty compact snapshot skeleton for fixtures / harnesses. */
