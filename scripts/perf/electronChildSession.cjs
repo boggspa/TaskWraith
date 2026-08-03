@@ -15,9 +15,15 @@
 
 const path = require('path')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
+const { listListeningPidsForPort, getProcessIdentity } = require('./portGuard.cjs')
 
 const DEFAULT_BUILD_COMMAND = 'npx electron-vite build'
 const DEFAULT_BUILD_ARGV = ['electron-vite', 'build']
+
+/** Bounded wait for CDP + inspector listeners after spawn (fail closed). */
+const DEFAULT_PORT_OWNERSHIP_TIMEOUT_MS = 15_000
+const DEFAULT_PORT_OWNERSHIP_INITIAL_DELAY_MS = 50
+const DEFAULT_PORT_OWNERSHIP_MAX_DELAY_MS = 500
 
 /**
  * @typedef {object} ChildHandle
@@ -431,39 +437,177 @@ function assertExactChildAttach(session, attachClaim) {
 }
 
 /**
- * After free-port preflight + spawn, verify CDP/inspector listeners belong to owned Electron tree.
+ * Whether a listener PID is the spawned Electron pid, an explicit owned pid,
+ * shares the recorded process group, or is a descendant of the owned tree.
+ *
+ * @param {number} listenerPid
  * @param {object} session
- * @param {{ listPortPids?: (port: number) => Promise<number[]>|number[] }} [adapters]
+ * @param {{ getProcessIdentity?: Function, maxAncestorHops?: number }} [adapters]
+ * @returns {Promise<boolean>}
+ */
+async function isPidInOwnedElectronTree(listenerPid, session, adapters = {}) {
+  if (!Number.isInteger(listenerPid) || listenerPid <= 0) return false
+  if (listenerPid === session.pid) return true
+  const ownedPids = Array.isArray(session.ownedPids) ? session.ownedPids : []
+  if (ownedPids.includes(listenerPid)) return true
+
+  const resolveIdentity =
+    typeof adapters.getProcessIdentity === 'function'
+      ? adapters.getProcessIdentity
+      : (pid) => getProcessIdentity(pid, adapters)
+  const maxHops = adapters.maxAncestorHops == null ? 32 : adapters.maxAncestorHops
+
+  if (session.pgid) {
+    const self = await resolveIdentity(listenerPid)
+    if (self && self.pgid === session.pgid) return true
+  }
+
+  let current = listenerPid
+  const seen = new Set()
+  for (let hop = 0; hop < maxHops; hop++) {
+    if (seen.has(current)) break
+    seen.add(current)
+    if (current === session.pid || ownedPids.includes(current)) return true
+    const identity = await resolveIdentity(current)
+    if (!identity) break
+    if (session.pgid && identity.pgid === session.pgid) return true
+    if (!Number.isInteger(identity.ppid) || identity.ppid <= 0) break
+    current = identity.ppid
+  }
+  return false
+}
+
+/**
+ * After free-port preflight + spawn, verify BOTH CDP and inspector listeners
+ * belong exclusively to the owned Electron pid/process-group/tree.
+ *
+ * Production default uses an exact-port lsof probe (execFile argv). Empty
+ * listener lists never soft-pass — bounded retry/backoff until both ports
+ * report listeners, then fail closed on timeout / unsupported probe / foreign PID.
+ *
+ * @param {object} session
+ * @param {{
+ *   listPortPids?: (port: number) => Promise<number[]>|number[],
+ *   getProcessIdentity?: (pid: number) => Promise<{pid:number,ppid:number,pgid:number}|null>,
+ *   sleep?: (ms: number) => Promise<void>,
+ *   now?: () => number,
+ *   timeoutMs?: number,
+ *   initialDelayMs?: number,
+ *   maxDelayMs?: number,
+ *   probeSupported?: boolean,
+ *   execFile?: Function,
+ *   lsofPath?: string,
+ *   psPath?: string,
+ *   platform?: string
+ * }} [adapters]
  */
 async function assertExactChildOwnsDebugPorts(session, adapters = {}) {
   if (!session || typeof session.pid !== 'number') {
     throw new Error('spawned session required for port ownership check')
   }
+  if (adapters.probeSupported === false) {
+    throw new Error('Refuse attach: exact-port ownership probe unsupported — refuse attach')
+  }
+
   const listPortPids =
-    adapters.listPortPids ||
-    (async () => {
-      // Default: no OS probe in unit tests — caller must inject for live attach.
-      return []
-    })
-  const allowed = new Set(
-    [session.pid, ...(Array.isArray(session.ownedPids) ? session.ownedPids : [])].filter(
-      (n) => typeof n === 'number' && n > 0
-    )
-  )
+    typeof adapters.listPortPids === 'function'
+      ? adapters.listPortPids
+      : (port) => listListeningPidsForPort(port, adapters)
+
+  const timeoutMs =
+    adapters.timeoutMs == null ? DEFAULT_PORT_OWNERSHIP_TIMEOUT_MS : adapters.timeoutMs
+  const initialDelayMs =
+    adapters.initialDelayMs == null
+      ? DEFAULT_PORT_OWNERSHIP_INITIAL_DELAY_MS
+      : adapters.initialDelayMs
+  const maxDelayMs =
+    adapters.maxDelayMs == null ? DEFAULT_PORT_OWNERSHIP_MAX_DELAY_MS : adapters.maxDelayMs
+  const sleep =
+    adapters.sleep ||
+    ((ms) =>
+      new Promise((resolve) => {
+        setTimeout(resolve, ms)
+      }))
+  const now = adapters.now || (() => Date.now())
+
   const ports = [session.remoteDebuggingPort, session.mainInspectorPort].filter((p) =>
     Number.isInteger(p)
   )
-  for (const port of ports) {
-    const pids = await listPortPids(port)
-    if (!Array.isArray(pids) || pids.length === 0) continue
-    const owned = pids.some((pid) => allowed.has(pid))
-    if (!owned) {
+  if (ports.length < 2) {
+    throw new Error(
+      'Refuse attach: CDP and inspector ports required for exact-child ownership check'
+    )
+  }
+  if (ports[0] === ports[1]) {
+    throw new Error('Refuse attach: CDP and inspector ports must be distinct')
+  }
+
+  const startedAt = now()
+  let delayMs = Math.max(0, initialDelayMs)
+  let attempts = 0
+  /** @type {Record<number, number[]>} */
+  let lastListeners = {}
+
+  while (true) {
+    attempts += 1
+    lastListeners = {}
+    let allPresent = true
+
+    for (const port of ports) {
+      let pids
+      try {
+        pids = await listPortPids(port)
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error)
+        throw new Error(
+          `Refuse attach: exact-port ownership probe failed for port ${port}: ${message}`
+        )
+      }
+      if (!Array.isArray(pids)) {
+        throw new Error(
+          `Refuse attach: exact-port ownership probe returned non-array for port ${port}`
+        )
+      }
+      const unique = [...new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0))].sort(
+        (a, b) => a - b
+      )
+      lastListeners[port] = unique
+      if (unique.length === 0) {
+        allPresent = false
+        continue
+      }
+      for (const listenerPid of unique) {
+        const owned = await isPidInOwnedElectronTree(listenerPid, session, adapters)
+        if (!owned) {
+          throw new Error(
+            `Refuse attach: port ${port} listener ${listenerPid} is not in owned Electron tree (pid=${session.pid}, pgid=${session.pgid || 'none'}, listeners=${unique.join(',')})`
+          )
+        }
+      }
+    }
+
+    if (allPresent) {
+      return {
+        ok: true,
+        attempts,
+        elapsedMs: Math.max(0, now() - startedAt),
+        listeners: lastListeners
+      }
+    }
+
+    const elapsed = Math.max(0, now() - startedAt)
+    if (elapsed >= timeoutMs) {
+      const detail = ports
+        .map((port) => `${port}=[${(lastListeners[port] || []).join(',') || 'none'}]`)
+        .join(' ')
       throw new Error(
-        `Refuse attach: port ${port} listeners ${pids.join(',')} are not in owned Electron tree (pid=${session.pid})`
+        `Refuse attach: timed out after ${elapsed}ms waiting for CDP+inspector listeners owned by Electron tree (pid=${session.pid}); last ${detail}`
       )
     }
+
+    await sleep(delayMs)
+    delayMs = Math.min(maxDelayMs, Math.max(1, Math.ceil(delayMs * 1.5)) || maxDelayMs)
   }
-  return true
 }
 
 /**
@@ -540,6 +684,9 @@ function shellQuote(value) {
 
 module.exports = {
   DEFAULT_BUILD_COMMAND,
+  DEFAULT_PORT_OWNERSHIP_TIMEOUT_MS,
+  DEFAULT_PORT_OWNERSHIP_INITIAL_DELAY_MS,
+  DEFAULT_PORT_OWNERSHIP_MAX_DELAY_MS,
   buildElectronSpawnPlan,
   resolveElectronBinary,
   createDirectCliBuildAdapter,
@@ -547,5 +694,6 @@ module.exports = {
   terminateExactChild,
   assertExactChildAttach,
   assertExactChildOwnsDebugPorts,
+  isPidInOwnedElectronTree,
   runIsolatedBuild
 }

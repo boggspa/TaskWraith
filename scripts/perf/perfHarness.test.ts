@@ -860,6 +860,8 @@ describe('T2 runner (no Electron launch)', () => {
   const {
     buildElectronSpawnPlan,
     assertExactChildAttach,
+    assertExactChildOwnsDebugPorts,
+    isPidInOwnedElectronTree,
     terminateExactChild,
     spawnExactElectronChild,
     runIsolatedBuild,
@@ -882,8 +884,22 @@ describe('T2 runner (no Electron launch)', () => {
     applyUnsupportedAnnotations,
     createUnsupportedObservationLedger
   } = require('./unsupportedMetrics.cjs')
-  const { assertLaunchPortsFree } = require('./portGuard.cjs')
+  const {
+    assertLaunchPortsFree,
+    parseLsofListenPids,
+    listListeningPidsForPort
+  } = require('./portGuard.cjs')
   const { EventEmitter } = require('events')
+
+  function ownedPortAdapters(pid, overrides = {}) {
+    return {
+      listPortPids: async () => [pid],
+      timeoutMs: 1000,
+      initialDelayMs: 0,
+      sleep: async () => {},
+      ...overrides
+    }
+  }
 
   it('derives sibling TaskWraith Dev <id> and refuses production/shared', () => {
     const home = '/Users/example'
@@ -1296,6 +1312,7 @@ describe('T2 runner (no Electron launch)', () => {
               probeCdp: async () => ({ port: 9411, reachable: false }),
               listInstancePids: () => []
             },
+            portOwnershipAdapters: ownedPortAdapters(9090),
             cdpAdapters: {
               httpGetJson: async () => {
                 throw new Error('staged attach failure')
@@ -1307,6 +1324,201 @@ describe('T2 runner (no Electron launch)', () => {
       ).rejects.toThrow(/staged attach failure/)
       expect(kills.length).toBeGreaterThan(0)
       expect(kills[0]).toBe('SIGTERM')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('E: exact-port ownership retries until both listeners appear; empty times out fail-closed', async () => {
+    expect(parseLsofListenPids('p4242\np4242\np100\n')).toEqual([100, 4242])
+
+    await expect(
+      listListeningPidsForPort(9411, {
+        platform: 'win32'
+      })
+    ).rejects.toThrow(/unsupported on win32/i)
+
+    await expect(
+      listListeningPidsForPort(9411, {
+        execFile: (_file, _args, _opts, cb) => {
+          const err = new Error('spawn lsof ENOENT')
+          err.code = 'ENOENT'
+          cb(err)
+        }
+      })
+    ).rejects.toThrow(/lsof not found/i)
+
+    const session = {
+      pid: 4242,
+      pgid: 4242,
+      ownedPids: [4242],
+      remoteDebuggingPort: 9411,
+      mainInspectorPort: 9811
+    }
+
+    let clock = 0
+    const calls = []
+    const delayed = await assertExactChildOwnsDebugPorts(session, {
+      listPortPids: async (port) => {
+        calls.push(port)
+        // First full sweep empty; second sweep both owned.
+        if (calls.length <= 2) return []
+        return [4242]
+      },
+      timeoutMs: 1000,
+      initialDelayMs: 10,
+      maxDelayMs: 50,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms
+      }
+    })
+    expect(delayed.ok).toBe(true)
+    expect(delayed.attempts).toBeGreaterThan(1)
+    expect(calls.filter((p) => p === 9411).length).toBeGreaterThan(1)
+    expect(calls.filter((p) => p === 9811).length).toBeGreaterThan(0)
+
+    clock = 0
+    await expect(
+      assertExactChildOwnsDebugPorts(session, {
+        listPortPids: async () => [],
+        timeoutMs: 40,
+        initialDelayMs: 10,
+        maxDelayMs: 10,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms
+        }
+      })
+    ).rejects.toThrow(/timed out/i)
+
+    await expect(
+      assertExactChildOwnsDebugPorts(session, {
+        listPortPids: async () => [7777],
+        getProcessIdentity: async (pid) =>
+          pid === 7777 ? { pid: 7777, ppid: 1, pgid: 1 } : { pid, ppid: 1, pgid: 1 },
+        timeoutMs: 100,
+        initialDelayMs: 0,
+        sleep: async () => {}
+      })
+    ).rejects.toThrow(/7777.*not in owned Electron tree/i)
+
+    const descendant = await assertExactChildOwnsDebugPorts(session, {
+      listPortPids: async () => [5555],
+      getProcessIdentity: async (pid) => {
+        if (pid === 5555) return { pid: 5555, ppid: 4242, pgid: 9999 }
+        if (pid === 4242) return { pid: 4242, ppid: 1, pgid: 4242 }
+        return null
+      },
+      timeoutMs: 100,
+      initialDelayMs: 0,
+      sleep: async () => {}
+    })
+    expect(descendant.ok).toBe(true)
+
+    const pgidOwned = await assertExactChildOwnsDebugPorts(session, {
+      listPortPids: async () => [6666],
+      getProcessIdentity: async (pid) =>
+        pid === 6666 ? { pid: 6666, ppid: 1, pgid: 4242 } : { pid, ppid: 1, pgid: 1 },
+      timeoutMs: 100,
+      initialDelayMs: 0,
+      sleep: async () => {}
+    })
+    expect(pgidOwned.ok).toBe(true)
+
+    expect(
+      await isPidInOwnedElectronTree(4242, session, {
+        getProcessIdentity: async () => {
+          throw new Error('should not probe self')
+        }
+      })
+    ).toBe(true)
+
+    await expect(
+      assertExactChildOwnsDebugPorts(session, { probeSupported: false })
+    ).rejects.toThrow(/unsupported/i)
+  })
+
+  it('E: runT2Baseline refuses attach before ownership check passes', async () => {
+    const kills = []
+    let cdpCalled = false
+    const home = mkdtempSync(path.join(tmpdir(), 'tw-t2-e-own-'))
+    try {
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfOwnE01',
+            `--home=${home}`,
+            '--port=9411',
+            '--inspect-port=9811'
+          ],
+          {
+            repoRoot: path.resolve(__dirname, '..', '..'),
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            },
+            buildAdapters: {
+              build: async () => ({ code: 0 })
+            },
+            spawnAdapters: {
+              resolveElectronPath: () => '/virtual/Electron',
+              spawn: () => {
+                const ee = new EventEmitter()
+                return Object.assign(ee, {
+                  pid: 4242,
+                  stdout: new EventEmitter(),
+                  stderr: new EventEmitter(),
+                  kill(sig) {
+                    kills.push(sig)
+                    queueMicrotask(() => ee.emit('exit', 0, sig))
+                    return true
+                  }
+                })
+              }
+            },
+            portAdapters: {
+              probePort: async (port) => ({ port, occupied: false }),
+              probeCdp: async () => ({ port: 9411, reachable: false }),
+              listInstancePids: () => []
+            },
+            portOwnershipAdapters: {
+              listPortPids: async () => [1111],
+              getProcessIdentity: async (pid) => ({ pid, ppid: 1, pgid: 1 }),
+              timeoutMs: 50,
+              initialDelayMs: 0,
+              sleep: async () => {}
+            },
+            cdpAdapters: {
+              httpGetJson: async () => {
+                cdpCalled = true
+                return {
+                  webSocketDebuggerUrl: 'ws://127.0.0.1:9411/devtools/browser/x',
+                  type: 'page',
+                  url: 'app://taskwraith'
+                }
+              }
+            },
+            terminateOptions: { waitMs: 20, sleep: async () => {} }
+          }
+        )
+      ).rejects.toThrow(/not in owned Electron tree|Refuse attach/i)
+      expect(cdpCalled).toBe(false)
+      expect(kills.length).toBeGreaterThan(0)
     } finally {
       rmSync(home, { recursive: true, force: true })
     }

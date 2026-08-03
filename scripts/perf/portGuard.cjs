@@ -144,8 +144,146 @@ async function assertLaunchPortsFree(options, adapters = {}) {
   }
 }
 
+/**
+ * Parse `lsof -Fp` field output into unique listening PIDs.
+ * @param {string} stdout
+ * @returns {number[]}
+ */
+function parseLsofListenPids(stdout) {
+  const pids = new Set()
+  for (const raw of String(stdout || '').split(/\r?\n/)) {
+    if (!raw || raw[0] !== 'p') continue
+    const next = Number(raw.slice(1))
+    if (Number.isInteger(next) && next > 0) pids.add(next)
+  }
+  return [...pids].sort((a, b) => a - b)
+}
+
+/**
+ * Exact-port listener PID probe via execFile argv (never shell interpolation / broad pgrep).
+ * Empty listeners → []; missing binary / unsupported platform → throw (fail closed).
+ *
+ * @param {number} port
+ * @param {{
+ *   execFile?: Function,
+ *   lsofPath?: string,
+ *   execTimeoutMs?: number,
+ *   platform?: string
+ * }} [adapters]
+ * @returns {Promise<number[]>}
+ */
+function listListeningPidsForPort(port, adapters = {}) {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return Promise.reject(new Error(`exact-port ownership probe refused invalid port ${port}`))
+  }
+  const platform = adapters.platform || process.platform
+  if (platform === 'win32') {
+    return Promise.reject(
+      new Error('exact-port ownership probe unsupported on win32 — refuse attach')
+    )
+  }
+
+  const execFile =
+    adapters.execFile ||
+    ((file, args, opts, cb) => {
+      const { execFile: nodeExecFile } = require('child_process')
+      return nodeExecFile(file, args, opts, cb)
+    })
+  const lsofPath = adapters.lsofPath || 'lsof'
+  const execTimeoutMs = adapters.execTimeoutMs == null ? 5000 : adapters.execTimeoutMs
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      lsofPath,
+      ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fp'],
+      { encoding: 'utf8', timeout: execTimeoutMs },
+      (err, stdout) => {
+        if (err) {
+          if (err.code === 'ENOENT') {
+            reject(
+              new Error('exact-port ownership probe unsupported: lsof not found — refuse attach')
+            )
+            return
+          }
+          // lsof exits 1 when no matching LISTEN sockets — treat as empty, not failure.
+          if (err.code === 1 || err.status === 1) {
+            resolve(parseLsofListenPids(stdout || ''))
+            return
+          }
+          reject(
+            new Error(
+              `exact-port ownership probe failed for port ${port}: ${
+                err && err.message ? err.message : err
+              }`
+            )
+          )
+          return
+        }
+        resolve(parseLsofListenPids(stdout || ''))
+      }
+    )
+  })
+}
+
+/**
+ * Read pid/ppid/pgid for ownership walks via execFile `ps` (never shell).
+ * @param {number} pid
+ * @param {{ execFile?: Function, psPath?: string, execTimeoutMs?: number }} [adapters]
+ * @returns {Promise<{ pid: number, ppid: number, pgid: number }|null>}
+ */
+function getProcessIdentity(pid, adapters = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) return Promise.resolve(null)
+  const execFile =
+    adapters.execFile ||
+    ((file, args, opts, cb) => {
+      const { execFile: nodeExecFile } = require('child_process')
+      return nodeExecFile(file, args, opts, cb)
+    })
+  const psPath = adapters.psPath || 'ps'
+  const execTimeoutMs = adapters.execTimeoutMs == null ? 5000 : adapters.execTimeoutMs
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      psPath,
+      ['-o', 'pid=,ppid=,pgid=', '-p', String(pid)],
+      { encoding: 'utf8', timeout: execTimeoutMs },
+      (err, stdout) => {
+        if (err) {
+          if (err.code === 'ENOENT') {
+            reject(
+              new Error(
+                'exact-port ownership process identity probe unsupported: ps not found — refuse attach'
+              )
+            )
+            return
+          }
+          resolve(null)
+          return
+        }
+        const line =
+          String(stdout || '')
+            .trim()
+            .split(/\r?\n/)[0] || ''
+        const match = line.match(/^(\d+)\s+(\d+)\s+(\d+)\s*$/)
+        if (!match) {
+          resolve(null)
+          return
+        }
+        resolve({
+          pid: Number(match[1]),
+          ppid: Number(match[2]),
+          pgid: Number(match[3])
+        })
+      }
+    )
+  })
+}
+
 module.exports = {
   probePortOccupied,
   probeCdpEndpoint,
-  assertLaunchPortsFree
+  assertLaunchPortsFree,
+  parseLsofListenPids,
+  listListeningPidsForPort,
+  getProcessIdentity
 }
