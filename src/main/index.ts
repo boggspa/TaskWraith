@@ -1464,6 +1464,7 @@ import { buildPiRpcArgs } from './pi/PiCliArgs'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES,
   PI_TASKWRAITH_TOOLS_READY_MARKER,
   piTaskWraithToolsReadyPromptAppendix,
   piTaskWraithToolsUnavailablePromptAppendix,
@@ -1801,6 +1802,7 @@ import {
 import {
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   buildToolPermissionRetryInstruction,
+  directUserApprovalAuthorizesUnscopedShell,
   isOneOffToolPermissionRetryForTarget,
   oneOffToolPermissionRetryGuardError,
   orchestrateToolPermissionRetry,
@@ -1809,6 +1811,7 @@ import {
 } from './mcp/ToolPermissionRetry'
 import {
   mcpToolAlwaysPrompts,
+  validateMcpCallerToolAllowlist,
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute,
   type McpCallerContext
@@ -20314,8 +20317,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // Without this, every broker call fails headlessly as "User rejected MCP"
   // even though TaskWraith policy allows it (pass-1 finding). Brokered tools
   // still route through TaskWraith's gateway (workspace guards + approval
-  // ledger); native reads stay available, while opaque native mutations are
-  // denied by the transient policy and use the broker instead.
+  // ledger). The broker is preferred for exact transactions; if setup cannot
+  // complete, a user-approved write seat retains Cursor-native Shell/Write
+  // inside `--sandbox enabled` rather than losing the lane.
   const writeCapable = cursorWriteCapable(payload.approvalMode)
   const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
   const cursorAdvertiseTaskWraithMcp =
@@ -20459,8 +20463,9 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // Transient workspace config (restored after the run): allow THIS
       // broker's tools, and strip workspace-registered MCP servers — under
       // `--force` those would execute ungoverned. The native-tool deny-list is
-      // seat-scoped and always denies opaque native shell/write. Write seats
-      // receive their mutation capability from the exact broker only.
+      // seat-scoped. While the broker is active every seat denies native
+      // Shell/Write so exact TaskWraith transactions remain the write route;
+      // degraded launches first release this transient policy.
       const cursorDir = join(payload.workspace!, '.cursor')
       const mcpPath = join(cursorDir, 'mcp.json')
       workspaceMcpAliasesGlobalRegistry = cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
@@ -20525,8 +20530,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       })
       cursorMcpBridgeActive = true
     } catch (error) {
-      // Degrade WITH A VISIBLE WARNING (Grok parity): the seat keeps serving
-      // native reads in ask mode rather than dying or regaining opaque writes.
+      // Degrade WITH A VISIBLE WARNING (Grok parity). A signed write seat keeps
+      // serving through Cursor's workspace sandbox; read-only seats stay ask-only.
       await releaseCursorConfigurationLeases()
       cursorMcpBridgeActive = false
       if (
@@ -20546,9 +20551,11 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
           provider: 'cursor',
           severity: 'warning',
           title: 'Cursor MCP bridge unavailable',
-          message: `TaskWraith could not set up the MCP broker; Cursor is continuing with native reads only. ${
-            error instanceof Error ? error.message : String(error)
-          }${
+          message: `TaskWraith could not set up the MCP broker; Cursor is continuing with ${
+            writeCapable
+              ? 'the user-approved native Shell/Write surface inside Cursor’s workspace sandbox'
+              : 'native reads only'
+          }. ${error instanceof Error ? error.message : String(error)}${
             error instanceof CursorGlobalBrokerRegistryInstallError
               ? ` Registry recovery outcome: ${error.cleanup.outcome}${
                   error.cleanup.outcome === 'cleanup-failed'
@@ -20600,9 +20607,10 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // as the mutation boundary. Read-only seats add a read-only
   // `--mode` (a BRIDGED read-only seat instead runs default mode — ask/plan
   // execute no tools headlessly — contained by the transient native-mutator
-  // deny-list + safe-subset broker); write-capable seats use default mode only
-  // while the exact broker is active and native mutators are denied. The contained argv never emits
-  // write-widening or sandbox-disabling flags (`--force` only with the bridge)
+  // deny-list + safe-subset broker); write-capable seats use default mode in the
+  // workspace sandbox, prefer exact broker transactions when present, and use
+  // the native stack only after broker setup visibly degrades. The contained argv never emits
+  // sandbox-disabling flags (`--force` remains broker-preparation-gated)
   // and guards the trailing prompt against flag injection. Path B inherits the
   // user's REAL ~/.cursor login via the process env (headless-verified:
   // apiKeySource "login", no key). The CursorStartupContainment canary is
@@ -20861,7 +20869,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     coreProfile: false
   })
 
-  const { writeCapable } = resolvePiNativeToolPosture({
+  const { writeCapable, shellCapable } = resolvePiNativeToolPosture({
     approvalMode: payload.approvalMode,
     effectivePermissions: payload.effectivePermissions
   })
@@ -20908,9 +20916,10 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   }
 
   // Pi's `--no-extensions` wall stays enabled. Main may add exactly one
-  // app-created extension by explicit path. A write-approved seat gets only
-  // exact brokered file mutations; Ensemble lanes may additionally get the
-  // fixed coordination surface. The broker re-enforces this per-token list.
+  // app-created extension by explicit path. An approved seat gets only exact
+  // brokered file mutations and/or TaskWraith-managed shell/elevation tools;
+  // Ensemble lanes may additionally get the fixed coordination surface. The
+  // broker re-enforces this per-token list.
   let taskWraithTools: PreparedPiTaskWraithExtension | undefined
   let taskWraithToolsPreparationFailure: string | undefined
   let piTaskWraithBrokerToken: string | undefined
@@ -20923,9 +20932,11 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
     AppStore.getSettings().agenticServices?.mcpTools
   const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
   const exactFileToolsExpected = writeCapable
+  const shellToolsExpected = shellCapable
   const coordinationExpected = ephemeralSession && piCoordinationAllowed
   const piTaskWraithToolNames: PiTaskWraithToolName[] = [
     ...(exactFileToolsExpected ? PI_EXACT_FILE_TOOL_NAMES : []),
+    ...(shellToolsExpected ? PI_MANAGED_SHELL_TOOL_NAMES : []),
     ...(coordinationExpected ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : [])
   ]
   if (piTaskWraithToolNames.length > 0) {
@@ -21000,13 +21011,17 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   const managedToolsFallbackPrompt = `${payload.prompt}\n\n${piTaskWraithToolsUnavailablePromptAppendix(
     {
       exactFileToolsExpected,
+      shellToolsExpected,
       coordinationExpected,
       reason:
         taskWraithToolsPreparationFailure ||
         'extension readiness was not verified before this turn began'
     }
   )}`
-  if ((exactFileToolsExpected || ephemeralSession) && !preparedTaskWraithTools) {
+  if (
+    (exactFileToolsExpected || shellToolsExpected || ephemeralSession) &&
+    !preparedTaskWraithTools
+  ) {
     appendDurableRunEventForRoute(
       'pi',
       route,
@@ -21018,8 +21033,9 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
         status: 'unavailable',
         reason: taskWraithToolsPreparationFailure || 'managed extension was not prepared',
         exactFileToolsExpected,
+        shellToolsExpected,
         coordinationExpected,
-        fallback: 'read-only continuation'
+        fallback: 'continue-and-request-visible-user-action'
       }
     )
   }
@@ -21027,12 +21043,13 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
   await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
     fallback: false,
     resolvedEnv,
-    ...((exactFileToolsExpected || ephemeralSession) && !preparedTaskWraithTools
+    ...((exactFileToolsExpected || shellToolsExpected || ephemeralSession) &&
+    !preparedTaskWraithTools
       ? {
           warning: `Pi managed tools are unavailable for this turn. ${
             taskWraithToolsPreparationFailure ||
             'The managed extension was not prepared; no manual Pi/MCP installation is required.'
-          } Pi is continuing read-only.`
+          } Pi will continue with available work and can visibly request the exact command or path that still needs user action.`
         }
       : {}),
     stdinPlan: preparedTaskWraithTools
@@ -21069,16 +21086,26 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   provider: 'pi',
                   severity: 'info',
                   title: 'Pi managed tools verified',
-                  message: exactFileToolsExpected
-                    ? 'TaskWraith attached the run-bound Pi tool surface. Exact file edits are transaction-locked; native shell/edit/write and generic MCP remain unavailable.'
-                    : 'TaskWraith attached the fixed run-bound Pi coordination surface; native mutation tools and generic MCP remain unavailable.'
+                  message:
+                    exactFileToolsExpected || shellToolsExpected
+                      ? `TaskWraith attached the run-bound Pi tool surface. ${[
+                          exactFileToolsExpected
+                            ? 'Exact file edits are transaction-locked'
+                            : undefined,
+                          shellToolsExpected
+                            ? 'managed shell and permission requests are approval-audited'
+                            : undefined
+                        ]
+                          .filter(Boolean)
+                          .join('; ')}; native bash/edit/write and generic MCP remain unavailable.`
+                      : 'TaskWraith attached the fixed run-bound Pi coordination surface; native mutation tools and generic MCP remain unavailable.'
                 },
                 route
               )
             },
             onUnavailable: (reason) => {
-              // Readiness failure switches this process to a native read-only
-              // prompt. Revoke the server-side credential before that prompt
+              // Readiness failure switches this process to an explicit
+              // continuity prompt. Revoke the server-side credential before that prompt
               // is written; the token string may remain visible in the child
               // environment, but it no longer authorizes any broker call.
               revokePiRunCredential()
@@ -21096,7 +21123,10 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   eventType: 'pi_managed_tool_surface',
                   status: 'unavailable',
                   reason,
-                  fallback: 'read-only continuation'
+                  exactFileToolsExpected,
+                  shellToolsExpected,
+                  coordinationExpected,
+                  fallback: 'continue-and-request-visible-user-action'
                 }
               )
               sendAgentCompatLine(
@@ -21107,7 +21137,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
                   provider: 'pi',
                   severity: 'warning',
                   title: 'Pi managed tools unavailable',
-                  message: `${detail} Pi is continuing read-only and was told not to probe another write transport. No manual Pi/MCP installation is required.`
+                  message: `${detail} Pi was told to continue all available work and visibly request any exact command or path still requiring user action. No manual Pi/MCP installation is required.`
                 },
                 route
               )
@@ -21117,7 +21147,7 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       : {
           initialLines: [
             piPromptCommand(
-              exactFileToolsExpected || ephemeralSession
+              exactFileToolsExpected || shellToolsExpected || ephemeralSession
                 ? managedToolsFallbackPrompt
                 : payload.prompt
             )
@@ -33776,7 +33806,16 @@ function gatewayCatalogDefinitions(context: GeminiToolContext) {
   return mcpToolDefinitions().filter((definition) => hidden.has(definition.name))
 }
 
-function toolPermissionRetryAvailable(context: GeminiToolContext): boolean {
+function toolPermissionRetryAvailable(
+  context: GeminiToolContext,
+  parentProvider?: ProviderId,
+  callerContext?: McpCallerContext
+): boolean {
+  // Pi receives this tool only through its exact per-run credential allowlist;
+  // it has no generic MCP profile identity to pin to gateway-v9.
+  if (parentProvider === 'pi') {
+    return callerContext?.fixedToolAllowlist?.includes(TOOL_PERMISSION_RETRY_TOOL_NAME) === true
+  }
   return taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId).includes(
     TOOL_PERMISSION_RETRY_TOOL_NAME
   )
@@ -33998,6 +34037,18 @@ async function executeGeminiMcpTool(
   }
   const dispatchContract: ResolvedToolDispatchContract = dispatchContractResolution
 
+  const callerToolAllowlistGuard = validateMcpCallerToolAllowlist(toolName, callerContext)
+  if (!callerToolAllowlistGuard.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error: callerToolAllowlistGuard.error
+      }),
+      isError: true
+    }
+  }
+
   if (isCapabilityGatewayToolName(toolName)) {
     const context = getAgentToolContext(parentProvider, effectiveRoute)
     if (!context) {
@@ -34200,7 +34251,10 @@ async function executeGeminiMcpTool(
       isError: true
     }
   }
-  if (toolName === TOOL_PERMISSION_RETRY_TOOL_NAME && !toolPermissionRetryAvailable(context)) {
+  if (
+    toolName === TOOL_PERMISSION_RETRY_TOOL_NAME &&
+    !toolPermissionRetryAvailable(context, parentProvider, callerContext)
+  ) {
     return {
       ...mcpStructuredJsonResult({
         ok: false,
@@ -34395,6 +34449,12 @@ async function executeGeminiMcpTool(
           externalPathDetection
         }
       )
+  const directUserApprovedUnscopedShell = directUserApprovalAuthorizesUnscopedShell({
+    toolName,
+    arguments: args,
+    allowed,
+    decision: genericApprovalResolution
+  })
   if (allowed && toolName === 'canvas_eval') {
     const liveRun = context.appRunId ? runManager.get(context.appRunId) : undefined
     const liveChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
@@ -34517,7 +34577,7 @@ async function executeGeminiMcpTool(
                 : ''
             }`
     const permissionRetryInstruction = buildToolPermissionRetryInstruction({
-      available: toolPermissionRetryAvailable(context),
+      available: toolPermissionRetryAvailable(context, parentProvider, callerContext),
       toolName,
       arguments: args,
       failure: deniedError,
@@ -34577,7 +34637,10 @@ async function executeGeminiMcpTool(
         args
       }),
       acquisitionStillWanted: () =>
-        canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
+        canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority),
+      allowUserApprovedUnscopedShell:
+        (exactOneOffPermissionRetry && toolName === 'run_shell_command') ||
+        directUserApprovedUnscopedShell
     })
   } catch (error) {
     workspaceMutationOperationDone?.finish()
@@ -34599,16 +34662,41 @@ async function executeGeminiMcpTool(
   }
   if (!workspaceMutationAdmission.ok) {
     workspaceMutationOperationDone?.finish()
+    const permissionRetryInstruction = exactOneOffPermissionRetry
+      ? null
+      : buildToolPermissionRetryInstruction({
+          available: toolPermissionRetryAvailable(context, parentProvider, callerContext),
+          toolName,
+          arguments: args,
+          failure: workspaceMutationAdmission.reason,
+          definitions: filterTaskWraithMcpToolDefinitionsForProfile(
+            context.taskWraithMcpProfileId,
+            mcpToolDefinitions()
+          ),
+          isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate)
+        })
+    const admissionDeniedText = permissionRetryInstruction
+      ? mcpJson({
+          ok: false,
+          tool: toolName,
+          ...(workspaceMutationAdmission.code ? { code: workspaceMutationAdmission.code } : {}),
+          error: workspaceMutationAdmission.reason,
+          ...(workspaceMutationAdmission.laneId
+            ? { laneId: workspaceMutationAdmission.laneId }
+            : {}),
+          permissionRetry: permissionRetryInstruction
+        })
+      : workspaceMutationAdmission.text
     emitMcpToolTranscriptEvent({
       type: 'tool_result',
       tool_id: toolId,
       tool_name: toolName,
       status: 'error',
-      output: workspaceMutationAdmission.text,
+      output: admissionDeniedText,
       provider: parentProvider,
       server: GEMINI_MCP_SERVER_NAME
     })
-    return { text: workspaceMutationAdmission.text, isError: true }
+    return { text: admissionDeniedText, isError: true }
   }
   if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
     let workspaceLockLifecycleResolved = true
@@ -34900,6 +34988,10 @@ async function executeGeminiMcpTool(
         isAutoAllowed: (candidate) => MCP_AUTO_ALLOWED_TOOLS.has(candidate),
         providerLabel: providerDisplayName(parentProvider),
         prepareTarget: (retryRequest) => {
+          const targetCallerToolAllowlistGuard = validateMcpCallerToolAllowlist(
+            retryRequest.toolName,
+            callerContext
+          )
           const targetArgumentPreflight = validateMcpToolArgumentsBeforeApproval(
             retryRequest.toolName,
             retryRequest.arguments,
@@ -34945,7 +35037,11 @@ async function executeGeminiMcpTool(
             : null
           return prepareToolPermissionRetryTarget({
             toolName: retryRequest.toolName,
-            routeError: targetRouteGuard.ok ? null : targetRouteGuard.error,
+            routeError: !targetCallerToolAllowlistGuard.ok
+              ? targetCallerToolAllowlistGuard.error
+              : targetRouteGuard.ok
+                ? null
+                : targetRouteGuard.error,
             workspaceError: targetWorkspaceGuard.ok ? null : targetWorkspaceGuard.error,
             providerPolicyError: targetProviderPolicyError,
             networkError: targetNetworkBlockedTool

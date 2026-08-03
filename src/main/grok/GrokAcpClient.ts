@@ -16,6 +16,7 @@ import {
   runAcpTurn,
   createAcpTurnAbortController,
   type AcpChildProcess,
+  type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
 import type {
@@ -95,6 +96,42 @@ export function grokDeniedToolRecoveryPrompt(taskWraithShellToolAvailable: boole
     : GROK_DENIED_TOOL_RECOVERY_PROMPT
 }
 
+export const GROK_FAILED_TOOL_CONTINUITY_PROMPT =
+  'The previous TaskWraith broker or provider tool call failed or was declined. Respect the ' +
+  'user decision and do not retry the same call or request the same permission again. An ' +
+  'optional tool outcome is not a reason to cancel the participant turn: continue from the ' +
+  'evidence already available and produce your final report. If the requested task genuinely ' +
+  'cannot be completed, state the exact tool, command, or path still needed so the user can ' +
+  'make one informed choice.'
+
+export const GROK_PERMISSION_BOUNDARY_CONTINUITY_PROMPT =
+  'TaskWraith returned a typed permission boundary, not a user refusal. If the tool result ' +
+  'advertises a permissionRetry instruction, execute that exact advertised tool and arguments ' +
+  'once; it resolves request_tool_permission so the user can inspect the exact command and cwd. If the user then ' +
+  'declines, do not retry or substitute another side effect; continue from available evidence ' +
+  'and finish the participant turn.'
+
+export function grokToolRecoveryPrompt(
+  context: AcpToolRecoveryContext,
+  taskWraithShellToolAvailable: boolean
+): string {
+  const request = context.deniedPermissionRequest
+  const nativeShellRequest =
+    context.reason === 'denied-permission-cancellation' &&
+    request?.toolKind.toLowerCase() === 'execute' &&
+    !/taskwraith/i.test(request.toolName)
+  if (nativeShellRequest) return grokDeniedToolRecoveryPrompt(taskWraithShellToolAvailable)
+  if (
+    context.reason === 'failed-tool-terminal' &&
+    /"permissionRetry"\s*:|request_tool_permission|one auditable host execution|caller-declared paths cannot prove/i.test(
+      context.lastFailedToolOutput || ''
+    )
+  ) {
+    return GROK_PERMISSION_BOUNDARY_CONTINUITY_PROMPT
+  }
+  return GROK_FAILED_TOOL_CONTINUITY_PROMPT
+}
+
 export function isGrokDeniedToolCancellation(status: string | null | undefined): boolean {
   const normalized = String(status || '')
     .trim()
@@ -156,7 +193,15 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
     onPermissionRequest: options.onPermissionRequest,
     deniedToolRecovery: {
       detect: isGrokDeniedToolCancellation,
-      prompt: grokDeniedToolRecoveryPrompt(Boolean(options.taskWraithShellToolAvailable))
+      prompt: (context) =>
+        grokToolRecoveryPrompt(context, Boolean(options.taskWraithShellToolAvailable)),
+      shouldRecover: (context) =>
+        context.toolFailureSeen && isGrokDeniedToolCancellation(context.terminalStatus),
+      warning: (context) =>
+        context.reason === 'denied-permission-cancellation' &&
+        context.deniedPermissionRequest?.toolKind.toLowerCase() === 'execute'
+          ? 'The agent cancelled after a refused native tool; continuing with clarified routing guidance.'
+          : 'Grok stopped after a declined or failed tool; continuing once so it can finish from available evidence.'
     },
     formatProcessError: formatGrokProcessError,
     // Grok receives a bounded graceful termination request first. The neutral

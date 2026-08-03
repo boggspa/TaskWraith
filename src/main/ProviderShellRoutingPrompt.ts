@@ -29,7 +29,8 @@ const TASKWRAITH_MCP_SHELL_PROVIDERS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'mistral'
+  'mistral',
+  'pi'
 ])
 
 type ShellRoutingPermissions = Pick<EffectiveRunPermissions, 'agenticServices'>
@@ -61,20 +62,38 @@ export function buildProviderShellRoutingPrompt(input: {
   if (
     !permissions ||
     !shellPolicy ||
-    !mcpPolicy ||
     !TASKWRAITH_MCP_SHELL_PROVIDERS.has(input.provider) ||
-    shellPolicy === 'deny' ||
-    mcpPolicy === 'deny'
+    shellPolicy === 'deny'
   ) {
     return ''
   }
 
-  const shellTool = taskWraithToolNameForProvider(input.provider, 'run_shell_command')
+  const managedRouteAvailable = input.provider === 'pi' || mcpPolicy !== 'deny'
+  if (!managedRouteAvailable && input.provider !== 'cursor') return ''
+  const shellTool =
+    input.provider === 'pi'
+      ? 'run_shell_command'
+      : taskWraithToolNameForProvider(input.provider, 'run_shell_command')
+  const permissionRoute =
+    input.provider === 'pi'
+      ? 'call `request_tool_permission` once with the original `run_shell_command` arguments and returned failure'
+      : 'follow the returned `permissionRetry` instruction exactly once through the listed capability gateway; it resolves `request_tool_permission` with the original command and failure'
   return [
     TASKWRAITH_SHELL_ROUTING_PROMPT_OPEN,
     'TaskWraith shell-routing (effective grant):',
-    `- For tests, builds, Git, npm, and other shell work, call \`${shellTool}\` if it is listed in your tool surface. ${shellGrantSentence(shellPolicy)}`,
-    `- A refusal from a native Bash/Shell/terminal tool can be a containment route, not a denial of the effective shell permission. This is the one permitted route change: do not retry the native tool; call \`${shellTool}\` once. This supersedes generic “do not retry through another tool” wording only for this contained-native-to-TaskWraith-shell route. If the TaskWraith shell call itself is unavailable or denied, report that exact blocker and do not substitute unrelated side effects.`,
+    ...(managedRouteAvailable
+      ? [
+          `- For tests, builds, Git, npm, and other shell work, call \`${shellTool}\` if it is listed in your tool surface. ${shellGrantSentence(shellPolicy)}`,
+          '- The normal managed route executes only commands TaskWraith can prove read-only. Opaque process side effects cannot be contained by caller-declared paths.',
+          `- If TaskWraith reports that boundary, ${permissionRoute}. That opens an auditable one-shot approval showing the exact command and cwd; approval runs only that invocation in the TaskWraith host process outside the workspace sandbox.`,
+          `- A refusal from a native Bash/Shell/terminal tool can be a containment route, not a denial of the effective shell permission. Do not repeat the native call; route once through \`${shellTool}\`. If the user declines either approval, respect it, continue from available evidence, and finish the turn instead of cancelling.`
+        ]
+      : []),
+    ...(input.provider === 'cursor'
+      ? [
+          '- Cursor continuity: when the managed TaskWraith shell tool is absent on a user-approved write seat, native Shell/Write remain available inside Cursor’s enabled workspace sandbox. Stay inside the assigned lane scope, expose the exact command/path, and continue the turn if the sandbox refuses it.'
+        ]
+      : []),
     TASKWRAITH_SHELL_ROUTING_PROMPT_CLOSE,
     '',
     ''

@@ -12,9 +12,28 @@ const OUTLOOK_ALWAYS_PROMPT_TOOLS = new Set<string>(OUTLOOK_MCP_TOOL_NAMES)
 export interface McpCallerContext {
   callerCwd?: string
   callerWorkspacePath?: string
+  /**
+   * Server-derived fixed tool ceiling for constrained transports such as Pi's
+   * per-run extension. It must survive nested gateway/permission dispatch so
+   * an allowed wrapper cannot widen the credential's original authority.
+   */
+  fixedToolAllowlist?: readonly string[]
 }
 
 export type McpGuardResult = { ok: true } | { ok: false; error: string }
+
+export function validateMcpCallerToolAllowlist(
+  toolName: string,
+  caller?: McpCallerContext
+): McpGuardResult {
+  const allowlist = caller?.fixedToolAllowlist
+  if (!allowlist) return { ok: true }
+  if (allowlist.includes(toolName)) return { ok: true }
+  return {
+    ok: false,
+    error: `The caller's fixed run-bound tool credential does not permit ${toolName}.`
+  }
+}
 
 export function isMutatingTaskWraithMcpTool(toolName: string, toolArgs?: unknown): boolean {
   const contract = resolveToolDispatchContractStrict(toolName, toolArgs)

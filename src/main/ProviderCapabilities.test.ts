@@ -75,8 +75,20 @@ describe('ProviderCapabilities', () => {
       expect(contract.mcp.serverName).toBe('TaskWraith Pi managed tools')
       expect(contract.mcp.message).toContain('no manual Pi/MCP installation')
       expect(contract.mcp.tools).toEqual(
-        expect.arrayContaining(['ensemble_yield', 'ensemble_send', 'blackboard_post'])
+        expect.arrayContaining([
+          'run_shell_command',
+          'request_tool_permission',
+          'ensemble_yield',
+          'ensemble_send',
+          'blackboard_post'
+        ])
       )
+      expect(contract.tools.shellCommands.source).toBe('taskwraith')
+      expect(contract.tools.shellCommands.tools).toEqual([
+        'run_shell_command',
+        'request_tool_permission'
+      ])
+      expect(contract.tools.shellCommands.details).toContain('auditable host execution')
       expect(contract.tools.mcpTools.source).toBe('taskwraith')
       expect(contract.tools.mcpTools.details).toContain('readiness receipt')
       expect(contract.tools.elicit.state).toBe('unavailable')
@@ -94,7 +106,13 @@ describe('ProviderCapabilities', () => {
 
       expect(contract.mcp.state).toBe('available')
       expect(contract.mcp.available).toBe(true)
-      expect(contract.mcp.tools).toEqual(['write_file', 'replace', 'apply_patch'])
+      expect(contract.mcp.tools).toEqual([
+        'write_file',
+        'replace',
+        'apply_patch',
+        'run_shell_command',
+        'request_tool_permission'
+      ])
       expect(contract.tools.mcpTools.state).toBe('unavailable')
     })
 
@@ -132,7 +150,7 @@ describe('ProviderCapabilities', () => {
         }
       ]
     ])(
-      'reports default mode as read-only for a signed %s posture',
+      'reports the precise managed surface for a signed %s posture',
       (_label, effectivePermissions) => {
         const contract = buildProviderCapabilityContract({
           provider: 'pi',
@@ -144,7 +162,17 @@ describe('ProviderCapabilities', () => {
 
         expect(contract.approvals.requestedMode).toBe('default')
         expect(contract.approvals.effectiveMode).toBe('plan')
-        expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+        if (effectivePermissions.readOnly) {
+          expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+          expect(contract.tools.shellCommands.state).toBe('unavailable')
+        } else {
+          expect(contract.approvals.providerMode).toContain('managed shell')
+          expect(contract.approvals.inAppApprovals).toBe(true)
+          expect(contract.tools.shellCommands.tools).toEqual([
+            'run_shell_command',
+            'request_tool_permission'
+          ])
+        }
         expect(
           contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
         ).toMatchObject({ severity: 'warning' })
@@ -162,7 +190,11 @@ describe('ProviderCapabilities', () => {
         })
 
         expect(contract.approvals.effectiveMode).toBe('plan')
-        expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+        expect(contract.approvals.providerMode).toContain('managed shell')
+        expect(contract.tools.shellCommands.tools).toEqual([
+          'run_shell_command',
+          'request_tool_permission'
+        ])
         expect(
           contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
         ).toMatchObject({ severity: 'warning' })
@@ -181,6 +213,24 @@ describe('ProviderCapabilities', () => {
       expect(contract.approvals.providerMode).toContain('brokered exact file tools')
       expect(contract.tools.shellCommands.state).toBe('unavailable')
       expect(contract.tools.fileChanges.tools).toEqual(['write_file', 'replace', 'apply_patch'])
+    })
+
+    it('retains managed shell when exact file changes are denied', () => {
+      const contract = buildProviderCapabilityContract({
+        provider: 'pi',
+        settings: settings({ ...defaultServices, fileChanges: 'deny', shellCommands: 'ask' }),
+        approvalMode: 'default',
+        status: { provider: 'pi', available: true }
+      })
+
+      expect(contract.approvals.effectiveMode).toBe('plan')
+      expect(contract.approvals.providerMode).toContain('managed shell')
+      expect(contract.approvals.supportsWorkspaceGrants).toBe(true)
+      expect(contract.tools.fileChanges.state).toBe('unavailable')
+      expect(contract.tools.shellCommands.tools).toEqual([
+        'run_shell_command',
+        'request_tool_permission'
+      ])
     })
   })
 

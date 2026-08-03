@@ -135,7 +135,7 @@ describe('CursorPathBLaunchPlan', () => {
     expect(plan.argv).toContain('ask')
   })
 
-  it('keeps write seats native-read-only unless the exact broker is active', () => {
+  it('keeps a sandboxed native write fallback when the exact broker is unavailable', () => {
     const degraded = buildCursorPathBLaunchPlan(
       input({
         writeCapable: true,
@@ -144,9 +144,12 @@ describe('CursorPathBLaunchPlan', () => {
         taskWraithMcpProfileId: 'taskwraith-full-v1'
       })
     )
-    expect(degraded.controls.executionMode).toBe('ask')
-    expect(degraded.argv).toContain('ask')
+    expect(degraded.controls.executionMode).toBe('contained-default')
     expect(degraded.argv).not.toContain('--force')
+    expect(degraded.argv).not.toContain('ask')
+    expect(degraded.broker.denyRules).toEqual([])
+    expect(degraded.prompt).toContain('user-approved write posture remains active')
+    expect(degraded.prompt).toContain('enabled workspace sandbox')
 
     const active = buildCursorPathBLaunchPlan(
       input({

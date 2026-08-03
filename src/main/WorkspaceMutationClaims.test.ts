@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -119,6 +119,80 @@ describe('deriveWorkspaceMutationClaims', () => {
       })
     ).rejects.toMatchObject({
       code: 'path-escape'
+    })
+
+    await mkdir(join(workspacePath, 'existing'))
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'write_file',
+        args: { path: 'existing/new.ts', content: 'new' }
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'file',
+        targetPath: join(workspacePath, 'existing/new.ts')
+      })
+    ])
+  })
+
+  it('requires the nearest existing parent to resolve to a directory', async () => {
+    const workspacePath = await temporaryWorkspace()
+    await writeFile(join(workspacePath, 'regular-parent'), 'not a directory')
+
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'write_file',
+        args: { path: 'regular-parent/new.ts', content: 'new' }
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-call',
+      message: 'Planned parent path must resolve to a directory before mutation.'
+    })
+  })
+
+  it('accepts an in-workspace symlink whose target is an existing directory', async () => {
+    const workspacePath = await temporaryWorkspace()
+    const physicalDirectory = join(workspacePath, 'physical')
+    await mkdir(physicalDirectory)
+    await symlink(
+      physicalDirectory,
+      join(workspacePath, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'write_file',
+        args: { path: 'alias/new.ts', content: 'new' }
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'file',
+        targetPath: join(workspacePath, 'alias/new.ts')
+      })
+    ])
+  })
+
+  it('rejects a dangling symlink instead of treating it as a missing parent', async () => {
+    const workspacePath = await temporaryWorkspace()
+    await symlink(
+      join(workspacePath, 'missing-target'),
+      join(workspacePath, 'dangling'),
+      process.platform === 'win32' ? 'junction' : 'dir'
+    )
+
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'write_file',
+        args: { path: 'dangling/new.ts', content: 'new' }
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-call',
+      message: 'Planned parent path must resolve to a directory before mutation.'
     })
   })
 
@@ -613,7 +687,7 @@ describe('deriveWorkspaceMutationClaims', () => {
     }
   })
 
-  it('does not lock read-labelled runtime operations and rejects opaque shell mutations', async () => {
+  it('does not lock read-labelled runtime operations and rejects advisory shell edit paths', async () => {
     const workspacePath = await temporaryWorkspace()
 
     await expect(
@@ -629,6 +703,19 @@ describe('deriveWorkspaceMutationClaims', () => {
         args: { command: 'touch changed.txt' }
       })
     ).rejects.toMatchObject({ code: 'invalid-call' })
+    await expect(
+      deriveWorkspaceMutationClaims({
+        workspacePath,
+        action: 'run_shell_command',
+        args: {
+          command: 'node scripts/update.mjs',
+          editPaths: ['src/a.ts', 'src/b.ts']
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'invalid-call',
+      message: expect.stringContaining('caller-declared paths cannot prove')
+    })
   })
 
   it('uses one exact git metadata mutex instead of a workspace claim', async () => {

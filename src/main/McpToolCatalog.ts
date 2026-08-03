@@ -23,7 +23,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'run_shell_command',
       description:
-        'Run a shell command in the active TaskWraith workspace after TaskWraith approval policy allows it.',
+        'Run proven read-only workspace commands; opaque or mutating effects require audited host approval.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,

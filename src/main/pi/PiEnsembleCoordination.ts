@@ -7,8 +7,8 @@ import { join, relative, resolve } from 'node:path'
  *
  * Pi has no MCP client.  These names are implemented by a TaskWraith-owned,
  * per-run Pi extension which talks only to the already-authenticated local
- * TaskWraith broker. It is not a generic MCP proxy; the separate exact-file
- * list below is the only mutation surface that may be combined with it.
+ * TaskWraith broker. It is not a generic MCP proxy; only the fixed exact-file
+ * and managed-shell lists below may be combined with it.
  */
 export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
   'ensemble_yield',
@@ -22,17 +22,28 @@ export const PI_ENSEMBLE_COORDINATION_TOOL_NAMES = Object.freeze([
 ] as const)
 
 /** Exact workspace mutation tools whose arguments can be locked and committed
- * inside TaskWraith's broker transaction. Shell and opaque runtime tools are
- * intentionally absent. */
+ * inside TaskWraith's broker transaction. */
 export const PI_EXACT_FILE_TOOL_NAMES = Object.freeze([
   'write_file',
   'replace',
   'apply_patch'
 ] as const)
 
+/** Managed shell and elevation tools. Native Pi bash remains disabled: proven
+ * reads use the normal route and opaque process effects require one visible,
+ * audited host approval. */
+export const PI_MANAGED_SHELL_TOOL_NAMES = Object.freeze([
+  'run_shell_command',
+  'request_tool_permission'
+] as const)
+
 export type PiEnsembleCoordinationToolName = (typeof PI_ENSEMBLE_COORDINATION_TOOL_NAMES)[number]
 export type PiExactFileToolName = (typeof PI_EXACT_FILE_TOOL_NAMES)[number]
-export type PiTaskWraithToolName = PiEnsembleCoordinationToolName | PiExactFileToolName
+export type PiManagedShellToolName = (typeof PI_MANAGED_SHELL_TOOL_NAMES)[number]
+export type PiTaskWraithToolName =
+  | PiEnsembleCoordinationToolName
+  | PiExactFileToolName
+  | PiManagedShellToolName
 
 /**
  * The broker enforces this independently of Pi's extension registration.
@@ -55,7 +66,9 @@ export function isPiEnsembleCoordinationToolName(
 export function isPiTaskWraithToolName(value: unknown): value is PiTaskWraithToolName {
   return (
     isPiEnsembleCoordinationToolName(value) ||
-    (typeof value === 'string' && (PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value))
+    (typeof value === 'string' &&
+      ((PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(value) ||
+        (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(value)))
   )
 }
 
@@ -151,6 +164,9 @@ export function piTaskWraithToolsReadyPromptAppendix(
   const exactFileTools = receipt.toolNames.filter((name) =>
     (PI_EXACT_FILE_TOOL_NAMES as readonly string[]).includes(name)
   )
+  const managedShellTools = receipt.toolNames.filter((name) =>
+    (PI_MANAGED_SHELL_TOOL_NAMES as readonly string[]).includes(name)
+  )
   const coordinationTools = receipt.toolNames.filter((name) =>
     (PI_ENSEMBLE_COORDINATION_TOOL_NAMES as readonly string[]).includes(name)
   )
@@ -161,6 +177,13 @@ export function piTaskWraithToolsReadyPromptAppendix(
     ...(exactFileTools.length
       ? [
           `- Exact edit tools (${exactFileTools.join(', ')}) acquire only their proposed file/hunk targets and release them immediately after each call. Native Pi bash/edit/write remain disabled.`
+        ]
+      : []),
+    ...(managedShellTools.length
+      ? [
+          '- `run_shell_command` is the managed route for commands TaskWraith can prove read-only. Opaque or mutating process effects are never treated as contained by caller-declared paths.',
+          '- When that exact boundary is returned, call `request_tool_permission` once with the exact command, cwd, failure and rationale. Any approved fallback is shown to the user and audited as a one-shot TaskWraith host execution outside the workspace sandbox.',
+          '- If the user declines a tool or elevation request, respect that decision, continue with available evidence, and finish the turn; do not cancel the whole lane.'
         ]
       : []),
     ...(coordinationTools.length
@@ -184,6 +207,7 @@ export function piEnsembleCoordinationUnavailablePromptAppendix(reason?: string)
 
 export function piTaskWraithToolsUnavailablePromptAppendix(input: {
   exactFileToolsExpected: boolean
+  shellToolsExpected: boolean
   coordinationExpected: boolean
   reason?: string
 }): string {
@@ -191,7 +215,12 @@ export function piTaskWraithToolsUnavailablePromptAppendix(input: {
     'TaskWraith managed-tools receipt: unavailable for this run.',
     ...(input.exactFileToolsExpected
       ? [
-          '- Native Pi bash/edit/write are disabled. Continue read-only and report that exact file tools were unavailable; do not attempt another write transport.'
+          '- Exact file tools were expected but their managed transport did not prove ready. Continue all work that remains possible and state the exact path/edit that still needs user action.'
+        ]
+      : []),
+    ...(input.shellToolsExpected
+      ? [
+          '- Managed shell was expected but did not prove ready. Do not invent success: visibly ask the user to approve the exact command and cwd, then continue with any work that does not depend on it.'
         ]
       : []),
     ...(input.coordinationExpected
@@ -316,7 +345,9 @@ function descriptionFor(name) {
     blackboard_delete: 'Retire stale shared blackboard entries when your run posture permits it. Optional ids, keys, category, or all.',
     write_file: 'Write one exact workspace file through TaskWraith mutation locking. Required: path and content.',
     replace: 'Replace exact text in one workspace file through TaskWraith mutation locking. Required: path, old_string, and new_string.',
-    apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.'
+    apply_patch: 'Apply one complete unified diff through an atomic TaskWraith multi-file transaction. Required: patch.',
+    run_shell_command: 'Run a command TaskWraith can prove read-only. Required: command. Opaque or mutating process effects require request_tool_permission for one audited host execution.',
+    request_tool_permission: 'Ask the user for one audited retry of a denied TaskWraith tool. Include the tool name, exact arguments, failure, and optional rationale.'
   }
   return descriptions[name] || 'Use this TaskWraith Ensemble coordination tool.'
 }
@@ -393,6 +424,18 @@ function parametersFor(name) {
         dryRun: Type.Optional(Type.Boolean()),
         check: Type.Optional(Type.Boolean())
       })
+    case 'run_shell_command':
+      return object({
+        command: Type.String(),
+        cwd: optionalText()
+      })
+    case 'request_tool_permission':
+      return object({
+        toolName: Type.String(),
+        arguments: Type.Any(),
+        failure: Type.String(),
+        rationale: optionalText()
+      })
     default:
       return object({})
   }
@@ -405,7 +448,7 @@ export default function (pi) {
       label: 'TaskWraith ' + name,
       description: descriptionFor(name),
       promptSnippet: descriptionFor(name),
-      promptGuidelines: ['Use ' + name + ' only for its stated TaskWraith Ensemble coordination purpose.'],
+      promptGuidelines: ['Use ' + name + ' only for its stated TaskWraith purpose.'],
       parameters: parametersFor(name),
       async execute(_toolCallId, params) {
         const result = await brokerCall(name, params)

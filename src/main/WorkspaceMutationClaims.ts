@@ -43,11 +43,13 @@ export interface WorkspaceMutationClaimStat {
 export interface WorkspaceMutationClaimDependencies {
   readFile(path: string): Promise<Buffer>
   lstat(path: string): Promise<WorkspaceMutationClaimStat>
+  stat(path: string): Promise<WorkspaceMutationClaimStat>
 }
 
 const NODE_WORKSPACE_MUTATION_CLAIM_DEPENDENCIES: WorkspaceMutationClaimDependencies = {
   readFile: (path) => fs.readFile(path),
-  lstat: (path) => fs.lstat(path)
+  lstat: (path) => fs.lstat(path),
+  stat: (path) => fs.stat(path)
 }
 
 export type WorkspaceMutationClaimDerivationErrorCode =
@@ -186,15 +188,6 @@ function hunkClaim(
   return { ...baseClaim(context), kind: 'hunk', targetPath, hunk }
 }
 
-function exactPathPrefixes(context: ClaimContext, targetPath: string): string[] {
-  const relativePath = relative(context.worktreePath, targetPath)
-  if (!relativePath) return [targetPath]
-  const segments = relativePath.split(sep).filter(Boolean)
-  return segments.map((_segment, index) =>
-    resolve(context.worktreePath, ...segments.slice(0, index + 1))
-  )
-}
-
 function promoteNativeHunkClaims(
   input: WorkspaceMutationCall,
   context: ClaimContext,
@@ -233,6 +226,76 @@ function firstArgument(args: Record<string, unknown>, names: readonly string[]):
     if (args[name] !== undefined) return args[name]
   }
   return undefined
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+}
+
+async function missingDirectoryEntryClaims(
+  context: ClaimContext,
+  targetDirectory: string,
+  dependencies: WorkspaceMutationClaimDependencies
+): Promise<WorkspaceLockClaimRequest[]> {
+  const missing: string[] = []
+  let cursor = targetDirectory
+  while (cursor !== context.worktreePath) {
+    const relativePath = relative(context.worktreePath, cursor)
+    if (relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+      throw new WorkspaceMutationClaimDerivationError(
+        'path-escape',
+        'Planned parent directory must stay inside the selected worktree.'
+      )
+    }
+    let lexicalStat: WorkspaceMutationClaimStat
+    try {
+      lexicalStat = await dependencies.lstat(cursor)
+    } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw new WorkspaceMutationClaimDerivationError(
+          'invalid-call',
+          'Planned parent directory could not be verified before mutation.'
+        )
+      }
+      missing.push(cursor)
+      const parent = dirname(cursor)
+      if (parent === cursor) {
+        throw new WorkspaceMutationClaimDerivationError(
+          'path-escape',
+          'Planned parent directory has no verified workspace ancestor.'
+        )
+      }
+      cursor = parent
+      continue
+    }
+
+    let resolvedStat = lexicalStat
+    if (!lexicalStat.isDirectory()) {
+      try {
+        resolvedStat = await dependencies.stat(cursor)
+      } catch {
+        // lstat already proved that an entry occupies this path. A failed
+        // follow means it is dangling or otherwise unusable as a parent, not a
+        // missing directory entry this mutation may safely create.
+        throw new WorkspaceMutationClaimDerivationError(
+          'invalid-call',
+          'Planned parent path must resolve to a directory before mutation.'
+        )
+      }
+    }
+    if (!resolvedStat.isDirectory()) {
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        'Planned parent path must resolve to a directory before mutation.'
+      )
+    }
+    // The runtime canonicalizer resolves and fingerprints this directory or
+    // in-workspace directory symlink before acquisition, then re-verifies
+    // that identity at commit.
+    break
+  }
+  missing.reverse()
+  return missing.map((targetPath) => pathClaim(context, targetPath))
 }
 
 function sha256(buffer: Buffer): string {
@@ -378,13 +441,15 @@ async function deriveMoveClaims(
       allowEmptyDirectory: true
     })
   ])
-  const createdParentPaths =
-    args.createParents === true ? exactPathPrefixes(context, dirname(destinationPath)) : []
-  return uniqueClaims(
-    [sourcePath, destinationPath, ...createdParentPaths].map((targetPath) =>
-      pathClaim(context, targetPath)
-    )
-  )
+  const createdParentClaims =
+    args.createParents === true
+      ? await missingDirectoryEntryClaims(context, dirname(destinationPath), dependencies)
+      : []
+  return uniqueClaims([
+    pathClaim(context, sourcePath),
+    pathClaim(context, destinationPath),
+    ...createdParentClaims
+  ])
 }
 
 async function deriveRenameClaims(
@@ -571,7 +636,7 @@ function parseUnifiedPatch(patch: string): ParsedPatch {
 async function derivePatchClaims(
   context: ClaimContext,
   args: Record<string, unknown>,
-  _dependencies: WorkspaceMutationClaimDependencies
+  dependencies: WorkspaceMutationClaimDependencies
 ): Promise<WorkspaceLockClaimRequest[]> {
   const patchValue = firstArgument(args, ['patch', 'diff'])
   if (typeof patchValue !== 'string') {
@@ -602,10 +667,11 @@ async function derivePatchClaims(
     const targetPaths = rawPaths.map((path) => resolveTargetPath(context, path, 'patch path'))
     const createdDestinationPaths =
       typeof file.newPath === 'string' && file.newPath !== file.oldPath
-        ? exactPathPrefixes(
+        ? await missingDirectoryEntryClaims(
             context,
-            resolveTargetPath(context, file.newPath, 'patch destination path')
-          ).slice(0, -1)
+            dirname(resolveTargetPath(context, file.newPath, 'patch destination path')),
+            dependencies
+          )
         : []
     // Unified patches can be applied with offset/fuzz semantics by the
     // executor, so the header's old-side line range is not proof of the
@@ -615,7 +681,7 @@ async function derivePatchClaims(
     // create parent directory entries, so include those exact entries in the
     // same atomic proposal.
     claims.push(
-      ...createdDestinationPaths.map((targetPath) => pathClaim(context, targetPath)),
+      ...createdDestinationPaths,
       ...targetPaths.map((targetPath) => pathClaim(context, targetPath))
     )
   }
@@ -692,6 +758,10 @@ export async function deriveWorkspaceMutationClaims(
     if (action.catalogTool === 'run_shell_command') {
       const command = firstArgument(args, ['command', 'cmd'])
       if (typeof command === 'string' && isReadOnlyShellCommand(command)) return []
+      throw new WorkspaceMutationClaimDerivationError(
+        'invalid-call',
+        'run_shell_command has opaque process side effects, so caller-declared paths cannot prove an exact file/hunk mutation scope. Use exact TaskWraith file tools or request one explicitly approved, auditable host execution.'
+      )
     }
     throw new WorkspaceMutationClaimDerivationError(
       'invalid-call',
@@ -713,11 +783,13 @@ export async function deriveWorkspaceMutationClaims(
         firstArgument(args, ['path', 'file_path', 'filePath']),
         'write path'
       )
-      // New-file writes create every missing parent directory inside the same
-      // broker operation. Claim each exact directory entry as well as the file
-      // so a concurrent delete/rename of that entry cannot race the commit.
-      // These are exact path mutexes: they do not lock descendants or reads.
-      return exactPathPrefixes(context, targetPath).map((path) => pathClaim(context, path))
+      // Claim only directory entries this call may create, stopping at the
+      // nearest existing ancestor, plus the exact file leaf. Existing
+      // parents and the workspace root are never reserved.
+      return uniqueClaims([
+        ...(await missingDirectoryEntryClaims(context, dirname(targetPath), dependencies)),
+        pathClaim(context, targetPath)
+      ])
     }
     case 'replace':
       return promoteNativeHunkClaims(
@@ -731,13 +803,11 @@ export async function deriveWorkspaceMutationClaims(
         firstArgument(args, ['path', 'directory']),
         'directory path'
       )
-      // The executor defaults to recursive mkdir, so every directory entry it
-      // may create is part of the exact proposal. Existing prefix entries are
-      // harmless exact mutexes and do not block reads or mutations beneath
-      // those directories.
-      const targetPaths =
-        args.recursive === false ? [targetPath] : exactPathPrefixes(context, targetPath)
-      return targetPaths.map((path) => pathClaim(context, path))
+      const parentClaims =
+        args.recursive === false
+          ? []
+          : await missingDirectoryEntryClaims(context, dirname(targetPath), dependencies)
+      return uniqueClaims([...parentClaims, pathClaim(context, targetPath)])
     }
     case 'delete_path':
       return deriveDeleteClaims(context, args, dependencies)

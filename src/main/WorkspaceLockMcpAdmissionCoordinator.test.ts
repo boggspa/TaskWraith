@@ -467,7 +467,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(result.runtimeInput?.externalMutationAuthority).toBe(externalMutationAuthority)
   })
 
-  it('persists a launching-child owner before a subprocess-capable raw spawn', async () => {
+  it('rejects opaque shell effects before any subprocess-capable lock acquisition', async () => {
     const acquire = vi.fn(async (runtimeInput: WorkspaceLockRuntimeAcquireInput) =>
       successfulAcquisition(runtimeInput)
     )
@@ -486,16 +486,40 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
       })
     )
 
-    expect(result.ok).toBe(true)
-    expect(acquire).toHaveBeenCalledWith(
-      expect.objectContaining({
-        owner: expect.objectContaining({
-          lockOwnerId: 'opaque-owner-1',
-          runId: 'run-1',
-          lifecycle: 'launching-child'
-        })
-      })
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'invalid-call',
+      reason: expect.stringContaining('opaque process side effects')
+    })
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
+  it('admits one exact user-approved unscoped shell retry without acquiring a broad lock', async () => {
+    const getRuntime = vi.fn(() => null)
+    const validateLaneWriteScope = vi.fn()
+    const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
+      dependencies({ getRuntime, validateLaneWriteScope })
     )
+
+    await expect(
+      coordinator.admit(
+        input({
+          context: ensembleContext(),
+          toolName: 'run_shell_command',
+          args: { command: 'npm test' },
+          resourcePath: undefined,
+          allowUserApprovedUnscopedShell: true
+        })
+      )
+    ).resolves.toEqual({
+      ok: true,
+      claims: [],
+      canonicalClaims: [],
+      claimsHeld: false,
+      releaseAfterOperation: false
+    })
+    expect(getRuntime).not.toHaveBeenCalled()
+    expect(validateLaneWriteScope).not.toHaveBeenCalled()
   })
 
   it('uses ensemble role and exact lane coordinates in the owner', async () => {

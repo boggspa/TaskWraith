@@ -5,6 +5,7 @@ describe('resolvePiNativeToolPosture', () => {
   it('keeps the exact default-mode baseline write-capable when no signed field narrows it', () => {
     expect(resolvePiNativeToolPosture({ approvalMode: 'default' })).toEqual({
       writeCapable: true,
+      shellCapable: true,
       effectiveMode: 'default'
     })
     expect(
@@ -20,6 +21,7 @@ describe('resolvePiNativeToolPosture', () => {
       })
     ).toEqual({
       writeCapable: true,
+      shellCapable: true,
       effectiveMode: 'default'
     })
   })
@@ -47,6 +49,7 @@ describe('resolvePiNativeToolPosture', () => {
       })
     ).toEqual({
       writeCapable: false,
+      shellCapable: effectivePermissions.readOnly !== true,
       effectiveMode: 'plan'
     })
   })
@@ -60,7 +63,7 @@ describe('resolvePiNativeToolPosture', () => {
           agenticServices: { shellCommands: 'deny', fileChanges: 'allow' }
         }
       })
-    ).toEqual({ writeCapable: true, effectiveMode: 'default' })
+    ).toEqual({ writeCapable: true, shellCapable: false, effectiveMode: 'default' })
   })
 
   it.each(['plan', 'acceptEdits', 'auto_edit', 'default ', '', undefined, null])(
@@ -79,6 +82,7 @@ describe('resolvePiNativeToolPosture', () => {
         })
       ).toEqual({
         writeCapable: false,
+        shellCapable: false,
         effectiveMode: 'plan'
       })
     }

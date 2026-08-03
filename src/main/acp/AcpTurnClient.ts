@@ -17,8 +17,8 @@
 //                         to the method-not-found keep-alive. Production Kimi
 //                         installs no filesystem request handler.
 //   - deniedToolRecovery: optional one-shot same-session recovery prompt after a
-//                         provider converts a denied native tool into a terminal
-//                         cancellation (Grok-only; Kimi passes null).
+//                         provider converts a denied permission or failed tool
+//                         into a terminal turn (Kimi passes null).
 //   - formatProcessError: provider-specific spawn/ENOENT copy.
 //
 // SAFETY: the permission machinery DEFAULTS TO DENY. A missing handler, a
@@ -67,12 +67,31 @@ export interface AcpInboundReply {
   respondError: (code: number, message: string) => void
 }
 
+export type AcpToolRecoveryReason =
+  | 'denied-permission-cancellation'
+  | 'failed-tool-terminal'
+
+export interface AcpToolRecoveryContext {
+  readonly reason: AcpToolRecoveryReason
+  readonly terminalStatus: string | null | undefined
+  readonly deniedPermissionRequest: AcpPermissionRequest | null
+  readonly assistantTextSeen: boolean
+  readonly toolFailureSeen: boolean
+  readonly lastFailedToolName: string | null
+  readonly lastFailedToolOutput: string | null
+}
+
 export interface AcpDeniedToolRecovery {
   /** True for a terminal status that represents "cancelled because a native
    *  tool was denied" (vs a genuine end_turn/error). */
   detect: (status: string | null | undefined) => boolean
   /** The single bounded follow-up prompt sent into the same session. */
-  prompt: string
+  prompt: string | ((context: AcpToolRecoveryContext) => string)
+  /** Additive provider seam for a terminal failed tool that did not travel
+   * through session/request_permission (for example a declined broker tool). */
+  shouldRecover?: (context: AcpToolRecoveryContext) => boolean
+  /** Optional provider-specific, user-visible explanation for the recovery. */
+  warning?: string | ((context: AcpToolRecoveryContext) => string)
 }
 
 export interface AcpTurnOptions {
@@ -202,6 +221,15 @@ function nonEmptyString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function toolOutputIndicatesFailure(value: string): boolean {
+  return (
+    /"ok"\s*:\s*false/i.test(value) ||
+    /\buser\s+(?:declined|rejected|cancelled|canceled)\b/i.test(value) ||
+    /\bpermission\s+(?:denied|rejected)\b/i.test(value) ||
+    /\btool(?: call)?\s+(?:failed|rejected)\b/i.test(value)
+  )
+}
+
 interface AcpAdvertisedConfigOption {
   id: string
   currentValue?: unknown
@@ -315,7 +343,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   const pendingConfigRpcs = new Map<number, { configId: string; value: string }>()
   let activePromptRpcId: number | null = null
   let deniedPromptRpcId: number | null = null
+  let deniedPermissionRequest: AcpPermissionRequest | null = null
   let deniedToolRecoveryAttempted = false
+  let assistantTextSeen = false
+  let toolFailureSeen = false
+  let lastFailedToolName: string | null = null
+  let lastFailedToolOutput: string | null = null
+  let lastObservedToolName: string | null = null
+  const toolNamesById = new Map<string, string>()
   let cancelRequested = false
 
   child.stdin?.on?.('error', (err) => {
@@ -368,6 +403,14 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
 
   const sendPrompt = (text: string): number | null => {
     if (cancelRequested || closed || stdinClosed) return null
+    deniedPromptRpcId = null
+    deniedPermissionRequest = null
+    assistantTextSeen = false
+    toolFailureSeen = false
+    lastFailedToolName = null
+    lastFailedToolOutput = null
+    lastObservedToolName = null
+    toolNamesById.clear()
     const promptRpcId = nextPromptRpcId++
     // RPC id 4 is reserved for session/resume. The first prompt remains id 3
     // for trace compatibility; any recovery prompt continues at 5.
@@ -506,6 +549,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     const recordDeniedPrompt = (): void => {
       if (permissionPromptIsCurrent()) {
         deniedPromptRpcId = permissionPromptRpcId
+        deniedPermissionRequest = request
       }
     }
     const fallbackDeny = (): void => {
@@ -676,6 +720,23 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       }
       // Notifications + responses: stream content/thinking; capture completion.
       for (const event of acpMessageToRunEvents(message)) {
+        if (event.type === 'content' && event.text) {
+          assistantTextSeen = true
+        } else if (event.type === 'tool_use') {
+          const toolName = nonEmptyString(event.toolName) || 'tool'
+          lastObservedToolName = toolName
+          if (event.toolId) toolNamesById.set(event.toolId, toolName)
+        } else if (event.type === 'tool_result') {
+          const toolOutput = nonEmptyString(event.toolOutput)
+          if (event.toolStatus === 'error' || toolOutputIndicatesFailure(toolOutput)) {
+            toolFailureSeen = true
+            lastFailedToolName =
+              (event.toolId ? toolNamesById.get(event.toolId) : undefined) ||
+              lastObservedToolName ||
+              'tool'
+            lastFailedToolOutput = toolOutput || null
+          }
+        }
         if (event.type === 'result') {
           const responsePromptRpcId =
             typeof message.id === 'number' && message.id === activePromptRpcId
@@ -683,27 +744,66 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
               : null
           if (responsePromptRpcId === null) continue
           const status = event.status || terminalStatus
-          if (
-            options.deniedToolRecovery &&
-            !cancelRequested &&
-            deniedPromptRpcId === responsePromptRpcId &&
-            !deniedToolRecoveryAttempted &&
-            options.deniedToolRecovery.detect(status)
-          ) {
-            // The provider converted a denied native tool into a terminal
-            // cancellation. Keep the DENY, but give the same session one bounded
-            // follow-up prompt so the participant can report from evidence.
-            deniedToolRecoveryAttempted = true
-            deniedPromptRpcId = null
-            options.onEvent({
-              type: 'provider_warning',
-              text: 'The agent cancelled after a refused native tool; continuing with clarified routing guidance.'
-            })
-            sendPrompt(options.deniedToolRecovery.prompt)
-            continue
+          const recovery = options.deniedToolRecovery
+          if (recovery && !cancelRequested && !deniedToolRecoveryAttempted) {
+            let deniedCancellation = false
+            try {
+              deniedCancellation =
+                deniedPromptRpcId === responsePromptRpcId && recovery.detect(status)
+            } catch {
+              deniedCancellation = false
+            }
+            let recoveryReason: AcpToolRecoveryReason = deniedCancellation
+              ? 'denied-permission-cancellation'
+              : 'failed-tool-terminal'
+            let recoveryContext: AcpToolRecoveryContext = {
+              reason: recoveryReason,
+              terminalStatus: status,
+              deniedPermissionRequest,
+              assistantTextSeen,
+              toolFailureSeen,
+              lastFailedToolName,
+              lastFailedToolOutput
+            }
+            let failedToolRecovery = false
+            try {
+              failedToolRecovery = recovery.shouldRecover?.(recoveryContext) === true
+            } catch {
+              failedToolRecovery = false
+            }
+            if (deniedCancellation || failedToolRecovery) {
+              recoveryReason = deniedCancellation
+                ? 'denied-permission-cancellation'
+                : 'failed-tool-terminal'
+              recoveryContext = { ...recoveryContext, reason: recoveryReason }
+              let prompt = ''
+              let warning = ''
+              try {
+                prompt =
+                  typeof recovery.prompt === 'function'
+                    ? recovery.prompt(recoveryContext)
+                    : recovery.prompt
+                warning =
+                  typeof recovery.warning === 'function'
+                    ? recovery.warning(recoveryContext)
+                    : recovery.warning ||
+                      'The provider stopped after a declined or failed tool; continuing once so it can finish from available evidence.'
+              } catch {
+                prompt = ''
+              }
+              if (prompt.trim()) {
+                // Keep the denial/failure intact, but give the same session one
+                // bounded chance to report rather than turning an optional tool
+                // outcome into a fatal participant cancellation.
+                deniedToolRecoveryAttempted = true
+                options.onEvent({ type: 'provider_warning', text: warning })
+                if (sendPrompt(prompt) !== null) continue
+              }
+            }
           }
           activePromptRpcId = null
           deniedPromptRpcId = null
+          deniedPermissionRequest = null
           turnComplete = true
           terminalStatus = status
         } else {
@@ -746,6 +846,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     clearKillBackstop()
     activePromptRpcId = null
     deniedPromptRpcId = null
+    deniedPermissionRequest = null
     const terminalCode = processError && (code === null || code === 0) ? 1 : code
     // The public close authority includes provider-owned async cleanup and
     // terminal projection. Resolve even when that callback rejects: callers
@@ -840,6 +941,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       cancelRequested = true
       activePromptRpcId = null
       deniedPromptRpcId = null
+      deniedPermissionRequest = null
       // Interrupt an in-progress turn first (protocol), then terminate the
       // process via the provider terminator + SIGKILL backstop.
       if (sessionId && !turnComplete) writeRpc(null, 'session/cancel', { sessionId })

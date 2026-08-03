@@ -7,7 +7,11 @@ import { join, resolve } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { buildSync } from 'esbuild'
 import { describe, expect, it, vi } from 'vitest'
-import { PI_EXACT_FILE_TOOL_NAMES } from '../pi/PiEnsembleCoordination'
+import {
+  PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES
+} from '../pi/PiEnsembleCoordination'
 import {
   applyMcpBridgeProfileArgvToEnv,
   beginBridgeSubprocessLogHistoryClear,
@@ -1056,7 +1060,7 @@ describe('MCP bridge stream writes', () => {
       { target: 'Reviewer' },
       { appRunId: 'pi-run-1', appChatId: 'chat-1' },
       'pi',
-      {}
+      { fixedToolAllowlist: [...PI_ENSEMBLE_COORDINATION_TOOL_NAMES] }
     )
   })
 
@@ -1085,7 +1089,7 @@ describe('MCP bridge stream writes', () => {
       { path: 'src/a.ts', content: 'next' },
       { appRunId: 'pi-run-write', appChatId: 'chat-write' },
       'pi',
-      {}
+      { fixedToolAllowlist: [...PI_EXACT_FILE_TOOL_NAMES] }
     )
 
     for (const tool of [
@@ -1125,6 +1129,87 @@ describe('MCP bridge stream writes', () => {
         appChatId: 'chat-write'
       })
     ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('authentication failed') })
+  })
+
+  it('binds Pi managed shell and permission requests to their exact run credential', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool
+    } as never)
+    const piCredential = runtime.issuePiTaskWraithCredential(
+      { appRunId: 'pi-run-shell', appChatId: 'chat-shell' },
+      PI_MANAGED_SHELL_TOOL_NAMES
+    )
+
+    for (const [tool, arguments_] of [
+      ['run_shell_command', { command: 'npm test' }],
+      [
+        'request_tool_permission',
+        {
+          toolName: 'run_shell_command',
+          arguments: { command: 'npm test' },
+          failure: 'sandbox boundary'
+        }
+      ]
+    ] as const) {
+      await expect(
+        runtime.handleGeminiMcpBrokerRequest({
+          token: piCredential,
+          tool,
+          arguments: arguments_,
+          appRunId: 'pi-run-shell',
+          appChatId: 'chat-shell'
+        })
+      ).resolves.toMatchObject({ ok: true })
+    }
+
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'write_file',
+        arguments: { path: 'src/a.ts', content: 'nope' },
+        appRunId: 'pi-run-shell',
+        appChatId: 'chat-shell'
+      })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringContaining('does not permit') })
+    await expect(
+      runtime.handleGeminiMcpBrokerRequest({
+        token: piCredential,
+        tool: 'request_tool_permission',
+        arguments: {
+          toolName: 'write_file',
+          arguments: { path: 'src/a.ts', content: 'nope' },
+          failure: 'permission denied'
+        },
+        appRunId: 'pi-run-shell',
+        appChatId: 'chat-shell'
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining('does not permit a permission retry for write_file')
+    })
+    expect(executeGeminiMcpTool).toHaveBeenCalledTimes(2)
+    expect(executeGeminiMcpTool).toHaveBeenNthCalledWith(
+      1,
+      'run_shell_command',
+      { command: 'npm test' },
+      { appRunId: 'pi-run-shell', appChatId: 'chat-shell' },
+      'pi',
+      { fixedToolAllowlist: [...PI_MANAGED_SHELL_TOOL_NAMES] }
+    )
+    expect(executeGeminiMcpTool).toHaveBeenNthCalledWith(
+      2,
+      'request_tool_permission',
+      {
+        toolName: 'run_shell_command',
+        arguments: { command: 'npm test' },
+        failure: 'sandbox boundary'
+      },
+      { appRunId: 'pi-run-shell', appChatId: 'chat-shell' },
+      'pi',
+      { fixedToolAllowlist: [...PI_MANAGED_SHELL_TOOL_NAMES] }
+    )
   })
 
   it('does not let a Pi coordination credential impersonate another live run', async () => {

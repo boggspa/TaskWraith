@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createGrokTurnAbortController,
+  grokToolRecoveryPrompt,
   runGrokAcpTurn,
   type AcpChildProcess,
   type GrokAcpRunOptions
@@ -97,6 +98,27 @@ const run = (
 }
 
 describe('runGrokAcpTurn', () => {
+  it('routes a typed broker boundary to one visible permission request', () => {
+    const prompt = grokToolRecoveryPrompt(
+      {
+        reason: 'failed-tool-terminal',
+        terminalStatus: 'cancelled',
+        deniedPermissionRequest: null,
+        assistantTextSeen: false,
+        toolFailureSeen: true,
+        lastFailedToolName: 'TaskWraith__run_shell_command',
+        lastFailedToolOutput:
+          '{"ok":false,"permissionRetry":{"available":true,"tool":"capability_invoke"}}'
+      },
+      true
+    )
+
+    expect(prompt).toContain('request_tool_permission')
+    expect(prompt).toContain('permissionRetry')
+    expect(prompt).toContain('exact command and cwd')
+    expect(prompt).not.toContain('do not retry the same call')
+  })
+
   afterEach(() => vi.useRealTimers())
 
   it('drives initialize → session/new → session/prompt and streams the answer', async () => {
@@ -441,6 +463,73 @@ describe('runGrokAcpTurn', () => {
     expect(recoveryPrompt).toContain('do not call, search for, or infer a replacement shell tool')
     expect(recoveryPrompt).not.toContain('TaskWraith__run_shell_command')
     expect(recoveryPrompt).not.toContain('taskwraith-grok__blackboard_post')
+  })
+
+  it('continues once after a declined broker tool without mislabelling it as native', async () => {
+    const child = new FakeAcpChild()
+    const { events, closeInfos } = run(child, { taskWraithShellToolAvailable: true })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'broker-1',
+          title: 'TaskWraith__capability_invoke',
+          kind: 'other',
+          rawInput: { capability: 'evidence_pack_write' }
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'broker-1',
+          // ACP may call the transport itself complete even though the
+          // TaskWraith result is a typed user decline.
+          status: 'completed',
+          content: [{ type: 'content', content: { type: 'text', text: 'User declined.' } }]
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'cancelled' } })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    const recoveryPrompt = JSON.stringify(prompts[1])
+    expect(recoveryPrompt).toContain('Respect the user decision')
+    expect(recoveryPrompt).toContain('not a reason to cancel the participant turn')
+    expect(recoveryPrompt).not.toContain('native Bash/Shell/terminal refusal')
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'provider_warning' &&
+          (event.text || '').includes('declined or failed tool')
+      )
+    ).toBe(true)
+
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text: 'Finished from existing evidence.' }
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
   })
 
   it('bounds denied-tool recovery to one follow-up prompt', async () => {

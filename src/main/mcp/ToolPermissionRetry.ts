@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { TaskWraithMcpToolDefinition } from '../McpToolCatalog'
+import { isReadOnlyShellCommand } from '../grok/GrokReadOnlyShell'
 import type { AgentApprovalAction } from '../store/types'
 import {
   canonicalTaskWraithToolName,
@@ -55,7 +56,11 @@ const PERMISSION_BOUNDARY_PATTERNS = [
   /\b(?:requires?|needs?)\b.{0,80}\bapproval\b/i,
   /\bread[-_ ]?only\b.{0,80}\b(?:blocked|denied|unavailable|cannot|can't)\b/i,
   /\b(?:blocked|denied|unavailable|cannot|can't)\b.{0,80}\bread[-_ ]?only\b/i,
-  /\boutside\b.{0,80}\bworkspace\b/i
+  /\boutside\b.{0,80}\bworkspace\b/i,
+  /\bcannot prove an exact (?:file\/hunk )?mutation scope\b/i,
+  /\bdid not provide exact edit scope\b/i,
+  /\boutside the approved lane scope\b/i,
+  /\bnot approved to write\b/i
 ]
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -276,7 +281,9 @@ export function buildToolPermissionRetryInstruction(input: {
     available: true,
     scope: 'one_exact_invocation',
     message:
-      'If this is a policy boundary rather than a user decision, ask for a one-shot retry with the exact invocation below.',
+      validation.request.toolName === 'run_shell_command'
+        ? 'Opaque shell process effects cannot be proven as exact file locks; ask for one auditable host execution of the exact command and cwd below.'
+        : 'If this is a policy boundary rather than a user decision, ask for a one-shot retry with the exact invocation below.',
     targetArgumentsSha256: argumentsFingerprint(validation.request.arguments),
     tool: 'capability_invoke',
     arguments: {
@@ -348,12 +355,14 @@ export function buildToolPermissionRetryApprovalPrompt(input: {
       ? `${input.request.failure.slice(0, 997)}...`
       : input.request.failure
   const targetPreview = isRecord(input.targetPreview) ? input.targetPreview : {}
+  const unscopedHostShell = input.request.toolName === 'run_shell_command'
   return {
     method: 'toolPermissionRetry',
     title: `Allow ${input.providerLabel} to retry ${input.request.toolName} once?`,
-    body:
-      `The agent reports that ${input.request.toolName} hit a permission boundary. ` +
-      'Accepting retries only the exact invocation shown below and does not create a session or workspace grant.',
+    body: unscopedHostShell
+      ? 'The agent could not express this shell command as exact file locks. Accepting runs this exact command once in the TaskWraith host process, outside a workspace sandbox and without workspace locks; it may race active writers. Review the command and cwd shown below. This does not create a session or workspace grant.'
+      : `The agent reports that ${input.request.toolName} hit a permission boundary. ` +
+        'Accepting retries only the exact invocation shown below and does not create a session or workspace grant.',
     preview: {
       ...targetPreview,
       permissionRetry: {
@@ -361,6 +370,14 @@ export function buildToolPermissionRetryApprovalPrompt(input: {
         targetToolName: input.request.toolName,
         targetArgumentsSha256: argumentsFingerprint(input.request.arguments),
         exactArguments: input.request.arguments,
+        ...(unscopedHostShell
+          ? {
+              executionBoundary: 'host-unsandboxed-one-shot',
+              workspaceMutationContainment: 'none-explicit-user-one-shot',
+              exactCommand: input.request.arguments.command,
+              exactCwd: input.request.arguments.cwd
+            }
+          : {}),
         priorFailure: failureSummary,
         ...(input.request.rationale ? { rationale: input.request.rationale } : {})
       }
@@ -466,6 +483,40 @@ export function prepareToolPermissionRetryTarget<TResult>(input: {
 export interface ToolPermissionRetryDecision {
   action: AgentApprovalAction
   decisionSource: 'user' | 'system'
+}
+
+const DIRECT_USER_ACCEPT_ACTIONS = new Set<AgentApprovalAction>([
+  'accept',
+  'acceptForSession',
+  'acceptForWorkspace',
+  'grantExternalPathRead',
+  'grantExternalPathEdit'
+])
+
+/**
+ * A generic approval that visibly showed this exact opaque command already
+ * supplies the one-shot authority the lock admission seam needs. Reusing that
+ * decision avoids asking the user twice. Policy/standing-grant auto-approval
+ * is deliberately excluded because it did not show this exact command.
+ */
+export function directUserApprovalAuthorizesUnscopedShell(input: {
+  toolName: TaskWraithMcpToolName
+  arguments: Record<string, unknown>
+  allowed: boolean
+  decision?: ToolPermissionRetryDecision
+}): boolean {
+  if (
+    input.toolName !== 'run_shell_command' ||
+    !input.allowed ||
+    input.decision?.decisionSource !== 'user' ||
+    !DIRECT_USER_ACCEPT_ACTIONS.has(input.decision.action)
+  ) {
+    return false
+  }
+  const command = input.arguments.command
+  return (
+    typeof command === 'string' && command.trim().length > 0 && !isReadOnlyShellCommand(command)
+  )
 }
 
 export interface ToolPermissionRetryOrchestrationResult<TResult> {

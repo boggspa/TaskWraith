@@ -20,11 +20,13 @@ import { agenticServicesDenyWrites } from './AgenticServiceWriteClamp'
 import { providerLabel } from './ProviderAdapters'
 import {
   resolvePiNativeToolPosture,
+  type PiNativeToolPosture,
   type PiNativeToolEffectivePermissions
 } from './pi/PiNativeToolPosture'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
-  PI_EXACT_FILE_TOOL_NAMES
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES
 } from './pi/PiEnsembleCoordination'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
@@ -529,7 +531,8 @@ function cliTaskWraithMcpCapability(
 function approvalContract(
   provider: ProviderId,
   requestedMode: string,
-  effectiveMode: string
+  effectiveMode: string,
+  piPosture?: PiNativeToolPosture
 ): ProviderApprovalCapability {
   if (provider === 'cursor') {
     return {
@@ -608,25 +611,32 @@ function approvalContract(
     // `--mode rpc --no-approve`, so native shell/file calls do not return to
     // TaskWraith for per-tool approval. Ensemble-only coordination is the
     // narrow exception: a verified app-owned extension routes its fixed
-    // coordination list through the authenticated TaskWraith broker; it is not
-    // a generic MCP, shell, or file bridge. The native allowlist mirrors
-    // PI_READ_ONLY_TOOLS / PI_WRITE_TOOLS in pi/PiCliArgs.ts.
+    // coordination, exact-file, and managed-shell lists through the
+    // authenticated TaskWraith broker; it is not a generic MCP bridge. The
+    // native allowlist remains read-only.
     //
     // `effectiveMode` is produced by the same downgrade-only helper as launch
     // evidence and production dispatch. Under Pi, every non-default mode and
     // every signed read-only/service-deny posture receives the read-only
     // allowlist.
-    const piWriteCapable = effectiveMode === 'default'
+    const piWriteCapable = piPosture?.writeCapable === true
+    const piShellCapable = piPosture?.shellCapable === true
+    const managedApprovals = piWriteCapable || piShellCapable
     return {
       requestedMode,
       effectiveMode,
-      providerMode: piWriteCapable
-        ? 'pi rpc with native reads plus brokered exact file tools (write_file, replace, apply_patch)'
-        : 'pi rpc with the read-only tool allowlist (read, grep, find, ls)',
-      inAppApprovals: piWriteCapable,
-      supportsWorkspaceGrants: piWriteCapable,
+      providerMode:
+        piWriteCapable && piShellCapable
+          ? 'pi rpc with native reads plus brokered exact file tools and managed shell tools'
+          : piWriteCapable
+            ? 'pi rpc with native reads plus brokered exact file tools (write_file, replace, apply_patch)'
+            : piShellCapable
+              ? 'pi rpc with native reads plus TaskWraith-managed shell and permission requests'
+              : 'pi rpc with the read-only tool allowlist (read, grep, find, ls)',
+      inAppApprovals: managedApprovals,
+      supportsWorkspaceGrants: managedApprovals,
       notes: [
-        'Pi runs in RPC mode with native read tools only. A write-approved seat receives one explicit per-run TaskWraith extension for exact file transactions; Ensemble lanes may add fixed coordination tools to the same server-authorized allowlist. Native bash/edit/write, extension discovery, skills, prompt templates and context files remain disabled, and the credential firewall passes only the selected upstream key.'
+        'Pi runs in RPC mode with native read tools only. Approved seats receive one explicit per-run TaskWraith extension for exact file transactions and/or managed shell and permission requests; Ensemble lanes may add fixed coordination tools to the same server-authorized allowlist. Native bash/edit/write, extension discovery, skills, prompt templates and context files remain disabled, and the credential firewall passes only the selected upstream key.'
       ]
     }
   }
@@ -1002,10 +1012,15 @@ export function buildProviderCapabilityContract({
   } else if (provider === 'pi') {
     const piCoordinationPolicy =
       effectivePermissions?.agenticServices?.mcpTools ?? services.mcpTools
+    const piShellPolicy =
+      effectivePermissions?.agenticServices?.shellCommands ?? services.shellCommands
+    const piFilePolicy = effectivePermissions?.agenticServices?.fileChanges ?? services.fileChanges
     const piCoordinationAllowed = piCoordinationPolicy !== 'deny'
     const piExactFileTools = piNativeToolPosture.writeCapable
+    const piManagedShell = piNativeToolPosture.shellCapable
     const piManagedTools = [
       ...(piExactFileTools ? PI_EXACT_FILE_TOOL_NAMES : []),
+      ...(piManagedShell ? PI_MANAGED_SHELL_TOOL_NAMES : []),
       ...(piCoordinationAllowed ? PI_ENSEMBLE_COORDINATION_TOOL_NAMES : [])
     ]
     mcp = {
@@ -1017,18 +1032,26 @@ export function buildProviderCapabilityContract({
       serverName: 'TaskWraith Pi managed tools',
       tools: piManagedTools,
       message: piManagedTools.length
-        ? 'TaskWraith loads one fixed per-run Pi extension after it proves ready; no manual Pi/MCP installation is required. Write-approved seats receive only exact brokered file transactions; Ensemble coordination follows the Tool calls policy. Native mutation tools and generic MCP remain disabled.'
+        ? 'TaskWraith loads one fixed per-run Pi extension after it proves ready; no manual Pi/MCP installation is required. Approved seats receive only exact brokered file transactions and/or managed shell and permission requests; Ensemble coordination follows the Tool calls policy. Native mutation tools and generic MCP remain disabled.'
         : 'This Pi posture has no managed mutation or coordination tools. Native Pi remains read-only.'
     }
-    shellCommands = unavailableCapability(
-      'shellCommands',
-      'provider',
-      'Pi always launches native read tools only; opaque shell mutation cannot be assigned an exact file/hunk transaction.'
-    )
+    shellCommands = piManagedShell
+      ? serviceCapability(
+          'shellCommands',
+          piShellPolicy,
+          'taskwraith',
+          [...PI_MANAGED_SHELL_TOOL_NAMES],
+          'Pi shell calls run through TaskWraith approval and audit. Proven reads use the managed route; opaque process effects require one visible, auditable host execution.'
+        )
+      : unavailableCapability(
+          'shellCommands',
+          'provider',
+          'This Pi posture keeps native bash disabled and does not attach the managed shell route.'
+        )
     fileChanges = piExactFileTools
       ? serviceCapability(
           'fileChanges',
-          services.fileChanges,
+          piFilePolicy,
           'taskwraith',
           [...PI_EXACT_FILE_TOOL_NAMES],
           'Pi exact file tools run through TaskWraith approval, multi-target locking, commit fencing, and immediate release.'
@@ -1263,7 +1286,7 @@ export function buildProviderCapabilityContract({
         'pi-native-tools-downgraded',
         'warning',
         'Pi native tools adjusted',
-        'Pi write tools require exact default mode and a signed posture that is not read-only and does not deny shell commands or file changes. This run will use Pi’s read-only native tool allowlist.'
+        `Pi exact file tools require default mode and a signed posture that is not read-only and does not deny file changes. This run will use Pi’s read-only native allowlist${piNativeToolPosture.shellCapable ? ' while retaining the separately approved TaskWraith managed-shell route' : ''}.`
       )
     )
   }
@@ -1321,7 +1344,7 @@ export function buildProviderCapabilityContract({
       elicit,
       delegate
     },
-    approvals: approvalContract(provider, requestedMode, effectiveMode),
+    approvals: approvalContract(provider, requestedMode, effectiveMode, piNativeToolPosture),
     mcp,
     warnings
   }

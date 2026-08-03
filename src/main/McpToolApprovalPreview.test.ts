@@ -175,16 +175,34 @@ describe('createMcpToolApprovalPreviewer', () => {
 
     expect(preview).toEqual({
       title: 'Approve OLLAMA shell command',
-      body: 'Intent: clean output\n\nrm -rf dist\n/repo',
+      body: 'Intent: clean output\n\nrm -rf dist\n/repo\n\nThis command cannot be represented as exact file locks. If approved, this invocation runs once outside a workspace sandbox and without workspace locks; it may race active writers.',
       service: 'shellCommands',
       preview: {
         kind: 'command',
         command: 'rm -rf dist',
         cwd: '/repo',
+        executionBoundary: 'taskwraith-host-unsandboxed-one-shot',
+        workspaceMutationContainment: 'none-explicit-user-one-shot',
         riskLabels: ['risk:rm -rf dist'],
         intent: 'clean output'
       }
     })
+  })
+
+  it('keeps a proven read-only shell command on the ordinary host boundary', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'run_shell_command',
+      { command: 'ls -la' },
+      '/repo',
+      context,
+      'codex'
+    )
+
+    expect(preview.body).not.toContain('without workspace locks')
+    expect(preview.preview).toMatchObject({
+      executionBoundary: 'taskwraith-host'
+    })
+    expect(preview.preview).not.toHaveProperty('workspaceMutationContainment')
   })
 
   it('routes background-process termination through shellCommands with its exact target', () => {

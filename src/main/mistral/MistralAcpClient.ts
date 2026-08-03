@@ -36,6 +36,7 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpToolRecoveryContext,
   type AcpTurnHandle
 } from '../acp/AcpTurnClient'
 import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
@@ -132,6 +133,41 @@ export interface MistralAcpRunHandle extends AcpTurnHandle {
   closed: Promise<void>
 }
 
+export const MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT =
+  'The previous tool was rejected or failed. Do not end or cancel the participant turn, and ' +
+  'do not blindly retry the same tool. If an applicable TaskWraith-managed route is actually ' +
+  'listed, use it once for the same requested operation; otherwise continue from available ' +
+  'evidence and answer in prose. If the task genuinely cannot proceed, report the exact tool, ' +
+  'command, or path still needed so the user can make an informed choice.'
+
+const MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT =
+  'The user declined the previous tool request. Respect that decision: do not retry the same ' +
+  'tool, request the same permission, or substitute an equivalent side effect. Continue from ' +
+  'the evidence already available and produce the best complete report you can; if a required ' +
+  'step remains impossible, state it precisely without cancelling the participant turn.'
+
+function isMistralDeniedToolTerminal(status: string | null | undefined): boolean {
+  const normalized = String(status || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
+  return (
+    normalized === 'cancelled' ||
+    normalized === 'canceled' ||
+    normalized === 'permissionrejected' ||
+    normalized === 'failed' ||
+    normalized === 'error'
+  )
+}
+
+function mistralToolRecoveryPrompt(context: AcpToolRecoveryContext): string {
+  return /\buser\s+(?:declined|rejected|cancelled|canceled)\b/i.test(
+    context.lastFailedToolOutput || ''
+  )
+    ? MISTRAL_USER_DECLINED_TOOL_CONTINUITY_PROMPT
+    : MISTRAL_TOOL_FAILURE_CONTINUITY_PROMPT
+}
+
 /**
  * Route RunManager cancellation through the ACP handle so the turn is cancelled
  * at the protocol level before RunManager's raw process-kill fallback runs.
@@ -164,9 +200,16 @@ export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunH
     onEvent: options.onEvent,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest,
-    // Vibe has no denied-tool cancellation idiom of its own; the core's
-    // default-deny outcome is answered directly and the agent continues.
-    deniedToolRecovery: null,
+    // Vibe can terminate opaquely after a native permission denial or an ACP
+    // tool failure. Preserve the decision, then give the same session one
+    // bounded chance to finish/report rather than failing the participant.
+    deniedToolRecovery: {
+      detect: isMistralDeniedToolTerminal,
+      prompt: mistralToolRecoveryPrompt,
+      shouldRecover: (context) => context.toolFailureSeen && !context.assistantTextSeen,
+      warning:
+        'Mistral stopped after a rejected or failed tool; continuing once so it can finish from available evidence.'
+    },
     formatProcessError: formatMistralProcessError,
     // MEASURED, not assumed (2026-07-26, vibe-acp 2.22.0): all three terminators
     // produce a clean `close` with exit code 0 in ~165ms — SIGTERM 165ms,

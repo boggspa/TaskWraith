@@ -545,6 +545,64 @@ describe('runAcpTurn — neutral core', () => {
     expect(events.some((e) => e.type === 'result')).toBe(false)
   })
 
+  it('recovers once from a failed tool terminal even without a permission request', async () => {
+    const child = new FakeAcpChild()
+    const contexts: Array<{ tool?: string | null; output?: string | null }> = []
+    baseOptions(child, {
+      deniedToolRecovery: {
+        detect: () => false,
+        shouldRecover: (context) => {
+          contexts.push({
+            tool: context.lastFailedToolName,
+            output: context.lastFailedToolOutput
+          })
+          return context.toolFailureSeen && !context.assistantTextSeen
+        },
+        prompt: (context) => `Continue after ${context.lastFailedToolName || 'tool'} failed.`,
+        warning: 'Continuing after a failed tool.'
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'tool-1',
+          title: 'read_file',
+          kind: 'read'
+        }
+      }
+    })
+    child.emit({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 's-1',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId: 'tool-1',
+          status: 'failed',
+          content: [{ type: 'content', content: { type: 'text', text: 'permission denied' } }]
+        }
+      }
+    })
+    child.emit({ jsonrpc: '2.0', id: 3, result: { stopReason: 'end_turn' } })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    expect(contexts).toEqual([{ tool: 'read_file', output: 'permission denied' }])
+    const prompts = child.sent().filter((message) => message.method === 'session/prompt')
+    expect(prompts).toHaveLength(2)
+    expect(JSON.stringify(prompts[1])).toContain('Continue after read_file failed.')
+
+    child.emit({ jsonrpc: '2.0', id: 5, result: { stopReason: 'end_turn' } })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(child.killed).toBe(true)
+  })
+
   it('terminates via the endProcess hook (stdin EOF) instead of SIGINT', async () => {
     const child = new FakeAcpChild()
     const { events } = baseOptions(child, {

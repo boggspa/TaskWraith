@@ -2218,12 +2218,24 @@ describe('runtime launch and loop verifier authority', () => {
   })
 
   it.each([
-    ['shell-command deny', { shellCommands: 'deny' as const, fileChanges: 'allow' as const }],
-    ['file-change deny', { shellCommands: 'allow' as const, fileChanges: 'deny' as const }],
-    ['shell and file deny', { shellCommands: 'deny' as const, fileChanges: 'deny' as const }]
+    [
+      'shell-command deny',
+      { shellCommands: 'deny' as const, fileChanges: 'allow' as const },
+      true
+    ],
+    [
+      'file-change deny',
+      { shellCommands: 'allow' as const, fileChanges: 'deny' as const },
+      false
+    ],
+    [
+      'shell and file deny',
+      { shellCommands: 'deny' as const, fileChanges: 'deny' as const },
+      false
+    ]
   ])(
-    'keeps Pi native writes disabled at the full seal boundary for default mode plus signed %s',
-    (_label, deniedServices) => {
+    'reconciles Pi exact file tools independently at the full seal boundary for signed %s',
+    (_label, deniedServices, expectedWriteCapable) => {
       const permissions = effectivePermissions({
         presetId: 'workspace_write',
         approvalMode: 'default',
@@ -2240,6 +2252,8 @@ describe('runtime launch and loop verifier authority', () => {
         ...readOnlyPlan,
         controls: { ...readOnlyPlan.controls, writeCapable: true }
       } as ProviderLaunchAuthorityInputByProvider['pi']
+      const expectedPlan = expectedWriteCapable ? writePlan : readOnlyPlan
+      const mismatchedPlan = expectedWriteCapable ? readOnlyPlan : writePlan
       const scheduled = task({
         provider: 'pi',
         runtimeProfileId: undefined,
@@ -2252,7 +2266,7 @@ describe('runtime launch and loop verifier authority', () => {
         mintScheduledOccurrenceSeal(
           ROOT,
           context(scheduled, {
-            runtimeSeats: [defaultSeatForPermissions('pi', permissions, readOnlyPlan)]
+            runtimeSeats: [defaultSeatForPermissions('pi', permissions, expectedPlan)]
           }),
           now
         )
@@ -2261,7 +2275,7 @@ describe('runtime launch and loop verifier authority', () => {
         mintScheduledOccurrenceSeal(
           ROOT,
           context(scheduled, {
-            runtimeSeats: [defaultSeatForPermissions('pi', permissions, writePlan)]
+            runtimeSeats: [defaultSeatForPermissions('pi', permissions, mismatchedPlan)]
           }),
           now
         )

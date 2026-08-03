@@ -1,6 +1,7 @@
 import type { GeminiToolContext } from './runStateTypes'
 import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import type { AgenticServiceId, ProviderId } from './store/types'
+import { isReadOnlyShellCommand } from './grok/GrokReadOnlyShell'
 import { outlookRecipientList } from './mcp/OutlookToolExecutors'
 import { MESH_SCENE_MCP_TOOL_NAMES } from './TaskWraithMcpTools'
 
@@ -270,16 +271,27 @@ export function createMcpToolApprovalPreviewer(
 
     if (toolName === 'run_shell_command') {
       const command = String(args.command || '')
+      const unscopedHostExecution = !isReadOnlyShellCommand(command)
       const ollamaShellMetadata =
         parentProvider === 'ollama' ? deps.ollamaShellApprovalPreviewMetadata(command) : {}
       return {
         title: `Approve ${providerName} shell command`,
-        body: `${intentBody}${command}\n${cwd}`,
+        body: `${intentBody}${command}\n${cwd}${
+          unscopedHostExecution
+            ? '\n\nThis command cannot be represented as exact file locks. If approved, this invocation runs once outside a workspace sandbox and without workspace locks; it may race active writers.'
+            : ''
+        }`,
         service: 'shellCommands',
         preview: {
           kind: 'command',
           command,
           cwd,
+          executionBoundary: unscopedHostExecution
+            ? 'taskwraith-host-unsandboxed-one-shot'
+            : 'taskwraith-host',
+          ...(unscopedHostExecution
+            ? { workspaceMutationContainment: 'none-explicit-user-one-shot' }
+            : {}),
           ...ollamaShellMetadata,
           ...intentPreview
         }

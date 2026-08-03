@@ -2528,13 +2528,26 @@ export class McpBridgeRuntime {
         error: `Pi's contained TaskWraith bridge does not permit ${String(rawToolName || 'unknown')} for this run.`
       }
     }
+    if (piCredential && toolName === 'request_tool_permission') {
+      const requestedTarget = isRecord(toolArguments) ? toolArguments.toolName : undefined
+      if (
+        typeof requestedTarget !== 'string' ||
+        !piCredential.allowedTools.has(requestedTarget as PiTaskWraithToolName)
+      ) {
+        return {
+          ok: false,
+          error: `Pi's contained TaskWraith bridge does not permit a permission retry for ${String(requestedTarget || 'unknown')} in this run.`
+        }
+      }
+    }
     const callerContext: McpCallerContext = {
       ...(typeof brokerRequestRecord.callerCwd === 'string'
         ? { callerCwd: brokerRequestRecord.callerCwd }
         : {}),
       ...(typeof brokerRequestRecord.callerWorkspacePath === 'string'
         ? { callerWorkspacePath: brokerRequestRecord.callerWorkspacePath }
-        : {})
+        : {}),
+      ...(piCredential ? { fixedToolAllowlist: [...piCredential.allowedTools] } : {})
     }
     const result = await this.deps.executeGeminiMcpTool(
       // Audit tools are a deliberately run-scoped extension to the canonical

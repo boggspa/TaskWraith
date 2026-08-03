@@ -2,7 +2,10 @@ import { resolve } from 'node:path'
 
 import { resolveToolDispatchContractStrict } from '../shared/providerActionTaxonomy'
 import type { ChatScope, EnsembleRunIdentity, ProviderId } from './store/types'
-import { deriveWorkspaceMutationClaims } from './WorkspaceMutationClaims'
+import {
+  deriveWorkspaceMutationClaims,
+  WorkspaceMutationClaimDerivationError
+} from './WorkspaceMutationClaims'
 import type {
   WorkspaceExternalMutationAuthorityReceipt,
   WorkspaceLockRuntime,
@@ -108,6 +111,12 @@ export interface WorkspaceLockMcpAdmissionInput<
   ownerLifecycle?: 'run' | 'launching-child'
   /** Checked while a contended exact target is queued. */
   acquisitionStillWanted?: () => boolean
+  /**
+   * Exact one-shot user approval for a shell command that cannot express a
+   * lockable edit set. This admits no workspace claim; the caller must bind it
+   * to the approved command/cwd arguments and present the host boundary.
+   */
+  allowUserApprovedUnscopedShell?: boolean
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -125,6 +134,8 @@ export type WorkspaceLockMcpAdmission =
       ok: false
       text: string
       reason: string
+      code?: string
+      laneId?: string
     }
 
 /**
@@ -191,17 +202,27 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       }
     }
 
+    const runId = exactRunId(input.context.appRunId)
+    if (!runId) {
+      const reason = `Workspace mutation ${input.toolName} has no exact run identity.`
+      return this.denied(input.toolName, reason)
+    }
+
+    if (input.allowUserApprovedUnscopedShell && input.toolName === 'run_shell_command') {
+      return {
+        ok: true,
+        claims: [],
+        canonicalClaims: [],
+        claimsHeld: false,
+        releaseAfterOperation: false
+      }
+    }
+
     const runtime = this.deps.getRuntime()
     if (!runtime) {
       const reason =
         this.deps.getRuntimeUnavailableReason?.() ||
         'Workspace-lock authority is not available; mutation was not started.'
-      return this.denied(input.toolName, reason)
-    }
-
-    const runId = exactRunId(input.context.appRunId)
-    if (!runId) {
-      const reason = `Workspace mutation ${input.toolName} has no exact run identity.`
       return this.denied(input.toolName, reason)
     }
 
@@ -222,10 +243,18 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       resourcePaths = (await deriveWorkspaceMutationClaims(mutation)).flatMap((claim) =>
         claim.targetPath ? [claim.targetPath] : []
       )
-    } catch {
-      // Runtime derivation below returns the typed tool error. Scope validation
-      // receives undefined so it cannot reinterpret an invalid proposal as a
-      // scope-less mutation.
+    } catch (error) {
+      const reason =
+        error instanceof Error
+          ? error.message
+          : 'Workspace mutation scope derivation failed before admission.'
+      return this.denied(input.toolName, reason, {
+        code:
+          error instanceof WorkspaceMutationClaimDerivationError
+            ? error.code
+            : 'claim_derivation_failed',
+        laneId
+      })
     }
     const scopeCheck = this.deps.validateLaneWriteScope(runId, {
       toolName: input.toolName,
@@ -394,7 +423,9 @@ export class WorkspaceLockMcpAdmissionCoordinator {
         error: reason,
         ...(details.laneId ? { laneId: details.laneId } : {})
       }),
-      reason
+      reason,
+      ...(details.code ? { code: details.code } : {}),
+      ...(details.laneId ? { laneId: details.laneId } : {})
     }
   }
 }

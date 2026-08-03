@@ -3,6 +3,7 @@ import {
   isMutatingTaskWraithMcpTool,
   mcpToolAlwaysPrompts,
   pathsShareWorkspaceLineage,
+  validateMcpCallerToolAllowlist,
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute
 } from './McpRouteGuards'
@@ -41,6 +42,18 @@ describe('MCP route guards', () => {
         arguments: { path: 'x', content: 'body' }
       })
     ).toMatchObject({ ok: false })
+  })
+
+  it('keeps nested dispatch inside a server-derived fixed tool allowlist', () => {
+    const caller = {
+      fixedToolAllowlist: ['run_shell_command', 'request_tool_permission']
+    }
+    expect(validateMcpCallerToolAllowlist('run_shell_command', caller)).toEqual({ ok: true })
+    expect(validateMcpCallerToolAllowlist('write_file', caller)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('does not permit write_file')
+    })
+    expect(validateMcpCallerToolAllowlist('write_file')).toEqual({ ok: true })
   })
 
   it('matches caller workspace lineage in either direction', () => {

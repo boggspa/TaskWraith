@@ -7,7 +7,8 @@ import {
 } from './PiCliArgs'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
-  PI_EXACT_FILE_TOOL_NAMES
+  PI_EXACT_FILE_TOOL_NAMES,
+  PI_MANAGED_SHELL_TOOL_NAMES
 } from './PiEnsembleCoordination'
 
 describe('buildPiRpcArgs', () => {
@@ -102,6 +103,18 @@ describe('buildPiRpcArgs', () => {
     expect(tools).not.toEqual(expect.arrayContaining(['bash', 'edit', 'write']))
   })
 
+  it('adds TaskWraith-managed shell without restoring native bash', () => {
+    const args = buildPiRpcArgs({
+      ...base,
+      writeCapable: false,
+      coordinationExtensionPath: '/tmp/taskwraith-pi-home/taskwraith-tools.mjs',
+      coordinationToolNames: PI_MANAGED_SHELL_TOOL_NAMES
+    })
+    const tools = args[args.indexOf('--tools') + 1].split(',')
+    expect(tools).toEqual([...PI_READ_ONLY_TOOLS, ...PI_MANAGED_SHELL_TOOL_NAMES])
+    expect(tools).not.toContain('bash')
+  })
+
   it('refuses a custom coordination allowlist without its explicit extension', () => {
     expect(() =>
       buildPiRpcArgs({
@@ -118,7 +131,7 @@ describe('buildPiRpcArgs', () => {
         ...base,
         writeCapable: true,
         coordinationExtensionPath: '/tmp/extension.mjs',
-        coordinationToolNames: ['run_shell_command'] as never
+        coordinationToolNames: ['git_commit'] as never
       })
     ).toThrow(/fixed allowlists/i)
   })

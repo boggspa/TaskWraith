@@ -7,6 +7,7 @@ import {
   buildToolPermissionRetryInstruction,
   buildToolPermissionRetryApprovalPrompt,
   createOneOffToolPermissionRetryMarker,
+  directUserApprovalAuthorizesUnscopedShell,
   executeOneOffToolPermissionRetry,
   isOneOffToolPermissionRetryForTarget,
   isPermissionBoundaryFailure,
@@ -457,6 +458,40 @@ describe('one-off permission retry execution', () => {
 })
 
 describe('one-off marker and approval receipt', () => {
+  it('reuses only a direct user approval of the exact opaque shell invocation', () => {
+    const base = {
+      toolName: 'run_shell_command' as const,
+      arguments: { command: 'npm test', cwd: '/repo' },
+      allowed: true
+    }
+
+    expect(
+      directUserApprovalAuthorizesUnscopedShell({
+        ...base,
+        decision: { action: 'accept', decisionSource: 'user' }
+      })
+    ).toBe(true)
+    expect(
+      directUserApprovalAuthorizesUnscopedShell({
+        ...base,
+        decision: { action: 'acceptForSession', decisionSource: 'system' }
+      })
+    ).toBe(false)
+    expect(
+      directUserApprovalAuthorizesUnscopedShell({
+        ...base,
+        arguments: { command: 'ls -la', cwd: '/repo' },
+        decision: { action: 'accept', decisionSource: 'user' }
+      })
+    ).toBe(false)
+    expect(
+      directUserApprovalAuthorizesUnscopedShell({
+        ...base,
+        decision: { action: 'decline', decisionSource: 'user' }
+      })
+    ).toBe(false)
+  })
+
   const request = {
     toolName: 'write_file' as const,
     arguments: { path: 'notes.txt', content: 'hello' },
@@ -501,6 +536,27 @@ describe('one-off marker and approval receipt', () => {
     )
   })
 
+  it('labels an unscoped shell retry as one auditable host execution', () => {
+    const prompt = buildToolPermissionRetryApprovalPrompt({
+      providerLabel: 'Pi',
+      request: {
+        toolName: 'run_shell_command',
+        arguments: { command: 'npm test', cwd: '/repo' },
+        failure: 'run_shell_command cannot prove an exact mutation scope.'
+      },
+      targetPreview: { kind: 'command', command: 'npm test', cwd: '/repo' }
+    })
+
+    expect(prompt.body).toContain('outside a workspace sandbox')
+    expect(prompt.body).toContain('may race active writers')
+    expect(prompt.preview.permissionRetry).toMatchObject({
+      executionBoundary: 'host-unsandboxed-one-shot',
+      workspaceMutationContainment: 'none-explicit-user-one-shot',
+      exactCommand: 'npm test',
+      exactCwd: '/repo'
+    })
+  })
+
   it('keeps exact arguments out of durable approval records while preserving shape and hash', () => {
     const secret = '__WRITE_CONTENT_BEYOND_NORMAL_PREVIEW__'
     const narrativeSecret = '__AGENT_NARRATIVE_SECRET__'
@@ -536,7 +592,11 @@ describe('isPermissionBoundaryFailure', () => {
     'operation not permitted',
     'EACCES: open failed',
     'blocked by the read-only posture',
-    'approval timed out'
+    'approval timed out',
+    'run_shell_command cannot prove an exact file/hunk mutation scope',
+    'writer lane did not provide exact edit scope',
+    'resource is outside the approved lane scope',
+    'participant is not approved to write this file'
   ])('recognizes %s', (failure) => {
     expect(isPermissionBoundaryFailure(failure)).toBe(true)
   })

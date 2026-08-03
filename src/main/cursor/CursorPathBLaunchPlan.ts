@@ -84,6 +84,9 @@ export function resolveCursorPathBBrokerPolicy(input: {
   readonly writeCapable: boolean
   readonly planSeat: boolean
   readonly taskWraithMcpProfileId: TaskWraithMcpProfileId | null
+  /** True only after broker setup failed or was not requested and no transient
+   * broker policy remains installed for this process. */
+  readonly nativeWriteFallback?: boolean
 }): CursorPathBBrokerPolicy {
   const common = {
     safeSubset: !input.writeCapable,
@@ -95,7 +98,10 @@ export function resolveCursorPathBBrokerPolicy(input: {
     return Object.freeze({
       bridgeMode: 'full',
       allowRules: Object.freeze([...CURSOR_BROKER_MCP_ALLOW_RULES]),
-      denyRules: Object.freeze(['Shell(**)', 'Write(**)']),
+      // While the broker is active, exact TaskWraith transactions remain the
+      // only write path. A degraded launch has already released this transient
+      // policy and may retain Cursor-native Shell/Write in its workspace sandbox.
+      denyRules: Object.freeze(input.nativeWriteFallback ? [] : ['Shell(**)', 'Write(**)']),
       ...common
     })
   }
@@ -124,15 +130,22 @@ export function buildCursorPathBLaunchPlan(
   input: CursorPathBLaunchPlanInput
 ): CursorPathBLaunchPlan {
   assertBrokerOutcome(input)
-  const policy = resolveCursorPathBBrokerPolicy(input)
   const brokerActive = input.brokerOutcome === 'active'
-  const transactionalWriteSeat = input.writeCapable && brokerActive
-  const prompt = brokerActive
+  const policy = resolveCursorPathBBrokerPolicy({
+    ...input,
+    nativeWriteFallback: input.writeCapable && !brokerActive
+  })
+  const transactionalWriteSeat = input.writeCapable
+  const basePrompt = brokerActive
     ? input.prompt
     : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
         advertised: false,
         coreProfile: false
       })
+  const prompt =
+    input.writeCapable && !brokerActive
+      ? `${basePrompt}\n\nTaskWraith Cursor continuity receipt: the managed broker is unavailable, but the user-approved write posture remains active. Use Cursor-native Shell/Write only inside the enabled workspace sandbox and only within your assigned lane scope. Keep each command/path visible in your response; if the sandbox refuses an essential action, ask the user with the exact command/path and continue any remaining work instead of cancelling the turn.`
+      : basePrompt
   const requestedModel = typeof input.model === 'string' ? input.model.trim() : ''
   const cursorGrokModel = requestedModel
     ? resolveCursorGrok45CliModelId({
@@ -153,6 +166,9 @@ export function buildCursorPathBLaunchPlan(
   const argv = transactionalWriteSeat
     ? buildContainedCursorWriteArgv({
         ...argvInput,
+        // `--force` is reserved for the prepared broker catalogue. A degraded
+        // seat still uses Cursor's native write mode, but never force-approves
+        // restored project MCP servers.
         forceAllowMcpTools: brokerActive
       })
     : buildContainedCursorReadOnlyArgv({
