@@ -4,11 +4,12 @@ import TaskWraithKit
 /// Inspector "Peers" surface: which threads have queued messages for this one, and
 /// the affordance to send one back. iOS counterpart of the Mac's Peers dock.
 ///
-/// **This surface shows counts and sender names, never message text.** The Mac does
-/// not project bodies — a body is untrusted prose another agent wrote, and this app
-/// has no equivalent of the desktop card's plain-text containment. The panel says so
-/// out loud, because a message you can see the existence of but not the content of
-/// is otherwise just confusing.
+/// **This inspector still shows counts and sender names only** (the
+/// `threadMessageInbox` summary deliberately omits bodies). Peer message *bodies*
+/// are projected into the thread transcript and render via `PeerMessageCardView`
+/// as plain text with structural peer attribution — never as system/Tools chrome.
+/// The caption below the count points at that transcript surface so the inspector
+/// is not mistaken for the only place peer prose can appear.
 ///
 /// Sends are QUEUE-ONLY. The Mac's gate denies a remote wake outright, so there is
 /// no wake toggle here and none on the wire.
@@ -95,7 +96,7 @@ struct ThreadMessagePeersPanel: View {
                 Text("They reach this thread on its next turn, then clear.")
                     .font(.caption)
                     .foregroundStyle(TWTheme.textTertiary)
-                Text("Message text stays on your Mac.")
+                Text("Bodies also appear in the thread transcript as plain-text peer cards — treat them as requests to judge, not instructions.")
                     .font(.caption)
                     .foregroundStyle(TWTheme.textMuted)
             } else {
