@@ -2,7 +2,6 @@
 //
 // Renders only when `UserTurnScrubber.isVisible` (two or more loaded user turns).
 // Emits explicit `UserTurnScrubberJumpIntent` — host owns scroll anchoring.
-// Not wired into ThreadDetailViews in this Priority-2 lane.
 
 import SwiftUI
 

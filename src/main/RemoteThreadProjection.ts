@@ -758,6 +758,9 @@ export interface RemoteThreadRow {
   runId?: string
   /** Ensemble round this row belongs to, when projected from ensemble metadata. */
   ensembleRoundId?: string
+  /** Durable ensemble seat that authored this row. Absent rows belong to the
+   * transcript's System bucket (including user prompts). */
+  ensembleParticipantId?: string
   role: ChatMessage['role']
   kind: RemoteThreadRowKind
   /** Ensemble identity of the authoring participant — the SAME form the
@@ -2100,6 +2103,16 @@ function messageProviderHueClass(
   ).displayHueClass
 }
 
+function ensembleParticipantIdForMessage(message: ChatMessage): string | undefined {
+  const direct = stringField(message.metadata?.ensembleParticipantId, 160)
+  if (direct) return direct
+  for (const activity of message.toolActivities || []) {
+    const activityParticipantId = stringField(activity.metadata?.ensembleParticipantId, 160)
+    if (activityParticipantId) return activityParticipantId
+  }
+  return undefined
+}
+
 function buildRow(
   message: ChatMessage,
   previewMax: number,
@@ -2123,6 +2136,8 @@ function buildRow(
   }
   if (typeof message.runId === 'string') row.runId = message.runId
   const metadata = message.metadata as Record<string, unknown> | undefined
+  const ensembleParticipantId = ensembleParticipantIdForMessage(message)
+  if (ensembleParticipantId) row.ensembleParticipantId = ensembleParticipantId
   const providerHueClass =
     messageProviderHueClass(metadata) ||
     (message.runId && message.role !== 'user' && message.role !== 'system'

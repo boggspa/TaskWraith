@@ -1415,6 +1415,9 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let runId: String?
         /// Ensemble round this row belongs to, when present.
         public let ensembleRoundId: String?
+        /// Durable ensemble seat that authored this row. Rows without one are
+        /// grouped under the transcript's System filter.
+        public let ensembleParticipantId: String?
         public let role: String?
         public let kind: String?
         /// Ensemble participant identity, mirroring the desktop transcript

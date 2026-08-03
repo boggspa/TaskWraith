@@ -1,8 +1,7 @@
 // Extracted multi-select participant / System filter surface.
 //
-// Pure presentation over `TranscriptParticipantFilter` — host owns selection
-// state and applies `filterRows` to the loaded transcript. Not wired into
-// ThreadDetailViews in this Priority-2 lane (Boss integrates later).
+// Pure presentation over `TranscriptParticipantFilter`; ThreadDetailView owns
+// the session-only selection and applies it to the loaded transcript.
 
 import SwiftUI
 

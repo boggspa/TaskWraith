@@ -7,8 +7,6 @@
 // - bounds dense marker spacing for long threads
 // - keeps stable row ids for jump targets
 // - emits explicit jump intents (begin / end / marker) for the host scroll path
-//
-// New-file-only Priority-2 candidate — not wired into ThreadDetailViews here.
 
 import Foundation
 

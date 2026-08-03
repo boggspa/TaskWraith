@@ -307,6 +307,10 @@ struct ThreadDetailView: View {
     /// single attributed disclosure. Their cards are rendered verbatim below
     /// the same header, so this remains display-only state.
     @State private var expandedFanoutViewports: Set<String> = []
+    /// Session-only additive participant/System selection. Empty means show all.
+    @State private var activeTranscriptFilterKeys: Set<String> = []
+    /// Last scrubber jump, used as a compact active-turn cue.
+    @State private var activeTurnScrubberMarkerKey: String?
     // Last user-touch wall-clock lives on `followPin` (a reference type) so the
     // per-touch-move tracker never re-renders the body. A forced follow-pin's
     // SETTLE pass reads it so it doesn't yank the scroll back to bottom while the
@@ -445,6 +449,34 @@ struct ThreadDetailView: View {
     }
     private var transcriptParticipants: [RemoteEnsembleState.Participant] {
         ensembleState?.displayParticipants ?? []
+    }
+    private var transcriptFilterItems: [TranscriptParticipantFilterItem] {
+        TranscriptNavigationAdapter.filterItems(for: ensembleState)
+    }
+    private var transcriptFilterItemKeys: [String] {
+        transcriptFilterItems.map(\.key)
+    }
+    private var transcriptFilterSignature: String {
+        activeTranscriptFilterKeys.sorted().joined(separator: ",")
+    }
+    private var filteredTranscriptRows: [RemoteThreadSnapshot.Row] {
+        TranscriptNavigationAdapter.filterRows(
+            snapshot?.rows ?? [],
+            activeFilterKeys: activeTranscriptFilterKeys
+        )
+    }
+    private var userTurnScrubberMarkers: [UserTurnScrubberMarker] {
+        TranscriptNavigationAdapter.scrubberMarkers(for: filteredTranscriptRows)
+    }
+    private var showsSystemTranscriptRows: Bool {
+        activeTranscriptFilterKeys.isEmpty
+            || activeTranscriptFilterKeys.contains(transcriptSystemFilterKey)
+    }
+    private var showsLiveParticipantOutput: Bool {
+        TranscriptNavigationAdapter.selectedParticipantId(
+            activeFilterKeys: activeTranscriptFilterKeys,
+            activeParticipantId: ensembleState?.activeParticipantId
+        )
     }
     /// Seats the Mac says are working, for the fan-out lane rim shimmer.
     /// Read straight off the projection — deriving it here from participant
@@ -638,9 +670,8 @@ struct ThreadDetailView: View {
     /// rows — those re-render inside `liveElements`, interleaved with the
     /// streamed text at their true positions.
     private var visibleRows: [RemoteThreadSnapshot.Row] {
-        let rows = snapshot?.rows ?? []
-        guard let liveRunId else { return rows }
-        return rows.filter { row in
+        guard let liveRunId else { return filteredTranscriptRows }
+        return filteredTranscriptRows.filter { row in
             guard row.runId == liveRunId else { return true }
             return !(row.role == "assistant" || row.role == "tool" || row.kind == "tool")
         }
@@ -648,7 +679,7 @@ struct ThreadDetailView: View {
 
     private var liveToolRows: [RemoteThreadSnapshot.Row] {
         guard let liveRunId else { return [] }
-        return (snapshot?.rows ?? []).filter {
+        return filteredTranscriptRows.filter {
             $0.runId == liveRunId && ($0.role == "tool" || $0.kind == "tool")
         }
     }
@@ -719,22 +750,28 @@ struct ThreadDetailView: View {
     }
 
     private var settledDisplayItemsBeforeLive: [TranscriptDisplayItem] {
-        toolRowGroupingCache.items(
+        if !activeTranscriptFilterKeys.isEmpty {
+            return groupAdjacentToolRows(settledRowsBeforeLive)
+        }
+        return toolRowGroupingCache.items(
             segment: "before",
             rows: settledRowsBeforeLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            extraKey: "\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
             group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
-        toolRowGroupingCache.items(
+        if !activeTranscriptFilterKeys.isEmpty {
+            return groupAdjacentToolRows(settledRowsAfterLive)
+        }
+        return toolRowGroupingCache.items(
             segment: "after",
             rows: settledRowsAfterLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            extraKey: "\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+            extraKey: "\(transcriptFilterSignature)|\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
             group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
     }
 
@@ -1174,6 +1211,7 @@ struct ThreadDetailView: View {
     /// shows the same order the finished transcript will.
     private var liveElements: [LiveElement] {
         guard let liveRunId else { return [] }
+        guard showsLiveParticipantOutput else { return [] }
         let segments = threadValue(model.streamingSegments) ?? [threadValue(model.streamingTexts) ?? ""]
         let rows = liveToolRows
         let counts = rows.map {
@@ -1447,6 +1485,14 @@ struct ThreadDetailView: View {
         }
         .onChange(of: taskId) { _, newTaskId in
             store.bind(model: model, taskId: newTaskId)
+            activeTranscriptFilterKeys.removeAll()
+            activeTurnScrubberMarkerKey = nil
+        }
+        .onChange(of: transcriptFilterItemKeys) {
+            activeTranscriptFilterKeys = TranscriptParticipantFilter.pruneStaleKeys(
+                activeFilterKeys: activeTranscriptFilterKeys,
+                validItems: transcriptFilterItems
+            )
         }
         .onChange(of: followUp) { _, newValue in
             TWDraftPersistence.setDraft(newValue, for: taskId)
@@ -1587,6 +1633,10 @@ struct ThreadDetailView: View {
             // behavior — a non-lazy child fires them on mount/unmount instead.
             // Sensor lazy, target non-lazy.
             VStack(spacing: 0) {
+            Color.clear
+                .frame(height: 1)
+                .id("transcript-start")
+                .accessibilityHidden(true)
             LazyVStack(alignment: .leading, spacing: 4) {
                 if earlierCount > 0 {
                     Button {
@@ -1613,6 +1663,7 @@ struct ThreadDetailView: View {
                 }
                 ForEach(settledDisplayItemsBeforeLive) { item in
                     settledDisplayItemView(item)
+                        .id(item.id)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -1621,7 +1672,8 @@ struct ThreadDetailView: View {
                             value: settledFoldMotionSignature)
                     // Desktop parity: each run's Task-complete card follows
                     // its final transcript row, persisting in the thread.
-                    if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
+                    if showsSystemTranscriptRows, showsRunCompleteSummary,
+                        let runCard = runCardSummary(after: item.lastRow) {
                         // Legacy diff lane keyed to ITS OWN run — a stale
                         // envelope from an older run must not decorate a
                         // newer no-edit card. run.fileChanges (per-run, in
@@ -1670,13 +1722,15 @@ struct ThreadDetailView: View {
                     }
                     ForEach(settledDisplayItemsAfterLive) { item in
                         settledDisplayItemView(item)
+                            .id(item.id)
                             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
                             .animation(
                                 ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
                                 value: settledFoldMotionSignature)
-                        if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
+                        if showsSystemTranscriptRows, showsRunCompleteSummary,
+                            let runCard = runCardSummary(after: item.lastRow) {
                             TaskCompleteCard(
                                 run: runCard,
                                 diff: diffSummary?.runId == runCard.runId ? diffSummary : nil,
@@ -1690,7 +1744,7 @@ struct ThreadDetailView: View {
                             .listRowSeparator(.hidden)
                         }
                     }
-                } else if isRunning {
+                } else if isRunning, showsLiveParticipantOutput {
                     ThinkingRow(
                         provider: thinkingProvider,
                         model: thinkingModel,
@@ -1724,7 +1778,7 @@ struct ThreadDetailView: View {
                     Text("No transcript yet.").foregroundStyle(TWTheme.textSecondary)
                         .listRowBackground(Color.clear)
                 }
-                if showsRunCompleteSummary, let run = unanchoredRunCardSummary {
+                if showsSystemTranscriptRows, showsRunCompleteSummary, let run = unanchoredRunCardSummary {
                     TaskCompleteCard(
                         run: run,
                         diff: diffSummary?.runId == run.runId ? diffSummary : nil,
@@ -1864,6 +1918,14 @@ struct ThreadDetailView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
+                TranscriptParticipantFilterRail(
+                    items: transcriptFilterItems,
+                    activeFilterKeys: activeTranscriptFilterKeys
+                ) { key in
+                    activeTranscriptFilterKeys = TranscriptParticipantFilter.toggle(
+                        key: key, in: activeTranscriptFilterKeys)
+                    activeTurnScrubberMarkerKey = nil
+                }
                 topActionBanner
                 attentionBanner
             }
@@ -1909,6 +1971,18 @@ struct ThreadDetailView: View {
             }
             .padding(.bottom, 14)
         }
+        .overlay(alignment: .trailing) {
+            if UserTurnScrubber.isVisible(markers: userTurnScrubberMarkers) {
+                UserTurnScrubberView(
+                    markers: userTurnScrubberMarkers,
+                    activeMarkerKey: activeTurnScrubberMarkerKey,
+                    frameHeight: 220
+                ) { intent in
+                    handleUserTurnScrubberJump(intent, proxy: proxy)
+                }
+                .padding(.trailing, 6)
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             // AnyView stage-break: the shell stack (banner + changes rows +
             // roster row + composer + rail) exceeds xcodebuild's stricter
@@ -1952,6 +2026,28 @@ struct ThreadDetailView: View {
                 onRevealFrame: {
                     requestFollowPin(proxy)
                 })
+        }
+    }
+
+    private func handleUserTurnScrubberJump(
+        _ intent: UserTurnScrubberJumpIntent,
+        proxy: ScrollViewProxy
+    ) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            switch intent {
+            case .begin:
+                activeTurnScrubberMarkerKey = nil
+                autoFollow = false
+                proxy.scrollTo("transcript-start", anchor: .top)
+            case .end:
+                activeTurnScrubberMarkerKey = nil
+                autoFollow = true
+                proxy.scrollTo("transcript-tail", anchor: .bottom)
+            case .marker(let marker):
+                activeTurnScrubberMarkerKey = marker.key
+                autoFollow = false
+                proxy.scrollTo(marker.messageId, anchor: .center)
+            }
         }
     }
 

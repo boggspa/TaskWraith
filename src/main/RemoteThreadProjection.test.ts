@@ -3027,6 +3027,31 @@ describe('RemoteThreadProjection', () => {
       expect(solo.rows.every((row) => row.speaker === undefined)).toBe(true)
     })
 
+    it('projects durable participant ids from messages and tool activities', () => {
+      const snapshot = project({ kind: 'latestN', n: 10 }, [
+        msg(0, { role: 'user' }),
+        msg(1, {
+          role: 'assistant',
+          metadata: { ensembleParticipantId: 'seat-message' }
+        }),
+        msg(2, {
+          role: 'tool',
+          toolActivities: [
+            activity({
+              id: 'tool-participant',
+              metadata: { ensembleParticipantId: 'seat-activity' }
+            })
+          ]
+        })
+      ])
+
+      expect(snapshot.rows.map((row) => row.ensembleParticipantId)).toEqual([
+        undefined,
+        'seat-message',
+        'seat-activity'
+      ])
+    })
+
     it.each([
       ['deepseek/deepseek-v4-flash', 'deepseek'],
       ['zai/glm-5.2', 'zai'],
