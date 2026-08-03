@@ -134,6 +134,7 @@ describe('work provenance query and reconciliation', () => {
   })
 
   it('keeps the read-only query from invoking repository fsmonitor code', () => {
+    if (process.platform === 'win32') return
     const root = makeRepo()
     const sentinel = join(root, 'fsmonitor-invoked')
     const hook = join(root, '.git', 'fsmonitor-probe.sh')

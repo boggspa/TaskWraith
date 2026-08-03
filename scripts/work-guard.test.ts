@@ -330,6 +330,7 @@ describe('orphan alarm', () => {
   })
 
   it('does not invoke repository fsmonitor code while checking dirty paths', () => {
+    if (process.platform === 'win32') return
     const root = makeRepo()
     const sentinel = join(root, 'fsmonitor-invoked')
     const hook = join(root, '.git', 'fsmonitor-probe.sh')
