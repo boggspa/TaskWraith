@@ -6,6 +6,7 @@ export type RightDockTab =
   | 'files'
   | 'office'
   | 'canvas'
+  | 'appdrive'
   | 'candidates'
   | 'media'
   | 'references'
@@ -22,6 +23,8 @@ export interface RightDockTabAvailabilityInput {
   showFileEditor: boolean
   showOfficeSuite: boolean
   isCanvasDockPanelOpen: boolean
+  /** Optional until composition-root wiring lands; defaults unavailable. */
+  isAppDriveDockPanelOpen?: boolean
   isFanoutCandidatesPanelOpen: boolean
   hasWorkspaceContext: boolean
   isChatMediaPanelOpen: boolean
@@ -46,6 +49,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'files',
   'office',
   'canvas',
+  'appdrive',
   'candidates',
   'peers',
   'inspector',
@@ -73,6 +77,11 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       available: input.showOfficeSuite && input.hasWorkspaceContext
     },
     { id: 'canvas' as const, label: 'Canvas', available: input.isCanvasDockPanelOpen },
+    {
+      id: 'appdrive' as const,
+      label: 'Drive',
+      available: Boolean(input.isAppDriveDockPanelOpen)
+    },
     {
       id: 'candidates' as const,
       label: 'Compare',

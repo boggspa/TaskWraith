@@ -1,0 +1,257 @@
+.appdrive-dock-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  padding: 8px;
+  color: var(--text-primary);
+  background: transparent;
+  overflow: auto;
+}
+
+.appdrive-dock-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.appdrive-dock-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.appdrive-dock-title {
+  font:
+    600 12px/1.3 system-ui,
+    sans-serif;
+  opacity: 0.9;
+}
+
+.appdrive-dock-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  background: color-mix(in srgb, var(--button-bg, rgba(127, 127, 127, 0.12)) 100%, transparent);
+  color: var(--text-secondary, inherit);
+  font:
+    600 10px/1.3 system-ui,
+    sans-serif;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.appdrive-dock-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+}
+
+.appdrive-dock-lifecycle {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.appdrive-dock-lifecycle.is-paused,
+.appdrive-dock-lifecycle.is-takeover {
+  color: color-mix(in srgb, var(--accent-color) 70%, var(--text-primary));
+}
+
+.appdrive-dock-permission {
+  opacity: 0.88;
+}
+
+.appdrive-dock-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.appdrive-dock-subtitle {
+  font:
+    600 10px/1.3 system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.62;
+}
+
+.appdrive-dock-target-primary {
+  font:
+    600 13px/1.3 system-ui,
+    sans-serif;
+}
+
+.appdrive-dock-target-secondary,
+.appdrive-dock-target-meta {
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appdrive-dock-target-meta {
+  opacity: 0.72;
+}
+
+.appdrive-dock-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+}
+
+.appdrive-dock-preview-frame {
+  position: relative;
+  min-height: 120px;
+  aspect-ratio: 16 / 10;
+  max-height: 220px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  background: color-mix(in srgb, var(--button-bg, rgba(127, 127, 127, 0.1)) 100%, transparent);
+  overflow: hidden;
+}
+
+.appdrive-dock-preview-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.appdrive-dock-preview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 12px;
+  text-align: center;
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+  opacity: 0.8;
+}
+
+.appdrive-dock-preview-note,
+.appdrive-dock-note,
+.appdrive-dock-empty,
+.appdrive-dock-controls-idle {
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+}
+
+.appdrive-dock-empty {
+  flex: 1 1 auto;
+  padding: 12px 4px;
+}
+
+.appdrive-dock-note {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--button-bg, rgba(127, 127, 127, 0.1)) 100%, transparent);
+}
+
+.appdrive-dock-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+  margin: 0;
+}
+
+.appdrive-dock-metrics > div {
+  min-width: 0;
+}
+
+.appdrive-dock-metrics-wide {
+  grid-column: 1 / -1;
+}
+
+.appdrive-dock-metrics dt {
+  margin: 0 0 2px;
+  font:
+    600 10px/1.2 system-ui,
+    sans-serif;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  opacity: 0.58;
+}
+
+.appdrive-dock-metrics dd {
+  margin: 0;
+  font:
+    12px/1.3 system-ui,
+    sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appdrive-dock-warning {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  font:
+    11px/1.4 system-ui,
+    sans-serif;
+}
+
+.appdrive-dock-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+
+.appdrive-dock-button {
+  appearance: none;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 6px;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+  color: inherit;
+  padding: 5px 10px;
+  font:
+    600 11px/1.2 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+
+.appdrive-dock-button:hover:not(:disabled),
+.appdrive-dock-button:focus-visible:not(:disabled) {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent-color) 45%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+.appdrive-dock-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.appdrive-dock-button.is-danger {
+  border-color: color-mix(in srgb, #c44 40%, var(--border-subtle, rgba(127, 127, 127, 0.32)));
+}

@@ -40,6 +40,7 @@ describe('rightDockState', () => {
           showFileEditor: true,
           showOfficeSuite: true,
           isCanvasDockPanelOpen: true,
+          isAppDriveDockPanelOpen: true,
           isFanoutCandidatesPanelOpen: true,
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
@@ -56,6 +57,7 @@ describe('rightDockState', () => {
         { id: 'files', label: 'Files' },
         { id: 'office', label: 'Office' },
         { id: 'canvas', label: 'Canvas' },
+        { id: 'appdrive', label: 'Drive' },
         { id: 'candidates', label: 'Compare' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
@@ -185,10 +187,21 @@ describe('rightDockState', () => {
         'files',
         'office',
         'canvas',
+        'appdrive',
         'candidates',
         'peers',
         'inspector',
         'terminal'
+      ])
+    })
+  })
+
+  describe('appdrive surface availability', () => {
+    it('shows Drive only when the App Drive panel open flag is set', () => {
+      expect(buildRightDockTabs({ ...allClosed })).toEqual([])
+      expect(buildRightDockTabs({ ...allClosed, isAppDriveDockPanelOpen: false })).toEqual([])
+      expect(buildRightDockTabs({ ...allClosed, isAppDriveDockPanelOpen: true })).toEqual([
+        { id: 'appdrive', label: 'Drive' }
       ])
     })
   })
@@ -207,9 +220,7 @@ describe('rightDockState', () => {
 
   describe('candidates surface availability', () => {
     it('shows Compare only when the panel is open AND a workspace exists', () => {
-      expect(
-        buildRightDockTabs({ ...allClosed, isFanoutCandidatesPanelOpen: true })
-      ).toEqual([])
+      expect(buildRightDockTabs({ ...allClosed, isFanoutCandidatesPanelOpen: true })).toEqual([])
       expect(
         buildRightDockTabs({
           ...allClosed,

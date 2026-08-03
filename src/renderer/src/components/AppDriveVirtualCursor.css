@@ -1,0 +1,41 @@
+.appdrive-virtual-cursor {
+  position: absolute;
+  left: var(--appdrive-cursor-x, 50%);
+  top: var(--appdrive-cursor-y, 50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transform: translate(-2px, -2px);
+  pointer-events: none;
+  user-select: none;
+  color: var(--text-primary);
+}
+
+.appdrive-virtual-cursor-glyph {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 1px 10px 10px 10px;
+  background: color-mix(in srgb, var(--accent-color) 88%, white 12%);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--bg-primary, #111) 55%, transparent),
+    0 1px 4px color-mix(in srgb, black 35%, transparent);
+  transform: rotate(-18deg);
+}
+
+.appdrive-virtual-cursor-label {
+  max-width: 120px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-primary, #111) 78%, transparent);
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  color: var(--text-secondary, inherit);
+  font:
+    10px/1.3 system-ui,
+    sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
