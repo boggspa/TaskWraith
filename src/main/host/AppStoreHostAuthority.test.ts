@@ -149,7 +149,7 @@ describe('AppStoreHostAuthority', () => {
   })
 
   function open(
-    overrides: Partial<AppStoreHostAuthorityOptions> & {
+    overrides: Omit<Partial<AppStoreHostAuthorityOptions>, 'ports'> & {
       ports?: Partial<AppStoreHostAuthorityPorts>
     } = {}
   ): AppStoreHostAuthority {
