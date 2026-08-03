@@ -303,6 +303,10 @@ struct ThreadDetailView: View {
     /// into one-line summaries. Keyed by display-item id (anchored on the
     /// first constituent row id, stable across snapshot growth).
     @State private var expandedSettledStacks: Set<String> = []
+    /// Completed fan-out waves the user re-opened after they condensed into a
+    /// single attributed disclosure. Their cards are rendered verbatim below
+    /// the same header, so this remains display-only state.
+    @State private var expandedFanoutViewports: Set<String> = []
     // Last user-touch wall-clock lives on `followPin` (a reference type) so the
     // per-touch-move tracker never re-renders the body. A forced follow-pin's
     // SETTLE pass reads it so it doesn't yank the scroll back to bottom while the
@@ -673,6 +677,10 @@ struct ThreadDetailView: View {
         case row(RemoteThreadSnapshot.Row)
         case toolBurst(
             id: String, rows: [RemoteThreadSnapshot.Row], lastRow: RemoteThreadSnapshot.Row)
+        /// A settled, fully-terminal fan-out wave. Its header replaces the
+        /// durable dispatch receipt; opening it restores the original lane
+        /// cards without changing the remote transcript projection.
+        case fanoutViewport(TWFanoutViewportGroup)
         /// Settled-stack collapse (desktop parity): a maximal run of
         /// thinking + tool rows folded behind a one-line summary. `items`
         /// preserves the ORIGINAL row/tool-burst rendering for the expanded
@@ -693,6 +701,7 @@ struct ThreadDetailView: View {
             switch self {
             case .row(let row): return row.id
             case .toolBurst(let id, _, _): return id
+            case .fanoutViewport(let group): return group.id
             case .settledStack(let id, _, _, _): return id
             case .superStack(let id, _, _, _, _, _): return id
             }
@@ -702,6 +711,7 @@ struct ThreadDetailView: View {
             switch self {
             case .row(let row): return row
             case .toolBurst(_, _, let lastRow): return lastRow
+            case .fanoutViewport(let group): return group.lastRow
             case .settledStack(_, _, _, let lastRow): return lastRow
             case .superStack(_, _, _, _, _, let lastRow): return lastRow
             }
@@ -714,8 +724,8 @@ struct ThreadDetailView: View {
             rows: settledRowsBeforeLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            extraKey: pinnedRowsKey,
-            group: { self.foldSuperGroups(self.buildSettledDisplayItems($0)) })
+            extraKey: "\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
@@ -724,8 +734,8 @@ struct ThreadDetailView: View {
             rows: settledRowsAfterLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            extraKey: pinnedRowsKey,
-            group: { self.foldSuperGroups(self.buildSettledDisplayItems($0)) })
+            extraKey: "\(pinnedRowsKey)|\(fanoutCollapseRunSummariesKey)",
+            group: { self.foldSuperGroups(self.buildFanoutViewportDisplayItems($0)) })
     }
 
     /// Second-level fold: consecutive one-liner items — settled stacks that
@@ -849,6 +859,39 @@ struct ThreadDetailView: View {
         return out
     }
 
+    /// Replace only fully settled fan-out waves with an attributed disclosure.
+    /// The ordinary settled-stack builder runs first so all non-fan-out rows
+    /// retain their previous grouping, while fan-out cards (which deliberately
+    /// never enter a stack) can be removed and restored as a clean set.
+    private func buildFanoutViewportDisplayItems(_ rows: [RemoteThreadSnapshot.Row])
+        -> [TranscriptDisplayItem]
+    {
+        let settledItems = buildSettledDisplayItems(rows)
+        let groups = twCollapsedFanoutViewportGroups(rows: rows, runSummaries: runSummaries)
+        guard !groups.isEmpty else { return settledItems }
+
+        var groupByAnchorRowId: [String: TWFanoutViewportGroup] = [:]
+        var ownedLaneRowIds: Set<String> = []
+        for group in groups {
+            groupByAnchorRowId[group.anchorRowId] = group
+            ownedLaneRowIds.formUnion(group.laneRows.map(\.id))
+        }
+
+        var out: [TranscriptDisplayItem] = []
+        for item in settledItems {
+            guard case .row(let row) = item else {
+                out.append(item)
+                continue
+            }
+            if let group = groupByAnchorRowId[row.id] {
+                out.append(.fanoutViewport(group))
+            } else if !ownedLaneRowIds.contains(row.id) {
+                out.append(item)
+            }
+        }
+        return out
+    }
+
     /// The trailing display item never auto-collapses while nothing streams
     /// below it — a freshly-settled stack stays open until the next
     /// assistant/panel message actually arrives (desktop parity).
@@ -868,6 +911,8 @@ struct ThreadDetailView: View {
             settledRowItemView(row, itemId: item.id)
         case .toolBurst:
             stackConstituentView(item)
+        case .fanoutViewport(let group):
+            fanoutViewportItemView(group)
         case .settledStack(let id, let items, let rows, _):
             settledStackItemView(id: id, items: items, rows: rows)
         case .superStack(
@@ -903,6 +948,11 @@ struct ThreadDetailView: View {
             settledRowItemView(row, itemId: member.id)
         case .toolBurst:
             stackConstituentView(member)
+        case .fanoutViewport:
+            // Fan-out viewports are only emitted at the outer display level;
+            // their expansion renders raw lane rows above, never a nested
+            // viewport.
+            EmptyView()
         case .settledStack(let id, let items, let rows, _):
             settledStackItemView(id: id, items: items, rows: rows)
         case .superStack:
@@ -957,11 +1007,38 @@ struct ThreadDetailView: View {
         }
     }
 
+    /// Desktop fan-out viewport parity: the compact row retains its stage,
+    /// lane count, and provider/role attribution; expanding it restores the
+    /// exact pre-collapse lane cards and their nested output.
+    @ViewBuilder
+    private func fanoutViewportItemView(_ group: TWFanoutViewportGroup) -> some View {
+        let expanded = expandedFanoutViewports.contains(group.id)
+        VStack(alignment: .leading, spacing: 4) {
+            FanoutViewportSummaryRow(
+                group: group,
+                expanded: expanded,
+                onToggle: { toggleFanoutViewportExpanded(group.id) })
+            if expanded {
+                ForEach(group.laneRows) { row in
+                    stackConstituentView(.row(row))
+                }
+            }
+        }
+    }
+
     private func toggleSettledStackExpanded(_ id: String) {
         if expandedSettledStacks.contains(id) {
             expandedSettledStacks.remove(id)
         } else {
             expandedSettledStacks.insert(id)
+        }
+    }
+
+    private func toggleFanoutViewportExpanded(_ id: String) {
+        if expandedFanoutViewports.contains(id) {
+            expandedFanoutViewports.remove(id)
+        } else {
+            expandedFanoutViewports.insert(id)
         }
     }
 
@@ -987,6 +1064,11 @@ struct ThreadDetailView: View {
                 rows: rows.map { model.resolvedRow($0, threadId: taskId) },
                 agentIdentity: threadAgentIdentity)
             .equatable()
+        case .fanoutViewport:
+            // Fan-out viewports are only emitted at the outer display level;
+            // their expansion renders raw lane rows above, never a nested
+            // viewport.
+            EmptyView()
         case .superStack:
             EmptyView()
         case .settledStack(_, _, let rows, _):
@@ -1015,6 +1097,21 @@ struct ThreadDetailView: View {
         (snapshot?.pinnedRows ?? []).map(\.id).sorted().joined(separator: ",")
     }
 
+    /// A row-count/last-id snapshot revision cannot see a run changing from
+    /// running to terminal. Include precisely the fields that decide whether a
+    /// fan-out is eligible for collapse so the cached display shape catches up
+    /// as soon as its remote run summaries do.
+    private var fanoutCollapseRunSummariesKey: String {
+        runSummaries.map { summary in
+            [
+                summary.runId ?? "", summary.ensembleRoundId ?? "", summary.status ?? "",
+                summary.startedAt ?? "", summary.endedAt ?? ""
+            ]
+            .joined(separator: "\u{1F}")
+        }
+        .joined(separator: "\u{1E}")
+    }
+
     private var snapshotRevisionToken: String {
         let rows = snapshot?.rows ?? []
         let lastId = rows.last?.id ?? ""
@@ -1034,12 +1131,14 @@ struct ThreadDetailView: View {
         var parts: [String] = [tailForceExpandedItemId ?? ""]
         for item in visibleDisplayItems {
             switch item {
+            case .fanoutViewport(let group): parts.append("fanout-\(group.id)")
             case .settledStack(let id, _, _, _): parts.append(id)
             case .superStack(let id, _, _, _, _, _): parts.append("super-\(id)")
             default: continue
             }
         }
         parts.append(contentsOf: expandedSettledStacks.sorted())
+        parts.append(contentsOf: expandedFanoutViewports.sorted().map { "fanout-expanded-\($0)" })
         return parts.joined(separator: "|")
     }
 
@@ -5052,6 +5151,102 @@ struct CollapsedTranscriptSummaryRow: View {
             }
         }
         return out
+    }
+}
+
+/// One-line header for a completed fan-out viewport. It shares the transcript
+/// disclosure rhythm with settled stacks while retaining the special fan-out
+/// glyph, stage, lane count, and per-seat provider attribution from the
+/// desktop viewport header.
+struct FanoutViewportSummaryRow: View {
+    let group: TWFanoutViewportGroup
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    private static let maxVisibleAttributions = 8
+
+    private var laneLabel: String {
+        "\(group.laneCount) \(group.laneCount == 1 ? "lane" : "lanes")"
+    }
+
+    private var visibleAttributions: [TWFanoutViewportAttribution] {
+        Array(group.attributions.prefix(Self.maxVisibleAttributions))
+    }
+
+    private var hiddenAttributionCount: Int {
+        max(0, group.attributions.count - visibleAttributions.count)
+    }
+
+    private func providerLabel(_ attribution: TWFanoutViewportAttribution) -> String {
+        let provider = TWTheme.providerLabel(
+            attribution.provider, modelId: attribution.model, modelLabel: attribution.model)
+        guard let role = attribution.role, !role.isEmpty else { return provider }
+        return "\(provider) / \(role)"
+    }
+
+    private func providerAccent(_ attribution: TWFanoutViewportAttribution) -> Color {
+        TWTheme.providerAccent(
+            OllamaDisplayBrands.providerHueClass(
+                provider: attribution.provider, modelId: attribution.model, modelLabel: attribution.model))
+    }
+
+    private var accessibleProviders: String {
+        group.attributions.map(providerLabel).joined(separator: ", ")
+    }
+
+    private var accessibleLabel: String {
+        [group.stage.label, laneLabel, accessibleProviders]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
+    /// A concatenated `Text` remains one shrinkable/truncatable run. Each
+    /// provider/role is individually branded without allowing a long roster to
+    /// shove the chevron or glyph off the compact transcript row.
+    private var labelText: Text {
+        var out = Text(verbatim: group.stage.label).foregroundColor(TWTheme.textPrimary)
+        out = out + Text(verbatim: " · \(laneLabel)").foregroundColor(TWTheme.textSecondary)
+        for (index, attribution) in visibleAttributions.enumerated() {
+            let separator = index == 0 ? " · " : " / "
+            out = out + Text(verbatim: separator).foregroundColor(TWTheme.textSecondary)
+            out = out + Text(verbatim: providerLabel(attribution))
+                .foregroundColor(providerAccent(attribution))
+        }
+        if hiddenAttributionCount > 0 {
+            out = out + Text(verbatim: " +\(hiddenAttributionCount)")
+                .foregroundColor(TWTheme.textTertiary)
+        }
+        return out
+    }
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .accessibilityHidden(true)
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TWTheme.chroma1)
+                    .accessibilityHidden(true)
+                Text("Fan-Out")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                labelText
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(expanded ? "Collapse" : "Expand") fan-out: \(accessibleLabel)")
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+        .accessibilityHint("Shows the individual fan-out lane cards")
     }
 }
 
