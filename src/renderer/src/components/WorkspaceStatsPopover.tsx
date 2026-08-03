@@ -108,9 +108,9 @@ export function WorkspaceStatsPopover({
       if (!active) return
       const hasLiveEvidence = Boolean(
         snapshot?.available &&
-          snapshot.workItems.some(
-            (item) => item.lifecycle === 'unresolved' && ['live', 'runtime'].includes(item.liveness)
-          )
+        snapshot.workItems.some(
+          (item) => item.lifecycle === 'unresolved' && ['live', 'runtime'].includes(item.liveness)
+        )
       )
       timer = window.setTimeout(query, hasLiveEvidence ? 5_000 : 30_000)
     }
@@ -158,8 +158,7 @@ export function WorkspaceStatsPopover({
             requestKey,
             loading: false,
             data: current.requestKey === requestKey ? current.data : null,
-            error:
-              error instanceof Error ? error.message : 'Local work provenance is unavailable.'
+            error: error instanceof Error ? error.message : 'Local work provenance is unavailable.'
           }))
           schedule(null)
         })
@@ -172,8 +171,7 @@ export function WorkspaceStatsPopover({
   }, [context.baseWorkspacePath, context.chatId, context.workspacePath, requestKey])
 
   const currentState = state.requestKey === requestKey ? state : null
-  const currentProvenanceState =
-    provenanceState.requestKey === requestKey ? provenanceState : null
+  const currentProvenanceState = provenanceState.requestKey === requestKey ? provenanceState : null
   return (
     <WorkspaceStatsPanel
       context={context}
@@ -411,7 +409,9 @@ export function WorkspaceStatsPanel({
             <span aria-hidden />
             <div>
               <strong>Work evidence unavailable</strong>
-              <small>{provenanceSnapshot.reason || 'No compatible local projection is available.'}</small>
+              <small>
+                {provenanceSnapshot.reason || 'No compatible local projection is available.'}
+              </small>
             </div>
           </div>
         )}
@@ -469,8 +469,8 @@ export function WorkspaceStatsPanel({
       </section>
 
       <p className="workspace-stats-boundary-copy">
-        Git totals describe this checkout. Provenance classifies local evidence; work locks
-        describe edit authority. Neither is inferred authorship.
+        Git totals describe this checkout. Provenance classifies local evidence; work locks describe
+        edit authority. Neither is inferred authorship.
       </p>
     </div>
   )
