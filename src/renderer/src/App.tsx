@@ -203,7 +203,8 @@ import {
 import {
   buildIsolatedSideChatContextSeed,
   buildHiddenSideChatInitialPrompt,
-  buildSideChatRunResultSeedPrompt
+  buildSideChatRunResultSeedPrompt,
+  shouldSeedIsolatedSideChatContext
 } from './lib/SideChatRunSeed'
 import type { SettingsPanelUpdate } from './lib/settingsPanelUpdate'
 import { IOS_REMOTE_ENABLED } from './lib/featureFlags'
@@ -15626,12 +15627,13 @@ function App(): React.JSX.Element {
         ? selectedSideParticipant.role || getProviderLabel(selectedSideParticipant.provider)
         : getProviderLabel(sideProvider)
       const shouldSeedIsolatedContextSnapshot =
-        !seedPrompt.trim() &&
-        sideChatMode === 'singleProvider' &&
-        !selectedSideParticipant &&
-        parentChat.chatKind !== 'ensemble'
+        shouldSeedIsolatedSideChatContext(seedPrompt, sideChatMode)
       const effectiveSeedPrompt = shouldSeedIsolatedContextSnapshot
-        ? buildIsolatedSideChatContextSeed(parentChat)
+        ? buildIsolatedSideChatContextSeed(parentChat, {
+            participantLabel: selectedSideParticipant
+              ? `${getProviderLabel(selectedSideParticipant.provider)} / ${sideParticipantLabel}`
+              : undefined
+          })
         : seedPrompt
       const hiddenInitialContextPrompt =
         shouldSeedIsolatedContextSnapshot && effectiveSeedPrompt.trim()

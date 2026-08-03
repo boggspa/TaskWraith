@@ -1,10 +1,21 @@
-import type { ChatMessage, ChatRecord, ProviderId } from '../../../main/store/types'
+import type { ChatMessage, ChatRecord, ProviderId, SideChatMode } from '../../../main/store/types'
 import { getChatProvider } from './chatScope'
 import { getProviderLabel } from './providerLabels'
 
 const SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT = 8
 const SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT = 5000
 const SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT = 700
+
+export interface IsolatedSideChatContextSeedOptions {
+  participantLabel?: string
+}
+
+export function shouldSeedIsolatedSideChatContext(
+  seedPrompt: string,
+  sideChatMode: SideChatMode
+): boolean {
+  return !seedPrompt.trim() && sideChatMode === 'singleProvider'
+}
 
 function metadataProvider(value: unknown): ProviderId | null {
   if (
@@ -72,7 +83,8 @@ export function formatSideChatParentContextMessage(
     return `User: ${truncateSideChatContextText(content, SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
   }
   if (message.role === 'assistant') {
-    const speaker = ensembleSpeakerLabel(message) || `${getProviderLabel(parentProvider)} parent agent`
+    const speaker =
+      ensembleSpeakerLabel(message) || `${getProviderLabel(parentProvider)} parent agent`
     return `${speaker}: ${truncateSideChatContextText(
       content,
       SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
@@ -100,25 +112,54 @@ export function formatSideChatParentContextMessage(
   return null
 }
 
-export function buildIsolatedSideChatContextSeed(parentChat: ChatRecord): string {
+export function buildIsolatedSideChatContextSeed(
+  parentChat: ChatRecord,
+  options: IsolatedSideChatContextSeedOptions = {}
+): string {
   const parentProvider = getChatProvider(parentChat)
   const turns = (parentChat.messages || [])
     .map((message) => formatSideChatParentContextMessage(message, parentProvider))
     .filter((entry): entry is string => Boolean(entry))
     .slice(-SIDE_CHAT_PARENT_CONTEXT_TURN_LIMIT)
-  if (turns.length === 0) return ''
-  const heading =
-    'Use this lightweight parent context snapshot as background for this isolated side chat. It was copied when the side chat was created and will not update automatically.'
-  const lines: string[] = []
-  let remaining = SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT - heading.length
-  for (const turn of turns) {
-    if (remaining <= 0) break
-    const next = truncateSideChatContextText(turn, remaining)
-    lines.push(next)
-    remaining -= next.length + 2
+  const activeGoal = parentChat.activeGoal?.objective?.trim()
+  const latestRoundSummary = parentChat.ensemble?.lastRoundSummary?.trim()
+  if (!activeGoal && !latestRoundSummary && turns.length === 0) return ''
+
+  const participantLabel = options.participantLabel?.trim()
+  const heading = [
+    'Use this bounded parent context snapshot as background for this isolated side chat.',
+    'It is a frozen copy from creation time and will not update automatically.',
+    'This side chat has its own provider session and permission lifecycle; it is not the live parent participant and cannot steer or interrupt that panel unless the user explicitly carries a result back.',
+    participantLabel
+      ? `Selected parent seat profile: ${truncateSideChatContextText(participantLabel, 160)}.`
+      : ''
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const sections: string[] = []
+  if (activeGoal) {
+    sections.push(
+      `Parent active goal:\n${truncateSideChatContextText(activeGoal, SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT)}`
+    )
   }
-  if (lines.length === 0) return ''
-  return [heading, '', 'Parent context snapshot:', ...lines].join('\n')
+  if (latestRoundSummary) {
+    sections.push(
+      `Latest parent round summary:\n${truncateSideChatContextText(
+        latestRoundSummary,
+        SIDE_CHAT_PARENT_CONTEXT_MESSAGE_CHAR_LIMIT
+      )}`
+    )
+  }
+  if (turns.length > 0) sections.push(['Recent parent transcript:', ...turns].join('\n'))
+
+  let result = heading
+  for (const section of sections) {
+    const separator = '\n\n'
+    const remaining = SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT - result.length - separator.length
+    if (remaining <= 0) break
+    result += separator + truncateSideChatContextText(section, remaining)
+  }
+  return truncateSideChatContextText(result, SIDE_CHAT_PARENT_CONTEXT_CHAR_LIMIT)
 }
 
 export function buildSideChatRunResultSeedPrompt(chat: ChatRecord, runId: string): string {

@@ -4,7 +4,8 @@ import {
   buildIsolatedSideChatContextSeed,
   buildHiddenSideChatInitialPrompt,
   buildSideChatRunResultSeedPrompt,
-  formatSideChatParentContextMessage
+  formatSideChatParentContextMessage,
+  shouldSeedIsolatedSideChatContext
 } from './SideChatRunSeed'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
@@ -100,6 +101,13 @@ describe('buildSideChatRunResultSeedPrompt', () => {
 })
 
 describe('side-chat context seed helpers', () => {
+  it('seeds only context-free single-provider side chats', () => {
+    expect(shouldSeedIsolatedSideChatContext('', 'singleProvider')).toBe(true)
+    expect(shouldSeedIsolatedSideChatContext('Explicit seed', 'singleProvider')).toBe(false)
+    expect(shouldSeedIsolatedSideChatContext('', 'ensembleClone')).toBe(false)
+    expect(shouldSeedIsolatedSideChatContext('', 'guestParticipant')).toBe(false)
+  })
+
   it('formats parent transcript messages for isolated side-chat context', () => {
     expect(
       formatSideChatParentContextMessage(
@@ -203,8 +211,8 @@ describe('side-chat context seed helpers', () => {
       })
     )
 
-    expect(seed).toContain('Use this lightweight parent context snapshot as background')
-    expect(seed).toContain('Parent context snapshot:')
+    expect(seed).toContain('Use this bounded parent context snapshot as background')
+    expect(seed).toContain('Recent parent transcript:')
     expect(seed).toContain('User: What changed in the renderer?')
     expect(seed).toContain('Codex parent agent: The scroll hook moved.')
     expect(seed).not.toContain('plain tool output')
@@ -254,6 +262,68 @@ describe('side-chat context seed helpers', () => {
 
     expect(seed).toContain('Codex / Planner: The planner found a smaller patch.')
     expect(seed).not.toContain('Grok parent agent')
+  })
+
+  it('carries bounded goal, summary, and selected-seat orientation without claiming live context', () => {
+    const seed = buildIsolatedSideChatContextSeed(
+      makeChat({
+        chatKind: 'ensemble',
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'Finish the Host Arc without interrupting the active panel.',
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'codex',
+          createdAt: '2026-08-03T18:00:00.000Z',
+          updatedAt: '2026-08-03T18:00:00.000Z'
+        },
+        ensemble: {
+          lastRoundSummary: 'Wave 2A is waiting on the final protocol review.',
+          participants: []
+        } as unknown as NonNullable<ChatRecord['ensemble']>,
+        messages: [
+          {
+            id: 'assistant',
+            role: 'assistant',
+            content: 'Keep the delta store authoritative.',
+            timestamp: '2026-08-03T18:01:00.000Z',
+            metadata: { ensembleProvider: 'codex', ensembleRole: 'CodexBoss' }
+          }
+        ]
+      }),
+      { participantLabel: 'Codex / CodexBoss' }
+    )
+
+    expect(seed).toContain('Parent active goal:')
+    expect(seed).toContain('Latest parent round summary:')
+    expect(seed).toContain('Selected parent seat profile: Codex / CodexBoss.')
+    expect(seed).toContain('its own provider session and permission lifecycle')
+    expect(seed).toContain('cannot steer or interrupt that panel')
+    expect(seed.length).toBeLessThanOrEqual(5_000)
+  })
+
+  it('never exceeds the bounded context capsule size', () => {
+    const seed = buildIsolatedSideChatContextSeed(
+      makeChat({
+        activeGoal: {
+          id: 'goal-1',
+          objective: 'g'.repeat(10_000),
+          status: 'active',
+          mode: 'taskwraith_steered',
+          provider: 'codex',
+          createdAt: '2026-08-03T18:00:00.000Z',
+          updatedAt: '2026-08-03T18:00:00.000Z'
+        },
+        messages: Array.from({ length: 20 }, (_, index) => ({
+          id: `message-${index}`,
+          role: 'assistant' as const,
+          content: 'm'.repeat(2_000),
+          timestamp: `2026-08-03T18:${String(index).padStart(2, '0')}:00.000Z`
+        }))
+      })
+    )
+
+    expect(seed.length).toBeLessThanOrEqual(5_000)
   })
 
   it('returns an empty seed when no context messages are eligible', () => {
