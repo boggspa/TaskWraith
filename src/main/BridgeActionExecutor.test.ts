@@ -47,7 +47,8 @@ import type {
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
   BridgeSetChatArchivedAction,
-  BridgeChatMarkdownTranscriptAction
+  BridgeChatMarkdownTranscriptAction,
+  BridgeChatMessageTranscriptAction
 } from './BridgeActionPayload'
 
 const sample = {
@@ -256,6 +257,11 @@ const sample = {
     workspaceId: 'ws-1',
     appChatId: 'chat-1'
   } satisfies BridgeChatMarkdownTranscriptAction,
+  chatMessageTranscript: {
+    kind: 'chatMessageTranscript',
+    workspaceId: 'ws-1',
+    appChatId: 'chat-1'
+  } satisfies BridgeChatMessageTranscriptAction,
   workspaceFileList: {
     kind: 'workspaceFileList',
     workspaceId: 'ws-1'
@@ -1232,6 +1238,44 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     const result = await executor.executeSetChatArchived(sample.setChatArchived)
     expect(result.executed).toBe(false)
     expect(result.message).toMatch(/not yet wired/i)
+  })
+
+  it('returns raw message text through chatMessageTranscriptFn', async () => {
+    const chatMessageTranscriptFn = vi.fn().mockResolvedValue({
+      ok: true,
+      text: 'Hello\n\nHi there',
+      messageCount: 2,
+      charCount: 15
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, chatMessageTranscriptFn })
+    const result = await executor.executeChatMessageTranscript(sample.chatMessageTranscript)
+    expect(chatMessageTranscriptFn).toHaveBeenCalledWith(sample.chatMessageTranscript)
+    expect(result).toMatchObject({
+      executed: true,
+      data: {
+        appChatId: 'chat-1',
+        text: 'Hello\n\nHi there',
+        messageCount: 2,
+        charCount: 15
+      }
+    })
+  })
+
+  it('surfaces raw message transcript size failures with counts', async () => {
+    const chatMessageTranscriptFn = vi.fn().mockResolvedValue({
+      ok: false,
+      reason: 'too-large',
+      messageCount: 900,
+      charCount: 2_400_000
+    })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, chatMessageTranscriptFn })
+    const result = await executor.executeChatMessageTranscript(sample.chatMessageTranscript)
+    expect(result.executed).toBe(false)
+    expect(result.data).toMatchObject({
+      reason: 'too-large',
+      messageCount: 900,
+      charCount: 2_400_000
+    })
   })
 
   it('returns markdown through chatMarkdownTranscriptFn on the happy path', async () => {

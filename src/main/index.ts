@@ -41327,6 +41327,24 @@ if (isGeminiMcpBridgeProcess) {
           broadcastThreadList()
           return { archived: action.archived }
         },
+        chatMessageTranscriptFn: async (action) => {
+          const chat = AppStore.getChat(action.appChatId)
+          if (!chat) return { ok: false as const, reason: 'not-found' }
+          if (chat.workspaceId && chat.workspaceId !== action.workspaceId) {
+            return { ok: false as const, reason: 'wrong-workspace' }
+          }
+          const result = buildChatMessageTranscript(chat)
+          if (!result.text.trim()) return { ok: false as const, reason: 'empty' }
+          if (result.charCount > 750_000) {
+            return {
+              ok: false as const,
+              reason: 'too-large',
+              messageCount: result.messageCount,
+              charCount: result.charCount
+            }
+          }
+          return { ok: true as const, ...result }
+        },
         chatMarkdownTranscriptFn: async (action) => {
           // Bridge variant of the desktop transcript export: same builder and
           // scrubbing, but with a smaller single-ack cap and archived reads allowed.

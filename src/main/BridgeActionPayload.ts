@@ -995,6 +995,15 @@ export interface BridgeChatMarkdownTranscriptAction extends BridgeActionMetadata
   appChatId: string
 }
 
+/** Read-only raw conversation-message transcript. Uses the desktop
+ * buildChatMessageTranscript serializer: user/assistant text only, no labels,
+ * tool rows, timestamps, metadata, or handoff annotations. */
+export interface BridgeChatMessageTranscriptAction extends BridgeActionMetadata {
+  kind: 'chatMessageTranscript'
+  workspaceId: string
+  appChatId: string
+}
+
 /** Fallback for any unrecognized `kind`. The router treats this as a
  * structured deny (no execution) but logs the original kind so we can
  * monitor schema drift between iOS and Electron versions. */
@@ -1073,6 +1082,7 @@ export type BridgeActionPayload =
   | BridgeTogglePinWorkspaceAction
   | BridgeSetChatArchivedAction
   | BridgeChatMarkdownTranscriptAction
+  | BridgeChatMessageTranscriptAction
   | BridgeUnknownAction
 
 export interface DecodedActionPayload {
@@ -1212,6 +1222,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'togglePinWorkspace':
     case 'setChatArchived':
     case 'chatMarkdownTranscript':
+    case 'chatMessageTranscript':
       return payload.workspaceId
     case 'workflowSetEnabled':
     case 'workflowRunNow':
@@ -1301,6 +1312,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'togglePinWorkspace':
     case 'setChatArchived':
     case 'chatMarkdownTranscript':
+    case 'chatMessageTranscript':
       return true
     case 'registerApnsToken':
       // falls through: ensemblePresetMutate is pair-gated only (no workspace
@@ -1425,6 +1437,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'fullProjectionResync':
     case 'setWatchedThread':
     case 'chatMarkdownTranscript':
+    case 'chatMessageTranscript':
       return false
     case 'unknown':
       return true
@@ -1702,6 +1715,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isChatMarkdownTranscript(parsed)
         ? (parsed as unknown as BridgeChatMarkdownTranscriptAction)
         : { kind: 'unknown', rawKind: 'chatMarkdownTranscript', raw: parsed }
+    case 'chatMessageTranscript':
+      return isChatMessageTranscript(parsed)
+        ? (parsed as unknown as BridgeChatMessageTranscriptAction)
+        : { kind: 'unknown', rawKind: 'chatMessageTranscript', raw: parsed }
     default:
       return { kind: 'unknown', rawKind: parsed.kind, raw: parsed }
   }
@@ -2621,6 +2638,10 @@ function isChatMarkdownTranscript(v: Record<string, unknown>): boolean {
     typeof v.workspaceId === 'string' &&
     typeof v.appChatId === 'string'
   )
+}
+
+function isChatMessageTranscript(v: Record<string, unknown>): boolean {
+  return isChatMarkdownTranscript(v)
 }
 
 function isEnsemblePresetMutate(v: Record<string, unknown>): boolean {

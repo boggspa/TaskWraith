@@ -373,6 +373,10 @@ function makeStubExecutor(
     executeChatMarkdownTranscript: make('executeChatMarkdownTranscript', {
       executed: true,
       message: 'chatMarkdownTranscript done'
+    }),
+    executeChatMessageTranscript: make('executeChatMessageTranscript', {
+      executed: true,
+      message: 'chatMessageTranscript done'
     })
   }
   return { executor, calls }
@@ -2454,6 +2458,22 @@ describe('BridgeActionRouter', () => {
       expect(result.accepted).toBe(true)
       expect(calls).toHaveLength(1)
       expect(calls[0].method).toBe('executeChatMarkdownTranscript')
+    })
+
+    it('accepts chatMessageTranscript against read-only workspace (monitor-tier read)', async () => {
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: seedReadOnly(), executor })
+      const wire = encodeAction({
+        kind: 'chatMessageTranscript',
+        workspaceId: 'ws-readonly',
+        appChatId: 'chat-1'
+      })
+      const result = (await router.route('bridge.requestActionAck', {
+        payloadBase64: wire
+      })) as { accepted: boolean }
+      expect(result.accepted).toBe(true)
+      expect(calls).toHaveLength(1)
+      expect(calls[0].method).toBe('executeChatMessageTranscript')
     })
 
     it('denies yolo changes when explicit capabilities omit yolo', async () => {

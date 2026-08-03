@@ -5772,6 +5772,47 @@ public final class RemoteSessionModel: ObservableObject {
         public let omissions: [String]
     }
 
+    /// Decoded success payload of desktop Copy Messages.
+    public struct ChatMessageTranscript {
+        public let text: String
+        public let messageCount: Int?
+        public let charCount: Int?
+    }
+
+    public func fetchChatMessageTranscript(
+        _ card: RemoteTaskCard, completion: @escaping (ChatMessageTranscript?) -> Void
+    ) {
+        guard !isDemo else {
+            lastActionMessage = "Message export needs a connected Mac."
+            completion(nil)
+            return
+        }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        send(
+            BridgeAction.chatMessageTranscript(workspaceId: ws, appChatId: card.id),
+            successLabel: "Messages copied.",
+            navigateOnAck: false,
+            onAckResult: { accepted, ack in
+                guard accepted,
+                    let raw = ack?.result,
+                    let object = try? JSONSerialization.jsonObject(with: raw) as? [String: Any]
+                else {
+                    completion(nil)
+                    return
+                }
+                let data = (object["data"] as? [String: Any]) ?? object
+                guard let text = data["text"] as? String, !text.isEmpty else {
+                    completion(nil)
+                    return
+                }
+                completion(
+                    ChatMessageTranscript(
+                        text: text,
+                        messageCount: data["messageCount"] as? Int,
+                        charCount: data["charCount"] as? Int))
+            })
+    }
+
     /// Fetch the FULL chat transcript as desktop-identical markdown from the
     /// Mac (the phone's 24-row snapshot window would silently truncate a
     /// local build — ios-t2-transcript-wire-ruling). Failure copy is surfaced

@@ -1695,6 +1695,23 @@ describe('decodeBridgeActionPayload', () => {
       expect(payload.kind).toBe('unknown')
     })
 
+    it('decodes chatMessageTranscript as a gated non-mutating read', () => {
+      const wire = encode({
+        kind: 'chatMessageTranscript',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toEqual({
+        kind: 'chatMessageTranscript',
+        workspaceId: 'ws-1',
+        appChatId: 'chat-1'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(false)
+    })
+
     it('decodes a registerApnsToken with production env', () => {
       const wire = encode({
         kind: 'registerApnsToken',

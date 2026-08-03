@@ -2480,6 +2480,18 @@ public enum BridgeAction {
         ])
     }
 
+    /// Read-only raw user/assistant message transcript. The Mac uses the same
+    /// serializer as desktop Copy Messages, never the phone's latest-N window.
+    public static func chatMessageTranscript(
+        workspaceId: String, appChatId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "chatMessageTranscript", "actionId": actionId,
+            "workspaceId": workspaceId, "appChatId": appChatId,
+        ])
+    }
+
     public static func createSideChat(
         workspaceId: String, threadId: String, provider: String?, model: String? = nil,
         reasoningEffort: String? = nil,

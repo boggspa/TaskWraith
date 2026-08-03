@@ -63,7 +63,8 @@ import type {
   BridgeTogglePinChatAction,
   BridgeTogglePinWorkspaceAction,
   BridgeSetChatArchivedAction,
-  BridgeChatMarkdownTranscriptAction
+  BridgeChatMarkdownTranscriptAction,
+  BridgeChatMessageTranscriptAction
 } from './BridgeActionPayload'
 import type { AgentApprovalAction } from './store/types'
 
@@ -268,6 +269,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeChatMarkdownTranscript(
     action: BridgeChatMarkdownTranscriptAction
+  ): Promise<BridgeActionExecutionResult>
+  executeChatMessageTranscript(
+    action: BridgeChatMessageTranscriptAction
   ): Promise<BridgeActionExecutionResult>
 }
 
@@ -596,6 +600,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeChatMarkdownTranscriptAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('chatMarkdownTranscript', action.appChatId)
+  }
+  async executeChatMessageTranscript(
+    action: BridgeChatMessageTranscriptAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('chatMessageTranscript', action.appChatId)
   }
 }
 
@@ -940,6 +949,10 @@ export interface MainProcessActionExecutorDependencies {
         charCount?: number
         omissions?: string[]
       }
+  >
+  chatMessageTranscriptFn?: (action: BridgeChatMessageTranscriptAction) => Promise<
+    | { ok: true; text: string; messageCount: number; charCount: number }
+    | { ok: false; reason: string; messageCount?: number; charCount?: number }
   >
   ensembleCancelRoundFn?: (action: BridgeEnsembleCancelRoundAction) => Promise<unknown>
   ensembleSkipActiveParticipantFn?: (
@@ -2561,6 +2574,45 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] setChatArchived failed: ${errMessage}`)
       return { executed: false, message: `Archive chat update failed: ${errMessage}` }
+    }
+  }
+
+  async executeChatMessageTranscript(
+    action: BridgeChatMessageTranscriptAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.chatMessageTranscriptFn) {
+      return notWired('chatMessageTranscript', action.appChatId)
+    }
+    try {
+      const result = await this.deps.chatMessageTranscriptFn(action)
+      if (!result.ok) {
+        return {
+          executed: false,
+          message: `Messages unavailable: ${result.reason}`,
+          data: {
+            appChatId: action.appChatId,
+            reason: result.reason,
+            ...(typeof result.messageCount === 'number'
+              ? { messageCount: result.messageCount }
+              : {}),
+            ...(typeof result.charCount === 'number' ? { charCount: result.charCount } : {})
+          }
+        }
+      }
+      return {
+        executed: true,
+        message: `Messages built for "${action.appChatId}" (${result.messageCount} messages)`,
+        data: {
+          appChatId: action.appChatId,
+          text: result.text,
+          messageCount: result.messageCount,
+          charCount: result.charCount
+        }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] chatMessageTranscript failed: ${errMessage}`)
+      return { executed: false, message: `Messages build failed: ${errMessage}` }
     }
   }
 

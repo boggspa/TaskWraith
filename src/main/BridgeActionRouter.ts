@@ -846,6 +846,8 @@ export class BridgeActionRouter {
         return this.executor.executeSetChatArchived(payload)
       case 'chatMarkdownTranscript':
         return this.executor.executeChatMarkdownTranscript(payload)
+      case 'chatMessageTranscript':
+        return this.executor.executeChatMessageTranscript(payload)
       case 'unknown':
         // Should never reach here — `handleActionAck` denies `unknown`
         // before dispatch. Defensive fallthrough.
@@ -1384,7 +1386,8 @@ function chatIdFromPayload(payload: BridgeActionPayload): string | undefined {
   if (
     payload.kind === 'togglePinChat' ||
     payload.kind === 'setChatArchived' ||
-    payload.kind === 'chatMarkdownTranscript'
+    payload.kind === 'chatMarkdownTranscript' ||
+    payload.kind === 'chatMessageTranscript'
   ) {
     return payload.appChatId
   }
@@ -1416,6 +1419,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'threadRowExpand':
     case 'threadMediaFetch':
     case 'chatMarkdownTranscript':
+    case 'chatMessageTranscript':
       return 'monitor'
     case 'workspaceFileList':
       return 'fileBrowse'

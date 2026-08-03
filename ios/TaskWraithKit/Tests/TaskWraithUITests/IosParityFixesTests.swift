@@ -797,6 +797,14 @@ struct IosParityFixesTests {
         #expect(payload["appChatId"] as? String == "chat-9")
     }
 
+    @Test func chatMessageTranscriptPayloadShape() throws {
+        let payload = try decodedPayload(
+            BridgeAction.chatMessageTranscript(workspaceId: "global", appChatId: "chat-9"))
+        #expect(payload["kind"] as? String == "chatMessageTranscript")
+        #expect(payload["workspaceId"] as? String == "global")
+        #expect(payload["appChatId"] as? String == "chat-9")
+    }
+
     // ── Pass-2.5 Track-A: IF2 stream-pull suppression gate ─────────────────
 
     @Test func agentOutputPullSuppressedOnlyForVisibleStreamingThread() {
