@@ -54,9 +54,17 @@ export interface BlackboardGroup {
 
 /** Category-grouped, canonically ordered view of a blackboard, with blank
  * key/value entries dropped. Shared by both surfaces. */
-export function buildBlackboardGroups(entries: BlackboardEntry[]): BlackboardGroup[] {
+export function buildBlackboardGroups(
+  entries: BlackboardEntry[],
+  nowMs = Date.now()
+): BlackboardGroup[] {
   const visible = entries
-    .filter((entry) => entry.key.trim() && entry.value.trim())
+    .filter((entry) => {
+      if (!entry.key.trim() || !entry.value.trim()) return false
+      if (!entry.expiresAt) return true
+      const expiryMs = Date.parse(entry.expiresAt)
+      return !Number.isFinite(expiryMs) || expiryMs > nowMs
+    })
     .sort(sortBlackboardEntries)
   return BLACKBOARD_CATEGORY_ORDER.map((category) => ({
     category,
@@ -304,6 +312,7 @@ export function BlackboardEntryCard({
   showSeenBy
 }: BlackboardEntryCardProps): ReactElement {
   const timestamp = formatBlackboardTimestamp(entry.createdAt)
+  const expiryTimestamp = formatBlackboardTimestamp(entry.expiresAt)
   const showKey = !isGeneratedBlackboardKey(entry.key)
   return (
     <article
@@ -319,6 +328,15 @@ export function BlackboardEntryCard({
             </time>
           )}
           <span className={`blackboard-card-scope scope-${entry.scope}`}>{entry.scope}</span>
+          {expiryTimestamp && (
+            <time
+              className="blackboard-card-time blackboard-card-expiry"
+              dateTime={entry.expiresAt}
+              title={`Self-deletes at ${entry.expiresAt}`}
+            >
+              Deletes {expiryTimestamp}
+            </time>
+          )}
           {actions}
         </div>
       </header>

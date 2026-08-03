@@ -21,6 +21,7 @@ describe('Blackboard quota and poll MCP schema', () => {
           maxItems?: number
           items?: { type?: string; minLength?: number; maxLength?: number }
         }
+        ttlMinutes?: { type?: string; minimum?: number; maximum?: number }
       }
     }
 
@@ -32,8 +33,14 @@ describe('Blackboard quota and poll MCP schema', () => {
       maxItems: 6,
       items: { type: 'string', minLength: 1, maxLength: 160 }
     })
+    expect(schema.properties?.ttlMinutes).toEqual({
+      type: 'integer',
+      minimum: 1,
+      maximum: 10_080,
+      description: 'Optional self-delete delay in whole minutes. Omit for no time expiry.'
+    })
     expect(tool('blackboard_post').description).toMatch(/ensemble_poll_response/i)
-    expect(tool('blackboard_post').description).toMatch(/replaced or retired/i)
+    expect(tool('blackboard_post').description).toMatch(/replaced, retired, or expired/i)
   })
 
   it('reuses the existing ensemble response tool with the Blackboard entry id', () => {

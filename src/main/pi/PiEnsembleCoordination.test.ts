@@ -57,6 +57,7 @@ describe('Pi managed Ensemble coordination extension', () => {
     expect(source).toContain('promptSnippet: descriptionFor(name)')
     expect(source).toContain("case 'ensemble_send'")
     expect(source).toContain("case 'blackboard_post'")
+    expect(source).toContain('ttlMinutes: Type.Optional(Type.Number())')
     expect(source).toContain('throw new Error(resultText(result))')
     expect(prepared.toolNames).not.toContain('run_shell_command')
     expect(source).toContain(

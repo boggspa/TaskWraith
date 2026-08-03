@@ -485,7 +485,8 @@ describe('IpcValidation', () => {
           value: 'Keep the synthesis concise.',
           key: 'synthesis-style',
           category: 'decision',
-          scope: 'session'
+          scope: 'session',
+          ttlMinutes: 60
         }
       ])
     ).not.toThrow()

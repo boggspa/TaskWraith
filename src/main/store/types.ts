@@ -1401,6 +1401,12 @@ export interface BlackboardEntry {
   authorKind?: 'external'
   createdAt: string
   /**
+   * Optional absolute expiry derived by the host from a bounded `ttlMinutes`
+   * post argument. Missing means the entry is durable until an ordinary
+   * Blackboard lifecycle action removes it.
+   */
+  expiresAt?: string
+  /**
    * Participant ids that have had this entry surfaced to them — via prompt
    * injection (marked at run flush) or an explicit `blackboard_read`. Drives
    * the unseen-only digest on slim resumed turns and the renderer's

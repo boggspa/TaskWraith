@@ -48,6 +48,7 @@ import type {
   TranscriptMediaThumbnail,
   ToolActivity
 } from './store/types'
+import { isBlackboardEntryExpired } from './blackboard/Blackboard'
 import {
   createToolResultMediaRefs,
   extractMcpImageBlocksFromRawResult
@@ -886,6 +887,7 @@ export interface RemoteBlackboardEntry {
   participantId?: string
   roundId?: string
   createdAt?: string
+  expiresAt?: string
   valueTruncated?: boolean
   originalLength?: number
 }
@@ -1197,10 +1199,18 @@ export function sanitizePreview(
   return { preview: `${collapsed.slice(0, Math.max(0, limit - 3)).trimEnd()}...`, truncated: true }
 }
 
-function projectBlackboardEntries(entries: BlackboardEntry[] | undefined): RemoteBlackboardEntry[] {
+function projectBlackboardEntries(
+  entries: BlackboardEntry[] | undefined,
+  nowMs: number
+): RemoteBlackboardEntry[] {
   if (!Array.isArray(entries) || entries.length === 0) return []
   return entries
-    .filter((entry) => typeof entry?.key === 'string' && typeof entry.value === 'string')
+    .filter(
+      (entry) =>
+        typeof entry?.key === 'string' &&
+        typeof entry.value === 'string' &&
+        !isBlackboardEntryExpired(entry, nowMs)
+    )
     .map((entry) => {
       const keySanitized = sanitizePreview(entry.key, 120)
       const valueSanitized = sanitizePreview(entry.value, 900)
@@ -1215,6 +1225,9 @@ function projectBlackboardEntries(entries: BlackboardEntry[] | undefined): Remot
           : {}),
         ...(entry.roundId ? { roundId: entry.roundId } : {}),
         ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
+        ...(entry.expiresAt && Number.isFinite(Date.parse(entry.expiresAt))
+          ? { expiresAt: entry.expiresAt }
+          : {}),
         ...(valueSanitized.truncated
           ? { valueTruncated: true, originalLength: entry.value.length }
           : {})
@@ -2982,7 +2995,10 @@ export function projectRemoteThread(
     .slice(-REMOTE_RUN_SUMMARY_MAX)
     .map((run) => summarizeRun(run, opts.costDisplay, all))
     .filter((entry): entry is RemoteRunSummary => Boolean(entry))
-  const blackboardEntries = projectBlackboardEntries(opts.blackboardEntries)
+  const blackboardEntries = projectBlackboardEntries(
+    opts.blackboardEntries,
+    Date.parse(generatedAt)
+  )
   // Built once over the WHOLE message list: buildRow sees one message at a
   // time, and a question's answer lives on a separate reply row.
   const questionAnswers = indexRemoteAgentQuestionAnswers(all)

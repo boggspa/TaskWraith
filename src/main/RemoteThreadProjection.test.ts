@@ -133,7 +133,20 @@ describe('RemoteThreadProjection', () => {
             value: 'Keep the iOS panel read-only.',
             category: 'decision',
             scope: 'chat',
-            createdAt: '2026-01-01T00:00:02.000Z'
+            createdAt: '2026-01-01T00:00:02.000Z',
+            expiresAt: '2026-05-28T12:05:00.000Z'
+          },
+          {
+            id: 'b-expired',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'Cursor',
+            key: 'expired',
+            value: 'This should never cross the remote projection boundary.',
+            category: 'note',
+            scope: 'session',
+            createdAt: '2026-01-01T00:00:03.000Z',
+            expiresAt: '2026-05-28T11:59:59.000Z'
           }
         ]
       })
@@ -144,8 +157,10 @@ describe('RemoteThreadProjection', () => {
         key: 'decision',
         category: 'decision',
         scope: 'chat',
-        participantId: 'Codex'
+        participantId: 'Codex',
+        expiresAt: '2026-05-28T12:05:00.000Z'
       })
+      expect(snap.blackboardEntries?.some((entry) => entry.id === 'b-expired')).toBe(false)
     })
 
     it('marks truncated blackboard previews with original length metadata', () => {

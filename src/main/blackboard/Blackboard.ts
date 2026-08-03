@@ -39,6 +39,16 @@ export const BLACKBOARD_MAX_TOMBSTONES = 60
 export const BLACKBOARD_MAX_VALUE_LEN = 1000
 export const BLACKBOARD_MAX_STORE_LEN = 8000
 export const BLACKBOARD_MAX_KEY_LEN = 80
+export const BLACKBOARD_MIN_TTL_MINUTES = 1
+export const BLACKBOARD_MAX_TTL_MINUTES = 7 * 24 * 60
+
+export type BlackboardExpiryResolution =
+  | { ok: true; expiresAt?: string }
+  | {
+      ok: false
+      code: 'blackboard_ttl_invalid' | 'blackboard_created_at_invalid'
+      message: string
+    }
 
 export type BlackboardPostFieldErrorCode = 'blackboard_key_too_long' | 'blackboard_value_too_long'
 
@@ -95,6 +105,71 @@ const VALID_SCOPES = new Set<BlackboardScope>(['round', 'session', 'chat'])
 
 function trimField(text: string): string {
   return text.trim()
+}
+
+/**
+ * Convert the optional relative self-delete request into a host-authored
+ * absolute timestamp. Callers never accept an arbitrary `expiresAt` from a
+ * renderer or model, and a malformed/out-of-range TTL is rejected rather than
+ * silently changed.
+ */
+export function resolveBlackboardExpiry(
+  createdAt: string,
+  ttlMinutes: unknown
+): BlackboardExpiryResolution {
+  if (ttlMinutes === undefined || ttlMinutes === null) return { ok: true }
+  if (
+    typeof ttlMinutes !== 'number' ||
+    !Number.isInteger(ttlMinutes) ||
+    ttlMinutes < BLACKBOARD_MIN_TTL_MINUTES ||
+    ttlMinutes > BLACKBOARD_MAX_TTL_MINUTES
+  ) {
+    return {
+      ok: false,
+      code: 'blackboard_ttl_invalid',
+      message: `ttlMinutes must be an integer from ${BLACKBOARD_MIN_TTL_MINUTES} to ${BLACKBOARD_MAX_TTL_MINUTES}.`
+    }
+  }
+  const createdAtMs = Date.parse(createdAt)
+  if (!Number.isFinite(createdAtMs)) {
+    return {
+      ok: false,
+      code: 'blackboard_created_at_invalid',
+      message: 'Blackboard entry creation time is invalid.'
+    }
+  }
+  return { ok: true, expiresAt: new Date(createdAtMs + ttlMinutes * 60_000).toISOString() }
+}
+
+/** Invalid persisted expiry text is treated as durable, never as permission to delete. */
+export function isBlackboardEntryExpired(
+  entry: Pick<BlackboardEntry, 'expiresAt'>,
+  nowMs = Date.now()
+): boolean {
+  if (!entry.expiresAt) return false
+  const expiryMs = Date.parse(entry.expiresAt)
+  return Number.isFinite(expiryMs) && expiryMs <= nowMs
+}
+
+/** Pure filter that preserves the input reference when nothing has expired. */
+export function pruneExpiredBlackboardEntries(
+  entries: BlackboardEntry[],
+  nowMs = Date.now()
+): BlackboardEntry[] {
+  const next = entries.filter((entry) => !isBlackboardEntryExpired(entry, nowMs))
+  return next.length === entries.length ? entries : next
+}
+
+/** Earliest valid expiry, including an already-due timestamp. */
+export function nextBlackboardExpiryAt(entries: BlackboardEntry[]): number | null {
+  let earliest: number | null = null
+  for (const entry of entries) {
+    if (!entry.expiresAt) continue
+    const expiryMs = Date.parse(entry.expiresAt)
+    if (!Number.isFinite(expiryMs)) continue
+    if (earliest === null || expiryMs < earliest) earliest = expiryMs
+  }
+  return earliest
 }
 
 /** Fail closed before persisting — never silently clamp stored key/value. */
@@ -162,13 +237,17 @@ function countBlackboardScopes(entries: BlackboardEntry[]): BlackboardCapacityCo
  * prompts and in a failed post response. Session/chat entries are deliberately
  * protected, whereas round entries can be evicted to make room for a new key.
  */
-export function formatBlackboardCapacityNotice(entries: BlackboardEntry[]): string | null {
-  if (entries.length < BLACKBOARD_MAX_ENTRIES) return null
-  const counts = countBlackboardScopes(entries)
+export function formatBlackboardCapacityNotice(
+  entries: BlackboardEntry[],
+  nowMs = Date.now()
+): string | null {
+  const liveEntries = pruneExpiredBlackboardEntries(entries, nowMs)
+  if (liveEntries.length < BLACKBOARD_MAX_ENTRIES) return null
+  const counts = countBlackboardScopes(liveEntries)
   if (counts.round > 0) {
-    return `${entries.length}/${BLACKBOARD_MAX_ENTRIES} entries. Before posting a new key, reuse an existing key or delete/retire stale notes; otherwise the oldest round-scoped entry may be evicted.`
+    return `${liveEntries.length}/${BLACKBOARD_MAX_ENTRIES} entries. Before posting a new key, reuse an existing key or delete/retire stale notes; otherwise the oldest round-scoped entry may be evicted.`
   }
-  return `${entries.length}/${BLACKBOARD_MAX_ENTRIES} protected session/chat entries. New unique posts will be rejected; reuse an existing key or call blackboard_delete to retire stale notes first.`
+  return `${liveEntries.length}/${BLACKBOARD_MAX_ENTRIES} protected session/chat entries. New unique posts will be rejected; reuse an existing key or call blackboard_delete to retire stale notes first.`
 }
 
 function boundEvictionTombstones(
@@ -263,6 +342,7 @@ export interface MakeBlackboardEntryInput {
   derivedFrom?: string
   pollOptions?: unknown
   pollEligibleParticipantIds?: string[]
+  ttlMinutes?: unknown
   createdAt: string
 }
 
@@ -278,6 +358,8 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
   if (validateBlackboardPostFields(key, value)) return null
   const pollValidation = validateBlackboardPollOptions(input.pollOptions)
   if (!pollValidation.ok) return null
+  const expiry = resolveBlackboardExpiry(input.createdAt, input.ttlMinutes)
+  if (!expiry.ok) return null
   const participantId = input.participantId || 'system'
   const eligibleParticipantIds = [
     ...new Set(
@@ -307,6 +389,7 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
     scope: normalizeBlackboardScope(input.scope),
     ...(input.derivedFrom ? { derivedFrom: input.derivedFrom } : {}),
     createdAt: input.createdAt,
+    ...(expiry.expiresAt ? { expiresAt: expiry.expiresAt } : {}),
     // The author has, by definition, seen their own post. Upserts mint a NEW
     // entry object, so a rewritten key resets to author-only — the fresh
     // content is correctly "unseen" for everyone else.
@@ -335,9 +418,13 @@ export function upsertBlackboardEntry(
 ): UpsertBlackboardResult {
   const currentRoundId = (options.currentRoundId || '').trim()
   const prunedAt = options.prunedAt || entry.createdAt
+  const prunedAtMs = Date.parse(prunedAt)
   let tombstones = (options.tombstones || []).filter((t) => t.key !== entry.key)
 
-  const without = entries.filter(
+  const liveEntries = Number.isFinite(prunedAtMs)
+    ? pruneExpiredBlackboardEntries(entries, prunedAtMs)
+    : entries
+  const without = liveEntries.filter(
     (e) =>
       !(
         e.participantId === entry.participantId &&
@@ -394,9 +481,12 @@ export function upsertBlackboardEntry(
  */
 export function pruneBlackboard(
   entries: BlackboardEntry[],
-  currentRoundId: string
+  currentRoundId: string,
+  nowMs = Date.now()
 ): BlackboardEntry[] {
-  return entries.filter((e) => e.scope !== 'round' || e.roundId === currentRoundId)
+  return pruneExpiredBlackboardEntries(entries, nowMs).filter(
+    (e) => e.scope !== 'round' || e.roundId === currentRoundId
+  )
 }
 
 /**
@@ -407,9 +497,12 @@ export function pruneBlackboard(
  */
 export function selectBlackboardForRound(
   entries: BlackboardEntry[],
-  currentRoundId: string
+  currentRoundId: string,
+  nowMs = Date.now()
 ): BlackboardEntry[] {
-  return entries.filter((e) => e.scope !== 'round' || e.roundId === currentRoundId)
+  return pruneExpiredBlackboardEntries(entries, nowMs).filter(
+    (e) => e.scope !== 'round' || e.roundId === currentRoundId
+  )
 }
 
 /** Has `participantId` seen this entry (via injection or an explicit read)? */
@@ -424,9 +517,12 @@ export function isBlackboardEntrySeenBy(entry: BlackboardEntry, participantId: s
  */
 export function selectUnseenBlackboard(
   entries: BlackboardEntry[],
-  participantId: string
+  participantId: string,
+  nowMs = Date.now()
 ): BlackboardEntry[] {
-  return entries.filter((entry) => !isBlackboardEntrySeenBy(entry, participantId))
+  return pruneExpiredBlackboardEntries(entries, nowMs).filter(
+    (entry) => !isBlackboardEntrySeenBy(entry, participantId)
+  )
 }
 
 /**
@@ -556,11 +652,12 @@ export function selectBlackboardReadWindow(
   entries: BlackboardEntry[],
   selector: BlackboardReadSelector,
   participantId?: string,
-  context?: BlackboardReadContext
+  context?: BlackboardReadContext,
+  nowMs = Date.now()
 ): { selected: BlackboardEntry[]; omitted: number; missingKeys: BlackboardMissingKey[] } {
   const ids = new Set((selector.ids || []).filter(Boolean))
   const keys = new Set((selector.keys || []).map((key) => String(key).trim()).filter(Boolean))
-  const chronological = [...entries]
+  const chronological = [...pruneExpiredBlackboardEntries(entries, nowMs)]
     .map((e, i) => ({ e, i }))
     .sort((a, b) =>
       a.e.createdAt === b.e.createdAt ? a.i - b.i : a.e.createdAt < b.e.createdAt ? -1 : 1
@@ -570,7 +667,10 @@ export function selectBlackboardReadWindow(
     const selected = chronological.filter((entry) => ids.has(entry.id) || keys.has(entry.key))
     const missingKeys =
       keys.size > 0 && context
-        ? resolveBlackboardMissingKeys([...(selector.keys || [])], selected, context)
+        ? resolveBlackboardMissingKeys([...(selector.keys || [])], selected, {
+            ...context,
+            allEntries: pruneExpiredBlackboardEntries(context.allEntries, nowMs)
+          })
         : []
     return { selected, omitted: 0, missingKeys }
   }
@@ -674,14 +774,16 @@ function formatBlackboardEntryLine(entry: BlackboardEntry): string {
 
 export function formatBlackboardForPrompt(
   entries: BlackboardEntry[],
-  options?: { allEntries?: BlackboardEntry[]; headerOverride?: string }
+  options?: { allEntries?: BlackboardEntry[]; headerOverride?: string; nowMs?: number }
 ): string {
-  const capacityNotice = formatBlackboardCapacityNotice(options?.allEntries || entries)
-  if (entries.length === 0 && !capacityNotice) return ''
+  const nowMs = options?.nowMs ?? Date.now()
+  const liveEntries = pruneExpiredBlackboardEntries(entries, nowMs)
+  const capacityNotice = formatBlackboardCapacityNotice(options?.allEntries || liveEntries, nowMs)
+  if (liveEntries.length === 0 && !capacityNotice) return ''
   // Partition BEFORE bucketing, so an external entry can never acquire one of
   // the host's category labels on its way into the digest.
-  const hostEntries = entries.filter((entry) => !isExternalBlackboardEntry(entry))
-  const externalEntries = entries.filter(isExternalBlackboardEntry)
+  const hostEntries = liveEntries.filter((entry) => !isExternalBlackboardEntry(entry))
+  const externalEntries = liveEntries.filter(isExternalBlackboardEntry)
   const byCategory = new Map<BlackboardCategory, BlackboardEntry[]>()
   for (const entry of hostEntries) {
     const bucket = byCategory.get(entry.category)

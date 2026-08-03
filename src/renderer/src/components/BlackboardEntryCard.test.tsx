@@ -218,6 +218,29 @@ describe('BlackboardEntryCard (static render)', () => {
     expect(html).not.toContain('role="listitem"')
   })
 
+  it('shows a self-delete deadline and filters expired cards before grouping', () => {
+    const expiresAt = '2026-07-09T11:00:00.000Z'
+    const html = renderToStaticMarkup(
+      <BlackboardEntryCard
+        chat={rosterChat}
+        entry={entry({ key: 'temporary', value: 'Short-lived note', expiresAt })}
+        variant="panel"
+      />
+    )
+
+    expect(html).toContain('blackboard-card-expiry')
+    expect(html).toContain(`title="Self-deletes at ${expiresAt}"`)
+    expect(
+      buildBlackboardGroups(
+        [
+          entry({ key: 'expired', value: 'gone', expiresAt: '2026-07-09T10:00:00.000Z' }),
+          entry({ key: 'future', value: 'visible', expiresAt })
+        ],
+        Date.parse('2026-07-09T10:30:00.000Z')
+      ).flatMap((group) => group.entries.map((item) => item.key))
+    ).toEqual(['future'])
+  })
+
   it('renders Markdown and sanitised HTML formatting in entry bodies', () => {
     const html = renderToStaticMarkup(
       <BlackboardEntryCard

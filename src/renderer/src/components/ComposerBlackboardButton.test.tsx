@@ -7,6 +7,7 @@ import {
   ComposerBlackboardDeleteButton,
   ComposerBlackboardPostForm,
   BLACKBOARD_POST_SECTION_OPTIONS,
+  BLACKBOARD_SELF_DELETE_OPTIONS,
   buildComposerBlackboardColumns,
   buildBlackboardGroups
 } from './ComposerBlackboardButton'
@@ -155,8 +156,11 @@ describe('ComposerBlackboardPostForm (static render)', () => {
     expect(html).toContain('Post a note to the Blackboard...')
     expect(html).toContain('rows="4"')
     expect(html).toContain('aria-label="Blackboard section"')
+    expect(html).toContain('aria-label="Blackboard self-delete timer"')
     expect(html).toContain('Post to')
+    expect(html).toContain('Self-delete')
     expect(html).toContain('<option value="note" selected="">Notes</option>')
+    expect(html).toContain('<option value="" selected="">Never</option>')
     expect(html).toContain('type="submit"')
     expect(html).toContain('disabled')
     expect(html).toContain('>Post</button>')
@@ -169,6 +173,18 @@ describe('ComposerBlackboardPostForm (static render)', () => {
       { category: 'risk', label: 'Risks' },
       { category: 'do-not-repeat', label: 'Do not repeat' },
       { category: 'note', label: 'Notes' }
+    ])
+  })
+
+  it('offers bounded opt-in self-delete windows and defaults to durable', () => {
+    expect(BLACKBOARD_SELF_DELETE_OPTIONS).toEqual([
+      { label: 'Never', minutes: null },
+      { label: '5 minutes', minutes: 5 },
+      { label: '15 minutes', minutes: 15 },
+      { label: '1 hour', minutes: 60 },
+      { label: '4 hours', minutes: 240 },
+      { label: '24 hours', minutes: 1_440 },
+      { label: '7 days', minutes: 10_080 }
     ])
   })
 

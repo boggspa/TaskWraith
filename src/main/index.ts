@@ -1923,6 +1923,7 @@ import {
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
   removeBlackboardEntries,
+  resolveBlackboardExpiry,
   resolveBlackboardPostRound,
   selectBlackboardForRound,
   selectBlackboardReadWindow,
@@ -1931,6 +1932,7 @@ import {
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
 import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
+import { BlackboardExpiryService } from './blackboard/BlackboardExpiryService'
 import { WorkspaceLockRuntime, workspaceLockAuthorityRootForHome } from './WorkspaceLockRuntime'
 import { WorkspaceLockRunLifecycleTracker } from './WorkspaceLockRunLifecycle'
 import { WorkspaceLockGatedProviderLaunch } from './WorkspaceLockGatedProviderLaunch'
@@ -3652,6 +3654,7 @@ function emitAutoFailoverNotice(notice: AutoFailoverNotice): void {
 }
 let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
 let wakeupTimerServiceRef: WakeupTimerService | null = null
+let blackboardExpiryServiceRef: BlackboardExpiryService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
 let activityReportingServiceRef: ActivityReportingService | null = null
@@ -9735,6 +9738,7 @@ function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const previous = AppStore.getChat(normalized.appChatId)
   const saved = AppStore.saveChat(normalized)
   broadcastChatUpdated(saved)
+  blackboardExpiryServiceRef?.observeChat(saved)
   maybeScheduleCodexNativeGoalSync(previous, saved, 'chat-save')
   // 1.0.5-PO2 — Notify open workspace popouts that something in
   // their workspace may have changed. The popout debounces a
@@ -36521,7 +36525,9 @@ async function executeGeminiMcpTool(
         const createdAt = new Date().toISOString()
         const postKey = optionalString(args.key) || ''
         const postValue = optionalString(args.value) || ''
+        const ttlMinutes = args.ttlMinutes ?? args.ttl_minutes
         const fieldError = validateBlackboardPostFields(postKey, postValue)
+        const expiry = resolveBlackboardExpiry(createdAt, ttlMinutes)
         const pollOptionsInput = args.pollOptions ?? args.poll_options
         const pollOptions = validateBlackboardPollOptions(pollOptionsInput)
         if (fieldError) {
@@ -36532,6 +36538,14 @@ async function executeGeminiMcpTool(
             code: fieldError.code,
             maxLength: fieldError.maxLength,
             originalLength: fieldError.originalLength
+          })
+        } else if (!expiry.ok) {
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: 'blackboard_post',
+            code: expiry.code,
+            error: expiry.message
           })
         } else if (!pollOptions.ok) {
           toolIsError = true
@@ -36560,6 +36574,7 @@ async function executeGeminiMcpTool(
             pollEligibleParticipantIds: chat.ensemble.participants
               .filter((participant) => participant.enabled)
               .map((participant) => participant.id),
+            ttlMinutes,
             createdAt
           })
           if (!entry) {
@@ -46780,6 +46795,8 @@ if (isGeminiMcpBridgeProcess) {
       workspaceLockRuntimeRef?.dispose()
       workspaceLockRuntimeRef = null
       runOrphanProcessReaperRef = null
+      blackboardExpiryServiceRef?.stop()
+      blackboardExpiryServiceRef = null
       activityReportingServiceRef?.stop()
       activityReportingServiceRef = null
       releaseRemotePowerAssertion()
@@ -48359,6 +48376,13 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender,
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
+
+    blackboardExpiryServiceRef = new BlackboardExpiryService({
+      listChats: () => AppStore.getChats(),
+      getChat: (chatId) => AppStore.getChat(chatId) || null,
+      saveChat: saveAndBroadcastChat
+    })
+    blackboardExpiryServiceRef.start()
 
     registerBlackboardPollHandlers({
       isMainRendererSender,
@@ -52610,6 +52634,7 @@ if (isGeminiMcpBridgeProcess) {
           value?: string
           category?: string
           scope?: string
+          ttlMinutes?: unknown
         }
       ) => {
         if (AppStore.getSettings().ensembleModeEnabled === false) {
@@ -52636,6 +52661,8 @@ if (isGeminiMcpBridgeProcess) {
             `${fieldError.code}: max ${fieldError.maxLength}, got ${fieldError.originalLength}`
           )
         }
+        const expiry = resolveBlackboardExpiry(createdAt, payload?.ttlMinutes)
+        if (!expiry.ok) throw new Error(`${expiry.code}: ${expiry.message}`)
         const entry = makeBlackboardEntry({
           id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           chatId: chat.appChatId,
@@ -52645,6 +52672,7 @@ if (isGeminiMcpBridgeProcess) {
           value,
           category: payload?.category,
           scope: roundResolution.scope,
+          ttlMinutes: payload?.ttlMinutes,
           createdAt
         })
         if (!entry) throw new Error('Blackboard entry requires non-empty key and value.')

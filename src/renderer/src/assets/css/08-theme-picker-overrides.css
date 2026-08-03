@@ -10831,7 +10831,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     'entry submit'
-    'section submit'
+    'controls submit'
     'error error';
   column-gap: 6px;
   row-gap: 6px;
@@ -10865,8 +10865,16 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.composer-blackboard-post-controls {
+  grid-area: controls;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
 .composer-blackboard-post-section {
-  grid-area: section;
   display: inline-flex;
   align-items: center;
   gap: 6px;

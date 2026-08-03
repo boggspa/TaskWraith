@@ -1685,6 +1685,7 @@ const api = {
     value: string
     category?: string
     scope?: string
+    ttlMinutes?: number
   }) =>
     ipcRenderer.invoke('post-blackboard-entry', payload) as Promise<{
       ok: true

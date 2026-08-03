@@ -1718,6 +1718,7 @@ declare global {
         value: string
         category?: string
         scope?: string
+        ttlMinutes?: number
       }) => Promise<{ ok: true; entry: BlackboardEntry }>
       deleteBlackboardEntry: (payload: {
         chatId: string

@@ -8,6 +8,8 @@ import {
   BLACKBOARD_MAX_POLL_OPTION_LEN,
   BLACKBOARD_MAX_POLL_OPTIONS,
   BLACKBOARD_MAX_STORE_LEN,
+  BLACKBOARD_MAX_TTL_MINUTES,
+  BLACKBOARD_MIN_TTL_MINUTES,
   BLACKBOARD_MIN_POLL_OPTIONS
 } from './blackboard/Blackboard'
 
@@ -3480,7 +3482,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'blackboard_post',
       description:
-        'Post a durable Blackboard entry/poll. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced or retired.',
+        'Post a Blackboard entry/poll. Optional ttlMinutes makes it self-delete after 1 minute–7 days; otherwise it is durable. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced, retired, or expired.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3507,6 +3509,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           scope: {
             type: 'string',
             enum: ['round', 'session', 'chat']
+          },
+          ttlMinutes: {
+            type: 'integer',
+            minimum: BLACKBOARD_MIN_TTL_MINUTES,
+            maximum: BLACKBOARD_MAX_TTL_MINUTES,
+            description: 'Optional self-delete delay in whole minutes. Omit for no time expiry.'
           }
         },
         required: ['key', 'value']

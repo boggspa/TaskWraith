@@ -8,6 +8,7 @@ import {
   BLACKBOARD_MAX_KEY_LEN,
   BLACKBOARD_MAX_POLL_OPTIONS,
   BLACKBOARD_MAX_STORE_LEN,
+  BLACKBOARD_MAX_TTL_MINUTES,
   BLACKBOARD_MAX_VALUE_LEN,
   deriveBlackboardFromRoundSummary,
   formatBlackboardCapacityNotice,
@@ -15,10 +16,13 @@ import {
   formatPromptBlackboardValue,
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
+  nextBlackboardExpiryAt,
   normalizeBlackboardCategory,
   normalizeBlackboardScope,
   pruneBlackboard,
+  pruneExpiredBlackboardEntries,
   removeBlackboardEntries,
+  resolveBlackboardExpiry,
   resolveBlackboardMissingKeys,
   resolveBlackboardPostRound,
   selectBlackboardForRound,
@@ -41,6 +45,7 @@ function entry(overrides: Partial<BlackboardEntry> = {}): BlackboardEntry {
     scope: overrides.scope ?? 'session',
     ...(overrides.derivedFrom ? { derivedFrom: overrides.derivedFrom } : {}),
     createdAt: overrides.createdAt ?? '2026-05-31T00:00:00.000Z',
+    ...(overrides.expiresAt ? { expiresAt: overrides.expiresAt } : {}),
     ...(overrides.seenBy ? { seenBy: overrides.seenBy } : {}),
     ...(overrides.poll ? { poll: overrides.poll } : {})
   }
@@ -227,6 +232,30 @@ describe('makeBlackboardEntry', () => {
       'tool-7'
     )
   })
+
+  it('derives an absolute self-delete time from a bounded relative TTL', () => {
+    const e = makeBlackboardEntry({
+      ...base,
+      key: 'temporary-note',
+      value: 'Remove after the handoff window.',
+      ttlMinutes: 15
+    })
+
+    expect(e?.expiresAt).toBe('2026-05-31T00:15:00.000Z')
+    expect(resolveBlackboardExpiry(base.createdAt, undefined)).toEqual({ ok: true })
+  })
+
+  it('rejects malformed or out-of-range self-delete TTLs instead of clamping them', () => {
+    for (const ttlMinutes of [0, 1.5, '15', BLACKBOARD_MAX_TTL_MINUTES + 1]) {
+      expect(
+        makeBlackboardEntry({ ...base, key: 'temporary-note', value: 'v', ttlMinutes })
+      ).toBeNull()
+    }
+    expect(resolveBlackboardExpiry(base.createdAt, 0)).toMatchObject({
+      ok: false,
+      code: 'blackboard_ttl_invalid'
+    })
+  })
 })
 
 describe('upsertBlackboardEntry', () => {
@@ -356,6 +385,22 @@ describe('pruneBlackboard', () => {
     const out = pruneBlackboard(list, 'round-2')
     expect(out.map((e) => e.id).sort()).toEqual(['c', 'r-cur', 's'])
   })
+
+  it('drops time-expired entries while preserving future and durable entries', () => {
+    const now = Date.parse('2026-05-31T00:30:00.000Z')
+    const list = [
+      entry({ id: 'expired', expiresAt: '2026-05-31T00:30:00.000Z' }),
+      entry({ id: 'future', expiresAt: '2026-05-31T00:31:00.000Z' }),
+      entry({ id: 'durable' })
+    ]
+
+    expect(pruneBlackboard(list, 'round-1', now).map((candidate) => candidate.id)).toEqual([
+      'future',
+      'durable'
+    ])
+    expect(pruneExpiredBlackboardEntries(list, now)).toHaveLength(2)
+    expect(nextBlackboardExpiryAt(list)).toBe(Date.parse('2026-05-31T00:30:00.000Z'))
+  })
 })
 
 describe('selectBlackboardForRound', () => {
@@ -366,6 +411,21 @@ describe('selectBlackboardForRound', () => {
       entry({ id: 's', scope: 'session' })
     ]
     expect(selectBlackboardForRound(list, 'round-2').map((e) => e.id).sort()).toEqual(['r-cur', 's'])
+  })
+
+  it('never exposes an expired entry even if durable cleanup has not run yet', () => {
+    const now = Date.parse('2026-05-31T00:30:00.000Z')
+    const list = [
+      entry({ id: 'expired', expiresAt: '2026-05-31T00:29:59.000Z' }),
+      entry({ id: 'live', expiresAt: '2026-05-31T00:31:00.000Z' })
+    ]
+
+    expect(
+      selectBlackboardForRound(list, 'round-1', now).map((candidate) => candidate.id)
+    ).toEqual(['live'])
+    expect(
+      selectUnseenBlackboard(list, 'another-participant', now).map((candidate) => candidate.id)
+    ).toEqual(['live'])
   })
 })
 
@@ -417,6 +477,24 @@ describe('selectBlackboardReadWindow', () => {
     expect(out.selected.map((e) => e.id)).toEqual(['old', 'mid'])
     expect(out.omitted).toBe(1)
     expect(out.missingKeys).toEqual([])
+  })
+
+  it('filters expired entries before explicit-key and window selection', () => {
+    const now = Date.parse('2026-05-31T00:30:00.000Z')
+    const expiring = [
+      entry({ id: 'expired', key: 'expired', expiresAt: '2026-05-31T00:30:00.000Z' }),
+      entry({ id: 'live', key: 'live', expiresAt: '2026-05-31T00:31:00.000Z' })
+    ]
+    const out = selectBlackboardReadWindow(
+      expiring,
+      { keys: ['expired', 'live'] },
+      'p1',
+      { allEntries: expiring },
+      now
+    )
+
+    expect(out.selected.map((candidate) => candidate.id)).toEqual(['live'])
+    expect(out.missingKeys).toEqual([{ key: 'expired', reason: 'not_found' }])
   })
 
   it('classifies explicit-key misses with stable ordering and dedupe', () => {

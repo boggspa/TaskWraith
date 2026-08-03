@@ -41,6 +41,16 @@ export const BLACKBOARD_POST_SECTION_OPTIONS = BLACKBOARD_CATEGORY_ORDER.map((ca
   label: BLACKBOARD_CATEGORY_LABELS[category]
 }))
 
+export const BLACKBOARD_SELF_DELETE_OPTIONS = [
+  { label: 'Never', minutes: null },
+  { label: '5 minutes', minutes: 5 },
+  { label: '15 minutes', minutes: 15 },
+  { label: '1 hour', minutes: 60 },
+  { label: '4 hours', minutes: 240 },
+  { label: '24 hours', minutes: 1_440 },
+  { label: '7 days', minutes: 10_080 }
+] as const
+
 /**
  * The full Notes panel omits empty category groups; the composer workspace keeps
  * all five visible so their positions never jump as entries arrive or are
@@ -143,6 +153,7 @@ export function ComposerBlackboardPostForm(
 ): ReactElement | null {
   const [draft, setDraft] = useState('')
   const [category, setCategory] = useState<BlackboardEntry['category']>('note')
+  const [ttlMinutes, setTtlMinutes] = useState<number | ''>('')
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
   const chatId = props.chat?.appChatId
@@ -159,9 +170,11 @@ export function ComposerBlackboardPostForm(
         chatId,
         value: draftValue,
         category,
-        scope: 'session'
+        scope: 'session',
+        ...(ttlMinutes === '' ? {} : { ttlMinutes })
       })
       setDraft('')
+      setTtlMinutes('')
     } catch (error) {
       setPostError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -192,20 +205,38 @@ export function ComposerBlackboardPostForm(
         placeholder="Post a note to the Blackboard..."
         rows={4}
       />
-      <label className="composer-blackboard-post-section">
-        <span>Post to</span>
-        <select
-          value={category}
-          onChange={(event) => setCategory(event.target.value as BlackboardEntry['category'])}
-          aria-label="Blackboard section"
-        >
-          {BLACKBOARD_POST_SECTION_OPTIONS.map((option) => (
-            <option key={option.category} value={option.category}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="composer-blackboard-post-controls">
+        <label className="composer-blackboard-post-section">
+          <span>Post to</span>
+          <select
+            value={category}
+            onChange={(event) => setCategory(event.target.value as BlackboardEntry['category'])}
+            aria-label="Blackboard section"
+          >
+            {BLACKBOARD_POST_SECTION_OPTIONS.map((option) => (
+              <option key={option.category} value={option.category}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="composer-blackboard-post-section">
+          <span>Self-delete</span>
+          <select
+            value={ttlMinutes}
+            onChange={(event) =>
+              setTtlMinutes(event.target.value ? Number(event.target.value) : '')
+            }
+            aria-label="Blackboard self-delete timer"
+          >
+            {BLACKBOARD_SELF_DELETE_OPTIONS.map((option) => (
+              <option key={option.label} value={option.minutes ?? ''}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
       <button type="submit" disabled={!draftValue || posting}>
         {posting ? 'Posting' : 'Post'}
       </button>
