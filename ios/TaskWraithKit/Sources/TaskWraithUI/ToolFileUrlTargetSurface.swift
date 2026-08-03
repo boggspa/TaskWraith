@@ -235,6 +235,55 @@ struct ToolUrlTargetInspectStrip: View {
     }
 }
 
+struct ToolResultInspectionSurface: View {
+    let detail: String
+    let truncated: Bool
+
+    @State private var expanded = false
+
+    private var canExpand: Bool {
+        truncated || detail.count > 180 || detail.contains("\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(detail)
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textTertiary)
+                .lineLimit(expanded ? nil : 2)
+                .textSelection(.enabled)
+
+            if canExpand {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        expanded.toggle()
+                    }
+                } label: {
+                    Label(
+                        expanded ? "Collapse result" : "Inspect result",
+                        systemImage: expanded ? "chevron.up" : "info.circle"
+                    )
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.chroma1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint(
+                    expanded
+                        ? "Collapses the tool result preview."
+                        : "Shows the bounded tool result preview."
+                )
+            }
+
+            if expanded, truncated {
+                Text("Result preview truncated on the Mac.")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+        }
+    }
+}
+
+
 // MARK: - Composed row chrome
 
 /// Drop-in target chrome for a detected tool presentation model.

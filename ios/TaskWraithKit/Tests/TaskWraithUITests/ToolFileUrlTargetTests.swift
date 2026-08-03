@@ -131,6 +131,32 @@ struct ToolFileUrlTargetDetectionTests {
         #expect(model.hasTargets)
     }
 
+    @Test func makePresentationAcceptsSanitizedProjectedUrls() {
+        let model = ToolFileUrlTargetModel.makePresentation(
+            file: nil,
+            detail: "Also https://detail.example.com/path",
+            projectedUrls: [
+                "https://user:secret@example.com/a#private",
+                "https://example.com/a",
+            ]
+        )
+        #expect(model.urlTargets.map(\.url) == [
+            "https://example.com/a",
+            "https://detail.example.com/path",
+        ])
+    }
+
+    @Test func zeroUrlLimitSuppressesAllTargets() {
+        let model = ToolFileUrlTargetModel.makePresentation(
+            from: ToolTargetDetectionInput(
+                resultText: "https://result.example.com",
+                projectedUrls: ["https://example.com"],
+                urlLimit: 0
+            )
+        )
+        #expect(model.urlTargets.isEmpty)
+    }
+
     @Test func makePresentationBuildsFileTargetFromProjectedFile() throws {
         let model = ToolFileUrlTargetModel.makePresentation(
             file: "/Users/alice/Documents/repo/src/main/index.ts",

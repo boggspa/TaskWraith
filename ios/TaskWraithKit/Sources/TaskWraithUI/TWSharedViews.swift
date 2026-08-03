@@ -4947,6 +4947,8 @@ public struct ToolActivityCards: View {
     let totalCount: Int
     let status: String?
 
+    @Environment(\.openURL) private var openURL
+
     public init(
         entries: [RemoteThreadSnapshot.Row.ToolEntry], totalCount: Int, status: String?
     ) {
@@ -4990,7 +4992,10 @@ public struct ToolActivityCards: View {
                     deletions: (last.entry.deletions ?? 0) + (entry.deletions ?? 0) > 0
                         ? (last.entry.deletions ?? 0) + (entry.deletions ?? 0) : nil,
                     detail: entry.detail ?? last.entry.detail,
-                    toolName: entry.toolName ?? last.entry.toolName
+                    toolName: entry.toolName ?? last.entry.toolName,
+                    urls: mergeUrlTargets(last.entry.urls, entry.urls),
+                    detailTruncated: entry.detailTruncated == true
+                        || last.entry.detailTruncated == true
                 )
                 out[out.count - 1] = CollapsedEntry(
                     entry: merged, count: last.count + 1, ordinal: last.ordinal)
@@ -5034,6 +5039,11 @@ public struct ToolActivityCards: View {
     @ViewBuilder
     private func row(_ entry: RemoteThreadSnapshot.Row.ToolEntry, count: Int = 1) -> some View {
         let isEdit = isEditCard(entry)
+        let targets = ToolFileUrlTargetModel.makePresentation(
+            file: entry.file,
+            detail: entry.detail,
+            projectedUrls: entry.urls ?? []
+        )
         HStack(alignment: .top, spacing: 7) {
             ToolFamilyGlyph(
                 toolName: entry.toolName ?? entry.name,
@@ -5057,12 +5067,17 @@ public struct ToolActivityCards: View {
                             .padding(.vertical, 1)
                             .background(TWTheme.surface3, in: Capsule())
                     }
-                    if let file = entry.file {
-                        Text(fileTail(file))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(isEdit ? TWTheme.chroma1 : TWTheme.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
+                    if targets.hasTargets {
+                        ToolFileUrlTargetSurface(
+                            model: targets,
+                            isEditAccent: isEdit,
+                            onCopyFilePath: { copyTargetText($0.absolutePath) },
+                            onOpenUrl: { target in
+                                guard let url = URL(string: target.url) else { return }
+                                openURL(url)
+                            },
+                            onCopyUrl: { copyTargetText($0.url) }
+                        )
                     }
                     // Live edits tick like an odometer — NumericTickText rolls
                     // the digits as the Mac re-projects growing ± totals.
@@ -5092,10 +5107,10 @@ public struct ToolActivityCards: View {
                         .frame(width: 5, height: 5)
                 }
                 if let detail = entry.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(TWTheme.textTertiary)
-                        .lineLimit(2)
+                    ToolResultInspectionSurface(
+                        detail: detail,
+                        truncated: entry.detailTruncated == true
+                    )
                 }
             }
         }
@@ -5115,9 +5130,20 @@ public struct ToolActivityCards: View {
         }
     }
 
-    private func fileTail(_ path: String) -> String {
-        let parts = path.split(separator: "/")
-        return parts.suffix(2).joined(separator: "/")
+    private func mergeUrlTargets(_ lhs: [String]?, _ rhs: [String]?) -> [String]? {
+        var seen = Set<String>()
+        var result: [String] = []
+        for url in (lhs ?? []) + (rhs ?? []) where seen.insert(url).inserted {
+            result.append(url)
+            if result.count == ToolFileUrlTargetModel.defaultUrlLimit { break }
+        }
+        return result.isEmpty ? nil : result
+    }
+
+    private func copyTargetText(_ value: String) {
+        #if canImport(UIKit)
+        UIPasteboard.general.string = value
+        #endif
     }
 }
 

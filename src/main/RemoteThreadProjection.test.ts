@@ -1934,6 +1934,38 @@ describe('RemoteThreadProjection', () => {
         deletions: 1
       })
     })
+
+
+    it('projects bounded file, URL, and inspectable detail fields', () => {
+      const toolMsg = msg(0, {
+        role: 'tool',
+        toolActivities: [
+          activity({
+            id: 'fetch',
+            parameters: {
+              path: 'src/main/fetch.ts',
+              endpoint: 'https://user:secret@example.com/v1#private'
+            },
+            resultSummary: `Fetched https://example.com/result · ${'detail '.repeat(220)}`,
+            outputPreview: 'Mirror https://mirror.example.com/result'
+          })
+        ]
+      })
+
+      const snap = project({ kind: 'latestN', n: 1 }, [toolMsg])
+      const entry = snap.rows[0].toolSummary?.tools?.[0]
+
+      expect(entry?.file).toBe('src/main/fetch.ts')
+      expect(entry?.urls).toEqual([
+        'https://example.com/v1',
+        'https://example.com/result',
+        'https://mirror.example.com/result'
+      ])
+      expect(entry?.detail?.length).toBeLessThanOrEqual(1_200)
+      expect(entry?.detailTruncated).toBe(true)
+      expect(JSON.stringify(entry)).not.toContain('secret')
+      expect(JSON.stringify(entry)).not.toContain('private')
+    })
   })
 
   describe('thinking trace projection', () => {

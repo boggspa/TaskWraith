@@ -1501,23 +1501,29 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let category: String?
             public let status: String?
             public let file: String?
+            public let urls: [String]?
             public let additions: Int?
             public let deletions: Int?
             public let detail: String?
+            public let detailTruncated: Bool?
             public var id: String { name + (file ?? "") + (detail ?? "") }
             public init(
                 name: String, category: String?, status: String?, file: String?,
                 additions: Int?, deletions: Int?, detail: String?,
-                toolName: String? = nil
+                toolName: String? = nil,
+                urls: [String]? = nil,
+                detailTruncated: Bool? = nil
             ) {
                 self.name = name
                 self.toolName = toolName
                 self.category = category
                 self.status = status
                 self.file = file
+                self.urls = urls
                 self.additions = additions
                 self.deletions = deletions
                 self.detail = detail
+                self.detailTruncated = detailTruncated
             }
         }
         public let toolSummary: ToolSummary?

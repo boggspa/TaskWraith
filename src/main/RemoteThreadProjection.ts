@@ -74,6 +74,11 @@ import {
   usageCacheReadInputTokens,
   usageInputIncludesCache
 } from '../shared/usageAccounting'
+import {
+  extractRemoteToolFilePath,
+  extractRemoteToolUrls,
+  projectRemoteToolDetail
+} from './RemoteToolTargetProjection'
 
 export type RemoteDisplayCurrency = 'USD' | 'GBP' | 'EUR'
 
@@ -456,9 +461,11 @@ export interface RemoteToolEntry {
   category: 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
   status: 'running' | 'success' | 'error'
   file?: string
+  urls?: string[]
   additions?: number
   deletions?: number
   detail?: string
+  detailTruncated?: boolean
 }
 
 export interface RemoteThinkingTrace {
@@ -1362,10 +1369,6 @@ function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] 
 }
 
 function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
-  const singleDiffFile =
-    Array.isArray(activity.diffSummary?.files) && activity.diffSummary.files.length === 1
-      ? activity.diffSummary.files[0]
-      : null
   const entry: RemoteToolEntry = {
     toolName: activity.toolName,
     name: activity.displayName || activity.toolName,
@@ -1377,11 +1380,14 @@ function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
           ? 'error'
           : 'success'
   }
-  if (typeof activity.filePath === 'string' && activity.filePath) {
-    entry.file = activity.filePath
-  } else if (typeof singleDiffFile?.path === 'string' && singleDiffFile.path) {
-    entry.file = singleDiffFile.path
-  }
+  const file = extractRemoteToolFilePath(activity)
+  if (file) entry.file = file
+  const urls = extractRemoteToolUrls(activity)
+  if (urls.length > 0) entry.urls = urls
+  const singleDiffFile =
+    Array.isArray(activity.diffSummary?.files) && activity.diffSummary.files.length === 1
+      ? activity.diffSummary.files[0]
+      : null
   if (typeof activity.diffSummary?.additions === 'number') {
     entry.additions = activity.diffSummary.additions
   } else if (typeof singleDiffFile?.additions === 'number') {
@@ -1398,9 +1404,10 @@ function toolEntryFromActivity(activity: ToolActivity): RemoteToolEntry {
   // else keeps the one-line summary.
   const hasDiffChips =
     entry.category === 'write' && ((entry.additions ?? 0) > 0 || (entry.deletions ?? 0) > 0)
-  const detail = activity.resultSummary?.trim()
-  if (detail && !hasDiffChips) {
-    entry.detail = detail.length > 90 ? `${detail.slice(0, 87).trimEnd()}...` : detail
+  const detail = projectRemoteToolDetail(activity)
+  if (detail.detail && !hasDiffChips) {
+    entry.detail = detail.detail
+    if (detail.truncated) entry.detailTruncated = true
   }
   return entry
 }

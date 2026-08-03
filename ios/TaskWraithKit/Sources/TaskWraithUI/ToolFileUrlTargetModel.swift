@@ -80,6 +80,8 @@ public struct ToolTargetDetectionInput: Equatable, Sendable {
     public var parameterStrings: [String: String]
     /// Optional result / output preview text for URL mining.
     public var resultText: String?
+    /// Already-sanitized URL targets projected by the Mac host.
+    public var projectedUrls: [String]
     /// Workspace root used to resolve relative file paths.
     public var workspacePath: String?
     /// Cap on extracted URL targets (desktop tool default is 5).
@@ -90,6 +92,7 @@ public struct ToolTargetDetectionInput: Equatable, Sendable {
         detail: String? = nil,
         parameterStrings: [String: String] = [:],
         resultText: String? = nil,
+        projectedUrls: [String] = [],
         workspacePath: String? = nil,
         urlLimit: Int = 5
     ) {
@@ -97,6 +100,7 @@ public struct ToolTargetDetectionInput: Equatable, Sendable {
         self.detail = detail
         self.parameterStrings = parameterStrings
         self.resultText = resultText
+        self.projectedUrls = projectedUrls
         self.workspacePath = workspacePath
         self.urlLimit = max(0, urlLimit)
     }
@@ -162,8 +166,11 @@ public enum ToolFileUrlTargetModel {
             makeFileTarget(rawPath: $0, workspacePath: input.workspacePath)
         }
 
-        let urlLimit = input.urlLimit > 0 ? input.urlLimit : defaultUrlLimit
+        let urlLimit = input.urlLimit
         var urlGroups: [[ToolUrlPresentationTarget]] = []
+        urlGroups.append(
+            input.projectedUrls.compactMap(normalizeHttpUrlTarget)
+        )
         urlGroups.append(extractUrlsFromParameterStrings(input.parameterStrings, limit: urlLimit))
         if let detail = input.detail {
             urlGroups.append(extractHttpUrls(detail, limit: urlLimit))
@@ -180,6 +187,7 @@ public enum ToolFileUrlTargetModel {
     public static func makePresentation(
         file: String?,
         detail: String? = nil,
+        projectedUrls: [String] = [],
         workspacePath: String? = nil,
         urlLimit: Int = defaultUrlLimit
     ) -> ToolTargetPresentationModel {
@@ -187,6 +195,7 @@ public enum ToolFileUrlTargetModel {
             from: ToolTargetDetectionInput(
                 file: file,
                 detail: detail,
+                projectedUrls: projectedUrls,
                 workspacePath: workspacePath,
                 urlLimit: urlLimit
             )
