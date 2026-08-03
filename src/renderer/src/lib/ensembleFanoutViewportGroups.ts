@@ -15,6 +15,8 @@ export type EnsembleFanoutViewportStage =
   | 'all'
   | 'specified'
 
+export type EnsembleFanoutViewportCategory = 'user' | 'orchestrated'
+
 export interface EnsembleFanoutViewportAttribution {
   participantId: string | null
   provider: string
@@ -24,9 +26,11 @@ export interface EnsembleFanoutViewportAttribution {
 
 export interface EnsembleFanoutViewportHeaderData {
   viewportId: string
+  waveId: string
   chatId: string
   roundId: string
   stage: EnsembleFanoutViewportStage
+  category: EnsembleFanoutViewportCategory
   /** Original durable status label that opened this dispatch wave, when known. */
   dispatchLabel: string | null
   expanded: boolean
@@ -44,6 +48,8 @@ interface MutableViewportGroup {
   anchorId: string
   anchorIndex: number
   dispatchLabel: string | null
+  category: EnsembleFanoutViewportCategory
+  waveId: string
   expectedLaneCount: number | null
   stage: EnsembleFanoutViewportStage
   /** One stable representative row per lane, used for count and attribution. */
@@ -54,11 +60,13 @@ interface MutableViewportGroup {
 
 export interface EnsembleFanoutViewportGroup {
   viewportId: string
+  waveId: string
   chatId: string
   roundId: string
   anchorIndex: number
   expectedLaneCount: number | null
   stage: EnsembleFanoutViewportStage
+  category: EnsembleFanoutViewportCategory
   dispatchLabel: string | null
   lanes: IndexedLaneMessage[]
   laneRows: IndexedLaneMessage[]
@@ -156,6 +164,7 @@ export function collectEnsembleFanoutViewportGroups(
 ): EnsembleFanoutViewportGroup[] {
   const groups: MutableViewportGroup[] = []
   const groupByLaneKey = new Map<string, MutableViewportGroup>()
+  const groupByWaveId = new Map<string, MutableViewportGroup>()
   const openGroups: MutableViewportGroup[] = []
   let legacyGroup: MutableViewportGroup | null = null
 
@@ -167,10 +176,17 @@ export function collectEnsembleFanoutViewportGroups(
         : null
     if (statusMatch) {
       const dispatchLabel = statusMatch[1].trim()
+      const durableWaveId = metadataString(message, 'ensembleFanoutWaveId') || message.id
+      const durableCategory = metadataString(message, 'ensembleFanoutCategory')
       const group: MutableViewportGroup = {
         anchorId: message.id,
         anchorIndex: index,
         dispatchLabel,
+        category:
+          durableCategory === 'user' || dispatchLabel.toLowerCase() === 'user fan-out'
+            ? 'user'
+            : 'orchestrated',
+        waveId: durableWaveId,
         expectedLaneCount: Number(statusMatch[2]),
         stage: stageFromDispatchLabel(dispatchLabel),
         lanes: [],
@@ -178,6 +194,7 @@ export function collectEnsembleFanoutViewportGroups(
       }
       groups.push(group)
       openGroups.push(group)
+      groupByWaveId.set(durableWaveId, group)
       continue
     }
 
@@ -190,6 +207,8 @@ export function collectEnsembleFanoutViewportGroups(
       continue
     }
     const laneStage = stageFromLaneMessages([indexed])
+    const explicitWaveId = metadataString(message, 'ensembleFanoutWaveId')
+    const explicitWaveGroup = explicitWaveId ? groupByWaveId.get(explicitWaveId) : undefined
     const matchingOpenGroups =
       laneStage === 'specified'
         ? openGroups
@@ -201,13 +220,16 @@ export function collectEnsembleFanoutViewportGroups(
     // after a later dispatch receipt. Keep every incomplete wave available and
     // prefer the oldest compatible stage match. All/Specified passes are stage
     // wildcards, so a late lane cannot be stolen by a newer narrow receipt.
-    let targetGroup = matchingOpenGroups[0] || openGroups[openGroups.length - 1] || null
+    let targetGroup =
+      explicitWaveGroup || matchingOpenGroups[0] || openGroups[openGroups.length - 1] || null
     if (!targetGroup) {
       if (!legacyGroup) {
         legacyGroup = {
           anchorId: message.id,
           anchorIndex: index,
           dispatchLabel: null,
+          category: 'orchestrated',
+          waveId: explicitWaveId || message.id,
           expectedLaneCount: null,
           stage: 'specified',
           lanes: [],
@@ -245,13 +267,15 @@ export function collectEnsembleFanoutViewportGroups(
       viewportId: viewportId(
         chatId,
         roundId,
-        `${group.anchorId}-${group.lanes[0]?.message.id || 'empty'}`
+        `${group.waveId}-${group.lanes[0]?.message.id || 'empty'}`
       ),
+      waveId: group.waveId,
       chatId,
       roundId,
       anchorIndex: group.anchorIndex,
       expectedLaneCount: group.expectedLaneCount,
       stage: group.stage,
+      category: group.category,
       dispatchLabel: group.dispatchLabel,
       lanes: group.lanes,
       laneRows: group.laneRows
@@ -276,9 +300,11 @@ function buildHeaderMessage(group: EnsembleFanoutViewportGroup, expanded: boolea
   const attributions = collectAttributions(group.lanes)
   const data: EnsembleFanoutViewportHeaderData = {
     viewportId: group.viewportId,
+    waveId: group.waveId,
     chatId: group.chatId,
     roundId: group.roundId,
     stage: group.stage,
+    category: group.category,
     dispatchLabel: group.dispatchLabel,
     expanded,
     laneCount: group.lanes.length,
@@ -293,6 +319,7 @@ function buildHeaderMessage(group: EnsembleFanoutViewportGroup, expanded: boolea
     // to invalidate this synthetic message deterministically.
     content: [
       'Fan-Out',
+      group.waveId,
       group.stage,
       expanded ? 'expanded' : 'collapsed',
       String(group.lanes.length),

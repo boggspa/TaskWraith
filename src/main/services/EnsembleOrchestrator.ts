@@ -144,6 +144,7 @@ import {
   planEnsembleMidRunSteeringBoundary,
   type EnsembleMidRunSteeringBoundaryState
 } from './EnsembleMidRunSteering'
+import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 // M4 (1.0.7) — auto-derive blackboard entries from the synthesizer's
 // round summary at round end, so the panel's agreed decisions / risks /
@@ -703,6 +704,10 @@ interface ActiveParticipantRun {
   transportCancellationConfirmed?: boolean
   laneId?: string
   laneIntent?: ConcurrentLane['intent']
+  /** Durable dispatch-wave identity for transcript grouping after reload. */
+  fanoutWaveId?: string
+  fanoutLabel?: string
+  fanoutCategory?: 'user' | 'orchestrated'
   approvedWriteScopes?: ConcurrentLaneWriteScope[]
   /**
    * Detached reader/writer fan-out passes launched by this foreground run.
@@ -1326,11 +1331,20 @@ function timelineMessageId(runId: string, index: number, kind: 'content' | 'tool
 
 function laneTranscriptMetadata(
   run: ActiveParticipantRun
-): { ensembleLaneId?: string; ensembleLaneIntent?: ConcurrentLane['intent'] } {
+): {
+  ensembleLaneId?: string
+  ensembleLaneIntent?: ConcurrentLane['intent']
+  ensembleFanoutWaveId?: string
+  ensembleFanoutLabel?: string
+  ensembleFanoutCategory?: 'user' | 'orchestrated'
+} {
   return run.laneId
     ? {
         ensembleLaneId: run.laneId,
-        ensembleLaneIntent: run.laneIntent || 'read'
+        ensembleLaneIntent: run.laneIntent || 'read',
+        ...(run.fanoutWaveId ? { ensembleFanoutWaveId: run.fanoutWaveId } : {}),
+        ...(run.fanoutLabel ? { ensembleFanoutLabel: run.fanoutLabel } : {}),
+        ...(run.fanoutCategory ? { ensembleFanoutCategory: run.fanoutCategory } : {})
       }
     : {}
 }
@@ -3151,6 +3165,20 @@ interface ActiveRoundRuntime {
    */
   fanoutReservedParticipantIds?: Set<string>
   /**
+   * Dispatch-start receipts for additive user-tagged fan-out. A serial turn
+   * reaching one of these seats waits only for its routing receipt, then skips
+   * an accepted lane or proceeds normally after a rejection. This prevents a
+   * transient reservation from silently consuming that seat's serial turn.
+   */
+  userFanoutDispatchSettlements?: Map<string, Promise<boolean>>
+  /**
+   * Explicit user-tagged seats that must run at the next serial boundary when
+   * the concurrent-write kill switch forbids their configured write posture
+   * from entering a parallel lane. Includes Background seats, which ordinary
+   * roster construction excludes from serial rotation.
+   */
+  userFanoutSerialParticipantIds?: Set<string>
+  /**
    * 1.0.4-AK6 — structured briefs recorded by participants during
    * the parallel fan-out pass via the `scout_brief` MCP tool. After
    * the fan-out pass closes, the serial writer's prompt builder
@@ -3648,6 +3676,8 @@ export class EnsembleOrchestrator {
     runtime.queuedPrompts = []
     runtime.remainingParticipants = []
     runtime.fanoutReservedParticipantIds = undefined
+    runtime.userFanoutDispatchSettlements = undefined
+    runtime.userFanoutSerialParticipantIds = undefined
     runtime.yieldRouting = undefined
     runtime.yieldReturnStack = []
     this.cancelHistoryTimerHandles(runtime.chatId, runtime, chat)
@@ -4340,12 +4370,48 @@ export class EnsembleOrchestrator {
     const remainingQueue = runtime.queuedPrompts.filter(
       (_, queuedIndex) => queuedIndex !== selectedIndex
     )
-    const boundaryAbsorbEligible =
-      !selected.dmTargetParticipantId &&
+    const textOnlySteer =
       selected.imageAttachments.length === 0 &&
       (selected.imageThumbnails?.length || 0) === 0 &&
       (selected.externalPathGrants?.length || 0) === 0 &&
       (selected.discordContextSnapshots?.length || 0) === 0
+    const activeChat = this.deps.getChat(input.chatId)
+    const userFanout =
+      textOnlySteer && activeChat?.ensemble
+        ? resolveEnsembleUserFanoutTargets({
+            text: selected.prompt,
+            participants: activeChat.ensemble.participants,
+            exactTargetParticipantId: selected.dmTargetParticipantId
+          })
+        : null
+    if (userFanout?.hasParticipantMention) {
+      const absorbed = this.absorbMidRunSteering({
+        chatId: input.chatId,
+        roundId: runtime.roundId,
+        text: selected.prompt
+      })
+      if (absorbed.status === 'steered') {
+        runtime.queuedPrompts = remainingQueue
+        this.updateChatRound(input.chatId, (round) =>
+          round?.roundId === runtime.roundId
+            ? { ...round, ...this.queuedPromptFields(remainingQueue) }
+            : round
+        )
+        for (const ambiguity of userFanout.ambiguities) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `User Fan-Out: \`@${ambiguity.text}\` is ambiguous (${ambiguity.participants
+              .map((participant) => participantDisplayName(participant))
+              .join(', ')}); no lane was started for that tag. Use a unique @role, @model, or @id.`
+          )
+        }
+        this.launchUserFanout(runtime, userFanout.targets, selected.prompt)
+        return absorbed
+      }
+    }
+
+    const boundaryAbsorbEligible = !selected.dmTargetParticipantId && textOnlySteer
     if (boundaryAbsorbEligible) {
       const absorbed = this.absorbMidRunSteering({
         chatId: input.chatId,
@@ -4564,6 +4630,7 @@ export class EnsembleOrchestrator {
     // lanes must not race this cancel path to a second finishRound.
     this.deferredLaneDrainByChatId.delete(chatId)
     runtime.queuedPrompts = []
+    runtime.userFanoutSerialParticipantIds = undefined
     this.clearYieldReturnStack(runtime)
     const pendingParticipantSeatChanges = runtime.pendingParticipantSeatChanges
     runtime.pendingParticipantSeatChanges = undefined
@@ -13146,6 +13213,8 @@ export class EnsembleOrchestrator {
     }`
     this.deferredLaneDrainByChatId.delete(runtime.chatId)
     runtime.fanoutReservedParticipantIds = undefined
+    runtime.userFanoutDispatchSettlements = undefined
+    runtime.userFanoutSerialParticipantIds = undefined
     try {
       this.cancelWakeupsForRuntime(runtime, reason)
     } catch {
@@ -13505,6 +13574,9 @@ export class EnsembleOrchestrator {
       if (runtime.cancelled) break
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble) break
+      for (const participantId of runtime.userFanoutSerialParticipantIds || []) {
+        stageGateExemptIds.add(participantId)
+      }
       // Terminal-goal pre-emption: once the goal leaves 'active' mid-round,
       // undispatched ordinary serial seats are confirmation ceremony — sweep
       // them out (marked 'skipped') instead of dispatching each in turn.
@@ -13570,6 +13642,26 @@ export class EnsembleOrchestrator {
         }
       }
       let participant = remaining.shift()!
+      runtime.userFanoutSerialParticipantIds?.delete(participant.id)
+      if (runtime.userFanoutSerialParticipantIds?.size === 0) {
+        runtime.userFanoutSerialParticipantIds = undefined
+      }
+      const pendingUserFanoutDispatch = runtime.userFanoutDispatchSettlements?.get(
+        participant.id
+      )
+      if (pendingUserFanoutDispatch) {
+        // The user wave was launched from a synchronous Steer handler while
+        // this serial loop was already live. Wait only for the provider-entry
+        // receipt: an accepted lane is skipped below, while a rejected lane
+        // falls through and keeps the seat's original serial turn.
+        await pendingUserFanoutDispatch.catch(() => false)
+        if (
+          runtime.cancelled ||
+          this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
+        ) {
+          break
+        }
+      }
       const fanoutDispatchState = this.participantFanoutDispatchState(runtime, participant.id)
       if (fanoutDispatchState) {
         if (fanoutDispatchState === 'active') {
@@ -13629,6 +13721,37 @@ export class EnsembleOrchestrator {
       // reads stuck 'running'. Bail cleanly; `finishRound` below no-ops against
       // the replacement round, leaving the live round untouched.
       if (runtime.cancelled) break
+
+      // A user steer can reserve this exact seat while the serial path is
+      // suspended in compaction. Reconcile the dispatch-start receipt again at
+      // this boundary: accepted/active lanes own the turn, while a rejected
+      // lane leaves the original serial dispatch intact.
+      const postCompactionUserFanoutDispatch = runtime.userFanoutDispatchSettlements?.get(
+        participant.id
+      )
+      if (postCompactionUserFanoutDispatch) {
+        await postCompactionUserFanoutDispatch.catch(() => false)
+      }
+      if (
+        runtime.cancelled ||
+        this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId
+      ) {
+        break
+      }
+      const postCompactionFanoutState = this.participantFanoutDispatchState(
+        runtime,
+        participant.id
+      )
+      if (postCompactionFanoutState) {
+        if (postCompactionFanoutState === 'active') {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            `${participantDisplayName(participant)} entered a fan-out lane while its serial turn was preparing; skipping duplicate serial dispatch.`
+          )
+        }
+        continue
+      }
 
       // A host compaction can replace session/summary/receipt fields while
       // this loop is awaiting it. Refresh those context-bearing fields, but
@@ -14658,6 +14781,14 @@ export class EnsembleOrchestrator {
     }
     if (roundHasActiveLanes(round) || runtime.fanoutReservedParticipantIds?.size) return
     this.deferredLaneDrainByChatId.delete(chatId)
+    const pendingSerialParticipants = runtime.remainingParticipants || []
+    if (pendingSerialParticipants.length > 0 && !runtime.cancelled) {
+      void this.trackRoundActivity(
+        runtime,
+        this.runRound(runtime, [...pendingSerialParticipants], { skipPreamble: true })
+      )
+      return
+    }
     const steeringBoundaryParticipant = this.takeMidRunSteeringBoundaryParticipant(runtime)
     if (steeringBoundaryParticipant && !runtime.cancelled) {
       void this.trackRoundActivity(
@@ -14927,6 +15058,162 @@ export class EnsembleOrchestrator {
   }
 
   /**
+   * Open one additive user-owned wave without replacing the active round.
+   * Running/reserved seats keep the ordinary transcript steer and are not
+   * duplicated; every other explicitly tagged current seat is reserved before
+   * the async dispatch starts so the serial loop cannot race it.
+   */
+  private launchUserFanout(
+    runtime: ActiveRoundRuntime,
+    requested: EnsembleParticipant[],
+    prompt: string
+  ): void {
+    if (runtime.cancelled) return
+    const chat = this.deps.getChat(runtime.chatId)
+    if (!chat?.ensemble) return
+    const idleParticipants = dedupeParticipants(requested).filter(
+      (participant) =>
+        participant.enabled !== false &&
+        !this.isParticipantActivelyExecuting(runtime, participant.id)
+    )
+    // Materialize every explicit idle target in the round projection before
+    // splitting concurrent and serial execution. Background seats are absent
+    // from ordinary serial roster construction, but a direct user tag remains
+    // authoritative routing even when the write-lane kill switch is off.
+    this.updateChatRound(runtime.chatId, (round) => {
+      if (!round || round.roundId !== runtime.roundId) return round
+      const present = new Set(round.participants.map((entry) => entry.participantId))
+      const added = idleParticipants
+        .filter((participant) => !present.has(participant.id))
+        .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
+      return added.length > 0
+        ? { ...round, participants: [...round.participants, ...added] }
+        : round
+    })
+    const writeLanesEnabled = concurrentWriteLanesEnabled()
+    const participants = idleParticipants.filter(
+      (participant) =>
+        writeLanesEnabled ||
+        this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
+    )
+    const participantIds = new Set(participants.map((participant) => participant.id))
+    const deferredWriters = idleParticipants.filter(
+      (participant) => !participantIds.has(participant.id)
+    )
+    if (deferredWriters.length > 0) {
+      const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
+      const deferredIds = new Set(deferredWriters.map((participant) => participant.id))
+      const rest = remaining.filter((participant) => !deferredIds.has(participant.id))
+      remaining.splice(0, remaining.length, ...deferredWriters, ...rest)
+      runtime.userFanoutSerialParticipantIds ??= new Set()
+      for (const participant of deferredWriters) {
+        runtime.userFanoutSerialParticipantIds.add(participant.id)
+      }
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `User Fan-Out queued ${deferredWriters.length} write-capable tagged seat(s) for the next serial boundary because TASKWRAITH_CONCURRENT_WRITE_LANES=0; their configured posture was not weakened.`
+      )
+    }
+    if (participants.length === 0) return
+
+    runtime.fanoutReservedParticipantIds ??= new Set()
+    for (const participant of participants) {
+      runtime.fanoutReservedParticipantIds.add(participant.id)
+    }
+
+    const acceptedParticipantIds = this.dispatchUserFanout(runtime, participants, prompt)
+    runtime.userFanoutDispatchSettlements ??= new Map()
+    const settlements = new Map<string, Promise<boolean>>()
+    for (const participant of participants) {
+      const settlement = acceptedParticipantIds.then((acceptedIds) =>
+        acceptedIds.has(participant.id)
+      )
+      settlements.set(participant.id, settlement)
+      runtime.userFanoutDispatchSettlements.set(participant.id, settlement)
+    }
+    const activity = acceptedParticipantIds
+      .then(() => undefined)
+      .finally(() => {
+        for (const [participantId, settlement] of settlements) {
+          if (runtime.userFanoutDispatchSettlements?.get(participantId) === settlement) {
+            runtime.userFanoutDispatchSettlements.delete(participantId)
+          }
+        }
+        if (runtime.userFanoutDispatchSettlements?.size === 0) {
+          runtime.userFanoutDispatchSettlements = undefined
+        }
+      })
+    void this.trackRoundActivity(runtime, activity)
+  }
+
+  private async dispatchUserFanout(
+    runtime: ActiveRoundRuntime,
+    participants: EnsembleParticipant[],
+    prompt: string
+  ): Promise<Set<string>> {
+    const acceptedParticipantIds = new Set<string>()
+    try {
+      if (!concurrentLanesEnabled()) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          'User Fan-Out not launched because parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0); tagged seats remain in normal rotation.'
+        )
+        return acceptedParticipantIds
+      }
+      const chat = this.deps.getChat(runtime.chatId)
+      if (!chat?.ensemble || runtime.cancelled) return acceptedParticipantIds
+      const acceptedRuns: ActiveParticipantRun[] = []
+      await this.runParallelFanoutPass(runtime, chat, participants, {
+        prompt,
+        label: 'User Fan-Out',
+        promptAuthority: 'user',
+        dispatchOwnPermissions: true,
+        acceptedRuns,
+        waitForCompletion: false,
+        completionDisposition: 'background'
+      })
+      for (const acceptedRun of acceptedRuns) {
+        acceptedParticipantIds.add(acceptedRun.participant.id)
+      }
+      if (acceptedParticipantIds.size > 0) {
+        runtime.fannedOutParticipantIds ??= new Set()
+        for (const participantId of acceptedParticipantIds) {
+          runtime.fannedOutParticipantIds.add(participantId)
+        }
+      }
+      const rejectedCount = participants.length - acceptedParticipantIds.size
+      if (rejectedCount > 0 && !runtime.cancelled) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `User Fan-Out dispatch receipt: ${acceptedParticipantIds.size} lane(s) accepted; ${rejectedCount} tagged seat(s) did not reach provider invocation and remain eligible for normal rotation.`
+        )
+      }
+      return acceptedParticipantIds
+    } catch (error) {
+      if (!runtime.cancelled) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `User Fan-Out dispatch failed without interrupting the round: ${message}`
+        )
+      }
+      return acceptedParticipantIds
+    } finally {
+      for (const participant of participants) {
+        runtime.fanoutReservedParticipantIds?.delete(participant.id)
+      }
+      if (runtime.fanoutReservedParticipantIds?.size === 0) {
+        runtime.fanoutReservedParticipantIds = undefined
+      }
+      this.maybeResumeDeferredDrain(runtime.chatId)
+    }
+  }
+
+  /**
    * Explicit BG routing reuses the normal fan-out lane executor, but automatic
    * @mention/yield launches are always read-only. This keeps shell/test/recon
    * useful while reserving asynchronous mutations for the existing
@@ -15142,6 +15429,10 @@ export class EnsembleOrchestrator {
       mode?: EnsembleFanoutMode
       sourceRunId?: string
       label?: string
+      /** Authority of an explicit per-lane prompt. User-authored prompts keep
+       * user authority; all existing agent/orchestrator fan-out briefs retain
+       * their lower-authority wrapper. */
+      promptAuthority?: 'user' | 'orchestrator' | 'peer'
       forceReadOnlyDispatch?: boolean
       /** ensemble_fanout_all: each lane runs under the participant's OWN
        * normal-turn posture (unattended clamps included via
@@ -15227,24 +15518,6 @@ export class EnsembleOrchestrator {
     const isolationNote = isolateWriteLanes
       ? ' Write lanes run in isolated worktrees (forked from the last commit); results land as candidates to compare and promote.'
       : ''
-    this.appendRoundStatus(
-      runtime.chatId,
-      runtime.roundId,
-      writeCount > 0
-        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${isolationNote}${ollamaRamNote}`
-        : `${label} · ${participants.length} read-only participants dispatched concurrently.${ollamaRamNote}`
-    )
-
-    // Seed each lane's run synchronously. UUIDs don't collide.
-    // The seedParticipantRun helper takes care of building the
-    // ChatRun + ActiveParticipantRun + registry entry + chat save.
-    //
-    // Re-fetch chat per seed so each save sees the LATEST chat —
-    // important because `appendRoundStatus` above mutated
-    // `chat.messages` via `deps.saveChat`, and `seedParticipantRun`
-    // spreads its `chat` parameter to compose the next save. Using
-    // the stale `chat` would clobber the status note we just
-    // appended.
     // Wave 3 — same seat-compaction barrier as the serial path, for every
     // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
     await Promise.all(
@@ -15260,6 +15533,26 @@ export class EnsembleOrchestrator {
     // the cancel. The post-`Promise.all(completionPromises)` check further down
     // fires only AFTER the lanes have already run — too late.
     if (dispatchWasCancelled()) return []
+    const fanoutCategory = options.promptAuthority === 'user' ? 'user' : 'orchestrated'
+    const fanoutWaveId = this.appendRoundStatus(
+      runtime.chatId,
+      runtime.roundId,
+      writeCount > 0
+        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${isolationNote}${ollamaRamNote}`
+        : `${label} · ${participants.length} read-only participants dispatched concurrently.${ollamaRamNote}`,
+      { fanoutCategory, fanoutLabel: label }
+    )
+
+    // Seed each lane's run synchronously. UUIDs don't collide.
+    // The seedParticipantRun helper takes care of building the
+    // ChatRun + ActiveParticipantRun + registry entry + chat save.
+    //
+    // Re-fetch chat per seed so each save sees the LATEST chat —
+    // important because `appendRoundStatus` above mutated
+    // `chat.messages` via `deps.saveChat`, and `seedParticipantRun`
+    // spreads its `chat` parameter to compose the next save. Using
+    // the stale `chat` would clobber the status note we just
+    // appended.
     const laneRuns: ActiveParticipantRun[] = participants.map((participant) => {
       const freshChat = this.deps.getChat(runtime.chatId) || chat
       const freshParticipant =
@@ -15277,6 +15570,9 @@ export class EnsembleOrchestrator {
       return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
         laneId: this.nextLaneId(runtime, freshParticipant),
         laneIntent: permissions.readOnly ? 'read' : 'write',
+        ...(fanoutWaveId ? { fanoutWaveId } : {}),
+        fanoutLabel: label,
+        fanoutCategory,
         approvedWriteScopes: permissions.readOnly
           ? undefined
           : options.writeScopesByParticipantId?.get(freshParticipant.id)
@@ -15336,12 +15632,39 @@ export class EnsembleOrchestrator {
             dispatchMode,
             participantExternalPathGrants
           )
-      const lanePromptAuthor = options.sourceRunId ? 'peer-authored' : 'orchestrator-authored'
-      const promptForLane = options.prompt?.trim()
-        ? `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${options.prompt.trim()}${
-            options.reason ? `\n\nReason: ${options.reason}` : ''
-          }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
+      const promptAuthority =
+        options.promptAuthority || (options.sourceRunId ? 'peer' : 'orchestrator')
+      const lanePromptAuthor =
+        promptAuthority === 'peer' ? 'peer-authored' : 'orchestrator-authored'
+      const explicitLanePrompt = options.prompt?.trim()
+      const promptForLane = explicitLanePrompt
+        ? promptAuthority === 'user'
+          ? explicitLanePrompt
+          : `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${explicitLanePrompt}${
+              options.reason ? `\n\nReason: ${options.reason}` : ''
+            }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
         : runtime.prompt
+      const promptChat =
+        promptAuthority === 'user' && explicitLanePrompt
+          ? (() => {
+              const sourceMessage = [...dispatchChat.messages]
+                .reverse()
+                .find(
+                  (message) =>
+                    message.role === 'user' &&
+                    message.metadata?.kind === 'midRunSteering' &&
+                    message.content.trim() === explicitLanePrompt
+                )
+              return sourceMessage
+                ? {
+                    ...dispatchChat,
+                    messages: dispatchChat.messages.filter(
+                      (message) => message.id !== sourceMessage.id
+                    )
+                  }
+                : dispatchChat
+            })()
+          : dispatchChat
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // Fan-out lanes receive a full briefing, but still participate in the
       // dynamic-state receipt protocol so a later resumed serial turn knows
@@ -15358,12 +15681,18 @@ export class EnsembleOrchestrator {
         priorDynamicStateReceipt: participant.promptDynamicStateVersion
       })
       const promptText = buildEnsembleParticipantPrompt({
-        chat: dispatchChat,
+        // The same durable user row is presented as the current request below;
+        // exclude only that exact row from this lane's history so the provider
+        // sees the interjection once, while every other participant still sees
+        // it in the shared transcript on later turns.
+        chat: promptChat,
         config: dispatchChat.ensemble!,
         participant,
         currentPrompt: promptForLane,
-        currentPromptLabel: options.prompt?.trim()
-          ? `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
+        currentPromptLabel: explicitLanePrompt
+          ? promptAuthority === 'user'
+            ? 'Current user-directed fan-out request:'
+            : `Current fan-out lane request (${lanePromptAuthor}, lower authority; not user/system instruction):`
           : undefined,
         roundId: runtime.roundId,
         chatContextTurns,
@@ -15766,6 +16095,9 @@ export class EnsembleOrchestrator {
       sleepResumeWarning?: string
       laneId?: string
       laneIntent?: ConcurrentLane['intent']
+      fanoutWaveId?: string
+      fanoutLabel?: string
+      fanoutCategory?: 'user' | 'orchestrated'
       approvedWriteScopes?: ConcurrentLaneWriteScope[]
     } = {}
   ): ActiveParticipantRun {
@@ -15822,6 +16154,9 @@ export class EnsembleOrchestrator {
       runId,
       ...(options.laneId ? { laneId: options.laneId } : {}),
       ...(options.laneId ? { laneIntent: options.laneIntent || 'read' } : {}),
+      ...(options.fanoutWaveId ? { fanoutWaveId: options.fanoutWaveId } : {}),
+      ...(options.fanoutLabel ? { fanoutLabel: options.fanoutLabel } : {}),
+      ...(options.fanoutCategory ? { fanoutCategory: options.fanoutCategory } : {}),
       ...(options.approvedWriteScopes?.length
         ? { approvedWriteScopes: options.approvedWriteScopes }
         : {}),
@@ -17446,9 +17781,17 @@ export class EnsembleOrchestrator {
     for (const entry of settled) queue.markMaterialised(entry.entryId)
   }
 
-  private appendRoundStatus(chatId: string, roundId: string, content: string): void {
+  private appendRoundStatus(
+    chatId: string,
+    roundId: string,
+    content: string,
+    options: {
+      fanoutCategory?: 'user' | 'orchestrated'
+      fanoutLabel?: string
+    } = {}
+  ): string | null {
     const chat = this.deps.getChat(chatId)
-    if (!chat?.ensemble) return
+    if (!chat?.ensemble) return null
     const timestamp = this.deps.nowIso()
     // 1.0.7 — UNIQUE id per status message. Pre-1.0.7 every status line in a
     // round shared `ensemble-round-status-${roundId}`, so a round that emitted
@@ -17472,12 +17815,20 @@ export class EnsembleOrchestrator {
           timestamp,
           metadata: {
             kind: 'ensembleRoundStatus',
-            ensembleRoundId: roundId
+            ensembleRoundId: roundId,
+            ...(options.fanoutCategory
+              ? {
+                  ensembleFanoutWaveId: id,
+                  ensembleFanoutCategory: options.fanoutCategory,
+                  ensembleFanoutLabel: options.fanoutLabel || content.split(' · ', 1)[0]
+                }
+              : {})
           }
         }
       ],
       updatedAt: this.deps.now()
     }, 'round-updated')
+    return id
   }
 
   /**

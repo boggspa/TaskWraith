@@ -24,6 +24,9 @@ export function EnsembleFanoutViewportHeader({
   if (!data) return null
 
   const stageLabel = ensembleFanoutViewportStageLabel(data.stage)
+  const isUserFanout =
+    data.category === 'user' || data.dispatchLabel?.trim().toLowerCase() === 'user fan-out'
+  const metaLabel = isUserFanout ? 'User Fan-Out' : 'Fan-Out'
   const laneLabel = `${data.laneCount} ${data.laneCount === 1 ? 'lane' : 'lanes'}`
   const providers = data.attributions.map((attribution) => {
     const provider = attribution.provider as ProviderId
@@ -39,7 +42,7 @@ export function EnsembleFanoutViewportHeader({
       provider.role ? `${provider.providerLabel} / ${provider.role}` : provider.providerLabel
     )
     .join(', ')
-  const accessibleLabel = [stageLabel, laneLabel, accessibleProviderLabels]
+  const accessibleLabel = [isUserFanout ? null : stageLabel, laneLabel, accessibleProviderLabels]
     .filter(Boolean)
     .join(' · ')
 
@@ -47,20 +50,25 @@ export function EnsembleFanoutViewportHeader({
     <div
       className={`ensemble-fanout-viewport-header is-${data.stage}`}
       data-fanout-stage={data.stage}
+      data-fanout-category={isUserFanout ? 'user' : 'orchestrated'}
     >
       <CollapsedTranscriptRow
         header={null}
-        metaLabel="Fan-Out"
+        metaLabel={metaLabel}
         label={accessibleLabel}
         labelContent={
           <>
-            <span
-              className={`ensemble-fanout-viewport-stage is-${data.stage}`}
-              title={data.dispatchLabel || `${stageLabel} fan-out`}
-            >
-              {stageLabel}
+            {!isUserFanout ? (
+              <span
+                className={`ensemble-fanout-viewport-stage is-${data.stage}`}
+                title={data.dispatchLabel || `${stageLabel} fan-out`}
+              >
+                {stageLabel}
+              </span>
+            ) : null}
+            <span className="ensemble-fanout-viewport-count">
+              {isUserFanout ? laneLabel : ` · ${laneLabel}`}
             </span>
-            <span className="ensemble-fanout-viewport-count"> · {laneLabel}</span>
             {visibleProviders.length > 0 ? (
               <span className="ensemble-fanout-viewport-providers">
                 <span aria-hidden="true"> · </span>
@@ -108,7 +116,11 @@ export function EnsembleFanoutViewportHeader({
         }
         expanded={data.expanded}
         onToggle={(expanded) => onSetExpanded(data.viewportId, expanded)}
-        ariaTargetLabel={`${stageLabel} fan-out with ${laneLabel}`}
+        ariaTargetLabel={
+          isUserFanout
+            ? `User Fan-Out with ${laneLabel}`
+            : `${stageLabel} fan-out with ${laneLabel}`
+        }
       />
     </div>
   )

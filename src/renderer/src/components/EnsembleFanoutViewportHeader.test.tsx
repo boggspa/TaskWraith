@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ChatMessage } from '../../../main/store/types'
+import type { EnsembleFanoutViewportHeaderData } from '../lib/ensembleFanoutViewportGroups'
 import { EnsembleFanoutViewportHeader } from './EnsembleFanoutViewportHeader'
 
-function viewportHeader(expanded = false): ChatMessage {
+function viewportHeader(
+  expanded = false,
+  patch: Partial<EnsembleFanoutViewportHeaderData> = {}
+): ChatMessage {
   return {
     id: 'ensemble-fanout-viewport-round-1-dispatch-1',
     role: 'system',
@@ -14,9 +18,11 @@ function viewportHeader(expanded = false): ChatMessage {
       ensembleRoundId: 'round-1',
       ensembleFanoutViewportHeader: {
         viewportId: 'ensemble-fanout-viewport-round-1-dispatch-1',
+        waveId: 'dispatch-1',
         chatId: 'chat-1',
         roundId: 'round-1',
         stage: 'scout',
+        category: 'orchestrated',
         dispatchLabel: 'Scout fan-out',
         expanded,
         laneCount: 2,
@@ -34,7 +40,8 @@ function viewportHeader(expanded = false): ChatMessage {
             role: 'Builder',
             model: 'qwen3.5:9b'
           }
-        ]
+        ],
+        ...patch
       }
     }
   }
@@ -72,5 +79,23 @@ describe('EnsembleFanoutViewportHeader', () => {
     expect(html).toContain('aria-expanded="true"')
     expect(html).toContain('Collapse Scout fan-out with 2 lanes')
     expect(html).toContain('collapsed-activity-stack is-expanded')
+  })
+
+  it('presents a user-directed wave as User Fan-Out instead of Specified fan-out', () => {
+    const html = renderToStaticMarkup(
+      <EnsembleFanoutViewportHeader
+        message={viewportHeader(false, {
+          stage: 'specified',
+          category: 'user',
+          dispatchLabel: 'User Fan-Out'
+        })}
+        onSetExpanded={() => {}}
+      />
+    )
+
+    expect(html).toContain('data-fanout-category="user"')
+    expect(html).toContain('User Fan-Out')
+    expect(html).not.toContain('Specified')
+    expect(html).toContain('Expand User Fan-Out with 2 lanes')
   })
 })

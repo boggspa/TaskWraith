@@ -8,13 +8,18 @@ import {
   readEnsembleFanoutViewportHeader
 } from './ensembleFanoutViewportGroups'
 
-function status(id: string, roundId: string, content: string): ChatMessage {
+function status(
+  id: string,
+  roundId: string,
+  content: string,
+  patch: Partial<NonNullable<ChatMessage['metadata']>> = {}
+): ChatMessage {
   return {
     id,
     role: 'system',
     content,
     timestamp: `2026-08-02T12:00:0${id.length}.000Z`,
-    metadata: { kind: 'ensembleRoundStatus', ensembleRoundId: roundId }
+    metadata: { kind: 'ensembleRoundStatus', ensembleRoundId: roundId, ...patch }
   }
 }
 
@@ -139,6 +144,83 @@ describe('fan-out disclosure groups', () => {
       'All',
       'Specified'
     ])
+  })
+
+  it('retains the durable User Fan-Out identity and folds it after the next turn', () => {
+    const roundId = 'round-user-fanout'
+    const messages = [
+      status(
+        'user-fanout-dispatch',
+        roundId,
+        'User Fan-Out · 2 participant(s) dispatched concurrently (1 read / 1 write-intent).',
+        {
+          ensembleFanoutWaveId: 'user-wave-1',
+          ensembleFanoutCategory: 'user',
+          ensembleFanoutLabel: 'User Fan-Out'
+        }
+      ),
+      lane('user-fanout-review', roundId, {
+        ensembleStageRole: 'reviewer',
+        ensembleFanoutWaveId: 'user-wave-1'
+      }),
+      lane('user-fanout-work', roundId, {
+        ensembleStageRole: 'worker',
+        ensembleFanoutWaveId: 'user-wave-1'
+      }),
+      serialTurn('ordinary-next-turn', roundId)
+    ]
+
+    const groups = collectEnsembleFanoutViewportGroups('chat-user-fanout', roundId, messages)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({
+      dispatchLabel: 'User Fan-Out',
+      category: 'user',
+      waveId: 'user-wave-1',
+      stage: 'specified',
+      expectedLaneCount: 2
+    })
+
+    const ranges = buildEnsembleFanoutViewportRanges({
+      chatId: 'chat-user-fanout',
+      roundId,
+      messages,
+      sourceOffset: 0,
+      expandedViewportIds: new Set()
+    })
+    expect(ranges).toHaveLength(2)
+    expect(readEnsembleFanoutViewportHeader(ranges[0].message)).toMatchObject({
+      dispatchLabel: 'User Fan-Out',
+      category: 'user',
+      waveId: 'user-wave-1',
+      stage: 'specified',
+      expanded: false,
+      laneCount: 2
+    })
+    expect(ranges[1].message.id).toBe('ordinary-next-turn')
+  })
+
+  it('uses durable wave ids when two dispatch receipts overlap before lane rows flush', () => {
+    const roundId = 'round-overlapping-user-fanout'
+    const messages = [
+      status('wave-a', roundId, 'User Fan-Out · 1 participant(s) dispatched concurrently.', {
+        ensembleFanoutWaveId: 'wave-a',
+        ensembleFanoutCategory: 'user'
+      }),
+      status('wave-b', roundId, 'User Fan-Out · 1 participant(s) dispatched concurrently.', {
+        ensembleFanoutWaveId: 'wave-b',
+        ensembleFanoutCategory: 'user'
+      }),
+      lane('lane-b-first', roundId, { ensembleFanoutWaveId: 'wave-b' }),
+      lane('lane-a-later', roundId, { ensembleFanoutWaveId: 'wave-a' })
+    ]
+
+    const groups = collectEnsembleFanoutViewportGroups('chat-overlap', roundId, messages)
+
+    expect(groups.map((group) => [group.waveId, group.lanes[0].message.id])).toEqual([
+      ['wave-a', 'lane-a-later'],
+      ['wave-b', 'lane-b-first']
+    ])
+    expect(groups.every((group) => group.category === 'user')).toBe(true)
   })
 
   it('recovers legacy lanes without dispatch receipts from their frozen stage role', () => {
