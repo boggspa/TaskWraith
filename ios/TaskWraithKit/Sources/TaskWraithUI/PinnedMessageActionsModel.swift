@@ -6,9 +6,8 @@
 // `pinnedRows[i].id` as the single stable key for copy, jump-to-source, and
 // unpin — no extra identity field is required.
 //
-// This file is intentionally free of RemoteSessionModel / bridge calls so
-// CodexBoss can wire the bar into NotesPanel (and any future scrubber jump
-// helper) without growing composition-root views here.
+// This file stays free of RemoteSessionModel / bridge calls so NotesPanel and
+// future transcript navigation surfaces share one stable presentation contract.
 
 import Foundation
 
@@ -19,9 +18,8 @@ public struct PinnedMessageActionItem: Equatable, Sendable, Identifiable {
     public let messageId: String
     public let speaker: String?
     public let role: String?
-    /// Text the host should place on the pasteboard for Copy. Today the pin
-    /// list only carries `preview`; the integrator may later substitute a
-    /// fuller body without changing the action contract.
+    /// Projected pin preview. NotesPanel asks the host for the expanded row
+    /// before copying when this preview is marked truncated.
     public let copyText: String
     /// When true, Copy is still offered but accessibility notes the text may
     /// be a truncated preview (parity with projected `row.truncated`).
@@ -58,9 +56,8 @@ public enum PinnedMessageAction: String, Equatable, Sendable, CaseIterable {
     case unpin
 }
 
-/// Jump-to-source request the transcript scroll owner will fulfill later.
-/// Carries only the stable message id so NotesPanel and a future turn scrubber
-/// can share one callback shape.
+/// Portable jump-to-source intent keyed only by the stable message id.
+/// NotesPanel and future transcript navigation surfaces can share this shape.
 public struct PinnedMessageJumpRequest: Equatable, Sendable {
     public let messageId: String
 

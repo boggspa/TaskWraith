@@ -5814,6 +5814,52 @@ public final class RemoteSessionModel: ObservableObject {
             })
     }
 
+    /// A Notes-panel pin jump routed to the active transcript's ScrollViewReader.
+    /// The source row is the canonical Mac-projected pinned row, so an off-window
+    /// target can be rendered without synthesizing message identity or content.
+    public struct PinnedTranscriptJumpRequest: Equatable {
+        public let id: UUID
+        public let threadId: String
+        public let rowId: String
+        public let sourceRow: RemoteThreadSnapshot.Row
+    }
+
+    @Published public var pinnedTranscriptJumpRequest: PinnedTranscriptJumpRequest?
+
+    public func requestPinnedTranscriptJump(threadId: String, sourceRow: RemoteThreadSnapshot.Row) {
+        pinnedTranscriptJumpRequest = PinnedTranscriptJumpRequest(
+            id: UUID(), threadId: threadId, rowId: sourceRow.id, sourceRow: sourceRow)
+    }
+
+    /// Copy a pin's actual row body. Clipped pin previews are expanded through
+    /// the existing read-only row endpoint before the pasteboard is updated.
+    public func copyPinnedTranscriptRow(threadId: String, sourceRow: RemoteThreadSnapshot.Row) {
+        let fallback = sourceRow.preview ?? ""
+        guard sourceRow.truncated == true, let workspaceId = remoteScopeForThread(threadId) else {
+            writePinnedTranscriptText(fallback)
+            return
+        }
+        let params = BridgeAction.threadRowExpand(
+            workspaceId: workspaceId, threadId: threadId, rowId: sourceRow.id)
+        Task {
+            do {
+                let actionAck = try await self.requestFileAction(params)
+                writePinnedTranscriptText(actionAck.data?.row?.preview ?? fallback)
+            } catch {
+                writePinnedTranscriptText(fallback)
+                lastActionMessage = Self.actionFailureMessage(error, phase: phase)
+            }
+        }
+    }
+
+    private func writePinnedTranscriptText(_ text: String) {
+        guard !text.isEmpty else { return }
+        #if canImport(UIKit)
+            UIPasteboard.general.string = text
+        #endif
+        lastActionMessage = "Copied pinned message."
+    }
+
     /// One transcript-message → composer append request (T1 "Add to prompt").
     /// Routed through the model because the transcript row views are Equatable-
     /// gated value types; ThreadDetailView observes this and appends to the

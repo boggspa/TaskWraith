@@ -8650,39 +8650,32 @@ struct NotesPanel: View {
                     .foregroundStyle(TWTheme.textMuted)
             } else {
                 ForEach(pins, id: \.id) { row in
-                    HStack(alignment: .top, spacing: 7) {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 9))
-                            .foregroundStyle(TWTheme.statusAttention)
-                            .padding(.top, 3)
-                        VStack(alignment: .leading, spacing: 2) {
-                            if let speaker = row.speaker {
-                                Text(speaker)
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(TWTheme.textTertiary)
+                    if let item = PinnedMessageActionsModel.makeItem(
+                        id: row.id,
+                        speaker: row.speaker,
+                        role: row.role,
+                        preview: row.preview,
+                        truncated: row.truncated
+                    ) {
+                        PinnedMessagePinRow(
+                            item: item,
+                            onCopy: { _, _ in
+                                model.copyPinnedTranscriptRow(
+                                    threadId: threadId, sourceRow: row)
+                            },
+                            onJumpToSource: { _ in
+                                model.requestPinnedTranscriptJump(
+                                    threadId: threadId, sourceRow: row)
+                                model.inspectorPresented = false
+                            },
+                            onUnpin: { messageId in
+                                if let card {
+                                    model.toggleMessagePin(
+                                        card, messageId: messageId, pinned: false)
+                                }
                             }
-                            Text(row.preview ?? "")
-                                .font(.caption)
-                                .foregroundStyle(TWTheme.textPrimary)
-                                .lineLimit(4)
-                        }
-                        Spacer(minLength: 4)
-                        Button {
-                            if let card {
-                                model.toggleMessagePin(
-                                    card, messageId: row.id, pinned: false)
-                            }
-                        } label: {
-                            Image(systemName: "pin.slash")
-                                .font(.caption2)
-                                .foregroundStyle(TWTheme.textMuted)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(unpinAccessibilityLabel(for: row))
+                        )
                     }
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
                 }
             }
         }
@@ -8697,21 +8690,6 @@ struct NotesPanel: View {
         }
     }
 
-    private func unpinAccessibilityLabel(
-        for row: RemoteThreadSnapshot.Row
-    ) -> String {
-        var parts = ["Unpin message"]
-        if let speaker = row.speaker, !speaker.isEmpty {
-            parts.append("from \(speaker)")
-        }
-        if let preview = row.preview?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !preview.isEmpty
-        {
-            let snippet = preview.count > 48 ? String(preview.prefix(48)) + "…" : preview
-            parts.append("\"\(snippet)\"")
-        }
-        return parts.joined(separator: ", ")
-    }
 }
 
 private struct BlackboardPanelSection: View {

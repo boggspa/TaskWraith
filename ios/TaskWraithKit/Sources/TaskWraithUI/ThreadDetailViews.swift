@@ -311,6 +311,9 @@ struct ThreadDetailView: View {
     @State private var activeTranscriptFilterKeys: Set<String> = []
     /// Last scrubber jump, used as a compact active-turn cue.
     @State private var activeTurnScrubberMarkerKey: String?
+    /// Canonical pinned source row temporarily materialized when it falls
+    /// outside the phone's latest-N transcript window.
+    @State private var pinnedJumpSourceRow: RemoteThreadSnapshot.Row?
     // Last user-touch wall-clock lives on `followPin` (a reference type) so the
     // per-touch-move tracker never re-renders the body. A forced follow-pin's
     // SETTLE pass reads it so it doesn't yank the scroll back to bottom while the
@@ -473,8 +476,12 @@ struct ThreadDetailView: View {
         activeTranscriptFilterKeys.sorted().joined(separator: ",")
     }
     private var filteredTranscriptRows: [RemoteThreadSnapshot.Row] {
-        TranscriptNavigationAdapter.filterRows(
-            snapshot?.rows ?? [],
+        let sourceRows = PinnedMessageNavigationModel.rowsForJump(
+            loadedRows: snapshot?.rows ?? [],
+            sourceRow: pinnedJumpSourceRow
+        )
+        return TranscriptNavigationAdapter.filterRows(
+            sourceRows,
             activeFilterKeys: activeTranscriptFilterKeys
         )
     }
@@ -1502,6 +1509,7 @@ struct ThreadDetailView: View {
             store.bind(model: model, taskId: newTaskId)
             activeTranscriptFilterKeys.removeAll()
             activeTurnScrubberMarkerKey = nil
+            pinnedJumpSourceRow = nil
         }
         .onChange(of: transcriptFilterItemKeys) {
             activeTranscriptFilterKeys = TranscriptParticipantFilter.pruneStaleKeys(
@@ -1534,6 +1542,10 @@ struct ThreadDetailView: View {
                         followChrome(
                             AnyView(navigationChrome(AnyView(listCore(proxy: proxy)), proxy: proxy)),
                             proxy: proxy)))))
+            .onChange(of: model.pinnedTranscriptJumpRequest) { _, request in
+                guard let request else { return }
+                handlePinnedTranscriptJump(request, proxy: proxy)
+            }
     }
 
     private var threadApprovals: [MobileApprovalCard] {
@@ -2068,6 +2080,32 @@ struct ThreadDetailView: View {
                 autoFollow = false
                 proxy.scrollTo(marker.messageId, anchor: .center)
             }
+        }
+    }
+
+    private func handlePinnedTranscriptJump(
+        _ request: RemoteSessionModel.PinnedTranscriptJumpRequest,
+        proxy: ScrollViewProxy
+    ) {
+        guard resolvedThreadKeys.contains(request.threadId) else { return }
+        let loadedRows = snapshot?.rows ?? []
+        pinnedJumpSourceRow = PinnedMessageNavigationModel.sourceRow(
+            messageId: request.rowId,
+            loadedRows: loadedRows,
+            pinnedRows: snapshot?.pinnedRows ?? []
+        ) ?? request.sourceRow
+        activeTranscriptFilterKeys.removeAll()
+        activeTurnScrubberMarkerKey = nil
+        autoFollow = false
+        model.pinnedTranscriptJumpRequest = nil
+
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(request.rowId, anchor: .center)
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            proxy.scrollTo(request.rowId, anchor: .center)
         }
     }
 

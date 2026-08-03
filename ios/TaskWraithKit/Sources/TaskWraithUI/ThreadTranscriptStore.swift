@@ -235,6 +235,7 @@ final class ThreadTranscriptStore: ObservableObject {
             // Read directly in the body via onChange/sheet — must re-eval the body
             // (composer "Add to prompt", inspector sheet, roster sheet).
             model.$composerAppendRequest.map { _ in () }.eraseToAnyPublisher(),
+            model.$pinnedTranscriptJumpRequest.map { _ in () }.eraseToAnyPublisher(),
             model.$inspectorPresented.map { _ in () }.eraseToAnyPublisher(),
             model.$rosterPresented.map { _ in () }.eraseToAnyPublisher(),
         ]

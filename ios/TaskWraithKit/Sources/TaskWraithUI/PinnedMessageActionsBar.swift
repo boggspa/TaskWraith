@@ -1,14 +1,10 @@
 // Extracted pinned-message action chrome — iOS mirror of the Copy / Jump /
 // Unpin buttons on desktop `PinnedMessagesPanel`.
 //
-// CodexBoss wires this into `NotesPanel` (TWSharedViews) later: replace the
-// pin-only trailing button with `PinnedMessagePinRow` / `PinnedMessageActionsBar`
-// and route:
-//   onCopy           → UIPasteboard (preview today; fuller body if available)
-//   onJumpToSource   → transcript scroll helper keyed by messageId
-//   onUnpin          → existing `toggleMessagePin(..., pinned: false)`
-//
-// Do not grow ThreadDetailViews or TWSharedViews in this candidate lane.
+// NotesPanel supplies the host actions:
+//   onCopy           → pasteboard, expanding clipped rows first
+//   onJumpToSource   → stable-id transcript scroll
+//   onUnpin          → existing toggleMessagePin(..., pinned: false)
 
 import Foundation
 import SwiftUI

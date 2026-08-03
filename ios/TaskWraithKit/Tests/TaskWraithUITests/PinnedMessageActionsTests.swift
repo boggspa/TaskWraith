@@ -49,7 +49,7 @@ struct PinnedMessageActionsTests {
         #expect(PinnedMessageActionsModel.canPerform(.unpin, on: item))
     }
 
-    @Test func emptyPreviewDisablesCopyButKeepsJumpAndUnpin() {
+    @Test func emptyPreviewDisablesCopyButKeepsJumpAndUnpin() throws {
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
                 messageId: "empty-body",
@@ -65,7 +65,7 @@ struct PinnedMessageActionsTests {
         #expect(PinnedMessageActionsModel.jumpRequest(for: item)?.messageId == "empty-body")
     }
 
-    @Test func nilPreviewIsTreatedAsEmptyCopyText() {
+    @Test func nilPreviewIsTreatedAsEmptyCopyText() throws {
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
                 messageId: "nil-preview",
@@ -76,7 +76,7 @@ struct PinnedMessageActionsTests {
         #expect(PinnedMessageActionsModel.canPerform(.copy, on: item) == false)
     }
 
-    @Test func truncatedFlagSurfacesInCopyAccessibility() {
+    @Test func truncatedFlagSurfacesInCopyAccessibility() throws {
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
                 messageId: "trunc-1",
@@ -92,7 +92,7 @@ struct PinnedMessageActionsTests {
         #expect(label.contains("preview may be truncated"))
     }
 
-    @Test func accessibilityLabelsMatchDesktopVerbs() {
+    @Test func accessibilityLabelsMatchDesktopVerbs() throws {
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
                 messageId: "a11y-1",
@@ -115,7 +115,7 @@ struct PinnedMessageActionsTests {
         )
     }
 
-    @Test func longPreviewIsSnippetCappedInAccessibility() {
+    @Test func longPreviewIsSnippetCappedInAccessibility() throws {
         let long = String(repeating: "x", count: 80)
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
@@ -129,7 +129,7 @@ struct PinnedMessageActionsTests {
         #expect(!label.contains(String(repeating: "x", count: 49)))
     }
 
-    @Test func roleFallsBackWhenSpeakerMissing() {
+    @Test func roleFallsBackWhenSpeakerMissing() throws {
         let item = try #require(
             PinnedMessageActionsModel.makeItem(
                 messageId: "role-only",
