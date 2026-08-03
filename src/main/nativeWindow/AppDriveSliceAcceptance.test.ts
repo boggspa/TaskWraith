@@ -50,7 +50,7 @@ describe('AppDriveSliceAcceptance', () => {
 
     const boundary = describeAppDriveShipBoundary()
     expect(boundary.foregroundAxAuthority).toBe('shipped_tier_4')
-    expect(boundary.uiSessionVerticalSlice).toBe('candidate_until_boss_wiring')
+    expect(boundary.uiSessionVerticalSlice).toBe('integrated_foreground_ui_session')
     expect(boundary.backgroundDrive).toBe('prototype_only')
     expect(boundary.isolatedDrive).toBe('rfc_only')
   })

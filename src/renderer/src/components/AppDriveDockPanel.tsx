@@ -213,7 +213,11 @@ export function AppDriveDockPanel({
 
       <footer className="appdrive-dock-controls" aria-label="App Drive controls">
         {showControlsHelp ? (
-          <p className="appdrive-dock-controls-help" data-testid="appdrive-controls-help">
+          <p
+            id="appdrive-controls-help"
+            className="appdrive-dock-controls-help"
+            data-testid="appdrive-controls-help"
+          >
             {PAUSE_VS_TAKEOVER_HELP}
           </p>
         ) : null}
@@ -222,6 +226,7 @@ export function AppDriveDockPanel({
             type="button"
             className="appdrive-dock-button"
             data-testid="appdrive-pause"
+            aria-describedby="appdrive-controls-help"
             onClick={onPause}
           >
             Pause
@@ -242,6 +247,7 @@ export function AppDriveDockPanel({
             type="button"
             className="appdrive-dock-button"
             data-testid="appdrive-takeover"
+            aria-describedby="appdrive-controls-help"
             onClick={onTakeOver}
           >
             Take Over

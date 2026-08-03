@@ -5,8 +5,8 @@
  * already-granted exact-run/window control projection. It deliberately:
  *
  * - does **not** mint, broaden, persist, or revoke native control authority
- * - does **not** talk to Electron, IPC, NativeWindowCoordinator, or the lease
- *   registry (integrators wire those later)
+ * - is owned by NativeWindowCoordinator as an admission overlay, while the
+ *   existing lease registry remains the sole control authority
  * - labels the only shipped mode as **Foreground Drive** with current-launch
  *   **View & Control** disclosure — never Background / Isolated claims
  * - refuses new actions while paused, in takeover, stopped, idle, or expired
@@ -43,7 +43,11 @@ export type AppDriveSessionLifecycle = (typeof APP_DRIVE_SESSION_LIFECYCLES)[num
 export type AppDriveControlVerb = 'observe' | 'inspect' | 'click' | 'fill'
 
 export type AppDriveStopReason =
-  'user-stop' | 'user-detach' | 'binding-cleared' | 'expired' | 'replaced'
+  | 'user-stop'
+  | 'user-detach'
+  | 'binding-cleared'
+  | 'expired'
+  | 'replaced'
 
 export type AppDriveSessionErrorCode =
   | 'invalid-input'
@@ -54,6 +58,7 @@ export type AppDriveSessionErrorCode =
   | 'session-stopped'
   | 'session-expired'
   | 'invalid-transition'
+  | 'step-budget-exhausted'
   | 'binding-mismatch'
 
 /** Display-only target fields. Never treated as authority. */
@@ -159,7 +164,7 @@ export interface AppDriveBindResult {
 }
 
 /**
- * Fail-closed chrome admission for a future CanvasWindowDriver gate.
+ * Fail-closed chrome admission for the CanvasWindowDriver gate.
  *
  * When `admitted` is true, session chrome allows an action attempt — the real
  * exact-run/window/secret/audit gates remain external prerequisites. When
@@ -438,7 +443,7 @@ export class AppDriveSession {
   }
 
   /**
-   * Fail-closed admission result for a future CanvasWindowDriver gate.
+   * Fail-closed admission result for the CanvasWindowDriver gate.
    * Never throws for lifecycle refusal; only throws for unknown verb shapes
    * when callers pass a verb that is not in the control catalogue at all.
    * Prefer this over boolean-only checks when the driver needs a typed code
@@ -545,6 +550,19 @@ export class AppDriveSession {
       })
     }
 
+    if (session.stepsRemaining <= 0) {
+      return denyAdmission({
+        lifecycle: 'active',
+        code: 'step-budget-exhausted',
+        message: 'Foreground Drive step budget is exhausted; new actions are refused.',
+        sessionId: session.sessionId,
+        allowedVerbs: session.allowedVerbs,
+        expiresAt: session.expiresAt,
+        stepsRemaining: session.stepsRemaining,
+        stopReason: null
+      })
+    }
+
     if (verb !== undefined && !session.allowedVerbs.includes(verb)) {
       return denyAdmission({
         lifecycle: 'active',
@@ -598,7 +616,8 @@ export class AppDriveSession {
       // Keep terminal state visible until clearStopped; never admit actions.
       return rendererStatusFromSession(session, false)
     }
-    const canAdmit = session.lifecycle === 'active' && session.expiresAt > this.now()
+    const canAdmit =
+      session.lifecycle === 'active' && session.expiresAt > this.now() && session.stepsRemaining > 0
     return rendererStatusFromSession(session, canAdmit)
   }
 

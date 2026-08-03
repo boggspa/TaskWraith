@@ -65,6 +65,7 @@ import {
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { CanvasDockPanel } from '../../components/CanvasDockPanel'
+import { AppDriveDockPanel } from '../../components/AppDriveDockPanel'
 import { FanoutCandidatesPanel } from '../../components/FanoutCandidatesPanel'
 import { ThreadMessageDockPanel } from '../../components/ThreadMessageDockPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
@@ -480,6 +481,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showFileEditor,
   showOfficeSuite,
   isCanvasDockPanelOpen,
+  isAppDriveDockPanelOpen,
+  appDriveDockStatus,
+  handleAppDrivePause,
+  handleAppDriveResume,
+  handleAppDriveTakeOver,
+  handleAppDriveStop,
   isFanoutCandidatesPanelOpen,
   isThreadMessagePanelOpen,
   threadMessageInbox,
@@ -2634,6 +2641,18 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     onRequestExternalAccess={onRequestOfficeExternalAccess}
                   />
                 )}
+
+                {activeRightDockTab === 'appdrive' &&
+                  isAppDriveDockPanelOpen &&
+                  appDriveDockStatus && (
+                    <AppDriveDockPanel
+                      status={appDriveDockStatus}
+                      onPause={handleAppDrivePause}
+                      onResume={handleAppDriveResume}
+                      onTakeOver={handleAppDriveTakeOver}
+                      onStop={handleAppDriveStop}
+                    />
+                  )}
 
                 {activeRightDockTab === 'canvas' && isCanvasDockPanelOpen && currentChat && (
                   <CanvasDockPanel chatId={currentChat.appChatId} />

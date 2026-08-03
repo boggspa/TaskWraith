@@ -170,9 +170,15 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('attach-window:pick', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('attach-window:status', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('attach-window:detach', ['chat-1', 7])).not.toThrow()
+    expect(() =>
+      validateIpcArgs('attach-window:control-session', ['chat-1', 'pause'])
+    ).not.toThrow()
 
     expect(() => validateIpcArgs('attach-window:pick', ['../settings'])).toThrow(/safe chat id/)
     expect(() => validateIpcArgs('attach-window:status', [])).toThrow(/non-empty/)
+    expect(() => validateIpcArgs('attach-window:control-session', ['chat-1', ''])).toThrow(
+      /non-empty/
+    )
     for (const invalidGeneration of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => validateIpcArgs('attach-window:detach', ['chat-1', invalidGeneration])).toThrow(
         /positive safe integer/
@@ -181,6 +187,9 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('attach-window:detach', ['chat-1', 7, 'extra'])).toThrow(
       /too many arguments/
     )
+    expect(() =>
+      validateIpcArgs('attach-window:control-session', ['chat-1', 'pause', 'extra'])
+    ).toThrow(/too many arguments/)
   })
 
   it('accepts only display-only sticky AppWatch resume hints', () => {

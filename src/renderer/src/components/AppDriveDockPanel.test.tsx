@@ -50,6 +50,7 @@ describe('AppDriveDockPanel', () => {
     expect(html).toContain('observe, inspect, click, fill')
     expect(html).toContain('data-testid="appdrive-pause"')
     expect(html).toContain('data-testid="appdrive-takeover"')
+    expect(html).toContain('aria-describedby="appdrive-controls-help"')
     expect(html).toContain('data-testid="appdrive-stop"')
     expect(html).toContain('Stop control')
     expect(html).toContain('Agent cursor is display-only')

@@ -21,6 +21,7 @@ import type {
 import {
   CanvasWindowDriver,
   type CanvasWindowActResult,
+  type CanvasWindowActionTargetTelemetry,
   type CanvasWindowAdoptResult,
   type CanvasWindowCaptureResult,
   type CanvasWindowClickAuthorization,
@@ -94,6 +95,14 @@ export interface CanvasWindowCoordinatorPort {
     owner: NativeWindowCoordinatorCanvasOwner,
     verb: NativeWindowLeaseControlVerb
   ): NativeWindowCoordinatorCanvasAccess
+  assertAppDriveActionAllowed(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    verb: NativeWindowLeaseControlVerb
+  ): void
+  recordAppDriveActionTarget(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    target: CanvasWindowActionTargetTelemetry
+  ): void
 }
 
 /** Deliberately generic so this module stays Electron-free and unit-testable. */
@@ -1658,6 +1667,12 @@ export class CanvasWindowDriverFactory {
             return null
           }
         }
+      },
+      actionAdmission: {
+        assertCanAdmit: (verb) => this.coordinator.assertAppDriveActionAllowed(binding.owner, verb)
+      },
+      actionTelemetry: {
+        recordTarget: (target) => this.coordinator.recordAppDriveActionTarget(binding.owner, target)
       },
       bridge: new BoundCanvasWindowNativeBridge(
         this.coordinator,

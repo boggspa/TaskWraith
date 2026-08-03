@@ -1549,6 +1549,10 @@ declare global {
         chatId: string,
         generation: number
       ) => Promise<{ detached: boolean; status: NativeWindowCoordinatorRendererStatus }>
+      attachWindowControlSession: (
+        chatId: string,
+        action: 'pause' | 'resume' | 'takeover' | 'stop'
+      ) => Promise<NativeWindowCoordinatorRendererStatus>
       attachWindowStatus: (chatId: string) => Promise<NativeWindowCoordinatorRendererStatus>
       /** Resume-only, chat-scoped display metadata; no native identity fields. */
       stickyAppWatchGet: (chatId: string) => Promise<{ snapshot: StickyAppWatchSnapshot | null }>

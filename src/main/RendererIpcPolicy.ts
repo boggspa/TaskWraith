@@ -512,6 +512,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'ensemble:update-live-round-config',
   'attach-window:pick',
   'attach-window:detach',
+  'attach-window:control-session',
   'attach-window:status',
   'sticky-appwatch:get',
   'sticky-appwatch:stash',

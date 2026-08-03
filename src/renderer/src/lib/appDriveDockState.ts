@@ -14,6 +14,8 @@
  * presence while lifecycle is `active` — they are not separate states.
  */
 
+import type { NativeWindowCoordinatorRendererStatus } from '../../../main/nativeWindow/NativeWindowCoordinator'
+
 export const APP_DRIVE_MODE = 'foreground' as const
 export type AppDriveMode = typeof APP_DRIVE_MODE
 
@@ -93,6 +95,48 @@ export const PERMISSION_HONESTY_DESCRIPTION =
 
 export const PAUSE_VS_TAKEOVER_HELP =
   'Pause holds agent click/fill until Resume. Take Over marks you as driving; Resume returns agent control. Neither is target-scoped HID arbitration — native idle remains machine-wide.'
+
+export function appDriveDockStatusFromNative(
+  chatId: string,
+  status: NativeWindowCoordinatorRendererStatus
+): AppDriveDockStatus {
+  const observation = status.observation
+    ? {
+        applicationName: status.observation.window.applicationName,
+        windowTitle: status.observation.window.title,
+        bundleID: status.observation.window.bundleID
+      }
+    : null
+  const control = status.control
+    ? {
+        provider: status.control.provider,
+        allowedVerbs: status.control.allowedVerbs,
+        expiresAt: status.control.expiresAt,
+        stepBudget: status.control.stepBudget,
+        stepsUsed: status.control.stepsUsed,
+        stepsRemaining: status.control.stepsRemaining,
+        approvedBy: status.control.approvedBy,
+        trustState: status.control.trustState
+      }
+    : null
+  return Object.freeze({
+    chatId,
+    observation,
+    control,
+    lifecycle: status.control?.lifecycle ?? (observation ? 'active' : 'idle'),
+    mode: APP_DRIVE_MODE,
+    ...(status.warning ? { warning: status.warning } : {}),
+    ...(status.control?.virtualCursor
+      ? {
+          virtualCursor: {
+            x: status.control.virtualCursor.x,
+            y: status.control.virtualCursor.y,
+            label: status.control.virtualCursor.label
+          }
+        }
+      : {})
+  })
+}
 
 export function isAppDriveControlVerb(value: unknown): value is AppDriveControlVerb {
   return value === 'observe' || value === 'inspect' || value === 'click' || value === 'fill'

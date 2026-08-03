@@ -626,6 +626,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // safe status projection; the opaque handle and scope remain main-owned.
   'attach-window:pick': ['chatId'],
   'attach-window:detach': ['chatId', 'positiveInteger'],
+  'attach-window:control-session': ['chatId', 'nonEmptyString'],
   'attach-window:status': ['chatId'],
   // M11 (1.0.7) — sticky AppWatch per-chat attachment snapshots.
   'sticky-appwatch:get': ['chatId'],
@@ -971,9 +972,12 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
     throw new Error(`No IPC schema registered for ${channel}.`)
   }
   // Detach is a generation-bound revoke operation, so trailing renderer data
-  // must not be silently ignored. Preserve legacy optional-tail behavior for
-  // unrelated IPC channels.
-  if (channel === 'attach-window:detach' && args.length > schema.length) {
+  // must not be silently ignored. Session lifecycle operations share the same
+  // exact-argument posture. Preserve legacy optional-tail behavior elsewhere.
+  if (
+    (channel === 'attach-window:detach' || channel === 'attach-window:control-session') &&
+    args.length > schema.length
+  ) {
     throw new Error(`${channel} received too many arguments.`)
   }
   schema.forEach((spec, index) => validateArg(channel, spec, args[index], index))

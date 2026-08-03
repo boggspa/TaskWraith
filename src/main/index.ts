@@ -48470,6 +48470,25 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
+    ipcMain.handle(
+      'attach-window:control-session',
+      async (event, chatId: string, action: string) => {
+        const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
+        assertRendererChatScope(event, canonicalChatId)
+        if (
+          action !== 'pause' &&
+          action !== 'resume' &&
+          action !== 'takeover' &&
+          action !== 'stop'
+        ) {
+          throw new Error('Unknown App Drive session action.')
+        }
+        const coordinator = nativeWindowCoordinatorRef
+        if (!coordinator) throw new Error('Native-window coordination is not ready.')
+        return coordinator.controlSession(canonicalChatId, action)
+      }
+    )
+
     ipcMain.handle('attach-window:status', (event, chatId: string) => {
       const canonicalChatId = requireNonEmptyString(chatId, 'Chat')
       assertRendererChatScope(event, canonicalChatId)

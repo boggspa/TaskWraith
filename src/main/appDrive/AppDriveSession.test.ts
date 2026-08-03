@@ -229,6 +229,22 @@ describe('AppDriveSession', () => {
     expect(mirrored.chatId).toBe('chat-a')
     expect(session.status().stepsRemaining).toBe(17)
 
+    const exhausted = session.mirrorControlBudget({
+      chatId: 'chat-a',
+      runId: 'run-a',
+      launchAttemptId: 'attempt-a',
+      expiresAt: 19_000,
+      stepBudget: 20,
+      stepsUsed: 20
+    })
+    expect(exhausted.stepsRemaining).toBe(0)
+    expect(session.status().canAdmitActions).toBe(false)
+    expect(session.evaluateAdmission('click')).toMatchObject({
+      admitted: false,
+      code: 'step-budget-exhausted'
+    })
+    expectCode(() => session.assertCanAdmitActions('click'), 'step-budget-exhausted')
+
     expectCode(
       () =>
         session.mirrorControlBudget({
@@ -286,7 +302,7 @@ describe('AppDriveSession', () => {
     ])
   })
 
-  it('returns a fail-closed evaluateAdmission result suitable for a future CanvasWindowDriver gate', () => {
+  it('returns a fail-closed evaluateAdmission result for the CanvasWindowDriver gate', () => {
     const { session, now } = createSession()
 
     const idle = session.evaluateAdmission()

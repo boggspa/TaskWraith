@@ -691,6 +691,10 @@ import {
   type RightDockTab
 } from './lib/rightDockState'
 import {
+  appDriveDockStatusFromNative,
+  type AppDriveDockStatus
+} from './lib/appDriveDockState'
+import {
   getPendingMeshCanvasOpenRequest,
   subscribeMeshCanvasOpenRequests
 } from './lib/meshCanvasLaunch'
@@ -2392,6 +2396,7 @@ function App(): React.JSX.Element {
   const [showFileEditor, setShowFileEditor] = useState(false)
   const [showOfficeSuite, setShowOfficeSuite] = useState(false)
   const [isCanvasDockPanelOpen, setIsCanvasDockPanelOpen] = useState(false)
+  const [isAppDriveDockPanelOpen, setIsAppDriveDockPanelOpen] = useState(false)
   const [isFanoutCandidatesPanelOpen, setIsFanoutCandidatesPanelOpen] = useState(false)
   const [officeOpenRequest, setOfficeOpenRequest] = useState<{
     path: string
@@ -3108,10 +3113,12 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('focus', onFocus)
   }, [currentGitPresentationPath])
   const [attachedWindow, setAttachedWindow] = useState<AttachedWindowSnapshot | null>(null)
+  const [appDriveDockStatus, setAppDriveDockStatus] = useState<AppDriveDockStatus | null>(null)
   // Main owns one live native attachment. Keep its safe renderer projection in
   // a ref even while focus changes so a real replacement/loss (not a chat
   // switch) can be remembered for the owning chat's resume affordance.
   const liveAttachedWindowRef = useRef<AttachedWindowSnapshot | null>(null)
+  const appDriveControlChatIdRef = useRef<string | null>(null)
   const stickyAppWatchQueueRef = useRef(new Map<string, Promise<void>>())
   const stickyAppWatchRevisionRef = useRef(new Map<string, number>())
   // Keep the primary composer synchronously scoped while the authoritative
@@ -3194,6 +3201,18 @@ function App(): React.JSX.Element {
     (chatId: string, status: NativeWindowCoordinatorRendererStatus): AttachedWindowSnapshot | null => {
       const next = attachedWindowFromStatus(status)
       const previous = liveAttachedWindowRef.current
+      if (currentChatIdRef.current === chatId) {
+        const dockStatus = appDriveDockStatusFromNative(chatId, status)
+        setAppDriveDockStatus(dockStatus)
+        if (status.control && appDriveControlChatIdRef.current !== chatId) {
+          appDriveControlChatIdRef.current = chatId
+          setIsAppDriveDockPanelOpen(true)
+          setRightDockTab('appdrive')
+        } else if (!status.control && appDriveControlChatIdRef.current === chatId) {
+          appDriveControlChatIdRef.current = null
+        }
+      }
+
       if (next) {
         // Re-picking in the same chat is a live replacement, not a loss that
         // should surface a resume card. Only a different chat displaces an
@@ -3639,6 +3658,8 @@ function App(): React.JSX.Element {
         return showOfficeSuite
       case 'canvas':
         return isCanvasDockPanelOpen
+      case 'appdrive':
+        return isAppDriveDockPanelOpen
       case 'candidates':
         return isFanoutCandidatesPanelOpen
       case 'peers':
@@ -5216,8 +5237,10 @@ function App(): React.JSX.Element {
     const chatId = currentChat?.appChatId
     if (isChatPopoutWindow || !chatId) {
       setAttachedWindow(null)
+      setAppDriveDockStatus(null)
       return
     }
+    setAppDriveDockStatus(null)
     let cancelled = false
     const applyStatus = (status: NativeWindowCoordinatorRendererStatus): void => {
       if (cancelled || currentChatIdRef.current !== chatId) return
@@ -10115,6 +10138,33 @@ function App(): React.JSX.Element {
         }
       ])
     }
+  }
+
+  const handleAppDriveSessionAction = async (
+    action: 'pause' | 'resume' | 'takeover' | 'stop'
+  ): Promise<void> => {
+    const chatId = currentChatIdRef.current || currentChat?.appChatId || null
+    if (!chatId) return
+    try {
+      const status = await window.api.attachWindowControlSession(chatId, action)
+      reconcileAttachedWindowStatus(chatId, status)
+    } catch (error) {
+      setRawLogs((previous) => [
+        ...previous,
+        {
+          type: 'info',
+          content: `App Drive ${action} failed: ${error instanceof Error ? error.message : String(error)}`
+        }
+      ])
+    }
+  }
+
+  const handleAppDriveStop = (): void => {
+    if (appDriveDockStatus?.control) {
+      void handleAppDriveSessionAction('stop')
+      return
+    }
+    void handleDetachWindow(appDriveDockStatus?.chatId)
   }
 
   // handleComposerDragEnter/Over/Leave/Drop + handleComposerPaste moved INTO
@@ -24766,6 +24816,9 @@ function App(): React.JSX.Element {
     showFileEditor,
     showOfficeSuite,
     isCanvasDockPanelOpen,
+    isAppDriveDockPanelOpen: Boolean(
+      appDriveDockStatus?.observation || appDriveDockStatus?.control
+    ),
     isFanoutCandidatesPanelOpen,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
@@ -24890,6 +24943,14 @@ function App(): React.JSX.Element {
       hint: 'Word, sheets, decks, calendar & mail'
     },
     {
+      id: 'appdrive',
+      label: 'Drive',
+      icon: <ScreenWatchSymbolIcon />,
+      enabled: Boolean(appDriveDockStatus?.observation || appDriveDockStatus?.control),
+      group: 'work',
+      hint: 'Foreground App Drive status & controls'
+    },
+    {
       id: 'canvas',
       label: 'Canvas',
       icon: <CanvasSurfaceSymbolIcon />,
@@ -24952,6 +25013,9 @@ function App(): React.JSX.Element {
       case 'canvas':
         setIsCanvasDockPanelOpen(false)
         break
+      case 'appdrive':
+        setIsAppDriveDockPanelOpen(false)
+        break
       case 'candidates':
         setIsFanoutCandidatesPanelOpen(false)
         break
@@ -24997,6 +25061,12 @@ function App(): React.JSX.Element {
         break
       case 'canvas':
         if (currentChat) setIsCanvasDockPanelOpen(true)
+        break
+      case 'appdrive':
+        if (
+          currentChat &&
+          (appDriveDockStatus?.observation || appDriveDockStatus?.control)
+        ) setIsAppDriveDockPanelOpen(true)
         break
       case 'candidates':
         if (currentChat && hasWorkspaceContext) setIsFanoutCandidatesPanelOpen(true)
@@ -30480,6 +30550,12 @@ function App(): React.JSX.Element {
     showFileEditor,
     showOfficeSuite,
     isCanvasDockPanelOpen,
+    isAppDriveDockPanelOpen,
+    appDriveDockStatus,
+    handleAppDrivePause: () => void handleAppDriveSessionAction('pause'),
+    handleAppDriveResume: () => void handleAppDriveSessionAction('resume'),
+    handleAppDriveTakeOver: () => void handleAppDriveSessionAction('takeover'),
+    handleAppDriveStop,
     isFanoutCandidatesPanelOpen,
     isThreadMessagePanelOpen,
     threadMessageInbox,

@@ -49,6 +49,7 @@ describe('RendererIpcPolicy', () => {
     'providerRates:probe',
     'ensemble-roster-presets:sync',
     'attach-window:pick',
+    'attach-window:control-session',
     'canvas:open-embedded',
     'canvas:set-bounds',
     'mesh-scene:import-user-model',

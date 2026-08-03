@@ -4,6 +4,8 @@ import type { CanvasFrame } from './canvasTypes'
 import {
   CanvasWindowDriver,
   CanvasWindowLeaseError,
+  type CanvasWindowActionAdmission,
+  type CanvasWindowActionTelemetry,
   type CanvasWindowActResult,
   type CanvasWindowClickAuthorization,
   type CanvasWindowLeaseIdentity,
@@ -43,7 +45,13 @@ function captureFrame(overrides: Partial<CanvasFrame> = {}): CanvasFrame {
 
 function tree(
   inputEpoch = 3,
-  target: Partial<{ role: string; tag: string; name: string; secure: boolean }> = {}
+  target: Partial<{
+    role: string
+    tag: string
+    name: string
+    secure: boolean
+    bbox: [number, number, number, number]
+  }> = {}
 ) {
   return {
     url: 'native://must-not-escape',
@@ -54,7 +62,16 @@ function tree(
       ref: 'ax1',
       role: 'window',
       tag: 'AXWindow',
-      children: [{ ref: 'ax2', role: 'button', tag: 'AXButton', name: 'Continue', ...target }]
+      children: [
+        {
+          ref: 'ax2',
+          role: 'button',
+          tag: 'AXButton',
+          name: 'Continue',
+          bbox: [10, 20, 100, 30] as [number, number, number, number],
+          ...target
+        }
+      ]
     },
     nodeCount: 2,
     truncated: false,
@@ -88,7 +105,13 @@ function actionResult(overrides: Partial<CanvasWindowActResult> = {}): CanvasWin
   }
 }
 
-function makeHarness(options: { clickAuthorization?: CanvasWindowClickAuthorization | null } = {}) {
+function makeHarness(
+  options: {
+    clickAuthorization?: CanvasWindowClickAuthorization | null
+    actionAdmission?: CanvasWindowActionAdmission
+    actionTelemetry?: CanvasWindowActionTelemetry
+  } = {}
+) {
   let currentLease: CanvasWindowLeaseIdentity | null = { ...LEASE }
   const defaultClickAuthorization: CanvasWindowClickAuthorization = {
     authorize: vi.fn(async () => ({ receipt: 'test-click-receipt' }))
@@ -134,6 +157,8 @@ function makeHarness(options: { clickAuthorization?: CanvasWindowClickAuthorizat
       current: () => currentLease
     },
     bridge,
+    ...(options.actionAdmission ? { actionAdmission: options.actionAdmission } : {}),
+    ...(options.actionTelemetry ? { actionTelemetry: options.actionTelemetry } : {}),
     ...(clickAuthorization ? { clickAuthorization } : {})
   })
   return {
@@ -334,6 +359,42 @@ describe('CanvasWindowDriver', () => {
       })
     ).rejects.toThrow(/pixel coordinates are refused/)
     expect(harness.bridge.click).not.toHaveBeenCalled()
+  })
+
+  it('refuses a paused App Drive session before authorization or native dispatch', async () => {
+    const assertCanAdmit = vi.fn(() => {
+      throw new Error('Foreground Drive session is paused')
+    })
+    const harness = await openAndObserve(makeHarness({ actionAdmission: { assertCanAdmit } }))
+    await expect(
+      harness.driver.click({
+        kind: 'click',
+        ref: 'ax2',
+        expectedObservationId: 'observation-1',
+        expectedInputEpoch: 3
+      })
+    ).rejects.toThrow(/session is paused/)
+    expect(assertCanAdmit).toHaveBeenCalledWith('click')
+    expect(harness.clickAuthorization?.authorize).not.toHaveBeenCalled()
+    expect(harness.bridge.click).not.toHaveBeenCalled()
+  })
+
+  it('projects only a normalized display target before native dispatch', async () => {
+    const recordTarget = vi.fn()
+    const harness = await openAndObserve(makeHarness({ actionTelemetry: { recordTarget } }))
+    await harness.driver.click({
+      kind: 'click',
+      ref: 'ax2',
+      expectedObservationId: 'observation-1',
+      expectedInputEpoch: 3
+    })
+    expect(recordTarget).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verb: 'click',
+        x: 60 / 900,
+        y: 35 / 700
+      })
+    )
   })
 
   it('reports dispatch honestly but never calls it verified until a matching re-observe', async () => {

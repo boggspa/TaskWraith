@@ -486,6 +486,46 @@ describe('NativeWindowCoordinator', () => {
 
     harness.coordinator.consumeCanvasActionStep(owner(), 'click')
     expect(harness.coordinator.statusForChat('chat-a').control?.stepsUsed).toBe(1)
+    expect(harness.coordinator.statusForChat('chat-a').control).toMatchObject({
+      mode: 'foreground',
+      lifecycle: 'active',
+      canAdmitActions: true,
+      virtualCursor: null
+    })
+
+    await harness.coordinator.controlSession('chat-a', 'pause')
+    expect(harness.coordinator.statusForChat('chat-a').control).toMatchObject({
+      lifecycle: 'paused',
+      canAdmitActions: false
+    })
+    expect(() => harness.coordinator.consumeCanvasActionStep(owner(), 'click')).toThrow(
+      /session is paused/
+    )
+    expect(harness.coordinator.statusForChat('chat-a').control?.stepsUsed).toBe(1)
+
+    await harness.coordinator.controlSession('chat-a', 'resume')
+    harness.coordinator.assertAppDriveActionAllowed(owner(), 'click')
+    harness.coordinator.recordAppDriveActionTarget(owner(), {
+      verb: 'click',
+      x: 0.25,
+      y: 0.75,
+      label: 'Continue'
+    })
+    expect(harness.coordinator.statusForChat('chat-a').control?.virtualCursor).toEqual({
+      verb: 'click',
+      x: 0.25,
+      y: 0.75,
+      label: 'Continue'
+    })
+
+    await harness.coordinator.controlSession('chat-a', 'takeover')
+    expect(harness.coordinator.statusForChat('chat-a').control?.virtualCursor).toBeNull()
+    expect(() => harness.coordinator.assertAppDriveActionAllowed(owner(), 'fill')).toThrow(
+      /taken over/
+    )
+    await harness.coordinator.controlSession('chat-a', 'stop')
+    expect(harness.coordinator.statusForChat('chat-a').control).toBeNull()
+    expect(harness.coordinator.statusForChat('chat-a').observation).not.toBeNull()
   })
 
   it('denies cross-chat and cross-run lease resolution', async () => {

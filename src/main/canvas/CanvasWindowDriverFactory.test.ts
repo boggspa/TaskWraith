@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 
 import type {
+  CanvasWindowActionTargetTelemetry,
   CanvasWindowClickAuthorization,
   CanvasWindowClickAuthorizationRequest,
   CanvasWindowClickRequest,
@@ -101,6 +102,19 @@ class FakeCoordinator implements CanvasWindowCoordinatorPort {
     this.actionCalls.push({ owner, verb })
     if (!this.current) throw new Error('lease revoked')
     return { ...this.access, lease: this.current }
+  }
+  assertAppDriveActionAllowed(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    _verb: 'click' | 'fill'
+  ): void {
+    this.assertOwner(owner)
+  }
+
+  recordAppDriveActionTarget(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    _target: CanvasWindowActionTargetTelemetry
+  ): void {
+    this.assertOwner(owner)
   }
 
   private assertOwner(owner: NativeWindowCoordinatorCanvasOwner): void {

@@ -150,10 +150,30 @@ export interface CanvasWindowNativeBridge {
   release(request: CanvasWindowLeaseEnvelope): Promise<CanvasWindowReleaseResult>
 }
 
+export interface CanvasWindowActionAdmission {
+  /** Main-owned session-chrome gate. Production factory wiring always supplies it. */
+  assertCanAdmit(verb: 'click' | 'fill'): void
+}
+
+export interface CanvasWindowActionTargetTelemetry {
+  readonly verb: 'click' | 'fill'
+  /** Display-only target centre normalized to the observed viewport. */
+  readonly x: number
+  readonly y: number
+  readonly label: string
+}
+
+export interface CanvasWindowActionTelemetry {
+  /** Projection side effect only; implementations must never actuate or grant authority. */
+  recordTarget(target: CanvasWindowActionTargetTelemetry): void
+}
+
 export interface CanvasWindowDriverDeps {
   lease: CanvasWindowLeaseIdentity
   authority: CanvasWindowLeaseAuthority
   bridge: CanvasWindowNativeBridge
+  actionAdmission?: CanvasWindowActionAdmission
+  actionTelemetry?: CanvasWindowActionTelemetry
   /**
    * Factory-owned authorization broker for native clicks. It requests human
    * confirmation using only the public scope/summary and returns an opaque,
@@ -291,12 +311,14 @@ interface ObservedTarget {
   name?: string
   tag: string
   secure: boolean
+  bbox?: readonly [number, number, number, number]
 }
 
 interface CurrentObservation {
   observationId: string
   inputEpoch: number
   targets: ReadonlyMap<string, ObservedTarget>
+  viewport: CanvasViewport
 }
 
 interface PendingAction {
@@ -396,11 +418,27 @@ function indexObservedTargets(root: CanvasElementNode): ReadonlyMap<string, Obse
     if (node.secure !== undefined && typeof node.secure !== 'boolean') {
       throw new Error(`nativeWindow.observe.tree.${ref}.secure must be a boolean.`)
     }
+    let bbox: readonly [number, number, number, number] | undefined
+    if (node.bbox !== undefined) {
+      if (
+        !Array.isArray(node.bbox) ||
+        node.bbox.length !== 4 ||
+        node.bbox.some((value) => typeof value !== 'number' || !Number.isFinite(value)) ||
+        node.bbox[2] <= 0 ||
+        node.bbox[3] <= 0
+      ) {
+        throw new Error(
+          `nativeWindow.observe.tree.${ref}.bbox must be a finite positive rectangle.`
+        )
+      }
+      bbox = Object.freeze([node.bbox[0], node.bbox[1], node.bbox[2], node.bbox[3]])
+    }
     targets.set(ref, {
       role,
       tag,
       secure: node.secure === true,
-      ...(node.name !== undefined ? { name: node.name } : {})
+      ...(node.name !== undefined ? { name: node.name } : {}),
+      ...(bbox ? { bbox } : {})
     })
     if (node.children !== undefined) {
       if (!Array.isArray(node.children)) {
@@ -478,6 +516,8 @@ export class CanvasWindowDriver implements CanvasDriver {
   private readonly authority: CanvasWindowLeaseAuthority
   private readonly bridge: CanvasWindowNativeBridge
   private readonly clickAuthorization?: CanvasWindowClickAuthorization
+  private readonly actionAdmission?: CanvasWindowActionAdmission
+  private readonly actionTelemetry?: CanvasWindowActionTelemetry
   private readonly syntheticUrl: string
   private state: DriverState = 'new'
   private title = ''
@@ -493,6 +533,8 @@ export class CanvasWindowDriver implements CanvasDriver {
     this.authority = deps.authority
     this.bridge = deps.bridge
     this.clickAuthorization = deps.clickAuthorization
+    this.actionAdmission = deps.actionAdmission
+    this.actionTelemetry = deps.actionTelemetry
     const digest = createHash('sha256')
       .update(
         [
@@ -608,7 +650,7 @@ export class CanvasWindowDriver implements CanvasDriver {
         throw new Error('Native observation nodeCount does not match its AX tree.')
       }
       await this.assertLeaseCurrent()
-      this.currentObservation = { observationId, inputEpoch, targets }
+      this.currentObservation = { observationId, inputEpoch, targets, viewport: tree.viewport }
       if (lastActionVerification) this.pendingAction = null
       this.title = tree.title
       return tree
@@ -724,6 +766,7 @@ export class CanvasWindowDriver implements CanvasDriver {
           'Native fill is limited to structurally known, non-secure standard text fields.'
         )
       }
+      this.actionAdmission?.assertCanAdmit(action.kind)
       let clickReceipt: string | null = null
       if (action.kind === 'click') {
         clickReceipt = await this.requestClickAuthorization(observation, target, ref)
@@ -738,7 +781,9 @@ export class CanvasWindowDriver implements CanvasDriver {
         // Confirmation may have waited for the human. Revalidate main-owned
         // authority immediately before the native dispatch boundary.
         await this.assertLeaseCurrent()
+        this.actionAdmission?.assertCanAdmit(action.kind)
       }
+      this.recordDisplayTarget(action.kind, target, observation.viewport)
       // Crossing the native call is the dispatch uncertainty boundary. From this
       // point onward no second action is admissible until a correlatable action id
       // has been observed and verified. A transport/protocol failure therefore
@@ -805,6 +850,28 @@ export class CanvasWindowDriver implements CanvasDriver {
         title: this.title
       }
     })
+  }
+
+  private recordDisplayTarget(
+    verb: 'click' | 'fill',
+    target: ObservedTarget,
+    viewport: CanvasViewport
+  ): void {
+    if (!this.actionTelemetry || !target.bbox) return
+    const [left, top, width, height] = target.bbox
+    const x = (left + width / 2) / viewport.width
+    const y = (top + height / 2) / viewport.height
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return
+    try {
+      this.actionTelemetry.recordTarget({
+        verb,
+        x,
+        y,
+        label: semanticSummary(target)
+      })
+    } catch {
+      // Display telemetry never changes action authority or dispatch.
+    }
   }
 
   private localRefusal(

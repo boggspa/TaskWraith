@@ -10,7 +10,7 @@
 | Layer | Status | Meaning |
 |---|---|---|
 | §12b Foreground AX authority (exact run/window lease, secret refuse, audit, host-global HID idle) | **Shipped production** | Already in main; do not re-derive or weaken |
-| UI/session vertical slice (dock, session pause chrome, display-only cursor, status binding) | **Candidate** until Boss production wiring + main admission gate | Peer worktree artifacts only; not a user-visible ship claim yet |
+| UI/session vertical slice (dock, enforced pause/takeover, display-only cursor, status binding) | **Integrated on the mission branch** | Main-owned admission gate, lifecycle IPC, persistent Drive tab, and normalized cursor projection |
 | Background Drive / interference harness | **Prototype only** (`prototypes/` + `scripts/`) | Never productize until per-app harness proves non-interference |
 | Isolated Drive (VM guest HID) | **RFC only** | Not profile `--taskwraith-isolated-instance` |
 | This RFC + shared contract + `AppDriveSliceAcceptance.test.ts` | **Decision lock / acceptance evidence** | Documentary + invariant tests; no actuation authority |
@@ -25,7 +25,7 @@ Productize **Foreground Drive** chrome on the existing exact-run/window AX lease
 
 | Mode | Meaning | This run |
 |---|---|---|
-| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Candidate UI/session** on shipped §12b authority (not yet Boss-wired) |
+| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Integrated UI/session slice** on shipped §12b authority |
 | **Background Drive** | Non-disruptive control: no host cursor, focus, keyboard, clipboard, or activation theft | **Prototype only** until interference harness passes per app |
 | **Isolated Drive** | Independent guest mouse/keyboard inside a VM | **RFC only**; Windows AppDrive remains off in v1 |
 
@@ -103,29 +103,29 @@ Default harness posture: dry-run / observe-only; any PostToPid prototype is fixt
 | ID | Criterion | Evidence |
 |---|---|---|
 | A1 | Mode chip / docs say **Foreground Drive** for native AX control | Dock UI + this RFC + contract test |
-| A2 | Pause refuses new acts without revoking/minting lease authority incorrectly | Session model tests (GrokWork1) |
+| A2 | Pause refuses new acts without revoking/minting lease authority incorrectly | Coordinator + CanvasWindowDriver integration tests |
 | A3 | Takeover/Stop are explicit UI; no “target-scoped auto-pause” copy for native HID | Dock copy + contract `describeNativeHumanArbitrationHonesty` |
 | A4 | Virtual cursor is display-only (`pointer-events:none`); never warps OS cursor | CursorWork1 tests/CSS |
-| A5 | Authority disclosure never treats bundle ID / app name as authorization | CursorWork2 model tests |
+| A5 | Authority disclosure never treats bundle ID / app name as authorization | Existing exact-run ownership gates + dock disclosure tests |
 | A6 | No production CGEvent / silent fallback / persistent app trust in this slice | Grep + forbidden-list contract test |
 | A7 | Background/Isolated remain unshipped in UI mode enum | `APP_DRIVE_SHIPPED_UI_MODES === ['foreground']` |
-| A8 | Interference harness exists only under prototype/scripts paths | GrokWork2 candidate |
-| A9 | Focused invariant tests green | `npx vitest run src/shared/appDriveComputerUseContract.test.ts src/main/nativeWindow/AppDriveSliceAcceptance.test.ts` |
+| A8 | Interference harness exists only under prototype/scripts paths | Isolated GrokWork2 candidate; intentionally not imported by production |
+| A9 | Focused invariant tests green | 12 AppDrive/native/dock suites; 288 tests |
 | A10 | Canonical lifecycle is `idle\|active\|paused\|takeover\|stopped`; Viewing/Driving are labels only | Shared contract helpers + peer dock/session alignment |
 
 ---
 
 ## 5. Ordered follow-up slices (file ownership)
 
-1. **Boss production wiring** — bind preload/`App.tsx`/dock registration once live claims clear; own composition-root touch points.  
-2. **Promote GrokWork1 session API** — `src/main/appDrive/*` behind coordinator adapters; still no lease authority change.  
-3. **Promote CursorWork1 dock** — register right-dock tab; keep Canvas dock web/sketch-only.  
-4. **Promote CursorWork2 disclosure** — Settings/App Drive permission panel shows current lease + revoke only.  
-5. **Harness iterate (GrokWork2 → security review)** — fixture apps; publish per-app results; still no product claim.  
-6. **Target-scoped native arbitration RFC** — requires explicit user consent (event tap / Input Monitoring is authority expansion).  
-7. **Background Drive productization** — only after A8 metrics pass per app; still no silent fallback.  
-8. **Isolated Drive RFC implementation** — VM lifecycle, guest agent, host control-plane consent; Windows separate.  
-9. **Verb expansion** — new `canvas_*` verbs only with gateway generation + Tools.md regen + observe→act→verify honesty.
+1. **Merge clearance (Boss)** — rebase onto current `master`, rerun all gates, and promote only when the shared checkout has no conflicting live claim.
+2. **Live dock preview (Renderer/AppWatch owner)** — feed a sanitized Screen Watch frame into `AppDriveDockPanel`; keep privileged geometry main-owned.
+3. **Renderer binder extraction (Renderer architecture owner)** — move AppDrive reconciliation out of `App.tsx` and import the shared lifecycle/mode contract.
+4. **Permission surface (Authority + UX owners)** — show the current-launch lease and revoke path; durable app-keyed approvals remain a separately consented RFC.
+5. **Harness iteration (GrokWork2 → security review)** — fixture apps; publish per-app results; still no product claim.
+6. **Target-scoped native arbitration RFC (Native/security owners)** — explicit consent required because event taps / Input Monitoring widen desktop authority.
+7. **Background Drive productization (Native + compatibility owners)** — only after A8 metrics pass per app; never silently fall back.
+8. **Isolated Drive implementation (VM/Windows owners)** — VM lifecycle, guest agent, host control-plane consent; Windows remains separate.
+9. **Verb expansion (Tooling owner)** — new `canvas_*` verbs only with gateway generation, Tools.md regeneration, and observe→act→verify honesty.
 
 ---
 
@@ -147,12 +147,26 @@ Default harness posture: dry-run / observe-only; any PostToPid prototype is fixt
 
 ---
 
-## 8. Verification commands (this lane)
+## 8. Verification commands
 
 ```bash
-npx vitest run \
+./node_modules/.bin/vitest run \
+  src/main/appDrive/AppDriveSession.test.ts \
+  src/main/nativeWindow/NativeWindowCoordinator.test.ts \
+  src/main/canvas/CanvasWindowDriver.test.ts \
+  src/main/canvas/CanvasWindowDriverFactory.test.ts \
+  src/main/canvas/NativeWindowCanvasOpenResolver.test.ts \
+  src/main/IpcValidation.test.ts \
+  src/main/RendererIpcPolicy.test.ts \
   src/shared/appDriveComputerUseContract.test.ts \
-  src/main/nativeWindow/AppDriveSliceAcceptance.test.ts
+  src/renderer/src/lib/appDriveDockState.test.ts \
+  src/renderer/src/components/AppDriveDockPanel.test.tsx \
+  src/renderer/src/components/AppDriveVirtualCursor.test.tsx \
+  src/renderer/src/lib/rightDockState.test.ts
+npm run typecheck
+npm run build
+npm run format:ratchet
+npm run guard:doctrine-integrity
 ```
 
-Expected: all tests pass. No production actuation modules modified by CursorWork3.
+Expected: 12 focused suites / 288 tests plus typecheck, build, formatting ratchet, and doctrine integrity all pass after rebase.

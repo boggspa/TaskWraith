@@ -106,7 +106,11 @@ function status(
       expiresAt: 60_000,
       stepBudget: 2,
       stepsUsed: 0,
-      stepsRemaining: 2
+      stepsRemaining: 2,
+      mode: 'foreground',
+      lifecycle: 'active',
+      canAdmitActions: true,
+      virtualCursor: null
     },
     ...overrides
   }

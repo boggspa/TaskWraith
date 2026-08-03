@@ -269,6 +269,35 @@ function nativeWindowObservation(
     ...(streaming ? { streaming } : {})
   })
 }
+function nativeWindowVirtualCursor(
+  value: unknown
+): NonNullable<NativeWindowCoordinatorRendererStatus['control']>['virtualCursor'] | undefined {
+  if (value === null) return null
+  const input = nativeWindowRecord(value)
+  if (!input) return undefined
+  const x = nativeWindowFiniteNumber(input.x)
+  const y = nativeWindowFiniteNumber(input.y)
+  const label = nativeWindowString(input.label, 300, true)
+  const verb = input.verb
+  if (
+    x === null ||
+    y === null ||
+    x < 0 ||
+    x > 1 ||
+    y < 0 ||
+    y > 1 ||
+    label === null ||
+    (verb !== 'click' && verb !== 'fill')
+  ) {
+    return undefined
+  }
+  return Object.freeze({
+    x,
+    y,
+    label,
+    verb
+  })
+}
 
 function nativeWindowControl(
   value: unknown
@@ -293,6 +322,8 @@ function nativeWindowControl(
       ? Number(input.stepsRemaining)
       : null
   const allowedVerbsInput = input.allowedVerbs
+  const lifecycle = input.lifecycle
+  const virtualCursor = nativeWindowVirtualCursor(input.virtualCursor)
   if (
     !chatId ||
     !runId ||
@@ -306,6 +337,10 @@ function nativeWindowControl(
     stepsRemaining === null ||
     input.approvedBy !== 'user' ||
     input.trustState !== 'user-approved' ||
+    input.mode !== 'foreground' ||
+    (lifecycle !== 'active' && lifecycle !== 'paused' && lifecycle !== 'takeover') ||
+    typeof input.canAdmitActions !== 'boolean' ||
+    virtualCursor === undefined ||
     !Array.isArray(allowedVerbsInput) ||
     allowedVerbsInput.some(
       (verb) => verb !== 'observe' && verb !== 'inspect' && verb !== 'click' && verb !== 'fill'
@@ -327,7 +362,11 @@ function nativeWindowControl(
     expiresAt,
     stepBudget,
     stepsUsed,
-    stepsRemaining
+    stepsRemaining,
+    mode: 'foreground' as const,
+    lifecycle,
+    canAdmitActions: input.canAdmitActions,
+    virtualCursor
   })
 }
 
@@ -1551,6 +1590,13 @@ const api = {
       detached: boolean
       status: NativeWindowCoordinatorRendererStatus
     }>,
+  attachWindowControlSession: (chatId: string, action: 'pause' | 'resume' | 'takeover' | 'stop') =>
+    ipcRenderer.invoke(
+      'attach-window:control-session',
+      chatId,
+      action
+    ) as Promise<NativeWindowCoordinatorRendererStatus>,
+
   attachWindowStatus: (chatId: string) =>
     ipcRenderer.invoke(
       'attach-window:status',

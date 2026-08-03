@@ -2,6 +2,12 @@ import { randomUUID } from 'node:crypto'
 
 import type { LaunchAttempt } from '../launch/types'
 import {
+  AppDriveSession,
+  type AppDriveSessionBinding,
+  type AppDriveSessionRendererStatus,
+  type AppDriveSessionLifecycle
+} from '../appDrive/AppDriveSession'
+import {
   NativeWindowLeaseError,
   NativeWindowLeaseRegistry,
   type NativeWindowLeaseControlVerb,
@@ -101,6 +107,15 @@ export interface NativeWindowCoordinatorRendererObservation {
   }
 }
 
+export interface NativeWindowCoordinatorVirtualCursor {
+  readonly x: number
+  readonly y: number
+  readonly label: string
+  readonly verb: NativeWindowLeaseControlVerb
+}
+
+export type NativeWindowCoordinatorControlSessionAction = 'pause' | 'resume' | 'takeover' | 'stop'
+
 export interface NativeWindowCoordinatorRendererControl {
   readonly chatId: string
   readonly runId: string
@@ -115,6 +130,10 @@ export interface NativeWindowCoordinatorRendererControl {
   readonly stepBudget: number
   readonly stepsUsed: number
   readonly stepsRemaining: number
+  readonly mode: 'foreground'
+  readonly lifecycle: Exclude<AppDriveSessionLifecycle, 'idle' | 'stopped'>
+  readonly canAdmitActions: boolean
+  readonly virtualCursor: NativeWindowCoordinatorVirtualCursor | null
 }
 
 /**
@@ -288,6 +307,8 @@ export class NativeWindowCoordinator {
   private readonly pickerTimeoutMs: number
   private readonly observationState: ScopedAttachedWindowState
   private readonly leaseRegistry: NativeWindowLeaseRegistry
+  private readonly appDriveSession: AppDriveSession
+  private virtualCursor: NativeWindowCoordinatorVirtualCursor | null = null
 
   private pendingPick: ScopedAttachedWindowPick | null = null
   private pickFlowChatId: string | null = null
@@ -342,6 +363,7 @@ export class NativeWindowCoordinator {
       now: this.now,
       ...(options.createLeaseID ? { createLeaseId: options.createLeaseID } : {})
     })
+    this.appDriveSession = new AppDriveSession({ now: this.now })
   }
 
   /**
@@ -567,6 +589,7 @@ export class NativeWindowCoordinator {
           leaseId: grant.lease.leaseId
         })
         await this.handleControlRevocation(grant.replaced)
+        this.bindAppDriveSession(grant.lease, nextAttachment.snapshot)
       } finally {
         this.candidateControlTarget = null
       }
@@ -615,6 +638,7 @@ export class NativeWindowCoordinator {
           ? this.activeControlTarget
           : null
       this.consumeControlRevocation(leaseStatus.expired)
+      this.consumeAppDriveRevocation(leaseStatus.expired)
       void this.releaseAccessibilityTarget(leaseStatus.expired, target).catch(() => undefined)
     }
     const lease =
@@ -623,11 +647,13 @@ export class NativeWindowCoordinator {
         ? leaseStatus.lease
         : null
     const warning = this.warnings.get(canonicalChatId)
+    const appDriveStatus = lease ? this.currentAppDriveControlStatus(lease) : null
 
     return Object.freeze({
       pickerPending: this.pickFlowChatId === canonicalChatId,
       observation: attachment ? rendererObservation(attachment) : null,
-      control: lease ? rendererControl(lease) : null,
+      control:
+        lease && appDriveStatus ? rendererControl(lease, appDriveStatus, this.virtualCursor) : null,
       ...(warning ? { warning } : {})
     })
   }
@@ -735,6 +761,7 @@ export class NativeWindowCoordinator {
           ? this.activeControlTarget
           : null
       this.consumeControlRevocation(revocation)
+      this.consumeAppDriveRevocation(revocation)
       void this.releaseAccessibilityTarget(revocation, target).catch(() => undefined)
     }
     if (this.privateAttachment?.snapshot === exact) this.privateAttachment = null
@@ -780,6 +807,76 @@ export class NativeWindowCoordinator {
       return null
     }
   }
+  /** Main-owned session lifecycle control. Stop revokes control but keeps Screen Watch attached. */
+  async controlSession(
+    chatId: string,
+    action: NativeWindowCoordinatorControlSessionAction
+  ): Promise<NativeWindowCoordinatorRendererStatus> {
+    const canonicalChatId = requiredString(chatId, 'chatId')
+    const status = this.appDriveSession.status()
+    if (!status.chatId || status.chatId !== canonicalChatId) {
+      throw new NativeWindowCoordinatorError(
+        'control-owner-mismatch',
+        'No Foreground Drive session is bound to this chat.'
+      )
+    }
+
+    if (action === 'pause') {
+      this.appDriveSession.pause()
+      this.virtualCursor = null
+    } else if (action === 'resume') {
+      this.appDriveSession.resume()
+    } else if (action === 'takeover') {
+      this.appDriveSession.takeOver()
+      this.virtualCursor = null
+    } else if (action === 'stop') {
+      this.appDriveSession.stop('user-stop')
+      const revocation = this.leaseRegistry.revokeActive('user-control-stopped')
+      await this.handleControlRevocation(revocation)
+    } else {
+      throw new NativeWindowCoordinatorError('invalid-input', 'Unknown App Drive session action.')
+    }
+
+    this.emitStatus(canonicalChatId)
+    return this.statusForChat(canonicalChatId)
+  }
+
+  /** Fail-closed chrome gate before a native click/fill is admitted. */
+  assertAppDriveActionAllowed(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    verb: NativeWindowLeaseControlVerb
+  ): void {
+    this.assertExactCanvasOwner(owner)
+    this.appDriveSession.assertCanAdmitActions(verb)
+  }
+
+  /** Record a normalized, display-only target; this never actuates or grants authority. */
+  recordAppDriveActionTarget(
+    owner: NativeWindowCoordinatorCanvasOwner,
+    target: NativeWindowCoordinatorVirtualCursor
+  ): void {
+    this.assertAppDriveActionAllowed(owner, target.verb)
+    if (
+      !Number.isFinite(target.x) ||
+      !Number.isFinite(target.y) ||
+      target.x < 0 ||
+      target.x > 1 ||
+      target.y < 0 ||
+      target.y > 1
+    ) {
+      throw new NativeWindowCoordinatorError(
+        'invalid-input',
+        'App Drive cursor coordinates must be normalized.'
+      )
+    }
+    this.virtualCursor = Object.freeze({
+      x: target.x,
+      y: target.y,
+      label: requiredString(target.label, 'target.label').slice(0, 300),
+      verb: target.verb
+    })
+    this.emitStatus(owner.chatId)
+  }
 
   /** Claim one click/fill step immediately before the corresponding Swift call. */
   consumeCanvasActionStep(
@@ -788,7 +885,10 @@ export class NativeWindowCoordinator {
   ): NativeWindowCoordinatorCanvasAccess {
     try {
       this.assertExactCanvasOwner(owner)
+      this.appDriveSession.assertCanAdmitActions(verb)
       const grant = this.leaseRegistry.consumeControlStep(this.executorContext(owner), verb)
+      this.appDriveSession.mirrorControlBudget(this.appDriveBudgetUpdate(grant.lease))
+      this.emitStatus(owner.chatId)
       return this.canvasAccessForExactOwner(grant.lease, owner)
     } catch (error) {
       this.handleRegistryError(error)
@@ -1187,12 +1287,90 @@ export class NativeWindowCoordinator {
         ? this.activeControlTarget
         : null
     this.consumeControlRevocation(revocation)
+    this.consumeAppDriveRevocation(revocation)
     if (release) await this.releaseAccessibilityTarget(revocation, target)
   }
 
   private consumeControlRevocation(revocation: NativeWindowLeaseRevocation): void {
     if (this.activeControlTarget?.leaseId === revocation.lease.leaseId) {
       this.activeControlTarget = null
+      this.virtualCursor = null
+    }
+  }
+  private consumeAppDriveRevocation(revocation: NativeWindowLeaseRevocation): void {
+    const status = this.appDriveSession.status()
+    if (
+      status.chatId !== revocation.lease.chatId ||
+      status.runId !== revocation.lease.runId ||
+      status.launchAttemptId !== revocation.lease.launchAttemptId
+    ) {
+      return
+    }
+    if (status.lifecycle !== 'stopped') {
+      this.appDriveSession.stop(appDriveStopReason(revocation.reason))
+    }
+    this.appDriveSession.clearStopped()
+  }
+
+  private bindAppDriveSession(
+    lease: NativeWindowLeaseSnapshot,
+    attachment: ScopedAttachedWindowSnapshot
+  ): void {
+    const binding: AppDriveSessionBinding = {
+      chatId: lease.chatId,
+      runId: lease.runId,
+      provider: lease.provider || 'unknown',
+      launchAttemptId: lease.launchAttemptId,
+      approvedAt: lease.approvedAt,
+      allowedVerbs: lease.allowedVerbs,
+      expiresAt: lease.expiresAt,
+      stepBudget: lease.stepBudget,
+      stepsUsed: lease.stepsUsed,
+      target: {
+        applicationName: attachment.windowMeta.applicationName,
+        windowTitle: attachment.windowMeta.title,
+        bundleID: attachment.windowMeta.bundleID
+      }
+    }
+    this.appDriveSession.bind(binding)
+    this.virtualCursor = null
+  }
+
+  private appDriveBudgetUpdate(
+    lease: Pick<
+      NativeWindowLeaseSnapshot | NativeWindowLeaseRendererProjection,
+      'chatId' | 'runId' | 'launchAttemptId' | 'expiresAt' | 'stepBudget' | 'stepsUsed'
+    >
+  ): Parameters<AppDriveSession['mirrorControlBudget']>[0] {
+    return {
+      chatId: lease.chatId,
+      runId: lease.runId,
+      launchAttemptId: lease.launchAttemptId,
+      expiresAt: lease.expiresAt,
+      stepBudget: lease.stepBudget,
+      stepsUsed: lease.stepsUsed
+    }
+  }
+
+  private currentAppDriveControlStatus(
+    lease: NativeWindowLeaseRendererProjection
+  ): AppDriveSessionRendererStatus | null {
+    try {
+      this.appDriveSession.mirrorControlBudget(this.appDriveBudgetUpdate(lease))
+      const status = this.appDriveSession.status()
+      if (
+        status.chatId !== lease.chatId ||
+        status.runId !== lease.runId ||
+        status.launchAttemptId !== lease.launchAttemptId ||
+        (status.lifecycle !== 'active' &&
+          status.lifecycle !== 'paused' &&
+          status.lifecycle !== 'takeover')
+      ) {
+        return null
+      }
+      return status
+    } catch {
+      return null
     }
   }
 
@@ -1203,6 +1381,7 @@ export class NativeWindowCoordinator {
         ? this.activeControlTarget
         : null
     this.consumeControlRevocation(error.revocation)
+    this.consumeAppDriveRevocation(error.revocation)
     void this.releaseAccessibilityTarget(error.revocation, target).catch(() => undefined)
     this.emitStatus(error.revocation.lease.chatId)
   }
@@ -1511,7 +1690,9 @@ function rendererObservation(
 }
 
 function rendererControl(
-  lease: NativeWindowLeaseRendererProjection
+  lease: NativeWindowLeaseRendererProjection,
+  session: AppDriveSessionRendererStatus,
+  virtualCursor: NativeWindowCoordinatorVirtualCursor | null
 ): NativeWindowCoordinatorRendererControl {
   return Object.freeze({
     chatId: lease.chatId,
@@ -1526,8 +1707,20 @@ function rendererControl(
     expiresAt: lease.expiresAt,
     stepBudget: lease.stepBudget,
     stepsUsed: lease.stepsUsed,
-    stepsRemaining: lease.stepsRemaining
+    stepsRemaining: lease.stepsRemaining,
+    mode: 'foreground',
+    lifecycle: session.lifecycle as Exclude<AppDriveSessionLifecycle, 'idle' | 'stopped'>,
+    canAdmitActions: session.canAdmitActions,
+    virtualCursor
   })
+}
+
+function appDriveStopReason(reason: NativeWindowLeaseRevocation['reason']) {
+  if (reason === 'user-control-stopped') return 'user-stop' as const
+  if (reason === 'user-detached') return 'user-detach' as const
+  if (reason === 'expired') return 'expired' as const
+  if (reason === 'replaced') return 'replaced' as const
+  return 'binding-cleared' as const
 }
 
 function freezeFrameEgress(

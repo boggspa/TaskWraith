@@ -6,6 +6,7 @@ import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
 import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
 import type { ThreadMessageInboxSnapshot } from '../../hooks/useThreadMessageInbox'
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
+import type { AppDriveDockStatus } from '../../lib/appDriveDockState'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -65,8 +66,12 @@ type MainAppLayoutSidebarProps = {
   displayCurrency: SidebarDisplayCurrency
   handleActiveSidebarTabChange: NonNullable<SidebarProps['onActiveSidebarTabChange']>
   handleAddChatToWorkspaceBoard: NonNullable<SidebarProps['onAddChatToWorkspaceBoard']>
-  handleAddLocalServerToWorkspaceBoard: NonNullable<SidebarProps['onAddLocalServerToWorkspaceBoard']>
-  handleAddRunQueueJobToWorkspaceBoard: NonNullable<SidebarProps['onAddRunQueueJobToWorkspaceBoard']>
+  handleAddLocalServerToWorkspaceBoard: NonNullable<
+    SidebarProps['onAddLocalServerToWorkspaceBoard']
+  >
+  handleAddRunQueueJobToWorkspaceBoard: NonNullable<
+    SidebarProps['onAddRunQueueJobToWorkspaceBoard']
+  >
   handleAddWorkflowToWorkspaceBoard: NonNullable<SidebarProps['onAddWorkflowToWorkspaceBoard']>
   handleArchiveWorkspaceBoard: NonNullable<SidebarProps['onArchiveWorkspaceBoard']>
   handleAgentApprovalAction: NonNullable<SidebarProps['onRespondAgentApproval']>
@@ -176,7 +181,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   activeWorkspaceBoardId: any
   activeWorkspaceBoardWorkspace: any
   activeProjectGraphId: string | null
-  activeProjectGraphProjection: import('../../lib/projectThreadGraphProjection').ProjectThreadGraphProjection | null
+  activeProjectGraphProjection:
+    | import('../../lib/projectThreadGraphProjection').ProjectThreadGraphProjection
+    | null
   projectGraphEntries: { id: string; name: string; memberCount: number }[]
   onOpenProjectGraph: (project: { id: string }) => void
   onBackFromProjectGraph: () => void
@@ -564,6 +571,12 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showFileEditor: any
   showOfficeSuite: any
   isCanvasDockPanelOpen: any
+  isAppDriveDockPanelOpen: boolean
+  appDriveDockStatus: AppDriveDockStatus | null
+  handleAppDrivePause: () => void
+  handleAppDriveResume: () => void
+  handleAppDriveTakeOver: () => void
+  handleAppDriveStop: () => void
   isFanoutCandidatesPanelOpen: any
   isThreadMessagePanelOpen: boolean
   threadMessageInbox: ThreadMessageInboxSnapshot

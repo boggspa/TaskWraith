@@ -6,6 +6,7 @@ import {
   PAUSE_VS_TAKEOVER_HELP,
   PERMISSION_HONESTY_DESCRIPTION,
   activityDisplayLabel,
+  appDriveDockStatusFromNative,
   deriveAppDriveLifecycle,
   formatExpiry,
   formatStepsRemaining,
@@ -44,6 +45,50 @@ const control: AppDriveDockControlView = {
 }
 
 describe('appDriveDockState', () => {
+  it('maps the sanitized native control projection into dock state', () => {
+    const dock = appDriveDockStatusFromNative('chat-1', {
+      pickerPending: false,
+      observation: {
+        chatId: 'chat-1',
+        generation: 2,
+        attachedAt: '2026-08-03T20:00:00.000Z',
+        window: {
+          title: 'Shopping',
+          bundleID: 'com.apple.Notes',
+          applicationName: 'Notes',
+          identityQuality: 'exact'
+        }
+      },
+      control: {
+        chatId: 'chat-1',
+        runId: 'run-1',
+        provider: 'codex',
+        participantId: null,
+        launchAttemptId: 'attempt-1',
+        approvedAt: 1,
+        approvedBy: 'user',
+        trustState: 'user-approved',
+        allowedVerbs: ['observe', 'inspect', 'click', 'fill'],
+        expiresAt: 100,
+        stepBudget: 20,
+        stepsUsed: 3,
+        stepsRemaining: 17,
+        mode: 'foreground',
+        lifecycle: 'paused',
+        canAdmitActions: false,
+        virtualCursor: { x: 0.25, y: 0.75, label: 'Continue', verb: 'click' }
+      }
+    })
+    expect(dock).toMatchObject({
+      chatId: 'chat-1',
+      lifecycle: 'paused',
+      mode: 'foreground',
+      observation: target,
+      control: { stepsRemaining: 17 },
+      virtualCursor: { x: 0.25, y: 0.75, label: 'Continue' }
+    })
+  })
+
   it('labels the shipped mode as Foreground Drive only', () => {
     expect(APP_DRIVE_MODE).toBe('foreground')
     expect(modeChipLabel()).toBe('Foreground Drive')

@@ -150,7 +150,7 @@ describe('appDriveComputerUseContract', () => {
 
     expect(describeAppDriveShipBoundary()).toEqual({
       foregroundAxAuthority: 'shipped_tier_4',
-      uiSessionVerticalSlice: 'candidate_until_boss_wiring',
+      uiSessionVerticalSlice: 'integrated_foreground_ui_session',
       backgroundDrive: 'prototype_only',
       isolatedDrive: 'rfc_only',
       externalPrerequisites: [

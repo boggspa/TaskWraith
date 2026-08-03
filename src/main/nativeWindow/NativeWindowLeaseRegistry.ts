@@ -38,6 +38,7 @@ export type NativeWindowLeaseRevocationReason =
   | 'run-terminal'
   | 'step-budget-exhausted'
   | 'system-permission-lost'
+  | 'user-control-stopped'
   | 'user-detached'
 
 export type NativeWindowLeaseErrorCode =

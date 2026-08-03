@@ -206,7 +206,7 @@ export function describeNativeHumanArbitrationHonesty(): {
  */
 export function describeAppDriveShipBoundary(): {
   readonly foregroundAxAuthority: 'shipped_tier_4'
-  readonly uiSessionVerticalSlice: 'candidate_until_boss_wiring'
+  readonly uiSessionVerticalSlice: 'integrated_foreground_ui_session'
   readonly backgroundDrive: 'prototype_only'
   readonly isolatedDrive: 'rfc_only'
   readonly externalPrerequisites: readonly [
@@ -219,7 +219,7 @@ export function describeAppDriveShipBoundary(): {
 } {
   return {
     foregroundAxAuthority: 'shipped_tier_4',
-    uiSessionVerticalSlice: 'candidate_until_boss_wiring',
+    uiSessionVerticalSlice: 'integrated_foreground_ui_session',
     backgroundDrive: 'prototype_only',
     isolatedDrive: 'rfc_only',
     externalPrerequisites: [

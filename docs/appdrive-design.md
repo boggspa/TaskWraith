@@ -590,7 +590,7 @@ Product language for “Computer Use” must not collapse into Tier 5 or into pr
 
 | Mode | Contract | Status |
 |---|---|---|
-| **Foreground Drive** | The **shipped** §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | §12b authority is production. Dock/session/virtual-cursor productization is a **candidate** until Boss wiring + main admission gate land. |
+| **Foreground Drive** | The **shipped** §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | §12b authority and the first-class dock/session/display-cursor slice are integrated on the mission branch. |
 | **Background Drive** | Non-disruptive control with zero host cursor, focus, keyboard, clipboard, or activation theft. | **Prototype only** until a per-app automated interference harness proves non-theft. No CGEvent productization in the safe slice. |
 | **Isolated Drive** | Real independent guest mouse/keyboard through a VM. | **RFC only**. **Not** `--taskwraith-isolated-instance` (that flag is TaskWraith state-profile isolation on the host). |
 
