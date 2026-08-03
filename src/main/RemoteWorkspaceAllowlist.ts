@@ -67,6 +67,11 @@ export type RemoteWorkspaceCapability =
    * paired device can toggle session YOLO.
    */
   | 'yolo'
+  /**
+   * Destructive, admin-only removal of one transcript message. Default-off:
+   * neither read-write defaults nor legacy grants inherit it.
+   */
+  | 'deleteMessage'
 
 export const READ_ONLY_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
   'monitor',
@@ -97,7 +102,8 @@ export const LEGACY_READ_WRITE_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWor
 export const ADMIN_REMOTE_WORKSPACE_CAPABILITIES: readonly RemoteWorkspaceCapability[] = [
   'externalPublish',
   'pin',
-  'yolo'
+  'yolo',
+  'deleteMessage'
 ]
 
 /** T71/T72 — the reserved workspace-id phones use for scope-global chats
@@ -224,6 +230,12 @@ export const REMOTE_WORKSPACE_CAPABILITY_DESCRIPTIONS: Record<
     capability: 'yolo',
     label: 'Session YOLO (admin)',
     description: 'Toggle the desktop session YOLO approval bypass from a paired device.',
+    adminOnly: true
+  },
+  deleteMessage: {
+    capability: 'deleteMessage',
+    label: 'Delete transcript messages (admin)',
+    description: 'Permanently remove individual transcript messages from a paired device.',
     adminOnly: true
   }
 }

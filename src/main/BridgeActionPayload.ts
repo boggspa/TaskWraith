@@ -839,6 +839,13 @@ export interface BridgeToggleMessageFeedbackAction extends BridgeActionMetadata 
   note?: string
 }
 
+export interface BridgeDeleteTranscriptMessageAction extends BridgeActionMetadata {
+  kind: 'deleteTranscriptMessage'
+  workspaceId: string
+  threadId: string
+  messageId: string
+}
+
 /** Promote a queued Human People comment into a host-owned composer draft.
  * The phone sends identity only; the Mac re-reads and frames canonical content. */
 export interface BridgePromoteCollaboratorCommentAction extends BridgeActionMetadata {
@@ -1077,6 +1084,7 @@ export type BridgeActionPayload =
   | BridgeBlackboardPostAction
   | BridgeToggleMessagePinAction
   | BridgeToggleMessageFeedbackAction
+  | BridgeDeleteTranscriptMessageAction
   | BridgePromoteCollaboratorCommentAction
   | BridgeProposedPlanDecisionAction
   | BridgeCanvasActionAction
@@ -1224,6 +1232,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'blackboardPost':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
+    case 'deleteTranscriptMessage':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1316,6 +1325,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'blackboardPost':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
+    case 'deleteTranscriptMessage':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1410,6 +1420,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'blackboardPost':
     case 'toggleMessagePin':
     case 'toggleMessageFeedback':
+    case 'deleteTranscriptMessage':
     case 'promoteCollaboratorComment':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1669,6 +1680,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isToggleMessageFeedback(parsed)
         ? (parsed as unknown as BridgeToggleMessageFeedbackAction)
         : { kind: 'unknown', rawKind: 'toggleMessageFeedback', raw: parsed }
+    case 'deleteTranscriptMessage':
+      return isDeleteTranscriptMessage(parsed)
+        ? (parsed as unknown as BridgeDeleteTranscriptMessageAction)
+        : { kind: 'unknown', rawKind: 'deleteTranscriptMessage', raw: parsed }
     case 'promoteCollaboratorComment':
       return isPromoteCollaboratorComment(parsed)
         ? (parsed as unknown as BridgePromoteCollaboratorCommentAction)
@@ -2458,6 +2473,14 @@ function isToggleMessageFeedback(v: Record<string, unknown>): boolean {
     (v.vote === 'up' || v.vote === 'down') &&
     (v.reason === undefined || (typeof v.reason === 'string' && v.reason.length <= 80)) &&
     (v.note === undefined || (typeof v.note === 'string' && v.note.length <= 1000))
+  )
+}
+
+function isDeleteTranscriptMessage(v: Record<string, unknown>): boolean {
+  return (
+    isWorkspaceThreadAction(v) &&
+    typeof v.messageId === 'string' &&
+    v.messageId.trim().length > 0
   )
 }
 

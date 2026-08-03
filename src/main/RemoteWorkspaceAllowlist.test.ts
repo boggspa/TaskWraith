@@ -212,6 +212,9 @@ describe('RemoteWorkspaceAllowlist', () => {
         allowlist.evaluate({ workspaceId: 'ws-1', capability: 'externalPublish' }).allowed
       ).toBe(false)
       expect(allowlist.evaluate({ workspaceId: 'ws-1', capability: 'yolo' }).allowed).toBe(false)
+      expect(
+        allowlist.evaluate({ workspaceId: 'ws-1', capability: 'deleteMessage' }).allowed
+      ).toBe(false)
       const migrated = JSON.parse(readFileSync(storagePath, 'utf-8'))
       expect(migrated.version).toBe(2)
       expect(migrated.entries[0]).not.toHaveProperty('allowedProviders')
@@ -219,13 +222,15 @@ describe('RemoteWorkspaceAllowlist', () => {
       rmSync(dir, { recursive: true, force: true })
     })
 
-    it('keeps external publishing, pin, and yolo as explicit admin-only capabilities outside defaults', () => {
+    it('keeps publishing, pin, yolo, and message deletion explicit and admin-only', () => {
       expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('externalPublish')
       expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('pin')
       expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('yolo')
+      expect(capabilitiesForRemoteWorkspaceMode('read-write')).not.toContain('deleteMessage')
       expect(isAdminRemoteWorkspaceCapability('externalPublish')).toBe(true)
       expect(isAdminRemoteWorkspaceCapability('pin')).toBe(true)
       expect(isAdminRemoteWorkspaceCapability('yolo')).toBe(true)
+      expect(isAdminRemoteWorkspaceCapability('deleteMessage')).toBe(true)
       expect(describeRemoteWorkspaceCapability('externalPublish')).toMatchObject({
         label: 'Publish externally (admin)',
         adminOnly: true
@@ -235,6 +240,10 @@ describe('RemoteWorkspaceAllowlist', () => {
         adminOnly: true
       })
       expect(REMOTE_WORKSPACE_CAPABILITY_DESCRIPTIONS.yolo.description).toMatch(/approval bypass/i)
+      expect(describeRemoteWorkspaceCapability('deleteMessage')).toMatchObject({
+        label: 'Delete transcript messages (admin)',
+        adminOnly: true
+      })
     })
 
     it('allows admin capabilities only when an allowlist entry explicitly grants them', () => {
@@ -243,7 +252,14 @@ describe('RemoteWorkspaceAllowlist', () => {
         workspaceId: 'ws-admin',
         path: '/a',
         mode: 'read-write',
-        capabilities: ['monitor', 'approve', 'externalPublish', 'pin', 'yolo']
+        capabilities: [
+          'monitor',
+          'approve',
+          'externalPublish',
+          'pin',
+          'yolo',
+          'deleteMessage'
+        ]
       })
 
       expect(
@@ -253,6 +269,9 @@ describe('RemoteWorkspaceAllowlist', () => {
       expect(allowlist.evaluate({ workspaceId: 'ws-admin', capability: 'yolo' }).allowed).toBe(
         true
       )
+      expect(
+        allowlist.evaluate({ workspaceId: 'ws-admin', capability: 'deleteMessage' }).allowed
+      ).toBe(true)
     })
 
     it('uses explicit capabilities when present instead of mode defaults', () => {
@@ -589,7 +608,8 @@ describe('RemoteWorkspaceAllowlist', () => {
         'fileWrite',
         'externalPublish',
         'pin',
-        'yolo'
+        'yolo',
+        'deleteMessage'
       ] as const) {
         expect(allowlist.evaluate({ workspaceId: GLOBAL_REMOTE_SCOPE, capability })).toMatchObject(
           { allowed: false, reason: expect.stringMatching(/no file access/i) }

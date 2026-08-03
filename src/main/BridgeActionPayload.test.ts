@@ -1620,6 +1620,37 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes transcript message deletion as a gated destructive mutation', () => {
+      const wire = encode({
+        kind: 'deleteTranscriptMessage',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'message-1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload).toEqual({
+        kind: 'deleteTranscriptMessage',
+        workspaceId: 'ws-1',
+        threadId: 'thread-1',
+        messageId: 'message-1'
+      })
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects transcript message deletion without a stable message id', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'deleteTranscriptMessage',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          messageId: ' '
+        })
+      )
+      expect(payload.kind).toBe('unknown')
+    })
+
     it('decodes promoteCollaboratorComment as an identity-only gated mutation', () => {
       const wire = encode({
         kind: 'promoteCollaboratorComment',

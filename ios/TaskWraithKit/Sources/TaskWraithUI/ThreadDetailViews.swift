@@ -4242,6 +4242,7 @@ struct MessageActionsBar: View {
     let onAddToPrompt: (() -> Void)?
     let onTogglePin: (() -> Void)?
     let onOpenSideChat: (() -> Void)?
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 2) {
@@ -4263,6 +4264,14 @@ struct MessageActionsBar: View {
                     systemImage: "rectangle.split.2x1",
                     label: "Open side chat",
                     action: onOpenSideChat)
+            }
+            if let onDelete {
+                actionButton(
+                    systemImage: "trash",
+                    label: TranscriptMessageDeletionPolicyModel
+                        .deleteAffordanceAccessibilityLabel(),
+                    action: onDelete
+                )
             }
             Spacer(minLength: 0)
         }
@@ -4310,6 +4319,8 @@ struct ThreadRowView: View, Equatable {
     /// token), so a shimmer derived from it would never re-render on or off.
     /// The projected set only changes when a lane starts or finishes.
     var workingParticipantIds: Set<String> = []
+
+    @State private var deletionPresentation: TranscriptMessageDeletionPresentation?
 
     // Compare ONLY the inputs that change rendering. The `model` reference is
     // constant (same object) so it's excluded; participant `status`/`order`
@@ -4654,7 +4665,10 @@ struct ThreadRowView: View, Equatable {
                                     model.requestComposerAppend(preview, threadId: threadId)
                                 },
                                 onTogglePin: { togglePin() },
-                                onOpenSideChat: { openSideChatFromMessage() }
+                                onOpenSideChat: { openSideChatFromMessage() },
+                                onDelete: canDeleteTranscriptMessage
+                                    ? { requestMessageDeletion() }
+                                    : nil
                             )
                             if let assistantFeedbackItem, let card = threadCard {
                                 AssistantMessageFeedbackBar(
@@ -4706,6 +4720,20 @@ struct ThreadRowView: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
+        .sheet(item: $deletionPresentation) { presentation in
+            TranscriptMessageDeletionConfirmationView(
+                presentation: presentation,
+                onConfirmDelete: { messageId in
+                    guard let card = threadCard else { return }
+                    deletionPresentation = nil
+                    model.deleteTranscriptMessage(card, messageId: messageId)
+                },
+                onCancel: { deletionPresentation = nil },
+                onDismissBlocked: { deletionPresentation = nil }
+            )
+            .padding()
+            .presentationDetents([.medium])
+        }
     }
 
     /// The lane's interleaved output, nested inside the card chrome — the
@@ -4826,6 +4854,10 @@ struct ThreadRowView: View, Equatable {
         model.taskCards.first { $0.id == threadId || $0.threadId == threadId }
     }
 
+    private var canDeleteTranscriptMessage: Bool {
+        threadCard?.capabilities?.deleteMessage == true
+    }
+
     private func copyText(_ text: String) {
         #if canImport(UIKit)
             UIPasteboard.general.string = text
@@ -4835,6 +4867,26 @@ struct ThreadRowView: View, Equatable {
     private func togglePin() {
         guard let card = threadCard else { return }
         model.toggleMessagePin(card, messageId: row.id, pinned: !isPinned)
+    }
+
+    private func requestMessageDeletion() {
+        guard canDeleteTranscriptMessage else { return }
+        var pendingQuestionIds = Set<String>()
+        if row.agentQuestion?.answer == nil, row.agentQuestion?.promptId != nil {
+            pendingQuestionIds.insert(row.id)
+        }
+        let pendingPlanMessageId =
+            row.proposedPlan?.status == "pending" ? row.id : nil
+        let decision = TranscriptMessageDeletionPolicyModel.evaluate(
+            TranscriptMessageDeletionInput(
+                messageId: row.id,
+                role: row.role,
+                content: row.preview,
+                pendingAgentQuestionMessageIds: pendingQuestionIds,
+                pendingPlanChoiceMessageId: pendingPlanMessageId
+            )
+        )
+        deletionPresentation = TranscriptMessageDeletionPresentation.from(decision)
     }
 
     private func openSideChatFromMessage() {
@@ -4884,6 +4936,16 @@ struct ThreadRowView: View, Equatable {
                 if showSideChat {
                     Button { openSideChatFromMessage() } label: {
                         Label("Open side chat", systemImage: "rectangle.split.2x1")
+                    }
+                }
+                if canDeleteTranscriptMessage {
+                    Button(role: .destructive) {
+                        requestMessageDeletion()
+                    } label: {
+                        Label(
+                            TranscriptMessageDeletionPolicyModel.deleteAffordanceTitle(),
+                            systemImage: "trash"
+                        )
                     }
                 }
             }

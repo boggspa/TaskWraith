@@ -5694,6 +5694,25 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Permanently delete one transcript message after explicit phone-side
+    /// confirmation. The Mac re-validates prompt anchors and capability scope.
+    public func deleteTranscriptMessage(_ card: RemoteTaskCard, messageId: String) {
+        guard !isDemo else {
+            lastActionMessage = "Message deletion needs a connected Mac."
+            return
+        }
+        guard let ws = card.workspaceId, let thread = card.threadId else { return }
+        send(
+            BridgeAction.deleteTranscriptMessage(
+                workspaceId: ws,
+                threadId: thread,
+                messageId: messageId
+            ),
+            successLabel: "Message deleted."
+        )
+        scheduleThreadRefreshAfterUserAction(thread)
+    }
+
     /// Promote a queued Human People contribution through the Mac canonical trust boundary.
     /// The host re-reads the message and returns framed text; the phone only appends
     /// that returned draft to the composer and never sends it.

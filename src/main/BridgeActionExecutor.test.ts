@@ -42,6 +42,7 @@ import type {
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
   BridgeToggleMessageFeedbackAction,
+  BridgeDeleteTranscriptMessageAction,
   BridgePromoteCollaboratorCommentAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
@@ -224,6 +225,12 @@ const sample = {
     vote: 'down',
     reason: 'incomplete'
   } satisfies BridgeToggleMessageFeedbackAction,
+  deleteTranscriptMessage: {
+    kind: 'deleteTranscriptMessage',
+    workspaceId: 'ws-1',
+    threadId: 't-1',
+    messageId: 'message-1'
+  } satisfies BridgeDeleteTranscriptMessageAction,
   promoteCollaboratorComment: {
     kind: 'promoteCollaboratorComment',
     workspaceId: 'ws-1',
@@ -1133,6 +1140,17 @@ describe('MainProcessActionExecutor session and pin controls', () => {
     expect(result).toMatchObject({
       executed: true,
       data: { actionKind: 'toggleMessageFeedback' }
+    })
+  })
+
+  it('dispatches confirmed transcript deletion through the host handler', async () => {
+    const deleteTranscriptMessageFn = vi.fn().mockResolvedValue({ ok: true })
+    const executor = new MainProcessActionExecutor({ cancelRunFn, deleteTranscriptMessageFn })
+    const result = await executor.executeDeleteTranscriptMessage(sample.deleteTranscriptMessage)
+    expect(deleteTranscriptMessageFn).toHaveBeenCalledWith(sample.deleteTranscriptMessage)
+    expect(result).toMatchObject({
+      executed: true,
+      data: { actionKind: 'deleteTranscriptMessage' }
     })
   })
 

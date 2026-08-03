@@ -315,6 +315,10 @@ function makeStubExecutor(
       executed: true,
       message: 'toggleMessageFeedback done'
     }),
+    executeDeleteTranscriptMessage: make('executeDeleteTranscriptMessage', {
+      executed: true,
+      message: 'deleteTranscriptMessage done'
+    }),
     executePromoteCollaboratorComment: make('executePromoteCollaboratorComment', {
       executed: true,
       message: 'promoteCollaboratorComment done'
@@ -2472,6 +2476,36 @@ describe('BridgeActionRouter', () => {
       })) as { accepted: boolean }
       expect(accepted.accepted).toBe(true)
       expect(calls[0]?.method).toBe('executeToggleMessageFeedback')
+    })
+
+    it('keeps message deletion default-off and dispatches only with an explicit grant', async () => {
+      const action = {
+        kind: 'deleteTranscriptMessage',
+        workspaceId: 'ws-readwrite',
+        threadId: 'chat-1',
+        messageId: 'message-1'
+      }
+      const deniedRouter = new BridgeActionRouter({ allowlist: seedReadOnly() })
+      const denied = (await deniedRouter.route('bridge.requestActionAck', {
+        payloadBase64: encodeAction(action)
+      })) as { accepted: boolean; message?: string }
+      expect(denied.accepted).toBe(false)
+      expect(denied.message).toMatch(/capability "deleteMessage"/i)
+
+      const allowlist = seedReadOnly()
+      allowlist.upsert({
+        workspaceId: 'ws-delete',
+        path: '/delete',
+        mode: 'read-write',
+        capabilities: ['monitor', 'deleteMessage']
+      })
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist, executor })
+      const accepted = (await router.route('bridge.requestActionAck', {
+        payloadBase64: encodeAction({ ...action, workspaceId: 'ws-delete' })
+      })) as { accepted: boolean }
+      expect(accepted.accepted).toBe(true)
+      expect(calls[0]?.method).toBe('executeDeleteTranscriptMessage')
     })
 
     it('accepts chatMarkdownTranscript against read-only workspace (monitor-tier read)', async () => {

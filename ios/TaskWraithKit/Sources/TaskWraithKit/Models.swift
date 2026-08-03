@@ -900,6 +900,7 @@ public struct RemoteTaskCapabilities: Codable, Sendable, Hashable {
     public let fileRead: Bool?
     public let fileWrite: Bool?
     public let externalPublish: Bool?
+    public let deleteMessage: Bool?
 }
 
 /// Nested `result` inside a successful `bridge.ack` for action requests.
@@ -2453,6 +2454,17 @@ public enum BridgeAction {
         if let reason, !reason.isEmpty { payload["reason"] = String(reason.prefix(80)) }
         if let note, !note.isEmpty { payload["note"] = String(note.prefix(1000)) }
         return encode(payload)
+    }
+
+    public static func deleteTranscriptMessage(
+        workspaceId: String, threadId: String, messageId: String,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        encode([
+            "kind": "deleteTranscriptMessage", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "messageId": messageId,
+        ])
     }
 
     /// Ask the Mac to re-read and safely frame a queued People comment as a

@@ -816,6 +816,8 @@ export class BridgeActionRouter {
         return this.executor.executeToggleMessagePin(payload)
       case 'toggleMessageFeedback':
         return this.executor.executeToggleMessageFeedback(payload)
+      case 'deleteTranscriptMessage':
+        return this.executor.executeDeleteTranscriptMessage(payload)
       case 'promoteCollaboratorComment':
         return this.executor.executePromoteCollaboratorComment(payload)
       case 'proposedPlanDecision':
@@ -1497,6 +1499,8 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     // session YOLO.
     case 'setYoloMode':
       return 'yolo'
+    case 'deleteTranscriptMessage':
+      return 'deleteMessage'
     // setChatArchived rides the same `pin` capability by Boss ruling
     // (ios-lifecycle-capability-ruling): reversible + non-destructive =
     // same organizational trust tier as pinning. Destructive delete is

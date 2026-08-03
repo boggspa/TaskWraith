@@ -825,6 +825,20 @@ struct IosParityFixesTests {
         #expect(payload["note"] as? String == "Missed the edge case")
     }
 
+    @Test func deleteTranscriptMessagePayloadShape() throws {
+        let payload = try decodedPayload(
+            BridgeAction.deleteTranscriptMessage(
+                workspaceId: "ws-1",
+                threadId: "chat-9",
+                messageId: "message-1"
+            )
+        )
+        #expect(payload["kind"] as? String == "deleteTranscriptMessage")
+        #expect(payload["workspaceId"] as? String == "ws-1")
+        #expect(payload["threadId"] as? String == "chat-9")
+        #expect(payload["messageId"] as? String == "message-1")
+    }
+
     // ── Pass-2.5 Track-A: IF2 stream-pull suppression gate ─────────────────
 
     @Test func agentOutputPullSuppressedOnlyForVisibleStreamingThread() {

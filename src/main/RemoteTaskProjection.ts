@@ -409,6 +409,7 @@ export interface RemoteTaskCapabilities {
   externalPublish?: boolean
   pin?: boolean
   yolo?: boolean
+  deleteMessage?: boolean
   cancelRound?: boolean
   skipActiveParticipant?: boolean
   wakeNow?: boolean
