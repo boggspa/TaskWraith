@@ -68,6 +68,60 @@ export const APP_DRIVE_EXPLICIT_SESSION_CONTROLS = ['pause', 'resume', 'takeover
 export type AppDriveExplicitSessionControl = (typeof APP_DRIVE_EXPLICIT_SESSION_CONTROLS)[number]
 
 /**
+ * Canonical App Drive session lifecycle literals for main/session/dock/authority
+ * consumers. Display words like "Viewing" / "Driving" are labels derived from
+ * observation/control presence — they are not extra FSM states.
+ */
+export const APP_DRIVE_CANONICAL_LIFECYCLE_STATES = [
+  'idle',
+  'active',
+  'paused',
+  'takeover',
+  'stopped'
+] as const
+
+export type AppDriveCanonicalLifecycleState = (typeof APP_DRIVE_CANONICAL_LIFECYCLE_STATES)[number]
+
+/** Visible activity label while lifecycle === 'active' (or idle with observation). */
+export type AppDriveActivityDisplayLabel = 'Idle' | 'Viewing' | 'Driving'
+
+export function isAppDriveCanonicalLifecycleState(
+  value: string
+): value is AppDriveCanonicalLifecycleState {
+  return (APP_DRIVE_CANONICAL_LIFECYCLE_STATES as readonly string[]).includes(value)
+}
+
+/**
+ * Derive Viewing/Driving chrome from observation vs control presence.
+ * Never invents `viewing` / `driving` lifecycle states.
+ */
+export function deriveAppDriveActivityDisplayLabel(args: {
+  readonly lifecycle: AppDriveCanonicalLifecycleState
+  readonly hasObservationAttachment: boolean
+  readonly hasControlLease: boolean
+}): AppDriveActivityDisplayLabel {
+  if (args.lifecycle !== 'active' && args.lifecycle !== 'idle') {
+    // Non-active states keep their own chrome (Paused / Takeover / Stopped).
+    return 'Idle'
+  }
+  if (args.hasControlLease) return 'Driving'
+  if (args.hasObservationAttachment) return 'Viewing'
+  return 'Idle'
+}
+
+export function describeAppDriveLifecycleHonesty(): {
+  readonly canonicalStates: typeof APP_DRIVE_CANONICAL_LIFECYCLE_STATES
+  readonly viewingDrivingAreDisplayLabelsOnly: true
+  readonly forbiddenLifecycleLiterals: readonly ['viewing', 'driving']
+} {
+  return {
+    canonicalStates: APP_DRIVE_CANONICAL_LIFECYCLE_STATES,
+    viewingDrivingAreDisplayLabelsOnly: true,
+    forbiddenLifecycleLiterals: ['viewing', 'driving']
+  }
+}
+
+/**
  * Forbidden authority expansions for this mission slice.
  * These remain RFC/prototype until explicit user consent widens desktop authority.
  */
@@ -143,5 +197,37 @@ export function describeNativeHumanArbitrationHonesty(): {
     sensorScope: 'host_global_hid',
     targetScopedClaimAllowed: false,
     explicitUiControlsAllowed: true
+  }
+}
+
+/**
+ * Ship-boundary honesty for docs/UI: what is already production vs candidate.
+ * Does not grant or revoke authority — disclosure only.
+ */
+export function describeAppDriveShipBoundary(): {
+  readonly foregroundAxAuthority: 'shipped_tier_4'
+  readonly uiSessionVerticalSlice: 'candidate_until_boss_wiring'
+  readonly backgroundDrive: 'prototype_only'
+  readonly isolatedDrive: 'rfc_only'
+  readonly externalPrerequisites: readonly [
+    'exact_run_window_lease',
+    'secret_field_refusal',
+    'stale_target_and_input_epoch_gates',
+    'per_click_audit_claim',
+    'user_only_consent'
+  ]
+} {
+  return {
+    foregroundAxAuthority: 'shipped_tier_4',
+    uiSessionVerticalSlice: 'candidate_until_boss_wiring',
+    backgroundDrive: 'prototype_only',
+    isolatedDrive: 'rfc_only',
+    externalPrerequisites: [
+      'exact_run_window_lease',
+      'secret_field_refusal',
+      'stale_target_and_input_epoch_gates',
+      'per_click_audit_claim',
+      'user_only_consent'
+    ]
   }
 }

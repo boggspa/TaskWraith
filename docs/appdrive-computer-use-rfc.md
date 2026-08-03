@@ -1,9 +1,19 @@
 # RFC: App Drive Computer Use modes and safe vertical slice
 
-**Status:** Accepted synthesis decision for this mission; productization of the safe UI/session slice is in-flight across peer worktrees.  
+**Status:** Accepted synthesis decision for this mission.  
 **Contract id:** `appdrive-computer-use-v1` (`src/shared/appDriveComputerUseContract.ts`)  
 **Authority:** Ensemble blackboard `appdrive-architecture-decision` (Boss draft + Captain reconciliation).  
 **Non-goals this run:** CGEvent productization, durable app-keyed trust, VM guest HID, Windows AppDrive, silent mode fallback.
+
+### Ship vs candidate vs prototype (read this first)
+
+| Layer | Status | Meaning |
+|---|---|---|
+| §12b Foreground AX authority (exact run/window lease, secret refuse, audit, host-global HID idle) | **Shipped production** | Already in main; do not re-derive or weaken |
+| UI/session vertical slice (dock, session pause chrome, display-only cursor, status binding) | **Candidate** until Boss production wiring + main admission gate | Peer worktree artifacts only; not a user-visible ship claim yet |
+| Background Drive / interference harness | **Prototype only** (`prototypes/` + `scripts/`) | Never productize until per-app harness proves non-interference |
+| Isolated Drive (VM guest HID) | **RFC only** | Not profile `--taskwraith-isolated-instance` |
+| This RFC + shared contract + `AppDriveSliceAcceptance.test.ts` | **Decision lock / acceptance evidence** | Documentary + invariant tests; no actuation authority |
 
 Related: [`docs/appdrive-design.md`](./appdrive-design.md) §12b (exact Tier 4 contract), §12c (mode taxonomy pointer).
 
@@ -11,13 +21,16 @@ Related: [`docs/appdrive-design.md`](./appdrive-design.md) §12b (exact Tier 4 c
 
 ## 1. Architecture decision (crisp)
 
-Ship **Foreground Drive** chrome on the existing exact-run/window AX lease. Keep **Background Drive** prototype-only until a per-app interference harness proves zero host theft. Keep **Isolated Drive** RFC-only as real VM guest HID — never rename `--taskwraith-isolated-instance` profile isolation into that claim.
+Productize **Foreground Drive** chrome on the existing exact-run/window AX lease. Keep **Background Drive** prototype-only until a per-app interference harness proves zero host theft. Keep **Isolated Drive** RFC-only as real VM guest HID — never rename `--taskwraith-isolated-instance` profile isolation into that claim.
 
 | Mode | Meaning | This run |
 |---|---|---|
-| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Ship** lifecycle/status/virtual-cursor UI on existing authority |
-| **Background Drive** | Non-disruptive control: no host cursor, focus, keyboard, clipboard, or activation theft | **Prototype/RFC only** until interference harness passes per app |
+| **Foreground Drive** | AX `observe/inspect/click/fill`; target app frontmost + exact window focused/visible; disruptive by construction | **Candidate UI/session** on shipped §12b authority (not yet Boss-wired) |
+| **Background Drive** | Non-disruptive control: no host cursor, focus, keyboard, clipboard, or activation theft | **Prototype only** until interference harness passes per app |
 | **Isolated Drive** | Independent guest mouse/keyboard inside a VM | **RFC only**; Windows AppDrive remains off in v1 |
+
+Canonical session lifecycle literals (shared contract): `idle | active | paused | takeover | stopped`.  
+**Viewing** / **Driving** are display labels derived from observation vs control presence — not extra FSM states.
 
 Hard rules:
 
@@ -40,7 +53,7 @@ Productize existing safe backend projection; do **not** widen desktop authority.
 | 4 | Persistent App Drive dock + display-only virtual cursor | CursorWork1 | Label Foreground Drive; `pointer-events:none`; no OS cursor control |
 | 5 | Disclosure/authority model (exact chat/run/launch/process-birth; no bundle-ID authority) | CursorWork2 | Pure model + tests; no lease/ledger edits |
 | 6 | Background-input prototype + interference harness (candidate-only) | GrokWork2 | Under `prototypes/` + `scripts/`; no production imports |
-| 7 | This RFC, acceptance matrix, mode-contract invariant test | CursorWork3 | Docs + pure shared contract only |
+| 7 | This RFC, acceptance matrix, mode-contract + slice acceptance tests | CursorWork3 | Docs + pure shared contract + `AppDriveSliceAcceptance.test.ts` only |
 
 Out of slice (remain RFC/prototype):
 
@@ -97,7 +110,8 @@ Default harness posture: dry-run / observe-only; any PostToPid prototype is fixt
 | A6 | No production CGEvent / silent fallback / persistent app trust in this slice | Grep + forbidden-list contract test |
 | A7 | Background/Isolated remain unshipped in UI mode enum | `APP_DRIVE_SHIPPED_UI_MODES === ['foreground']` |
 | A8 | Interference harness exists only under prototype/scripts paths | GrokWork2 candidate |
-| A9 | Focused invariant test green | `npx vitest run src/shared/appDriveComputerUseContract.test.ts` |
+| A9 | Focused invariant tests green | `npx vitest run src/shared/appDriveComputerUseContract.test.ts src/main/nativeWindow/AppDriveSliceAcceptance.test.ts` |
+| A10 | Canonical lifecycle is `idle\|active\|paused\|takeover\|stopped`; Viewing/Driving are labels only | Shared contract helpers + peer dock/session alignment |
 
 ---
 
@@ -136,7 +150,9 @@ Default harness posture: dry-run / observe-only; any PostToPid prototype is fixt
 ## 8. Verification commands (this lane)
 
 ```bash
-npx vitest run src/shared/appDriveComputerUseContract.test.ts
+npx vitest run \
+  src/shared/appDriveComputerUseContract.test.ts \
+  src/main/nativeWindow/AppDriveSliceAcceptance.test.ts
 ```
 
 Expected: all tests pass. No production actuation modules modified by CursorWork3.

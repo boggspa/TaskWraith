@@ -590,15 +590,16 @@ Product language for “Computer Use” must not collapse into Tier 5 or into pr
 
 | Mode | Contract | Status |
 |---|---|---|
-| **Foreground Drive** | The shipped §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | UI/session productization may ship on this authority (dock, status, display-only virtual cursor, explicit Pause/Takeover/Stop). |
-| **Background Drive** | Non-disruptive control with zero host cursor, focus, keyboard, clipboard, or activation theft. | Prototype/RFC only until a per-app automated interference harness proves non-theft. No CGEvent productization in the safe slice. |
-| **Isolated Drive** | Real independent guest mouse/keyboard through a VM. | RFC only. **Not** `--taskwraith-isolated-instance` (that flag is TaskWraith state-profile isolation on the host). |
+| **Foreground Drive** | The **shipped** §12b native path: AX-only actuation that requires the selected app frontmost and the exact window focused/visible. Explicitly disruptive. | §12b authority is production. Dock/session/virtual-cursor productization is a **candidate** until Boss wiring + main admission gate land. |
+| **Background Drive** | Non-disruptive control with zero host cursor, focus, keyboard, clipboard, or activation theft. | **Prototype only** until a per-app automated interference harness proves non-theft. No CGEvent productization in the safe slice. |
+| **Isolated Drive** | Real independent guest mouse/keyboard through a VM. | **RFC only**. **Not** `--taskwraith-isolated-instance` (that flag is TaskWraith state-profile isolation on the host). |
 
 Rules that override marketing copy:
 
 - No silent fallback between modes. The §12b AX path is never a Background/Isolated fallback.
 - Native physical-input arbitration today is **host-global HID**, not target-scoped. Explicit Pause/Takeover/Stop chrome is allowed; automatic “human interaction with the target pauses the agent; unrelated work does not” is **not** a native claim yet.
 - Bundle ID / application name remain disclosure metadata, not authorization keys. Exact chat/run/launchAttempt + PID + process-birth receipts remain the authority boundary (§12b).
+- Session lifecycle literals are canonical `idle | active | paused | takeover | stopped`. Viewing/Driving are display labels only (see shared contract).
 
 ## 13. Open questions for the next session
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  APP_DRIVE_CANONICAL_LIFECYCLE_STATES,
   APP_DRIVE_COMPUTER_USE_CONTRACT_ID,
   APP_DRIVE_EXPLICIT_SESSION_CONTROLS,
   APP_DRIVE_FORBIDDEN_THIS_SLICE,
@@ -9,8 +10,12 @@ import {
   APP_DRIVE_SHIPPED_UI_MODES,
   assertNoSilentModeFallback,
   canClaimBackgroundDriveSupport,
+  deriveAppDriveActivityDisplayLabel,
+  describeAppDriveLifecycleHonesty,
+  describeAppDriveShipBoundary,
   describeNativeHumanArbitrationHonesty,
   getAppDriveModeDefinition,
+  isAppDriveCanonicalLifecycleState,
   isAppDriveModeShippedInUi
 } from './appDriveComputerUseContract'
 
@@ -101,5 +106,60 @@ describe('appDriveComputerUseContract', () => {
       'target_success',
       'target_scoped_human_arbitration'
     ])
+  })
+
+  it('locks canonical lifecycle literals and Viewing/Driving as display labels only', () => {
+    expect([...APP_DRIVE_CANONICAL_LIFECYCLE_STATES]).toEqual([
+      'idle',
+      'active',
+      'paused',
+      'takeover',
+      'stopped'
+    ])
+    expect(isAppDriveCanonicalLifecycleState('active')).toBe(true)
+    expect(isAppDriveCanonicalLifecycleState('viewing')).toBe(false)
+    expect(isAppDriveCanonicalLifecycleState('driving')).toBe(false)
+
+    expect(describeAppDriveLifecycleHonesty()).toEqual({
+      canonicalStates: APP_DRIVE_CANONICAL_LIFECYCLE_STATES,
+      viewingDrivingAreDisplayLabelsOnly: true,
+      forbiddenLifecycleLiterals: ['viewing', 'driving']
+    })
+
+    expect(
+      deriveAppDriveActivityDisplayLabel({
+        lifecycle: 'active',
+        hasObservationAttachment: true,
+        hasControlLease: true
+      })
+    ).toBe('Driving')
+    expect(
+      deriveAppDriveActivityDisplayLabel({
+        lifecycle: 'active',
+        hasObservationAttachment: true,
+        hasControlLease: false
+      })
+    ).toBe('Viewing')
+    expect(
+      deriveAppDriveActivityDisplayLabel({
+        lifecycle: 'paused',
+        hasObservationAttachment: true,
+        hasControlLease: true
+      })
+    ).toBe('Idle')
+
+    expect(describeAppDriveShipBoundary()).toEqual({
+      foregroundAxAuthority: 'shipped_tier_4',
+      uiSessionVerticalSlice: 'candidate_until_boss_wiring',
+      backgroundDrive: 'prototype_only',
+      isolatedDrive: 'rfc_only',
+      externalPrerequisites: [
+        'exact_run_window_lease',
+        'secret_field_refusal',
+        'stale_target_and_input_epoch_gates',
+        'per_click_audit_claim',
+        'user_only_consent'
+      ]
+    })
   })
 })
