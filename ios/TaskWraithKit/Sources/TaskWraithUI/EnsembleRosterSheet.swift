@@ -17,7 +17,7 @@ import SwiftUI
 import TaskWraithKit
 
 // Keep in step with the Mac's shared MAX_ENSEMBLE_PARTICIPANTS.
-private let maxEnsembleRosterParticipants = 30
+private let maxEnsembleRosterParticipants = 50
 
 public struct EnsembleRosterSheet: View {
     @ObservedObject var model: RemoteSessionModel

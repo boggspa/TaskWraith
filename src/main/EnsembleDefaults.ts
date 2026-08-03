@@ -238,8 +238,8 @@ export function createDefaultEnsembleConfig(
     // so the user starts with a panel well under the cap and has plenty
     // of headroom to add specialists / extra Claudes / etc. before
     // hitting the cap. The chip strip wraps at 6+ into balanced rows
-    // of at most 5, so even a fully-loaded 30-participant panel
-    // stays navigable across six rows. Hard min on the remove path is 2.
+    // of at most 5, so even a fully-loaded participant panel
+    // stays navigable in balanced rows. Hard min on the remove path is 2.
     maxParticipants: MAX_ENSEMBLE_PARTICIPANTS,
     orchestrationMode: 'turn_bound',
     maxContinuationHops: 6,

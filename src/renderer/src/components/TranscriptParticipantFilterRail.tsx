@@ -42,7 +42,7 @@ interface ElementRect {
 
 const RAIL_GAP_PX = 8
 const RAIL_MIN_VIEWPORT_WIDTH_PX = 720
-const FILTER_MAX_ROWS = 10
+export const TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN = 25
 const FILTER_COLUMN_WIDTH_PX = 36
 const FILTER_COLUMN_GAP_PX = 4
 const FILTER_ROW_HEIGHT_PX = 24
@@ -220,7 +220,10 @@ export function TranscriptParticipantFilterRail({
   )
   const participantItems = useMemo(() => items.filter((item) => item.kind === 'participant'), [items])
   const systemItem = useMemo(() => items.find((item) => item.kind === 'system') || null, [items])
-  const columnCount = Math.max(1, Math.ceil(participantItems.length / FILTER_MAX_ROWS))
+  const columnCount = Math.max(
+    1,
+    Math.ceil(participantItems.length / TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN)
+  )
   const [frame, setFrame] = useState<RailFrame | null>(null)
   // Root ref for the shared re-measure hook's transitionend filter (skips
   // transitions originating inside the rail itself).
@@ -251,7 +254,7 @@ export function TranscriptParticipantFilterRail({
       setFrame(null)
       return
     }
-    const participantRows = FILTER_MAX_ROWS
+    const participantRows = TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN
     const participantHeight =
       participantRows * FILTER_ROW_HEIGHT_PX + Math.max(0, participantRows - 1) * FILTER_ROW_GAP_PX
     const naturalHeight =
@@ -294,11 +297,19 @@ export function TranscriptParticipantFilterRail({
   if (!currentChat || currentChat.chatKind !== 'ensemble' || participantItems.length === 0) return null
 
   const participantGridRowOffset =
-    participantItems.length < FILTER_MAX_ROWS ? FILTER_MAX_ROWS - participantItems.length : 0
+    participantItems.length < TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN
+      ? TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN - participantItems.length
+      : 0
 
   const gridPlacementForIndex = (index: number): CSSProperties => ({
-    gridRowStart: String(participantGridRowOffset + (index % FILTER_MAX_ROWS) + 1),
-    gridColumnStart: String(Math.floor(index / FILTER_MAX_ROWS) + 1)
+    gridRowStart: String(
+      participantGridRowOffset +
+        (index % TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN) +
+        1
+    ),
+    gridColumnStart: String(
+      Math.floor(index / TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN) + 1
+    )
   })
 
   const renderFilterButton = (

@@ -60,7 +60,7 @@ provider.
 - **Investigation (3–4):** Boss, Captain, debugging Specialist, adversarial
   Outsider.
 
-Thirty participants is a capacity ceiling, not a recommended starting panel.
+Fifty participants is a capacity ceiling, not a recommended starting panel.
 
 ## Release boundary
 

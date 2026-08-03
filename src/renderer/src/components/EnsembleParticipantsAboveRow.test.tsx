@@ -20,6 +20,7 @@ import {
   retargetEnsembleParticipantAddDetails
 } from './EnsembleParticipantsAboveRow'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 
 function makeParticipant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
   return {
@@ -1122,7 +1123,7 @@ describe('EnsembleParticipantsAboveRow', () => {
 
   it('keeps the unified add trigger disabled at the roster cap', () => {
     const chat = makeChat(
-      Array.from({ length: 30 }, (_, index) =>
+      Array.from({ length: MAX_ENSEMBLE_PARTICIPANTS }, (_, index) =>
         makeParticipant({
           id: `ensemble-participant-${index + 1}`,
           provider: 'codex',
@@ -1134,14 +1135,16 @@ describe('EnsembleParticipantsAboveRow', () => {
     const html = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow
         chat={chat}
-        selectedParticipantId="ensemble-participant-30"
+        selectedParticipantId={`ensemble-participant-${MAX_ENSEMBLE_PARTICIPANTS}`}
         onSelectParticipant={() => undefined}
         onChatChange={() => undefined}
       />
     )
 
     expect(html).toMatch(/class="ensemble-above-add-participant"[^>]*disabled=""/)
-    expect(html).toContain('Ensembles support up to 30 participants.')
+    expect(html).toContain(
+      `Ensembles support up to ${MAX_ENSEMBLE_PARTICIPANTS} participants.`
+    )
   })
 
   it('keeps live roster controls available while an Ensemble round is running', () => {
@@ -1368,7 +1371,7 @@ describe('EnsembleParticipantsAboveRow', () => {
   })
 
   describe('computeEnsembleChipRowDistribution', () => {
-    it('matches the balanced ≤5-per-row product spec for every count up to the 30 cap', () => {
+    it('matches the balanced ≤5-per-row product spec through the roster cap', () => {
       // Verbatim from the product spec: rows only expand to accommodate
       // participants; remainder lands on the LATER rows.
       const expected: Record<number, number[]> = {
@@ -1401,15 +1404,36 @@ describe('EnsembleParticipantsAboveRow', () => {
         27: [4, 4, 4, 5, 5, 5],
         28: [4, 4, 5, 5, 5, 5],
         29: [4, 5, 5, 5, 5, 5],
-        30: [5, 5, 5, 5, 5, 5]
+        30: [5, 5, 5, 5, 5, 5],
+        31: [4, 4, 4, 4, 5, 5, 5],
+        32: [4, 4, 4, 5, 5, 5, 5],
+        33: [4, 4, 5, 5, 5, 5, 5],
+        34: [4, 5, 5, 5, 5, 5, 5],
+        35: [5, 5, 5, 5, 5, 5, 5],
+        36: [4, 4, 4, 4, 5, 5, 5, 5],
+        37: [4, 4, 4, 5, 5, 5, 5, 5],
+        38: [4, 4, 5, 5, 5, 5, 5, 5],
+        39: [4, 5, 5, 5, 5, 5, 5, 5],
+        40: [5, 5, 5, 5, 5, 5, 5, 5],
+        41: [4, 4, 4, 4, 5, 5, 5, 5, 5],
+        42: [4, 4, 4, 5, 5, 5, 5, 5, 5],
+        43: [4, 4, 5, 5, 5, 5, 5, 5, 5],
+        44: [4, 5, 5, 5, 5, 5, 5, 5, 5],
+        45: [5, 5, 5, 5, 5, 5, 5, 5, 5],
+        46: [4, 4, 4, 4, 5, 5, 5, 5, 5, 5],
+        47: [4, 4, 4, 5, 5, 5, 5, 5, 5, 5],
+        48: [4, 4, 5, 5, 5, 5, 5, 5, 5, 5],
+        49: [4, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+        50: [5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
       }
+      expect(Object.keys(expected)).toHaveLength(MAX_ENSEMBLE_PARTICIPANTS)
       for (const [count, rows] of Object.entries(expected)) {
         expect(computeEnsembleChipRowDistribution(Number(count)), `count ${count}`).toEqual(rows)
       }
     })
 
     it('yields index-aligned grid spans that fill each 60-track row exactly', () => {
-      // Past 30 (MAX_ENSEMBLE_PARTICIPANTS) on purpose: the spans are keyed off
+      // Past 50 (MAX_ENSEMBLE_PARTICIPANTS) on purpose: the spans are keyed off
       // models PLUS externals now, and external seats are not capped, so counts
       // above the model limit reach this helper for the first time.
       for (let count = 6; count <= 60; count++) {

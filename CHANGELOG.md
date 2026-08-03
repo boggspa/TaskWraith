@@ -73,6 +73,10 @@ provider model catalogues arrive reliably, configured AntiGravity seats are
 admitted through their existing consent and credential wall, and workspace
 provider grants can be edited without recreating the workspace.
 
+Ensemble capacity now reaches 50 participants across desktop, iOS, presets,
+bridge validation, agent schemas, and orchestration. The transcript's compact
+participant filter rail keeps that full roster to two 25-seat columns.
+
 This release deliberately does not open Channels or agent participation.
 Channels P1 remains behind the two-real-Mac People transport proof; 1.9.2 records
 the bounded main-owned, human-only contract and three-member test plan without

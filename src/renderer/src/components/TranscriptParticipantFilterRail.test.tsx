@@ -1,13 +1,18 @@
 import { createRef } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, EnsembleParticipant } from '../../../main/store/types'
+import { MAX_ENSEMBLE_PARTICIPANTS } from '../../../shared/ensembleLimits'
 import { PI_MODEL_LABELS } from '../../../shared/piBrandTable'
 import {
   TRANSCRIPT_SYSTEM_FILTER_KEY,
   transcriptParticipantFilterKey
 } from '../lib/transcriptParticipantFilter'
-import { TranscriptParticipantFilterRail } from './TranscriptParticipantFilterRail'
+import {
+  TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN,
+  TranscriptParticipantFilterRail
+} from './TranscriptParticipantFilterRail'
 
 function participant(overrides: Partial<EnsembleParticipant>): EnsembleParticipant {
   return {
@@ -73,7 +78,7 @@ describe('TranscriptParticipantFilterRail', () => {
 
     expect(html).toContain('aria-label="Transcript participant filters"')
     expect(html).toContain('data-column-count="1"')
-    expect(html).toContain('data-row-offset="8"')
+    expect(html).toContain('data-row-offset="23"')
     expect(html).toContain('transcript-participant-filter-grid')
     expect(html).toContain('transcript-participant-filter-system-row')
     expect(html).toContain('transcript-participant-filter-side-stack')
@@ -113,13 +118,14 @@ describe('TranscriptParticipantFilterRail', () => {
     )
 
     expect(html).toContain('data-column-count="1"')
-    expect(html).toContain('data-row-offset="4"')
-    expect(html).toMatch(/data-filter-ordinal="1"[\s\S]*?grid-row-start:5;grid-column-start:1/)
-    expect(html).toMatch(/data-filter-ordinal="6"[\s\S]*?grid-row-start:10;grid-column-start:1/)
+    expect(html).toContain('data-row-offset="19"')
+    expect(html).toMatch(/data-filter-ordinal="1"[\s\S]*?grid-row-start:20;grid-column-start:1/)
+    expect(html).toMatch(/data-filter-ordinal="6"[\s\S]*?grid-row-start:25;grid-column-start:1/)
   })
 
-  it('adds a third ten-row filter column for a full 30-participant roster', () => {
-    const participants = Array.from({ length: 30 }, (_, index) =>
+  it('uses two 25-row filter columns for a full roster', () => {
+    expect(MAX_ENSEMBLE_PARTICIPANTS).toBe(TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN * 2)
+    const participants = Array.from({ length: MAX_ENSEMBLE_PARTICIPANTS }, (_, index) =>
       participant({
         id: `participant-${index + 1}`,
         role: `P${index + 1}`,
@@ -136,19 +142,26 @@ describe('TranscriptParticipantFilterRail', () => {
       />
     )
 
-    expect(html).toContain('data-column-count="3"')
+    expect(html).toContain('data-column-count="2"')
     expect(html).toContain('data-row-offset="0"')
     expect(html).toContain('data-filter-ordinal="1"')
-    expect(html).toContain('data-filter-ordinal="10"')
-    expect(html).toContain('data-filter-ordinal="11"')
-    expect(html).toContain('data-filter-ordinal="20"')
-    expect(html).toContain('data-filter-ordinal="21"')
-    expect(html).toContain('data-filter-ordinal="30"')
-    expect(html).toMatch(/data-filter-ordinal="11"[\s\S]*?grid-row-start:1;grid-column-start:2/)
-    expect(html).toMatch(/data-filter-ordinal="20"[\s\S]*?grid-row-start:10;grid-column-start:2/)
-    expect(html).toMatch(/data-filter-ordinal="21"[\s\S]*?grid-row-start:1;grid-column-start:3/)
-    expect(html).toMatch(/data-filter-ordinal="30"[\s\S]*?grid-row-start:10;grid-column-start:3/)
+    expect(html).toContain('data-filter-ordinal="25"')
+    expect(html).toContain('data-filter-ordinal="26"')
+    expect(html).toContain('data-filter-ordinal="50"')
+    expect(html).toMatch(/data-filter-ordinal="25"[\s\S]*?grid-row-start:25;grid-column-start:1/)
+    expect(html).toMatch(/data-filter-ordinal="26"[\s\S]*?grid-row-start:1;grid-column-start:2/)
+    expect(html).toMatch(/data-filter-ordinal="50"[\s\S]*?grid-row-start:25;grid-column-start:2/)
     expect(html).toContain('System messages')
+  })
+
+  it('keeps the CSS grid row count aligned with participant placement', () => {
+    const css = readFileSync(
+      new URL('../assets/css/02-transcript-messages-fx.css', import.meta.url),
+      'utf8'
+    )
+    expect(css).toContain(
+      `grid-template-rows: repeat(${TRANSCRIPT_PARTICIPANT_FILTER_ROWS_PER_COLUMN}, 24px);`
+    )
   })
 
   it('uses the official Ollama brand mark for Ollama-backed filter rows', () => {

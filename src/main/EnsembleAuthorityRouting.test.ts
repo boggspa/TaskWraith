@@ -84,7 +84,7 @@ describe('resolveAuthoritySelection', () => {
     ).toEqual({ ok: false, error: 'ambiguous_selector', selector: 'Reviewer' })
   })
 
-  it('keeps every pending seat in a full 30-participant panel', () => {
+  it('keeps every pending seat in a full-capacity participant panel', () => {
     const fullPanel = Array.from({ length: MAX_ENSEMBLE_PARTICIPANTS }, (_, index) => ({
       id: index === 0 ? 'boss' : `worker-${index}`,
       provider: index === 0 ? ('claude' as const) : ('codex' as const),

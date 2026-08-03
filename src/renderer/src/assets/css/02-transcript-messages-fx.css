@@ -2781,7 +2781,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .transcript-participant-filter-grid {
   display: grid;
   grid-auto-flow: column;
-  grid-template-rows: repeat(10, 24px);
+  grid-template-rows: repeat(25, 24px);
   grid-auto-columns: 36px;
   column-gap: 4px;
   row-gap: 2px;

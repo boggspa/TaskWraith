@@ -44,7 +44,7 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
-of living in separate tabs. A thread can include up to thirty named participants
+of living in separate tabs. A thread can include up to fifty named participants
 across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, Mistral Vibe, and
 local Ollama, each with its own model, role, order, and permission posture.
 
