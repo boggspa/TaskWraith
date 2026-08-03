@@ -6,17 +6,24 @@ import {
   HOST_CONTROL_PROTOCOL_COMPAT_VERSION,
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW,
   HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_RECEIPT_STATUSES,
   applyHostDeltaCursor,
   assertHostSnapshotFamilies,
+  buildHostBootstrapWelcome,
   createEmptyHostSnapshot,
   decodeHostBootstrapHello,
   decodeHostBootstrapWelcome,
   decodeHostCommand,
   decodeHostCommandReceipt,
   decodeHostDeltaEnvelope,
+  decodeHostDeltasFrame,
   decodeHostDeltasSinceResult,
+  decodeHostHealthFrame,
+  decodeHostHealthProjection,
+  decodeHostSnapshot,
+  decodeHostSnapshotFrame,
   evaluateHostIdempotencyFingerprints,
   evaluateHostIdempotencyReplay,
   intersectHostCapabilities,
@@ -24,6 +31,7 @@ import {
   normalizeHostCommandFingerprint,
   type HostCommand,
   type HostCommandReceipt,
+  type HostCapability,
   type HostDeltaEnvelope
 } from './hostProtocol'
 
@@ -725,6 +733,416 @@ describe('Host protocol Wave 2A contract', () => {
       expect(Object.prototype.hasOwnProperty.call(receiptConflict.value, 'resultSummary')).toBe(
         false
       )
+    }
+  })
+})
+
+describe('Host protocol Wave 2D-1 read frames', () => {
+  it('round-trips decodeHostSnapshot for empty and populated compact snapshots', () => {
+    const empty = createEmptyHostSnapshot({ generation: 2, cursor: 5 })
+    const decodedEmpty = decodeHostSnapshot(empty)
+    expect(decodedEmpty).toEqual({ ok: true, value: empty })
+    if (decodedEmpty.ok) {
+      expect(Object.prototype.hasOwnProperty.call(decodedEmpty.value, 'routing')).toBe(false)
+    }
+
+    const populated = createEmptyHostSnapshot({ generation: 4, cursor: 12 })
+    populated.routing = {
+      mode: 'continuous',
+      fanout: 'locked_writers',
+      activeParticipantId: 'p1',
+      continuationHops: 1,
+      maxContinuationHops: 455,
+      bossParticipantId: 'boss-1',
+      captainParticipantId: 'captain-1'
+    }
+    populated.workspaces.push({
+      id: 'ws-1',
+      name: 'AGBench',
+      path: '/tmp/agbench',
+      pinned: true,
+      updatedAt: 1
+    })
+    populated.threads.push({
+      id: 'thread-1',
+      workspaceId: 'ws-1',
+      title: 'Host Arc',
+      chatKind: 'ensemble',
+      archived: false,
+      pinned: true,
+      updatedAt: 2,
+      messageCount: 3,
+      latestPreview: 'progress',
+      previewTruncated: false,
+      providerId: 'codex',
+      missionOutcome: 'active',
+      activeRoundId: 'round-1'
+    })
+    populated.runs.push({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      providerId: 'codex',
+      providerOutcome: 'completed',
+      startedAt: 1,
+      endedAt: 2,
+      modelId: 'gpt-5.6'
+    })
+    populated.missions.push({
+      missionId: 'mission-1',
+      threadId: 'thread-1',
+      title: 'Host Arc',
+      status: 'active',
+      goalId: 'goal-1',
+      updatedAt: 3,
+      activeRoundId: 'round-1'
+    })
+    populated.rounds.push({
+      roundId: 'round-1',
+      threadId: 'thread-1',
+      status: 'running',
+      startedAt: 1,
+      participantIds: ['p1'],
+      providerRunIds: ['run-1'],
+      waves: [{ waveId: 'wave-1', status: 'open', participantIds: ['p1'], label: '2D-1' }]
+    })
+    populated.participants.push({
+      id: 'p1',
+      providerId: 'cursor',
+      role: 'CursorWork3',
+      modelId: 'grok-4.5',
+      stage: 'worker',
+      order: 4,
+      enabled: true,
+      active: true,
+      status: 'running'
+    })
+    populated.providers.push({
+      providerId: 'cursor',
+      displayProvider: 'Cursor',
+      modelId: 'grok-4.5',
+      modelLabel: 'Grok 4.5',
+      shortCode: 'cur',
+      available: true,
+      note: 'path-b'
+    })
+    populated.questions.push({
+      questionId: 'q-1',
+      threadId: 'thread-1',
+      status: 'open',
+      promptPreview: 'Approve?',
+      askedAt: 4,
+      receiptId: 'rcpt-1'
+    })
+    populated.approvals.push({
+      approvalId: 'appr-1',
+      threadId: 'thread-1',
+      status: 'pending',
+      actionKind: 'run_shell_command',
+      createdAt: 5,
+      summary: 'npm test'
+    })
+    populated.schedules.push({
+      scheduleId: 'sched-1',
+      title: 'Daily',
+      enabled: true,
+      nextFireAt: 6,
+      threadId: 'thread-1'
+    })
+    populated.artifacts.push({
+      artifactId: 'art-1',
+      kind: 'diff',
+      threadId: 'thread-1',
+      title: 'patch',
+      createdAt: 7,
+      byteLength: 128,
+      sha256: FP_EMPTY_SHA256
+    })
+    populated.warnings.push({
+      warningId: 'warn-1',
+      severity: 'info',
+      code: 'note',
+      message: 'ok',
+      at: 8,
+      threadId: 'thread-1'
+    })
+    populated.recovery = {
+      reopenStatus: 'clean',
+      lastCheckpointAt: 9,
+      lastGeneration: 4,
+      lastCursor: 12,
+      detail: 'warm'
+    }
+    populated.usage = {
+      availability: 'available',
+      tokens: 42,
+      costText: '$0.01',
+      confidence: 'exact',
+      band: 'low'
+    }
+
+    const decoded = decodeHostSnapshot(JSON.parse(JSON.stringify(populated)))
+    expect(decoded).toEqual({ ok: true, value: populated })
+  })
+
+  it('rejects adversarial snapshot values without inventing families', () => {
+    expect(decodeHostSnapshot(null)).toMatchObject({
+      ok: false,
+      error: 'snapshot must be an object'
+    })
+    expect(
+      decodeHostSnapshot({
+        ...createEmptyHostSnapshot({ generation: 1, cursor: 0 }),
+        protocolVersion: 1
+      })
+    ).toMatchObject({ ok: false, error: 'unsupported protocol version' })
+
+    const missingHealth = createEmptyHostSnapshot({ generation: 1, cursor: 0 }) as Record<
+      string,
+      unknown
+    >
+    delete missingHealth.health
+    expect(decodeHostSnapshot(missingHealth)).toMatchObject({
+      ok: false,
+      error: 'health must be an object'
+    })
+
+    const oversizedPreview = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    oversizedPreview.threads.push({
+      id: 't1',
+      workspaceId: null,
+      title: 'x',
+      chatKind: 'single',
+      archived: false,
+      pinned: false,
+      updatedAt: 1,
+      messageCount: 1,
+      latestPreview: 'x'.repeat(HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW + 1)
+    })
+    expect(decodeHostSnapshot(oversizedPreview)).toMatchObject({
+      ok: false,
+      error: 'threads[0].latestPreview is invalid'
+    })
+
+    const fakeZero = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    fakeZero.usage = { availability: 'unavailable', tokens: 0 }
+    expect(decodeHostSnapshot(fakeZero)).toMatchObject({
+      ok: false,
+      error: 'unavailable usage must not publish tokens'
+    })
+  })
+
+  it('decodes host.snapshot / host.deltas / host.health frames', () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 3, cursor: 9 })
+    const snapshotFrame = decodeHostSnapshotFrame({
+      type: 'host.snapshot',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      snapshot
+    })
+    expect(snapshotFrame).toEqual({
+      ok: true,
+      value: {
+        type: 'host.snapshot',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        snapshot
+      }
+    })
+
+    expect(
+      decodeHostSnapshotFrame({
+        type: 'host.command',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        snapshot
+      })
+    ).toMatchObject({ ok: false, error: 'type must be host.snapshot' })
+
+    const deltas = decodeHostDeltasFrame({
+      type: 'host.deltas',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      result: {
+        kind: 'deltas',
+        generation: 3,
+        fromCursor: 8,
+        toCursor: 9,
+        deltas: [sampleDelta({ generation: 3, cursor: 9, previousCursor: 8 })]
+      }
+    })
+    expect(deltas.ok).toBe(true)
+    if (deltas.ok) {
+      expect(deltas.value.type).toBe('host.deltas')
+      expect(deltas.value.result.kind).toBe('deltas')
+    }
+
+    const resnapshot = decodeHostDeltasFrame({
+      type: 'host.deltas',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      result: {
+        kind: 'full_resnapshot_required',
+        reason: 'generation_reset',
+        generation: 4,
+        cursor: 1,
+        clientGeneration: 3,
+        clientCursor: 9
+      }
+    })
+    expect(resnapshot).toEqual({
+      ok: true,
+      value: {
+        type: 'host.deltas',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        result: {
+          kind: 'full_resnapshot_required',
+          reason: 'generation_reset',
+          generation: 4,
+          cursor: 1,
+          clientGeneration: 3,
+          clientCursor: 9
+        }
+      }
+    })
+
+    const health = decodeHostHealthProjection({
+      hostStatus: 'ok',
+      connectionPhase: 'live',
+      supervised: true,
+      freshness: 'live'
+    })
+    expect(health.ok).toBe(true)
+    if (health.ok) {
+      expect(Object.prototype.hasOwnProperty.call(health.value, 'detail')).toBe(false)
+    }
+
+    const healthFrame = decodeHostHealthFrame({
+      type: 'host.health',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      health: {
+        hostStatus: 'degraded',
+        detail: 'restarting providers',
+        connectionPhase: 'reconnecting',
+        supervised: true,
+        freshness: 'cached'
+      }
+    })
+    expect(healthFrame).toEqual({
+      ok: true,
+      value: {
+        type: 'host.health',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        health: {
+          hostStatus: 'degraded',
+          detail: 'restarting providers',
+          connectionPhase: 'reconnecting',
+          supervised: true,
+          freshness: 'cached'
+        }
+      }
+    })
+  })
+
+  it('mints HostBootstrapWelcome from authenticated context via capability intersection', () => {
+    const minted = buildHostBootstrapWelcome({
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-mint-1',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: client,
+      hostCapabilityOffer: ['bootstrap', 'snapshot', 'deltas', 'commands', 'receipts', 'health'],
+      clientCapabilityRequest: [
+        'health',
+        'snapshot',
+        'health',
+        'deltas',
+        'unknown'
+      ] as readonly HostCapability[],
+      freshness: 'live'
+    })
+    // unknown rejected before intersect
+    expect(minted).toMatchObject({
+      ok: false,
+      error: 'unknown client capability: unknown'
+    })
+
+    const ok = buildHostBootstrapWelcome({
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-mint-1',
+      generation: 7,
+      cursor: 21,
+      authenticatedClient: {
+        ...client,
+        subjectId: 'pair-1'
+      },
+      hostCapabilityOffer: ['bootstrap', 'snapshot', 'deltas', 'commands', 'receipts', 'health'],
+      clientCapabilityRequest: ['health', 'snapshot', 'health', 'deltas'],
+      freshness: 'live'
+    })
+    expect(ok).toEqual({
+      ok: true,
+      value: {
+        type: 'host.welcome',
+        protocolVersion: HOST_PROTOCOL_VERSION,
+        controlProtocolCompat: HOST_CONTROL_PROTOCOL_COMPAT_VERSION,
+        projectionVersion: HOST_PROJECTION_VERSION,
+        hostId: 'host-local-1',
+        hostVersion: '1.9.2',
+        sessionId: 'sess-mint-1',
+        generation: 7,
+        cursor: 21,
+        authenticatedClient: {
+          ...client,
+          subjectId: 'pair-1'
+        },
+        capabilities: ['snapshot', 'deltas', 'health'],
+        freshness: 'live'
+      }
+    })
+
+    const bareClient = buildHostBootstrapWelcome({
+      hostId: 'host-local-1',
+      hostVersion: '1.9.2',
+      sessionId: 'sess-mint-2',
+      generation: 0,
+      cursor: 0,
+      authenticatedClient: client,
+      hostCapabilityOffer: HOST_CAPABILITY_ORDER,
+      clientCapabilityRequest: ['bootstrap'],
+      freshness: 'cached'
+    })
+    expect(bareClient.ok).toBe(true)
+    if (bareClient.ok) {
+      expect(
+        Object.prototype.hasOwnProperty.call(bareClient.value.authenticatedClient, 'subjectId')
+      ).toBe(false)
+      expect(bareClient.value.capabilities).toEqual(['bootstrap'])
+      expect(bareClient.value.freshness).toBe('cached')
+    }
+
+    expect(
+      buildHostBootstrapWelcome({
+        hostId: '',
+        hostVersion: '1.9.2',
+        sessionId: 'sess',
+        generation: 0,
+        cursor: 0,
+        authenticatedClient: client,
+        hostCapabilityOffer: ['bootstrap'],
+        clientCapabilityRequest: ['bootstrap'],
+        freshness: 'live'
+      })
+    ).toMatchObject({ ok: false, error: 'hostId is required' })
+  })
+
+  it('keeps read-shaped HostCommandName values wire-compatible', () => {
+    for (const name of ['snapshot.get', 'deltas.since', 'receipt.lookup', 'ping'] as const) {
+      const decoded = decodeHostCommand(
+        sampleCommand({
+          name,
+          target:
+            name === 'receipt.lookup' ? { commandId: 'cmd-1' } : name === 'deltas.since' ? {} : {},
+          arguments: name === 'deltas.since' ? { generation: 1, cursor: 0 } : {}
+        })
+      )
+      expect(decoded.ok).toBe(true)
     }
   })
 })

@@ -364,6 +364,47 @@ export interface HostBootstrapWelcome {
   freshness: HostProjectionFreshness
 }
 
+/**
+ * Authority-RPC response frames for body-bearing reads (Wave 2D-1).
+ * Clients consume these instead of routing `snapshot.get` / `deltas.since`
+ * through `host.command` (reserved aliases never mint durable receipts).
+ * `receipt` remains on the existing `host.receipt` envelope.
+ */
+export interface HostSnapshotFrame {
+  type: 'host.snapshot'
+  protocolVersion: HostProtocolVersion
+  snapshot: HostSnapshot
+}
+
+export interface HostDeltasFrame {
+  type: 'host.deltas'
+  protocolVersion: HostProtocolVersion
+  result: HostDeltasSinceResult
+}
+
+export interface HostHealthFrame {
+  type: 'host.health'
+  protocolVersion: HostProtocolVersion
+  health: HostHealthProjection
+}
+
+/**
+ * Inputs a later session adapter uses to mint `HostBootstrapWelcome`.
+ * Identity must already be transport-verified — this contract never
+ * authenticates, opens listeners, or invents capabilities beyond intersection.
+ */
+export interface HostBootstrapWelcomeMintInput {
+  hostId: string
+  hostVersion: string
+  sessionId: string
+  generation: HostGeneration
+  cursor: HostCursor
+  authenticatedClient: HostAuthenticatedClientIdentity
+  hostCapabilityOffer: readonly HostCapability[]
+  clientCapabilityRequest: readonly HostCapability[]
+  freshness: HostProjectionFreshness
+}
+
 export type HostDeltaKind = 'upsert' | 'remove' | 'tombstone' | 'generation-reset'
 
 export type HostDeltaFamily =
@@ -668,6 +709,63 @@ const HOST_DELTA_FAMILIES = new Set<string>([
   'snapshot-meta'
 ])
 
+const HOST_FRESHNESS = new Set<string>(['live', 'cached', 'stale'])
+const HOST_STATUSES = new Set<string>(['ok', 'degraded', 'recovering', 'offline'])
+const HOST_CONNECTION_PHASES = new Set<string>([
+  'connecting',
+  'live',
+  'reconnecting',
+  'offline',
+  'stale-cache',
+  'incompatible-protocol',
+  'host-unavailable'
+])
+const HOST_REOPEN_STATUSES = new Set<string>(['clean', 'recovered', 'degraded', 'unknown'])
+const HOST_USAGE_AVAILABILITY = new Set<string>(['available', 'unavailable', 'estimated'])
+const HOST_USAGE_CONFIDENCE = new Set<string>(['exact', 'derived', 'estimated', 'unknown'])
+const HOST_USAGE_BAND = new Set<string>(['low', 'medium', 'high', 'critical', 'unknown'])
+const HOST_PROVIDER_OUTCOMES = new Set<string>([
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+  'requires_action',
+  'unknown'
+])
+const HOST_ROUND_OUTCOMES = new Set<string>([
+  'running',
+  'completed',
+  'cancelled',
+  'failed',
+  'unknown'
+])
+const HOST_MISSION_OUTCOMES = new Set<string>([
+  'active',
+  'completed',
+  'blocked',
+  'cancelled',
+  'failed',
+  'unknown'
+])
+const HOST_QUESTION_STATUSES = new Set<string>(['open', 'answered', 'dismissed', 'expired'])
+const HOST_APPROVAL_STATUSES = new Set<string>([
+  'pending',
+  'approved',
+  'denied',
+  'expired',
+  'cancelled'
+])
+const HOST_WARNING_SEVERITIES = new Set<string>(['info', 'warning', 'error'])
+const HOST_DECISION_SOURCES = new Set<string>(['user', 'system'])
+const HOST_CHAT_KINDS = new Set<string>(['single', 'ensemble'])
+const HOST_PARTICIPANT_STAGES = new Set<string>([
+  'scout',
+  'worker',
+  'reviewer',
+  'background',
+  'any'
+])
+
 function decodeClientIdentity(
   value: unknown,
   label: string
@@ -851,8 +949,8 @@ function decodeApprovalDecideArguments(
 /**
  * Deterministic capability intersection: host offer ∩ client request.
  * Preserves host offer order, dedupes, and never invents capabilities.
- * Effective Welcome.capabilities remain an adapter obligation when constructing
- * the handshake response (this helper does not mint Welcome frames).
+ * Prefer `buildHostBootstrapWelcome` when minting a Welcome frame — it applies
+ * this intersection and returns a decode-valid envelope.
  */
 export function intersectHostCapabilities(
   hostOffer: readonly HostCapability[],
@@ -1484,4 +1582,992 @@ export function assertHostSnapshotFamilies(snapshot: HostSnapshot): HostDecodeRe
     return { ok: false, error: 'thread preview exceeds compact bound' }
   }
   return { ok: true, value: true }
+}
+
+function decodeBoundedArray<T>(
+  value: unknown,
+  label: string,
+  decodeItem: (entry: unknown, index: number) => HostDecodeResult<T>
+): HostDecodeResult<T[]> {
+  if (!Array.isArray(value)) return { ok: false, error: `${label} must be an array` }
+  if (value.length > HOST_PROTOCOL_MAX_COLLECTION) {
+    return { ok: false, error: `${label} exceeds collection bound` }
+  }
+  const out: T[] = []
+  for (let i = 0; i < value.length; i += 1) {
+    const decoded = decodeItem(value[i], i)
+    if (!decoded.ok) return decoded
+    out.push(decoded.value)
+  }
+  return { ok: true, value: out }
+}
+
+function decodeOptionalNonNegativeInt(
+  value: unknown,
+  label: string
+): HostDecodeResult<number | undefined> {
+  if (value === undefined) return { ok: true, value: undefined }
+  if (!isNonNegativeInt(value)) return { ok: false, error: `${label} is invalid` }
+  return { ok: true, value }
+}
+
+/** Strict wire decoder for `HostHealthProjection`. */
+export function decodeHostHealthProjection(value: unknown): HostDecodeResult<HostHealthProjection> {
+  if (!isRecord(value)) return { ok: false, error: 'health must be an object' }
+  if (typeof value.hostStatus !== 'string' || !HOST_STATUSES.has(value.hostStatus)) {
+    return { ok: false, error: 'health.hostStatus is invalid' }
+  }
+  if (
+    typeof value.connectionPhase !== 'string' ||
+    !HOST_CONNECTION_PHASES.has(value.connectionPhase)
+  ) {
+    return { ok: false, error: 'health.connectionPhase is invalid' }
+  }
+  if (typeof value.supervised !== 'boolean') {
+    return { ok: false, error: 'health.supervised must be boolean' }
+  }
+  if (typeof value.freshness !== 'string' || !HOST_FRESHNESS.has(value.freshness)) {
+    return { ok: false, error: 'health.freshness is invalid' }
+  }
+  if (!isOptionalString(value.detail, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: 'health.detail is invalid' }
+  }
+  const health: HostHealthProjection = {
+    hostStatus: value.hostStatus as HostHealthProjection['hostStatus'],
+    connectionPhase: value.connectionPhase as HostConnectionPhase,
+    supervised: value.supervised,
+    freshness: value.freshness as HostProjectionFreshness
+  }
+  if (value.detail !== undefined) {
+    health.detail = value.detail
+  }
+  return { ok: true, value: health }
+}
+
+function decodeHostUsageObservation(value: unknown): HostDecodeResult<HostUsageObservation> {
+  if (!isRecord(value)) return { ok: false, error: 'usage must be an object' }
+  if (typeof value.availability !== 'string' || !HOST_USAGE_AVAILABILITY.has(value.availability)) {
+    return { ok: false, error: 'usage.availability is invalid' }
+  }
+  if (value.tokens !== undefined) {
+    if (typeof value.tokens !== 'number' || !Number.isFinite(value.tokens) || value.tokens < 0) {
+      return { ok: false, error: 'usage.tokens is invalid' }
+    }
+  }
+  if (!isOptionalString(value.costText, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: 'usage.costText is invalid' }
+  }
+  if (
+    value.confidence !== undefined &&
+    (typeof value.confidence !== 'string' || !HOST_USAGE_CONFIDENCE.has(value.confidence))
+  ) {
+    return { ok: false, error: 'usage.confidence is invalid' }
+  }
+  if (
+    value.band !== undefined &&
+    (typeof value.band !== 'string' || !HOST_USAGE_BAND.has(value.band))
+  ) {
+    return { ok: false, error: 'usage.band is invalid' }
+  }
+  if (value.availability === 'unavailable' && value.tokens !== undefined) {
+    return { ok: false, error: 'unavailable usage must not publish tokens' }
+  }
+  const usage: HostUsageObservation = {
+    availability: value.availability as HostUsageAvailability
+  }
+  if (value.tokens !== undefined) usage.tokens = value.tokens
+  if (value.costText !== undefined) usage.costText = value.costText
+  if (value.confidence !== undefined) {
+    usage.confidence = value.confidence as NonNullable<HostUsageObservation['confidence']>
+  }
+  if (value.band !== undefined) {
+    usage.band = value.band as NonNullable<HostUsageObservation['band']>
+  }
+  return { ok: true, value: usage }
+}
+
+function decodeHostRecoveryProjection(value: unknown): HostDecodeResult<HostRecoveryProjection> {
+  if (!isRecord(value)) return { ok: false, error: 'recovery must be an object' }
+  if (typeof value.reopenStatus !== 'string' || !HOST_REOPEN_STATUSES.has(value.reopenStatus)) {
+    return { ok: false, error: 'recovery.reopenStatus is invalid' }
+  }
+  const lastCheckpointAt = decodeOptionalNonNegativeInt(
+    value.lastCheckpointAt,
+    'recovery.lastCheckpointAt'
+  )
+  if (!lastCheckpointAt.ok) return lastCheckpointAt
+  const lastGeneration = decodeOptionalNonNegativeInt(
+    value.lastGeneration,
+    'recovery.lastGeneration'
+  )
+  if (!lastGeneration.ok) return lastGeneration
+  const lastCursor = decodeOptionalNonNegativeInt(value.lastCursor, 'recovery.lastCursor')
+  if (!lastCursor.ok) return lastCursor
+  if (!isOptionalString(value.detail, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: 'recovery.detail is invalid' }
+  }
+  const recovery: HostRecoveryProjection = {
+    reopenStatus: value.reopenStatus as HostRecoveryProjection['reopenStatus']
+  }
+  if (lastCheckpointAt.value !== undefined) recovery.lastCheckpointAt = lastCheckpointAt.value
+  if (lastGeneration.value !== undefined) recovery.lastGeneration = lastGeneration.value
+  if (lastCursor.value !== undefined) recovery.lastCursor = lastCursor.value
+  if (value.detail !== undefined) recovery.detail = value.detail
+  return { ok: true, value: recovery }
+}
+
+function decodeHostRoutingProjection(value: unknown): HostDecodeResult<HostRoutingProjection> {
+  if (!isRecord(value)) return { ok: false, error: 'routing must be an object' }
+  if (!isNonEmptyString(value.mode, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: 'routing.mode is required' }
+  }
+  if (!isNonEmptyString(value.fanout, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: 'routing.fanout is required' }
+  }
+  if (!isOptionalString(value.activeParticipantId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'routing.activeParticipantId is invalid' }
+  }
+  if (!isOptionalString(value.bossParticipantId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'routing.bossParticipantId is invalid' }
+  }
+  if (!isOptionalString(value.captainParticipantId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'routing.captainParticipantId is invalid' }
+  }
+  const continuationHops = decodeOptionalNonNegativeInt(
+    value.continuationHops,
+    'routing.continuationHops'
+  )
+  if (!continuationHops.ok) return continuationHops
+  const maxContinuationHops = decodeOptionalNonNegativeInt(
+    value.maxContinuationHops,
+    'routing.maxContinuationHops'
+  )
+  if (!maxContinuationHops.ok) return maxContinuationHops
+  const routing: HostRoutingProjection = {
+    mode: value.mode,
+    fanout: value.fanout
+  }
+  if (value.activeParticipantId !== undefined) {
+    routing.activeParticipantId = value.activeParticipantId
+  }
+  if (continuationHops.value !== undefined) routing.continuationHops = continuationHops.value
+  if (maxContinuationHops.value !== undefined) {
+    routing.maxContinuationHops = maxContinuationHops.value
+  }
+  if (value.bossParticipantId !== undefined) routing.bossParticipantId = value.bossParticipantId
+  if (value.captainParticipantId !== undefined) {
+    routing.captainParticipantId = value.captainParticipantId
+  }
+  return { ok: true, value: routing }
+}
+
+function decodeHostWorkspaceProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostWorkspaceProjection> {
+  const label = `workspaces[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.id is required` }
+  }
+  if (!isNonEmptyString(value.name, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.name is required` }
+  }
+  if (!isNonEmptyString(value.path, HOST_PROTOCOL_MAX_STRING)) {
+    return { ok: false, error: `${label}.path is required` }
+  }
+  if (typeof value.pinned !== 'boolean') {
+    return { ok: false, error: `${label}.pinned must be boolean` }
+  }
+  if (!isNonNegativeInt(value.updatedAt)) {
+    return { ok: false, error: `${label}.updatedAt is invalid` }
+  }
+  return {
+    ok: true,
+    value: {
+      id: value.id,
+      name: value.name,
+      path: value.path,
+      pinned: value.pinned,
+      updatedAt: value.updatedAt
+    }
+  }
+}
+
+function decodeHostThreadProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostThreadProjection> {
+  const label = `threads[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.id is required` }
+  }
+  if (!(value.workspaceId === null || isNonEmptyString(value.workspaceId, HOST_PROTOCOL_MAX_ID))) {
+    return { ok: false, error: `${label}.workspaceId is invalid` }
+  }
+  if (!isNonEmptyString(value.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (typeof value.chatKind !== 'string' || !HOST_CHAT_KINDS.has(value.chatKind)) {
+    return { ok: false, error: `${label}.chatKind is invalid` }
+  }
+  if (typeof value.archived !== 'boolean' || typeof value.pinned !== 'boolean') {
+    return { ok: false, error: `${label}.archived/pinned must be boolean` }
+  }
+  if (!isNonNegativeInt(value.updatedAt) || !isNonNegativeInt(value.messageCount)) {
+    return { ok: false, error: `${label}.updatedAt/messageCount are invalid` }
+  }
+  if (
+    value.latestPreview !== undefined &&
+    (typeof value.latestPreview !== 'string' ||
+      value.latestPreview.length === 0 ||
+      value.latestPreview.length > HOST_PROTOCOL_MAX_TRANSCRIPT_PREVIEW)
+  ) {
+    return { ok: false, error: `${label}.latestPreview is invalid` }
+  }
+  if (value.previewTruncated !== undefined && typeof value.previewTruncated !== 'boolean') {
+    return { ok: false, error: `${label}.previewTruncated must be boolean` }
+  }
+  if (!isOptionalString(value.parentThreadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.parentThreadId is invalid` }
+  }
+  if (!isOptionalString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.providerId is invalid` }
+  }
+  if (!isOptionalString(value.activeRoundId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.activeRoundId is invalid` }
+  }
+  if (
+    value.missionOutcome !== undefined &&
+    (typeof value.missionOutcome !== 'string' || !HOST_MISSION_OUTCOMES.has(value.missionOutcome))
+  ) {
+    return { ok: false, error: `${label}.missionOutcome is invalid` }
+  }
+  let usage: HostUsageObservation | undefined
+  if (value.usage !== undefined) {
+    const decodedUsage = decodeHostUsageObservation(value.usage)
+    if (!decodedUsage.ok) return decodedUsage
+    usage = decodedUsage.value
+  }
+  const thread: HostThreadProjection = {
+    id: value.id,
+    workspaceId: value.workspaceId as string | null,
+    title: value.title,
+    chatKind: value.chatKind as HostThreadProjection['chatKind'],
+    archived: value.archived,
+    pinned: value.pinned,
+    updatedAt: value.updatedAt,
+    messageCount: value.messageCount
+  }
+  if (value.parentThreadId !== undefined) thread.parentThreadId = value.parentThreadId
+  if (value.latestPreview !== undefined) thread.latestPreview = value.latestPreview
+  if (value.previewTruncated !== undefined) thread.previewTruncated = value.previewTruncated
+  if (value.providerId !== undefined) thread.providerId = value.providerId
+  if (value.missionOutcome !== undefined) {
+    thread.missionOutcome = value.missionOutcome as HostMissionOutcome
+  }
+  if (value.activeRoundId !== undefined) thread.activeRoundId = value.activeRoundId
+  if (usage !== undefined) thread.usage = usage
+  return { ok: true, value: thread }
+}
+
+function decodeHostRunProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostRunProjection> {
+  const label = `runs[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.runId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.runId is required` }
+  }
+  if (!isNonEmptyString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is required` }
+  }
+  if (!isNonEmptyString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.providerId is required` }
+  }
+  if (
+    typeof value.providerOutcome !== 'string' ||
+    !HOST_PROVIDER_OUTCOMES.has(value.providerOutcome)
+  ) {
+    return { ok: false, error: `${label}.providerOutcome is invalid` }
+  }
+  const startedAt = decodeOptionalNonNegativeInt(value.startedAt, `${label}.startedAt`)
+  if (!startedAt.ok) return startedAt
+  const endedAt = decodeOptionalNonNegativeInt(value.endedAt, `${label}.endedAt`)
+  if (!endedAt.ok) return endedAt
+  if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  let usage: HostUsageObservation | undefined
+  if (value.usage !== undefined) {
+    const decodedUsage = decodeHostUsageObservation(value.usage)
+    if (!decodedUsage.ok) return decodedUsage
+    usage = decodedUsage.value
+  }
+  const run: HostRunProjection = {
+    runId: value.runId,
+    threadId: value.threadId,
+    providerId: value.providerId,
+    providerOutcome: value.providerOutcome as HostProviderTerminalOutcome
+  }
+  if (startedAt.value !== undefined) run.startedAt = startedAt.value
+  if (endedAt.value !== undefined) run.endedAt = endedAt.value
+  if (value.modelId !== undefined) run.modelId = value.modelId
+  if (usage !== undefined) run.usage = usage
+  return { ok: true, value: run }
+}
+
+function decodeHostMissionProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostMissionProjection> {
+  const label = `missions[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.missionId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.missionId is required` }
+  }
+  if (!isNonEmptyString(value.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (typeof value.status !== 'string' || !HOST_MISSION_OUTCOMES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isNonNegativeInt(value.updatedAt)) {
+    return { ok: false, error: `${label}.updatedAt is invalid` }
+  }
+  if (!isOptionalString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is invalid` }
+  }
+  if (!isOptionalString(value.goalId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.goalId is invalid` }
+  }
+  if (!isOptionalString(value.activeRoundId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.activeRoundId is invalid` }
+  }
+  const mission: HostMissionProjection = {
+    missionId: value.missionId,
+    title: value.title,
+    status: value.status as HostMissionOutcome,
+    updatedAt: value.updatedAt
+  }
+  if (value.threadId !== undefined) mission.threadId = value.threadId
+  if (value.goalId !== undefined) mission.goalId = value.goalId
+  if (value.activeRoundId !== undefined) mission.activeRoundId = value.activeRoundId
+  return { ok: true, value: mission }
+}
+
+function decodeHostWaveProjection(
+  value: unknown,
+  label: string
+): HostDecodeResult<HostWaveProjection> {
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.waveId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.waveId is required` }
+  }
+  if (!isNonEmptyString(value.status, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.status is required` }
+  }
+  if (!isOptionalString(value.label, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.label is invalid` }
+  }
+  const participantIds = decodeBoundedArray(
+    value.participantIds,
+    `${label}.participantIds`,
+    (entry, i) => {
+      if (!isNonEmptyString(entry, HOST_PROTOCOL_MAX_ID)) {
+        return { ok: false, error: `${label}.participantIds[${i}] is invalid` }
+      }
+      return { ok: true, value: entry }
+    }
+  )
+  if (!participantIds.ok) return participantIds
+  const wave: HostWaveProjection = {
+    waveId: value.waveId,
+    status: value.status,
+    participantIds: participantIds.value
+  }
+  if (value.label !== undefined) wave.label = value.label
+  return { ok: true, value: wave }
+}
+
+function decodeHostRoundProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostRoundProjection> {
+  const label = `rounds[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.roundId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.roundId is required` }
+  }
+  if (!isNonEmptyString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is required` }
+  }
+  if (typeof value.status !== 'string' || !HOST_ROUND_OUTCOMES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  const startedAt = decodeOptionalNonNegativeInt(value.startedAt, `${label}.startedAt`)
+  if (!startedAt.ok) return startedAt
+  const endedAt = decodeOptionalNonNegativeInt(value.endedAt, `${label}.endedAt`)
+  if (!endedAt.ok) return endedAt
+  let routing: HostRoutingProjection | undefined
+  if (value.routing !== undefined) {
+    const decodedRouting = decodeHostRoutingProjection(value.routing)
+    if (!decodedRouting.ok) return decodedRouting
+    routing = decodedRouting.value
+  }
+  let waves: HostWaveProjection[] | undefined
+  if (value.waves !== undefined) {
+    const decodedWaves = decodeBoundedArray(value.waves, `${label}.waves`, (entry, i) =>
+      decodeHostWaveProjection(entry, `${label}.waves[${i}]`)
+    )
+    if (!decodedWaves.ok) return decodedWaves
+    waves = decodedWaves.value
+  }
+  const participantIds = decodeBoundedArray(
+    value.participantIds,
+    `${label}.participantIds`,
+    (entry, i) => {
+      if (!isNonEmptyString(entry, HOST_PROTOCOL_MAX_ID)) {
+        return { ok: false, error: `${label}.participantIds[${i}] is invalid` }
+      }
+      return { ok: true, value: entry }
+    }
+  )
+  if (!participantIds.ok) return participantIds
+  const providerRunIds = decodeBoundedArray(
+    value.providerRunIds,
+    `${label}.providerRunIds`,
+    (entry, i) => {
+      if (!isNonEmptyString(entry, HOST_PROTOCOL_MAX_ID)) {
+        return { ok: false, error: `${label}.providerRunIds[${i}] is invalid` }
+      }
+      return { ok: true, value: entry }
+    }
+  )
+  if (!providerRunIds.ok) return providerRunIds
+  const round: HostRoundProjection = {
+    roundId: value.roundId,
+    threadId: value.threadId,
+    status: value.status as HostRoundOutcome,
+    participantIds: participantIds.value,
+    providerRunIds: providerRunIds.value
+  }
+  if (startedAt.value !== undefined) round.startedAt = startedAt.value
+  if (endedAt.value !== undefined) round.endedAt = endedAt.value
+  if (routing !== undefined) round.routing = routing
+  if (waves !== undefined) round.waves = waves
+  return { ok: true, value: round }
+}
+
+function decodeHostParticipantProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostParticipantProjection> {
+  const label = `participants[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.id, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.id is required` }
+  }
+  if (!isNonEmptyString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.providerId is required` }
+  }
+  if (!isNonEmptyString(value.role, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.role is required` }
+  }
+  if (!isNonNegativeInt(value.order)) {
+    return { ok: false, error: `${label}.order is invalid` }
+  }
+  if (typeof value.enabled !== 'boolean' || typeof value.active !== 'boolean') {
+    return { ok: false, error: `${label}.enabled/active must be boolean` }
+  }
+  if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  if (!isOptionalString(value.status, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (
+    value.stage !== undefined &&
+    (typeof value.stage !== 'string' || !HOST_PARTICIPANT_STAGES.has(value.stage))
+  ) {
+    return { ok: false, error: `${label}.stage is invalid` }
+  }
+  const participant: HostParticipantProjection = {
+    id: value.id,
+    providerId: value.providerId,
+    role: value.role,
+    order: value.order,
+    enabled: value.enabled,
+    active: value.active
+  }
+  if (value.modelId !== undefined) participant.modelId = value.modelId
+  if (value.stage !== undefined) {
+    participant.stage = value.stage as NonNullable<HostParticipantProjection['stage']>
+  }
+  if (value.status !== undefined) participant.status = value.status
+  return { ok: true, value: participant }
+}
+
+function decodeHostProviderModelProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostProviderModelProjection> {
+  const label = `providers[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.providerId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.providerId is required` }
+  }
+  if (!isNonEmptyString(value.displayProvider, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.displayProvider is required` }
+  }
+  if (!isNonEmptyString(value.shortCode, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.shortCode is required` }
+  }
+  if (typeof value.available !== 'boolean') {
+    return { ok: false, error: `${label}.available must be boolean` }
+  }
+  if (!isOptionalString(value.modelId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.modelId is invalid` }
+  }
+  if (!isOptionalString(value.modelLabel, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.modelLabel is invalid` }
+  }
+  if (!isOptionalString(value.hueKey, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.hueKey is invalid` }
+  }
+  if (!isOptionalString(value.note, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.note is invalid` }
+  }
+  const provider: HostProviderModelProjection = {
+    providerId: value.providerId,
+    displayProvider: value.displayProvider,
+    shortCode: value.shortCode,
+    available: value.available
+  }
+  if (value.modelId !== undefined) provider.modelId = value.modelId
+  if (value.modelLabel !== undefined) provider.modelLabel = value.modelLabel
+  if (value.hueKey !== undefined) provider.hueKey = value.hueKey
+  if (value.note !== undefined) provider.note = value.note
+  return { ok: true, value: provider }
+}
+
+function decodeHostQuestionProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostQuestionProjection> {
+  const label = `questions[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.questionId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.questionId is required` }
+  }
+  if (!isNonEmptyString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is required` }
+  }
+  if (typeof value.status !== 'string' || !HOST_QUESTION_STATUSES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isNonEmptyString(value.promptPreview, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.promptPreview is required` }
+  }
+  if (!isNonNegativeInt(value.askedAt)) {
+    return { ok: false, error: `${label}.askedAt is invalid` }
+  }
+  const answeredAt = decodeOptionalNonNegativeInt(value.answeredAt, `${label}.answeredAt`)
+  if (!answeredAt.ok) return answeredAt
+  if (!isOptionalString(value.receiptId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.receiptId is invalid` }
+  }
+  const question: HostQuestionProjection = {
+    questionId: value.questionId,
+    threadId: value.threadId,
+    status: value.status as HostQuestionProjection['status'],
+    promptPreview: value.promptPreview,
+    askedAt: value.askedAt
+  }
+  if (answeredAt.value !== undefined) question.answeredAt = answeredAt.value
+  if (value.receiptId !== undefined) question.receiptId = value.receiptId
+  return { ok: true, value: question }
+}
+
+function decodeHostApprovalProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostApprovalProjection> {
+  const label = `approvals[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.approvalId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.approvalId is required` }
+  }
+  if (typeof value.status !== 'string' || !HOST_APPROVAL_STATUSES.has(value.status)) {
+    return { ok: false, error: `${label}.status is invalid` }
+  }
+  if (!isNonEmptyString(value.actionKind, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.actionKind is required` }
+  }
+  if (!isNonNegativeInt(value.createdAt)) {
+    return { ok: false, error: `${label}.createdAt is invalid` }
+  }
+  if (!isNonEmptyString(value.summary, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.summary is required` }
+  }
+  if (!isOptionalString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is invalid` }
+  }
+  const decidedAt = decodeOptionalNonNegativeInt(value.decidedAt, `${label}.decidedAt`)
+  if (!decidedAt.ok) return decidedAt
+  if (
+    value.decisionSource !== undefined &&
+    (typeof value.decisionSource !== 'string' || !HOST_DECISION_SOURCES.has(value.decisionSource))
+  ) {
+    return { ok: false, error: `${label}.decisionSource is invalid` }
+  }
+  const approval: HostApprovalProjection = {
+    approvalId: value.approvalId,
+    status: value.status as HostApprovalProjection['status'],
+    actionKind: value.actionKind,
+    createdAt: value.createdAt,
+    summary: value.summary
+  }
+  if (value.threadId !== undefined) approval.threadId = value.threadId
+  if (decidedAt.value !== undefined) approval.decidedAt = decidedAt.value
+  if (value.decisionSource !== undefined) {
+    approval.decisionSource = value.decisionSource as NonNullable<
+      HostApprovalProjection['decisionSource']
+    >
+  }
+  return { ok: true, value: approval }
+}
+
+function decodeHostScheduleProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostScheduleProjection> {
+  const label = `schedules[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.scheduleId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.scheduleId is required` }
+  }
+  if (!isNonEmptyString(value.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (typeof value.enabled !== 'boolean') {
+    return { ok: false, error: `${label}.enabled must be boolean` }
+  }
+  const nextFireAt = decodeOptionalNonNegativeInt(value.nextFireAt, `${label}.nextFireAt`)
+  if (!nextFireAt.ok) return nextFireAt
+  if (!isOptionalString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is invalid` }
+  }
+  const schedule: HostScheduleProjection = {
+    scheduleId: value.scheduleId,
+    title: value.title,
+    enabled: value.enabled
+  }
+  if (nextFireAt.value !== undefined) schedule.nextFireAt = nextFireAt.value
+  if (value.threadId !== undefined) schedule.threadId = value.threadId
+  return { ok: true, value: schedule }
+}
+
+function decodeHostArtifactProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostArtifactProjection> {
+  const label = `artifacts[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.artifactId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.artifactId is required` }
+  }
+  if (!isNonEmptyString(value.kind, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.kind is required` }
+  }
+  if (!isNonEmptyString(value.title, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.title is required` }
+  }
+  if (!isNonNegativeInt(value.createdAt)) {
+    return { ok: false, error: `${label}.createdAt is invalid` }
+  }
+  if (!isOptionalString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is invalid` }
+  }
+  const byteLength = decodeOptionalNonNegativeInt(value.byteLength, `${label}.byteLength`)
+  if (!byteLength.ok) return byteLength
+  if (
+    value.sha256 !== undefined &&
+    (typeof value.sha256 !== 'string' ||
+      value.sha256.length !== HOST_COMMAND_FINGERPRINT_HEX_LENGTH ||
+      !/^[a-f0-9]+$/.test(value.sha256))
+  ) {
+    return { ok: false, error: `${label}.sha256 is invalid` }
+  }
+  const artifact: HostArtifactProjection = {
+    artifactId: value.artifactId,
+    kind: value.kind,
+    title: value.title,
+    createdAt: value.createdAt
+  }
+  if (value.threadId !== undefined) artifact.threadId = value.threadId
+  if (byteLength.value !== undefined) artifact.byteLength = byteLength.value
+  if (value.sha256 !== undefined) artifact.sha256 = value.sha256
+  return { ok: true, value: artifact }
+}
+
+function decodeHostWarningProjection(
+  value: unknown,
+  index: number
+): HostDecodeResult<HostWarningProjection> {
+  const label = `warnings[${index}]`
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isNonEmptyString(value.warningId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.warningId is required` }
+  }
+  if (typeof value.severity !== 'string' || !HOST_WARNING_SEVERITIES.has(value.severity)) {
+    return { ok: false, error: `${label}.severity is invalid` }
+  }
+  if (!isNonEmptyString(value.code, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.code is required` }
+  }
+  if (!isNonEmptyString(value.message, HOST_PROTOCOL_MAX_WARNING)) {
+    return { ok: false, error: `${label}.message is required` }
+  }
+  if (!isNonNegativeInt(value.at)) {
+    return { ok: false, error: `${label}.at is invalid` }
+  }
+  if (!isOptionalString(value.threadId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.threadId is invalid` }
+  }
+  const warning: HostWarningProjection = {
+    warningId: value.warningId,
+    severity: value.severity as HostWarningProjection['severity'],
+    code: value.code,
+    message: value.message,
+    at: value.at
+  }
+  if (value.threadId !== undefined) warning.threadId = value.threadId
+  return { ok: true, value: warning }
+}
+
+/**
+ * Strict wire decoder for `HostSnapshot`.
+ * Fail-closed on missing families, invalid enums, oversized collections/previews,
+ * and unavailable-usage fake zeros. Does not invent projection data.
+ */
+export function decodeHostSnapshot(value: unknown): HostDecodeResult<HostSnapshot> {
+  if (!isRecord(value)) return { ok: false, error: 'snapshot must be an object' }
+  if (value.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    return { ok: false, error: 'unsupported protocol version' }
+  }
+  if (value.projectionVersion !== HOST_PROJECTION_VERSION) {
+    return { ok: false, error: 'unsupported projection version' }
+  }
+  if (!isNonEmptyString(value.generatedAt, 80)) {
+    return { ok: false, error: 'generatedAt is required' }
+  }
+  if (!isNonNegativeInt(value.generation) || !isNonNegativeInt(value.cursor)) {
+    return { ok: false, error: 'generation/cursor must be non-negative integers' }
+  }
+  if (typeof value.freshness !== 'string' || !HOST_FRESHNESS.has(value.freshness)) {
+    return { ok: false, error: 'freshness is invalid' }
+  }
+
+  const health = decodeHostHealthProjection(value.health)
+  if (!health.ok) return health
+  const workspaces = decodeBoundedArray(
+    value.workspaces,
+    'workspaces',
+    decodeHostWorkspaceProjection
+  )
+  if (!workspaces.ok) return workspaces
+  const threads = decodeBoundedArray(value.threads, 'threads', decodeHostThreadProjection)
+  if (!threads.ok) return threads
+  const runs = decodeBoundedArray(value.runs, 'runs', decodeHostRunProjection)
+  if (!runs.ok) return runs
+  const missions = decodeBoundedArray(value.missions, 'missions', decodeHostMissionProjection)
+  if (!missions.ok) return missions
+  const rounds = decodeBoundedArray(value.rounds, 'rounds', decodeHostRoundProjection)
+  if (!rounds.ok) return rounds
+  const participants = decodeBoundedArray(
+    value.participants,
+    'participants',
+    decodeHostParticipantProjection
+  )
+  if (!participants.ok) return participants
+  const providers = decodeBoundedArray(
+    value.providers,
+    'providers',
+    decodeHostProviderModelProjection
+  )
+  if (!providers.ok) return providers
+  let routing: HostRoutingProjection | undefined
+  if (value.routing !== undefined) {
+    const decodedRouting = decodeHostRoutingProjection(value.routing)
+    if (!decodedRouting.ok) return decodedRouting
+    routing = decodedRouting.value
+  }
+  const questions = decodeBoundedArray(value.questions, 'questions', decodeHostQuestionProjection)
+  if (!questions.ok) return questions
+  const approvals = decodeBoundedArray(value.approvals, 'approvals', decodeHostApprovalProjection)
+  if (!approvals.ok) return approvals
+  const schedules = decodeBoundedArray(value.schedules, 'schedules', decodeHostScheduleProjection)
+  if (!schedules.ok) return schedules
+  const usage = decodeHostUsageObservation(value.usage)
+  if (!usage.ok) return usage
+  const artifacts = decodeBoundedArray(value.artifacts, 'artifacts', decodeHostArtifactProjection)
+  if (!artifacts.ok) return artifacts
+  const warnings = decodeBoundedArray(value.warnings, 'warnings', decodeHostWarningProjection)
+  if (!warnings.ok) return warnings
+  const recovery = decodeHostRecoveryProjection(value.recovery)
+  if (!recovery.ok) return recovery
+
+  const snapshot: HostSnapshot = {
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
+    generatedAt: value.generatedAt,
+    generation: value.generation,
+    cursor: value.cursor,
+    freshness: value.freshness as HostProjectionFreshness,
+    health: health.value,
+    workspaces: workspaces.value,
+    threads: threads.value,
+    runs: runs.value,
+    missions: missions.value,
+    rounds: rounds.value,
+    participants: participants.value,
+    providers: providers.value,
+    questions: questions.value,
+    approvals: approvals.value,
+    schedules: schedules.value,
+    usage: usage.value,
+    artifacts: artifacts.value,
+    warnings: warnings.value,
+    recovery: recovery.value
+  }
+  if (routing !== undefined) snapshot.routing = routing
+
+  const families = assertHostSnapshotFamilies(snapshot)
+  if (!families.ok) return families
+  return { ok: true, value: snapshot }
+}
+
+export function decodeHostSnapshotFrame(value: unknown): HostDecodeResult<HostSnapshotFrame> {
+  if (!isRecord(value)) return { ok: false, error: 'snapshot frame must be an object' }
+  if (value.type !== 'host.snapshot') return { ok: false, error: 'type must be host.snapshot' }
+  if (value.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    return { ok: false, error: 'unsupported protocol version' }
+  }
+  const snapshot = decodeHostSnapshot(value.snapshot)
+  if (!snapshot.ok) return snapshot
+  return {
+    ok: true,
+    value: {
+      type: 'host.snapshot',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      snapshot: snapshot.value
+    }
+  }
+}
+
+export function decodeHostDeltasFrame(value: unknown): HostDecodeResult<HostDeltasFrame> {
+  if (!isRecord(value)) return { ok: false, error: 'deltas frame must be an object' }
+  if (value.type !== 'host.deltas') return { ok: false, error: 'type must be host.deltas' }
+  if (value.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    return { ok: false, error: 'unsupported protocol version' }
+  }
+  const result = decodeHostDeltasSinceResult(value.result)
+  if (!result.ok) return result
+  return {
+    ok: true,
+    value: {
+      type: 'host.deltas',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      result: result.value
+    }
+  }
+}
+
+export function decodeHostHealthFrame(value: unknown): HostDecodeResult<HostHealthFrame> {
+  if (!isRecord(value)) return { ok: false, error: 'health frame must be an object' }
+  if (value.type !== 'host.health') return { ok: false, error: 'type must be host.health' }
+  if (value.protocolVersion !== HOST_PROTOCOL_VERSION) {
+    return { ok: false, error: 'unsupported protocol version' }
+  }
+  const health = decodeHostHealthProjection(value.health)
+  if (!health.ok) return health
+  return {
+    ok: true,
+    value: {
+      type: 'host.health',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      health: health.value
+    }
+  }
+}
+
+/**
+ * Pure Welcome mint helper for a later authenticated session adapter.
+ * Intersects capabilities, validates bounds, and returns a decode-valid frame.
+ * Does not authenticate, allocate session ids, open listeners, or persist state.
+ */
+export function buildHostBootstrapWelcome(
+  input: HostBootstrapWelcomeMintInput
+): HostDecodeResult<HostBootstrapWelcome> {
+  if (!isNonEmptyString(input.hostId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'hostId is required' }
+  }
+  if (!isNonEmptyString(input.hostVersion, 80)) {
+    return { ok: false, error: 'hostVersion is required' }
+  }
+  if (!isNonEmptyString(input.sessionId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'sessionId is required' }
+  }
+  if (!isNonNegativeInt(input.generation) || !isNonNegativeInt(input.cursor)) {
+    return { ok: false, error: 'generation/cursor must be non-negative integers' }
+  }
+  if (!HOST_FRESHNESS.has(input.freshness)) {
+    return { ok: false, error: 'freshness is invalid' }
+  }
+  const authenticatedClient = decodeClientIdentity(input.authenticatedClient, 'authenticatedClient')
+  if (!authenticatedClient.ok) return authenticatedClient
+  if (
+    !Array.isArray(input.hostCapabilityOffer) ||
+    input.hostCapabilityOffer.length > HOST_PROTOCOL_MAX_CAPABILITIES
+  ) {
+    return { ok: false, error: 'hostCapabilityOffer must be a bounded array' }
+  }
+  if (
+    !Array.isArray(input.clientCapabilityRequest) ||
+    input.clientCapabilityRequest.length > HOST_PROTOCOL_MAX_CAPABILITIES
+  ) {
+    return { ok: false, error: 'clientCapabilityRequest must be a bounded array' }
+  }
+  for (const entry of input.hostCapabilityOffer) {
+    if (typeof entry !== 'string' || !HOST_CAPABILITIES.has(entry)) {
+      return { ok: false, error: `unknown host capability: ${String(entry)}` }
+    }
+  }
+  for (const entry of input.clientCapabilityRequest) {
+    if (typeof entry !== 'string' || !HOST_CAPABILITIES.has(entry)) {
+      return { ok: false, error: `unknown client capability: ${String(entry)}` }
+    }
+  }
+  const capabilities = intersectHostCapabilities(
+    input.hostCapabilityOffer,
+    input.clientCapabilityRequest
+  )
+  const welcome: HostBootstrapWelcome = {
+    type: 'host.welcome',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    controlProtocolCompat: HOST_CONTROL_PROTOCOL_COMPAT_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
+    hostId: input.hostId,
+    hostVersion: input.hostVersion,
+    sessionId: input.sessionId,
+    generation: input.generation,
+    cursor: input.cursor,
+    authenticatedClient: authenticatedClient.value,
+    capabilities,
+    freshness: input.freshness
+  }
+  return decodeHostBootstrapWelcome(welcome)
 }
