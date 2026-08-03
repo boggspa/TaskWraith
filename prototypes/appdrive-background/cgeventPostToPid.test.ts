@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  attemptCgEventPostToPid,
-  refuseGlobalCgEventPost
-} from './cgeventPostToPid'
+import { attemptCgEventPostToPid, refuseGlobalCgEventPost } from './cgeventPostToPid'
 import { DEFAULT_FIXTURE_TARGET } from './fixtureTarget'
 
 describe('cgeventPostToPid prototype', () => {

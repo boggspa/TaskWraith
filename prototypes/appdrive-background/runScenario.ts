@@ -7,11 +7,7 @@ import { attemptCgEventPostToPid, type EventSpec } from './cgeventPostToPid'
 import { DEFAULT_FIXTURE_TARGET, type FixtureTarget } from './fixtureTarget'
 import { createSyntheticSnapshot } from './hostSnapshot'
 import { diffHostSnapshots, isNonInterferenceProven } from './interferenceDiff'
-import type {
-  HostSnapshot,
-  InterferenceReport,
-  PerAppInterferenceResult
-} from './types'
+import type { HostSnapshot, InterferenceReport, PerAppInterferenceResult } from './types'
 
 export type ScenarioApp = {
   appId: string
@@ -123,7 +119,12 @@ export function runAppScenario(
     appLabel: app.appLabel,
     targetPid: target.pid,
     fixtureOwned: target.ownedByHarness === true,
-    actuation: post.actuation === 'refused' ? (dryRun ? 'dry_run_cgevent_post_to_pid' : 'observe_only') : post.actuation,
+    actuation:
+      post.actuation === 'refused'
+        ? dryRun
+          ? 'dry_run_cgevent_post_to_pid'
+          : 'observe_only'
+        : post.actuation,
     dryRun,
     startedAtMs,
     finishedAtMs,
@@ -134,9 +135,7 @@ export function runAppScenario(
   }
 }
 
-export function runInterferenceScenarios(
-  options: RunScenarioOptions
-): InterferenceReport {
+export function runInterferenceScenarios(options: RunScenarioOptions): InterferenceReport {
   const now = options.nowMs ?? (() => Date.now())
   const results = options.apps.map((app) => runAppScenario(app, options))
   let proven = 0

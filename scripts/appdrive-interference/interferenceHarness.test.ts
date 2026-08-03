@@ -78,9 +78,9 @@ describe('appdrive interference harness CLI', () => {
     for (const d of harness.REQUIRED_DIMENSIONS) {
       expect(dims.has(d)).toBe(true)
     }
-    expect(
-      r.dimensions.find((d) => d.dimension === 'targetScopedHumanArbitration')?.verdict
-    ).toBe('fail')
+    expect(r.dimensions.find((d) => d.dimension === 'targetScopedHumanArbitration')?.verdict).toBe(
+      'fail'
+    )
   })
 
   it('refuses global post and live post without gates', () => {

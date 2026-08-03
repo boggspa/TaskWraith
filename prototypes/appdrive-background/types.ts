@@ -17,10 +17,7 @@ export type InterferenceDimension =
 
 export type DimensionVerdict = 'pass' | 'fail' | 'unknown' | 'not_measured'
 
-export type ActuationKind =
-  | 'observe_only'
-  | 'dry_run_cgevent_post_to_pid'
-  | 'cgevent_post_to_pid'
+export type ActuationKind = 'observe_only' | 'dry_run_cgevent_post_to_pid' | 'cgevent_post_to_pid'
 
 export type ForbiddenActuation =
   | 'global_cgevent_post'

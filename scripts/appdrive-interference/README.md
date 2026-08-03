@@ -9,15 +9,15 @@ Paired with: `prototypes/appdrive-background/`.
 
 For each app entry:
 
-| Dimension | Pass means |
-| --- | --- |
-| `focus` | Focused window id unchanged |
-| `frontmostApp` | Frontmost app unchanged |
-| `hostCursor` | Host cursor position unchanged |
-| `keyboardTarget` | Keyboard-target PID unchanged |
-| `clipboardHash` | Clipboard hash unchanged (no contents stored) |
-| `activation` | Target did not become active |
-| `targetSuccess` | Action hit the intended fixture target |
+| Dimension                      | Pass means                                        |
+| ------------------------------ | ------------------------------------------------- |
+| `focus`                        | Focused window id unchanged                       |
+| `frontmostApp`                 | Frontmost app unchanged                           |
+| `hostCursor`                   | Host cursor position unchanged                    |
+| `keyboardTarget`               | Keyboard-target PID unchanged                     |
+| `clipboardHash`                | Clipboard hash unchanged (no contents stored)     |
+| `activation`                   | Target did not become active                      |
+| `targetSuccess`                | Action hit the intended fixture target            |
 | `targetScopedHumanArbitration` | Human-on-target vs elsewhere can be discriminated |
 
 Dry-run never sets `nonInterferenceProven: true`.

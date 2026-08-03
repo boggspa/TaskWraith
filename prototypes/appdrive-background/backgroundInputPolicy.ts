@@ -51,7 +51,8 @@ export function evaluateBackgroundInputPolicy(req: PostRequest): PolicyDecision 
     return {
       allow: false,
       refused: 'global_cgevent_post',
-      reason: 'Global CGEventPost is forbidden; only CGEventPostToPid to a harness fixture may be prototyped.'
+      reason:
+        'Global CGEventPost is forbidden; only CGEventPostToPid to a harness fixture may be prototyped.'
     }
   }
 

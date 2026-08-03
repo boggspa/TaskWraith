@@ -36,13 +36,7 @@
     },
     "summary": {
       "type": "object",
-      "required": [
-        "appsMeasured",
-        "provenNonInterference",
-        "failed",
-        "unknown",
-        "dryRunOnly"
-      ],
+      "required": ["appsMeasured", "provenNonInterference", "failed", "unknown", "dryRunOnly"],
       "properties": {
         "appsMeasured": {
           "type": "integer",
@@ -83,25 +77,14 @@
     },
     "DimensionResult": {
       "type": "object",
-      "required": [
-        "dimension",
-        "verdict",
-        "before",
-        "after",
-        "detail"
-      ],
+      "required": ["dimension", "verdict", "before", "after", "detail"],
       "properties": {
         "dimension": {
           "$ref": "#/$defs/InterferenceDimension"
         },
         "verdict": {
           "type": "string",
-          "enum": [
-            "pass",
-            "fail",
-            "unknown",
-            "not_measured"
-          ]
+          "enum": ["pass", "fail", "unknown", "not_measured"]
         },
         "before": {},
         "after": {},
@@ -146,21 +129,14 @@
           "type": "string"
         },
         "targetPid": {
-          "type": [
-            "integer",
-            "null"
-          ]
+          "type": ["integer", "null"]
         },
         "fixtureOwned": {
           "type": "boolean"
         },
         "actuation": {
           "type": "string",
-          "enum": [
-            "observe_only",
-            "dry_run_cgevent_post_to_pid",
-            "cgevent_post_to_pid"
-          ]
+          "enum": ["observe_only", "dry_run_cgevent_post_to_pid", "cgevent_post_to_pid"]
         },
         "dryRun": {
           "type": "boolean"

@@ -26,13 +26,9 @@ describe('interferenceDiff', () => {
       dryRun: true
     })
     expect(dims).toHaveLength(8)
-    expect(dims.every((d) => d.verdict === 'not_measured' || d.verdict === 'fail')).toBe(
-      true
-    )
+    expect(dims.every((d) => d.verdict === 'not_measured' || d.verdict === 'fail')).toBe(true)
     // global_hid fails target-scoped arbitration even in dry-run
-    expect(
-      dims.find((d) => d.dimension === 'targetScopedHumanArbitration')?.verdict
-    ).toBe('fail')
+    expect(dims.find((d) => d.dimension === 'targetScopedHumanArbitration')?.verdict).toBe('fail')
     expect(isNonInterferenceProven(dims, true)).toBe(false)
   })
 

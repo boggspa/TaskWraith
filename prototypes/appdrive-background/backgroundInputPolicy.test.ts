@@ -53,9 +53,9 @@ describe('backgroundInputPolicy', () => {
       operation: 'cgevent_post_to_pid'
     }
     expect(evaluateBackgroundInputPolicy(base).allow).toBe(false)
-    expect(
-      evaluateBackgroundInputPolicy({ ...base, explicitUserInvocation: true }).allow
-    ).toBe(false)
+    expect(evaluateBackgroundInputPolicy({ ...base, explicitUserInvocation: true }).allow).toBe(
+      false
+    )
     expect(
       evaluateBackgroundInputPolicy({
         ...base,

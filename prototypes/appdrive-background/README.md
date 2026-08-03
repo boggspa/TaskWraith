@@ -15,11 +15,11 @@ It lives under `prototypes/appdrive-background` on purpose:
 
 ## Modes (architecture decision)
 
-| Mode | Meaning | This package |
-| --- | --- | --- |
+| Mode                 | Meaning                                                            | This package                         |
+| -------------------- | ------------------------------------------------------------------ | ------------------------------------ |
 | **Background Drive** | Zero host cursor / focus / keyboard / clipboard / activation theft | Prototype + interference schema only |
-| **Isolated Drive** | Independent guest input via VM | Out of scope here |
-| **Foreground Drive** | Current shipped AX path (frontmost + focused) | Not reimplemented |
+| **Isolated Drive**   | Independent guest input via VM                                     | Out of scope here                    |
+| **Foreground Drive** | Current shipped AX path (frontmost + focused)                      | Not reimplemented                    |
 
 ## Default safety posture
 
@@ -54,16 +54,16 @@ when scope is `global_hid`, so Background Drive cannot claim
 
 ## Layout
 
-| Path | Role |
-| --- | --- |
-| `types.ts` | Result / snapshot schema |
-| `fixtureTarget.ts` | Harness-owned fixture identity |
-| `backgroundInputPolicy.ts` | Hard refusals + live triple-gate |
-| `cgeventPostToPid.ts` | Dry-run post surface; live refuses missing native |
-| `hostSnapshot.ts` / `interferenceDiff.ts` | Pure measurement |
-| `runScenario.ts` | Observe → act (dry) → re-observe |
-| `fixtures/sample-apps.json` | Offline catalog |
-| `*.test.ts` | Focused unit tests |
+| Path                                      | Role                                              |
+| ----------------------------------------- | ------------------------------------------------- |
+| `types.ts`                                | Result / snapshot schema                          |
+| `fixtureTarget.ts`                        | Harness-owned fixture identity                    |
+| `backgroundInputPolicy.ts`                | Hard refusals + live triple-gate                  |
+| `cgeventPostToPid.ts`                     | Dry-run post surface; live refuses missing native |
+| `hostSnapshot.ts` / `interferenceDiff.ts` | Pure measurement                                  |
+| `runScenario.ts`                          | Observe → act (dry) → re-observe                  |
+| `fixtures/sample-apps.json`               | Offline catalog                                   |
+| `*.test.ts`                               | Focused unit tests                                |
 
 Companion harness CLI: `scripts/appdrive-interference/`.
 

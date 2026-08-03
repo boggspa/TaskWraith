@@ -168,9 +168,27 @@ function diffSnapshots(before, after, { dryRun, targetActionSucceeded }) {
     }
   }
 
-  sameOr(before.focusedWindowId, after.focusedWindowId, 'focus', 'Focused window unchanged.', 'Focus theft.')
-  sameOr(before.frontmostAppId, after.frontmostAppId, 'frontmostApp', 'Frontmost app unchanged.', 'Frontmost theft.')
-  sameOr(before.hostCursor, after.hostCursor, 'hostCursor', 'Host cursor unchanged.', 'Host cursor moved.')
+  sameOr(
+    before.focusedWindowId,
+    after.focusedWindowId,
+    'focus',
+    'Focused window unchanged.',
+    'Focus theft.'
+  )
+  sameOr(
+    before.frontmostAppId,
+    after.frontmostAppId,
+    'frontmostApp',
+    'Frontmost app unchanged.',
+    'Frontmost theft.'
+  )
+  sameOr(
+    before.hostCursor,
+    after.hostCursor,
+    'hostCursor',
+    'Host cursor unchanged.',
+    'Host cursor moved.'
+  )
   sameOr(
     before.keyboardTargetPid,
     after.keyboardTargetPid,
@@ -188,12 +206,22 @@ function diffSnapshots(before, after, { dryRun, targetActionSucceeded }) {
 
   if (dryRun) {
     dims.push(
-      dim('activation', 'not_measured', before.targetIsActive, after.targetIsActive, 'Dry-run: activation not measured.')
+      dim(
+        'activation',
+        'not_measured',
+        before.targetIsActive,
+        after.targetIsActive,
+        'Dry-run: activation not measured.'
+      )
     )
   } else if (!before.targetIsActive && after.targetIsActive) {
-    dims.push(dim('activation', 'fail', before.targetIsActive, after.targetIsActive, 'Activation theft.'))
+    dims.push(
+      dim('activation', 'fail', before.targetIsActive, after.targetIsActive, 'Activation theft.')
+    )
   } else {
-    dims.push(dim('activation', 'pass', before.targetIsActive, after.targetIsActive, 'No activation theft.'))
+    dims.push(
+      dim('activation', 'pass', before.targetIsActive, after.targetIsActive, 'No activation theft.')
+    )
   }
 
   if (targetActionSucceeded == null) {
@@ -213,8 +241,7 @@ function diffSnapshots(before, after, { dryRun, targetActionSucceeded }) {
   }
 
   if (after.humanInputScope === 'target_scoped') {
-    const ok =
-      after.humanInputRecentOnTarget !== null && after.humanInputRecentElsewhere !== null
+    const ok = after.humanInputRecentOnTarget !== null && after.humanInputRecentElsewhere !== null
     dims.push(
       dim(
         'targetScopedHumanArbitration',
@@ -305,15 +332,12 @@ function runApp(app, opts, now) {
     targetActionSucceeded: posted ? true : null
   })
 
-  notes.push(
-    'Dry-run/observe-only cannot set nonInterferenceProven=true; live proof required.'
-  )
+  notes.push('Dry-run/observe-only cannot set nonInterferenceProven=true; live proof required.')
   notes.push(
     'Human arbitration scope is global_hid (production-like); Background Drive target-only pause is not claimable.'
   )
 
-  const nonInterferenceProven =
-    !effectiveDryRun && dimensions.every((d) => d.verdict === 'pass')
+  const nonInterferenceProven = !effectiveDryRun && dimensions.every((d) => d.verdict === 'pass')
 
   return {
     schemaVersion: 1,
@@ -369,7 +393,8 @@ function buildReport(apps, opts) {
 function main(argv = process.argv.slice(2)) {
   const opts = parseArgs(argv)
   if (opts.help) {
-    const text = `App Drive interference harness (candidate, dry-run default)\n\n` +
+    const text =
+      `App Drive interference harness (candidate, dry-run default)\n\n` +
       `  --json                 print JSON report to stdout\n` +
       `  --out <path>           write JSON report\n` +
       `  --catalog <path>       app catalog JSON\n` +

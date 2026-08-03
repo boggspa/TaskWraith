@@ -3,11 +3,7 @@
  */
 
 import { cursorMoved } from './hostSnapshot'
-import type {
-  DimensionResult,
-  HostSnapshot,
-  InterferenceDimension
-} from './types'
+import type { DimensionResult, HostSnapshot, InterferenceDimension } from './types'
 
 const REQUIRED: InterferenceDimension[] = [
   'focus',
@@ -167,8 +163,7 @@ export function diffHostSnapshots(input: {
   }
 
   // activation (target became active when it was not, or frontmost flipped onto target)
-  const activationStole =
-    before.targetIsActive === false && after.targetIsActive === true
+  const activationStole = before.targetIsActive === false && after.targetIsActive === true
   if (dryRun) {
     results.push({
       dimension: 'activation',
@@ -229,8 +224,7 @@ export function diffHostSnapshots(input: {
   // Global HID (today's production native path) is explicitly not sufficient.
   if (after.humanInputScope === 'target_scoped') {
     const canDiscriminate =
-      after.humanInputRecentOnTarget !== null &&
-      after.humanInputRecentElsewhere !== null
+      after.humanInputRecentOnTarget !== null && after.humanInputRecentElsewhere !== null
     results.push({
       dimension: 'targetScopedHumanArbitration',
       verdict: canDiscriminate ? (dryRun ? 'not_measured' : 'pass') : 'unknown',
@@ -279,10 +273,7 @@ export function diffHostSnapshots(input: {
   return results
 }
 
-export function isNonInterferenceProven(
-  dimensions: DimensionResult[],
-  dryRun: boolean
-): boolean {
+export function isNonInterferenceProven(dimensions: DimensionResult[], dryRun: boolean): boolean {
   if (dryRun) return false
   return dimensions.every((d) => d.verdict === 'pass')
 }
