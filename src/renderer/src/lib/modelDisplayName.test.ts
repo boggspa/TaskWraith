@@ -107,7 +107,7 @@ describe('humaniseModelId', () => {
   })
 
   describe('AntiGravity', () => {
-    it('derives key-lane ids to the catalog label instead of the raw wire id', () => {
+    it('keeps key-lane and official agy ids on their own readable model families', () => {
       expect(humaniseModelId('antigravity', 'gemini-api:gemini-2.5-flash')).toBe('2.5 Flash')
       expect(humaniseModelId('antigravity', 'gemini-api:gemini-2.5-flash-lite')).toBe(
         '2.5 Flash-Lite'
@@ -115,7 +115,20 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('antigravity', 'gemini-api:gemini-3.1-pro-preview')).toBe(
         '3.1 Pro Preview'
       )
-      // agy-lane ids keep the shared-table fallback behaviour.
+      expect(canonicalModelIdForProvider('antigravity', 'gemini-3.6-flash-high')).toBe(
+        'gemini-3.6-flash'
+      )
+      expect(canonicalModelIdForProvider('antigravity', 'gemini-3.6-flash-low')).toBe(
+        'gemini-3.6-flash'
+      )
+      expect(canonicalModelIdForProvider('antigravity', 'GEMINI-3.6-FLASH-HIGH')).toBe(
+        'gemini-3.6-flash'
+      )
+      expect(humaniseModelId('antigravity', 'gemini-3.6-flash-high')).toBe('Gemini 3.6 Flash')
+      expect(humaniseModelIdCompact('antigravity', 'gemini-3.6-flash-low')).toBe('3.6 Flash')
+      expect(humaniseModelId('antigravity', 'gemini-3.5-flash-medium')).toBe('Gemini 3.5 Flash')
+      expect(humaniseModelId('antigravity', 'gemini-3.1-pro-high')).toBe('Gemini 3.1 Pro')
+      // Unrecognised ids remain lossless rather than becoming a guessed model.
       expect(humaniseModelId('antigravity', 'agy-model')).toBe('agy-model')
     })
   })

@@ -1,4 +1,8 @@
 import type { ProviderId } from '../../../main/store/types'
+import {
+  antigravityDisplayName,
+  antigravityEffortForModelId
+} from '../../../shared/antigravityAgyModelGrouping'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 
@@ -225,6 +229,16 @@ export function canonicalModelIdForProvider(
     if (key === 'mistral-vibe-cli-latest') return 'mistral-medium-3.5'
     if (key === 'devstral-small-latest') return 'devstral-small'
   }
+  if (provider === 'antigravity') {
+    // Official agy exposes one bare wire id per effort level. The picker
+    // groups that same family behind one model row, so usage reporting must do
+    // the same rather than presenting three accidental variants of one model.
+    // `gemini-api:` is a separate paid transport with no effort suffix contract.
+    const effort = antigravityEffortForModelId(key)
+    if (effort && !key.startsWith('gemini-api:')) {
+      return key.slice(0, -(effort.length + 1))
+    }
+  }
   if (provider === 'grok') {
     if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-4.5'
     if (!key || key === 'grok') {
@@ -372,12 +386,14 @@ export function humaniseModelId(
   if (provider === 'grok' && key === 'grok-4.5') {
     return 'Grok 4.5 Fast'
   }
-  // AntiGravity key-lane ids derive their catalog label (`gemini-api:
-  // gemini-2.5-flash` → `2.5 Flash`) instead of surfacing the raw wire id;
-  // agy-lane ids fall through to the shared table like any other provider.
+  // AntiGravity has two deliberately distinct lanes. Key-lane ids derive their
+  // curated catalog label (`gemini-api:gemini-2.5-flash` → `2.5 Flash`), while
+  // official agy ids are grouped on their effort-less family and retain a
+  // readable Gemini name (`gemini-3.6-flash-high` → `Gemini 3.6 Flash`).
   if (provider === 'antigravity') {
     const apiLabel = antigravityGeminiApiModelDisplayLabel(key)
     if (apiLabel) return apiLabel
+    if (key.startsWith('gemini-')) return antigravityDisplayName(key)
   }
   // Pi wire ids are `<upstream>/<modelId>` and are matched CASE-SENSITIVELY
   // against the curated catalog — `minimax/MiniMax-M3` is mixed-case on the
@@ -395,6 +411,7 @@ const PROVIDER_MODEL_LABEL_PREFIX: Partial<Record<ProviderId, RegExp>> = {
   claude: /^Claude\s+/i,
   kimi: /^Kimi\s+/i,
   grok: /^Grok\s+/i,
+  antigravity: /^Gemini\s+/i,
   // 'Mistral Medium 3.5' → 'Medium 3.5'. Devstral keeps its full name: it does
   // not repeat the provider, so the strip is a no-op there.
   mistral: /^Mistral\s+/i

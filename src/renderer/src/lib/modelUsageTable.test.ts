@@ -716,6 +716,28 @@ describe('buildModelUsageTable — External Usage switches source (no double-cou
     expect(result.map((g) => g.provider)).toEqual(['codex'])
     expect(result[0].models[0].windows.h24.runs).toBe(1)
   })
+
+  it('keeps a completed but unmetered official agy model as an attributable row', () => {
+    const result = buildModelUsageTable(
+      [
+        makeRecord({
+          provider: 'antigravity',
+          model: 'gemini-3.6-flash-high',
+          timestamp: NOW - HOURS(1),
+          usageKind: 'run',
+          durationMs: 5_000
+        })
+      ],
+      [],
+      RATES,
+      USD,
+      NOW
+    )
+
+    const antigravity = result.find((group) => group.provider === 'antigravity')!
+    expect(antigravity.models.map((model) => model.model)).toEqual(['gemini-3.6-flash'])
+    expect(antigravity.totals.h24).toMatchObject({ totalTokens: 0, runs: 1, costUsd: 0 })
+  })
 })
 
 describe('buildModelUsageTableForSettings — private-home supplements when external is on', () => {
@@ -747,6 +769,75 @@ describe('buildModelUsageTableForSettings — private-home supplements when exte
     const codex = result.find((group) => group.provider === 'codex')!
     expect(codex.totals.h24.tokensIn).toBe(3_000_000)
     expect(codex.totals.h24.runs).toBe(2)
+  })
+
+  it('keeps modeled TaskWraith Kimi usage alongside generic provider-wide scanner activity', () => {
+    const internal = [
+      makeRecord({
+        provider: 'kimi',
+        model: 'kimi-k2.6',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 100
+      }),
+      makeRecord({
+        provider: 'kimi',
+        model: 'default',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 200
+      }),
+      makeRecord({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 300
+      })
+    ]
+    const external = [
+      makeRecord({
+        id: 'external-kimi-unattributed',
+        provider: 'kimi',
+        model: 'Kimi',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 1_000
+      })
+    ]
+
+    const result = buildModelUsageTableForSettings(
+      internal,
+      external,
+      RATES,
+      { currency: 'USD', includeExternal: true },
+      NOW
+    )
+
+    const kimi = result.find((group) => group.provider === 'kimi')!
+    expect(kimi.models.map((model) => model.model).sort()).toEqual([
+      'Kimi',
+      'kimi-k2.6',
+      'kimi-k2.7-code',
+      'kimi-k3'
+    ])
+    expect(kimi.totals.h24).toMatchObject({ tokensIn: 1_600, runs: 4 })
+  })
+
+  it('keeps unmetered official agy models in the workspace matrix', () => {
+    const internal = [
+      makeRecord({
+        provider: 'antigravity',
+        model: 'gemini-3.1-pro-high',
+        timestamp: NOW - HOURS(1),
+        usageKind: 'run',
+        durationMs: 5_000
+      })
+    ]
+    const chats = [
+      makeChat({ appChatId: 'chat-1', workspaceId: 'ws-1', workspacePath: '/repo/alpha' })
+    ]
+
+    const matrix = buildModelUsageWorkspaceMatrix(internal, [], chats, RATES, USD, NOW)
+    const antigravity = matrix.groups.find((group) => group.provider === 'antigravity')!
+    expect(antigravity.models.map((model) => model.model)).toEqual(['gemini-3.1-pro'])
+    expect(antigravity.totals['ws-1']).toMatchObject({ totalTokens: 0, runs: 1 })
   })
 
   // The external activity scanner only walks the codex / claude / gemini /

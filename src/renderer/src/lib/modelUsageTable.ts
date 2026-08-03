@@ -45,6 +45,7 @@ import {
   usageRecordInputTokens,
   type RendererProviderRates
 } from './providerRateEstimate'
+import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 import { usageRecordRunCount } from '../../../shared/externalUsageBuckets'
 import { formatCost, type DisplayCurrency } from './formatCost'
 
@@ -253,6 +254,31 @@ function recordCostUsd(record: UsageRecord, rates: RendererProviderRates): numbe
   return estimateUsageRecordCostUsd(rates, record)
 }
 
+/**
+ * The official agy quota lane reports a completed run duration but no token
+ * counters. Retain those concrete, effort-qualified model records so Settings
+ * can accurately say which models ran; their token/cost cells intentionally
+ * remain empty. Synthetic external scanner markers have no duration and never
+ * meet this narrower contract.
+ */
+function isUnmeteredOfficialAgyRun(record: UsageRecord): boolean {
+  if (record.provider !== 'antigravity' || (record.usageKind && record.usageKind !== 'run'))
+    return false
+  if (!Number.isFinite(record.durationMs) || record.durationMs <= 0) return false
+  const model = (record.model || '').trim()
+  const key = model.toLowerCase()
+  return !key.startsWith('gemini-api:') && antigravityEffortForModelId(key) !== null
+}
+
+function hasReportableModelUsage(
+  record: UsageRecord,
+  tokensIn: number,
+  tokensOut: number,
+  costUsd: number
+): boolean {
+  return tokensIn > 0 || tokensOut > 0 || costUsd > 0 || isUnmeteredOfficialAgyRun(record)
+}
+
 /** Normalise a model id for grouping. Falls back to the provider name so a
  * record with a blank model still gets a stable bucket rather than vanishing
  * into an empty-string key. */
@@ -434,10 +460,10 @@ export function buildModelUsageTable(
       const costUsd = recordCostUsd(record, rates)
       // Drop synthetic zero-signal markers — the external scanner emits some
       // (codex session-index, cursor daily-stat rows) with 0 tokens and no
-      // cost. They carry no usage for this table and would otherwise inflate
-      // run counts. Skip BEFORE bucketing so a provider/model whose ONLY
-      // records are markers never sprouts an empty section.
-      if (tokensIn === 0 && tokensOut === 0 && costUsd === 0) continue
+      // cost. The sole exception is a completed official agy quota-lane run:
+      // agy does not provide token telemetry, but its duration + exact model
+      // make the row genuine, useful attribution rather than a marker.
+      if (!hasReportableModelUsage(record, tokensIn, tokensOut, costUsd)) continue
 
       let modelMap = buckets.get(provider)
       if (!modelMap) {
@@ -536,7 +562,8 @@ const EXTERNALLY_SCANNED_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId
 /**
  * Providers whose TaskWraith-internal records are always folded into the table
  * when External Usage is ON. Codex's TaskWraith-owned sessions live outside
- * the shared home scanned for external activity; Grok is never scanned
+ * the shared home scanned for external activity; Kimi's scan retains legacy
+ * provider-wide usage but has no model identity; Grok is never scanned
  * externally. Cursor is additive for reporting: IDE-native Composer activity
  * comes from the external scanner while historical TaskWraith Cursor records
  * stay visible.
@@ -552,6 +579,7 @@ const EXTERNALLY_SCANNED_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId
  */
 const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = [
   'codex',
+  'kimi',
   'grok',
   'cursor',
   ...MODEL_USAGE_PROVIDER_ORDER.filter((provider) => !EXTERNALLY_SCANNED_PROVIDERS.has(provider))
@@ -711,10 +739,16 @@ export function buildModelUsageTableForSettings(
       byProvider.set(provider, internalGroup)
       continue
     }
-    if (provider === 'codex' || provider === 'cursor') {
+    if (provider === 'codex' || provider === 'cursor' || provider === 'kimi') {
       byProvider.set(
         provider,
-        mergeModelUsageProviderGroups(existing, internalGroup, currency, overestimatePercent, locale)
+        mergeModelUsageProviderGroups(
+          existing,
+          internalGroup,
+          currency,
+          overestimatePercent,
+          locale
+        )
       )
     } else {
       byProvider.set(provider, internalGroup)
@@ -750,7 +784,7 @@ function modelUsageRecordsForSettingsMatrix(
         return cursorRecordsLikelyOverlap(record, external)
       })
     }
-    if (provider === 'codex' || provider === 'grok') return true
+    if (provider === 'codex' || provider === 'kimi' || provider === 'grok') return true
     // Anything the scanner cannot see (antigravity, pi, mistral, …) is
     // internal-only and cannot double-count.
     return !EXTERNALLY_SCANNED_PROVIDERS.has(provider)
@@ -792,7 +826,7 @@ export function buildModelUsageWorkspaceMatrix(
     const tokensOut = toNonNegative(record.outputTokens)
     const totalTokens = tokensIn + tokensOut
     const costUsd = recordCostUsd(record, rates)
-    if (totalTokens === 0 && costUsd === 0) continue
+    if (!hasReportableModelUsage(record, tokensIn, tokensOut, costUsd)) continue
 
     const workspaceId = workspaceKeyFor(record)
     const changedFiles = diffByRun.get(`${record.chatId}:${record.runId}`) ?? 0
@@ -869,18 +903,20 @@ export function buildModelUsageWorkspaceMatrix(
     for (const [model, workspaceMap] of modelMap.entries()) {
       const rowCells: Record<string, ModelUsageWorkspaceCell> = {}
       let rowTokens = 0
+      let rowRuns = 0
       for (const workspace of workspaces) {
         const acc = workspaceMap.get(workspace.workspaceId)
         const cell = acc ? finalizeCell(acc) : emptyWorkspaceCell()
         rowCells[workspace.workspaceId] = cell
         rowTokens += cell.totalTokens
+        rowRuns += cell.runs
         const total = totals[workspace.workspaceId]
         total.runs += cell.runs
         total.changedFiles += cell.changedFiles
         total.totalTokens += cell.totalTokens
         total.costUsd += cell.costUsd
       }
-      if (rowTokens > 0) models.push({ model, workspaces: rowCells })
+      if (rowTokens > 0 || rowRuns > 0) models.push({ model, workspaces: rowCells })
     }
     for (const workspaceId of Object.keys(totals)) {
       totals[workspaceId].costDisplay = formatCost(
