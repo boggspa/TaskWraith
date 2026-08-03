@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildEnsembleYieldToolResult,
+  ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE,
   ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE
 } from './EnsembleYieldToolResult'
 
@@ -43,6 +44,20 @@ describe('buildEnsembleYieldToolResult', () => {
       target: 'Worker',
       action: 'promoted',
       targetParticipantId: 'ensemble-codex'
+    })
+  })
+
+  it('acknowledges a late yield from a run that already settled', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: { kind: 'already_settled' },
+        reason: 'Handoff already recorded.'
+      })
+    ).toEqual({
+      ok: true,
+      tool: 'ensemble_yield',
+      reason: 'Handoff already recorded.',
+      message: ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE
     })
   })
 

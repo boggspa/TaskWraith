@@ -66,8 +66,30 @@ describe('resolvePiNativeToolPosture', () => {
     ).toEqual({ writeCapable: true, shellCapable: false, effectiveMode: 'default' })
   })
 
-  it.each(['plan', 'acceptEdits', 'auto_edit', 'default ', '', undefined, null])(
-    'never widens non-default approval mode %s',
+  it.each(['default', 'auto_edit', 'acceptEdits', 'allow-all', ' default '])(
+    'honours the write-capable approval alias %s through exact managed tools',
+    (approvalMode) => {
+      expect(
+        resolvePiNativeToolPosture({
+          approvalMode,
+          effectivePermissions: {
+            readOnly: false,
+            agenticServices: {
+              shellCommands: 'allow',
+              fileChanges: 'allow'
+            }
+          }
+        })
+      ).toEqual({
+        writeCapable: true,
+        shellCapable: true,
+        effectiveMode: 'default'
+      })
+    }
+  )
+
+  it.each(['plan', 'never', 'unknown', '', undefined, null])(
+    'never widens non-write approval mode %s',
     (approvalMode) => {
       expect(
         resolvePiNativeToolPosture({

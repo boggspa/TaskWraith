@@ -137,7 +137,7 @@ export function buildCursorPathBLaunchPlan(
   })
   const transactionalWriteSeat = input.writeCapable
   const basePrompt = brokerActive
-    ? input.prompt
+    ? `${input.prompt}\n\nTaskWraith Cursor broker receipt: the managed tools are ready under the exact Cursor MCP server id \`${CURSOR_MCP_SERVER_NAME}\`. Call GetMcpTools with server \`${CURSOR_MCP_SERVER_NAME}\` before concluding that TaskWraith tools are absent. Do not confuse it with user-owned \`taskwraith\` or \`agbench\` servers. Use the returned exact file and shell tools within your assigned lane.`
     : sanitizeTaskWraithMcpPromptClaims(input.prompt, {
         advertised: false,
         coreProfile: false

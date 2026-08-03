@@ -382,6 +382,8 @@ const PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS = 450
 // the serial queue indefinitely; the caller synthesizes with partial results
 // after timeout. Measured in milliseconds; default 75s.
 const DEFAULT_OWNED_FANOUT_SETTLEMENT_TIMEOUT_MS = 75 * 1000
+const TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS = 2 * 60 * 1000
+const TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT = 256
 
 export interface EnsembleDispatchEvent {
   sender: Electron.WebContents
@@ -3270,6 +3272,12 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
+  /**
+   * Bounded receipts for provider calls that arrive just after terminal
+   * settlement. They acknowledge a duplicate/late ensemble_yield without
+   * reviving authority; unknown run ids still fail closed.
+   */
+  private terminalRunToolTombstones = new Map<string, number>()
   private readonly cursorCompletionWatchdog = new EnsembleCursorCompletionWatchdog()
   /** Last emitted monotonic usage value per active seat. Keeps the renderer
    * animation smooth without putting a timer or write loop in main. */
@@ -4582,10 +4590,11 @@ export class EnsembleOrchestrator {
     const activeRuns = [...activeRunIds]
       .map((runId) => this.runsByRunId.get(runId))
       .filter((run): run is ActiveParticipantRun => Boolean(run))
+    const liveActiveRuns = activeRuns.filter((run) => !run.terminalFinalized)
     for (const active of activeRuns) {
       this.finalizeRun(active, 'cancelled', reason)
     }
-    for (const active of activeRuns) {
+    for (const active of liveActiveRuns) {
       this.updateParticipantState(chatId, roundId, active.participant.id, 'cancelled', reason)
     }
     const endedAt = this.deps.nowIso()
@@ -4615,7 +4624,7 @@ export class EnsembleOrchestrator {
     this.completeCheckpoint(chatId, roundId, 'cancelled')
     this.applyPendingParticipantSeatChanges(runtime, pendingParticipantSeatChanges)
     this.clearRuntimeIfCurrent(runtime)
-    for (const active of activeRuns) {
+    for (const active of liveActiveRuns) {
       try {
         const result = await this.requestExactRunCancellation(active)
         if (strictTransport && result !== true) {
@@ -4803,7 +4812,11 @@ export class EnsembleOrchestrator {
 
   markYielded(runId: string, reason?: string, target?: string): EnsembleYieldOutcome {
     const run = this.actionableRunForTool(runId)
-    if (!run) return { kind: 'no_active_run' }
+    if (!run) {
+      return this.isRecentlyTerminalRun(runId)
+        ? { kind: 'already_settled' }
+        : { kind: 'no_active_run' }
+    }
     const checkpoint = run.authorityRoutingCheckpoint
     const chatForCheckpoint = this.deps.getChat(run.chatId)
     const explicitCheckpointTarget = target
@@ -5134,6 +5147,32 @@ export class EnsembleOrchestrator {
     // settlement cleanup can find them. Map membership must not keep their MCP
     // authority alive for late/retried calls or provider events.
     return run?.terminalFinalized ? undefined : run
+  }
+
+  private rememberTerminalRun(runId: string): void {
+    const now = this.deps.now()
+    this.pruneTerminalRunToolTombstones(now)
+    this.terminalRunToolTombstones.delete(runId)
+    this.terminalRunToolTombstones.set(runId, now + TERMINAL_RUN_TOOL_TOMBSTONE_TTL_MS)
+    while (this.terminalRunToolTombstones.size > TERMINAL_RUN_TOOL_TOMBSTONE_LIMIT) {
+      const oldest = this.terminalRunToolTombstones.keys().next().value
+      if (typeof oldest !== 'string') break
+      this.terminalRunToolTombstones.delete(oldest)
+    }
+  }
+
+  private isRecentlyTerminalRun(runId: string | undefined): boolean {
+    if (!runId) return false
+    if (this.runsByRunId.get(runId)?.terminalFinalized) return true
+    const now = this.deps.now()
+    this.pruneTerminalRunToolTombstones(now)
+    return (this.terminalRunToolTombstones.get(runId) || 0) > now
+  }
+
+  private pruneTerminalRunToolTombstones(now: number): void {
+    for (const [runId, expiresAt] of this.terminalRunToolTombstones) {
+      if (expiresAt <= now) this.terminalRunToolTombstones.delete(runId)
+    }
   }
 
   /**
@@ -10234,6 +10273,7 @@ export class EnsembleOrchestrator {
         prompt,
         reason: input.reason,
         mode,
+        forceReadOnlyDispatch: mode === 'read_only',
         sourceRunId: runId,
         writeScopesByParticipantId,
         ...(isolation ? { isolation } : {}),
@@ -14700,21 +14740,11 @@ export class EnsembleOrchestrator {
           error: 'invalid_target'
         }
       }
-      if (mode === 'read_only') {
-        const permissions = this.resolveFanoutEligibilityPermissions(
-          chat,
-          runtime,
-          participant,
-          mode
-        )
-        if (!permissions.readOnly) {
-          return {
-            ok: false,
-            message: `ensemble_fanout: target "${rawTarget}" is not read-only. Use mode=locked_writers with TASKWRAITH_CONCURRENT_WRITE_LANES enabled for writer-capable lanes.`,
-            error: 'invalid_target'
-          }
-        }
-      }
+      // An explicit target is an operator-authored routing decision. In
+      // read_only mode its configured seat posture is immaterial because the
+      // actual lane dispatch below is rebuilt with the signed read_only preset,
+      // ignores overrides, and disallows Trusted Session. Broad/all discovery
+      // remains restricted to participants already configured as read-only.
       targets.push(participant)
     }
     const deduped = dedupeParticipants(targets)
@@ -16345,9 +16375,11 @@ export class EnsembleOrchestrator {
     }
     if (run.terminalFinalized) {
       if (suppressOwnedFanout) {
-        run.status = status
-        run.terminalReason = reason
-        this.flushRun(run, true, reason)
+        // The round may stop while a provider-terminal fan-out owner is still
+        // retained solely to settle its lanes. Suppress/release that held
+        // transcript, but never rewrite the provider's immutable terminal
+        // outcome (or send a late cancellation to its completed transport).
+        this.flushRun(run, true, run.terminalReason)
         this.applyTerminalRunSideEffects(run)
       }
       return
@@ -16359,6 +16391,7 @@ export class EnsembleOrchestrator {
     run.status = status
     run.terminalFinalized = true
     run.terminalReason = reason
+    this.rememberTerminalRun(run.runId)
     const runtime = this.roundsByChatId.get(run.chatId)
     if (runtime?.roundId === run.roundId) {
       this.incrementBossmanBudgetUsage(

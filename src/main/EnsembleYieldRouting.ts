@@ -31,6 +31,7 @@ export type EnsembleYieldRoutingResult =
 
 export type EnsembleYieldOutcome =
   | { kind: 'no_active_run' }
+  | { kind: 'already_settled' }
   | {
       kind: 'authority_routing_decision_required'
       pass: number

@@ -652,9 +652,9 @@ function approvalContract(
           ? 'official agy print mode with --sandbox --mode plan'
           : 'official agy print mode with --sandbox --mode accept-edits',
       inAppApprovals: false,
-      supportsWorkspaceGrants: false,
+      supportsWorkspaceGrants: true,
       notes: [
-        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Shared checkouts use plan mode because the official agy CLI has no exact per-edit bridge; sandboxed accept-edits is retained only for main-verified isolated worktrees, and no credential access or permission-bypass flag is used.'
+        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Signed in-workspace read/shell grants are projected through a temporary, merge-safe official-agy settings lease; shared checkouts still use plan mode because agy has no exact per-edit bridge, while sandboxed accept-edits is retained for main-verified isolated worktrees; no credential access or permission-bypass flag is used.'
       ]
     }
   }
@@ -1280,13 +1280,13 @@ export function buildProviderCapabilityContract({
     }
   }
 
-  if (provider === 'pi' && requestedMode !== effectiveMode) {
+  if (provider === 'pi' && !piNativeToolPosture.writeCapable && requestedMode !== 'plan') {
     warnings.push(
       warning(
         'pi-native-tools-downgraded',
         'warning',
         'Pi native tools adjusted',
-        `Pi exact file tools require default mode and a signed posture that is not read-only and does not deny file changes. This run will use Pi’s read-only native allowlist${piNativeToolPosture.shellCapable ? ' while retaining the separately approved TaskWraith managed-shell route' : ''}.`
+        `Pi exact file tools require a managed write mode and a signed posture that is not read-only and does not deny file changes. This run will use Pi’s read-only native allowlist${piNativeToolPosture.shellCapable ? ' while retaining the separately approved TaskWraith managed-shell route' : ''}.`
       )
     )
   }

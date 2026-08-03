@@ -47,6 +47,7 @@ import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
 import { classifyError, redactLog } from './lib/ErrorClassifier'
 import { stripElectronInvokeErrorFraming } from './lib/electronInvokeError'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
+import { findChatRunIndex } from './lib/findChatRunIndex'
 import {
   finalizeOrphanAgentExitChat,
   shouldPruneRunningChatIdAfterOrphanExit
@@ -6866,12 +6867,10 @@ function App(): React.JSX.Element {
         .then(setGeminiMcpBridgeStatus)
         .catch(() => {})
     }
-    if (!isChatPopoutWindow && typeof window.api.getProductOperationsStatus === 'function') {
-      void window.api
-        .getProductOperationsStatus()
-        .then(setProductOperationsStatus)
-        .catch(() => {})
-    }
+    // Product operations is a user-requested diagnostics surface. Loading it
+    // here used to compete with first-paint chat/workspace hydration and could
+    // monopolise the main process while it inspected a large local history.
+    // Settings retains the explicit refresh action for this status.
     if (typeof window.api.getClaudeAuthStatus === 'function') {
       void window.api
         .getClaudeAuthStatus()
@@ -14718,11 +14717,15 @@ function App(): React.JSX.Element {
               }
             }
             const runs = [...(updated.runs || [])]
-            if (runs.length > 0) {
-              runs[runs.length - 1].actualModel = event.model
-              if (effectiveRunProvider !== 'gemini') {
-                runs[runs.length - 1].providerThreadId =
-                  sessionId || runs[runs.length - 1].providerThreadId
+            const runIndex = findChatRunIndex(runs, currentRunId)
+            if (runIndex >= 0) {
+              const targetRun = runs[runIndex]
+              runs[runIndex] = {
+                ...targetRun,
+                actualModel: event.model,
+                ...(effectiveRunProvider !== 'gemini'
+                  ? { providerThreadId: sessionId || targetRun.providerThreadId }
+                  : {})
               }
             }
             updated.runs = runs
@@ -14748,23 +14751,24 @@ function App(): React.JSX.Element {
             if (finishedSessionId && effectiveRunProvider !== 'gemini') {
               updated.linkedProviderSessionId = finishedSessionId
             }
+            const runIndex = findChatRunIndex(runs, currentRunId)
+            const targetRun = runIndex >= 0 ? runs[runIndex] : undefined
             const resolvedRunModel =
-              runs.length > 0
-                ? runs[runs.length - 1].actualModel ||
-                  runs[runs.length - 1].requestedModel ||
-                  'unknown'
-                : 'unknown'
+              targetRun?.actualModel || targetRun?.requestedModel || 'unknown'
             const runUsageEntries = extractModelUsageEntriesFromStats(
               finishedStats || {},
               resolvedRunModel
             )
 
-            if (runs.length > 0) {
-              runs[runs.length - 1].status = event.status
-              runs[runs.length - 1].stats = finishedStats
-              runs[runs.length - 1].endedAt = new Date().toISOString()
-              if (finishedSessionId && effectiveRunProvider !== 'gemini') {
-                runs[runs.length - 1].providerThreadId = finishedSessionId
+            if (runIndex >= 0 && targetRun) {
+              runs[runIndex] = {
+                ...targetRun,
+                status: event.status,
+                stats: finishedStats,
+                endedAt: new Date().toISOString(),
+                ...(finishedSessionId && effectiveRunProvider !== 'gemini'
+                  ? { providerThreadId: finishedSessionId }
+                  : {})
               }
             }
             updated.runs = runs

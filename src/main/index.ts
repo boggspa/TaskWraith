@@ -208,7 +208,6 @@ import {
   GROK_SCOPED_MCP_SERVER_NAME,
   MISTRAL_SCOPED_MCP_SERVER_NAME,
   MISTRAL_BROKER_MCP_TOOL_NAMESPACE,
-  PROBE_TIMEOUT_MS,
   KNOWN_OFF_PATH_CODEX_BINARIES,
   LIGHT_THEME_POPOUT_BACKDROPS,
   RUN_MANAGER_PROVIDERS
@@ -253,12 +252,15 @@ import {
   isCodexAppServerThreadId,
   isCodexAppServerRequestTimeout,
   isCodexConfigParseError,
-  isCodexTokenRevokedError,
-  codexTokenRevokedUserMessage,
   type CodexAppServerCredentialLease,
+  type CodexMcpTaskWraithConfig,
   type CodexAppServerSpawnedProcess
 } from './CodexAppServerClient'
 import { acquireCodexOAuthCredentialLease } from './codex/CodexOAuthCredentialLease'
+import {
+  CodexClientRunCohortRegistry,
+  type CodexClientRunCohortLease
+} from './codex/CodexClientRunCohort'
 import {
   codexCompactionFailureProvesNoLiveTurn,
   updateCodexCompactionLaunchEvidence
@@ -1506,7 +1508,7 @@ import {
 } from './cursor/CursorMcpBridge'
 import { createVerifiedCursorWorkspaceConfigTransaction } from './cursor/CursorWorkspaceConfig'
 import { createCursorGlobalBrokerRegistrationTransaction } from './cursor/CursorGlobalBrokerRegistrationTransaction'
-import { runCursorMcpEnable } from './cursor/CursorMcpEnable'
+import { runCursorMcpEnable, runCursorMcpReadyProbe } from './cursor/CursorMcpEnable'
 import {
   CursorWorkspaceConfigLeaseAbortedError,
   CursorWorkspaceConfigLeaseCoordinator,
@@ -1546,6 +1548,12 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
+import {
+  AntigravityPermissionLeaseAbortedError,
+  AntigravityPermissionLeaseCoordinator,
+  recoverInterruptedAntigravityPermissionLease,
+  type AntigravityPermissionLease
+} from './antigravity/AntigravityPermissionLease'
 import {
   formatAgyProjectBoundSessionId,
   readAgyConversationReceipt
@@ -2128,6 +2136,12 @@ interface CodexClientLifecycleLease {
 }
 let codexClientLifecycleTail: Promise<void> = Promise.resolve()
 let activeCodexClientLifecycleLease: CodexClientLifecycleLease | null = null
+interface CodexProviderClientCohortResource {
+  readonly client: CodexAppServerClient
+  readonly lifecycleLease: CodexClientLifecycleLease
+}
+const codexProviderClientCohorts =
+  new CodexClientRunCohortRegistry<CodexProviderClientCohortResource>()
 const codexRunClientBindings = new Map<
   string,
   { client: CodexAppServerClient; lease: CodexClientLifecycleLease }
@@ -15533,19 +15547,23 @@ async function getCodexStatusSnapshotForCliRuntime(): Promise<any> {
   let codexUsage: any = null
   let startupError: string | null = null
   try {
-    await withUnownedCodexClientLifecycle('status-snapshot', async (client) => {
-      await client.ensureStarted(app.getVersion())
-      try {
-        accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
-      } catch (error) {
-        accountStatus = { error: error instanceof Error ? error.message : String(error) }
-      }
-      try {
-        rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
-      } catch (error) {
-        rateLimitStatus = { error: error instanceof Error ? error.message : String(error) }
-      }
-    })
+    await withUnownedCodexClientLifecycle(
+      'status-snapshot',
+      async (client) => {
+        await client.ensureStarted(app.getVersion())
+        try {
+          accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
+        } catch (error) {
+          accountStatus = { error: error instanceof Error ? error.message : String(error) }
+        }
+        try {
+          rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
+        } catch (error) {
+          rateLimitStatus = { error: error instanceof Error ? error.message : String(error) }
+        }
+      },
+      { borrowActiveProviderClient: true }
+    )
   } catch (error) {
     startupError = error instanceof Error ? error.message : String(error)
   }
@@ -15569,17 +15587,21 @@ async function getCodexStatusSnapshotForCliRuntime(): Promise<any> {
 }
 
 async function getCodexMcpStatusSnapshotForCliRuntime(): Promise<any> {
-  return withUnownedCodexClientLifecycle('mcp-status-snapshot', async (client) => {
-    await client.ensureStarted(app.getVersion())
-    return client.request(
-      'mcpServerStatus/list',
-      {
-        detail: 'toolsAndAuthOnly',
-        limit: 100
-      },
-      20_000
-    )
-  })
+  return withUnownedCodexClientLifecycle(
+    'mcp-status-snapshot',
+    async (client) => {
+      await client.ensureStarted(app.getVersion())
+      return client.request(
+        'mcpServerStatus/list',
+        {
+          detail: 'toolsAndAuthOnly',
+          limit: 100
+        },
+        20_000
+      )
+    },
+    { borrowActiveProviderClient: true }
+  )
 }
 
 async function getKimiAdmittedStatusSnapshot(): Promise<any> {
@@ -15666,7 +15688,8 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
       async (client) => {
         await client.ensureStarted(app.getVersion())
         return client.request('account/read', { refreshToken: false }, 15_000)
-      }
+      },
+      { borrowActiveProviderClient: true }
     )
     const snapshot = buildCodexStatusSnapshot({
       version: 'configured-provider-probe',
@@ -20548,6 +20571,31 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
             ? instanceLaunchPosture.instanceId
             : undefined
       })
+      await runCursorMcpReadyProbe({
+        serverName: CURSOR_MCP_SERVER_NAME,
+        signal: payload.providerSetupAbortSignal,
+        launch: (callback) =>
+          execFile(
+            resolved.binaryPath!,
+            ['mcp', 'list'],
+            {
+              cwd: payload.workspace!,
+              timeout: 10000,
+              env: { ...process.env, ...cursorMcpBridgeEnv }
+            },
+            (error, stdout, stderr) =>
+              callback(
+                error instanceof Error ? error : error ? new Error(String(error)) : null,
+                String(stdout || ''),
+                String(stderr || '')
+              )
+          )
+      })
+      if (!providerTransportLaunchAuthorized('cursor', payload, route)) {
+        await releaseCursorConfigurationLeases()
+        settleDeniedProviderTransportLaunch(route)
+        return
+      }
       cursorMcpBridgeActive = true
     } catch (error) {
       // Degrade WITH A VISIBLE WARNING (Grok parity). A signed write seat keeps
@@ -23680,6 +23728,10 @@ async function acquireCodexCredentialLeaseIfConsented(
 async function acquireCodexClientLifecycleLease(label: string): Promise<CodexClientLifecycleLease> {
   const normalizedLabel = label.trim()
   if (!normalizedLabel) throw new Error('Codex client lifecycle requires an exact owner label.')
+  // An exclusive transition queued behind a provider cohort must eventually
+  // run. Close admission before joining the lifecycle tail so later compatible
+  // turns cannot starve a profile, credential, maintenance, or teardown change.
+  codexProviderClientCohorts.stopAccepting()
   const predecessor = codexClientLifecycleTail
   let unlock!: () => void
   codexClientLifecycleTail = new Promise<void>((resolve) => {
@@ -23753,8 +23805,19 @@ async function withUnownedCodexClientLifecycle<T>(
   options: {
     runtimeProfile?: RuntimeProfile | null
     taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
+    borrowActiveProviderClient?: boolean
   } = {}
 ): Promise<T> {
+  const borrowed = options.borrowActiveProviderClient
+    ? codexProviderClientCohorts.tryBorrow(`read:${label}:${randomUUID()}`)
+    : null
+  if (borrowed) {
+    try {
+      return await operation(borrowed.resource.client)
+    } finally {
+      await borrowed.release()
+    }
+  }
   const lease = await acquireCodexClientLifecycleLease(label)
   let client: CodexAppServerClient | null = null
   try {
@@ -23890,10 +23953,83 @@ function handleCodexServerRequestFromClient(message: any, client: CodexAppServer
   dispatchCodexMessageFromClient(message, client, handleCodexServerRequest)
 }
 
+function handleCodexStderrFromClient(chunk: string, client: CodexAppServerClient): void {
+  const states = [...codexRunClientBindings.entries()]
+    .filter(([, binding]) => binding.client === client)
+    .map(([runId]) => getCodexStateFromSession(runManager.get(runId)))
+    .filter((state): state is CodexRunState => Boolean(state?.sender))
+  if (states.length === 0) {
+    console.warn('[codex] unowned app-server stderr', chunk)
+    return
+  }
+  if (states.length !== 1) {
+    // The shared transport has no run identity on raw stderr. Copying one
+    // turn's diagnostic into every active run would contaminate failure and
+    // quota classification. Exact JSON-RPC responses and notifications retain
+    // their normal per-thread routing; the client also keeps bounded raw stderr
+    // for startup diagnostics.
+    console.warn('[codex] shared app-server stderr lacked exact turn attribution', chunk)
+    return
+  }
+  sendAgentCompatError(states[0].sender!, 'codex', chunk, states[0])
+}
+
+interface CodexClientStartupConfiguration {
+  readonly runtimeProfile: RuntimeProfile | null | undefined
+  readonly mcpConfig: CodexMcpTaskWraithConfig | null
+  readonly credentialLeaseConsent: boolean
+  readonly compatibilityKey: string
+}
+
+function resolveCodexClientStartupConfiguration(
+  runtimeProfile?: RuntimeProfile | null,
+  taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null
+): CodexClientStartupConfiguration {
+  const settings = AppStore.getSettings()
+  const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
+    supportedTransports: ['stdio', 'http'],
+    allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
+    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
+    validatePluginProvenance: validateUserMcpPluginProvenance
+  })
+  const taskWraithBridgeEnabled = Boolean(
+    settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
+  )
+  const mcpProfileId = taskWraithMcpProfileId ?? TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
+  const mcpConfig: CodexMcpTaskWraithConfig | null =
+    taskWraithBridgeEnabled || userMcpServers.length > 0
+      ? {
+          enabled: taskWraithBridgeEnabled,
+          bridgeBinaryPath: bridgeCommandStatus.command,
+          bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+            gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
+            portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
+            meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
+            sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId)
+          }),
+          parentProvider: 'codex',
+          userMcpServers
+        }
+      : null
+  const credentialLeaseConsent = Boolean(settings.codexReuseExistingLogin)
+  const compatibilityKey = createHash('sha256')
+    .update(
+      JSON.stringify({
+        runtimeProfile: runtimeProfile ?? null,
+        mcpConfig,
+        credentialLeaseConsent
+      })
+    )
+    .digest('hex')
+  return { runtimeProfile, mcpConfig, credentialLeaseConsent, compatibilityKey }
+}
+
 function getCodexClient(
   runtimeProfile?: RuntimeProfile | null,
   taskWraithMcpProfileId?: AgentRunPayload['taskWraithMcpProfileId'] | null,
-  lifecycleLease?: CodexClientLifecycleLease
+  lifecycleLease?: CodexClientLifecycleLease,
+  resolvedConfiguration?: CodexClientStartupConfiguration
 ): CodexAppServerClient {
   if (activeCodexClientLifecycleLease && activeCodexClientLifecycleLease !== lifecycleLease) {
     throw new Error(
@@ -23913,8 +24049,11 @@ function getCodexClient(
       { acquireCredentialLease: acquireCodexCredentialLeaseIfConsented }
     )
   }
-  if (runtimeProfile !== undefined) {
-    codexClient.setRuntimeProfile(runtimeProfile ?? null)
+  const configuration =
+    resolvedConfiguration ??
+    resolveCodexClientStartupConfiguration(runtimeProfile, taskWraithMcpProfileId)
+  if (configuration.runtimeProfile !== undefined) {
+    codexClient.setRuntimeProfile(configuration.runtimeProfile ?? null)
   }
   // Phase I2: refresh the MCP config on every accessor call so the
   // toggle in Settings → MCP Bridge takes effect on the NEXT Codex
@@ -23923,44 +24062,17 @@ function getCodexClient(
   // The TaskWraith bridge mirrors the existing Gemini gate
   // (geminiMcpBridgeEnabled); user-managed stdio/HTTP servers can
   // attach independently through the MCP Servers settings page.
-  const settings = AppStore.getSettings()
-  const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-  const userMcpServers = buildUserMcpLaunchServers(settings.userMcpServers, {
-    supportedTransports: ['stdio', 'http'],
-    allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-    resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
-    validatePluginProvenance: validateUserMcpPluginProvenance
-  })
-  const taskWraithBridgeEnabled = Boolean(
-    settings.geminiMcpBridgeEnabled && bridgeCommandStatus.available
-  )
   // Codex's app-server owns one bridge configuration for its process lifetime.
   // A run passes its profile here before a fresh server starts; a running server
   // retains its started profile as a compatibility receipt, never as a Mesh
   // permission grant. Every actual mesh call still hits the current run's
   // signed meshCanvas approval gate in executeGeminiMcpTool.
-  const mcpProfileId = taskWraithMcpProfileId ?? TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
-  if (taskWraithBridgeEnabled || userMcpServers.length > 0) {
-    codexClient.setMcpConfig({
-      enabled: taskWraithBridgeEnabled,
-      bridgeBinaryPath: bridgeCommandStatus.command,
-      bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-        gatewaySubset: isGatewayTaskWraithMcpProfile(mcpProfileId),
-        portableEnsembleControl: isPortableEnsembleControlMcpProfile(mcpProfileId),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(mcpProfileId),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(mcpProfileId)
-      }),
-      parentProvider: 'codex',
-      userMcpServers
-    })
-  } else {
-    codexClient.setMcpConfig(null)
-  }
+  codexClient.setMcpConfig(configuration.mcpConfig)
   // Same deferral rule as the MCP config: consent to borrow ~/.codex applies to
   // the NEXT app-server start, so an idle daemon is restarted to pick it up.
   // Without this the toggle looks inert — the daemon that started before it was
   // enabled keeps serving, and Codex keeps asking for a sign-in.
-  codexClient.setCredentialLeaseConsent(Boolean(settings.codexReuseExistingLogin))
+  codexClient.setCredentialLeaseConsent(configuration.credentialLeaseConsent)
   const shouldRestart = shouldRestartCodexAppServerForMcpConfig({
     stale: codexClient.hasStaleMcpConfig() || codexClient.hasStaleCredentialLeaseConsent(),
     startupLeaseCount: codexAppServerStartupLeaseCount,
@@ -23976,6 +24088,74 @@ function getCodexClient(
     codexClient.dispose()
   }
   return codexClient
+}
+
+interface CodexProviderClientRunLease {
+  readonly client: CodexAppServerClient
+  readonly lifecycleLease: CodexClientLifecycleLease
+  readonly cohortLease: CodexClientRunCohortLease<CodexProviderClientCohortResource>
+}
+
+async function acquireCodexProviderClientRunLease(
+  payload: AgentRunPayload,
+  runId: string,
+  workspaceLockOwnerId: string | null
+): Promise<CodexProviderClientRunLease> {
+  const configuration = resolveCodexClientStartupConfiguration(
+    payload.runtimeProfile ?? null,
+    payload.taskWraithMcpProfileId
+  )
+  // A future coarse-lock compatibility mode must remain isolated by its exact
+  // owner. Today's operation-scoped policy always supplies null, allowing
+  // compatible native threads to share one process without sharing authority.
+  const compatibilityKey = createHash('sha256')
+    .update(
+      `${configuration.compatibilityKey}\0${
+        workspaceLockOwnerId ? `${workspaceLockOwnerId}\0${runId}` : 'unowned'
+      }`
+    )
+    .digest('hex')
+  const joined = codexProviderClientCohorts.tryJoin(runId, compatibilityKey)
+  if (joined) {
+    const { client, lifecycleLease } = joined.resource
+    if (activeCodexClientLifecycleLease !== lifecycleLease) {
+      codexProviderClientCohorts.stopAccepting()
+      await joined.release().catch(() => undefined)
+      poisonWorkspaceLockMutationAdmission(
+        `Codex run ${runId} joined a client cohort without its exact lifecycle lease.`
+      )
+      throw new Error('Codex compatible client cohort lost lifecycle ownership.')
+    }
+    return { client, lifecycleLease, cohortLease: joined }
+  }
+
+  const lifecycleLease = await acquireCodexClientLifecycleLease(`provider-run:${runId}`)
+  let client: CodexAppServerClient | null = null
+  try {
+    await disposeCodexClientForOwnerTransition(lifecycleLease)
+    client = getCodexClient(
+      configuration.runtimeProfile,
+      payload.taskWraithMcpProfileId,
+      lifecycleLease,
+      configuration
+    )
+    client.setWorkspaceLockOwnerId(workspaceLockOwnerId)
+    const cohortLease = codexProviderClientCohorts.open(
+      runId,
+      compatibilityKey,
+      { client, lifecycleLease },
+      async () => finishCodexClientLifecycle(client!, lifecycleLease),
+      () => lifecycleLease.release()
+    )
+    return { client, lifecycleLease, cohortLease }
+  } catch (error) {
+    try {
+      if (client) await finishCodexClientLifecycle(client, lifecycleLease)
+    } finally {
+      lifecycleLease.release()
+    }
+    throw error
+  }
 }
 
 /**
@@ -24071,45 +24251,24 @@ async function probeAntigravityParticipant(
 async function probeCodexParticipant(
   runtimeProfile?: RuntimeProfile | null
 ): Promise<ParticipantProbeResult> {
-  const ensure = withUnownedCodexClientLifecycle(
-    `ensemble-probe:${runtimeProfile?.id || 'default'}`,
-    async (client) => {
-      await client.ensureStarted(app.getVersion())
-    },
-    { runtimeProfile: runtimeProfile ?? null }
-  )
-    .then<ParticipantProbeResult>(() => ({ reachable: true }))
-    .catch<ParticipantProbeResult>((err: unknown) => {
-      const message = err instanceof Error ? err.message : String(err)
-      const code =
-        typeof (err as { code?: unknown })?.code === 'string'
-          ? ((err as { code?: string }).code as string)
-          : 'ECONNREFUSED'
-      // Surface a config.toml parse failure as the actionable message so the
-      // ensemble unreachable reason isn't a cryptic serde dump.
-      const stderr = (err as { codexStderr?: string } | null)?.codexStderr || message
-      // A revoked token is checked FIRST: it is also surfaced as a generic
-      // failure, and its remedy (sign out, then in) differs from every other
-      // 401 — re-signing in over a revoked credential appears to do nothing.
-      const reason = isCodexTokenRevokedError(stderr)
-        ? codexTokenRevokedUserMessage()
-        : isCodexConfigParseError(stderr)
-          ? codexConfigParseUserMessage(stderr)
-          : message
-      return { reachable: false, reason, underlyingCode: code }
-    })
-  const timeout = new Promise<ParticipantProbeResult>((resolve) =>
-    setTimeout(
-      () =>
-        resolve({
-          reachable: false,
-          reason: `Codex app-server probe timed out after ${PROBE_TIMEOUT_MS}ms`,
-          underlyingCode: 'ETIMEDOUT'
-        }),
-      PROBE_TIMEOUT_MS
-    )
-  )
-  return Promise.race([ensure, timeout])
+  if (
+    codexClient?.isRunning() &&
+    codexClient.getRuntimeProfileKey() === (runtimeProfile?.id || 'default')
+  ) {
+    return { reachable: true }
+  }
+  // A reachability probe must not start, retarget, or tear down the shared
+  // app-server. Doing so queues behind an active compatible cohort and turns
+  // fan-out admission back into process-global serialization. Exact config,
+  // credential, and startup failures still surface from the real dispatch.
+  const resolved = await resolveCliProviderBinary('codex', runtimeProfile ?? null)
+  return resolved.binaryPath
+    ? { reachable: true }
+    : {
+        reachable: false,
+        reason: resolved.error || 'Codex CLI binary not found on PATH',
+        underlyingCode: 'ENOENT'
+      }
 }
 
 async function probeCliParticipant(
@@ -29787,41 +29946,37 @@ async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: Ag
   }
   const runId = payload.appRunId?.trim()
   if (!runId) throw new Error('Codex app-server dispatch requires an exact run identity.')
-  const lifecycleLease = await acquireCodexClientLifecycleLease(`provider-run:${runId}`)
   codexAppServerStartupLeaseCount += 1
   try {
     await workspaceLockRunLifecycle.run(runId, async () => {
       let lockBinding: CodexWorkspaceLockStartupBinding | null = null
+      let runClientLease: CodexProviderClientRunLease | null = null
       let client: CodexAppServerClient | null = null
       let clientDeathProven = false
       try {
-        await disposeCodexClientForOwnerTransition(lifecycleLease)
         lockBinding = createCodexWorkspaceLockStartupBinding(payload)
-        client = getCodexClient(
-          payload.runtimeProfile ?? null,
-          payload.taskWraithMcpProfileId,
-          lifecycleLease
+        runClientLease = await acquireCodexProviderClientRunLease(
+          payload,
+          runId,
+          lockBinding.ownerId
         )
-        client.setWorkspaceLockOwnerId(lockBinding.ownerId)
-        bindCodexRunClient(runId, client, lifecycleLease)
+        client = runClientLease.client
+        bindCodexRunClient(runId, client, runClientLease.lifecycleLease)
         await runCodexAppServerWithClient(event, payload, client, lockBinding.bindSpawnedProcess)
       } finally {
         try {
-          if (client) {
-            await finishCodexClientLifecycle(client, lifecycleLease)
-            clientDeathProven = true
-          } else {
-            clientDeathProven = true
+          if (client && runClientLease) {
+            unbindCodexRunClient(runId, client, runClientLease.lifecycleLease)
+            await runClientLease.cohortLease.release()
+            clientDeathProven = !client.isRunning()
           }
         } finally {
-          if (client) unbindCodexRunClient(runId, client, lifecycleLease)
           await lockBinding?.settleAfterClientClosed(clientDeathProven)
         }
       }
     })
   } finally {
     codexAppServerStartupLeaseCount = Math.max(0, codexAppServerStartupLeaseCount - 1)
-    lifecycleLease.release()
   }
 }
 
@@ -29835,12 +29990,7 @@ async function runCodexAppServerWithClient(
   const route = routeWithRunId('codex', payload)
   client.setNotificationHandler((message) => handleCodexNotificationFromClient(message, client))
   client.setRequestHandler((message) => handleCodexServerRequestFromClient(message, client))
-  client.setStderrHandler((chunk) => {
-    const state = getCodexStateFromSession(runManager.get(route.appRunId))
-    if (state?.sender) {
-      sendAgentCompatError(state.sender, 'codex', chunk, state)
-    }
-  })
+  client.setStderrHandler((chunk) => handleCodexStderrFromClient(chunk, client))
 
   const persistedChat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
   const taskWraithOwnsThisRun =
@@ -32208,6 +32358,16 @@ async function runAntigravityProvider(
  * governed CLI stream/cancellation lifecycle with an official-agy, sandboxed
  * launch plan. Combined-mode Gemini API candidates never reach this function.
  */
+const antigravityPermissionLeases = new AntigravityPermissionLeaseCoordinator()
+
+function antigravityCliSettingsPath(): string {
+  return join(app.getPath('home'), '.gemini', 'antigravity-cli', 'settings.json')
+}
+
+function antigravityPolicyIsPregranted(value: unknown): boolean {
+  return value === 'allow' || value === 'workspace'
+}
+
 async function runAntigravityAgyProvider(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload
@@ -32255,30 +32415,102 @@ async function runAntigravityAgyProvider(
   const receiptBeforeFreshProject = launch.resumedConversationId
     ? null
     : await readAgyConversationReceipt(payload.workspace)
-  await runCliProviderProcess(
-    event,
-    'antigravity',
-    launch.binary.binaryPath!,
-    launch.args,
-    payload,
-    {
-      fallback: false,
-      requireExistingRun: true,
-      resolvedEnv: launch.env,
-      // Keyed by the run's own cwd, which is what agy records. Fan-out lanes get
-      // their own worktrees, so per-lane cwds do not collide; two concurrent runs
-      // sharing one cwd are last-writer-wins on the CLI's side, which is agy's
-      // behaviour and not something TaskWraith can arbitrate.
-      resolveExitSessionId: async () => {
-        const learned = await readAgyConversationReceipt(payload.workspace)
-        // If a fresh project failed before agy allocated a conversation, its
-        // cwd cache still contains the legacy/default-project UUID. Do not
-        // bless that stale value with project provenance.
-        if (!launch.resumedConversationId && learned === receiptBeforeFreshProject) return null
-        return formatAgyProjectBoundSessionId(learned)
+  let permissionLease: AntigravityPermissionLease | undefined
+  if (payload.workspace && providerTransportLaunchAuthorized('antigravity', payload, route)) {
+    const permissions = payload.effectivePermissions
+    const allowShell =
+      permissions?.readOnly !== true &&
+      antigravityPolicyIsPregranted(permissions?.agenticServices?.shellCommands)
+    const allowWrite =
+      launch.mode === 'accept-edits' &&
+      permissions?.readOnly !== true &&
+      antigravityPolicyIsPregranted(permissions?.agenticServices?.fileChanges)
+    try {
+      permissionLease = await antigravityPermissionLeases.acquire({
+        settingsPath: antigravityCliSettingsPath(),
+        workspacePath: payload.workspace,
+        allowShell,
+        allowWrite,
+        signal: payload.providerSetupAbortSignal
+      })
+    } catch (error) {
+      if (
+        error instanceof AntigravityPermissionLeaseAbortedError ||
+        payload.providerSetupAbortSignal?.aborted
+      ) {
+        settleDeniedProviderTransportLaunch(route)
+        return
       }
+      sendAgentCompatLine(
+        event.sender,
+        'antigravity',
+        {
+          type: 'provider_warning',
+          provider: 'antigravity',
+          severity: 'warning',
+          title: 'AntiGravity native permission handoff unavailable',
+          message: `TaskWraith could not project this run's signed in-workspace permissions into official agy settings. The provider remains available and will continue under its native policy. ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        },
+        route
+      )
     }
-  )
+  }
+
+  const releasePermissionLease = async (): Promise<void> => {
+    if (!permissionLease) return
+    const lease = permissionLease
+    permissionLease = undefined
+    try {
+      await lease.release()
+    } catch (error) {
+      sendAgentCompatLine(
+        event.sender,
+        'antigravity',
+        {
+          type: 'provider_warning',
+          provider: 'antigravity',
+          severity: 'warning',
+          title: 'AntiGravity permission cleanup not verified',
+          message: `TaskWraith could not verify restoration of the temporary agy permission overlay. It will retry recovery at startup. ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        },
+        route
+      )
+      throw error
+    }
+  }
+
+  try {
+    await runCliProviderProcess(
+      event,
+      'antigravity',
+      launch.binary.binaryPath!,
+      launch.args,
+      payload,
+      {
+        fallback: false,
+        requireExistingRun: true,
+        resolvedEnv: launch.env,
+        onComplete: releasePermissionLease,
+        // Keyed by the run's own cwd, which is what agy records. The temporary
+        // native permission overlay is separately serialized because official
+        // agy exposes only one global settings path.
+        resolveExitSessionId: async () => {
+          const learned = await readAgyConversationReceipt(payload.workspace)
+          // If a fresh project failed before agy allocated a conversation, its
+          // cwd cache still contains the legacy/default-project UUID. Do not
+          // bless that stale value with project provenance.
+          if (!launch.resumedConversationId && learned === receiptBeforeFreshProject) return null
+          return formatAgyProjectBoundSessionId(learned)
+        }
+      }
+    )
+  } finally {
+    await releasePermissionLease()
+  }
 }
 
 // Grok is a first-class provider — its adapter is always registered.
@@ -32785,7 +33017,11 @@ async function getProductOperationsStatus(): Promise<ProductOperationsStatus> {
   )
 
   const workspaces = AppStore.getWorkspaces()
-  const chats = AppStore.getChats()
+  // Product-operations health only needs the number of chats. Reading every
+  // full transcript here can synchronously parse hundreds of megabytes on the
+  // main process and stall unrelated first-paint IPC. The summary index has
+  // the same ChatRecord surface without loading transcript bodies.
+  const chats = AppStore.getChatList()
   const runQueue = AppStore.getRunQueueJobs()
   const runRecovery = AppStore.getRunRecoveryRecords()
   const approvalLedger = AppStore.getApprovalLedger()
@@ -38620,6 +38856,19 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    try {
+      const recovered = await recoverInterruptedAntigravityPermissionLease(
+        antigravityCliSettingsPath()
+      )
+      if (recovered) {
+        console.warn('[antigravity] recovered an interrupted temporary permission overlay')
+      }
+    } catch (error) {
+      // Keep the provider admitted. A later official-agy launch retries the
+      // same merge-safe recovery and surfaces a visible warning if it remains
+      // unavailable.
+      console.warn('[antigravity] temporary permission overlay recovery was not verified', error)
+    }
     await installTaskWraithLocalControl(app, () => createBridgeActionExecutor())
     try {
       await regenerableHistoryByteStore.initializeStrict(
@@ -49957,10 +50206,14 @@ if (isGeminiMcpBridgeProcess) {
         // and hit Cursor's period-usage RPC (same path as Limit Counter).
         if (provider === 'cursor') return fetchCursorUsageSnapshot({ force })
         if (provider !== 'codex') return null
-        return withUnownedCodexClientLifecycle('rate-limit-snapshot', async (client) => {
-          await client.ensureStarted(app.getVersion())
-          return client.request('account/rateLimits/read', {}, 15_000)
-        })
+        return withUnownedCodexClientLifecycle(
+          'rate-limit-snapshot',
+          async (client) => {
+            await client.ensureStarted(app.getVersion())
+            return client.request('account/rateLimits/read', {}, 15_000)
+          },
+          { borrowActiveProviderClient: true }
+        )
       }
     )
 
@@ -50874,7 +51127,8 @@ if (isGeminiMcpBridgeProcess) {
           async (client) => {
             await client.ensureStarted(app.getVersion())
             return client.request('model/list', {}, 15_000)
-          }
+          },
+          { borrowActiveProviderClient: true }
         )
         const models = Array.isArray(response?.data) ? response.data : []
         const normalized = activeCodexModelRows(

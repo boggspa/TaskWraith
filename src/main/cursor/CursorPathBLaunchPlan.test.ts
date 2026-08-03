@@ -71,7 +71,9 @@ describe('CursorPathBLaunchPlan', () => {
       })
     )
 
-    expect(plan.prompt).toBe(PROMPT)
+    expect(plan.prompt).toContain(PROMPT)
+    expect(plan.prompt).toContain('exact Cursor MCP server id `taskwraith-broker`')
+    expect(plan.prompt).toContain('GetMcpTools')
     expect(plan.controls).toEqual({
       executionMode: 'contained-default',
       bridgeMode: 'safe-subset',

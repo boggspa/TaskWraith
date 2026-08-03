@@ -25,6 +25,19 @@ export interface PiNativeToolPosture {
   readonly effectiveMode: 'default' | 'plan'
 }
 
+const PI_MANAGED_WRITE_APPROVAL_MODES = new Set([
+  'default',
+  'auto_edit',
+  'acceptEdits',
+  'allow-all'
+])
+
+function piManagedMutationCapable(approvalMode: string | null | undefined): boolean {
+  return (
+    typeof approvalMode === 'string' && PI_MANAGED_WRITE_APPROVAL_MODES.has(approvalMode.trim())
+  )
+}
+
 /**
  * Resolve Pi's launch-time brokered-file posture without ever widening it.
  *
@@ -35,7 +48,8 @@ export interface PiNativeToolPosture {
  */
 export function resolvePiNativeToolPosture(input: PiNativeToolPostureInput): PiNativeToolPosture {
   const permissions = input.effectivePermissions
-  const managedMutationCapable = input.approvalMode === 'default' && permissions?.readOnly !== true
+  const managedMutationCapable =
+    piManagedMutationCapable(input.approvalMode) && permissions?.readOnly !== true
   const writeCapable =
     managedMutationCapable && permissions?.agenticServices?.fileChanges !== 'deny'
   const shellCapable =

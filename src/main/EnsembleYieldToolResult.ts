@@ -18,6 +18,8 @@ export type EnsembleYieldToolResult = {
 
 export const ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE =
   'No active Ensemble participant run matches this yield call.'
+export const ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE =
+  'This Ensemble participant run already settled; no further routing action is required.'
 
 export function buildEnsembleYieldToolResult(input: {
   outcome: EnsembleYieldOutcome
@@ -36,6 +38,14 @@ export function buildEnsembleYieldToolResult(input: {
       ok: false,
       message: ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE,
       error: 'no_active_run'
+    }
+  }
+
+  if (input.outcome.kind === 'already_settled') {
+    return {
+      ...base,
+      ok: true,
+      message: ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE
     }
   }
 

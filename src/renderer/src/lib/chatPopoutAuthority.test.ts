@@ -60,9 +60,11 @@ describe('chat popout authority projection', () => {
     expect(appSource).toContain(
       "if (!isChatPopoutWindow && typeof window.api.getGeminiMcpBridgeStatus === 'function')"
     )
-    expect(appSource).toContain(
-      "if (!isChatPopoutWindow && typeof window.api.getProductOperationsStatus === 'function')"
+    expect(appSource).not.toContain(
+      ".getProductOperationsStatus()\n        .then(setProductOperationsStatus)"
     )
+    expect(appSource).toContain('const refreshProductOperationsStatus = async () => {')
+    expect(appSource).toContain('    refreshProductOperationsStatus,')
     expect(appSource).toContain(
       'if (isChatPopoutWindow) return\n    void window.api.getScheduledTasks(currentWorkspace?.id)'
     )

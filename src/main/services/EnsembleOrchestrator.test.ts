@@ -15643,6 +15643,51 @@ Next action:
     expect(result.laneIds).toHaveLength(1)
   })
 
+  it('clamps an explicitly targeted writer seat to read-only for a read_only fan-out', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'captain',
+        provider: 'codex',
+        enabled: true,
+        role: 'Captain',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'writer-reviewer',
+        provider: 'kimi',
+        enabled: true,
+        role: 'WriterReviewer',
+        instructions: 'Normally writes, but inspect only in this lane.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.chat.ensemble!.bossmanParticipantId = 'captain'
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Captain starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      mode: 'read_only',
+      targets: ['WriterReviewer'],
+      prompt: 'Inspect without editing.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const lane = harness.dispatched[1]
+    expect(lane.approvalMode).toBe('plan')
+    expect(lane.effectivePermissions).toMatchObject({ presetId: 'read_only', readOnly: true })
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+  })
+
   it('binds fan-out attachment grants to the lane run instead of the parent run', async () => {
     const issueRunScopedExternalGrants = vi.fn(
       ({ participant, appRunId, attachments }: Parameters<
@@ -16081,6 +16126,34 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
+  it('keeps a provider-terminal fan-out owner successful when the round is stopped', async () => {
+    const harness = makeFanoutRaceHarness()
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    completeDispatchedRun(harness, 0)
+    await vi.waitFor(() =>
+      expect(harness.chat.runs?.find((run) => run.runId === ownerRunId)?.status).toBe('success')
+    )
+
+    await expect(
+      harness.orchestrator.cancelRound('ensemble-chat', 'Stopped after provider completion.')
+    ).resolves.toBe(true)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    expect(harness.cancelRun).not.toHaveBeenCalledWith('codex', ownerRunId)
+    expect(harness.chat.runs?.find((run) => run.runId === ownerRunId)?.status).toBe('success')
+    expect(
+      harness.chat.messages
+        .filter(
+          (message) =>
+            message.runId === ownerRunId && message.metadata?.kind === 'ensembleParticipant'
+        )
+        .every((message) => message.metadata?.ensembleStatus === 'success')
+    ).toBe(true)
+    expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
+  })
+
   it('releases foreground ownership when a pending fan-out dispatch is rejected', async () => {
     const dispatchGate = deferred<boolean>()
     const harness = makeFanoutRaceHarness({
@@ -16386,7 +16459,7 @@ Next action:
     expect(internals.runsByRunId.get(ownerRunId)?.terminalFinalized).toBe(true)
     expect(harness.orchestrator.getParticipantIdForRun(ownerRunId)).toBeNull()
     expect(harness.orchestrator.markYielded(ownerRunId, 'late yield', 'Researcher').kind).toBe(
-      'no_active_run'
+      'already_settled'
     )
     await expect(
       harness.orchestrator.fanoutForRun(ownerRunId, {
@@ -16431,6 +16504,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
     expect(internals.runsByRunId.has(ownerRunId)).toBe(false)
+    expect(harness.orchestrator.markYielded(ownerRunId, 'duplicate late yield').kind).toBe(
+      'already_settled'
+    )
     expect(
       harness.chat.messages.filter((message) => message.content.includes('OWNER-TERMINAL-ANSWER.'))
     ).toHaveLength(1)

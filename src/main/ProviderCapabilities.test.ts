@@ -116,21 +116,24 @@ describe('ProviderCapabilities', () => {
       expect(contract.tools.mcpTools.state).toBe('unavailable')
     })
 
-    // Pi's exact-default baseline is stricter than the house convention (any
-    // mode except 'plan'); the signed posture can only narrow it further. If
-    // the runtime is ever intentionally widened, this test must change with it
-    // — the contract must not claim a tool set the launch does not use.
-    it.each(['plan', 'acceptEdits', 'auto_edit'])(
-      'reports the read-only allowlist for %s',
+    it('reports the read-only allowlist for plan mode', () => {
+      const contract = piContract('plan')
+      expect(contract.approvals.effectiveMode).toBe('plan')
+      expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+      expect(
+        contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
+      ).toBeUndefined()
+    })
+
+    it.each(['acceptEdits', 'auto_edit'])(
+      'reports the exact managed write tools for signed %s posture',
       (approvalMode) => {
-        const approvals = piContract(approvalMode).approvals
-        expect(approvals.effectiveMode).toBe('plan')
-        expect(approvals.providerMode).toContain('read-only tool allowlist')
-        const downgradeWarning = piContract(approvalMode).warnings.find(
-          (warning) => warning.id === 'pi-native-tools-downgraded'
-        )
-        if (approvalMode === 'plan') expect(downgradeWarning).toBeUndefined()
-        else expect(downgradeWarning).toMatchObject({ severity: 'warning' })
+        const contract = piContract(approvalMode)
+        expect(contract.approvals.effectiveMode).toBe('default')
+        expect(contract.approvals.providerMode).toContain('brokered exact file tools')
+        expect(
+          contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
+        ).toBeUndefined()
       }
     )
 

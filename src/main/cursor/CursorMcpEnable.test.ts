@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CURSOR_MCP_ENABLE_KILL_GRACE_MS,
+  cursorMcpListReportsReady,
   runCursorMcpEnable,
+  runCursorMcpReadyProbe,
   type CursorMcpEnableChild
 } from './CursorMcpEnable'
 import { CursorWorkspaceConfigLeaseAbortedError } from './CursorWorkspaceConfigLease'
@@ -90,6 +92,51 @@ describe('runCursorMcpEnable', () => {
 
     await expect(approval).rejects.toThrow(
       'cursor-agent mcp enable taskwraith failed: approval denied'
+    )
+  })
+})
+
+describe('runCursorMcpReadyProbe', () => {
+  it('accepts only the exact ready server row, including ANSI output', async () => {
+    expect(
+      cursorMcpListReportsReady(
+        '\u001b[32mtaskwraith-broker: ready\u001b[0m\ntaskwraith: ready',
+        'taskwraith-broker'
+      )
+    ).toBe(true)
+    expect(
+      cursorMcpListReportsReady('taskwraith-broker: Error: Connection failed', 'taskwraith-broker')
+    ).toBe(false)
+    expect(cursorMcpListReportsReady('taskwraith: ready', 'taskwraith-broker')).toBe(false)
+  })
+
+  it('settles only when the exact broker is ready', async () => {
+    const child = new FakeChild()
+    const probe = runCursorMcpReadyProbe({
+      serverName: 'taskwraith-broker',
+      launch: (callback) => {
+        queueMicrotask(() => callback(null, 'taskwraith-broker: ready\n', ''))
+        return child
+      }
+    })
+
+    await expect(probe).resolves.toBeUndefined()
+  })
+
+  it('fails visibly when the broker registration exists but is not reachable', async () => {
+    const child = new FakeChild()
+    const probe = runCursorMcpReadyProbe({
+      serverName: 'taskwraith-broker',
+      launch: (callback) => {
+        queueMicrotask(() =>
+          callback(null, 'taskwraith-broker: Error: Connection failed\ntaskwraith: ready\n', '')
+        )
+        return child
+      }
+    })
+
+    await expect(probe).rejects.toThrow(
+      'Cursor MCP server taskwraith-broker is not ready for this run'
     )
   })
 })

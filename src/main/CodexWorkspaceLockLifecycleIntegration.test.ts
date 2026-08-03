@@ -18,20 +18,29 @@ function collapse(text: string): string {
 }
 
 describe('Codex production workspace-lock lifecycle wiring', () => {
-  it('serializes the one shared client and private home around the whole provider run', () => {
+  it('shares only a compatible client cohort and tears it down after its last run', () => {
     const provider = section(
       'async function runCodexAppServer(',
       'async function runCodexAppServerWithClient('
     )
+    const cohort = section(
+      'async function acquireCodexProviderClientRunLease(',
+      '/**\n * 1.0.4-AD — pre-flight reachability probe'
+    )
 
-    expect(provider).toContain('acquireCodexClientLifecycleLease(`provider-run:${runId}`)')
     expect(provider).toContain('workspaceLockRunLifecycle.run(runId, async () => {')
-    expect(provider).toContain('await disposeCodexClientForOwnerTransition(lifecycleLease)')
     expect(provider).toContain('createCodexWorkspaceLockStartupBinding(payload)')
-    expect(provider).toContain('client.setWorkspaceLockOwnerId(lockBinding.ownerId)')
-    expect(provider).toContain('bindCodexRunClient(runId, client, lifecycleLease)')
-    expect(provider).toContain('await finishCodexClientLifecycle(client, lifecycleLease)')
-    expect(provider).toContain('lifecycleLease.release()')
+    expect(provider).toContain('acquireCodexProviderClientRunLease(')
+    expect(provider).toContain('bindCodexRunClient(runId, client, runClientLease.lifecycleLease)')
+    expect(provider).toContain('await runClientLease.cohortLease.release()')
+    expect(cohort).toContain('codexProviderClientCohorts.tryJoin(runId, compatibilityKey)')
+    expect(cohort).toContain(
+      "workspaceLockOwnerId ? `${workspaceLockOwnerId}\\0${runId}` : 'unowned'"
+    )
+    expect(cohort).toContain('await disposeCodexClientForOwnerTransition(lifecycleLease)')
+    expect(cohort).toContain('client.setWorkspaceLockOwnerId(workspaceLockOwnerId)')
+    expect(cohort).toContain('async () => finishCodexClientLifecycle(client!, lifecycleLease)')
+    expect(cohort).toContain('() => lifecycleLease.release()')
     expect(provider).not.toContain('createDedicatedWorkspaceLockClient')
   })
 
@@ -136,6 +145,15 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
       expect(reply).toMatch(/^respondingClient\.(?:respond|reject)\($/)
     }
     expect(source).toContain('getCodexClient: onlyBoundCodexRunClient')
+    const stderr = section(
+      'function handleCodexStderrFromClient(',
+      'interface CodexClientStartupConfiguration'
+    )
+    expect(stderr).toContain('if (states.length !== 1)')
+    expect(stderr).toContain(
+      "console.warn('[codex] shared app-server stderr lacked exact turn attribution', chunk)"
+    )
+    expect(stderr).toContain("sendAgentCompatError(states[0].sender!, 'codex', chunk, states[0])")
   })
 
   it('puts maintenance and native review users of the same client on the lifecycle queue', () => {
@@ -157,5 +175,16 @@ describe('Codex production workspace-lock lifecycle wiring', () => {
     expect(review).toContain(
       'await finishCodexClientLifecycle(reviewClient, reviewClientLifecycleLease)'
     )
+  })
+
+  it('keeps ensemble reachability probing outside the client lifecycle queue', () => {
+    const probe = section(
+      'async function probeCodexParticipant(',
+      'async function probeCliParticipant('
+    )
+
+    expect(probe).toContain("resolveCliProviderBinary('codex', runtimeProfile ?? null)")
+    expect(probe).not.toContain('withUnownedCodexClientLifecycle(')
+    expect(probe).not.toContain('ensureStarted(')
   })
 })
