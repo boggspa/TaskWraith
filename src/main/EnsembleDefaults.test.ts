@@ -77,6 +77,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
       }
     })
     expect(config.bossmanParticipantId).toBe('ensemble-claude')
+    expect(config.captainParticipantIds).toEqual(['ensemble-codex'])
     expect(config.secondInCommandParticipantId).toBe('ensemble-codex')
   })
 
@@ -92,6 +93,7 @@ describe('createDefaultEnsembleConfig parity guard', () => {
         'Outsider'
       ])
       expect(config.bossmanParticipantId).toBe(config.participants[0]?.id)
+      expect(config.captainParticipantIds).toEqual([config.participants[1]?.id])
       expect(config.secondInCommandParticipantId).toBe(config.participants[1]?.id)
 
       for (const participant of config.participants) {

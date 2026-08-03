@@ -1136,9 +1136,11 @@ export interface EnsembleRoundState {
   /** Boss captured at round start. Event-bound control commands must
    * resolve against this id rather than mutable role/provider labels. */
   bossmanParticipantId?: string
-  /** Backup Boss captured at round start. This participant remains standby
-   * for controlling authority unless the primary Boss is unavailable, but may
-   * independently invoke configured fan-out powers. */
+  /** Captains captured at round start, in deterministic roster order. Every
+   * Captain may invoke configured fan-out powers; only the first currently
+   * available Captain acts as controlling authority while Boss is unavailable. */
+  captainParticipantIds?: string[]
+  /** Compatibility mirror of `captainParticipantIds[0]`. */
   secondInCommandParticipantId?: string
   /** Participant ids present at the start of the round. Used to detect
    * replacement/addition commands that would exceed the round baseline. */
@@ -1669,12 +1671,14 @@ export interface EnsembleConfig {
    */
   ensembleContextChars?: number
   participants: EnsembleParticipant[]
-  /** Optional user-designated Ensemble manager. No Boss is assigned by
-   * default; controls are rejected unless the active run belongs to this id. */
+  /** The single configured Ensemble manager. Persisted legacy records recover
+   * the first non-background roster seat when this id is absent or invalid. */
   bossmanParticipantId?: string
-  /** Optional user-designated Captain. This seat may always use configured
-   * fan-out powers; other Boss-like controls remain available only when the
-   * primary Boss is missing, disabled, unreachable, or failed for the round. */
+  /** Zero to three user-designated Captains in deterministic roster order.
+   * Every Captain may use configured fan-out powers; only one becomes acting
+   * controlling authority while the primary Boss is unavailable. */
+  captainParticipantIds?: string[]
+  /** Compatibility mirror of `captainParticipantIds[0]`. */
   secondInCommandParticipantId?: string
   /** Opt-in auto-approval preference. The current runtime only records and
    * surfaces this explicit consent; approval execution remains constrained by

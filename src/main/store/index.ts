@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from 'util'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
+import { normalizeEnsembleAuthority } from '../../shared/ensembleAuthority'
 import {
   normalizeSystemThemeAppearance,
   resolveSystemThemeAppearance
@@ -4712,15 +4713,59 @@ export class AppStore {
         : chat.sideChatContext
     const ensemble =
       chatKind === 'ensemble'
-        ? {
-            ...createDefaultEnsembleConfig(chat.provider || this.getSettings().activeProvider),
-            ...(chat.ensemble || {}),
-            participants:
-              Array.isArray(chat.ensemble?.participants) && chat.ensemble.participants.length > 0
-                ? chat.ensemble.participants
-                : createDefaultEnsembleConfig(chat.provider || this.getSettings().activeProvider)
-                    .participants
-          }
+        ? (() => {
+            const defaults = createDefaultEnsembleConfig(
+              chat.provider || this.getSettings().activeProvider
+            )
+            const stored = chat.ensemble
+            const participants =
+              Array.isArray(stored?.participants) && stored.participants.length > 0
+                ? stored.participants
+                : defaults.participants
+            const authority = normalizeEnsembleAuthority({
+              participants,
+              bossmanParticipantId: stored?.bossmanParticipantId ?? defaults.bossmanParticipantId,
+              captainParticipantIds:
+                stored && Object.prototype.hasOwnProperty.call(stored, 'captainParticipantIds')
+                  ? stored.captainParticipantIds
+                  : stored
+                    ? undefined
+                    : defaults.captainParticipantIds,
+              secondInCommandParticipantId:
+                stored?.secondInCommandParticipantId ??
+                (stored ? undefined : defaults.secondInCommandParticipantId)
+            })
+            const activeRound = stored?.activeRound
+              ? (() => {
+                  const roundAuthority = normalizeEnsembleAuthority({
+                    participants: stored.activeRound.participants.map((participant) => ({
+                      id: participant.participantId,
+                      order: participant.order
+                    })),
+                    bossmanParticipantId: stored.activeRound.bossmanParticipantId,
+                    captainParticipantIds: stored.activeRound.captainParticipantIds,
+                    secondInCommandParticipantId:
+                      stored.activeRound.secondInCommandParticipantId
+                  })
+                  return {
+                    ...stored.activeRound,
+                    bossmanParticipantId: roundAuthority.bossmanParticipantId,
+                    captainParticipantIds: roundAuthority.captainParticipantIds,
+                    secondInCommandParticipantId:
+                      roundAuthority.secondInCommandParticipantId
+                  }
+                })()
+              : undefined
+            return {
+              ...defaults,
+              ...(stored || {}),
+              participants,
+              bossmanParticipantId: authority.bossmanParticipantId,
+              captainParticipantIds: authority.captainParticipantIds,
+              secondInCommandParticipantId: authority.secondInCommandParticipantId,
+              ...(activeRound ? { activeRound } : {})
+            }
+          })()
         : undefined
     const activeGoal =
       chatKind === 'ensemble' ? resolveActiveGoalForEnsemble(chat.activeGoal) : chat.activeGoal

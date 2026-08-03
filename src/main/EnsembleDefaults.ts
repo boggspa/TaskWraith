@@ -245,6 +245,7 @@ export function createDefaultEnsembleConfig(
     maxContinuationHops: 6,
     participants,
     bossmanParticipantId: participants[0]?.id,
+    captainParticipantIds: participants[1]?.id ? [participants[1].id] : [],
     secondInCommandParticipantId: participants[1]?.id,
     updatedAt: new Date().toISOString()
   }

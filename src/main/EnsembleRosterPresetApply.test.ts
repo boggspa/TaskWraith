@@ -6,6 +6,7 @@ import {
   buildEnsembleRosterPresetApply,
   buildUserEnsembleRosterPresetApplyPlan,
   hasPendingEnsembleRosterPresetApply,
+  parsePendingEnsembleRosterPresetApply,
   parseSingleAgentRosterPresetExport,
   queuePendingEnsembleRosterPresetApply
 } from './EnsembleRosterPresetApply'
@@ -156,6 +157,7 @@ describe('EnsembleRosterPresetApply', () => {
       authority: 'user',
       presetId: 'agent-preset',
       bossmanParticipantId: 'new-boss',
+      captainParticipantIds: [],
       maxParticipants: MAX_ROSTER_PRESET_PARTICIPANTS,
       maxContinuationHops: 500,
       ensembleContextChars: 256_000
@@ -176,6 +178,17 @@ describe('EnsembleRosterPresetApply', () => {
       'new-boss',
       'new-worker'
     ])
+
+    expect(
+      parsePendingEnsembleRosterPresetApply({
+        ...plan,
+        captainParticipantIds: undefined,
+        secondInCommandParticipantId: 'new-worker'
+      })
+    ).toMatchObject({
+      captainParticipantIds: ['new-worker'],
+      secondInCommandParticipantId: 'new-worker'
+    })
   })
 
   it('builds a valid export from compact agent input without caller metadata', () => {
