@@ -4,12 +4,28 @@ import {
   agyCliRootPath,
   agyConversationReceiptCandidateKeys,
   agyConversationReceiptPath,
+  formatAgyProjectBoundSessionId,
   parseAgyConversationReceipt,
+  parseAgyProjectBoundSessionId,
   readAgyConversationReceipt
 } from './AntigravityConversationReceipt'
 
 const HOME = '/Users/test'
 const CONVERSATION = '0e81528b-aa70-4678-b9ce-d3005b829583'
+
+describe('project-bound provider session ids', () => {
+  it('round-trips a CLI UUID with explicit project provenance', () => {
+    const tagged = formatAgyProjectBoundSessionId(CONVERSATION)
+    expect(tagged).toBe(`agy-project-v1:${CONVERSATION}`)
+    expect(parseAgyProjectBoundSessionId(tagged)).toBe(CONVERSATION)
+  })
+
+  it('does not treat a bare legacy UUID or malformed tag as project-bound', () => {
+    expect(parseAgyProjectBoundSessionId(CONVERSATION)).toBeNull()
+    expect(parseAgyProjectBoundSessionId('agy-project-v1:not-a-uuid')).toBeNull()
+    expect(formatAgyProjectBoundSessionId('not-a-uuid')).toBeNull()
+  })
+})
 
 describe('agyConversationReceiptPath', () => {
   it('reads the official CLI cache location by default', () => {

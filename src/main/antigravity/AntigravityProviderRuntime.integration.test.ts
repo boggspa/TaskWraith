@@ -39,22 +39,22 @@ describe('AntiGravity S3 runtime integration', () => {
     // conversation, so without the re-read a stale id would strand the chat.
     expect(probe.propText(prepare[0], 0, 'conversationId')).toBe('payload.providerSessionId')
     expect(probe.assignmentsTo(agy, 'payload.providerSessionId')).toEqual([
-      'launch.resumedConversationId'
+      'formatAgyProjectBoundSessionId(launch.resumedConversationId)'
     ])
 
     const run = probe.callsTo(agy, 'runCliProviderProcess')
     expect(run).toHaveLength(1)
     expect(probe.argText(run[0], 1)).toBe("'antigravity'")
     expect(probe.propText(run[0], 5, 'resolvedEnv')).toBe('launch.env')
-    expect(probe.propText(run[0], 5, 'resolveExitSessionId')).toBe(
-      '() => readAgyConversationReceipt(payload.workspace)'
-    )
+    const exitSessionResolver = probe.propText(run[0], 5, 'resolveExitSessionId')
+    expect(exitSessionResolver).toContain('readAgyConversationReceipt(payload.workspace)')
+    expect(exitSessionResolver).toContain('learned === receiptBeforeFreshProject')
+    expect(exitSessionResolver).toContain('formatAgyProjectBoundSessionId(learned)')
 
     // The binary comes from the prepared launch, never re-resolved here.
     expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
     // Literal argv content — a string check is the right tool for these.
     expect(probe.text(agy)).not.toContain('--dangerously-skip-permissions')
-    expect(probe.text(agy)).not.toContain('--new-project')
   })
 
   it('settles a setup failure rather than leaving the run unfinished', () => {

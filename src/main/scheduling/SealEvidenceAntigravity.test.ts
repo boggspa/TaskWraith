@@ -9,10 +9,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord } from '../store/types'
-import {
-  buildAgyReadOnlyPrintArgs,
-  buildAgyWriteCapablePrintArgs
-} from '../antigravity/AntigravityCli'
+import { buildAgyReadOnlyPrintArgs } from '../antigravity/AntigravityCli'
+import { formatAgyProjectBoundSessionId } from '../antigravity/AntigravityConversationReceipt'
 import { isAntigravityGeminiApiModelCandidate } from '../antigravity/AntigravityCombinedModeDispatch'
 import {
   antigravityLaunchAuthorityDigest,
@@ -37,6 +35,7 @@ import {
 
 const temporaryDirectories: string[] = []
 const CONVERSATION_ID = '123e4567-e89b-12d3-a456-426614174000'
+const PROJECT_SESSION_ID = formatAgyProjectBoundSessionId(CONVERSATION_ID)!
 const AGENTIC_SERVICES = {
   shellCommands: 'allow',
   fileChanges: 'allow',
@@ -114,7 +113,7 @@ function createAgyFixture(contents = `#!${FIXTURE_INTERPRETER}\nexit 0\n`): {
       reasoningEffort: 'high',
       approvalMode: 'default',
       effectivePermissions: { readOnly: false },
-      conversationId: CONVERSATION_ID,
+      conversationId: PROJECT_SESSION_ID,
       inheritedEnv: {
         PATH: '/usr/bin:/bin',
         HOME: '/tmp/agy-home',
@@ -294,14 +293,14 @@ describe('official agy scheduled launch evidence', () => {
       riskConsentAcceptedAt: 1_700_000_000_000,
       binaryProvenanceState: 'verified',
       binaryProvenanceTeamId: 'EQHXZ8M8AV',
-      permissionMode: 'accept-edits',
+      permissionMode: 'plan',
       selectedModel: 'claude-sonnet-4-5',
       reasoningEffort: 'high',
       conversationMode: 'resume',
       taskWraithMcpAttachmentMode: 'none',
       fallbackPolicy: 'forbid'
     })
-    const expectedArgv = buildAgyWriteCapablePrintArgs({
+    const expectedArgv = buildAgyReadOnlyPrintArgs({
       prompt: SEAL_EVIDENCE_ARGV_PROMPT_PLACEHOLDER,
       model: fixture.facts.model,
       reasoningEffort: fixture.facts.reasoningEffort,
@@ -309,7 +308,7 @@ describe('official agy scheduled launch evidence', () => {
     })
     // The real arg builder rejects a placeholder conversation id, so apply the
     // same structural replacement to an accepted receipt after construction.
-    const actualShape = buildAgyWriteCapablePrintArgs({
+    const actualShape = buildAgyReadOnlyPrintArgs({
       prompt: fixture.facts.promptEnvelope.contextualPrompt,
       model: fixture.facts.model,
       reasoningEffort: fixture.facts.reasoningEffort,

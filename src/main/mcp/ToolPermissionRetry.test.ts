@@ -7,7 +7,7 @@ import {
   buildToolPermissionRetryInstruction,
   buildToolPermissionRetryApprovalPrompt,
   createOneOffToolPermissionRetryMarker,
-  directUserApprovalAuthorizesUnscopedShell,
+  approvedShellAuthorityAuthorizesUnscopedShell,
   executeOneOffToolPermissionRetry,
   isOneOffToolPermissionRetryForTarget,
   isPermissionBoundaryFailure,
@@ -458,7 +458,7 @@ describe('one-off permission retry execution', () => {
 })
 
 describe('one-off marker and approval receipt', () => {
-  it('reuses only a direct user approval of the exact opaque shell invocation', () => {
+  it('reuses direct and audited automatic authority for an opaque shell invocation', () => {
     const base = {
       toolName: 'run_shell_command' as const,
       arguments: { command: 'npm test', cwd: '/repo' },
@@ -466,28 +466,36 @@ describe('one-off marker and approval receipt', () => {
     }
 
     expect(
-      directUserApprovalAuthorizesUnscopedShell({
+      approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
         decision: { action: 'accept', decisionSource: 'user' }
       })
     ).toBe(true)
     expect(
-      directUserApprovalAuthorizesUnscopedShell({
+      approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
+        automaticApproval: true,
         decision: { action: 'acceptForSession', decisionSource: 'system' }
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
-      directUserApprovalAuthorizesUnscopedShell({
+      approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
         arguments: { command: 'ls -la', cwd: '/repo' },
+        automaticApproval: true,
         decision: { action: 'accept', decisionSource: 'user' }
       })
     ).toBe(false)
     expect(
-      directUserApprovalAuthorizesUnscopedShell({
+      approvedShellAuthorityAuthorizesUnscopedShell({
         ...base,
         decision: { action: 'decline', decisionSource: 'user' }
+      })
+    ).toBe(false)
+    expect(
+      approvedShellAuthorityAuthorizesUnscopedShell({
+        ...base,
+        decision: { action: 'acceptForSession', decisionSource: 'system' }
       })
     ).toBe(false)
   })

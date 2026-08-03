@@ -18,10 +18,10 @@ import {
   buildAgyReadOnlyPrintArgs,
   buildAgyWriteCapablePrintArgs,
   createAgyCliEnv,
-  normalizeAgyConversationId,
   resolveAgyCliBinary,
   type ResolvedAgyCliBinary
 } from './AntigravityCli'
+import { parseAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
 
 export interface PrepareAntigravityProviderLaunchInput {
   settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined
@@ -47,9 +47,9 @@ export interface PrepareAntigravityProviderLaunchInput {
   /** Exact opaque owner issued for this seat by workspace-lock admission. */
   workspaceLockOwnerId?: string | null
   /**
-   * Prior agy conversation to resume, learned from the CLI's own receipt after a
-   * previous turn (never synthesized). Non-uuid values are dropped by
-   * `normalizeAgyConversationId` and simply start a fresh conversation.
+   * Prior TaskWraith-tagged agy conversation to resume. Bare legacy UUIDs are
+   * intentionally dropped because they may belong to `default-cli-project`,
+   * whose headless read prompts cannot be serviced.
    */
   conversationId?: string | null
 }
@@ -106,13 +106,12 @@ function selectedAgyModel(value: string | null | undefined): string | null {
  * resolution, environment construction, or child-process opportunity until
  * the persisted Settings consent gate is true.
  *
- * Resumption (added 2026-07-25) passes `--conversation <uuid>` when the caller
- * supplies an id the CLI itself previously reported. The earlier note here said
- * no stable structured receipt existed outside the hook/transcript path; that
- * was wrong — `~/.gemini/antigravity-cli/cache/last_conversations.json` is a
- * plain `cwd -> uuid` map, which `AntigravityConversationReceipt` reads. No id
- * is ever invented: agy silently ignores an unknown id and starts a fresh
- * conversation, so only uuids it minted are forwarded.
+ * Resumption passes `--conversation <uuid>` only for a TaskWraith-tagged receipt
+ * created after an explicit agy project launch. The CLI's raw cwd -> uuid cache
+ * remains the source of the UUID; TaskWraith's tag records the additional fact
+ * that this adapter created the session with `--new-project`. Untagged legacy
+ * ids start fresh once so they cannot reopen `default-cli-project` and lose
+ * headless workspace-read authority.
  */
 export async function prepareAntigravityProviderLaunch(
   input: PrepareAntigravityProviderLaunchInput,
@@ -130,12 +129,14 @@ export async function prepareAntigravityProviderLaunch(
   }
 
   const mode = writeCapableAgyMode(input) ? 'accept-edits' : 'plan'
-  const resumedConversationId = normalizeAgyConversationId(input.conversationId)
+  const resumedConversationId = parseAgyProjectBoundSessionId(input.conversationId)
   const argsInput = {
     prompt: input.prompt,
     model: selectedAgyModel(input.model),
     reasoningEffort: input.reasoningEffort,
-    ...(resumedConversationId ? { conversationId: resumedConversationId } : {})
+    ...(resumedConversationId
+      ? { conversationId: resumedConversationId }
+      : { newProject: true })
   }
   return {
     binary,

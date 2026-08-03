@@ -129,6 +129,31 @@ describe('Antigravity argv builders', () => {
     expect(args).not.toContain('--new-project')
   })
 
+  it('creates a project for a fresh headless workspace session', () => {
+    expect(
+      buildAgyReadOnlyPrintArgs({ prompt: 'Inspect the workspace.', newProject: true })
+    ).toEqual([
+      '--sandbox',
+      '--mode',
+      'plan',
+      '--print-timeout',
+      AGY_READ_ONLY_PRINT_TIMEOUT,
+      '--new-project',
+      '-p',
+      'Inspect the workspace.'
+    ])
+  })
+
+  it('never combines project creation with conversation resumption', () => {
+    expect(() =>
+      buildAgyReadOnlyPrintArgs({
+        prompt: 'Carry on.',
+        conversationId: '0e81528b-aa70-4678-b9ce-d3005b829583',
+        newProject: true
+      })
+    ).toThrow(/cannot create a new project while resuming/i)
+  })
+
   // agy answers an unknown --conversation id by SILENTLY allocating a fresh
   // conversation rather than failing, so a non-uuid on the argv would discard
   // the user's context with no error anywhere. It must never be forwarded.

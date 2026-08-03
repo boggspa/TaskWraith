@@ -47,7 +47,16 @@ function structuredPayloadRecords(value: unknown): Record<string, unknown>[] {
   const seen = new Set<unknown>([root])
   while (pending.length > 0 && records.length < 20) {
     const current = pending.shift()!
-    for (const key of ['rawInput', 'input', 'arguments', 'args', 'parameters', 'params']) {
+    for (const key of [
+      'rawInput',
+      'tool_input',
+      'toolInput',
+      'input',
+      'arguments',
+      'args',
+      'parameters',
+      'params'
+    ]) {
       const nested = record(current[key])
       if (!nested || seen.has(nested)) continue
       seen.add(nested)
@@ -69,7 +78,8 @@ export function structuredTaskWraithSafeToolRequested(
 ): boolean {
   const raw = record(request.rawToolCall)
   const rawInput = record(raw?.rawInput)
-  const kinds = [request.toolKind, raw?.kind, rawInput?.kind]
+  const nestedToolInput = record(rawInput?.tool_input) || record(rawInput?.toolInput)
+  const kinds = [request.toolKind, raw?.kind, rawInput?.kind, nestedToolInput?.kind]
     .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
     .map((value) => value.trim().toLowerCase())
   if (
@@ -116,6 +126,13 @@ export function resolveStructuredTaskWraithToolRequest(
 ): ResolvedToolDispatchContract | null {
   const raw = record(request.rawToolCall)
   const rawInput = record(raw?.rawInput)
+  const snakeToolInput = record(rawInput?.tool_input)
+  const camelToolInput = record(rawInput?.toolInput)
+  // Two independently populated input envelopes are ambiguous. Do not guess
+  // which one the provider meant, even if their human-visible text looks alike.
+  if (snakeToolInput && camelToolInput) return null
+  const nestedToolInput = snakeToolInput || camelToolInput
+  const dispatchInput = nestedToolInput || rawInput
   // `rawInput.name` is ambiguous. For an ordinary tool it is a machine identity,
   // but for the capability gateway it is the envelope's OWN ARGUMENT — the target
   // being invoked. Counting it as a competing identity makes the agreement check
@@ -127,21 +144,35 @@ export function resolveStructuredTaskWraithToolRequest(
     raw?.toolName,
     raw?.name,
     rawInput?.tool_name,
-    rawInput?.toolName
+    rawInput?.toolName,
+    nestedToolInput?.tool_name,
+    nestedToolInput?.toolName
   ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
   const gatewayEnvelope = envelopeIdentities.some((candidate) => {
     const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)
     return Boolean(toolName && isCapabilityGatewayToolName(toolName))
   })
-  const targetArgument =
+  const rootTargetArgument =
     typeof rawInput?.name === 'string' && rawInput.name.trim().length > 0 ? rawInput.name : null
+  const nestedTargetArgument =
+    typeof nestedToolInput?.name === 'string' && nestedToolInput.name.trim().length > 0
+      ? nestedToolInput.name
+      : null
+  if (
+    rootTargetArgument &&
+    nestedTargetArgument &&
+    rootTargetArgument !== nestedTargetArgument
+  ) {
+    return null
+  }
+  const targetArgument = nestedTargetArgument || rootTargetArgument
   const identities =
     gatewayEnvelope || !targetArgument ? envelopeIdentities : [...envelopeIdentities, targetArgument]
   if (identities.length === 0) return null
   const resolved = identities.map((candidate) => {
     const toolName = unqualifyTaskWraithMcpTool(candidate, namespaces)
     if (!toolName) return null
-    const contract = resolveToolDispatchContractStrict(candidate, rawInput)
+    const contract = resolveToolDispatchContractStrict(candidate, dispatchInput)
     if (!contract.ok) return null
     return contract
   })

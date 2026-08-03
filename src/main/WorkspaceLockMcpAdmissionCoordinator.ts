@@ -112,11 +112,11 @@ export interface WorkspaceLockMcpAdmissionInput<
   /** Checked while a contended exact target is queued. */
   acquisitionStillWanted?: () => boolean
   /**
-   * Exact one-shot user approval for a shell command that cannot express a
+   * Audited approval authority for a shell command that cannot express a
    * lockable edit set. This admits no workspace claim; the caller must bind it
-   * to the approved command/cwd arguments and present the host boundary.
+   * to the approved command/cwd arguments and retain the exact command receipt.
    */
-  allowUserApprovedUnscopedShell?: boolean
+  allowApprovedUnscopedShell?: boolean
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -208,7 +208,7 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       return this.denied(input.toolName, reason)
     }
 
-    if (input.allowUserApprovedUnscopedShell && input.toolName === 'run_shell_command') {
+    if (input.allowApprovedUnscopedShell && input.toolName === 'run_shell_command') {
       return {
         ok: true,
         claims: [],

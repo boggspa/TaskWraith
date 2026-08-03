@@ -65,6 +65,8 @@ export interface BuildAgyReadOnlyPrintArgsInput {
   model?: string | null
   reasoningEffort?: string | null
   conversationId?: string | null
+  /** Create and bind a real agy project for a fresh TaskWraith conversation. */
+  newProject?: boolean
 }
 
 export interface BuildAgyWriteCapablePrintArgsInput extends BuildAgyReadOnlyPrintArgsInput {}
@@ -257,7 +259,11 @@ function buildAgyPrintArgs(
     AGY_READ_ONLY_PRINT_TIMEOUT
   ]
   const conversationId = normalizeAgyConversationId(input.conversationId)
+  if (conversationId && input.newProject) {
+    throw new Error('Antigravity cannot create a new project while resuming a conversation.')
+  }
   if (conversationId) args.push('--conversation', conversationId)
+  else if (input.newProject) args.push('--new-project')
   const model = normalizeAgyArg(input.model)
   if (model) args.push('--model', model)
   const reasoningEffort = normalizeAgyReasoningEffort(input.reasoningEffort)

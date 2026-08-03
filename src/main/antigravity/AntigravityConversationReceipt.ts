@@ -19,14 +19,35 @@
 //     context with no diagnostic, which is why the receipt is re-read after
 //     EVERY turn (the id agy actually used wins over the one we requested) and
 //     why `normalizeAgyConversationId` rejects anything that is not a uuid.
-//   - Passing no `--conversation` always starts a fresh conversation; it never
-//     implicitly inherits an existing one for the same cwd. So a first turn
-//     needs no `--new-project` guard to stay isolated.
+//   - Passing no `--conversation` always starts a fresh conversation. TaskWraith
+//     additionally uses `--new-project` so agy's own workspace permission rule
+//     recognizes that cwd during non-interactive/headless tool calls.
 
 import { promises as fsPromises } from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { normalizeAgyConversationId } from './AntigravityCli'
+
+export const AGY_PROJECT_BOUND_SESSION_PREFIX = 'agy-project-v1:'
+
+/**
+ * TaskWraith stores a tagged provider-session id only after it launched the
+ * conversation inside an explicit agy project. Bare UUIDs predate that
+ * guarantee and are deliberately not resumed: the CLI would otherwise reopen
+ * `default-cli-project`, where headless workspace reads fall back to Ask and
+ * are auto-denied.
+ */
+export function formatAgyProjectBoundSessionId(conversationId: unknown): string | null {
+  const normalized = normalizeAgyConversationId(conversationId)
+  return normalized ? `${AGY_PROJECT_BOUND_SESSION_PREFIX}${normalized}` : null
+}
+
+export function parseAgyProjectBoundSessionId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed.startsWith(AGY_PROJECT_BOUND_SESSION_PREFIX)) return null
+  return normalizeAgyConversationId(trimmed.slice(AGY_PROJECT_BOUND_SESSION_PREFIX.length))
+}
 
 export interface AgyConversationReceiptDependencies {
   readFile?: (path: string) => Promise<string>

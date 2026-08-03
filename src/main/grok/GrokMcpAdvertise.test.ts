@@ -153,6 +153,56 @@ describe('grokTaskWraithSafeToolRequested', () => {
     ).toBe(true)
   })
 
+  it('resolves Grok ACP use_tool envelopes whose invocation lives under tool_input', () => {
+    const request = {
+      toolName: 'use_tool',
+      rawToolCall: {
+        title: 'use_tool',
+        rawInput: {
+          tool_name: 'TaskWraith__capability_invoke',
+          tool_input: {
+            name: 'request_tool_permission',
+            arguments: {
+              tool_name: 'run_shell_command',
+              arguments: { command: 'npm run test', cwd: '.' },
+              failure: 'opaque process side effects'
+            }
+          }
+        }
+      }
+    }
+
+    expect(grokTaskWraithBrokerToolRequested(request)).toBe(true)
+    expect(
+      resolveStructuredTaskWraithToolRequest(request, [
+        'taskwraith-grok',
+        'taskwraith-broker',
+        'TaskWraith'
+      ])
+    ).toMatchObject({
+      toolName: 'capability_invoke',
+      effectiveToolName: 'request_tool_permission'
+    })
+  })
+
+  it('fails closed when root and nested gateway targets disagree', () => {
+    expect(
+      grokTaskWraithBrokerToolRequested({
+        toolName: 'use_tool',
+        rawToolCall: {
+          rawInput: {
+            tool_name: 'TaskWraith__capability_invoke',
+            name: 'read_file',
+            tool_input: {
+              name: 'request_tool_permission',
+              arguments: {}
+            }
+          }
+        }
+      })
+    ).toBe(false)
+  })
+
   it('still refuses a NON-gateway envelope whose rawInput.name contradicts it', () => {
     expect(
       structuredTaskWraithSafeToolRequested(

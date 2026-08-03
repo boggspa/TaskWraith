@@ -1546,7 +1546,10 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
-import { readAgyConversationReceipt } from './antigravity/AntigravityConversationReceipt'
+import {
+  formatAgyProjectBoundSessionId,
+  readAgyConversationReceipt
+} from './antigravity/AntigravityConversationReceipt'
 import {
   dispatchAntigravityCombinedMode,
   isAntigravityGeminiApiModelCandidate
@@ -1804,7 +1807,7 @@ import {
 import {
   TOOL_PERMISSION_RETRY_TOOL_NAME,
   buildToolPermissionRetryInstruction,
-  directUserApprovalAuthorizesUnscopedShell,
+  approvedShellAuthorityAuthorizesUnscopedShell,
   isOneOffToolPermissionRetryForTarget,
   oneOffToolPermissionRetryGuardError,
   orchestrateToolPermissionRetry,
@@ -32245,14 +32248,13 @@ async function runAntigravityAgyProvider(
     return
   }
 
-  // Resumption (2026-07-25): the id on the argv is only ever one agy itself
-  // minted, and it is re-learned from the CLI's own receipt after every turn.
-  // That re-read is load-bearing, not belt-and-braces: agy silently ignores an
-  // id it does not recognise and allocates a new conversation instead, so
-  // without it a single stale id would strand the chat on a conversation the CLI
-  // abandoned, and every later turn would look resumed while starting fresh.
-  // `normalizeAgyConversationId` already dropped any non-uuid.
-  payload.providerSessionId = launch.resumedConversationId
+  // Resumption is app-tagged as project-bound. Legacy bare UUIDs are rotated
+  // once into a fresh `--new-project` session; later turns resume the raw agy
+  // UUID while TaskWraith retains the project provenance in its own id.
+  payload.providerSessionId = formatAgyProjectBoundSessionId(launch.resumedConversationId)
+  const receiptBeforeFreshProject = launch.resumedConversationId
+    ? null
+    : await readAgyConversationReceipt(payload.workspace)
   await runCliProviderProcess(
     event,
     'antigravity',
@@ -32267,7 +32269,14 @@ async function runAntigravityAgyProvider(
       // their own worktrees, so per-lane cwds do not collide; two concurrent runs
       // sharing one cwd are last-writer-wins on the CLI's side, which is agy's
       // behaviour and not something TaskWraith can arbitrate.
-      resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)
+      resolveExitSessionId: async () => {
+        const learned = await readAgyConversationReceipt(payload.workspace)
+        // If a fresh project failed before agy allocated a conversation, its
+        // cwd cache still contains the legacy/default-project UUID. Do not
+        // bless that stale value with project provenance.
+        if (!launch.resumedConversationId && learned === receiptBeforeFreshProject) return null
+        return formatAgyProjectBoundSessionId(learned)
+      }
     }
   )
 }
@@ -34547,10 +34556,14 @@ async function executeGeminiMcpTool(
           externalPathDetection
         }
       )
-  const directUserApprovedUnscopedShell = directUserApprovalAuthorizesUnscopedShell({
+  const approvedUnscopedShell = approvedShellAuthorityAuthorizesUnscopedShell({
     toolName,
     arguments: args,
     allowed,
+    // An absent resolution after the central gate returns true means its own
+    // audited policy/grant path auto-approved this invocation. Skipped generic
+    // gates do not count; their authority belongs to the dedicated target gate.
+    automaticApproval: allowed && !skipGenericApproval && !genericApprovalResolution,
     decision: genericApprovalResolution
   })
   if (allowed && toolName === 'canvas_eval') {
@@ -34736,9 +34749,8 @@ async function executeGeminiMcpTool(
       }),
       acquisitionStillWanted: () =>
         canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority),
-      allowUserApprovedUnscopedShell:
-        (exactOneOffPermissionRetry && toolName === 'run_shell_command') ||
-        directUserApprovedUnscopedShell
+      allowApprovedUnscopedShell:
+        (exactOneOffPermissionRetry && toolName === 'run_shell_command') || approvedUnscopedShell
     })
   } catch (error) {
     workspaceMutationOperationDone?.finish()

@@ -494,22 +494,32 @@ const DIRECT_USER_ACCEPT_ACTIONS = new Set<AgentApprovalAction>([
 ])
 
 /**
- * A generic approval that visibly showed this exact opaque command already
- * supplies the one-shot authority the lock admission seam needs. Reusing that
- * decision avoids asking the user twice. Policy/standing-grant auto-approval
- * is deliberately excluded because it did not show this exact command.
+ * The ordinary shell-service gate is the authority for an opaque host command.
+ * A direct approval has shown the exact command; an automatic approval has
+ * resolved through the run's signed policy, session/workspace grant, Trusted
+ * Session, or another audited user-configured authority. Either must be reused
+ * by lock admission or TaskWraith asks twice and turns an explicit Shell
+ * Commands grant back into an every-call prompt.
+ *
+ * `automaticApproval` is supplied only after the central approval orchestrator
+ * returned true without opening a decision modal. The command/cwd still remain
+ * in that orchestrator's durable approval receipt. Read-only shell commands do
+ * not need this mutation escape hatch and stay on their ordinary path.
  */
-export function directUserApprovalAuthorizesUnscopedShell(input: {
+export function approvedShellAuthorityAuthorizesUnscopedShell(input: {
   toolName: TaskWraithMcpToolName
   arguments: Record<string, unknown>
   allowed: boolean
+  automaticApproval?: boolean
   decision?: ToolPermissionRetryDecision
 }): boolean {
+  const directUserApproval =
+    input.decision?.decisionSource === 'user' &&
+    DIRECT_USER_ACCEPT_ACTIONS.has(input.decision.action)
   if (
     input.toolName !== 'run_shell_command' ||
     !input.allowed ||
-    input.decision?.decisionSource !== 'user' ||
-    !DIRECT_USER_ACCEPT_ACTIONS.has(input.decision.action)
+    (!input.automaticApproval && !directUserApproval)
   ) {
     return false
   }

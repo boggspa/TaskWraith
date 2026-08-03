@@ -494,7 +494,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
     expect(acquire).not.toHaveBeenCalled()
   })
 
-  it('admits one exact user-approved unscoped shell retry without acquiring a broad lock', async () => {
+  it('admits an audited unscoped shell command without acquiring a broad lock', async () => {
     const getRuntime = vi.fn(() => null)
     const validateLaneWriteScope = vi.fn()
     const coordinator = new WorkspaceLockMcpAdmissionCoordinator(
@@ -508,7 +508,7 @@ describe('WorkspaceLockMcpAdmissionCoordinator', () => {
           toolName: 'run_shell_command',
           args: { command: 'npm test' },
           resourcePath: undefined,
-          allowUserApprovedUnscopedShell: true
+          allowApprovedUnscopedShell: true
         })
       )
     ).resolves.toEqual({

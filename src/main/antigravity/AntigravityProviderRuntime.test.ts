@@ -3,6 +3,7 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './AntigravityProviderRuntime'
+import { formatAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
 
 const OPTED_IN = {
   antigravityEnabled: true,
@@ -45,6 +46,7 @@ describe('prepareAntigravityProviderLaunch', () => {
       'plan',
       '--print-timeout',
       '30m',
+      '--new-project',
       '--effort',
       'high',
       '-p',
@@ -52,7 +54,7 @@ describe('prepareAntigravityProviderLaunch', () => {
     ])
     expect(launch.env).toEqual({ PATH: '/usr/bin', KEEP: 'yes' })
     expect(launch.args).not.toContain('--dangerously-skip-permissions')
-    expect(launch.args).not.toContain('--new-project')
+    expect(launch.args).toContain('--new-project')
     expect(launch.resumedConversationId).toBeNull()
   })
 
@@ -142,6 +144,7 @@ describe('prepareAntigravityProviderLaunch', () => {
       source: 'path' as const
     })
     const CONVERSATION = '0e81528b-aa70-4678-b9ce-d3005b829583'
+    const PROJECT_SESSION = formatAgyProjectBoundSessionId(CONVERSATION)!
 
     it('resumes a prior conversation the CLI itself reported', async () => {
       const launch = await prepareAntigravityProviderLaunch(
@@ -149,7 +152,7 @@ describe('prepareAntigravityProviderLaunch', () => {
           settings: OPTED_IN,
           prompt: 'Carry on.',
           approvalMode: 'plan',
-          conversationId: CONVERSATION
+          conversationId: PROJECT_SESSION
         },
         { resolveBinary }
       )
@@ -168,9 +171,7 @@ describe('prepareAntigravityProviderLaunch', () => {
       ])
     })
 
-    // A fresh turn needs no --new-project guard: verified 2026-07-25 that agy
-    // never implicitly inherits an existing conversation for the same cwd.
-    it('starts fresh with no conversation flag when no prior id exists', async () => {
+    it('starts fresh in an explicit project when no prior id exists', async () => {
       for (const conversationId of [null, undefined, '']) {
         const launch = await prepareAntigravityProviderLaunch(
           { settings: OPTED_IN, prompt: 'Start.', approvalMode: 'plan', conversationId },
@@ -178,7 +179,7 @@ describe('prepareAntigravityProviderLaunch', () => {
         )
         expect(launch.resumedConversationId).toBeNull()
         expect(launch.args).not.toContain('--conversation')
-        expect(launch.args).not.toContain('--new-project')
+        expect(launch.args).toContain('--new-project')
       }
     })
 
@@ -198,7 +199,25 @@ describe('prepareAntigravityProviderLaunch', () => {
 
       expect(launch.resumedConversationId).toBeNull()
       expect(launch.args).not.toContain('--conversation')
+      expect(launch.args).toContain('--new-project')
       expect(launch.args.join(' ')).not.toContain('claude-session-abc123')
+    })
+
+    it('rotates a bare legacy agy UUID into a project-bound fresh session', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Carry on safely.',
+          approvalMode: 'plan',
+          conversationId: CONVERSATION
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.resumedConversationId).toBeNull()
+      expect(launch.args).toContain('--new-project')
+      expect(launch.args).not.toContain('--conversation')
+      expect(launch.args).not.toContain(CONVERSATION)
     })
 
     it('carries resumption into write-capable mode too', async () => {
@@ -208,7 +227,7 @@ describe('prepareAntigravityProviderLaunch', () => {
           prompt: 'Apply the fix.',
           approvalMode: 'default',
           isolatedMutationWorkspace: true,
-          conversationId: CONVERSATION
+          conversationId: PROJECT_SESSION
         },
         { resolveBinary }
       )
