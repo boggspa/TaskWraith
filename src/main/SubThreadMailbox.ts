@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { LinkedChildRelation } from './LinkedChildReturn'
 import type { ProviderId, SubThreadJoinPolicy } from './store/types'
 
 export const SUBTHREAD_MAILBOX_SCHEMA_VERSION = 1 as const
@@ -22,6 +23,7 @@ export interface SubThreadMailboxEvent {
   priority: SubThreadMailboxPriority
   trust: 'untrusted-child-output'
   source: {
+    relation: LinkedChildRelation
     subThreadId: string
     subThreadProvider?: ProviderId
     subThreadTitle: string
@@ -57,6 +59,7 @@ export interface SubThreadMailboxEventInput {
   subThreadId: string
   subThreadProvider?: ProviderId
   subThreadTitle: string
+  sourceRelation?: LinkedChildRelation
   sourceAssistantMessageId: string
   sourceRunId?: string
   joinPolicy?: SubThreadJoinPolicy
@@ -182,6 +185,7 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
   const claimedAt = deliveryRunId ? nonEmptyString(event.claimedAt) : undefined
   const originalChars = positiveInteger(payload.originalChars, content.length)
   const join = normalizeJoinPolicy(event.join)
+  const relation: LinkedChildRelation = source.relation === 'sideChat' ? 'sideChat' : 'subThread'
 
   return {
     schemaVersion: SUBTHREAD_MAILBOX_SCHEMA_VERSION,
@@ -196,6 +200,7 @@ function normalizeEvent(value: unknown, parentChatId: string): SubThreadMailboxE
     priority: event.priority === 'interrupt' ? 'interrupt' : 'normal',
     trust: 'untrusted-child-output',
     source: {
+      relation,
       subThreadId,
       ...(provider ? { subThreadProvider: provider } : {}),
       subThreadTitle,
@@ -330,6 +335,7 @@ export function enqueueSubThreadMailboxEvent(
     priority: input.priority === 'interrupt' ? 'interrupt' : 'normal',
     trust: 'untrusted-child-output',
     source: {
+      relation: input.sourceRelation === 'sideChat' ? 'sideChat' : 'subThread',
       subThreadId: input.subThreadId,
       ...(input.subThreadProvider ? { subThreadProvider: input.subThreadProvider } : {}),
       subThreadTitle: input.subThreadTitle,

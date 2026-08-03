@@ -2,7 +2,11 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import { findClickableByClassName } from '../test/reactElementTree'
-import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
+import {
+  isSubThreadReturnMessage,
+  linkedChildReturnRelation,
+  subThreadReturnBody
+} from './SubThreadReturnCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 
 function subThreadMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
@@ -37,6 +41,33 @@ describe('SubThreadReturnCard', () => {
       )
     ).toBe('**Done**')
     expect(subThreadReturnBody('plain body')).toBe('plain body')
+    expect(
+      subThreadReturnBody(
+        'Side-chat result payload:\n\n<side_chat_result>\n**Async done**\n</side_chat_result>'
+      )
+    ).toBe('**Async done**')
+  })
+
+  it('renders opted-in side-chat returns with truthful relationship labels', () => {
+    const message = subThreadMessage({
+      content: '<side_chat_result>\nAsync finding.\n</side_chat_result>',
+      metadata: {
+        kind: 'subThreadReturn',
+        subThreadId: 'side-chat-1',
+        subThreadProvider: 'codex',
+        subThreadTitle: 'Async design room',
+        linkedChildRelation: 'sideChat'
+      }
+    })
+    const html = renderToStaticMarkup(
+      <SubThreadReturnCard message={message} onOpenSubThreadInSidePanel={() => {}} />
+    )
+
+    expect(linkedChildReturnRelation(message)).toBe('sideChat')
+    expect(html).toContain('Side-chat result from')
+    expect(html).toContain('Async design room')
+    expect(html).toContain('aria-label="Side-chat result"')
+    expect(html).toContain('title="Open this side chat"')
   })
 
   it('renders provider satellite identity, title, markdown body, and one side-chat control', () => {

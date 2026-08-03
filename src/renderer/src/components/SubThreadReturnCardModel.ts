@@ -7,8 +7,14 @@ export function isSubThreadReturnMessage(message: ChatMessage): boolean {
   )
 }
 
+export function linkedChildReturnRelation(message: ChatMessage): 'subThread' | 'sideChat' {
+  return message.metadata?.linkedChildRelation === 'sideChat' ? 'sideChat' : 'subThread'
+}
+
 export function subThreadReturnBody(content: string): string {
-  const tagged = content.match(/<subthread_result(?:\s[^>]*)?>\n?([\s\S]*)\n?<\/subthread_result>/)
+  const tagged = content.match(
+    /<(?:subthread_result|side_chat_result)(?:\s[^>]*)?>\n?([\s\S]*)\n?<\/(?:subthread_result|side_chat_result)>/
+  )
   if (tagged) return tagged[1].trim()
   const lines = content.split(/\r?\n/)
   if (!lines[0]?.startsWith('↩ Result from ')) return content

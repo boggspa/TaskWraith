@@ -67,7 +67,7 @@ describe('EnsembleSubThreadReturnIntegration — source wiring', () => {
       '/**\n * Surface a sub-thread-dispatch failure'
     )
     expect(attachment).toContain("parent.chatKind === 'ensemble'")
-    expect(attachment).toContain('return dispatch(payload, event)')
+    expect(attachment).toContain('return dispatch(payload, event, observer)')
 
     // Solo gate must still refuse ensembles (never flip parentChatIsEnsemble false).
     expect(shouldAutoResumeParent({
@@ -80,15 +80,16 @@ describe('EnsembleSubThreadReturnIntegration — source wiring', () => {
     })).toBe(false)
   })
 
-  it('propagates failed/cancelled terminal evidence through the shared produce+drain path', () => {
+  it('propagates linked-child terminal evidence through the shared produce+drain path', () => {
     const producer = sourceBetween(
-      'async function maybePropagateSubThreadResult(',
+      'async function maybePropagateLinkedChildResult(',
       'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
     )
     expect(producer).toContain("outcome: 'done' | 'requires_action' | 'failed' | 'cancelled'")
-    expect(producer).toContain("terminal.outcome === 'failed'")
-    expect(producer).toContain("terminal.outcome === 'cancelled'")
     expect(producer).toContain('outcome: terminal.outcome')
+    expect(producer).toContain('decideLinkedChildReturn(linkedChild, terminal')
+    expect(producer).toContain('sourceRelation: decision.relation')
+    expect(producer).toContain("decision.relation === 'sideChat' ? 'side_chat_returned'")
     expect(producer).toContain('await maybeDrainParentSubThreadMailbox(')
     // Projection stays projection-only until a separate delivery ack.
     expect(producer).toContain("providerContextVisibility: 'projection-only'")

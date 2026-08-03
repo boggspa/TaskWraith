@@ -269,6 +269,10 @@ import {
   isTopLevelWorkspaceChat,
   type SideChatCreateMode
 } from './lib/sideChatLifecycle'
+import {
+  setSideChatAuthorityReturn,
+  sideChatAuthorityReturnEnabled
+} from './lib/sideChatReturn'
 import { findReusableSideChat } from './lib/sideChatReuse'
 import {
   CODEX_DEFAULT_MODELS,
@@ -16318,6 +16322,33 @@ function App(): React.JSX.Element {
     setSideChatMenuOpen(false)
   }
 
+  const handleToggleSideChatAuthorityReturn = async (chatId?: string) => {
+    const target = chatId
+      ? chatByIdRef.current.get(chatId) || chats.find((chat) => chat.appChatId === chatId)
+      : sideChat
+    if (!target || target.parentChatRelation !== 'sideChat') return
+    const enabled = !sideChatAuthorityReturnEnabled(target)
+    const updated = updateChatById(target.appChatId, (source) =>
+      setSideChatAuthorityReturn(source, enabled)
+    )
+    if (!updated) return
+    try {
+      // Persist immediately so a terminal provider event cannot race the
+      // ordinary 200ms renderer save debounce and miss the user's opt-in.
+      await window.api.saveChat(updated)
+    } catch (error) {
+      updateChatById(target.appChatId, (source) =>
+        sideChatAuthorityReturnEnabled(source) === enabled
+          ? setSideChatAuthorityReturn(source, !enabled)
+          : source
+      )
+      appendThreadRawLog(target.appChatId, {
+        type: 'stderr',
+        content: `Could not save side-chat return preference: ${redactLog(String(error))}`
+      })
+    }
+  }
+
   const handleReturnToSideChatParent = () => {
     if (sidePanelParentChat && currentChat?.appChatId !== sidePanelParentChat.appChatId) {
       void handleSelectChat(sidePanelParentChat)
@@ -30024,6 +30055,7 @@ function App(): React.JSX.Element {
     handleRestoreWorkspaceBoard,
     handleEndCurrentLinkedMainChat,
     handleEndSidePanelChat,
+    handleToggleSideChatAuthorityReturn,
     handleForkCodexThread,
     handleForkAgentThread,
     handleGeminiTerminalSubmit,
@@ -30333,6 +30365,8 @@ function App(): React.JSX.Element {
     sidePanelLayoutClass,
     sidePanelParentChat,
     sidePanelRelation,
+    sideChatAuthorityReturnEnabled: sideChatAuthorityReturnEnabled(sideChat),
+    currentChatSideChatAuthorityReturnEnabled: sideChatAuthorityReturnEnabled(currentChat),
     sidePermissionOptions,
     sidePrompt,
     sideProvider,

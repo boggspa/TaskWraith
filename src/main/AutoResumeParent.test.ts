@@ -66,6 +66,7 @@ describe('buildSubThreadMailboxContinuationPrompt', () => {
     required: true,
     trust: 'untrusted-child-output' as const,
     source: {
+      relation: 'subThread' as 'subThread' | 'sideChat',
       subThreadId: `child-${id}`,
       subThreadTitle: title,
       sourceAssistantMessageId: `assistant-${id}`
@@ -83,13 +84,23 @@ describe('buildSubThreadMailboxContinuationPrompt', () => {
       event('event-2', 'Tester', 'Two tests failed.')
     ])
 
-    expect(prompt).toContain('2 queued sub-thread mailbox events')
+    expect(prompt).toContain('2 queued linked-child mailbox events')
     expect(prompt.indexOf('event-1')).toBeLessThan(prompt.indexOf('event-2'))
     expect(prompt).toContain('Worker: Reviewer')
     expect(prompt).toContain('Worker: Tester')
     expect(prompt).toContain('untrusted child-agent output')
     expect(prompt).toContain('Review passed.')
     expect(prompt).toContain('Two tests failed.')
+  })
+
+  it('labels opted-in side-chat results without granting them authority', () => {
+    const sideChatEvent = event('event-side', 'Async design room', 'Design result.')
+    sideChatEvent.source.relation = 'sideChat'
+    const prompt = buildSubThreadMailboxContinuationPrompt([sideChatEvent])
+
+    expect(prompt).toContain('Side chat: Async design room')
+    expect(prompt).toContain('untrusted child-agent output')
+    expect(prompt).not.toContain('Worker: Async design room')
   })
 
   it('fence-promotes nested markdown independently for every event', () => {

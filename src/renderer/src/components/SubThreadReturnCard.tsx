@@ -7,7 +7,7 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
 import { PillButton } from './PillButton'
 import { ProviderSatelliteLabel } from './ProviderSatelliteLabel'
-import { subThreadReturnBody } from './SubThreadReturnCardModel'
+import { linkedChildReturnRelation, subThreadReturnBody } from './SubThreadReturnCardModel'
 
 interface SubThreadReturnCardProps {
   message: ChatMessage
@@ -48,8 +48,12 @@ export function SubThreadReturnCard({
   onResultExpandedChange
 }: SubThreadReturnCardProps) {
   const metadata = message.metadata || {}
+  const relation = linkedChildReturnRelation(message)
+  const isSideChatReturn = relation === 'sideChat'
   const provider = metadata.subThreadProvider
-  const title = textValue(metadata.subThreadTitle) || 'Untitled sub-thread'
+  const title =
+    textValue(metadata.subThreadTitle) ||
+    (isSideChatReturn ? 'Untitled side chat' : 'Untitled sub-thread')
   const subThreadId = textValue(metadata.subThreadId)
   // Deterministic per-sub-thread identity (same id -> same character on
   // every delegation surface: this card, the Agent-Invocation card, the
@@ -82,7 +86,9 @@ export function SubThreadReturnCard({
           <span aria-hidden="true" className="subthread-return-glyph">
             ↩
           </span>
-          <span className="subthread-return-label">Invocation result from</span>
+          <span className="subthread-return-label">
+            {isSideChatReturn ? 'Side-chat result from' : 'Invocation result from'}
+          </span>
           {agentIdentity && (
             <span className="subthread-return-agent" title={agentIdentity.name}>
               <AgentIdentityIcon
@@ -107,7 +113,9 @@ export function SubThreadReturnCard({
               size="compact"
               className="subthread-side-chat-button"
               onClick={handleOpen}
-              title="Open this sub-thread as a side chat"
+              title={
+                isSideChatReturn ? 'Open this side chat' : 'Open this sub-thread as a side chat'
+              }
               aria-label="Open side chat"
             >
               Side chat
@@ -122,7 +130,7 @@ export function SubThreadReturnCard({
           collapsedMaxHeight={220}
           expanded={resultExpanded}
           onExpandedChange={onResultExpandedChange}
-          label="Sub-thread result"
+          label={isSideChatReturn ? 'Side-chat result' : 'Sub-thread result'}
           expandLabel="Expand result"
           collapseLabel="Collapse result"
           jumpLabel="Jump to latest result"
@@ -133,7 +141,7 @@ export function SubThreadReturnCard({
             ) : (
               <div
                 className="subthread-return-preview"
-                aria-label="Collapsed sub-thread result preview"
+                aria-label={`Collapsed ${isSideChatReturn ? 'side-chat' : 'sub-thread'} result preview`}
               >
                 <MarkdownMessage content={previewBody} chat={chat} />
                 <div className="subthread-return-preview-note">
@@ -159,7 +167,7 @@ export function SubThreadReturnCard({
           }
           pinned={pinned}
           copied={copied}
-          label="sub-thread result"
+          label={isSideChatReturn ? 'side-chat result' : 'sub-thread result'}
         />
       )}
     </article>

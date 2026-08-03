@@ -14,7 +14,7 @@ function sourceBetween(startMarker: string, endMarker: string): string {
 describe('sub-thread mailbox main-process integration', () => {
   it('durably enqueues before transcript dedupe can return', () => {
     const producer = sourceBetween(
-      'async function maybePropagateSubThreadResult(',
+      'async function maybePropagateLinkedChildResult(',
       'const SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT'
     )
     const enqueue = producer.indexOf('AppStore.enqueueSubThreadMailboxEvent({')
@@ -24,7 +24,8 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(existingReturn).toBeGreaterThan(enqueue)
     expect(producer).toContain('sourceAssistantMessageId,')
     expect(producer).toContain('outcome: terminal.outcome')
-    expect(producer).toContain('joinPolicy: subThread.delegationContext.joinPolicy')
+    expect(producer).toContain('joinPolicy: linkedChild.delegationContext.joinPolicy')
+    expect(producer).toContain('sourceRelation: decision.relation')
     expect(producer).toContain("resultTrust: 'untrusted-child-output'")
     expect(producer).toContain("providerContextVisibility: 'projection-only'")
   })
@@ -75,7 +76,7 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(attachment).toContain('originalPostureWasValid')
     expect(attachment).toContain('verifyRunPosture(')
     expect(attachment).toContain('runPostureContextFromPayload(mailboxPayload)')
-    expect(attachment).toContain('await dispatch(mailboxPayload, event)')
+    expect(attachment).toContain('await dispatch(mailboxPayload, event, observer)')
     expect(attachment).toContain('AppStore.acknowledgeSubThreadMailboxDelivery(')
     expect(attachment).toContain('AppStore.releaseSubThreadMailboxDelivery(')
     expect(attachment).not.toContain('taskWraithMcpProfileId:')

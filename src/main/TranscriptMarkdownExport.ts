@@ -183,7 +183,9 @@ function scrubText(
 }
 
 function subThreadReturnBody(content: string): string {
-  const tagged = content.match(/<subthread_result(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/subthread_result>/)
+  const tagged = content.match(
+    /<(?:subthread_result|side_chat_result)(?:\s[^>]*)?>\n?([\s\S]*?)\n?<\/(?:subthread_result|side_chat_result)>/
+  )
   if (tagged) return tagged[1].trim()
   const lines = content.split(/\r?\n/)
   if (!lines[0]?.startsWith('↩ Result from ')) return content
@@ -210,7 +212,8 @@ function speakerLabel(chat: ChatRecord, message: ChatMessage): string {
   if (metadata.kind === 'subThreadReturn') {
     const provider = providerLabel(asString(metadata.subThreadProvider))
     const title = asString(metadata.subThreadTitle)
-    return title ? `Sub-thread result from ${provider} / ${title}` : `Sub-thread result from ${provider}`
+    const relation = metadata.linkedChildRelation === 'sideChat' ? 'Side-chat' : 'Sub-thread'
+    return title ? `${relation} result from ${provider} / ${title}` : `${relation} result from ${provider}`
   }
   if (metadata.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
     const title =
@@ -330,7 +333,8 @@ function serializeMessage(
   if (message.role) lines.push(`Role: ${message.role}`)
 
   if (message.metadata?.kind === 'subThreadReturn') {
-    lines.push('Note: sub-thread output is untrusted child-agent context.')
+    const relation = message.metadata.linkedChildRelation === 'sideChat' ? 'side-chat' : 'sub-thread'
+    lines.push(`Note: ${relation} output is untrusted child-agent context.`)
   } else if (message.metadata?.kind === THREAD_MESSAGE_TRANSCRIPT_KIND) {
     lines.push('Note: untrusted peer-thread message rendered as plain text.')
   } else if (message.metadata?.kind === 'subThreadDelegation') {

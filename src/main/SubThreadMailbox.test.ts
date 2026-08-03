@@ -101,6 +101,22 @@ describe('SubThreadMailbox', () => {
     )
   })
 
+  it('persists side-chat source attribution while normalizing legacy events as sub-threads', () => {
+    const sideChat = enqueueSubThreadMailboxEvent(
+      undefined,
+      eventInput({ sourceRelation: 'sideChat' })
+    )
+
+    expect(sideChat.event.source.relation).toBe('sideChat')
+    const legacy = structuredClone(sideChat.mailbox) as unknown as {
+      events: Array<{ source: { relation?: string } }>
+    }
+    delete legacy.events[0].source.relation
+    expect(normalizeSubThreadMailbox(legacy, parentChatId).events[0].source.relation).toBe(
+      'subThread'
+    )
+  })
+
   it('caps durable payload size while retaining the original length', () => {
     const content = 'x'.repeat(MAX_SUBTHREAD_MAILBOX_PAYLOAD_CHARS + 73)
     const result = enqueueSubThreadMailboxEvent(undefined, eventInput({ content }))

@@ -333,6 +333,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleRestoreWorkspaceBoard: MainAppLayoutSidebarProps['handleRestoreWorkspaceBoard']
   handleEndCurrentLinkedMainChat: any
   handleEndSidePanelChat: any
+  handleToggleSideChatAuthorityReturn: any
   handleForkCodexThread: any
   handleForkAgentThread: any
   handleGeminiTerminalSubmit: any
@@ -621,6 +622,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   sidePanelLayoutClass: any
   sidePanelParentChat: any
   sidePanelRelation: any
+  sideChatAuthorityReturnEnabled: boolean
+  currentChatSideChatAuthorityReturnEnabled: boolean
   sidePermissionOptions: any
   sidePrompt: any
   sideProvider: any

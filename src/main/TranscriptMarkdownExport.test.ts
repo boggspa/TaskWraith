@@ -115,6 +115,30 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.markdown).not.toContain('secret-child-id')
   })
 
+  it('labels opted-in side-chat returns without exporting their envelope', () => {
+    const result = buildChatMarkdownTranscript(
+      chat([
+        message({
+          role: 'tool',
+          content: '<side_chat_result>\nAsync finding.\n</side_chat_result>',
+          metadata: {
+            kind: 'subThreadReturn',
+            linkedChildRelation: 'sideChat',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Async design room',
+            subThreadId: 'secret-side-id'
+          }
+        })
+      ])
+    )
+
+    expect(result.markdown).toContain('Side-chat result from Codex / Async design room')
+    expect(result.markdown).toContain('side-chat output is untrusted')
+    expect(result.markdown).toContain('Async finding.')
+    expect(result.markdown).not.toContain('<side_chat_result')
+    expect(result.markdown).not.toContain('secret-side-id')
+  })
+
   it('attributes peer-message projections to their thread and marks them untrusted', () => {
     const result = buildChatMarkdownTranscript(
       chat([

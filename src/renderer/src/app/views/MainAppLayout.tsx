@@ -42,6 +42,7 @@ import { ProjectThreadGraphView } from '../../components/ProjectThreadGraphView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
 import { MainPaneActionPill } from '../../components/MainPaneActionPill'
+import { SideChatAuthorityReturnButton } from '../../components/SideChatAuthorityReturnButton'
 import { buildWorkspaceStatsContext } from '../../components/workspaceStatsContext'
 import { RightDockHome } from '../../components/RightDockHome'
 import { SettingsPanel } from '../../components/SettingsPanel'
@@ -271,6 +272,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleRestoreWorkspaceBoard,
   handleEndCurrentLinkedMainChat,
   handleEndSidePanelChat,
+  handleToggleSideChatAuthorityReturn,
   handleForkCodexThread,
   handleForkAgentThread,
   handleGeminiTerminalSubmit,
@@ -524,6 +526,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   sidePanelLayoutClass,
   sidePanelParentChat,
   sidePanelRelation,
+  sideChatAuthorityReturnEnabled,
+  currentChatSideChatAuthorityReturnEnabled,
   sidePrompt,
   sideProvider,
   sideQueuedMessagesAboveRowEntries,
@@ -1698,6 +1702,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 <DockDrawerIcon />
               </button>
               {currentChat.parentChatRelation === 'sideChat' && (
+                <SideChatAuthorityReturnButton
+                  enabled={currentChatSideChatAuthorityReturnEnabled}
+                  onToggle={() => void handleToggleSideChatAuthorityReturn(currentChat.appChatId)}
+                />
+              )}
+              {currentChat.parentChatRelation === 'sideChat' && (
                 <button
                   type="button"
                   className="side-chat-action-btn danger"
@@ -2416,6 +2426,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 >
                   <LinkCircleSymbolIcon />
                 </button>
+                {sidePanelRelation === 'sideChat' && (
+                  <SideChatAuthorityReturnButton
+                    enabled={sideChatAuthorityReturnEnabled}
+                    onToggle={() => void handleToggleSideChatAuthorityReturn()}
+                  />
+                )}
                 {sidePanelRelation === 'sideChat' && (
                   <button
                     type="button"

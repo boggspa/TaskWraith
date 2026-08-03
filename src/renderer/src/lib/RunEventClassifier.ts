@@ -295,7 +295,8 @@ export function classifyForInspector(event: RunEventRecord): InspectorRow {
         raw: event
       }
     }
-    case 'subthread_returned': {
+    case 'subthread_returned':
+    case 'side_chat_returned': {
       const p = isRecord(event.payload) ? event.payload : {}
       const summaryText = asString(p.summary) ?? asString(p.result) ?? event.summary
       return {

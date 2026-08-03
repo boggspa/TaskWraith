@@ -1,60 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord } from './store/types'
+import {
+  buildLinkedChildReturnContent,
+  decideLinkedChildReturn,
+  markLinkedChildResultReturned
+} from './LinkedChildReturn'
 
 /**
  * Phase F2 — pure-function tests for the sub-thread result back-
  * propagation logic.
  *
- * The actual `maybePropagateSubThreadResult` helper in `index.ts`
- * pulls from / pushes to `AppStore`, which would require a much
- * larger fixture to test directly. Instead this suite tests the
- * pure predicate + builder functions that determine WHETHER and
- * HOW propagation should happen.
- *
- * The helper in index.ts re-implements the same logic via direct
- * AppStore calls + side effects; this test surface ensures the
- * preconditions stay correctly enforced as the feature evolves.
+ * The AppStore wiring remains in index.ts; the gate and content builder live
+ * in LinkedChildReturn so delegated sub-threads and opted-in side chats cannot
+ * drift into different trust or idempotency semantics.
  */
-
-interface SubThreadReturnDecision {
-  shouldPropagate: boolean
-  reason?: string
-  lastAssistantContent?: string
-  parentChatId?: string
-}
-
-/** Pure helper mirroring the gate logic in
- * `maybePropagateSubThreadResult`. Exported here as a test helper
- * (not from index.ts to keep that file simple); kept in sync by
- * convention. If the helper diverges, the tests will catch a
- * regression because the index.ts version still has to apply the
- * same gates. */
-function decideSubThreadReturn(subThread: ChatRecord): SubThreadReturnDecision {
-  if (!subThread.parentChatId) {
-    return { shouldPropagate: false, reason: 'no parentChatId' }
-  }
-  if (!subThread.delegationContext?.returnResultToParent) {
-    return { shouldPropagate: false, reason: 'returnResultToParent=false' }
-  }
-  const lastAssistant = [...subThread.messages].reverse().find((m) => m.role === 'assistant')
-  if (!lastAssistant || !lastAssistant.content.trim()) {
-    return { shouldPropagate: false, reason: 'no assistant message' }
-  }
-  if (subThread.delegationContext.resultReturnedAt) {
-    const assistantTimestamp = Date.parse(lastAssistant.timestamp)
-    if (
-      !Number.isFinite(assistantTimestamp) ||
-      assistantTimestamp <= subThread.delegationContext.resultReturnedAt
-    ) {
-      return { shouldPropagate: false, reason: 'already propagated' }
-    }
-  }
-  return {
-    shouldPropagate: true,
-    lastAssistantContent: lastAssistant.content,
-    parentChatId: subThread.parentChatId
-  }
-}
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -74,7 +33,7 @@ function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
 describe('Phase F2 — sub-thread return decision', () => {
   it('refuses propagation when chat has no parentChatId', () => {
     const chat = makeChat()
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(false)
     expect(decision.reason).toBe('no parentChatId')
   })
@@ -97,7 +56,7 @@ describe('Phase F2 — sub-thread return decision', () => {
         }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(false)
     expect(decision.reason).toBe('returnResultToParent=false')
   })
@@ -121,7 +80,7 @@ describe('Phase F2 — sub-thread return decision', () => {
         }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(false)
     expect(decision.reason).toBe('already propagated')
   })
@@ -157,9 +116,11 @@ describe('Phase F2 — sub-thread return decision', () => {
         }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(true)
-    expect(decision.lastAssistantContent).toBe('Second failure details.')
+    expect(decision.shouldPropagate && decision.lastAssistant?.content).toBe(
+      'Second failure details.'
+    )
   })
 
   it('refuses propagation when no assistant message exists', () => {
@@ -173,7 +134,7 @@ describe('Phase F2 — sub-thread return decision', () => {
       },
       messages: [{ id: 'm1', role: 'user', content: 'Run it', timestamp: new Date().toISOString() }]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(false)
     expect(decision.reason).toBe('no assistant message')
   })
@@ -191,7 +152,7 @@ describe('Phase F2 — sub-thread return decision', () => {
         { id: 'm1', role: 'assistant', content: '   \n  ', timestamp: new Date().toISOString() }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(false)
     expect(decision.reason).toBe('no assistant message')
   })
@@ -212,10 +173,10 @@ describe('Phase F2 — sub-thread return decision', () => {
         { id: 'm4', role: 'assistant', content: 'All done.', timestamp: '2026-01-01T00:00:03Z' }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(true)
-    expect(decision.lastAssistantContent).toBe('All done.')
-    expect(decision.parentChatId).toBe('parent-1')
+    expect(decision.shouldPropagate && decision.lastAssistant?.content).toBe('All done.')
+    expect(decision.shouldPropagate && decision.parentChatId).toBe('parent-1')
   })
 
   it('propagates when all preconditions are satisfied', () => {
@@ -236,9 +197,11 @@ describe('Phase F2 — sub-thread return decision', () => {
         }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     expect(decision.shouldPropagate).toBe(true)
-    expect(decision.lastAssistantContent).toBe('Build succeeded with 3 warnings.')
+    expect(decision.shouldPropagate && decision.lastAssistant?.content).toBe(
+      'Build succeeded with 3 warnings.'
+    )
   })
 
   it('ignores tool / error / system messages when finding the result', () => {
@@ -262,9 +225,144 @@ describe('Phase F2 — sub-thread return decision', () => {
         { id: 'm4', role: 'error', content: 'transient', timestamp: '2026-01-01T00:00:03Z' }
       ]
     })
-    const decision = decideSubThreadReturn(chat)
+    const decision = decideLinkedChildReturn(chat)
     // The last *assistant* message is 'Running build' — that's what we propagate.
     expect(decision.shouldPropagate).toBe(true)
-    expect(decision.lastAssistantContent).toBe('Running build')
+    expect(decision.shouldPropagate && decision.lastAssistant?.content).toBe('Running build')
+  })
+})
+
+describe('opt-in side-chat authority return', () => {
+  const sideChat = (overrides: Partial<ChatRecord> = {}): ChatRecord =>
+    makeChat({
+      title: 'Async design room',
+      parentChatId: 'parent-1',
+      parentChatRelation: 'sideChat',
+      sideChatContext: {
+        createdAt: Date.parse('2026-01-01T00:00:00Z'),
+        returnResultToParent: true,
+        returnResultEnabledAt: Date.parse('2026-01-01T00:00:10Z')
+      },
+      ...overrides
+    })
+
+  it('keeps ordinary side chats silent by default', () => {
+    const decision = decideLinkedChildReturn(
+      sideChat({
+        sideChatContext: { createdAt: Date.now() },
+        messages: [
+          {
+            id: 'answer-1',
+            role: 'assistant',
+            runId: 'run-1',
+            content: 'Independent answer.',
+            timestamp: '2026-01-01T00:01:00Z'
+          }
+        ]
+      }),
+      { outcome: 'done', sourceRunId: 'run-1' }
+    )
+
+    expect(decision).toEqual({
+      shouldPropagate: false,
+      reason: 'returnResultToParent=false'
+    })
+  })
+
+  it('returns only the exact opted-in terminal run result', () => {
+    const decision = decideLinkedChildReturn(
+      sideChat({
+        messages: [
+          {
+            id: 'old-answer',
+            role: 'assistant',
+            runId: 'run-old',
+            content: 'Old isolated answer.',
+            timestamp: '2026-01-01T00:00:05Z'
+          },
+          {
+            id: 'answer-1',
+            role: 'assistant',
+            runId: 'run-1',
+            content: 'Fresh side-chat result.',
+            timestamp: '2026-01-01T00:01:00Z'
+          }
+        ]
+      }),
+      { outcome: 'done', sourceRunId: 'run-1' }
+    )
+
+    expect(decision).toMatchObject({
+      shouldPropagate: true,
+      relation: 'sideChat',
+      parentChatId: 'parent-1',
+      sourceAssistantMessageId: 'answer-1',
+      resultContent: 'Fresh side-chat result.'
+    })
+  })
+
+  it('does not return output created before the user opted in', () => {
+    const decision = decideLinkedChildReturn(
+      sideChat({
+        messages: [
+          {
+            id: 'answer-1',
+            role: 'assistant',
+            runId: 'run-1',
+            content: 'Older answer.',
+            timestamp: '2026-01-01T00:00:05Z'
+          }
+        ]
+      }),
+      { outcome: 'done', sourceRunId: 'run-1' }
+    )
+
+    expect(decision).toEqual({ shouldPropagate: false, reason: 'output predates opt-in' })
+  })
+
+  it('keeps typed failure evidence even when the side chat produced no answer', () => {
+    const decision = decideLinkedChildReturn(sideChat(), {
+      outcome: 'failed',
+      sourceRunId: 'run-failed',
+      errorMessage: 'provider unavailable'
+    })
+
+    expect(decision).toMatchObject({
+      shouldPropagate: true,
+      relation: 'sideChat',
+      sourceAssistantMessageId: 'linked-child-terminal-run-failed-failed',
+      resultContent: 'Linked child run failed: provider unavailable'
+    })
+  })
+
+  it('marks only side-chat return state and preserves isolation metadata', () => {
+    const updated = markLinkedChildResultReturned(
+      sideChat(),
+      'sideChat',
+      Date.parse('2026-01-01T00:02:00Z'),
+      'answer-1'
+    )
+
+    expect(updated.sideChatContext).toMatchObject({
+      returnResultToParent: true,
+      resultReturnedAt: Date.parse('2026-01-01T00:02:00Z'),
+      lastReturnedMessageId: 'answer-1'
+    })
+    expect(updated.delegationContext).toBeUndefined()
+  })
+
+  it('uses a distinct untrusted side-chat envelope', () => {
+    const content = buildLinkedChildReturnContent({
+      relation: 'sideChat',
+      label: 'Codex',
+      title: 'Async design room',
+      childId: 'side-1',
+      result: 'A bounded result.',
+      outcome: 'done'
+    })
+
+    expect(content).toContain('Side-chat result from Codex side-chat')
+    expect(content).toContain('untrusted linked-child output')
+    expect(content).toContain('<side_chat_result>\nA bounded result.\n</side_chat_result>')
   })
 })

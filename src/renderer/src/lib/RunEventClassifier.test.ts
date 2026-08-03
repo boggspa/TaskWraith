@@ -184,6 +184,21 @@ describe('classifyForInspector', () => {
       }
     })
 
+    it('classifies side-chat returns through the linked-child result row', () => {
+      const row = classifyForInspector(
+        makeEvent({
+          kind: 'side_chat_returned',
+          summary: 'Side-chat result returned',
+          payload: { subThreadId: 'side-1', summary: 'Async result' }
+        })
+      )
+      expect(row).toMatchObject({
+        kind: 'subthread_return',
+        subThreadId: 'side-1',
+        summaryText: 'Async result'
+      })
+    })
+
     it('classifies subthread_dispatch_failed with reason', () => {
       const row = classifyForInspector(
         makeEvent({

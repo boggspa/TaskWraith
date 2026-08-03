@@ -2548,15 +2548,14 @@ export interface AppSettings {
    * `invoke_agent`, etc.) versus TaskWraith durable sub-threads. When
    * unset, the runtime asks on the first observable native request. */
   nativeSubAgentRequests?: NativeSubAgentRequestPolicy
-  /** When true (default), an agent's parent chat is automatically
-   * "nudged" with a synthetic continuation prompt after a sub-thread
-   * the agent delegated to (with `returnResultToParent: true`) finishes
-   * and its final assistant message has been back-propagated to the
-   * parent transcript. Without this, the back-propagated result just
+  /** When true (default), a parent chat is automatically continued after an
+   * opted-in linked child (delegated sub-thread or explicit side-chat return)
+   * finishes and its terminal result enters the durable parent mailbox.
+   * Without this, the back-propagated result just
    * sits in the parent transcript until the user manually types
    * something — the agent has no event to wake up on. See
    * `src/main/AutoResumeParent.ts` for the gating logic and
-   * `maybePropagateSubThreadResult` in `src/main/index.ts` for the
+   * `maybePropagateLinkedChildResult` in `src/main/index.ts` for the
    * dispatch site. */
   autoResumeParentOnSubThreadCompletion: boolean
   geminiMcpBridgeEnabled: boolean
@@ -3323,6 +3322,9 @@ export interface ChatMessage {
     mailboxEventId?: string
     providerContextVisibility?: 'projection-only'
     subThreadOutcome?: 'done' | 'requires_action' | 'failed' | 'cancelled'
+    /** Relationship of the linked child that produced this return. Missing on
+     * legacy records means delegated sub-thread. */
+    linkedChildRelation?: 'subThread' | 'sideChat'
     /** TaskWraith-authored, transcript-native close-out row. */
     closeoutSource?: 'currentProvider' | 'summaryProvider' | 'deterministicFallback'
     closeoutProvider?: ProviderId
@@ -3820,8 +3822,9 @@ export interface ChatRecord {
   parentChatRelation?: ChatParentRelation
   /** User-owned split-view chat metadata. A side chat is context-isolated
    * like a normal chat but keeps a back-pointer to the chat it was opened
-   * beside. It must not use `delegationContext`, auto-return, or parent
-   * auto-resume. */
+   * beside. It never uses `delegationContext`; an explicit, default-off
+   * return flag may route terminal results through the same durable parent
+   * mailbox as delegated sub-threads. */
   sideChatContext?: {
     createdAt: number
     mode?: SideChatMode
@@ -3833,6 +3836,14 @@ export interface ChatRecord {
     originMessageId?: string
     originRunId?: string
     transcriptVisibility?: 'none' | 'summary' | 'selected' | 'snapshot'
+    /** Explicit user opt-in for asynchronous terminal-result delivery. */
+    returnResultToParent?: boolean
+    /** Gesture time for the current opt-in, used to reject older output. */
+    returnResultEnabledAt?: number
+    /** Latest side-chat result durably projected to the parent. */
+    resultReturnedAt?: number
+    /** Exact source message id for idempotent same-result recovery. */
+    lastReturnedMessageId?: string
   }
   forkContext?: ChatForkContext
   /** Phase F1 — delegation metadata, present only when `parentChatId`
@@ -4006,6 +4017,7 @@ export type RunEventKind =
   | 'subthread_autoresume_dispatched'
   | 'host_rerun_continuation_dispatched'
   | 'side_chat_created'
+  | 'side_chat_returned'
   | 'diff'
   | 'final_message'
   | 'lifecycle'
