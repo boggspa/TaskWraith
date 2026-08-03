@@ -36,6 +36,12 @@
  *   node scripts/work-guard.cjs tick       heartbeat + snapshot + prune (timer)
  *   node scripts/work-guard.cjs snapshot   one-shot snapshot
  *   node scripts/work-guard.cjs check      exit 1 on aged orphans (ship gate)
+ *   node scripts/work-guard.cjs self-check prove current file parses + runs (CI/local)
+ *
+ * DIAGNOSIS NOTE. launchd writes stdout+stderr to `.work-guard/tick.log`.
+ * A mid-edit SyntaxError under Node 25.x can leave permanent stacks at the top
+ * of that log even after the file is fixed. Live authority is `tick.json`
+ * (`parseOk` / `node` / `lastTickMs`) and `self-check`, not the log head.
  */
 
 const { execFileSync } = require('node:child_process')
@@ -320,7 +326,15 @@ function readTickRecord(root) {
   try {
     const parsed = JSON.parse(fs.readFileSync(tickRecordPath(root), 'utf8'))
     const lastTickMs = Number(parsed?.lastTickMs)
-    return Number.isFinite(lastTickMs) ? { lastTickMs } : null
+    if (!Number.isFinite(lastTickMs)) return null
+    // Extra fields are optional: receipts written before this stamp only carried
+    // lastTickMs. Treat missing parseOk as unknown, not as false — a pre-stamp
+    // healthy timer must not look broken.
+    return {
+      lastTickMs,
+      node: typeof parsed?.node === 'string' ? parsed.node : null,
+      parseOk: parsed?.parseOk === true ? true : null
+    }
   } catch {
     return null
   }
@@ -330,7 +344,19 @@ function writeTickRecord(root, now) {
   try {
     fs.mkdirSync(path.join(root, SIDECAR_DIR), { recursive: true })
     const tmp = path.join(root, SIDECAR_DIR, `.${TICK_FILE}.${process.pid}.tmp`)
-    fs.writeFileSync(tmp, `${JSON.stringify({ lastTickMs: now }, null, 2)}\n`)
+    // Reaching this function means Node already parsed and executed this file.
+    // launchd's combined stdout/stderr log (tick.log) can still retain older
+    // mid-edit SyntaxError stacks (observed under Node 25.9.0) long after the
+    // save is fixed — those lines are historical. This receipt is the live
+    // authority for "does the current work-guard.cjs parse and run?".
+    fs.writeFileSync(
+      tmp,
+      `${JSON.stringify(
+        { lastTickMs: now, node: process.version, parseOk: true },
+        null,
+        2
+      )}\n`
+    )
     fs.renameSync(tmp, tickRecordPath(root))
   } catch {
     /* a receipt we cannot write only costs the staleness report */
@@ -343,9 +369,15 @@ function writeTickRecord(root, now) {
  */
 function timerHealth(root, now) {
   const record = readTickRecord(root)
-  if (!record) return { everRan: false, stale: true, ageMs: null }
+  if (!record) return { everRan: false, stale: true, ageMs: null, node: null, parseOk: null }
   const ageMs = now - record.lastTickMs
-  return { everRan: true, stale: ageMs > TICK_STALE_MS, ageMs }
+  return {
+    everRan: true,
+    stale: ageMs > TICK_STALE_MS,
+    ageMs,
+    node: record.node,
+    parseOk: record.parseOk
+  }
 }
 
 /**
@@ -644,7 +676,11 @@ function cmdStatus(root, now, { json, hook }) {
       ? 'TIMER      never run — `node scripts/work-guard.cjs timer` prints the launchd agent'
       : timer.stale
         ? `TIMER      STALE, last tick ${humanAge(timer.ageMs)} ago — NOT snapshotting`
-        : `TIMER      healthy, last tick ${humanAge(timer.ageMs)} ago`
+        : `TIMER      healthy, last tick ${humanAge(timer.ageMs)} ago` +
+          (timer.node ? ` under ${timer.node}` : '') +
+          (timer.parseOk
+            ? ' (parse ok — older SyntaxError stacks in tick.log are stale)'
+            : '')
   )
   process.stdout.write(`${lines.join('\n')}\n`)
   return 0
@@ -653,11 +689,15 @@ function cmdStatus(root, now, { json, hook }) {
 function cmdTick(root, now) {
   const markers = listMarkers(root)
   const dirty = dirtyEntries(root)
-  writeTickRecord(root, now)
   advanceHeartbeats(root, markers, dirty, now)
   const label = `work-guard snapshot — ${dirty.length} dirty, ${markers.length} claim(s)`
   const snap = takeSnapshot(root, label)
   pruneSnapshots(root, now)
+  // Publish liveness only after the full tick completes. Reaching here proves
+  // parse/load AND heartbeat/snapshot/prune completion; a crash in any earlier
+  // phase must leave the previous timestamp standing rather than advertising a
+  // successful timer cycle that never happened.
+  writeTickRecord(root, now)
   const result = evaluate(root, now)
   // A timer that chatters gets muted, so speak only when something is wrong.
   if (result.aged.length) {
@@ -731,6 +771,15 @@ function main(argv) {
   const command = args.find((a) => !a.startsWith('-')) || 'status'
   const json = args.includes('--json')
   const hook = args.includes('--hook')
+  if (command === 'self-check') {
+    // This is intentionally repository-independent: CI and launchd diagnosis
+    // need to prove that the CURRENT file parses and loads even when invoked
+    // from a directory that is not a Git checkout.
+    process.stdout.write(
+      `work-guard: self-check ok under ${process.version} (parse+load succeeded)\n`
+    )
+    return 0
+  }
   const root = repoRoot()
   if (!root) {
     if (hook) return 0

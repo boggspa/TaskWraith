@@ -63,7 +63,13 @@ const {
   timerHealth: (
     root: string,
     now: number
-  ) => { everRan: boolean; stale: boolean; ageMs: number | null }
+  ) => {
+    everRan: boolean
+    stale: boolean
+    ageMs: number | null
+    node: string | null
+    parseOk: true | null
+  }
   writeTickRecord: (root: string, now: number) => void
   stableNodePath: (execPath: string, probe: (p: string) => string | null) => string
 }
@@ -318,6 +324,8 @@ describe('timer liveness', () => {
     const fresh = timerHealth(root, NOW)
     expect(fresh.everRan).toBe(true)
     expect(fresh.stale).toBe(false)
+    expect(fresh.node).toBe(process.version)
+    expect(fresh.parseOk).toBe(true)
 
     writeTickRecord(root, NOW - TICK_STALE_MS - 1000)
     const dead = timerHealth(root, NOW)
@@ -334,6 +342,32 @@ describe('timer liveness', () => {
     expect(timerHealth(root, NOW).everRan).toBe(false)
     writeFileSync(join(root, '.work-guard', 'tick.json'), '{"lastTickMs":"soon"}')
     expect(timerHealth(root, NOW).everRan).toBe(false)
+  })
+
+  it('keeps pre-upgrade receipts healthy while reporting runtime evidence as unknown', () => {
+    const root = makeRepo()
+    mkdirSync(join(root, '.work-guard'), { recursive: true })
+    writeFileSync(
+      join(root, '.work-guard', 'tick.json'),
+      `${JSON.stringify({ lastTickMs: NOW - 60_000 })}\n`
+    )
+    expect(timerHealth(root, NOW)).toMatchObject({
+      everRan: true,
+      stale: false,
+      node: null,
+      parseOk: null
+    })
+  })
+
+  it('runs self-check outside a Git repository', () => {
+    const outside = mkdtempSync(join(tmpdir(), 'work-guard-self-check-'))
+    repos.push(outside)
+    const output = execFileSync(
+      process.execPath,
+      [join(process.cwd(), 'scripts', 'work-guard.cjs'), 'self-check'],
+      { cwd: outside, encoding: 'utf8' }
+    )
+    expect(output).toContain(`self-check ok under ${process.version}`)
   })
 })
 
