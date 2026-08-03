@@ -1,11 +1,14 @@
 /**
- * Durable Host command receipt + idempotency store (Host Arc Wave 2A).
+ * Durable Host command receipt + idempotency store (Host Arc Wave 2A/2B).
  *
  * Crash-safe bounded journal + checkpoint under an injected data directory.
  * Receipts reopen across simulated Host restart. Interrupted pending commands
  * surface as explicit recoverable/indeterminate state and are never blindly
  * re-executed. Exact command repeats return the original receipt; the same
- * idempotency key with a different canonical command fingerprint conflicts.
+ * idempotency key with a different canonical command fingerprint produces a
+ * durable conflict receipt for the attempted commandId without stealing the
+ * original idempotency-key mapping. Occupied commandId mismatches conflict
+ * immediately with no second durable row. Terminal statuses include cancelled.
  *
  * Records retain actor/client identity, target, authority evaluation, and
  * timestamps without credentials, unrestricted arguments/tool output, or
@@ -48,7 +51,9 @@ export type HostCommandReceiptStatus =
   | 'succeeded'
   | 'failed'
   | 'denied'
+  | 'cancelled'
   | 'indeterminate'
+  | 'conflict'
 
 export type HostCommandAuthorityDecision = 'allowed' | 'denied' | 'deferred'
 
@@ -92,6 +97,11 @@ export interface HostCommandReceiptRecord {
   errorCode?: string
   errorMessage?: string
   resultSummary?: string
+  /**
+   * When status is `conflict`: commandId of the original receipt that owns the
+   * idempotency key. Never raw args/tool output.
+   */
+  conflictCommandId?: string
   /** Set when a pending receipt was reopened after Host crash/restart. */
   recoveryState?: 'recoverable-indeterminate'
 }
@@ -107,7 +117,7 @@ export type HostCommandReceiptBeginInput = {
   createdAt?: string
 }
 
-export type HostCommandReceiptTerminalStatus = 'succeeded' | 'failed' | 'denied'
+export type HostCommandReceiptTerminalStatus = 'succeeded' | 'failed' | 'denied' | 'cancelled'
 
 export type HostCommandReceiptCompleteInput = {
   commandId: string
@@ -126,8 +136,15 @@ export type HostCommandReceiptBeginResult =
   | {
       kind: 'conflict'
       reason: 'idempotency_key_command_mismatch' | 'command_id_mismatch'
+      /** Original receipt that owns the idempotency key or occupied commandId. */
       existing: HostCommandReceiptRecord
       requestedFingerprint: string
+      /**
+       * Durable conflict receipt for a NEW commandId that collided on an
+       * existing idempotency key. Absent when the conflict is an occupied
+       * commandId (no second durable row written).
+       */
+      receipt?: HostCommandReceiptRecord
     }
 
 export interface HostCommandReceiptStoreOptions {
@@ -256,8 +273,11 @@ export class HostCommandReceiptStore {
    * Begin (or look up) a command receipt.
    * - Exact same commandId + fingerprint, or same idempotencyKey + fingerprint:
    *   returns the original receipt.
-   * - Same idempotencyKey with a different fingerprint: conflict (no write).
-   * - Same commandId with mismatched identity fields: conflict (no write).
+   * - Same idempotencyKey with a different fingerprint and a NEW commandId:
+   *   durable conflict receipt for the attempt; original remains sole
+   *   idempotency-key owner.
+   * - Same commandId with mismatched identity fields: immediate conflict,
+   *   no second durable row (occupied id cannot be overwritten).
    */
   begin(input: HostCommandReceiptBeginInput): HostCommandReceiptBeginResult {
     const commandId = normalizeId(input.commandId, 'commandId')
@@ -272,6 +292,7 @@ export class HostCommandReceiptStore {
       ) {
         return { kind: 'existing', receipt: cloneRecord(byId) }
       }
+      // Occupied commandId: never overwrite; no second durable row.
       return {
         kind: 'conflict',
         reason: 'command_id_mismatch',
@@ -287,11 +308,36 @@ export class HostCommandReceiptStore {
         if (existing.commandFingerprint === commandFingerprint) {
           return { kind: 'existing', receipt: cloneRecord(existing) }
         }
+
+        // Distinct commandId + same key + different fingerprint → durable conflict.
+        // If a prior conflict receipt for this commandId already exists it would
+        // have been caught by byId; we write once and keep the original key map.
+        const createdAt = input.createdAt ?? this.now()
+        const conflictRecord: HostCommandReceiptRecord = {
+          schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
+          commandId,
+          idempotencyKey,
+          commandFingerprint,
+          status: 'conflict',
+          actor: normalizeActor(input.actor),
+          target: normalizeTarget(input.target),
+          authority: normalizeAuthority(input.authority),
+          createdAt,
+          updatedAt: createdAt,
+          completedAt: createdAt,
+          conflictCommandId: existing.commandId,
+          errorCode: 'idempotency_key_command_mismatch'
+        }
+
+        this.indexRecord(conflictRecord)
+        this.appendJournalEvent({ op: 'upsert', record: conflictRecord })
+        this.maybeCompact()
         return {
           kind: 'conflict',
           reason: 'idempotency_key_command_mismatch',
           existing: cloneRecord(existing),
-          requestedFingerprint: commandFingerprint
+          requestedFingerprint: commandFingerprint,
+          receipt: cloneRecord(conflictRecord)
         }
       }
     }
@@ -317,8 +363,9 @@ export class HostCommandReceiptStore {
   }
 
   /**
-   * Complete a pending or indeterminate receipt. Terminal statuses are
-   * idempotent when the same terminal status is re-applied.
+   * Complete a pending or indeterminate receipt. Terminal statuses (including
+   * cancelled) are idempotent when the same terminal status is re-applied.
+   * Conflict receipts are terminal and cannot be completed further.
    */
   complete(input: HostCommandReceiptCompleteInput): HostCommandReceiptRecord | null {
     const commandId = normalizeId(input.commandId, 'commandId')
@@ -328,7 +375,9 @@ export class HostCommandReceiptStore {
     if (
       current.status === 'succeeded' ||
       current.status === 'failed' ||
-      current.status === 'denied'
+      current.status === 'denied' ||
+      current.status === 'cancelled' ||
+      current.status === 'conflict'
     ) {
       if (current.status === input.status) {
         return cloneRecord(current)
@@ -374,7 +423,11 @@ export class HostCommandReceiptStore {
 
   private indexRecord(record: HostCommandReceiptRecord): void {
     this.recordsByCommandId.set(record.commandId, record)
-    this.commandIdByIdempotencyKey.set(record.idempotencyKey, record.commandId)
+    // Conflict receipts never claim or steal the idempotency-key mapping.
+    // The original non-conflict receipt remains the sole getByIdempotencyKey owner.
+    if (record.status !== 'conflict') {
+      this.commandIdByIdempotencyKey.set(record.idempotencyKey, record.commandId)
+    }
   }
 
   private maybeCompact(): void {
@@ -594,7 +647,9 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
     raw.status !== 'succeeded' &&
     raw.status !== 'failed' &&
     raw.status !== 'denied' &&
-    raw.status !== 'indeterminate'
+    raw.status !== 'cancelled' &&
+    raw.status !== 'indeterminate' &&
+    raw.status !== 'conflict'
   ) {
     return null
   }
@@ -628,6 +683,9 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
     }
     if (typeof raw.resultSummary === 'string') {
       record.resultSummary = truncateText(raw.resultSummary, MAX_SUMMARY_CHARS)
+    }
+    if (typeof raw.conflictCommandId === 'string') {
+      record.conflictCommandId = truncateText(raw.conflictCommandId, MAX_ID_CHARS)
     }
     if (raw.recoveryState === 'recoverable-indeterminate') {
       record.recoveryState = 'recoverable-indeterminate'
