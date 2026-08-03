@@ -12631,6 +12631,103 @@ Next action:
     ).toBe(true)
   })
 
+  it('repeats only the automatic Scout fan-out on a continuous continuation pass', async () => {
+    const harness = makeHarness({ probeParticipant: async () => ({ reachable: true }) })
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 3
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'claude-scout',
+        provider: 'claude',
+        enabled: true,
+        role: 'Scout A',
+        instructions: 'Inspect the workspace.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        stageRole: 'scout'
+      },
+      {
+        id: 'grok-scout',
+        provider: 'grok',
+        enabled: true,
+        role: 'Scout B',
+        instructions: 'Independently inspect the workspace.',
+        order: 2,
+        permissionPresetId: 'read_only',
+        stageRole: 'scout'
+      },
+      {
+        id: 'codex-worker',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Implement the next step.',
+        order: 3,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'worker'
+      }
+    ]
+    const completeWithProgress = (payload: AgentRunPayload): void => {
+      harness.orchestrator.handleProviderOutput(
+        payload.provider,
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: `${payload.provider} made progress.` }
+      )
+      harness.orchestrator.handleProviderOutput(
+        payload.provider,
+        { appRunId: payload.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Scout, then implement until the round completes.',
+      event: { sender: {} as Electron.WebContents }
+    })
+
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const initialScouts = harness.dispatched.slice(0, 2)
+    expect(initialScouts.map((payload) => payload.ensembleRun?.participantId)).toEqual([
+      'claude-scout',
+      'grok-scout'
+    ])
+    expect(initialScouts.every((payload) => Boolean(payload.ensembleRun?.laneId))).toBe(true)
+    expect(harness.probeParticipant!).toHaveBeenCalledTimes(3)
+
+    for (const payload of initialScouts) completeWithProgress(payload)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('codex-worker')
+    expect(harness.dispatched[2].ensembleRun?.laneId).toBeUndefined()
+
+    completeWithProgress(harness.dispatched[2])
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5))
+    const continuationScouts = harness.dispatched.slice(3, 5)
+    expect(continuationScouts.map((payload) => payload.ensembleRun?.participantId)).toEqual([
+      'claude-scout',
+      'grok-scout'
+    ])
+    expect(continuationScouts.every((payload) => Boolean(payload.ensembleRun?.laneId))).toBe(true)
+    // Continuations repeat the fresh Scout pass, but retain the one-time
+    // health probe rather than treating every pass like a new user round.
+    expect(harness.probeParticipant!).toHaveBeenCalledTimes(3)
+
+    for (const payload of continuationScouts) completeWithProgress(payload)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(6))
+    expect(harness.dispatched[5].ensembleRun?.participantId).toBe('codex-worker')
+    expect(harness.dispatched[5].ensembleRun?.laneId).toBeUndefined()
+
+    completeWithProgress(harness.dispatched[5])
+    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(3)
+    expect(
+      harness.chat.messages.filter((message) =>
+        message.content?.startsWith('Automatic read stage · 2 read-only participants')
+      )
+    ).toHaveLength(2)
+  })
+
   it('dispatches a final partial continuous pass before publishing one terminal hop-limit status', async () => {
     const harness = makeHarness()
     await startContinuousQuartet(harness)

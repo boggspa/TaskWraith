@@ -13106,13 +13106,13 @@ export class EnsembleOrchestrator {
   private async runRound(
     runtime: ActiveRoundRuntime,
     participants: EnsembleParticipant[],
-    // `skipPreamble` is set for a continuous-mode auto-continuation pass
-    // (see `tryAutoContinueRound`): the round already ran its health probe +
-    // round-start read-only fan-out on the FIRST pass, so a re-dispatched
-    // continuation pass jumps straight to the serial loop rather than
-    // re-probing / re-fanning-out every hop.
+    // `skipPreamble` is set for continuation and steering-boundary passes so
+    // they do not repeat health checks, background dispatch, or writer
+    // preflight. Continuous auto-continuation opts back into just the opening
+    // read-only Scout wave with `repeatOpeningScoutFanout`.
     options: {
       skipPreamble?: boolean
+      repeatOpeningScoutFanout?: boolean
       backgroundParticipants?: EnsembleParticipant[]
     } = {}
   ): Promise<void> {
@@ -13197,9 +13197,12 @@ export class EnsembleOrchestrator {
     const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
     const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
     const shouldRunReadOnlyFanout = readFanoutRequested
+    const shouldRunOpeningScoutFanout =
+      !options.skipPreamble || options.repeatOpeningScoutFanout === true
+    const shouldRunOpeningWriterFanout = !options.skipPreamble
     if (
-      !options.skipPreamble &&
-      (shouldRunReadOnlyFanout || writerFanoutRequested) &&
+      ((shouldRunOpeningScoutFanout && shouldRunReadOnlyFanout) ||
+        (shouldRunOpeningWriterFanout && writerFanoutRequested)) &&
       !runtime.cancelled
     ) {
       const readers: EnsembleParticipant[] = []
@@ -13240,7 +13243,12 @@ export class EnsembleOrchestrator {
           writers.push(participant)
         }
       }
-      if (shouldRunReadOnlyFanout && readers.length >= 2 && chatForFanout) {
+      if (
+        shouldRunOpeningScoutFanout &&
+        shouldRunReadOnlyFanout &&
+        readers.length >= 2 &&
+        chatForFanout
+      ) {
         // Remove ONLY the dispatched readers from `remaining` (preserving
         // original order) so the serial while-loop below still sees stage
         // reviewers / read-only stage workers alongside the writers.
@@ -13251,14 +13259,23 @@ export class EnsembleOrchestrator {
           mode: 'read_only',
           label: 'Automatic read stage'
         })
-      } else if (readFanoutRequested && readers.length > 0) {
+      } else if (
+        shouldRunOpeningScoutFanout &&
+        readFanoutRequested &&
+        readers.length > 0
+      ) {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
           'Parallel mode requested but fewer than two read-only participants were available; continuing serially.'
         )
       }
-      if (chatForFanout && writers.length > 0 && !runtime.cancelled) {
+      if (
+        shouldRunOpeningWriterFanout &&
+        chatForFanout &&
+        writers.length > 0 &&
+        !runtime.cancelled
+      ) {
         const bossmanParticipantId = this.activeBossmanParticipantId(chatForFanout, runtime)
         const writerPolicy =
           roundFanoutPolicy === 'all'
@@ -14306,7 +14323,10 @@ export class EnsembleOrchestrator {
       if (continuationRoster && continuationRoster.length > 0 && !runtime.cancelled) {
         await this.trackRoundActivity(
           runtime,
-          this.runRound(runtime, continuationRoster, { skipPreamble: true })
+          this.runRound(runtime, continuationRoster, {
+            skipPreamble: true,
+            repeatOpeningScoutFanout: true
+          })
         )
         return
       }
