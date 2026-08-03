@@ -691,6 +691,7 @@ describe('provider action taxonomy', () => {
     for (const untrustedPresentation of [
       'Ask User Question',
       'AskUserQuestion',
+      'Request_User_Input',
       'READ_FILE',
       'mcp__taskwraith__AskUserQuestion',
       'mcp__TASKWRAITH__read_file',

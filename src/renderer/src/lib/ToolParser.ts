@@ -401,6 +401,11 @@ const TASK_LIKE_TOOL_NAMES = new Set([
   'exit_planmode',
   'ask_user_question',
   'askuserquestion',
+  // Codex's host request may be projected into a transcript under this
+  // display spelling; this is presentation-only, not MCP authority.
+  'request_user_input',
+  'requestuserinput',
+  'request-user-input',
   'goal_read',
   'goalread',
   'goal_update',
@@ -632,7 +637,13 @@ export function getToolDisplayName(toolName: string, parameters?: Record<string,
       ) {
         return 'Exited plan mode'
       }
-      if (unqualifiedName === 'ask_user_question' || unqualifiedName === 'askuserquestion') {
+      if (
+        unqualifiedName === 'ask_user_question' ||
+        unqualifiedName === 'askuserquestion' ||
+        unqualifiedName === 'request_user_input' ||
+        unqualifiedName === 'requestuserinput' ||
+        unqualifiedName === 'request-user-input'
+      ) {
         return 'Asked user'
       }
       if (unqualifiedName === 'get_diagnostics' || unqualifiedName === 'getdiagnostics') {

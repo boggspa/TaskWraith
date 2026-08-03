@@ -72,6 +72,8 @@ describe('canonicalTaskWraithToolName', () => {
       'ask_user_question'
     )
     expect(canonicalTaskWraithToolName('TaskWraith__Ask_User_Question')).toBe('ask_user_question')
+    // Codex's host request method is not a TaskWraith MCP alias.
+    expect(canonicalTaskWraithToolName('Request_User_Input')).toBe('request_user_input')
   })
 })
 

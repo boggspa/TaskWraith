@@ -9,6 +9,7 @@ export interface RemoteQuestionResolution {
 }
 
 export type RemoteQuestionStatus = 'pending' | 'answered' | 'rejected' | 'expired' | 'cancelled'
+export type RemoteQuestionSource = 'taskwraith' | 'codex-host'
 
 export interface RemoteQuestionRecord {
   questionId: string
@@ -21,6 +22,7 @@ export interface RemoteQuestionRecord {
   workspacePath?: string
   threadId?: string
   runId?: string
+  source?: RemoteQuestionSource
   createdAt: string
   expiresAt?: string
   status: RemoteQuestionStatus
@@ -38,6 +40,7 @@ export interface RegisterRemoteQuestionInput {
   workspacePath?: string
   threadId?: string
   runId?: string
+  source?: RemoteQuestionSource
   ttlMs?: number
   expiresAt?: string
   resolve: (result: RemoteQuestionResolution) => void
@@ -138,6 +141,7 @@ export class RemoteQuestionRegistry {
     if (input.workspacePath) record.workspacePath = input.workspacePath
     if (input.threadId) record.threadId = input.threadId
     if (input.runId) record.runId = input.runId
+    if (input.source) record.source = input.source
     if (expiresAt) record.expiresAt = expiresAt
 
     const pending: PendingRemoteQuestion = {

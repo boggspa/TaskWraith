@@ -190,6 +190,8 @@ import {
   codexGitMetadataRootsForWorkspace,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
+import { isCodexUserInputRequestMethod } from './codex/CodexUserInput'
+import { collectCodexUserInput } from './codex/CodexUserInputBridge'
 import { buildCodexAppServerThreadLaunchPlan } from './codex/CodexAppServerThreadLaunchPlan'
 import { concurrentWriteLanesEnabled, ensembleWakeupsEnabled } from './featureGates'
 import {
@@ -28553,6 +28555,71 @@ function handleCodexServerRequest(message: any) {
   }
   const method = message.method || 'approval/request'
   const params = message.params || {}
+  if (isCodexUserInputRequestMethod(method)) {
+    void collectCodexUserInput(params, {
+      registerQuestion: (question, resolveQuestion, ttlMs, index) => {
+        const questionId = `q-codex-host-${state.appRunId || 'no-run'}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`
+        const workspaceId =
+          state.scope === 'workspace' ? workspaceIdForApprovalPush(state.workspacePath) : null
+        return remoteQuestionRegistry.register({
+          questionId,
+          question: question.question,
+          options: question.options,
+          context: question.context,
+          provider: 'codex',
+          workspaceId,
+          workspacePath: state.workspacePath,
+          threadId: state.appChatId || '',
+          runId: state.appRunId || '',
+          source: 'codex-host',
+          ttlMs,
+          resolve: resolveQuestion
+        })
+      },
+      emitQuestion: (record) => {
+        const rendererSender =
+          mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()
+            ? mainWindow.webContents
+            : state.sender.id === -1
+              ? null
+              : state.sender
+        const delivered = safeSendToSender(rendererSender, 'agent-question-requested', {
+          questionId: record.questionId,
+          appRunId: state.appRunId || '',
+          appChatId: state.appChatId || '',
+          provider: 'codex',
+          question: record.question,
+          options: record.options,
+          context: record.context
+        })
+        if (!delivered && !bridgeBroadcasterRef) {
+          remoteQuestionRegistry.cancel(record.questionId, 'no-renderer')
+        }
+      }
+    }).then(
+      (result) => {
+        try {
+          if (result.ok) {
+            respondingClient.respond(message.id, result.response)
+          } else {
+            respondingClient.reject(message.id, result.reason)
+          }
+        } catch {
+          // The Codex client may have closed while the user question was pending.
+        }
+      },
+      (error) => {
+        const reason =
+          error instanceof Error ? error.message : 'Codex user input request could not be shown.'
+        try {
+          respondingClient.reject(message.id, reason)
+        } catch {
+          // The Codex client may have closed while the user question was pending.
+        }
+      }
+    )
+    return
+  }
   const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
   const structuralItemId = params?.itemId || params?.item_id || params?.item?.id
   const structuralApproval = resolveCodexStructuralApproval({
@@ -36618,6 +36685,7 @@ async function executeGeminiMcpTool(
             workspacePath: context.workspacePath,
             threadId: context.appChatId || '',
             runId: context.appRunId || '',
+            source: 'taskwraith',
             ttlMs: AGENT_QUESTION_TIMEOUT_MS,
             resolve
           })

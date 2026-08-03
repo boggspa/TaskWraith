@@ -216,9 +216,12 @@ describe('ToolParser', () => {
       expect(getToolCategory('exitplanmode')).toBe('task')
       expect(getToolCategory('ExitPlanMode')).toBe('task')
     })
-    it('maps ask_user_question + askuserquestion to task', () => {
+    it('maps user-question aliases to task', () => {
       expect(getToolCategory('ask_user_question')).toBe('task')
       expect(getToolCategory('askuserquestion')).toBe('task')
+      expect(getToolCategory('Request_User_Input')).toBe('task')
+      expect(getToolCategory('RequestUserInput')).toBe('task')
+      expect(getToolCategory('request-user-input')).toBe('task')
     })
     // Cursor / Grok-ACP machine tool names that previously fell through to the
     // generic dot when they reached name-based resolution.
@@ -360,9 +363,12 @@ describe('ToolParser', () => {
       expect(getToolDisplayName('exitplanmode', {})).toBe('Exited plan mode')
       expect(getToolDisplayName('ExitPlanMode', {})).toBe('Exited plan mode')
     })
-    it('shows Asked user for ask_user_question variants', () => {
+    it('shows Asked user for user-question aliases', () => {
       expect(getToolDisplayName('ask_user_question', {})).toBe('Asked user')
       expect(getToolDisplayName('askuserquestion', {})).toBe('Asked user')
+      expect(getToolDisplayName('Request_User_Input', {})).toBe('Asked user')
+      expect(getToolDisplayName('RequestUserInput', {})).toBe('Asked user')
+      expect(getToolDisplayName('request-user-input', {})).toBe('Asked user')
     })
     it('shows a generic Searched label when the target is unknown', () => {
       expect(getToolDisplayName('grep_search', {})).toBe('Searched')

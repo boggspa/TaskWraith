@@ -70,6 +70,23 @@ describe('RemoteQuestionRegistry', () => {
     expect(registry.answer('q1', 'Again')).toEqual({ ok: false, reason: 'not-found' })
   })
 
+  it('preserves the source for host-originated questions without changing the UI shape', () => {
+    const registry = new RemoteQuestionRegistry({
+      setTimer: () => 'timer',
+      clearTimer: vi.fn()
+    })
+
+    const record = registry.register({
+      questionId: 'q-codex-host',
+      question: 'Pick one?',
+      source: 'codex-host',
+      resolve: vi.fn()
+    })
+
+    expect(record).toMatchObject({ questionId: 'q-codex-host', source: 'codex-host' })
+    expect(registry.listProjectionCards()[0]).not.toHaveProperty('source')
+  })
+
   it('rejects and resolves as a cancellation', () => {
     let resolved: RemoteQuestionResolution | null = null
     const registry = new RemoteQuestionRegistry({
