@@ -11,46 +11,19 @@ struct ExistingChildNavigationIntentTests {
         parent: String?,
         relation: String?
     ) -> RemoteTaskCard {
-        RemoteTaskCard(
-            id: id,
-            title: "Child",
-            status: "idle",
-            provider: "codex",
-            selectedModelType: nil,
-            customModel: nil,
-            codexReasoningEffort: nil,
-            claudeReasoningEffort: nil,
-            pendingProviderChange: nil,
-            workspaceId: "ws",
-            threadId: id,
-            parentChatId: parent,
-            createdAt: nil,
-            updatedAt: nil,
-            parentChatRelation: relation,
-            pinned: nil,
-            watchingPr: nil,
-            agentName: nil,
-            agentAccent: nil,
-            agentSlug: nil,
-            sideChatMode: nil,
-            sideChatLifecycleState: nil,
-            chatKind: "single",
-            isDraft: nil,
-            draftVariant: nil,
-            isShared: nil,
-            sharedMode: nil,
-            archived: nil,
-            runId: nil,
-            preview: nil,
-            pendingApprovalCount: nil,
-            pendingQuestionCount: nil,
-            activeGoal: nil,
-            todoLanes: nil,
-            canvasPreviews: nil,
-            capabilities: nil,
-            additionalWorkspaces: nil,
-            queuedComposerPrompts: nil
-        )
+        var object: [String: Any] = [
+            "id": id,
+            "title": "Child",
+            "status": "idle",
+            "provider": "codex",
+            "workspaceId": "ws",
+            "threadId": id,
+            "chatKind": "single",
+        ]
+        if let parent { object["parentChatId"] = parent }
+        if let relation { object["parentChatRelation"] = relation }
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return try! JSONDecoder().decode(RemoteTaskCard.self, from: data)
     }
 
     @Test func opensExistingDirectChild() {

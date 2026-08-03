@@ -15,46 +15,20 @@ struct SubThreadStatusTickerModelTests {
         title: String = "Child",
         agentName: String? = nil
     ) -> RemoteTaskCard {
-        RemoteTaskCard(
-            id: id,
-            title: title,
-            status: status,
-            provider: provider,
-            selectedModelType: nil,
-            customModel: nil,
-            codexReasoningEffort: nil,
-            claudeReasoningEffort: nil,
-            pendingProviderChange: nil,
-            workspaceId: "ws",
-            threadId: id,
-            parentChatId: parent,
-            createdAt: nil,
-            updatedAt: nil,
-            parentChatRelation: relation,
-            pinned: nil,
-            watchingPr: nil,
-            agentName: agentName,
-            agentAccent: nil,
-            agentSlug: nil,
-            sideChatMode: nil,
-            sideChatLifecycleState: nil,
-            chatKind: "single",
-            isDraft: nil,
-            draftVariant: nil,
-            isShared: nil,
-            sharedMode: nil,
-            archived: nil,
-            runId: nil,
-            preview: nil,
-            pendingApprovalCount: nil,
-            pendingQuestionCount: nil,
-            activeGoal: nil,
-            todoLanes: nil,
-            canvasPreviews: nil,
-            capabilities: nil,
-            additionalWorkspaces: nil,
-            queuedComposerPrompts: nil
-        )
+        var object: [String: Any] = [
+            "id": id,
+            "title": title,
+            "status": status,
+            "provider": provider,
+            "workspaceId": "ws",
+            "threadId": id,
+            "chatKind": "single",
+        ]
+        if let parent { object["parentChatId"] = parent }
+        if let relation { object["parentChatRelation"] = relation }
+        if let agentName { object["agentName"] = agentName }
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return try! JSONDecoder().decode(RemoteTaskCard.self, from: data)
     }
 
     @Test func emptyWhenNoRunningDirectChildren() {
