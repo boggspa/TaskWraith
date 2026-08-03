@@ -592,7 +592,10 @@ function isNonEmptyString(value: unknown, max = HOST_PROTOCOL_MAX_STRING): value
   return typeof value === 'string' && value.length > 0 && value.length <= max
 }
 
-function isOptionalString(value: unknown, max = HOST_PROTOCOL_MAX_STRING): boolean {
+function isOptionalString(
+  value: unknown,
+  max = HOST_PROTOCOL_MAX_STRING
+): value is string | undefined {
   return value === undefined || isNonEmptyString(value, max)
 }
 
@@ -685,16 +688,18 @@ function decodeClientIdentity(
   if (!isOptionalString(value.displayName, HOST_PROTOCOL_MAX_SHORT)) {
     return { ok: false, error: `${label}.displayName is invalid` }
   }
-  return {
-    ok: true,
-    value: {
-      clientId: value.clientId,
-      clientClass: value.clientClass,
-      clientVersion: value.clientVersion,
-      ...(value.subjectId !== undefined ? { subjectId: value.subjectId } : {}),
-      ...(value.displayName !== undefined ? { displayName: value.displayName } : {})
-    }
+  const identity: HostAuthenticatedClientIdentity = {
+    clientId: value.clientId,
+    clientClass: value.clientClass,
+    clientVersion: value.clientVersion
   }
+  if (value.subjectId !== undefined) {
+    identity.subjectId = value.subjectId
+  }
+  if (value.displayName !== undefined) {
+    identity.displayName = value.displayName
+  }
+  return { ok: true, value: identity }
 }
 
 function decodeActorIdentity(value: unknown): HostDecodeResult<HostActorIdentity> {
@@ -1063,22 +1068,26 @@ export function decodeHostDeltaEnvelope(value: unknown): HostDecodeResult<HostDe
   if (value.kind === 'tombstone' && value.tombstone !== true) {
     return { ok: false, error: 'tombstone kind requires tombstone:true' }
   }
-  return {
-    ok: true,
-    value: {
-      protocolVersion: HOST_PROTOCOL_VERSION,
-      projectionVersion: HOST_PROJECTION_VERSION,
-      generation: value.generation,
-      cursor: value.cursor,
-      previousCursor: value.previousCursor,
-      kind: value.kind as HostDeltaKind,
-      family: value.family as HostDeltaFamily,
-      ...(value.entityId !== undefined ? { entityId: value.entityId } : {}),
-      ...(value.payload !== undefined ? { payload: value.payload } : {}),
-      ...(value.tombstone !== undefined ? { tombstone: value.tombstone } : {}),
-      at: value.at
-    }
+  const envelope: HostDeltaEnvelope = {
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    projectionVersion: HOST_PROJECTION_VERSION,
+    generation: value.generation,
+    cursor: value.cursor,
+    previousCursor: value.previousCursor,
+    kind: value.kind as HostDeltaKind,
+    family: value.family as HostDeltaFamily,
+    at: value.at
   }
+  if (value.entityId !== undefined) {
+    envelope.entityId = value.entityId
+  }
+  if (value.payload !== undefined) {
+    envelope.payload = value.payload
+  }
+  if (typeof value.tombstone === 'boolean') {
+    envelope.tombstone = value.tombstone
+  }
+  return { ok: true, value: envelope }
 }
 
 export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand> {
@@ -1238,46 +1247,48 @@ export function decodeHostCommandReceipt(value: unknown): HostDecodeResult<HostC
   if (!isOptionalString(value.conflictCommandId, HOST_PROTOCOL_MAX_ID)) {
     return { ok: false, error: 'conflictCommandId is invalid' }
   }
-  const authority: HostAuthorityDecision =
-    value.authority.decision === 'deny'
-      ? { decision: 'deny', reason: String(value.authority.reason) }
-      : value.authority.decision === 'ask'
-        ? {
-            decision: 'ask',
-            ...(isNonEmptyString(value.authority.reason, 500)
-              ? { reason: value.authority.reason }
-              : {})
-          }
-        : {
-            decision: 'allow',
-            ...(isNonEmptyString(value.authority.reason, 500)
-              ? { reason: value.authority.reason }
-              : {})
-          }
-  return {
-    ok: true,
-    value: {
-      type: 'host.receipt',
-      protocolVersion: HOST_PROTOCOL_VERSION,
-      commandId: value.commandId,
-      idempotencyKey: value.idempotencyKey,
-      name: value.name as HostCommandName,
-      actor: actor.value,
-      authority,
-      status,
-      commandFingerprint,
-      generation: value.generation,
-      cursor: value.cursor,
-      createdAt: value.createdAt,
-      updatedAt: value.updatedAt,
-      ...(value.resultSummary !== undefined ? { resultSummary: value.resultSummary } : {}),
-      ...(value.errorCode !== undefined ? { errorCode: value.errorCode } : {}),
-      ...(value.errorMessage !== undefined ? { errorMessage: value.errorMessage } : {}),
-      ...(value.conflictCommandId !== undefined
-        ? { conflictCommandId: value.conflictCommandId }
-        : {})
+  let authority: HostAuthorityDecision
+  if (value.authority.decision === 'deny') {
+    authority = { decision: 'deny', reason: String(value.authority.reason) }
+  } else if (value.authority.decision === 'ask') {
+    authority = { decision: 'ask' }
+    if (isNonEmptyString(value.authority.reason, 500)) {
+      authority.reason = value.authority.reason
+    }
+  } else {
+    authority = { decision: 'allow' }
+    if (isNonEmptyString(value.authority.reason, 500)) {
+      authority.reason = value.authority.reason
     }
   }
+  const receipt: HostCommandReceipt = {
+    type: 'host.receipt',
+    protocolVersion: HOST_PROTOCOL_VERSION,
+    commandId: value.commandId,
+    idempotencyKey: value.idempotencyKey,
+    name: value.name as HostCommandName,
+    actor: actor.value,
+    authority,
+    status,
+    commandFingerprint,
+    generation: value.generation,
+    cursor: value.cursor,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt
+  }
+  if (value.resultSummary !== undefined) {
+    receipt.resultSummary = value.resultSummary
+  }
+  if (value.errorCode !== undefined) {
+    receipt.errorCode = value.errorCode
+  }
+  if (value.errorMessage !== undefined) {
+    receipt.errorMessage = value.errorMessage
+  }
+  if (value.conflictCommandId !== undefined) {
+    receipt.conflictCommandId = value.conflictCommandId
+  }
+  return { ok: true, value: receipt }
 }
 
 /**

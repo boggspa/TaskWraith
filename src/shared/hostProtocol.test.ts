@@ -629,4 +629,102 @@ describe('Host protocol Wave 2A contract', () => {
       )
     ).toEqual(['snapshot', 'deltas'])
   })
+
+  it('keeps absent optional decoder fields absent (exactOptionalPropertyTypes)', () => {
+    const hello = decodeHostBootstrapHello({
+      type: 'host.hello',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: HOST_PROJECTION_VERSION,
+      client: {
+        ...client,
+        subjectId: 'pair-1',
+        displayName: 'Desktop'
+      },
+      capabilities: ['bootstrap']
+    })
+    expect(hello.ok).toBe(true)
+    if (hello.ok) {
+      expect(hello.value.client).toEqual({
+        ...client,
+        subjectId: 'pair-1',
+        displayName: 'Desktop'
+      })
+      expect(Object.prototype.hasOwnProperty.call(hello.value.client, 'subjectId')).toBe(true)
+    }
+
+    const helloBare = decodeHostBootstrapHello({
+      type: 'host.hello',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: HOST_PROJECTION_VERSION,
+      client,
+      capabilities: ['bootstrap']
+    })
+    expect(helloBare.ok).toBe(true)
+    if (helloBare.ok) {
+      expect(Object.prototype.hasOwnProperty.call(helloBare.value.client, 'subjectId')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(helloBare.value.client, 'displayName')).toBe(
+        false
+      )
+    }
+
+    const deltaBare = decodeHostDeltaEnvelope({
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      projectionVersion: HOST_PROJECTION_VERSION,
+      generation: 1,
+      cursor: 2,
+      previousCursor: 1,
+      kind: 'upsert',
+      family: 'thread',
+      at: '2026-08-03T17:00:00.000Z'
+    })
+    expect(deltaBare.ok).toBe(true)
+    if (deltaBare.ok) {
+      expect(Object.prototype.hasOwnProperty.call(deltaBare.value, 'entityId')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(deltaBare.value, 'payload')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(deltaBare.value, 'tombstone')).toBe(false)
+    }
+
+    const receiptBare = decodeHostCommandReceipt({
+      type: 'host.receipt',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId: 'cmd-bare',
+      idempotencyKey: 'idem-bare',
+      name: 'ping',
+      actor,
+      authority: { decision: 'allow' },
+      status: 'succeeded',
+      commandFingerprint: FP_A,
+      generation: 1,
+      cursor: 1,
+      createdAt: '2026-08-03T17:00:00.000Z',
+      updatedAt: '2026-08-03T17:00:00.000Z'
+    })
+    expect(receiptBare.ok).toBe(true)
+    if (receiptBare.ok) {
+      expect(Object.prototype.hasOwnProperty.call(receiptBare.value, 'resultSummary')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(receiptBare.value, 'errorCode')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(receiptBare.value, 'errorMessage')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(receiptBare.value, 'conflictCommandId')).toBe(
+        false
+      )
+    }
+
+    const receiptConflict = decodeHostCommandReceipt(
+      sampleReceipt({
+        status: 'conflict',
+        conflictCommandId: 'cmd-original',
+        errorCode: 'idempotency_conflict',
+        errorMessage: 'fingerprint mismatch',
+        resultSummary: undefined
+      })
+    )
+    expect(receiptConflict.ok).toBe(true)
+    if (receiptConflict.ok) {
+      expect(receiptConflict.value.conflictCommandId).toBe('cmd-original')
+      expect(receiptConflict.value.errorCode).toBe('idempotency_conflict')
+      expect(Object.prototype.hasOwnProperty.call(receiptConflict.value, 'resultSummary')).toBe(
+        false
+      )
+    }
+  })
 })
