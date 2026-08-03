@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "packages": {
+    "@napi-rs/canvas-android-arm64@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-darwin-arm64@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-darwin-x64@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-arm-gnueabihf@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-arm64-gnu@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-arm64-musl@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-riscv64-gnu@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-x64-gnu@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-linux-x64-musl@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-win32-arm64-msvc@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@napi-rs/canvas-win32-x64-msvc@1.0.2": {
+      "kind": "package-file",
+      "sourcePackage": "@napi-rs/canvas@1.0.2",
+      "file": "LICENSE",
+      "expectedSha256": "8802fecf9da4367bc23bcf20b21cc143785fc6c92b152f3fa7fbe6ce08d344d6",
+      "source": "https://github.com/Brooooooklyn/canvas/blob/826600b258db693d98a652c935e2b94107b41bb2/LICENSE",
+      "reason": "The architecture package is published from the same canvas release and maps to the parent package's retained MIT license."
+    },
+    "@uiw/codemirror-extensions-basic-setup@4.25.9": {
+      "kind": "bundled-file",
+      "file": "build/third-party-license-texts/uiw-react-codemirror-4.25.9.LICENSE.txt",
+      "expectedSha256": "fd1f049b3bb5cbaf5143516b72dbc6805cd30cca0cda94edb37160e37662fd17",
+      "source": "https://github.com/uiwjs/react-codemirror/blob/bd413cc5e714c0c7331b242f286d06fa4f1899b4/LICENSE",
+      "reason": "The npm subpackage omits the monorepo license file; this exact release-commit license is retained and hash-pinned."
+    },
+    "@uiw/react-codemirror@4.25.9": {
+      "kind": "bundled-file",
+      "file": "build/third-party-license-texts/uiw-react-codemirror-4.25.9.LICENSE.txt",
+      "expectedSha256": "fd1f049b3bb5cbaf5143516b72dbc6805cd30cca0cda94edb37160e37662fd17",
+      "source": "https://github.com/uiwjs/react-codemirror/blob/bd413cc5e714c0c7331b242f286d06fa4f1899b4/LICENSE",
+      "reason": "The npm subpackage omits the monorepo license file; this exact release-commit license is retained and hash-pinned."
+    },
+    "data-uri-to-buffer@4.0.1": {
+      "kind": "bundled-file",
+      "file": "build/third-party-license-texts/data-uri-to-buffer-4.0.1.README.txt",
+      "expectedSha256": "a7cc4332acfa1f9b6530e01aac77fefe74f2efa32579215fddaa473013f9a25c",
+      "source": "https://github.com/TooTallNate/node-data-uri-to-buffer/blob/85cd8c854aefbf1bb636789d80364cfac8ea1583/README.md#license",
+      "reason": "The package publishes its complete MIT notice in README.md rather than a standalone license file."
+    },
+    "lazy-val@1.0.5": {
+      "kind": "bundled-file",
+      "file": "build/third-party-license-texts/lazy-val-1.0.5.NOTICE.txt",
+      "expectedSha256": "20f978014548cefb877a7ff7160ffa72bc06623b4345aed521d37e258ad60d00",
+      "source": "https://registry.npmjs.org/lazy-val/1.0.5",
+      "reason": "The version-pinned notice preserves the author, repository, source commit, and MIT declaration published in upstream package metadata.",
+      "upstreamLimitation": "Upstream publishes no license text or copyright notice, so TaskWraith records the omission and does not infer a copyright holder."
+    }
+  }
+}

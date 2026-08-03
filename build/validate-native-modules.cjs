@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
+const { generateThirdPartyNotices } = require('./third-party-notices.cjs')
 
 async function validateNativeModules(context) {
   const resourcesDir = resolveResourcesDir(context)
@@ -70,6 +71,15 @@ async function validateNativeModules(context) {
   // Developer Preview tw sidecar: official Node runtime under tui-runtime/
   // (not ELECTRON_RUN_AS_NODE — RunAsNode fuse stays disabled below).
   validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs)
+
+  const noticeInventory = generateThirdPartyNotices({
+    resourcesDir,
+    repoRoot: path.resolve(__dirname, '..'),
+    electronVersion: context.packager?.config?.electronVersion
+  })
+  console.log(
+    `Generated third-party notices for ${noticeInventory.summary.packageInstanceCount} packaged dependency instance(s).`
+  )
 
   await hardenElectronFuses(context, resourcesDir)
 }

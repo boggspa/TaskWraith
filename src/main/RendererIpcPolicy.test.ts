@@ -34,6 +34,8 @@ describe('RendererIpcPolicy', () => {
     'get-ios-remote-config',
     'set-apns-config',
     'image-generation:set-key',
+    'licenses:get-status',
+    'licenses:open-notice',
     'install-update-now',
     'repair-product-install',
     'get-product-crashes',

@@ -85,6 +85,11 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { QuotaSnapshotHookSnapshot } from '../shared/quotaSnapshotHook'
+import type {
+  LicenseNoticeKind,
+  LicenseNoticeStatus,
+  OpenLicenseNoticeResult
+} from '../shared/licenseNotices'
 import type { PendingEnsembleRosterPresetApply } from '../main/EnsembleRosterPresetApply'
 import type { EnsembleUserRosterMutationInput } from '../main/EnsembleUserRosterMutation'
 import type { EnsembleUserRosterMutationResult } from '../main/services/EnsembleOrchestrator'
@@ -1256,6 +1261,8 @@ declare global {
         idempotencyKey?: string
       }) => Promise<{ ok: boolean; outcome?: string; messageId?: string; error?: string }>
       openExternalOrPath: (href: string) => Promise<{ ok: boolean; error?: string }>
+      getLicenseNoticeStatus: () => Promise<LicenseNoticeStatus>
+      openLicenseNotice: (kind: LicenseNoticeKind) => Promise<OpenLicenseNoticeResult>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>
       getMediaAssetPath: (sha256: string, mimeType: string) => Promise<string | null>

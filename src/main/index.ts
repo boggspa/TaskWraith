@@ -1638,6 +1638,7 @@ import {
 } from './PromptCachePolicy'
 import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
+import { registerLicenseNoticeHandlers } from './ipc/licenseNoticeHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleChatHandlers } from './ipc/ensembleChatHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
@@ -53666,6 +53667,7 @@ if (isGeminiMcpBridgeProcess) {
       authorizeLocalPath: authorizeRendererLocalPath,
       isMainRendererSender
     })
+    registerLicenseNoticeHandlers()
 
     // Ensemble roster presets: the renderer (localStorage source of truth)
     // syncs its list up via 'ensemble-roster-presets:sync' so the bridge can

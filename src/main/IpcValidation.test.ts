@@ -743,6 +743,12 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('favicon:getForUrl', [''])).toThrow(/non-empty/)
   })
 
+  it('validates fixed packaged legal-notice actions', () => {
+    expect(() => validateIpcArgs('licenses:get-status', [])).not.toThrow()
+    expect(() => validateIpcArgs('licenses:open-notice', ['third-party'])).not.toThrow()
+    expect(() => validateIpcArgs('licenses:open-notice', [''])).toThrow(/non-empty/)
+  })
+
   it('validates sidebar path action identifiers', () => {
     expect(() => validateIpcArgs('sidebar:show-workspace-in-finder', ['ws-1'])).not.toThrow()
     expect(() => validateIpcArgs('sidebar:copy-workspace-directory', ['ws-1'])).not.toThrow()

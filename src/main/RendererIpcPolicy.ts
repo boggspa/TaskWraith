@@ -286,6 +286,10 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // The discovery outcome describes that same credential's health, so it stays
   // on the identical main-renderer-only footing even though it carries no key.
   'antigravity-gemini-api:get-discovery-outcome',
+  // About can open only build-generated, fixed resource paths. Utility/chat
+  // renderers have no reason to launch host applications for legal notices.
+  'licenses:get-status',
+  'licenses:open-notice',
   'pi:get-key-status',
   'pi:set-upstream-key',
   'pi:clear-upstream-key',

@@ -7849,6 +7849,7 @@ public struct AppSettingsSheet: View {
                 SettingsValueRow(title: "App", value: "TaskWraith Remote")
                 SettingsValueRow(title: "Version", value: appVersionLabel)
                 SettingsValueRow(title: "Transport", value: "taskwraith-e2ee-v1")
+                ThirdPartyNoticesSettingsView()
             }
             SettingsCard(title: "Safety posture", systemImage: "checkmark.shield") {
                 SettingsInfoRow(

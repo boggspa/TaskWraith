@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { spawn, spawnSync } = require('node:child_process')
+const { validatePackagedNotices } = require('../build/third-party-notices.cjs')
 
 const repoRoot = process.cwd()
 const searchArg = process.argv[2]
@@ -36,6 +37,8 @@ async function main() {
   assertDir(resourcesDir, 'Electron resources directory')
   assertFile(appAsarPath, 'packaged app.asar')
   assertMaxFileSize(appAsarPath, 'packaged app.asar', maxAsarBytes)
+  validatePackagedNotices(resourcesDir)
+  console.log('packaged third-party notice coverage ok')
 
   const unpackedDir = path.join(resourcesDir, 'app.asar.unpacked')
   assertDir(unpackedDir, 'app.asar.unpacked directory')

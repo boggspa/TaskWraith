@@ -1,0 +1,57 @@
+.settings-license-page {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-license-overview .settings-section-title-row {
+  margin-bottom: 6px;
+}
+
+.settings-license-summary {
+  display: grid;
+  gap: 3px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.settings-license-summary strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.settings-license-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.settings-license-card {
+  display: flex;
+  min-height: 128px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.settings-license-card h4,
+.settings-license-card p {
+  margin: 0;
+}
+
+.settings-license-card h4 {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.settings-license-card p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}

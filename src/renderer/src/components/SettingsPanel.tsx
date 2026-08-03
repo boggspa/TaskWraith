@@ -111,6 +111,7 @@ import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
+import { ThirdPartyNoticesSettings } from './ThirdPartyNoticesSettings'
 import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { NotificationBannerSettings } from './NotificationBannerSettings'
 import { ModelUsageCard } from './ModelUsageCard'
@@ -2750,6 +2751,7 @@ const MCP_TOOL_CATALOG = TASKWRAITH_MCP_TOOLS.map((name) => ({
 export type SettingsTab =
   | 'appearance'
   | 'behavior'
+  | 'about'
   | 'providers'
   | 'roster'
   | 'agent-pool'
@@ -2837,6 +2839,23 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'app',
     description: 'Editable app keybindings and command shortcuts.',
     aliases: ['key commands', 'hotkeys', 'keybindings', 'commands', 'record shortcut'],
+    scope: 'global'
+  },
+  {
+    id: 'about',
+    label: 'About & Licenses',
+    group: 'app',
+    description:
+      'TaskWraith licensing, exact packaged dependency notices, and Chromium attribution.',
+    aliases: [
+      'about',
+      'license',
+      'licenses',
+      'attribution',
+      'third party',
+      'open source',
+      'chromium'
+    ],
     scope: 'global'
   },
   {
@@ -10383,6 +10402,8 @@ export function SettingsPanel({
             </div>
           </div>
         )}
+
+        {activeTab === 'about' && <ThirdPartyNoticesSettings />}
 
         {/* ── Safety & Privacy ─────────────────────────────── */}
         {activeTab === 'safety-privacy' && (

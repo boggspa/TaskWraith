@@ -3,6 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 app_dir="$(cd "$script_dir/.." && pwd)"
+repo_root="$(cd "$app_dir/../.." && pwd)"
 team_id="${TASKWRAITH_APPLE_TEAM_ID:-}"
 asc_key_id="${ASC_API_KEY_ID:-}"
 asc_issuer_id="${ASC_API_ISSUER_ID:-}"
@@ -37,8 +38,26 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 
+node "$repo_root/scripts/ios-third-party-notices.cjs"
+
 cd "$app_dir"
 xcodegen generate
+
+verify_bundled_notice() {
+  bundle_root="$1"
+  notice_name="$2"
+  expected_path="$3"
+  match_count="$(find "$bundle_root" -type f -name "$notice_name" -print | awk 'END { print NR }')"
+  if [[ "$match_count" != "1" ]]; then
+    echo "Expected exactly one bundled $notice_name under $bundle_root; found $match_count." >&2
+    exit 1
+  fi
+  bundled_path="$(find "$bundle_root" -type f -name "$notice_name" -print -quit)"
+  if ! cmp -s "$expected_path" "$bundled_path"; then
+    echo "Bundled $notice_name does not match the release-verified source." >&2
+    exit 1
+  fi
+}
 
 # Read a scalar from project.yml regardless of how YAML happens to quote it.
 # This used to split on a literal double quote, which meant a formatting pass
@@ -87,6 +106,14 @@ xcodebuild \
   clean archive
 
 app_path="$archive_path/Products/Applications/TaskWraith.app"
+verify_bundled_notice \
+  "$app_path" \
+  "TASKWRAITH-LICENSE.txt" \
+  "$repo_root/ios/TaskWraithKit/Sources/TaskWraithUI/Resources/TASKWRAITH-LICENSE.txt"
+verify_bundled_notice \
+  "$app_path" \
+  "THIRD-PARTY-NOTICES.txt" \
+  "$repo_root/ios/TaskWraithKit/Sources/TaskWraithUI/Resources/THIRD-PARTY-NOTICES.txt"
 if [[ "$unsigned_archive" == "1" || "$unsigned_archive" == "true" ]]; then
   app_entitlements_path="$(mktemp "${TMPDIR:-/tmp}/TaskWraithAppEntitlements.XXXXXX").plist"
   extension_entitlements_path="$(mktemp "${TMPDIR:-/tmp}/TaskWraithExtensionEntitlements.XXXXXX").plist"
@@ -140,6 +167,14 @@ fi
 ipa_tmp="$(mktemp -d "${TMPDIR:-/tmp}/TaskWraithIpa.XXXXXX")"
 ditto -xk "$ipa_path" "$ipa_tmp"
 exported_app_path="$ipa_tmp/Payload/TaskWraith.app"
+verify_bundled_notice \
+  "$exported_app_path" \
+  "TASKWRAITH-LICENSE.txt" \
+  "$repo_root/ios/TaskWraithKit/Sources/TaskWraithUI/Resources/TASKWRAITH-LICENSE.txt"
+verify_bundled_notice \
+  "$exported_app_path" \
+  "THIRD-PARTY-NOTICES.txt" \
+  "$repo_root/ios/TaskWraithKit/Sources/TaskWraithUI/Resources/THIRD-PARTY-NOTICES.txt"
 exported_entitlements_path="$app_dir/build/export/TaskWraith-${version}-${build}-exported-entitlements.plist"
 codesign -d --entitlements :- "$exported_app_path" > "$exported_entitlements_path"
 exported_aps_env="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$exported_entitlements_path" 2>/dev/null || true)"

@@ -84,6 +84,11 @@ import type { WatchPollProgress } from '../shared/watchPrPollCycle'
 import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import type {
+  LicenseNoticeKind,
+  LicenseNoticeStatus,
+  OpenLicenseNoticeResult
+} from '../shared/licenseNotices'
+import type {
   NativeWindowCoordinatorPickResult,
   NativeWindowCoordinatorRendererEvent,
   NativeWindowCoordinatorRendererStatus
@@ -1277,6 +1282,10 @@ const api = {
   // (filesystem paths); unknown / unsafe schemes are no-ops.
   openExternalOrPath: (href: string) =>
     ipcRenderer.invoke('shell:open-link', href) as Promise<{ ok: boolean; error?: string }>,
+  getLicenseNoticeStatus: () =>
+    ipcRenderer.invoke('licenses:get-status') as Promise<LicenseNoticeStatus>,
+  openLicenseNotice: (kind: LicenseNoticeKind) =>
+    ipcRenderer.invoke('licenses:open-notice', kind) as Promise<OpenLicenseNoticeResult>,
   revealPathInFinder: (path: string) =>
     ipcRenderer.invoke('shell:reveal-in-finder', path) as Promise<{ ok: boolean; error?: string }>,
   // Sha-addressed media-asset actions for generated (path-less) AV/image refs.

@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "identity": "runestone",
+      "displayName": "Runestone",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/simonbs/Runestone.git",
+      "version": "0.5.2",
+      "revision": "592434a103a4d1ab83e14f87ac6eef569dd7a99d",
+      "notices": [
+        {
+          "label": "MIT License",
+          "path": "ios/TaskWraithKit/ThirdPartyLicenses/Runestone-0.5.2.LICENSE.txt",
+          "sha256": "b34c869efe68c5082708d220ec01e7a4531a92b4ab96bf50b7b1e323bdea53c2"
+        }
+      ]
+    },
+    {
+      "identity": "tree-sitter",
+      "displayName": "Tree-sitter",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/tree-sitter/tree-sitter",
+      "version": "0.20.9",
+      "revision": "98be227227af10cc7a269cb3ffb23686c0610b17",
+      "notices": [
+        {
+          "label": "MIT License",
+          "path": "ios/TaskWraithKit/ThirdPartyLicenses/tree-sitter-0.20.9.LICENSE.txt",
+          "sha256": "70693cc2aedfa6505ddb40c4e5d6c5edf9ed58fc50c697c4065a49f834fca5ac"
+        },
+        {
+          "label": "Bundled Unicode and ICU notices",
+          "path": "ios/TaskWraithKit/ThirdPartyLicenses/tree-sitter-0.20.9.unicode.LICENSE.txt",
+          "sha256": "6a18c5fac70d7860b57f5b72b4e2c9a1ba6b3d2741eef7ff9767c5379364f10d"
+        }
+      ]
+    },
+    {
+      "identity": "treesitterlanguages",
+      "displayName": "TreeSitterLanguages",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/simonbs/TreeSitterLanguages.git",
+      "version": "0.1.10",
+      "revision": "15cf3a9ec3ab95e0d058b7df9f35619123c9e02d",
+      "notices": [
+        {
+          "label": "MIT License",
+          "path": "ios/TaskWraithKit/ThirdPartyLicenses/TreeSitterLanguages-0.1.10.LICENSE.txt",
+          "sha256": "b34c869efe68c5082708d220ec01e7a4531a92b4ab96bf50b7b1e323bdea53c2"
+        },
+        {
+          "label": "Copied-language source acknowledgements",
+          "path": "ios/TaskWraithKit/ThirdPartyLicenses/TreeSitterLanguages-0.1.10.README.txt",
+          "sha256": "04c210acd0dd519fdf5c7bc78af21b03d88cf953cef07d8de363d7698171708b",
+          "extractFromHeading": "## Acknowledgements"
+        }
+      ]
+    }
+  ]
+}
