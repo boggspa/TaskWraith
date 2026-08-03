@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 
+const ACTOR = {
+  clientId: 'test-client',
+  actorId: 'actor-1',
+  clientClass: 'test' as const
+}
+
 describe('HostRuntimeBootstrap', () => {
   let hostDataDir: string
 
@@ -36,12 +42,18 @@ describe('HostRuntimeBootstrap', () => {
     const receipt = runtime.receiptStore.begin({
       commandId: 'command-1',
       idempotencyKey: 'idem-1',
+      commandName: 'composer.send',
       commandFingerprint: 'a'.repeat(64),
-      actor: { clientId: 'test-client', clientKind: 'tui' },
+      actor: ACTOR,
       target: { kind: 'thread', id: 'thread-1' },
       authority: { decision: 'allowed' }
     })
     expect(receipt.kind).toBe('created')
+    if (receipt.kind !== 'created') return
+    // Position sourced only through delta-backed bootstrap callback.
+    expect(receipt.receipt.generation).toBe(1)
+    expect(receipt.receipt.cursor).toBe(1)
+    expect(receipt.receipt.commandName).toBe('composer.send')
     expect(runtime.getPosition()).toEqual({ generation: 1, cursor: 1 })
   })
 
@@ -58,8 +70,9 @@ describe('HostRuntimeBootstrap', () => {
     first.receiptStore.begin({
       commandId: 'command-pending',
       idempotencyKey: 'idem-pending',
+      commandName: 'ping',
       commandFingerprint: 'b'.repeat(64),
-      actor: { clientId: 'test-client' },
+      actor: ACTOR,
       target: { kind: 'mission', id: 'mission-1' },
       authority: { decision: 'allowed' }
     })
@@ -67,10 +80,14 @@ describe('HostRuntimeBootstrap', () => {
     const restarted = new HostRuntimeBootstrap({ hostDataDir })
     expect(restarted.getPosition()).toEqual({ generation: 2, cursor: 1 })
     expect(restarted.deltaStore.getByCursor(1)?.envelope.kind).toBe('generation-reset')
-    expect(restarted.receiptStore.getByCommandId('command-pending')).toMatchObject({
-      status: 'indeterminate',
-      recoveryState: 'recoverable-indeterminate'
-    })
+    const pending = restarted.receiptStore.getByCommandId('command-pending', ACTOR)
+    expect(pending.kind).toBe('found')
+    if (pending.kind !== 'found') return
+    expect(pending.receipt.status).toBe('indeterminate')
+    expect(pending.receipt.recoveryState).toBe('recoverable-indeterminate')
+    // Mint-time position preserved across reopen (generation-reset cursor 1).
+    expect(pending.receipt.generation).toBe(2)
+    expect(pending.receipt.cursor).toBe(1)
     expect(restarted.getRecoverySummary().receipts.indeterminate).toBe(1)
   })
 

@@ -8,7 +8,7 @@ export interface HostRuntimeBootstrapOptions {
   /** Durable Host-owned directory shared by both stores. */
   hostDataDir: string
   delta?: Omit<HostDeltaStoreOptions, 'dataDir'>
-  receipts?: Omit<HostCommandReceiptStoreOptions, 'dataDir'>
+  receipts?: Omit<HostCommandReceiptStoreOptions, 'dataDir' | 'getPosition'>
 }
 
 export interface HostRuntimeRecoverySummary {
@@ -25,6 +25,8 @@ export interface HostRuntimeRecoverySummary {
  *
  * This class owns no domain state or position counters: generation/cursor are
  * always read from HostDeltaStore, while receipts remain independently durable.
+ * Receipt minting receives position only through the delta-backed getPosition
+ * callback — never a second journal.
  */
 export class HostRuntimeBootstrap {
   readonly deltaStore: HostDeltaStore
@@ -41,7 +43,8 @@ export class HostRuntimeBootstrap {
     })
     this.receiptStore = new HostCommandReceiptStore({
       ...options.receipts,
-      dataDir: options.hostDataDir
+      dataDir: options.hostDataDir,
+      getPosition: () => this.deltaStore.getPosition()
     })
   }
 
