@@ -8,11 +8,12 @@ const { MATERIALIZE_MODES } = require('./schema.cjs')
 
 /**
  * Materialize a synthetic fixture into an isolated userData-shaped tree.
- * Never writes under the live TaskWraith / TaskWraith Dev profile dirs.
+ * Never writes under the live TaskWraith / bare TaskWraith Dev / AGBench profile dirs.
+ * Sibling `TaskWraith Dev <sanitizedId>` paths are allowed (T2 attach contract).
  *
  * Modes:
- *   legacy_v1  — fat chat-list index (ChatRecord-spread) + 508 checkpoints (493 superseded)
- *   future_v2  — minimal DTO list index + no fat global checkpoint rewrite (hot stub only)
+ *   legacy_v1  — HEAD-shaped chat-list index map + 508 checkpoints (493 superseded)
+ *   future_v2  — minimal DTO list index + one hot checkpoint per chat (no fat archive)
  */
 
 const FORBIDDEN_USERDATA_SUBSTRINGS = Object.freeze([
@@ -22,6 +23,8 @@ const FORBIDDEN_USERDATA_SUBSTRINGS = Object.freeze([
 
 const LEGACY_CHECKPOINT_TOTAL = 508
 const LEGACY_CHECKPOINT_SUPERSEDED = 493
+const SESSION_CHECKPOINT_SCHEMA_VERSION = 1
+const SESSION_CHECKPOINT_RELATIVE_PATH = path.join('checkpoints', 'session-checkpoints.json')
 
 function assertIsolatedUserDataDir(userDataDir) {
   if (typeof userDataDir !== 'string' || userDataDir.length < 4) {
@@ -59,6 +62,79 @@ function toPersistedChatRecord(chat) {
 }
 
 /**
+ * @param {unknown} text
+ * @param {number} maxLength
+ */
+function previewText(text, maxLength) {
+  const normalized = String(text || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+/**
+ * Fixture runs historically used `id`; production ChatRun uses `runId`.
+ * @param {object|null|undefined} run
+ * @returns {string|null}
+ */
+function runIdOf(run) {
+  if (!run || typeof run !== 'object') return null
+  if (typeof run.runId === 'string' && run.runId) return run.runId
+  if (typeof run.id === 'string' && run.id) return run.id
+  return null
+}
+
+/**
+ * Lean lastRun projection matching store summarizeLastRun field set.
+ * @param {object|undefined} run
+ */
+function summarizeLastRunLean(run) {
+  const runId = runIdOf(run)
+  if (!run || !runId) return undefined
+  return {
+    runId,
+    provider: run.provider,
+    providerRunId: run.providerRunId,
+    providerThreadId: run.providerThreadId,
+    startedAt: run.startedAt,
+    endedAt: run.endedAt,
+    requestedModel: run.requestedModel,
+    actualModel: run.actualModel,
+    approvalMode: run.approvalMode,
+    workflowMode: run.workflowMode,
+    status: run.status,
+    cancelled: run.cancelled,
+    exitCode: run.exitCode,
+    runtimeProfileId: run.runtimeProfileId,
+    geminiAuthProfileId: run.geminiAuthProfileId,
+    ensembleRoundId: run.ensembleRoundId,
+    ensembleParticipantId: run.ensembleParticipantId,
+    ensembleLaneId: run.ensembleLaneId,
+    ensembleRole: run.ensembleRole,
+    ensembleStageRole: run.ensembleStageRole,
+    ensembleOrder: run.ensembleOrder
+  }
+}
+
+/**
+ * Lean runsSummary row matching store summarizeRunForChatList (diffFileCount=0 in fixtures).
+ * @param {object} run
+ */
+function summarizeRunForListLean(run) {
+  const runId = runIdOf(run)
+  return {
+    runId,
+    ...(run.provider ? { provider: run.provider } : {}),
+    ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+    ...(run.endedAt ? { endedAt: run.endedAt } : {}),
+    ...(run.requestedModel ? { requestedModel: run.requestedModel } : {}),
+    ...(run.actualModel ? { actualModel: run.actualModel } : {}),
+    diffFileCount: 0
+  }
+}
+
+/**
  * Minimal chat-list index entry — future-v2 DTO shape.
  * @param {object} chat
  */
@@ -73,106 +149,243 @@ function toMinimalChatListItem(chat) {
     messages: [],
     runs: [],
     summaryOnly: true,
-    messageCount: chat.messages.length,
-    runCount: chat.runs.length,
+    messageCount: Array.isArray(chat.messages) ? chat.messages.length : 0,
+    runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
     persistenceRevision: chat.persistenceRevision || 1
   }
 }
 
 /**
- * Legacy-v1 fat index entry: spreads much of ChatRecord (mission suspect).
+ * Legacy-v1 HEAD-shaped list entry: spreads ChatRecord metadata, clears messages/runs,
+ * summaryOnly:true — retains fat ensemble/goal/grant fields that amplify index rewrites.
  * @param {object} chat
  */
 function toLegacyFatChatListItem(chat) {
   const persisted = toPersistedChatRecord(chat)
+  const messages = Array.isArray(persisted.messages) ? persisted.messages : []
+  const runs = Array.isArray(persisted.runs) ? persisted.runs : []
+  const lastRun = summarizeLastRunLean(runs[runs.length - 1])
+  const recentMessageSearch = messages
+    .slice(-8)
+    .map((message) => `${message.role} ${previewText(message.content, 180)}`)
+    .filter(Boolean)
+  const latestMessagePreview = [...messages]
+    .reverse()
+    .map((message) => previewText(message.content, 180))
+    .find(Boolean)
   return {
     ...persisted,
-    // Keep messages/runs in the index entry to reproduce HEAD rewrite amplification.
-    summaryOnly: false,
-    messageCount: chat.messages.length,
-    runCount: chat.runs.length,
-    ensembleSummary: persisted.ensemble
-      ? {
-          enabled: persisted.ensemble.enabled,
-          orchestrationMode: persisted.ensemble.orchestrationMode,
-          participantCount: Array.isArray(persisted.ensemble.participants)
-            ? persisted.ensemble.participants.length
-            : 0,
-          activeRound: persisted.ensemble.activeRound || null
-        }
-      : null
+    messages: [],
+    runs: [],
+    summaryOnly: true,
+    messageCount: messages.length,
+    runCount: runs.length,
+    runsSummary: runs.filter((run) => runIdOf(run)).map((run) => summarizeRunForListLean(run)),
+    ...(lastRun ? { lastRun } : {}),
+    searchText: [
+      persisted.title,
+      persisted.provider,
+      persisted.appChatId,
+      persisted.linkedGeminiSessionId,
+      persisted.linkedProviderSessionId,
+      ...recentMessageSearch
+    ]
+      .filter(Boolean)
+      .join(' '),
+    ...(latestMessagePreview ? { searchPreview: latestMessagePreview } : {})
   }
 }
 
 /**
- * Build 508 checkpoint records with 493 superseded — reproduces session-checkpoints.json bloat.
+ * @param {object} chat
+ * @returns {{ roundId: string, round: object }}
+ */
+function resolveActiveRound(chat) {
+  const round = (chat && chat.ensemble && chat.ensemble.activeRound) || {}
+  const roundId =
+    (typeof round.roundId === 'string' && round.roundId) ||
+    (typeof round.id === 'string' && round.id) ||
+    `${chat.appChatId}-round-1`
+  return { roundId, round }
+}
+
+/**
+ * Build a snapshot that passes production isSessionCheckpointRecord.
+ * @param {object} chat
+ * @param {object} round
+ * @param {string} roundId
+ * @param {number} index
+ * @param {boolean} superseded
+ */
+function buildCheckpointSnapshot(chat, round, roundId, index, superseded) {
+  const participants = Array.isArray(round.participants)
+    ? round.participants
+    : Array.isArray(chat.ensemble && chat.ensemble.participants)
+      ? chat.ensemble.participants
+      : []
+  const prompt =
+    typeof round.prompt === 'string'
+      ? round.prompt
+      : `perf-fixture ${chat.appChatId} ${roundId} #${index + 1}`
+  const startedAt =
+    typeof round.startedAt === 'string' && Number.isFinite(Date.parse(round.startedAt))
+      ? round.startedAt
+      : new Date(Date.UTC(2026, 7, 3, 12, 0, 0) + index * 1000).toISOString()
+  return {
+    blackboard: Array.isArray(chat.ensemble && chat.ensemble.blackboard)
+      ? chat.ensemble.blackboard
+      : [],
+    openTasks: Array.isArray(round.openTasks) ? round.openTasks : [],
+    ...(superseded
+      ? {}
+      : {
+          lastRoundSummary: `perf-hot ${chat.appChatId}`
+        }),
+    queueState: {
+      roundStatus: typeof round.status === 'string' ? round.status : 'running',
+      prompt,
+      startedAt,
+      ...(round.endedAt ? { endedAt: round.endedAt } : {}),
+      ...(round.activeParticipantId ? { activeParticipantId: round.activeParticipantId } : {}),
+      orchestrationMode:
+        round.orchestrationMode ||
+        (chat.ensemble && chat.ensemble.orchestrationMode) ||
+        'continuous',
+      ...(round.continuationHops !== undefined ? { continuationHops: round.continuationHops } : {}),
+      ...(round.maxContinuationHops !== undefined
+        ? { maxContinuationHops: round.maxContinuationHops }
+        : {}),
+      ...(round.continuationPass !== undefined ? { continuationPass: round.continuationPass } : {}),
+      queuedPrompts: Array.isArray(round.queuedPrompts)
+        ? round.queuedPrompts
+        : typeof round.queuedPrompt === 'string'
+          ? [round.queuedPrompt]
+          : [],
+      sleepingParticipantIds: Array.isArray(round.sleepingParticipantIds)
+        ? round.sleepingParticipantIds
+        : [],
+      pendingWakeupIds: Array.isArray(round.pendingWakeupIds) ? round.pendingWakeupIds : [],
+      participants
+    }
+  }
+}
+
+/**
+ * Production-validator-equivalent acceptance check (mirrors SessionCheckpoint.ts).
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isSessionCheckpointRecordEquivalent(value) {
+  if (!value || typeof value !== 'object') return false
+  const record = /** @type {Record<string, unknown>} */ (value)
+  const snapshot = /** @type {Record<string, unknown>|undefined} */ (record.snapshot)
+  const queueState = /** @type {Record<string, unknown>|undefined} */ (
+    snapshot && snapshot.queueState
+  )
+  return (
+    record.schemaVersion === SESSION_CHECKPOINT_SCHEMA_VERSION &&
+    typeof record.id === 'string' &&
+    typeof record.chatId === 'string' &&
+    typeof record.roundId === 'string' &&
+    (record.status === 'available' ||
+      record.status === 'accepted' ||
+      record.status === 'dismissed' ||
+      record.status === 'superseded') &&
+    typeof record.reason === 'string' &&
+    typeof record.createdAt === 'string' &&
+    typeof record.updatedAt === 'string' &&
+    Number.isFinite(Date.parse(record.createdAt)) &&
+    Number.isFinite(Date.parse(record.updatedAt)) &&
+    Boolean(snapshot) &&
+    Array.isArray(snapshot.blackboard) &&
+    Array.isArray(snapshot.openTasks) &&
+    Boolean(queueState) &&
+    typeof queueState.prompt === 'string' &&
+    Array.isArray(queueState.participants) &&
+    Array.isArray(queueState.queuedPrompts)
+  )
+}
+
+/**
+ * Build 508 production-valid checkpoint records with 493 superseded.
+ * Returns a raw array (production on-disk shape) — not a wrapper object.
  * @param {object} fixture
  * @param {number} [baseTimestamp]
+ * @returns {object[]}
  */
 function buildLegacyCheckpointRecords(fixture, baseTimestamp) {
   const baseTs = baseTimestamp == null ? Date.UTC(2026, 7, 3, 12, 0, 0) : baseTimestamp
   const hotChat = fixture.chats[0]
   /** @type {object[]} */
   const records = []
-  const hotCount = LEGACY_CHECKPOINT_TOTAL - LEGACY_CHECKPOINT_SUPERSEDED
   for (let i = 0; i < LEGACY_CHECKPOINT_TOTAL; i++) {
     const superseded = i < LEGACY_CHECKPOINT_SUPERSEDED
-    const chatId =
-      superseded && fixture.chats.length > 1
-        ? fixture.chats[i % fixture.chats.length].appChatId
-        : hotChat.appChatId
-    records.push({
+    const chat =
+      superseded && fixture.chats.length > 1 ? fixture.chats[i % fixture.chats.length] : hotChat
+    const { roundId: activeRoundId, round } = resolveActiveRound(chat)
+    const roundId = superseded ? `${chat.appChatId}-round-hist-${i + 1}` : activeRoundId
+    const createdAt = new Date(baseTs + i * 1000).toISOString()
+    const updatedAt = new Date(baseTs + i * 1000 + 500).toISOString()
+    /** @type {object} */
+    const record = {
+      schemaVersion: SESSION_CHECKPOINT_SCHEMA_VERSION,
       id: `perf-ckpt-${String(i + 1).padStart(4, '0')}`,
-      appChatId: chatId,
-      roundId: `${chatId}-round-hist-${i + 1}`,
-      status: superseded ? 'superseded' : 'active',
-      reason: superseded ? 'participant-updated' : 'round-start',
-      createdAt: baseTs + i * 1000,
-      updatedAt: baseTs + i * 1000 + 500,
-      superseded,
-      // Inflate like HEAD full-fidelity mirrors (trimmed vs live for harness size control).
-      snapshot: {
-        persistenceRevision: i + 1,
-        messageCount: hotChat.messages.length,
-        runCount: hotChat.runs.length,
-        ensembleParticipantCount: hotChat.ensemble.participants.length,
-        padding: superseded ? `superseded-archive-${i}` : `hot-record-${i}`
-      }
-    })
+      chatId: chat.appChatId,
+      ...(chat.title ? { chatTitle: chat.title } : {}),
+      roundId,
+      status: superseded ? 'superseded' : 'available',
+      reason: superseded ? 'participant-updated' : 'round-started',
+      createdAt,
+      updatedAt,
+      snapshot: buildCheckpointSnapshot(chat, round, roundId, i, superseded)
+    }
+    if (superseded) {
+      record.supersededAt = updatedAt
+    }
+    records.push(record)
   }
-  return {
-    schemaVersion: 1,
-    kind: 'taskwraith-perf-legacy-checkpoints',
-    total: records.length,
-    supersededCount: records.filter((r) => r.superseded).length,
-    hotCount,
-    records
-  }
+  return records
 }
 
 /**
- * future-v2: one hot checkpoint stub per chat (archive stays out of the hot rewrite file).
+ * future-v2: one hot valid checkpoint per chat (no superseded archive in the hot file).
  * @param {object} fixture
+ * @returns {object[]}
  */
 function buildFutureV2CheckpointStub(fixture) {
-  return {
-    schemaVersion: 2,
-    kind: 'taskwraith-perf-future-v2-checkpoints',
-    hotRecords: fixture.chats.map((chat) => ({
+  const baseTs = Date.UTC(2026, 7, 3, 12, 0, 0)
+  return fixture.chats.map((chat, index) => {
+    const { roundId, round } = resolveActiveRound(chat)
+    const createdAt = new Date(baseTs + index * 1000).toISOString()
+    return {
+      schemaVersion: SESSION_CHECKPOINT_SCHEMA_VERSION,
       id: `perf-hot-${chat.appChatId}`,
-      appChatId: chat.appChatId,
-      roundId: chat.ensemble.activeRound.id,
-      status: 'active',
-      reason: 'round-start',
-      superseded: false,
-      snapshot: {
-        persistenceRevision: chat.persistenceRevision || 1,
-        messageCount: chat.messages.length,
-        runCount: chat.runs.length
-      }
-    })),
-    archiveNote: 'Superseded history lives outside the hot rewrite path (ADR amendment).'
+      chatId: chat.appChatId,
+      ...(chat.title ? { chatTitle: chat.title } : {}),
+      roundId,
+      status: 'available',
+      reason: 'round-started',
+      createdAt,
+      updatedAt: createdAt,
+      snapshot: buildCheckpointSnapshot(chat, round, roundId, index, false)
+    }
+  })
+}
+
+/**
+ * @param {object[]} listItems
+ * @returns {Record<string, object>}
+ */
+function toChatListIndexMap(listItems) {
+  /** @type {Record<string, object>} */
+  const index = {}
+  for (const item of listItems) {
+    if (!item || typeof item.appChatId !== 'string' || !item.appChatId) {
+      throw new Error('chat-list-index item missing appChatId')
+    }
+    index[item.appChatId] = item
   }
+  return index
 }
 
 /**
@@ -204,6 +417,7 @@ function materializePerfUserData(options) {
   const chatsDir = path.join(userDataDir, 'chats')
   fs.mkdirSync(chatsDir, { recursive: true })
 
+  /** @type {object[]} */
   const listItems = []
   for (const chat of fixture.chats) {
     const persisted = toPersistedChatRecord(chat)
@@ -217,21 +431,25 @@ function materializePerfUserData(options) {
     )
   }
 
+  const indexMap = toChatListIndexMap(listItems)
   const indexPath = path.join(userDataDir, 'chat-list-index.json')
   fs.writeFileSync(
     indexPath,
-    pretty ? `${JSON.stringify(listItems, null, 2)}\n` : `${JSON.stringify(listItems)}\n`,
+    pretty ? `${JSON.stringify(indexMap, null, 2)}\n` : `${JSON.stringify(indexMap)}\n`,
     'utf8'
   )
 
-  const checkpointPath = path.join(userDataDir, 'session-checkpoints.json')
-  const checkpointDoc =
+  const checkpointRecords =
     mode === 'legacy_v1'
       ? buildLegacyCheckpointRecords(fixture)
       : buildFutureV2CheckpointStub(fixture)
+  const checkpointPath = path.join(userDataDir, SESSION_CHECKPOINT_RELATIVE_PATH)
+  fs.mkdirSync(path.dirname(checkpointPath), { recursive: true })
   fs.writeFileSync(
     checkpointPath,
-    pretty ? `${JSON.stringify(checkpointDoc, null, 2)}\n` : `${JSON.stringify(checkpointDoc)}\n`,
+    pretty
+      ? `${JSON.stringify(checkpointRecords, null, 2)}\n`
+      : `${JSON.stringify(checkpointRecords)}\n`,
     'utf8'
   )
 
@@ -249,6 +467,8 @@ function materializePerfUserData(options) {
 
   const indexBytes = fs.statSync(indexPath).size
   const checkpointBytes = fs.statSync(checkpointPath).size
+  const supersededCount =
+    mode === 'legacy_v1' ? checkpointRecords.filter((r) => r.status === 'superseded').length : 0
 
   const manifest = {
     schemaVersion: 1,
@@ -264,15 +484,24 @@ function materializePerfUserData(options) {
       chatSerializedBytes: fixture.totals.chatSerializedBytes,
       toolSerializedBytes: fixture.totals.toolSerializedBytes
     },
+    paths: {
+      chatListIndex: 'chat-list-index.json',
+      sessionCheckpoints: SESSION_CHECKPOINT_RELATIVE_PATH.replace(/\\/g, '/')
+    },
     checkpoints:
       mode === 'legacy_v1'
         ? {
-            total: checkpointDoc.total,
-            supersededCount: checkpointDoc.supersededCount
+            total: checkpointRecords.length,
+            supersededCount,
+            hotCount: checkpointRecords.length - supersededCount,
+            relativePath: SESSION_CHECKPOINT_RELATIVE_PATH.replace(/\\/g, '/'),
+            onDiskShape: 'raw-array'
           }
         : {
-            hotCount: checkpointDoc.hotRecords.length,
-            supersededCount: 0
+            hotCount: checkpointRecords.length,
+            supersededCount: 0,
+            relativePath: SESSION_CHECKPOINT_RELATIVE_PATH.replace(/\\/g, '/'),
+            onDiskShape: 'raw-array'
           },
     chatFiles: fixture.chats.map((c) => `chats/${c.appChatId}.json`),
     replayScheduleFile: 'perf-replay-schedule.json',
@@ -292,7 +521,8 @@ function materializePerfUserData(options) {
     manifest,
     fixture,
     mode,
-    sizes: manifest.sizes
+    sizes: manifest.sizes,
+    checkpointRelativePath: SESSION_CHECKPOINT_RELATIVE_PATH.replace(/\\/g, '/')
   }
 }
 
@@ -303,7 +533,10 @@ module.exports = {
   toLegacyFatChatListItem,
   buildLegacyCheckpointRecords,
   buildFutureV2CheckpointStub,
+  isSessionCheckpointRecordEquivalent,
   materializePerfUserData,
   LEGACY_CHECKPOINT_TOTAL,
-  LEGACY_CHECKPOINT_SUPERSEDED
+  LEGACY_CHECKPOINT_SUPERSEDED,
+  SESSION_CHECKPOINT_SCHEMA_VERSION,
+  SESSION_CHECKPOINT_RELATIVE_PATH
 }

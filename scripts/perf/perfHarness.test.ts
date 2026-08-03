@@ -27,8 +27,11 @@ const {
 const {
   materializePerfUserData,
   assertIsolatedUserDataDir,
+  toLegacyFatChatListItem,
+  isSessionCheckpointRecordEquivalent,
   LEGACY_CHECKPOINT_TOTAL,
-  LEGACY_CHECKPOINT_SUPERSEDED
+  LEGACY_CHECKPOINT_SUPERSEDED,
+  SESSION_CHECKPOINT_RELATIVE_PATH
 } = require('./materializeUserData.cjs')
 const { buildIsolatedLaunchPlan } = require('./isolatedLaunch.cjs')
 const { runBaselineCli } = require('./runBaseline.cjs')
@@ -281,7 +284,7 @@ describe('perf userData materializer', () => {
     expect(() => assertIsolatedUserDataDir(live)).toThrow(/live userData/i)
   })
 
-  it('legacy_v1 writes fat index + 508/493 checkpoints + replay schedule', () => {
+  it('legacy_v1 writes keyed fat index + 508/493 checkpoints + replay schedule', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'tw-perf-mat-'))
     try {
       const result = materializePerfUserData({
@@ -295,13 +298,21 @@ describe('perf userData materializer', () => {
       expect(existsSync(path.join(dir, 'chats', 'perf-dual_run-chat-01.json'))).toBe(true)
       expect(existsSync(result.checkpointPath)).toBe(true)
       expect(existsSync(result.replayPath)).toBe(true)
+      expect(result.checkpointPath).toBe(path.join(dir, SESSION_CHECKPOINT_RELATIVE_PATH))
       const index = JSON.parse(readFileSync(result.indexPath, 'utf8'))
-      expect(index[0].summaryOnly).toBe(false)
-      expect(Array.isArray(index[0].messages)).toBe(true)
-      expect(index[0].messages.length).toBeGreaterThan(0)
+      expect(Array.isArray(index)).toBe(false)
+      expect(index['perf-dual_run-chat-01']).toBeTruthy()
+      expect(index['perf-dual_run-chat-01'].summaryOnly).toBe(true)
+      expect(index['perf-dual_run-chat-01'].messages).toEqual([])
+      expect(index['perf-dual_run-chat-01'].runs).toEqual([])
       const ckpt = JSON.parse(readFileSync(result.checkpointPath, 'utf8'))
-      expect(ckpt.total).toBe(LEGACY_CHECKPOINT_TOTAL)
-      expect(ckpt.supersededCount).toBe(LEGACY_CHECKPOINT_SUPERSEDED)
+      expect(Array.isArray(ckpt)).toBe(true)
+      expect(ckpt.length).toBe(LEGACY_CHECKPOINT_TOTAL)
+      expect(ckpt.filter((r: { status: string }) => r.status === 'superseded').length).toBe(
+        LEGACY_CHECKPOINT_SUPERSEDED
+      )
+      expect(result.manifest.checkpoints.total).toBe(LEGACY_CHECKPOINT_TOTAL)
+      expect(result.manifest.checkpoints.supersededCount).toBe(LEGACY_CHECKPOINT_SUPERSEDED)
       const replay = JSON.parse(readFileSync(result.replayPath, 'utf8'))
       expect(replay.eventCount).toBeGreaterThan(10)
       expect(result.manifest.mode).toBe('legacy_v1')
@@ -310,7 +321,7 @@ describe('perf userData materializer', () => {
     }
   })
 
-  it('future_v2 writes minimal index + hot checkpoint stubs', () => {
+  it('future_v2 writes keyed minimal index + hot checkpoint array at production path', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'tw-perf-v2-'))
     try {
       const result = materializePerfUserData({
@@ -322,11 +333,90 @@ describe('perf userData materializer', () => {
         scaleDown: 50
       })
       const index = JSON.parse(readFileSync(result.indexPath, 'utf8'))
-      expect(index[0].summaryOnly).toBe(true)
-      expect(index[0].messages).toEqual([])
+      expect(Array.isArray(index)).toBe(false)
+      const firstId = Object.keys(index)[0]
+      expect(index[firstId].summaryOnly).toBe(true)
+      expect(index[firstId].messages).toEqual([])
+      expect(result.checkpointPath).toBe(path.join(dir, SESSION_CHECKPOINT_RELATIVE_PATH))
       const ckpt = JSON.parse(readFileSync(result.checkpointPath, 'utf8'))
-      expect(ckpt.kind).toBe('taskwraith-perf-future-v2-checkpoints')
-      expect(ckpt.hotRecords.length).toBe(1)
+      expect(Array.isArray(ckpt)).toBe(true)
+      expect(ckpt.length).toBe(1)
+      expect(isSessionCheckpointRecordEquivalent(ckpt[0])).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('legacy_v1 materialize matches production index map + checkpoint validator shape', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'tw-perf-fidelity-'))
+    try {
+      const result = materializePerfUserData({
+        workload: 'dual_run',
+        seed: 7,
+        userDataDir: dir,
+        mode: 'legacy_v1',
+        lean: true,
+        scaleDown: 8
+      })
+
+      const index = JSON.parse(readFileSync(result.indexPath, 'utf8'))
+      expect(Array.isArray(index)).toBe(false)
+      expect(Object.keys(index).sort()).toEqual(
+        result.fixture.chats.map((c: { appChatId: string }) => c.appChatId).sort()
+      )
+      for (const chat of result.fixture.chats) {
+        const item = index[chat.appChatId]
+        const expected = toLegacyFatChatListItem(chat)
+        expect(item.summaryOnly).toBe(true)
+        expect(item.messages).toEqual([])
+        expect(item.runs).toEqual([])
+        expect(item.messageCount).toBe(chat.messages.length)
+        expect(item.runCount).toBe(chat.runs.length)
+        expect(Array.isArray(item.runsSummary)).toBe(true)
+        expect(item.runsSummary.length).toBe(
+          chat.runs.filter((r: { runId?: string; id?: string }) => r.runId || r.id).length
+        )
+        expect(item.ensemble).toBeTruthy()
+        expect(item.ensemble.enabled).toBe(true)
+        expect(Array.isArray(item.ensemble.participants)).toBe(true)
+        expect(item.ensemble.participants.length).toBeGreaterThan(0)
+        expect(JSON.stringify(item.messages)).toBe('[]')
+        expect(JSON.stringify(item.runs)).toBe('[]')
+        expect(item.appChatId).toBe(expected.appChatId)
+        expect(item.title).toBe(expected.title)
+      }
+
+      expect(
+        result.checkpointPath.endsWith(path.join('checkpoints', 'session-checkpoints.json'))
+      ).toBe(true)
+      expect(existsSync(path.join(dir, 'checkpoints', 'session-checkpoints.json'))).toBe(true)
+      expect(existsSync(path.join(dir, 'session-checkpoints.json'))).toBe(false)
+      const records = JSON.parse(readFileSync(result.checkpointPath, 'utf8'))
+      expect(Array.isArray(records)).toBe(true)
+      expect(records.length).toBe(LEGACY_CHECKPOINT_TOTAL)
+      const superseded = records.filter((r: { status: string }) => r.status === 'superseded')
+      expect(superseded.length).toBe(LEGACY_CHECKPOINT_SUPERSEDED)
+      expect(records.every((r: unknown) => isSessionCheckpointRecordEquivalent(r))).toBe(true)
+      for (const record of records) {
+        expect(typeof record.chatId).toBe('string')
+        expect(record.appChatId).toBeUndefined()
+        expect(['available', 'accepted', 'dismissed', 'superseded']).toContain(record.status)
+        expect(['participant-updated', 'round-started']).toContain(record.reason)
+        expect(Number.isFinite(Date.parse(record.createdAt))).toBe(true)
+        expect(Number.isFinite(Date.parse(record.updatedAt))).toBe(true)
+        expect(Array.isArray(record.snapshot.blackboard)).toBe(true)
+        expect(Array.isArray(record.snapshot.openTasks)).toBe(true)
+        expect(typeof record.snapshot.queueState.prompt).toBe('string')
+        expect(Array.isArray(record.snapshot.queueState.participants)).toBe(true)
+        expect(Array.isArray(record.snapshot.queueState.queuedPrompts)).toBe(true)
+      }
+
+      expect(result.manifest.paths.sessionCheckpoints).toBe('checkpoints/session-checkpoints.json')
+      expect(result.manifest.checkpoints.onDiskShape).toBe('raw-array')
+      expect(result.manifest.checkpoints.total).toBe(LEGACY_CHECKPOINT_TOTAL)
+      expect(result.manifest.checkpoints.supersededCount).toBe(LEGACY_CHECKPOINT_SUPERSEDED)
+      expect(result.manifest.sizes.indexBytes).toBeGreaterThan(0)
+      expect(result.manifest.sizes.checkpointBytes).toBeGreaterThan(0)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -344,6 +434,8 @@ describe('isolated launch plan', () => {
     expect(plan.env.IOS_REMOTE_TRUE).toBe('0')
     expect(plan.fxPosture).toBe('reduce_motion')
     expect(plan.safety.electronLaunchDisabledUntilT2).toBe(true)
+    expect(plan.mainInspectorPort).not.toBe(plan.remoteDebuggingPort)
+    expect(plan.argv.join(' ')).toContain('--inspect=')
   })
 })
 
@@ -601,16 +693,30 @@ describe('T1b collectors (DI adapters, no attach)', () => {
 
   it('drives CDP renderer collectors through a fake session', async () => {
     const calls = []
+    /** @type {Set<Function>} */
+    const eventHandlers = new Set()
     const session = {
       send: async (method, params) => {
         calls.push({ method, params })
         if (method === 'Profiler.stop') return { profile: { nodes: [{ id: 1 }] } }
-        if (method === 'HeapProfiler.takeHeapSnapshot') return { snapshot: 'HEAPDATA'.repeat(40) }
+        if (method === 'HeapProfiler.takeHeapSnapshot') {
+          for (const handler of eventHandlers) {
+            handler({
+              method: 'HeapProfiler.addHeapSnapshotChunk',
+              params: { chunk: 'HEAPDATA'.repeat(40) }
+            })
+          }
+          return {}
+        }
         if (method === 'Performance.getMetrics') {
           return { metrics: [{ name: 'JSHeapUsedSize', value: 12345 }] }
         }
         if (method === 'Tracing.end') return { ok: true }
         return {}
+      },
+      onEvent(handler) {
+        eventHandlers.add(handler)
+        return () => eventHandlers.delete(handler)
       }
     }
     const started = await collectRendererCpuProfile(session)
@@ -618,6 +724,8 @@ describe('T1b collectors (DI adapters, no attach)', () => {
     expect(stopped.profile.nodes).toHaveLength(1)
     const heap = await collectRendererHeapSnapshot(session)
     expect(heap.bytes).toBeGreaterThan(0)
+    expect(heap.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(heap.streamed).toBe(true)
     const perf = await collectRendererPerformanceMetrics(session)
     expect(perf.jsHeapUsedSize).toBe(12345)
     const tracing = await startRendererTracing(session)
@@ -741,5 +849,566 @@ describe('T1b preload probe (disabled by default)', () => {
     const unsupported = on.wrapStringifyOrMarkUnsupported(null)
     expect(unsupported.supported).toBe(false)
     expect(lines.some((l) => l.includes('stringify_unsupported'))).toBe(true)
+  })
+})
+
+describe('T2 runner (no Electron launch)', () => {
+  const {
+    sanitizeDevInstanceId,
+    resolveUnpackagedDevUserDataPath
+  } = require('./devUserDataPath.cjs')
+  const {
+    buildElectronSpawnPlan,
+    assertExactChildAttach,
+    terminateExactChild,
+    spawnExactElectronChild,
+    runIsolatedBuild,
+    resolveElectronBinary,
+    createDirectCliBuildAdapter
+  } = require('./electronChildSession.cjs')
+  const {
+    openCdpWebSocketSession,
+    selectRendererTarget,
+    attachRendererCdpSession
+  } = require('./cdpWebSocketSession.cjs')
+  const { buildMessagePrefixBatches, runDeterministicReplay } = require('./replayDriver.cjs')
+  const { buildT2SmokePlan, summarizeT2SmokePlan } = require('./t2SmokePlan.cjs')
+  const {
+    collectRendererHeapSnapshot,
+    verifyArtifactFile
+  } = require('./collectors/cdpRendererCollector.cjs')
+  const { runT2BaselineCli } = require('./runT2Baseline.cjs')
+  const {
+    applyUnsupportedAnnotations,
+    createUnsupportedObservationLedger
+  } = require('./unsupportedMetrics.cjs')
+  const { assertLaunchPortsFree } = require('./portGuard.cjs')
+  const { EventEmitter } = require('events')
+
+  it('derives sibling TaskWraith Dev <id> and refuses production/shared', () => {
+    const home = '/Users/example'
+    const resolved = resolveUnpackagedDevUserDataPath({
+      instanceId: 'perf-t2-30seat-42!!!',
+      home,
+      platform: 'darwin'
+    })
+    expect(resolved.sanitizedInstanceId).toBe(sanitizeDevInstanceId('perf-t2-30seat-42!!!'))
+    expect(resolved.sanitizedInstanceId.length).toBeLessThanOrEqual(16)
+    expect(resolved.appName).toBe(`TaskWraith Dev ${resolved.sanitizedInstanceId}`)
+    expect(resolved.userDataPath).toBe(
+      path.join(home, 'Library', 'Application Support', resolved.appName)
+    )
+    expect(resolved.userDataPath).not.toBe(resolved.productionUserDataPath)
+    expect(resolved.userDataPath).not.toBe(resolved.sharedDevUserDataPath)
+
+    expect(() =>
+      resolveUnpackagedDevUserDataPath({ instanceId: '!!!', home, platform: 'darwin' })
+    ).toThrow(/empty|shared/i)
+  })
+
+  it('spawn plan forces IOS off, unique inspect port, exact-child safety', () => {
+    const plan = buildElectronSpawnPlan({
+      instanceId: 'perfT2Child01',
+      repoRoot: path.resolve(__dirname, '..', '..'),
+      workload: 'dual_run',
+      fxPosture: 'reduce_motion',
+      adapters: {
+        resolveElectronPath: () => '/virtual/electron-bin'
+      }
+    })
+    expect(plan.env.IOS_REMOTE_TRUE).toBe('0')
+    expect(plan.mainInspectorPort).not.toBe(plan.remoteDebuggingPort)
+    expect(plan.argv.join(' ')).toContain(`--inspect=${plan.mainInspectorPort}`)
+    expect(plan.argv[0]).not.toBe('electron')
+    expect(plan.spawnCommand).toBe('/virtual/electron-bin')
+    expect(plan.shellCommand).not.toMatch(/\bnpx\b/)
+    expect(plan.safety.attachOnlyExactChild).toBe(true)
+    expect(plan.safety.neverAutoDeleteArtifacts).toBe(true)
+    expect(plan.safety.neverPgrepKillBroad).toBe(true)
+    expect(plan.safety.neverSpawnViaNpxWrapper).toBe(true)
+  })
+
+  it('refuses attach/terminate against non-exact child claims', async () => {
+    const session = {
+      pid: 4242,
+      remoteDebuggingPort: 9411,
+      mainInspectorPort: 9811,
+      kill() {
+        return true
+      }
+    }
+    expect(() => assertExactChildAttach(session, { pid: 1 })).toThrow(/pid/)
+    expect(() => assertExactChildAttach(session, { remoteDebuggingPort: 9999 })).toThrow(/CDP port/)
+
+    const kills = []
+    const fake = new EventEmitter()
+    Object.assign(fake, {
+      pid: 77,
+      kill(sig) {
+        kills.push(sig)
+        if (sig === 'SIGTERM') fake.emit('exit', 0, sig)
+        return true
+      }
+    })
+    const result = await terminateExactChild(fake, { waitMs: 50, sleep: async () => {} })
+    expect(result.pid).toBe(77)
+    expect(result.neverAutoDeletedArtifacts).toBe(true)
+    expect(kills[0]).toBe('SIGTERM')
+  })
+
+  it('CDP websocket adapter speaks JSON-RPC via injected WebSocket', async () => {
+    class FakeWs {
+      constructor(url) {
+        this.url = url
+        this.handlers = {}
+        queueMicrotask(() => this.handlers.open && this.handlers.open())
+      }
+      on(event, handler) {
+        this.handlers[event] = handler
+      }
+      send(data) {
+        const msg = JSON.parse(data)
+        queueMicrotask(() => {
+          this.handlers.message(
+            JSON.stringify({ id: msg.id, result: { ok: true, method: msg.method } })
+          )
+        })
+      }
+      close() {}
+    }
+    const session = await openCdpWebSocketSession({
+      url: 'ws://127.0.0.1:9/devtools/page/1',
+      WebSocket: FakeWs
+    })
+    const result = await session.send('Profiler.enable')
+    expect(result.ok).toBe(true)
+    session.close()
+
+    const target = selectRendererTarget([
+      { type: 'page', id: 'p1', webSocketDebuggerUrl: 'ws://127.0.0.1:9/devtools/page/p1' }
+    ])
+    expect(target.id).toBe('p1')
+
+    const attached = await attachRendererCdpSession({
+      port: 9,
+      WebSocket: FakeWs,
+      adapters: {
+        httpGetJson: async (url) => {
+          if (String(url).includes('/json/version')) return { Browser: 'Fake/1' }
+          return [
+            { type: 'page', id: 'p1', webSocketDebuggerUrl: 'ws://127.0.0.1:9/devtools/page/p1' }
+          ]
+        }
+      }
+    })
+    expect(attached.kind).toBe('renderer_cdp')
+    attached.close()
+  })
+
+  it('replay driver applies prefix saves and records explicit unsupported fields', async () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      lean: true,
+      scaleDown: 20,
+      baseTimestamp: 1_700_000_000_000
+    })
+    const chat = fixture.chats[0]
+    const batches = buildMessagePrefixBatches(chat, 5)
+    expect(batches[0].messageCount).toBeLessThanOrEqual(5)
+    expect(batches[batches.length - 1].messageCount).toBe(chat.messages.length)
+
+    /** @type {object[]} */
+    const saved = []
+    const api = {
+      getChat: async (id) => saved.filter((c) => c.appChatId === id).at(-1) || null,
+      saveChat: async (c) => {
+        saved.push(JSON.parse(JSON.stringify(c)))
+        return { ok: true }
+      }
+    }
+    const result = await runDeterministicReplay({
+      fixture,
+      api,
+      maxEvents: 20
+    })
+    expect(result.saveCount).toBeGreaterThan(0)
+    expect(result.unsupported.every((u) => u.reason)).toBe(true)
+    // durability_soft_flush marks integrated orchestrator unsupported rather than inventing ticks
+    if (fixture.replaySchedule.slice(0, 20).some((e) => e.kind === 'durability_soft_flush')) {
+      expect(result.unsupported.some((u) => u.field === 'integratedOrchestratorTick')).toBe(true)
+    }
+  })
+
+  it('port preflight refuses occupied / answering CDP via adapters', async () => {
+    await expect(
+      assertLaunchPortsFree(
+        { remoteDebuggingPort: 9411, mainInspectorPort: 9411, instanceId: 'x' },
+        {}
+      )
+    ).rejects.toThrow(/distinct/)
+
+    await expect(
+      assertLaunchPortsFree(
+        { remoteDebuggingPort: 9411, mainInspectorPort: 9811, instanceId: 'perfx' },
+        {
+          probePort: async (port) => ({ port, occupied: port === 9411, error: 'EADDRINUSE' }),
+          probeCdp: async () => ({ port: 9411, reachable: false })
+        }
+      )
+    ).rejects.toThrow(/occupied/)
+
+    const ok = await assertLaunchPortsFree(
+      { remoteDebuggingPort: 9411, mainInspectorPort: 9811, instanceId: 'perfx' },
+      {
+        probePort: async (port) => ({ port, occupied: false }),
+        probeCdp: async () => ({ port: 9411, reachable: false }),
+        listInstancePids: () => []
+      }
+    )
+    expect(ok.ok).toBe(true)
+  })
+
+  it('smoke plan never launches Electron and CLI defaults refuse --launch', async () => {
+    const plan = buildT2SmokePlan({ workload: 'dual_run', seed: 1, scaleDown: 40 })
+    expect(plan.doesNotLaunchElectron).toBe(true)
+    const summary = summarizeT2SmokePlan(plan)
+    expect(summary.electronSkippedStepIds).toEqual(
+      expect.arrayContaining(['build', 'launch', 'attach', 'profiles', 'terminate'])
+    )
+
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--launch', '--lean', '--scale-down=40'], {
+        repoRoot: path.resolve(__dirname, '..', '..'),
+        forceIsolated: true
+      })
+    ).rejects.toThrow(/i-accept-isolated-launch/)
+
+    const dry = await runT2BaselineCli(
+      [
+        '--workload=dual_run',
+        '--dry-run',
+        '--lean',
+        '--scale-down=40',
+        '--instance-id=perfT2Dry01',
+        `--home=${path.join(tmpdir(), 'tw-t2-home')}`
+      ],
+      {
+        repoRoot: path.resolve(__dirname, '..', '..'),
+        forceIsolated: true,
+        platform: 'darwin'
+      }
+    )
+    expect(dry.ok).toBe(true)
+    expect(dry.launched).toBe(false)
+    expect(dry.report.status.metricsCollected).toBe(false)
+    expect(dry.report.metrics.main.saveChat.stringifyMsUnsupported).toBe(true)
+    expect(dry.report.observationLedger.compositorLayerCountP95.status).toBe('unsupported')
+    expect(existsSync(dry.reportPath)).toBe(true)
+
+    const smoke = await runT2BaselineCli(['--smoke-plan', '--workload=dual_run', '--scale-down=40'])
+    expect(smoke.smokePlan.doesNotLaunchElectron).toBe(true)
+  })
+
+  it('unsupported ledger never invents compositor/orchestrator wins', () => {
+    const metrics = applyUnsupportedAnnotations(createEmptyPerfMetrics())
+    const ledger = createUnsupportedObservationLedger()
+    expect(metrics.observationLedger.compositorLayerCountP95.status).toBe('unsupported')
+    expect(ledger.integratedOrchestratorSignals.status).toBe('unsupported')
+    expect(metrics.main.saveChat.stringifyMsUnsupported).toBe(true)
+  })
+
+  it('materialize into exact injected instance path creates chats/ for migration skip', () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'tw-t2-home-'))
+    try {
+      const resolved = resolveUnpackagedDevUserDataPath({
+        instanceId: 'perfMat01',
+        home,
+        platform: 'darwin'
+      })
+      const result = materializePerfUserData({
+        workload: 'dual_run',
+        seed: 3,
+        userDataDir: resolved.userDataPath,
+        mode: 'legacy_v1',
+        lean: true,
+        scaleDown: 30
+      })
+      expect(existsSync(path.join(result.userDataDir, 'chats'))).toBe(true)
+      expect(result.userDataDir).toBe(resolved.userDataPath)
+      expect(path.basename(result.userDataDir)).toBe('TaskWraith Dev perfMat01')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('A: authoritative build fails closed — no silent skip / stale out launch', async () => {
+    await expect(
+      runIsolatedBuild({
+        repoRoot: path.resolve(__dirname, '..', '..'),
+        authoritative: true,
+        allowSkip: false,
+        adapters: {
+          build: async () => ({ skipped: true, reason: 'fake skip' })
+        }
+      })
+    ).rejects.toThrow(/skipped|stale out/i)
+
+    await expect(
+      runIsolatedBuild({
+        repoRoot: path.resolve(__dirname, '..', '..'),
+        authoritative: true,
+        allowSkip: false,
+        adapters: {
+          spawnSync: () => ({ status: 7, stderr: 'boom', stdout: '' })
+        }
+      })
+    ).rejects.toThrow(/failed with code 7/)
+
+    const ok = await runIsolatedBuild({
+      repoRoot: '/virtual/repo',
+      authoritative: true,
+      adapters: {
+        build: async () => ({ code: 0, command: 'npx electron-vite build' })
+      }
+    })
+    expect(ok.skipped).toBe(false)
+    expect(ok.authoritative).toBe(true)
+
+    const skippedNonAuth = await runIsolatedBuild({
+      repoRoot: '/virtual/repo',
+      authoritative: false,
+      allowSkip: true
+    })
+    expect(skippedNonAuth.skipped).toBe(true)
+    expect(skippedNonAuth.authoritative).toBe(false)
+
+    const direct = createDirectCliBuildAdapter({
+      spawnSync: () => ({ status: 0, stdout: 'built', stderr: '' })
+    })
+    const built = await direct('/virtual/repo')
+    expect(built.code).toBe(0)
+  })
+
+  it('B: spawn uses resolved Electron binary PID — never npx wrapper', () => {
+    expect(
+      resolveElectronBinary({ adapters: { requireElectron: () => '/opt/Electron.app/electron' } })
+    ).toBe(path.resolve('/opt/Electron.app/electron'))
+    expect(() =>
+      resolveElectronBinary({ adapters: { requireElectron: () => ({ not: 'a path' }) } })
+    ).toThrow(/binary path string/)
+
+    const spawned = []
+    const plan = buildElectronSpawnPlan({
+      instanceId: 'perfOwnPid01',
+      repoRoot: '/virtual/repo',
+      remoteDebuggingPort: 9411,
+      mainInspectorPort: 9811,
+      adapters: { resolveElectronPath: () => '/virtual/Electron' }
+    })
+    const child = spawnExactElectronChild({
+      spawnPlan: plan,
+      adapters: {
+        spawn: (cmd, args, opts) => {
+          spawned.push({ cmd, args, opts })
+          const ee = new EventEmitter()
+          return Object.assign(ee, {
+            pid: 4242,
+            stdout: new EventEmitter(),
+            stderr: new EventEmitter(),
+            kill: () => true
+          })
+        }
+      }
+    })
+    expect(spawned[0].cmd).toBe('/virtual/Electron')
+    expect(spawned[0].cmd).not.toBe('npx')
+    expect(child.pid).toBe(4242)
+    expect(child.electronBinary).toBe('/virtual/Electron')
+    expect(child.pgid).toBe(4242)
+    expect(spawned[0].opts.detached).toBe(true)
+
+    expect(() =>
+      spawnExactElectronChild({
+        spawnPlan: { ...plan, electronBinary: 'npx', spawnCommand: 'npx' },
+        adapters: {
+          spawn: () => {
+            throw new Error('should not spawn')
+          }
+        }
+      })
+    ).toThrow(/npx wrapper/i)
+  })
+
+  it('C: launch try/finally terminates owned child on staged attach failure', async () => {
+    const kills = []
+    const home = mkdtempSync(path.join(tmpdir(), 'tw-t2-finally-'))
+    try {
+      await expect(
+        runT2BaselineCli(
+          [
+            '--workload=dual_run',
+            '--launch',
+            '--i-accept-isolated-launch',
+            '--materialize-instance-userdata',
+            '--lean',
+            '--scale-down=40',
+            '--instance-id=perfFin01',
+            `--home=${home}`,
+            '--port=9411',
+            '--inspect-port=9811'
+          ],
+          {
+            repoRoot: path.resolve(__dirname, '..', '..'),
+            forceIsolated: true,
+            allowDirtyLaunch: true,
+            allowNonIsolatedLaunch: true,
+            platform: 'darwin',
+            provenance: {
+              gitSha: 'a'.repeat(40),
+              dirty: false,
+              dirtyTreeFingerprint: 'b'.repeat(64),
+              dirtyPaths: [],
+              isolatedWorktree: true,
+              authoritativeBaseline: true
+            },
+            buildAdapters: {
+              build: async () => ({ code: 0 })
+            },
+            spawnAdapters: {
+              resolveElectronPath: () => '/virtual/Electron',
+              spawn: () => {
+                const ee = new EventEmitter()
+                return Object.assign(ee, {
+                  pid: 9090,
+                  stdout: new EventEmitter(),
+                  stderr: new EventEmitter(),
+                  kill(sig) {
+                    kills.push(sig)
+                    queueMicrotask(() => ee.emit('exit', 0, sig))
+                    return true
+                  }
+                })
+              }
+            },
+            portAdapters: {
+              probePort: async (port) => ({ port, occupied: false }),
+              probeCdp: async () => ({ port: 9411, reachable: false }),
+              listInstancePids: () => []
+            },
+            cdpAdapters: {
+              httpGetJson: async () => {
+                throw new Error('staged attach failure')
+              }
+            },
+            terminateOptions: { waitMs: 20, sleep: async () => {} }
+          }
+        )
+      ).rejects.toThrow(/staged attach failure/)
+      expect(kills.length).toBeGreaterThan(0)
+      expect(kills[0]).toBe('SIGTERM')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('D: heap streams addHeapSnapshotChunk to temp, promotes, hashes; refuses empty', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'tw-heap-'))
+    try {
+      const finalPath = path.join(dir, 'renderer.heapsnapshot')
+      const files = new Map()
+      const fsApi = {
+        writeFileSync(p, data) {
+          files.set(p, Buffer.from(data))
+        },
+        appendFileSync(p, data) {
+          const prev = files.get(p) || Buffer.alloc(0)
+          files.set(p, Buffer.concat([prev, Buffer.from(data)]))
+        },
+        renameSync(from, to) {
+          files.set(to, files.get(from))
+          files.delete(from)
+        },
+        unlinkSync(p) {
+          files.delete(p)
+        },
+        openSync() {
+          return 3
+        },
+        fsyncSync() {},
+        closeSync() {},
+        existsSync(p) {
+          return files.has(p)
+        },
+        readFileSync(p) {
+          return files.get(p)
+        },
+        statSync(p) {
+          return { size: (files.get(p) || Buffer.alloc(0)).length }
+        }
+      }
+
+      /** @type {Set<Function>} */
+      const handlers = new Set()
+      const session = {
+        send: async (method) => {
+          if (method === 'HeapProfiler.takeHeapSnapshot') {
+            for (const h of handlers) {
+              h({
+                method: 'HeapProfiler.addHeapSnapshotChunk',
+                params: { chunk: 'CHUNK'.repeat(40) }
+              })
+              h({
+                method: 'HeapProfiler.addHeapSnapshotChunk',
+                params: { chunk: 'MORE'.repeat(40) }
+              })
+            }
+            return {}
+          }
+          return {}
+        },
+        onEvent(handler) {
+          handlers.add(handler)
+          return () => handlers.delete(handler)
+        }
+      }
+
+      const result = await collectRendererHeapSnapshot(session, {
+        heapSnapshotPath: finalPath,
+        fs: fsApi,
+        nowMs: () => 123,
+        pid: 7,
+        minBytes: 64
+      })
+      expect(result.bytes).toBeGreaterThan(64)
+      expect(result.chunkCount).toBe(2)
+      expect(result.sha256).toMatch(/^[a-f0-9]{64}$/)
+      expect(files.has(finalPath)).toBe(true)
+      expect([...files.keys()].some((k) => String(k).includes('.tmp-'))).toBe(false)
+      const digest = verifyArtifactFile(finalPath, { fs: fsApi, minBytes: 64 })
+      expect(digest.sha256).toBe(result.sha256)
+
+      const emptyHandlers = new Set()
+      const emptySession = {
+        send: async () => ({}),
+        onEvent(handler) {
+          emptyHandlers.add(handler)
+          return () => emptyHandlers.delete(handler)
+        }
+      }
+      await expect(
+        collectRendererHeapSnapshot(emptySession, {
+          heapSnapshotPath: path.join(dir, 'empty.heapsnapshot'),
+          fs: fsApi,
+          minBytes: 64
+        })
+      ).rejects.toThrow(/too small|empty/i)
+
+      await expect(collectRendererHeapSnapshot({ send: async () => ({}) })).rejects.toThrow(
+        /onEvent required/i
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

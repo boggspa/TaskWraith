@@ -12,11 +12,13 @@ const { WORKLOADS, FX_POSTURES } = require('./schema.cjs')
  */
 
 const DEFAULT_BASE_PORT = 9400
+const DEFAULT_INSPECTOR_BASE_PORT = 9800
 
 /**
  * @param {object} options
  * @param {string} options.instanceId — must be unique per concurrent session
  * @param {number} [options.remoteDebuggingPort]
+ * @param {number} [options.mainInspectorPort]
  * @param {'30seat'|'50seat'|'dual_run'|'455_soak'|'50_chat_switch'} [options.workload]
  * @param {string} [options.fxPosture]
  * @param {string} [options.repoRoot]
@@ -52,6 +54,21 @@ function buildIsolatedLaunchPlan(options) {
     throw new Error('remoteDebuggingPort must be an integer 1024–65535')
   }
 
+  const mainInspectorPort =
+    options.mainInspectorPort == null
+      ? DEFAULT_INSPECTOR_BASE_PORT + hashPortOffset(instanceId)
+      : options.mainInspectorPort
+  if (
+    !Number.isInteger(mainInspectorPort) ||
+    mainInspectorPort < 1024 ||
+    mainInspectorPort > 65535
+  ) {
+    throw new Error('mainInspectorPort must be an integer 1024–65535')
+  }
+  if (mainInspectorPort === port) {
+    throw new Error('mainInspectorPort must differ from remoteDebuggingPort')
+  }
+
   const repoRoot = path.resolve(options.repoRoot || process.cwd())
   const electronEntry = options.electronEntry || '.'
 
@@ -62,28 +79,38 @@ function buildIsolatedLaunchPlan(options) {
     TASKWRAITH_PERF_FX_POSTURE: fxPosture
   }
 
-  const argv = ['electron', electronEntry, `--remote-debugging-port=${port}`]
+  const argv = [
+    'electron',
+    electronEntry,
+    `--remote-debugging-port=${port}`,
+    `--inspect=${mainInspectorPort}`
+  ]
   const shellCommand = [
     `TASKWRAITH_INSTANCE_ID=${shellQuote(instanceId)}`,
     'IOS_REMOTE_TRUE=0',
-    `npx electron ${shellQuote(electronEntry)} --remote-debugging-port=${port}`
+    `npx electron ${shellQuote(electronEntry)} --remote-debugging-port=${port} --inspect=${mainInspectorPort}`
   ].join(' ')
 
   const safety = {
     neverKillLiveApp: true,
     neverMutateLiveUserData: true,
     iosRemoteForcedOff: true,
+    // T1 dry CLI still refuses --launch; T2 runT2Baseline.cjs is the opt-in launcher.
     electronLaunchDisabledUntilT2: true,
+    attachOnlyExactChild: true,
+    terminateOnlyExactChild: true,
+    neverAutoDeleteArtifacts: true,
     preflight: [
-      `pgrep -fl "TASKWRAITH_INSTANCE_ID=${instanceId}" || true`,
-      `curl -sS --max-time 2 http://127.0.0.1:${port}/json/version || true`
+      `curl -sS --max-time 2 http://127.0.0.1:${port}/json/version || true`,
+      `curl -sS --max-time 2 http://127.0.0.1:${mainInspectorPort}/json || true`
     ],
     notes: [
       'Build from this worktree/checkout first: npx electron-vite build',
-      'First boot may take ~60–90s while isolated migrateLegacyUserDataSync runs — poll /json/version',
-      'Do not attach CDP to the live v1.9.2 instance; only to this instanceId + port',
-      'Cleanup: stop only this process, then rm isolated "TaskWraith Dev <instanceId>" userData if disposable',
-      'T1/T1-harden: CLI refuses --launch; plan is printable only'
+      'Materialize legacy_v1 into exact TaskWraith Dev <sanitizedId> before launch so chats/ skips legacy migration',
+      'Do not attach CDP to the live v1.9.2 instance; only to this instanceId + ports',
+      'Terminate only the spawned child pid — never broad pgrep/kill',
+      'Never auto-delete artifact dirs or userData',
+      'T1 runBaseline.cjs refuses --launch; use scripts/perf/runT2Baseline.cjs with explicit accept flags'
     ]
   }
 
@@ -92,14 +119,17 @@ function buildIsolatedLaunchPlan(options) {
     kind: 'taskwraith-perf-isolated-launch',
     instanceId,
     remoteDebuggingPort: port,
+    mainInspectorPort,
     workload,
     fxPosture,
     repoRoot,
+    electronEntry,
     env,
     argv,
     shellCommand,
     cdpVersionUrl: `http://127.0.0.1:${port}/json/version`,
     cdpListUrl: `http://127.0.0.1:${port}/json`,
+    inspectorJsonUrl: `http://127.0.0.1:${mainInspectorPort}/json`,
     safety
   }
 }
@@ -119,5 +149,6 @@ function shellQuote(value) {
 
 module.exports = {
   DEFAULT_BASE_PORT,
+  DEFAULT_INSPECTOR_BASE_PORT,
   buildIsolatedLaunchPlan
 }
