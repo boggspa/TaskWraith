@@ -644,8 +644,17 @@ describe('runAcpTurn — neutral core', () => {
 
   it('terminates a lifecycle error via endProcess (stdin EOF), not a bare SIGINT', async () => {
     const child = new FakeAcpChild()
-    const { events } = baseOptions(child, { endProcess: (c) => c.stdin?.end?.() })
-    void events
+    const closes: Array<{
+      code: number | null
+      turnComplete: boolean
+      terminalStatus?: string
+    }> = []
+    const { events } = baseOptions(child, {
+      endProcess: (c) => c.stdin?.end?.(),
+      onClose: (code, turnComplete, terminalStatus) => {
+        closes.push({ code, turnComplete, terminalStatus })
+      }
+    })
     // session/new returns a JSON-RPC error → the turn must fail-close by
     // terminating the process the provider's way, so a Kimi child (ignores
     // SIGINT) still exits and onClose runs.
@@ -654,6 +663,13 @@ describe('runAcpTurn — neutral core', () => {
     await new Promise((r) => setTimeout(r, 20))
     expect(child.stdinEnded).toBe(true)
     expect(child.killed).toBe(false)
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP session/new failed: bad params'
+    })
+    expect(closes).toEqual([
+      { code: 0, turnComplete: false, terminalStatus: 'rpc_error:session/new' }
+    ])
   })
 
   it('uses the provider formatProcessError for spawn failures', () => {

@@ -184,7 +184,9 @@ export interface AcpTurnOptions {
   /**
    * Called once when the child exits. `turnComplete` is true when the prompt
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
-   * status so callers can distinguish end_turn from Cancelled/PermissionRejected.
+   * status so callers can distinguish end_turn from Cancelled/PermissionRejected,
+   * or `rpc_error:<step>` when an ACP lifecycle request failed before a terminal
+   * response.
    */
   onClose?: (
     code: number | null,
@@ -626,6 +628,11 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
               : message.id === ACP_ID.sessionResume
                 ? 'session/resume'
                 : 'session/prompt'
+        // Preserve the failed lifecycle step through child close. Without a
+        // non-success status, provider adapters can normalize an unfinished
+        // prompt to success and replace the real RPC failure with an unrelated
+        // empty-response diagnosis.
+        terminalStatus = `rpc_error:${step}`
         const detail = typeof rpcError?.data === 'string' ? ` (${rpcError.data})` : ''
         options.onEvent({
           type: 'provider_warning',

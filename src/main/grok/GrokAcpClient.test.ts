@@ -434,6 +434,29 @@ describe('runGrokAcpTurn', () => {
     expect(closeInfos).toEqual([{ code: 0, turnComplete: true, terminalStatus: 'end_turn' }])
   })
 
+  it('preserves a prompt RPC failure as a non-success terminal status', async () => {
+    const child = new FakeAcpChild()
+    const { events, closeInfos } = run(child)
+    child.emit({ jsonrpc: '2.0', id: 1, result: {} })
+    child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 's-1' } })
+
+    child.emit({
+      jsonrpc: '2.0',
+      id: 3,
+      error: { code: -32603, message: 'Internal error' }
+    })
+    await new Promise((r) => setTimeout(r, 40))
+
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP session/prompt failed: Internal error'
+    })
+    expect(child.killed).toBe(true)
+    expect(closeInfos).toEqual([
+      { code: 0, turnComplete: false, terminalStatus: 'rpc_error:session/prompt' }
+    ])
+  })
+
   it('reports the exact broker-unavailable blocker after a denied native tool', async () => {
     const child = new FakeAcpChild()
     run(child, { onPermissionRequest: () => 'deny' })
