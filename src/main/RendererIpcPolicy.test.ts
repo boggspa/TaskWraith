@@ -80,6 +80,7 @@ describe('RendererIpcPolicy', () => {
     'get-diff',
     'git:snapshot',
     'git:workspace-stats',
+    'git:work-provenance',
     'work-locks:list',
     'work-locks:subscribe',
     'work-locks:unsubscribe',

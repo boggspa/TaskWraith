@@ -41,6 +41,7 @@ import type {
   GitResult
 } from '../main/services/GitService'
 import type { GitWorkspaceStats } from '../main/services/GitWorkspaceStats'
+import type { WorkProvenanceSnapshot } from '../shared/workProvenance'
 import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason,
@@ -659,6 +660,15 @@ const api = {
     worktreePath?: string
     chatId?: string
   }) => ipcRenderer.invoke('git:workspace-stats', payload) as Promise<GitResult<GitWorkspaceStats>>,
+  gitWorkProvenance: (payload: {
+    workspacePath?: string
+    repoPath?: string
+    worktreePath?: string
+    chatId?: string
+  }) =>
+    ipcRenderer.invoke('git:work-provenance', payload) as Promise<
+      GitResult<WorkProvenanceSnapshot>
+    >,
   gitSubscribeSnapshot: (
     payload: { workspacePath?: string; repoPath?: string; chatId?: string },
     callback: (payload: GitSnapshotChangedPayload) => void

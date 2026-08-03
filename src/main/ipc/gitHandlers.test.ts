@@ -161,6 +161,14 @@ function createDeps() {
         } as any
       }))
     },
+    workProvenanceService: {
+      query: vi.fn<GitHandlersDeps['workProvenanceService']['query']>(async (path: string) => ({
+        available: true,
+        stale: false,
+        repository: { root: path },
+        workItems: []
+      }) as any)
+    },
     gitSnapshotPublisher: {
       subscribe: vi.fn<NonNullable<GitHandlersDeps['gitSnapshotPublisher']>['subscribe']>(
         async (subscription) => ({
@@ -198,6 +206,7 @@ describe('registerGitHandlers', () => {
 
     expect(handlerFor('git:snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:workspace-stats')).toBeTypeOf('function')
+    expect(handlerFor('git:work-provenance')).toBeTypeOf('function')
     expect(handlerFor('git:subscribe-snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:unsubscribe-snapshot')).toBeTypeOf('function')
     expect(handlerFor('git:invalidate-snapshot')).toBeTypeOf('function')
@@ -253,6 +262,18 @@ describe('registerGitHandlers', () => {
     })
     expect(deps.gitService.workspaceStats).toHaveBeenCalledWith('/repo')
     await expect(
+      handlerFor('git:work-provenance')({}, { workspacePath: '/repo', chatId: 'chat-1' })
+    ).resolves.toEqual({
+      ok: true,
+      data: {
+        available: true,
+        stale: false,
+        repository: { root: '/repo' },
+        workItems: []
+      }
+    })
+    expect(deps.workProvenanceService.query).toHaveBeenCalledWith('/repo')
+    await expect(
       handlerFor('git:snapshot')({}, { workspacePath: '/workspace', repoPath: '  /preferred-repo  ' })
     ).resolves.toEqual({
       ok: true,
@@ -307,6 +328,12 @@ describe('registerGitHandlers', () => {
 
     expect(deps.gitService.listWorktrees).toHaveBeenCalledWith('/repo')
     expect(deps.gitService.workspaceStats).toHaveBeenCalledWith('/repo-worktrees/feature')
+
+    await handlerFor('git:work-provenance')({}, {
+      workspacePath: '/repo',
+      worktreePath: '/repo-worktrees/feature'
+    })
+    expect(deps.workProvenanceService.query).toHaveBeenCalledWith('/repo-worktrees/feature')
 
     await expect(
       handlerFor('git:workspace-stats')({}, {

@@ -385,6 +385,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // GitHub PR creation (optional payload with target path / options).
   'git:snapshot': ['optionalObject'],
   'git:workspace-stats': ['optionalObject'],
+  'git:work-provenance': ['optionalObject'],
   'git:subscribe-snapshot': ['optionalObject'],
   'git:unsubscribe-snapshot': ['optionalObject'],
   'git:invalidate-snapshot': ['optionalObject'],

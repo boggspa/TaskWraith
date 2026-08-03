@@ -792,6 +792,8 @@ import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
+import { WorkProvenanceQueryService } from './workProvenance/WorkProvenanceQueryService'
+import { createWorkProvenanceWorkerDriver } from './workProvenance/WorkProvenanceWorkerScan'
 import { FanoutCandidateService } from './services/FanoutCandidateService'
 import { DurableFanoutCandidatePromotionLock } from './services/FanoutCandidatePromotionLock'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
@@ -47175,6 +47177,15 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const gitService = new GitService()
+    const workProvenanceWorkerPath = [
+      join(__dirname, 'workProvenanceWorker.js'),
+      resolve(__dirname, '..', 'workProvenanceWorker.js')
+    ].find((candidate) => fsSync.existsSync(candidate))
+    const workProvenanceService = new WorkProvenanceQueryService(
+      createWorkProvenanceWorkerDriver(
+        workProvenanceWorkerPath || join(__dirname, 'workProvenanceWorker.js')
+      )
+    )
     const gitSnapshotPublisher = new GitSnapshotPublisher({ gitService })
     // Remote lane of the publisher: while ≥1 phone is connected, headless
     // subscriptions land every watcher/run recompute in the remote git
@@ -50518,6 +50529,7 @@ if (isGeminiMcpBridgeProcess) {
       resolvePath: (pathValue) => resolve(pathValue),
       pathSeparator: sep,
       gitService,
+      workProvenanceService,
       gitSnapshotPublisher,
       externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),
       openSafeShellTarget,

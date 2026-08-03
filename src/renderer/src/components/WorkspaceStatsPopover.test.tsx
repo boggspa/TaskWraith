@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 import type { GitWorkspaceStats } from '../../../main/services/GitWorkspaceStats'
 import type { WorkLockProjectionSnapshot } from '../../../shared/workLockProjection'
+import {
+  unavailableWorkProvenanceSnapshot,
+  type WorkProvenanceSnapshot
+} from '../../../shared/workProvenance'
 import { WorkspaceStatsPanel } from './WorkspaceStatsPopover'
 import { buildWorkspaceStatsContext, type WorkspaceStatsContext } from './workspaceStatsContext'
 
@@ -50,13 +54,25 @@ const context: WorkspaceStatsContext = {
   snapshot
 }
 
-function renderPanel(lockSnapshot: WorkLockProjectionSnapshot | null): string {
+const emptyProvenance: WorkProvenanceSnapshot = {
+  ...unavailableWorkProvenanceSnapshot('fixture'),
+  available: true,
+  reason: undefined
+}
+
+function renderPanel(
+  lockSnapshot: WorkLockProjectionSnapshot | null,
+  provenanceSnapshot: WorkProvenanceSnapshot | null = emptyProvenance
+): string {
   return renderToStaticMarkup(
     <WorkspaceStatsPanel
       context={context}
       stats={stats}
       statsLoading={false}
       statsError={null}
+      provenanceSnapshot={provenanceSnapshot}
+      provenanceLoading={false}
+      provenanceError={null}
       lockSnapshot={lockSnapshot}
       locksLoading={false}
       id="workspace-stats"
@@ -82,8 +98,9 @@ describe('WorkspaceStatsPopover', () => {
     expect(html).toContain('No upstream · all history local')
     expect(html).toContain('1,223,743')
     expect(html).toContain('1 of 49')
-    expect(html).toContain('No TaskWraith work evidence attached')
-    expect(html).toContain('neither proves authorship')
+    expect(html).toContain('No current work evidence')
+    expect(html).toContain('No active TaskWraith work locks')
+    expect(html).toContain('Neither is inferred authorship')
   })
 
   it('groups several locks from the same worker lane into one compact row', () => {
@@ -141,13 +158,15 @@ describe('WorkspaceStatsPopover', () => {
     expect(html).toContain('2 locks')
     expect(html).toContain('1 worker lane')
     expect(html).toContain('src/a.ts, src/b.ts')
-    expect(html).not.toContain('No TaskWraith work evidence attached')
+    expect(html).not.toContain('No active TaskWraith work locks')
   })
 
   it('reports unavailable evidence rather than turning a failed observation into zero', () => {
-    const html = renderPanel(null)
+    const html = renderPanel(null, unavailableWorkProvenanceSnapshot('Projection unavailable.'))
 
     expect(html).toContain('Edit authority unavailable')
+    expect(html).toContain('Work evidence unavailable')
+    expect(html).toContain('Projection unavailable.')
     expect(html).not.toContain('0 active locks')
   })
 

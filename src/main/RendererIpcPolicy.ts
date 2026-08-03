@@ -126,6 +126,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'git:select-worktree',
   'git:snapshot',
   'git:workspace-stats',
+  'git:work-provenance',
   'git:stage',
   'git:subscribe-snapshot',
   'git:unstage',

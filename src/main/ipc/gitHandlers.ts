@@ -20,6 +20,8 @@ import type {
   GitWorktreeList
 } from '../services/GitService'
 import type { GitWorkspaceStats } from '../services/GitWorkspaceStats'
+import type { WorkProvenanceQueryService } from '../workProvenance/WorkProvenanceQueryService'
+import type { WorkProvenanceSnapshot } from '../../shared/workProvenance'
 import type {
   GitSnapshotInvalidationReason,
   GitSnapshotPublisher
@@ -88,6 +90,7 @@ export interface GitHandlersDeps {
     | 'createPullRequest'
     | 'ciStatus'
   >
+  workProvenanceService: Pick<WorkProvenanceQueryService, 'query'>
   gitSnapshotPublisher?: Pick<
     GitSnapshotPublisher,
     'subscribe' | 'unsubscribe' | 'unsubscribeWebContents' | 'invalidatePath' | 'publishSnapshot'
@@ -355,6 +358,30 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
         return { ok: false, error: 'Selected path is not a linked worktree for this repository.' }
       }
       return deps.gitService.workspaceStats(targetPath)
+    }
+  )
+
+  ipcMain.handle(
+    'git:work-provenance',
+    async (
+      event,
+      payload?: GitWorkspaceStatsPayload
+    ): Promise<GitResult<WorkProvenanceSnapshot> | { ok: false; error: string }> => {
+      const repo = gitPayloadPath(deps, event, payload, 'registered-or-granted-read')
+      if (!repo.ok) return repo
+      const targetPath = String(payload?.worktreePath || '').trim()
+      if (!targetPath || targetPath.replace(/\/+$/, '') === repo.path.replace(/\/+$/, '')) {
+        return { ok: true, data: await deps.workProvenanceService.query(repo.path) }
+      }
+      if (repo.source === 'external') {
+        return { ok: false, error: EXTERNAL_WORKTREE_SCOPE_ERROR }
+      }
+      const worktrees = await deps.gitService.listWorktrees(repo.path)
+      if (!worktrees.ok) return worktrees
+      if (!worktreeListContainsPath(worktrees.data, targetPath)) {
+        return { ok: false, error: 'Selected path is not a linked worktree for this repository.' }
+      }
+      return { ok: true, data: await deps.workProvenanceService.query(targetPath) }
     }
   )
 

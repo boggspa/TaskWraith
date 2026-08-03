@@ -59,7 +59,10 @@ export default defineConfig(({ mode }) => {
             // Workspace activity may need a cold git/filesystem walk too.
             // Bundle it as its own utilityProcess entry so the renderer's
             // 90-day heatmap only ever reads a main-process cache.
-            workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts')
+            workspaceActivityWorker: resolve('src/main/workers/workspaceActivityWorker.ts'),
+            // Work-provenance sampling brackets Git state and fingerprints
+            // dirty paths. Keep that synchronous audited core out of main.
+            workProvenanceWorker: resolve('src/main/workers/workProvenanceWorker.ts')
           }
         }
       }
