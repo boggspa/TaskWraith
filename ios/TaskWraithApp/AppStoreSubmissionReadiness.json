@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "releaseTarget": "1.9.3",
+  "updatedAt": "2026-08-03",
+  "overallStatus": "not-ready-for-submission",
+  "scope": {
+    "purpose": "Machine-readable engineering evidence and operator checklist for the user-controlled iOS App Store submission step.",
+    "doesNotAuthorize": [
+      "changing Apple Developer or App Store Connect settings",
+      "using signing or App Store Connect credentials",
+      "archiving, signing, uploading, or submitting a build",
+      "claiming legal export classification or App Privacy answers are complete",
+      "claiming the external human cryptography review is complete"
+    ]
+  },
+  "technicalEvidence": [
+    {
+      "id": "export-compliance-build-flag",
+      "status": "verified-in-repo",
+      "claim": "The XcodeGen source and generated app Info.plist both declare ITSAppUsesNonExemptEncryption=false.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithApp/project.yml",
+          "requiredText": ["ITSAppUsesNonExemptEncryption: false"]
+        },
+        {
+          "path": "ios/TaskWraithApp/Generated/Info.plist",
+          "requiredText": ["<key>ITSAppUsesNonExemptEncryption</key>", "<false/>"]
+        }
+      ],
+      "operatorFollowUp": "Reconfirm the per-build App Store Connect export questionnaire and record the answer; repository flags are not legal advice."
+    },
+    {
+      "id": "paired-transport-cryptography",
+      "status": "verified-in-repo",
+      "claim": "The paired transport implements 256-bit AES-GCM content protection over X25519-derived, HKDF-SHA-256 session keys.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithKit/Sources/TaskWraithKit/Cipher.swift",
+          "requiredText": ["guard key.bitCount == 256", "AES.GCM.seal(", "AES.GCM.open("]
+        },
+        {
+          "path": "ios/TaskWraithKit/Sources/TaskWraithKit/Session.swift",
+          "requiredText": ["Curve25519.KeyAgreement.PrivateKey", "TWKeySchedule.deriveSessionKeys("]
+        },
+        {
+          "path": "ios/TaskWraithKit/Sources/TaskWraithKit/KeySchedule.swift",
+          "requiredText": ["HKDF<SHA256>.deriveKey("]
+        }
+      ]
+    },
+    {
+      "id": "encrypted-rich-notification-envelope",
+      "status": "verified-in-repo",
+      "claim": "Optional rich notification content is opened on-device with a domain-separated X25519/HKDF/AES-GCM envelope.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithKit/Sources/TaskWraithKit/PushSeal.swift",
+          "requiredText": [
+            "taskwraith-push-agreement-v1",
+            "HKDF<SHA256>.deriveKey(",
+            "Curve25519.KeyAgreement.PublicKey",
+            "AES.GCM.open("
+          ]
+        }
+      ]
+    },
+    {
+      "id": "live-activity-readable-allowlist",
+      "status": "verified-in-repo",
+      "claim": "The readable Live Activity payload is built through a named-field allowlist and uses an opaque per-activity reference rather than a thread id.",
+      "anchors": [
+        {
+          "path": "src/shared/apns/liveActivityPayload.ts",
+          "requiredText": [
+            "export function buildLiveActivityContentState",
+            "activityRef: string",
+            "The opaque per-activity ref, never a threadId"
+          ]
+        }
+      ],
+      "operatorFollowUp": "Make App Privacy answers match the actual APNs, relay, and distribution architecture; do not infer Data Not Collected from encrypted task content."
+    },
+    {
+      "id": "privacy-manifest",
+      "status": "verified-in-repo",
+      "claim": "The app target includes a privacy manifest that disables tracking and declares the UserDefaults required-reason API.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithApp/PrivacyInfo.xcprivacy",
+          "requiredText": [
+            "<key>NSPrivacyTracking</key>",
+            "<false/>",
+            "NSPrivacyAccessedAPICategoryUserDefaults",
+            "CA92.1"
+          ]
+        },
+        {
+          "path": "ios/TaskWraithApp/project.yml",
+          "requiredText": ["- path: PrivacyInfo.xcprivacy"]
+        }
+      ],
+      "operatorFollowUp": "Review the App Store Connect questionnaire separately; the privacy manifest is not the questionnaire."
+    },
+    {
+      "id": "app-store-export-template",
+      "status": "verified-in-repo",
+      "claim": "The export template targets App Store Connect and keeps the team id as an operator-supplied placeholder.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithApp/ExportOptions-AppStore.plist",
+          "requiredText": ["<string>app-store-connect</string>", "<string>__TEAM_ID__</string>"]
+        }
+      ]
+    },
+    {
+      "id": "exported-entitlement-verification",
+      "status": "verified-in-repo",
+      "claim": "The archive helper rejects an exported IPA unless aps-environment is production and get-task-allow is false or absent.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithApp/scripts/archive-testflight.sh",
+          "requiredText": [
+            "Expected exported aps-environment=production",
+            "Expected exported get-task-allow to be false or absent"
+          ]
+        },
+        {
+          "path": "ios/TaskWraithApp/TaskWraith.entitlements",
+          "requiredText": ["<key>aps-environment</key>", "<string>$(APS_ENVIRONMENT)</string>"]
+        }
+      ]
+    },
+    {
+      "id": "offline-review-surface",
+      "status": "verified-in-repo",
+      "claim": "The screenshot helper exercises the offline demo surface without a paired Mac and rejects splash-sized captures.",
+      "anchors": [
+        {
+          "path": "ios/TaskWraithApp/scripts/appstore-screenshots.sh",
+          "requiredText": ["-tw-demo", "-tw-demo-thread", "do NOT upload"]
+        }
+      ]
+    }
+  ],
+  "humanGates": [
+    {
+      "id": "external-human-cryptography-review",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Dated review record covering pairing, session keys, replay/nonce handling, notification envelopes, and the readable Live Activity exception."
+    },
+    {
+      "id": "app-privacy-questionnaire",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Saved App Store Connect answers reconciled with relay metadata, APNs tokens and routing fields, Live Activity fields, retention, and any project-operated gateway."
+    },
+    {
+      "id": "export-compliance-questionnaire",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Per-build App Store Connect export-compliance answer and any applicable self-classification record."
+    },
+    {
+      "id": "public-metadata-and-urls",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Approved app name, debut version, privacy-policy URL, support URL, marketing URL, keywords, screenshots, and final review notes."
+    },
+    {
+      "id": "desktop-and-remote-recordings",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Both required recordings below, reviewed for secrets and representative of the submitted build."
+    },
+    {
+      "id": "signed-archive-and-ipa",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "Archive/export log, IPA checksum, production APNs entitlement, get-task-allow false or absent, and matching app/extension version-build values."
+    },
+    {
+      "id": "upload-processing-and-submit",
+      "status": "required",
+      "blocking": true,
+      "owner": "release-owner",
+      "evidenceRequired": "App Store Connect processing result, selected build, attached review assets, and explicit user approval before submission."
+    }
+  ],
+  "requiredRecordings": [
+    {
+      "id": "desktop-pairing-and-control",
+      "status": "not-recorded",
+      "artifact": "submission-evidence/1.9.3/desktop-pairing-and-control.mov",
+      "captureOn": "stable packaged macOS build",
+      "acceptance": [
+        "show the Remote pairing entry point and QR flow",
+        "show the matching six-digit confirmation and explicit human confirmation",
+        "show the connected phone and one live run or approval reaching the desktop",
+        "show the packaged app version/build without development or HMR tooling",
+        "redact bootstrap payloads, keys, tokens, personal identifiers, and private workspace content"
+      ]
+    },
+    {
+      "id": "remote-demo-and-paired-action",
+      "status": "not-recorded",
+      "artifact": "submission-evidence/1.9.3/remote-demo-and-paired-action.mov",
+      "captureOn": "physical iPhone or release-equivalent build",
+      "acceptance": [
+        "show first launch and entry into the offline Try the demo review path",
+        "show home, transcript, approval, ensemble, diff, and settings surfaces",
+        "show exit from demo and a paired reconnect",
+        "show one user-approved remote action continuing on the Mac",
+        "show notification permission requested only after pairing if notifications are demonstrated",
+        "redact bootstrap payloads, keys, tokens, personal identifiers, and private workspace content"
+      ]
+    }
+  ],
+  "credentialInputs": [
+    {
+      "envName": "TASKWRAITH_APPLE_TEAM_ID",
+      "purpose": "Apple Developer team selected by the release owner"
+    },
+    {
+      "envName": "ASC_API_KEY_ID",
+      "purpose": "App Store Connect API key identifier"
+    },
+    {
+      "envName": "ASC_API_ISSUER_ID",
+      "purpose": "App Store Connect API issuer identifier"
+    },
+    {
+      "envName": "ASC_API_KEY_PATH",
+      "purpose": "Local path to the user-controlled App Store Connect private key"
+    }
+  ],
+  "submissionSteps": [
+    {
+      "id": "approve-metadata-and-disclosures",
+      "userControlled": true,
+      "status": "not-run"
+    },
+    {
+      "id": "complete-external-crypto-review",
+      "userControlled": true,
+      "status": "not-run"
+    },
+    {
+      "id": "record-desktop-and-remote-evidence",
+      "userControlled": true,
+      "status": "not-run"
+    },
+    {
+      "id": "bump-build-archive-and-export",
+      "userControlled": true,
+      "status": "not-run"
+    },
+    {
+      "id": "verify-ipa-and-submit-to-processing",
+      "userControlled": true,
+      "status": "not-run"
+    },
+    {
+      "id": "approve-app-review-submission",
+      "userControlled": true,
+      "status": "not-run"
+    }
+  ]
+}
