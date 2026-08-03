@@ -121,7 +121,9 @@
     "build:linux:compile": "npm run clean:dist && npm run prepare:tui-runtime && npm run build",
     "build:linux:checks": "node scripts/smoke-packaged-electron.cjs dist/linux-unpacked && npm run smoke:linux-artifacts && npm run validate:linux-update-feed && node scripts/guard-no-bundled-secrets.cjs --require-packaged",
     "build:linux": "npm run build:linux:compile && electron-builder --linux AppImage deb --publish never && npm run build:linux:checks",
-    "build:linux:nopublish": "npm run build:linux:compile && electron-builder --linux AppImage deb --publish never && npm run build:linux:checks"
+    "build:linux:nopublish": "npm run build:linux:compile && electron-builder --linux AppImage deb --publish never && npm run build:linux:checks",
+    "perf:schedule:60m": "node -e \"const {buildSixtyMinuteChatSwitchSchedule,summarizeSixtyMinuteSchedule}=require('./scripts/perf/sixtyMinuteSchedule.cjs'); const s=buildSixtyMinuteChatSwitchSchedule({seed:Number(process.env.PERF_SEED||42)}); console.log(JSON.stringify(summarizeSixtyMinuteSchedule(s),null,2));\"",
+    "perf:gates:help": "node -e \"const {PERF_GATE_THRESHOLDS}=require('./scripts/perf/schema.cjs'); console.log(JSON.stringify(PERF_GATE_THRESHOLDS,null,2));\""
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.140",
