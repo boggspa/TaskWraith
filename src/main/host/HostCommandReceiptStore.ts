@@ -1,0 +1,662 @@
+/**
+ * Durable Host command receipt + idempotency store (Host Arc Wave 2A).
+ *
+ * Crash-safe bounded journal + checkpoint under an injected data directory.
+ * Receipts reopen across simulated Host restart. Interrupted pending commands
+ * surface as explicit recoverable/indeterminate state and are never blindly
+ * re-executed. Exact command repeats return the original receipt; the same
+ * idempotency key with a different canonical command fingerprint conflicts.
+ *
+ * Records retain actor/client identity, target, authority evaluation, and
+ * timestamps without credentials, unrestricted arguments/tool output, or
+ * hidden reasoning. Not wired to BridgeActionExecutor or control server yet.
+ */
+
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { join } from 'node:path'
+
+export const HOST_COMMAND_RECEIPT_SCHEMA_VERSION = 1 as const
+export const HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME = 'command-receipts.checkpoint.json'
+export const HOST_COMMAND_RECEIPT_JOURNAL_FILENAME = 'command-receipts.journal.jsonl'
+
+/** Default bound on retained receipts after compaction. */
+export const DEFAULT_HOST_COMMAND_RECEIPT_MAX_RECORDS = 2000
+
+/** Default journal record count before compaction is attempted. */
+export const DEFAULT_HOST_COMMAND_RECEIPT_COMPACT_AFTER_RECORDS = 256
+
+const MAX_ID_CHARS = 200
+const MAX_REASON_CHARS = 500
+const MAX_SUMMARY_CHARS = 500
+const MAX_ERROR_CHARS = 500
+const MAX_KIND_CHARS = 80
+
+export type HostCommandReceiptStatus =
+  | 'pending'
+  | 'succeeded'
+  | 'failed'
+  | 'denied'
+  | 'indeterminate'
+
+export type HostCommandAuthorityDecision = 'allowed' | 'denied' | 'deferred'
+
+/** Compact actor/client identity — never credentials or tokens. */
+export interface HostCommandReceiptActor {
+  clientId: string
+  clientKind?: string
+  actorId?: string
+}
+
+/** Compact command target identity — no unrestricted paths or payloads. */
+export interface HostCommandReceiptTarget {
+  kind: string
+  id?: string
+}
+
+/** Authority evaluation retained on the receipt. */
+export interface HostCommandReceiptAuthority {
+  decision: HostCommandAuthorityDecision
+  reason?: string
+  policy?: string
+}
+
+/**
+ * Durable receipt record. `commandFingerprint` is a caller-supplied digest of
+ * the canonical command (type + target + bounded arg digest). Raw args, tool
+ * output, and hidden reasoning must never be stored here.
+ */
+export interface HostCommandReceiptRecord {
+  schemaVersion: typeof HOST_COMMAND_RECEIPT_SCHEMA_VERSION
+  commandId: string
+  idempotencyKey: string
+  commandFingerprint: string
+  status: HostCommandReceiptStatus
+  actor: HostCommandReceiptActor
+  target: HostCommandReceiptTarget
+  authority: HostCommandReceiptAuthority
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+  errorCode?: string
+  errorMessage?: string
+  resultSummary?: string
+  /** Set when a pending receipt was reopened after Host crash/restart. */
+  recoveryState?: 'recoverable-indeterminate'
+}
+
+export type HostCommandReceiptBeginInput = {
+  commandId: string
+  idempotencyKey: string
+  /** SHA-256 hex (or other stable digest) of the canonical command. */
+  commandFingerprint: string
+  actor: HostCommandReceiptActor
+  target: HostCommandReceiptTarget
+  authority: HostCommandReceiptAuthority
+  createdAt?: string
+}
+
+export type HostCommandReceiptTerminalStatus = 'succeeded' | 'failed' | 'denied'
+
+export type HostCommandReceiptCompleteInput = {
+  commandId: string
+  status: HostCommandReceiptTerminalStatus
+  completedAt?: string
+  errorCode?: string
+  errorMessage?: string
+  resultSummary?: string
+  /** Optional authority update at completion (e.g. final deny reason). */
+  authority?: HostCommandReceiptAuthority
+}
+
+export type HostCommandReceiptBeginResult =
+  | { kind: 'created'; receipt: HostCommandReceiptRecord }
+  | { kind: 'existing'; receipt: HostCommandReceiptRecord }
+  | {
+      kind: 'conflict'
+      reason: 'idempotency_key_command_mismatch' | 'command_id_mismatch'
+      existing: HostCommandReceiptRecord
+      requestedFingerprint: string
+    }
+
+export interface HostCommandReceiptStoreOptions {
+  /** Injected Host data directory. Required — no Electron app path lookup. */
+  dataDir: string
+  maxRecords?: number
+  compactAfterRecords?: number
+  now?: () => string
+  log?: (line: string) => void
+}
+
+interface CheckpointDocument {
+  schemaVersion: typeof HOST_COMMAND_RECEIPT_SCHEMA_VERSION
+  updatedAt: string
+  records: HostCommandReceiptRecord[]
+}
+
+type JournalEvent =
+  | { op: 'upsert'; record: HostCommandReceiptRecord }
+  | { op: 'compact'; retainedCommandIds: string[]; at: string }
+
+export class HostCommandReceiptStore {
+  private readonly dataDir: string
+  private readonly checkpointPath: string
+  private readonly journalPath: string
+  private readonly maxRecords: number
+  private readonly compactAfterRecords: number
+  private readonly now: () => string
+  private readonly log: (line: string) => void
+
+  private recordsByCommandId = new Map<string, HostCommandReceiptRecord>()
+  private commandIdByIdempotencyKey = new Map<string, string>()
+  private journalRecordCount = 0
+
+  constructor(options: HostCommandReceiptStoreOptions) {
+    if (!options.dataDir || typeof options.dataDir !== 'string') {
+      throw new Error('HostCommandReceiptStore requires an injected dataDir')
+    }
+    this.dataDir = options.dataDir
+    this.checkpointPath = join(this.dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    this.journalPath = join(this.dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    this.maxRecords = Math.max(1, options.maxRecords ?? DEFAULT_HOST_COMMAND_RECEIPT_MAX_RECORDS)
+    this.compactAfterRecords = Math.max(
+      1,
+      options.compactAfterRecords ?? DEFAULT_HOST_COMMAND_RECEIPT_COMPACT_AFTER_RECORDS
+    )
+    this.now = options.now ?? (() => new Date().toISOString())
+    this.log = options.log ?? (() => {})
+    this.reopen()
+  }
+
+  /**
+   * Re-read checkpoint + journal from disk. Any still-pending receipt is marked
+   * indeterminate (recoverable) so callers never re-execute blindly.
+   */
+  reopen(): void {
+    this.recordsByCommandId = new Map()
+    this.commandIdByIdempotencyKey = new Map()
+    this.journalRecordCount = 0
+
+    const checkpointRecords = this.readCheckpoint()
+    for (const record of checkpointRecords) {
+      this.indexRecord(record)
+    }
+
+    const journalEvents = this.readJournal()
+    for (const event of journalEvents) {
+      this.journalRecordCount += 1
+      if (event.op === 'upsert') {
+        this.indexRecord(event.record)
+      } else if (event.op === 'compact') {
+        const retain = new Set(event.retainedCommandIds)
+        for (const commandId of [...this.recordsByCommandId.keys()]) {
+          if (!retain.has(commandId)) {
+            const existing = this.recordsByCommandId.get(commandId)
+            if (existing) {
+              this.commandIdByIdempotencyKey.delete(existing.idempotencyKey)
+              this.recordsByCommandId.delete(commandId)
+            }
+          }
+        }
+      }
+    }
+
+    // Host restart while a command was in-flight: surface indeterminate recovery
+    // state. Do not auto-succeed, auto-fail, or re-run.
+    let pendingPromoted = false
+    for (const [, record] of this.recordsByCommandId) {
+      if (record.status === 'pending') {
+        const promoted: HostCommandReceiptRecord = {
+          ...record,
+          status: 'indeterminate',
+          recoveryState: 'recoverable-indeterminate',
+          updatedAt: this.now()
+        }
+        this.indexRecord(promoted)
+        pendingPromoted = true
+        this.appendJournalEvent({ op: 'upsert', record: promoted })
+      }
+    }
+    if (pendingPromoted) {
+      this.maybeCompact()
+    }
+  }
+
+  getByCommandId(commandId: string): HostCommandReceiptRecord | null {
+    const id = normalizeId(commandId, 'commandId')
+    const record = this.recordsByCommandId.get(id)
+    return record ? cloneRecord(record) : null
+  }
+
+  getByIdempotencyKey(idempotencyKey: string): HostCommandReceiptRecord | null {
+    const key = normalizeId(idempotencyKey, 'idempotencyKey')
+    const commandId = this.commandIdByIdempotencyKey.get(key)
+    if (!commandId) return null
+    return this.getByCommandId(commandId)
+  }
+
+  list(): HostCommandReceiptRecord[] {
+    return [...this.recordsByCommandId.values()]
+      .map(cloneRecord)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  /**
+   * Begin (or look up) a command receipt.
+   * - Exact same commandId + fingerprint, or same idempotencyKey + fingerprint:
+   *   returns the original receipt.
+   * - Same idempotencyKey with a different fingerprint: conflict (no write).
+   * - Same commandId with mismatched identity fields: conflict (no write).
+   */
+  begin(input: HostCommandReceiptBeginInput): HostCommandReceiptBeginResult {
+    const commandId = normalizeId(input.commandId, 'commandId')
+    const idempotencyKey = normalizeId(input.idempotencyKey, 'idempotencyKey')
+    const commandFingerprint = normalizeFingerprint(input.commandFingerprint)
+
+    const byId = this.recordsByCommandId.get(commandId)
+    if (byId) {
+      if (
+        byId.commandFingerprint === commandFingerprint &&
+        byId.idempotencyKey === idempotencyKey
+      ) {
+        return { kind: 'existing', receipt: cloneRecord(byId) }
+      }
+      return {
+        kind: 'conflict',
+        reason: 'command_id_mismatch',
+        existing: cloneRecord(byId),
+        requestedFingerprint: commandFingerprint
+      }
+    }
+
+    const existingCommandId = this.commandIdByIdempotencyKey.get(idempotencyKey)
+    if (existingCommandId) {
+      const existing = this.recordsByCommandId.get(existingCommandId)
+      if (existing) {
+        if (existing.commandFingerprint === commandFingerprint) {
+          return { kind: 'existing', receipt: cloneRecord(existing) }
+        }
+        return {
+          kind: 'conflict',
+          reason: 'idempotency_key_command_mismatch',
+          existing: cloneRecord(existing),
+          requestedFingerprint: commandFingerprint
+        }
+      }
+    }
+
+    const createdAt = input.createdAt ?? this.now()
+    const record: HostCommandReceiptRecord = {
+      schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
+      commandId,
+      idempotencyKey,
+      commandFingerprint,
+      status: 'pending',
+      actor: normalizeActor(input.actor),
+      target: normalizeTarget(input.target),
+      authority: normalizeAuthority(input.authority),
+      createdAt,
+      updatedAt: createdAt
+    }
+
+    this.indexRecord(record)
+    this.appendJournalEvent({ op: 'upsert', record })
+    this.maybeCompact()
+    return { kind: 'created', receipt: cloneRecord(record) }
+  }
+
+  /**
+   * Complete a pending or indeterminate receipt. Terminal statuses are
+   * idempotent when the same terminal status is re-applied.
+   */
+  complete(input: HostCommandReceiptCompleteInput): HostCommandReceiptRecord | null {
+    const commandId = normalizeId(input.commandId, 'commandId')
+    const current = this.recordsByCommandId.get(commandId)
+    if (!current) return null
+
+    if (
+      current.status === 'succeeded' ||
+      current.status === 'failed' ||
+      current.status === 'denied'
+    ) {
+      if (current.status === input.status) {
+        return cloneRecord(current)
+      }
+      throw new Error(
+        `HostCommandReceiptStore: receipt ${commandId} is already terminal (${current.status})`
+      )
+    }
+
+    const completedAt = input.completedAt ?? this.now()
+    const next: HostCommandReceiptRecord = {
+      ...current,
+      status: input.status,
+      updatedAt: completedAt,
+      completedAt,
+      ...(input.authority ? { authority: normalizeAuthority(input.authority) } : {}),
+      ...(input.errorCode !== undefined
+        ? { errorCode: truncateText(input.errorCode, MAX_KIND_CHARS) }
+        : {}),
+      ...(input.errorMessage !== undefined
+        ? { errorMessage: truncateText(input.errorMessage, MAX_ERROR_CHARS) }
+        : {}),
+      ...(input.resultSummary !== undefined
+        ? { resultSummary: truncateText(input.resultSummary, MAX_SUMMARY_CHARS) }
+        : {})
+    }
+    delete next.recoveryState
+
+    this.indexRecord(next)
+    this.appendJournalEvent({ op: 'upsert', record: next })
+    this.maybeCompact()
+    return cloneRecord(next)
+  }
+
+  /** Force compaction of journal into checkpoint, enforcing maxRecords. */
+  compact(): void {
+    this.writeCheckpointAndResetJournal()
+  }
+
+  get size(): number {
+    return this.recordsByCommandId.size
+  }
+
+  private indexRecord(record: HostCommandReceiptRecord): void {
+    this.recordsByCommandId.set(record.commandId, record)
+    this.commandIdByIdempotencyKey.set(record.idempotencyKey, record.commandId)
+  }
+
+  private maybeCompact(): void {
+    if (this.journalRecordCount >= this.compactAfterRecords) {
+      this.writeCheckpointAndResetJournal()
+    } else if (this.recordsByCommandId.size > this.maxRecords) {
+      this.writeCheckpointAndResetJournal()
+    }
+  }
+
+  private writeCheckpointAndResetJournal(): void {
+    let records = [...this.recordsByCommandId.values()].sort((a, b) => {
+      const byUpdated = b.updatedAt.localeCompare(a.updatedAt)
+      if (byUpdated !== 0) return byUpdated
+      return b.createdAt.localeCompare(a.createdAt)
+    })
+    if (records.length > this.maxRecords) {
+      records = records.slice(0, this.maxRecords)
+    }
+
+    this.recordsByCommandId = new Map()
+    this.commandIdByIdempotencyKey = new Map()
+    for (const record of records) {
+      this.indexRecord(record)
+    }
+
+    const doc: CheckpointDocument = {
+      schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
+      updatedAt: this.now(),
+      records: records.map(cloneRecord)
+    }
+
+    mkdirSync(this.dataDir, { recursive: true })
+    const tmpPath = `${this.checkpointPath}.${process.pid}.${randomUUID()}.tmp`
+    writeFileSync(tmpPath, `${JSON.stringify(doc)}\n`, { encoding: 'utf8', mode: 0o600 })
+    const fd = openSync(tmpPath, 'r+')
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    renameSync(tmpPath, this.checkpointPath)
+
+    try {
+      if (existsSync(this.journalPath)) {
+        unlinkSync(this.journalPath)
+      }
+    } catch (err) {
+      this.log(
+        `[HostCommandReceiptStore] journal reset failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+    this.journalRecordCount = 0
+  }
+
+  private appendJournalEvent(event: JournalEvent): void {
+    mkdirSync(this.dataDir, { recursive: true })
+    const line = `${JSON.stringify(event)}\n`
+    const descriptor = openSync(this.journalPath, 'a', 0o600)
+    try {
+      appendFileSync(descriptor, line, 'utf8')
+      fsyncSync(descriptor)
+    } finally {
+      closeSync(descriptor)
+    }
+    this.journalRecordCount += 1
+  }
+
+  private readCheckpoint(): HostCommandReceiptRecord[] {
+    if (!existsSync(this.checkpointPath)) return []
+    try {
+      const raw = readFileSync(this.checkpointPath, 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        this.log('[HostCommandReceiptStore] checkpoint malformed (not an object); starting empty')
+        return []
+      }
+      const doc = parsed as Partial<CheckpointDocument>
+      if (
+        doc.schemaVersion !== HOST_COMMAND_RECEIPT_SCHEMA_VERSION ||
+        !Array.isArray(doc.records)
+      ) {
+        this.log('[HostCommandReceiptStore] checkpoint schema mismatch; starting empty')
+        return []
+      }
+      return doc.records
+        .map(normalizeStoredRecord)
+        .filter((r): r is HostCommandReceiptRecord => r !== null)
+    } catch (err) {
+      this.log(
+        `[HostCommandReceiptStore] checkpoint load failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return []
+    }
+  }
+
+  private readJournal(): JournalEvent[] {
+    if (!existsSync(this.journalPath)) return []
+    let source: string
+    try {
+      source = readFileSync(this.journalPath, 'utf8')
+    } catch (err) {
+      this.log(
+        `[HostCommandReceiptStore] journal read failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return []
+    }
+
+    const events: JournalEvent[] = []
+    const lines = source.split('\n')
+    const endsWithNewline = source.endsWith('\n')
+    const lastContentIndex = endsWithNewline ? lines.length - 2 : lines.length - 1
+
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (!line) continue
+      try {
+        const event = parseJournalEvent(line)
+        if (event) events.push(event)
+      } catch {
+        if (index === lastContentIndex && !endsWithNewline) {
+          this.log('[HostCommandReceiptStore] dropped truncated journal tail')
+          break
+        }
+        this.log(`[HostCommandReceiptStore] skipped corrupt journal line at index ${index}`)
+      }
+    }
+    return events
+  }
+}
+
+/** Stable SHA-256 fingerprint helper for callers building canonical digests. */
+export function hostCommandFingerprint(parts: {
+  type: string
+  targetKind: string
+  targetId?: string
+  /** Pre-bounded arg digest (never raw unrestricted args). */
+  argsDigest?: string
+}): string {
+  const canonical = JSON.stringify({
+    type: parts.type,
+    targetKind: parts.targetKind,
+    targetId: parts.targetId ?? null,
+    argsDigest: parts.argsDigest ?? null
+  })
+  return createHash('sha256').update(canonical, 'utf8').digest('hex')
+}
+
+function cloneRecord(record: HostCommandReceiptRecord): HostCommandReceiptRecord {
+  return JSON.parse(JSON.stringify(record)) as HostCommandReceiptRecord
+}
+
+function normalizeId(value: string, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`HostCommandReceiptStore: ${field} is required`)
+  }
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > MAX_ID_CHARS) {
+    throw new Error(`HostCommandReceiptStore: ${field} is invalid`)
+  }
+  return trimmed
+}
+
+function normalizeFingerprint(value: string): string {
+  if (typeof value !== 'string') {
+    throw new Error('HostCommandReceiptStore: commandFingerprint is required')
+  }
+  const trimmed = value.trim().toLowerCase()
+  if (!trimmed || trimmed.length > 128 || !/^[a-f0-9]+$/.test(trimmed)) {
+    throw new Error('HostCommandReceiptStore: commandFingerprint must be a hex digest')
+  }
+  return trimmed
+}
+
+function normalizeActor(actor: HostCommandReceiptActor): HostCommandReceiptActor {
+  const clientId = normalizeId(actor.clientId, 'actor.clientId')
+  const out: HostCommandReceiptActor = { clientId }
+  if (actor.clientKind) out.clientKind = truncateText(actor.clientKind, MAX_KIND_CHARS)
+  if (actor.actorId) out.actorId = truncateText(actor.actorId, MAX_ID_CHARS)
+  return out
+}
+
+function normalizeTarget(target: HostCommandReceiptTarget): HostCommandReceiptTarget {
+  const kind = truncateText(target.kind, MAX_KIND_CHARS)
+  if (!kind) throw new Error('HostCommandReceiptStore: target.kind is required')
+  const out: HostCommandReceiptTarget = { kind }
+  if (target.id) out.id = truncateText(target.id, MAX_ID_CHARS)
+  return out
+}
+
+function normalizeAuthority(authority: HostCommandReceiptAuthority): HostCommandReceiptAuthority {
+  const decision = authority.decision
+  if (decision !== 'allowed' && decision !== 'denied' && decision !== 'deferred') {
+    throw new Error('HostCommandReceiptStore: authority.decision is invalid')
+  }
+  const out: HostCommandReceiptAuthority = { decision }
+  if (authority.reason) out.reason = truncateText(authority.reason, MAX_REASON_CHARS)
+  if (authority.policy) out.policy = truncateText(authority.policy, MAX_KIND_CHARS)
+  return out
+}
+
+function truncateText(value: string, max: number): string {
+  const trimmed = String(value).trim()
+  if (trimmed.length <= max) return trimmed
+  return trimmed.slice(0, max)
+}
+
+function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Record<string, unknown>
+  if (raw.schemaVersion !== HOST_COMMAND_RECEIPT_SCHEMA_VERSION) return null
+  if (typeof raw.commandId !== 'string' || !raw.commandId) return null
+  if (typeof raw.idempotencyKey !== 'string' || !raw.idempotencyKey) return null
+  if (typeof raw.commandFingerprint !== 'string' || !raw.commandFingerprint) return null
+  if (
+    raw.status !== 'pending' &&
+    raw.status !== 'succeeded' &&
+    raw.status !== 'failed' &&
+    raw.status !== 'denied' &&
+    raw.status !== 'indeterminate'
+  ) {
+    return null
+  }
+  if (typeof raw.createdAt !== 'string' || typeof raw.updatedAt !== 'string') return null
+  if (!raw.actor || typeof raw.actor !== 'object' || Array.isArray(raw.actor)) return null
+  if (!raw.target || typeof raw.target !== 'object' || Array.isArray(raw.target)) return null
+  if (!raw.authority || typeof raw.authority !== 'object' || Array.isArray(raw.authority))
+    return null
+
+  try {
+    const actor = normalizeActor(raw.actor as HostCommandReceiptActor)
+    const target = normalizeTarget(raw.target as HostCommandReceiptTarget)
+    const authority = normalizeAuthority(raw.authority as HostCommandReceiptAuthority)
+    const record: HostCommandReceiptRecord = {
+      schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
+      commandId: normalizeId(raw.commandId, 'commandId'),
+      idempotencyKey: normalizeId(raw.idempotencyKey, 'idempotencyKey'),
+      commandFingerprint: normalizeFingerprint(raw.commandFingerprint),
+      status: raw.status,
+      actor,
+      target,
+      authority,
+      createdAt: raw.createdAt,
+      updatedAt: raw.updatedAt
+    }
+    if (typeof raw.completedAt === 'string') record.completedAt = raw.completedAt
+    if (typeof raw.errorCode === 'string')
+      record.errorCode = truncateText(raw.errorCode, MAX_KIND_CHARS)
+    if (typeof raw.errorMessage === 'string') {
+      record.errorMessage = truncateText(raw.errorMessage, MAX_ERROR_CHARS)
+    }
+    if (typeof raw.resultSummary === 'string') {
+      record.resultSummary = truncateText(raw.resultSummary, MAX_SUMMARY_CHARS)
+    }
+    if (raw.recoveryState === 'recoverable-indeterminate') {
+      record.recoveryState = 'recoverable-indeterminate'
+    }
+    return record
+  } catch {
+    return null
+  }
+}
+
+function parseJournalEvent(line: string): JournalEvent | null {
+  const parsed: unknown = JSON.parse(line)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('malformed journal event')
+  }
+  const raw = parsed as Record<string, unknown>
+  if (raw.op === 'upsert') {
+    const record = normalizeStoredRecord(raw.record)
+    if (!record) throw new Error('malformed upsert record')
+    return { op: 'upsert', record }
+  }
+  if (raw.op === 'compact') {
+    if (!Array.isArray(raw.retainedCommandIds) || typeof raw.at !== 'string') {
+      throw new Error('malformed compact event')
+    }
+    const retainedCommandIds = raw.retainedCommandIds.filter(
+      (id): id is string => typeof id === 'string' && id.length > 0
+    )
+    return { op: 'compact', retainedCommandIds, at: raw.at }
+  }
+  throw new Error('unknown journal op')
+}
