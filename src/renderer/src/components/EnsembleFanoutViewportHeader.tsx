@@ -7,6 +7,7 @@ import {
 import { getProviderLabel } from '../lib/providerLabels'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { CollapsedTranscriptRow } from './CollapsedTranscriptRow'
+import { ToolFamilyIcon } from './icons/ToolFamilyIcon'
 
 const MAX_VISIBLE_PROVIDER_STRINGS = 8
 
@@ -96,6 +97,15 @@ export function EnsembleFanoutViewportHeader({
           </>
         }
         compact
+        icons={
+          <span className="ensemble-fanout-viewport-glyph" aria-hidden="true">
+            <ToolFamilyIcon
+              family="fanout"
+              size={18}
+              className="ensemble-fanout-viewport-glyph-icon"
+            />
+          </span>
+        }
         expanded={data.expanded}
         onToggle={(expanded) => onSetExpanded(data.viewportId, expanded)}
         ariaTargetLabel={`${stageLabel} fan-out with ${laneLabel}`}

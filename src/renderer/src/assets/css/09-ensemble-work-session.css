@@ -4871,19 +4871,53 @@
   min-width: 0;
 }
 
+/* Fan-out is an actioned transcript summary, not a low-priority system
+ * notice. It deliberately overrides the generic compact 12px treatment so
+ * the round-level control can be read alongside its full-size lane cards. */
+.ensemble-fanout-viewport-header
+  .collapsed-activity-stack.is-compact
+  .collapsed-activity-stack-summary {
+  gap: 0.45rem;
+  padding: 4px 0;
+  /* Default theme: 18.1px — a 1.5× lift from the 12px compact default,
+   * while still respecting the configured transcript scale. */
+  font-size: calc(var(--font-size-md) - 1px);
+  line-height: 1.35;
+}
+
+.ensemble-fanout-viewport-header .collapsed-activity-stack-meta {
+  font-size: 0.72em;
+  letter-spacing: 0.02em;
+}
+
+.ensemble-fanout-viewport-glyph {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--accent);
+}
+
+.ensemble-fanout-viewport-glyph-icon {
+  display: block;
+}
+
 .ensemble-fanout-viewport-stage {
   color: var(--text-primary);
   font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .ensemble-fanout-viewport-count {
   color: var(--text-secondary);
+  font-size: 0.8em;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .ensemble-fanout-viewport-providers {
   min-width: 0;
   color: var(--text-tertiary);
+  font-size: 0.8em;
 }
 
 .ensemble-fanout-viewport-provider {
