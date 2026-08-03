@@ -69,6 +69,8 @@ final class ThreadTranscriptStore: ObservableObject {
     /// this-thread card/snapshot change as well as on a key-set change.
     private var lastCard: RemoteTaskCard?
     private var lastSnap: RemoteThreadSnapshot?
+    /// Direct children drive the live sub-thread ticker and invocation status.
+    private var lastChildren: [RemoteTaskCard] = []
 
     /// (Re)bind to a thread. Called from `.onAppear` (first mount) and
     /// `.onChange(of: taskId)` (in-place swap) — both synchronous, so no model
@@ -84,6 +86,7 @@ final class ThreadTranscriptStore: ObservableObject {
             taskId: taskId, cards: latestCards, snapshots: latestSnaps)
         lastCard = card(latestCards)
         lastSnap = slice(latestSnaps)
+        lastChildren = children(latestCards)
         wire()
     }
 
@@ -123,6 +126,13 @@ final class ThreadTranscriptStore: ObservableObject {
         cards.first { $0.id == taskId || $0.threadId == taskId }
     }
 
+    private func children(_ cards: [RemoteTaskCard]) -> [RemoteTaskCard] {
+        cards.filter { card in
+            guard let parentChatId = card.parentChatId else { return false }
+            return cachedKeys.contains(parentChatId) && card.parentChatRelation != "sideChat"
+        }
+    }
+
     private func fire() {
         objectWillChange.send()
     }
@@ -143,8 +153,12 @@ final class ThreadTranscriptStore: ObservableObject {
                 self.cachedKeys = Self.resolvedThreadKeys(
                     taskId: self.taskId, cards: cards, snapshots: self.latestSnaps)
                 let newCard = self.card(cards)
-                if self.cachedKeys != before || newCard != self.lastCard {
+                let newChildren = self.children(cards)
+                if self.cachedKeys != before || newCard != self.lastCard
+                    || newChildren != self.lastChildren
+                {
                     self.lastCard = newCard
+                    self.lastChildren = newChildren
                     self.fire()
                 }
             }

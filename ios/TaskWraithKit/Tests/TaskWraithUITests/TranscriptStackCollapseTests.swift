@@ -23,12 +23,17 @@ struct TranscriptStackCollapseTests {
         let question = try row(
             #"{"id":"q1","role":"tool","toolSummary":{"activityCount":1},"agentQuestion":{"promptId":"p1","question":"Pick one"}}"#
         )
+        let delegation = try row(
+            #"{"id":"d1","role":"system","preview":"Delegated","subThreadDelegation":{"subThreadId":"sub-1"}}"#
+        )
 
         #expect(twCanCollapseIntoStack(tool))
         #expect(twCanCollapseIntoStack(thinking))
         #expect(!twCanCollapseIntoStack(answer))
         // Interactive cards never fold away.
         #expect(!twCanCollapseIntoStack(question))
+        #expect(!twCanCollapseIntoStack(delegation))
+        #expect(!twIsPlainSystemNoticeRow(delegation))
         // A thinking trace attached to an answer body is not thinking-only.
         let thinkingWithBody = try row(
             #"{"id":"th2","preview":"body","thinking":{"preview":"pondering"}}"#)

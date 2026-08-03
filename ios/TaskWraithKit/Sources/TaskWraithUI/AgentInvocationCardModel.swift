@@ -61,9 +61,9 @@ enum AgentInvocationRoute: String, Equatable, Sendable {
     }
 }
 
-/// Honest presentation input for the invocation card. Wire projection of
-/// `subThreadDelegation` is still Boss-owned; until that lands, callers can
-/// build this from known child-card + metadata fields without inventing rows.
+/// Honest presentation input for the invocation card. The transcript adapter
+/// joins immutable delegation wire metadata to the linked child task card
+/// without inventing lifecycle or navigation authority.
 struct AgentInvocationCardInput: Equatable, Sendable, Identifiable {
     var id: String { subThreadId ?? title }
     let subThreadId: String?

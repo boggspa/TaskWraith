@@ -2,9 +2,8 @@ import SwiftUI
 import TaskWraithKit
 
 /// Extracted Agent Invocation card — iOS mirror of desktop
-/// `SubThreadDelegationCard`. Boss wires this from `ThreadRowView` once the
-/// remote row carries structured delegation fields; until then the input is
-/// an honest presentation model.
+/// `SubThreadDelegationCard`. `ThreadRowView` supplies the structured wire
+/// metadata, live child status, and an existing-child-only navigation intent.
 struct AgentInvocationCard: View {
     let input: AgentInvocationCardInput
     /// Resolved open intent for the existing child. Missing/stale ids disable
@@ -71,7 +70,7 @@ struct AgentInvocationCard: View {
             RoundedRectangle(cornerRadius: 12)
                 .strokeBorder(accent.opacity(0.54), lineWidth: 1.2)
         )
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilitySummary)
     }
 

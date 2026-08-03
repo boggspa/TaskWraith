@@ -370,6 +370,19 @@ struct ThreadDetailView: View {
     private func isMessagePinned(_ messageId: String) -> Bool {
         snapshot?.pinnedRows?.contains(where: { $0.id == messageId }) == true
     }
+    private func linkedChildCard(for row: RemoteThreadSnapshot.Row) -> RemoteTaskCard? {
+        let childId = row.subThreadDelegation?.subThreadId ?? row.subThreadReturn?.subThreadId
+        guard let childId else { return nil }
+        return model.taskCards.first { $0.id == childId }
+    }
+    private var subThreadTickerModel: SubThreadTickerModel {
+        SubThreadStatusTicker.build(
+            parentThreadId: card?.id ?? taskId,
+            parentProvider: card?.provider,
+            taskCards: model.taskCards,
+            runningChatIds: nil
+        )
+    }
     /// Slice 5 (RC4): this thread's current wake generation (bumped by a
     /// notification tap / foreground targeting it).
     private var wakeRefreshGeneration: Int { model.wakeRefreshGeneration[taskId] ?? 0 }
@@ -1093,6 +1106,7 @@ struct ThreadDetailView: View {
                 isExpanding: model.expandingRows.contains(row.id),
                 participants: transcriptParticipants,
                 isPinned: isMessagePinned(row.id),
+                linkedChildCard: linkedChildCard(for: row),
                 workingParticipantIds: workingParticipantIds
             )
             .equatable()
@@ -1121,6 +1135,7 @@ struct ThreadDetailView: View {
                     isExpanding: model.expandingRows.contains(row.id),
                     participants: transcriptParticipants,
                     isPinned: isMessagePinned(row.id),
+                    linkedChildCard: linkedChildCard(for: row),
                     workingParticipantIds: workingParticipantIds
                 )
                 .equatable()
@@ -1918,6 +1933,10 @@ struct ThreadDetailView: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 4) {
+                SubThreadStatusTickerView(model: subThreadTickerModel) { childId in
+                    model.navigationTarget = childId
+                }
+
                 TranscriptParticipantFilterRail(
                     items: transcriptFilterItems,
                     activeFilterKeys: activeTranscriptFilterKeys
@@ -2013,6 +2032,7 @@ struct ThreadDetailView: View {
                 isExpanding: model.expandingRows.contains(row.id),
                 participants: transcriptParticipants,
                 isPinned: isMessagePinned(row.id),
+                linkedChildCard: linkedChildCard(for: row),
                 workingParticipantIds: workingParticipantIds
             )
             .equatable()
@@ -3589,6 +3609,8 @@ struct SubThreadReturnSummaryCard: View {
     let summary: RemoteThreadSnapshot.Row.SubThreadReturn
     let resultText: String
     let participants: [RemoteEnsembleState.Participant]
+    let navigation: ExistingChildNavigationIntent
+    var onOpenExistingChild: ((String) -> Void)?
 
     private var provider: String { summary.provider ?? "unknown" }
     private var title: String {
@@ -3617,6 +3639,19 @@ struct SubThreadReturnSummaryCard: View {
                 )
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if navigation.isAvailable, let childId = navigation.subThreadId,
+                onOpenExistingChild != nil
+            {
+                Button {
+                    onOpenExistingChild?(childId)
+                } label: {
+                    Label(navigation.actionLabel, systemImage: "arrow.up.right.square")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.chroma1)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(navigation.accessibilityLabel)
             }
         }
         .padding(10)
@@ -4181,6 +4216,9 @@ struct ThreadRowView: View, Equatable {
     let isExpanding: Bool
     let participants: [RemoteEnsembleState.Participant]
     let isPinned: Bool
+    /// Linked child state is an explicit equality input, so an invocation card
+    /// updates when only the child run status changes.
+    var linkedChildCard: RemoteTaskCard? = nil
     /// Seats still working, straight from the Mac's projection. Defaulted so
     /// the callers that render outside a live ensemble need not thread it.
     ///
@@ -4206,6 +4244,7 @@ struct ThreadRowView: View, Equatable {
             && lhs.agentIdentity == rhs.agentIdentity
             && lhs.isExpanding == rhs.isExpanding
             && lhs.isPinned == rhs.isPinned
+            && lhs.linkedChildCard == rhs.linkedChildCard
             // Compared even though participant status is not: this set changes
             // only at lane start/finish, and it is what turns the fan-out rim
             // shimmer on and off.
@@ -4225,7 +4264,8 @@ struct ThreadRowView: View, Equatable {
         // text it already renders).
         (row.truncated == true || hasElidedFanoutParts) && !hasParticipantHealthCard
             && !hasProposedPlanCard && !hasAgentQuestionCard && !hasContextCompactionCard
-            && !hasRunFailureCard && !hasTrustAwareCard
+            && !hasRunFailureCard && !hasTrustAwareCard && !hasSubThreadReturnCard
+            && !hasAgentInvocationCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -4239,7 +4279,34 @@ struct ThreadRowView: View, Equatable {
     private var hasTrustAwareCard: Bool {
         row.threadMessage != nil || row.peopleContribution != nil
     }
+    private var linkedChildCards: [RemoteTaskCard] {
+        if let linkedChildCard { return [linkedChildCard] }
+        return []
+    }
+    private var agentInvocationInput: AgentInvocationCardInput? {
+        DelegationTranscriptRowAdapter.input(for: row, childCards: linkedChildCards)
+    }
+    private var agentInvocationNavigation: ExistingChildNavigationIntent {
+        DelegationTranscriptRowAdapter.navigation(
+            for: row,
+            parentThreadId: threadCard?.id ?? threadId,
+            childCards: linkedChildCards,
+            preferredDestination: .openInMain
+        )
+    }
+    private var subThreadReturnNavigation: ExistingChildNavigationIntent {
+        ExistingChildNavigation.resolve(
+            subThreadId: row.subThreadReturn?.subThreadId,
+            parentThreadId: threadCard?.id ?? threadId,
+            childCards: linkedChildCards,
+            preferredDestination: .openInMain
+        )
+    }
+    private var hasAgentInvocationCard: Bool { agentInvocationInput != nil }
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
+    private var hasDelegationLifecycleCard: Bool {
+        hasAgentInvocationCard || hasSubThreadReturnCard
+    }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
     private var hasContextCompactionCard: Bool {
@@ -4291,9 +4358,10 @@ struct ThreadRowView: View, Equatable {
                 identity: activeAgentIdentity,
                 fallbackAccent: accentColor,
                 hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
-                    || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard)
+                    || hasFanoutResultCard || hasRunFailureCard || hasTrustAwareCard
+                    || hasDelegationLifecycleCard)
             VStack(alignment: .leading, spacing: 4) {
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
                     && !hasFanoutResultCard && !hasRunFailureCard && !hasTrustAwareCard
                 {
@@ -4369,11 +4437,33 @@ struct ThreadRowView: View, Equatable {
                             showSideChat: false
                         )
                     }
+                } else if let agentInvocationInput {
+                    AgentInvocationCard(
+                        input: agentInvocationInput,
+                        navigation: agentInvocationNavigation,
+                        onOpenExistingChild: { childId, _ in
+                            model.navigationTarget = childId
+                        }
+                    )
+                    .contextMenu {
+                        messageActionMenu(
+                            content: row.preview ?? "",
+                            copyLabel: "Copy invocation",
+                            pinLabelPinned: "Unpin invocation",
+                            pinLabelUnpinned: "Pin invocation",
+                            showAddToPrompt: false,
+                            showSideChat: false
+                        )
+                    }
                 } else if let subThreadReturn = row.subThreadReturn {
                     SubThreadReturnSummaryCard(
                         summary: subThreadReturn,
                         resultText: row.preview ?? "",
-                        participants: participants
+                        participants: participants,
+                        navigation: subThreadReturnNavigation,
+                        onOpenExistingChild: { childId in
+                            model.navigationTarget = childId
+                        }
                     )
                     .contextMenu {
                         messageActionMenu(
@@ -4382,7 +4472,7 @@ struct ThreadRowView: View, Equatable {
                             pinLabelPinned: "Unpin result",
                             pinLabelUnpinned: "Pin result",
                             showAddToPrompt: false,
-                            showSideChat: true
+                            showSideChat: false
                         )
                     }
                 } else if !hasFanoutTranscriptParts, let tools = row.toolSummary,
@@ -4411,7 +4501,7 @@ struct ThreadRowView: View, Equatable {
                 // so an image attached to the plan turn can't render orphaned
                 // beneath the card. Guard every branch — gating only the first
                 // would fall through to the else-ifs.
-                if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let media = row.media, !media.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4420,7 +4510,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let thumbs = row.imageThumbnails, !thumbs.isEmpty
                 {
                     #if canImport(UIKit)
@@ -4428,7 +4518,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if !hasTrustAwareCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                } else if !hasTrustAwareCard, !hasDelegationLifecycleCard, !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let count = row.imageAttachmentCount, count > 0
                 {
                     imageAttachmentChip(count)
@@ -4438,7 +4528,7 @@ struct ThreadRowView: View, Equatable {
                 // "Show thinking" chip, in-place expand, full text via the
                 // existing expandRow path when host-truncated. Renders ABOVE
                 // the answer body, mirroring desktop chronology.
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasRunFailureCard && !hasTrustAwareCard,
                     let thinking = row.thinking,
                     let thinkingText = thinking.preview, !thinkingText.isEmpty
@@ -4450,7 +4540,7 @@ struct ThreadRowView: View, Equatable {
                             model.expandRow(threadId: threadId, rowId: row.id)
                         })
                 }
-                if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+                if !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
                     && !hasTrustAwareCard,
                     let preview = row.preview, !preview.isEmpty
@@ -4614,7 +4704,7 @@ struct ThreadRowView: View, Equatable {
     /// User + assistant prose rows get the action chrome; special cards keep
     /// their own surface (plans, questions, health, pure tool chips).
     private var showsMessageActionChrome: Bool {
-        !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+        !hasParticipantHealthCard && !hasDelegationLifecycleCard && !hasProposedPlanCard
             && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard && !isTool
             && (row.role == "user" || row.role == "assistant" || row.kind == "assistant"
                 || row.kind == "user" || row.kind == "message")

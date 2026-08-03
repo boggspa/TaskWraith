@@ -51,7 +51,8 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
 /// would hide an error behind a summary that reads like success.
 private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
     row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
-        || row.subThreadReturn != nil || row.fanoutResult != nil || row.runFailure != nil
+        || row.subThreadReturn != nil || row.subThreadDelegation != nil
+        || row.fanoutResult != nil || row.runFailure != nil
 }
 
 /// True when the transcript window carries a row that explains why `runId`

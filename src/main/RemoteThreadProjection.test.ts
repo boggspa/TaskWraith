@@ -827,6 +827,48 @@ describe('RemoteThreadProjection', () => {
       })
     })
 
+    it('projects structured Agent Invocation metadata and sibling return state', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'delegation',
+          role: 'system',
+          content: '↪ Delegated to Codex sub-thread.',
+          metadata: {
+            kind: 'subThreadDelegation',
+            subThreadId: 'sub-1',
+            parentProvider: 'claude',
+            subThreadProvider: 'codex',
+            subThreadTitle: 'Build check',
+            delegationPromptPreview: 'Run the focused checks',
+            returnResultToParent: true
+          }
+        }),
+        msg(2, {
+          id: 'child-prompt',
+          role: 'user',
+          content: 'Run the focused checks',
+          metadata: { kind: 'subThreadDelegation', subThreadId: 'sub-1' }
+        }),
+        msg(3, {
+          id: 'sub-return',
+          role: 'tool',
+          content: '↩ Result from Codex sub-thread:\n\nDone.',
+          metadata: { kind: 'subThreadReturn', subThreadId: 'sub-1' }
+        })
+      ])
+
+      expect(snap.rows[0]?.subThreadDelegation).toEqual({
+        subThreadId: 'sub-1',
+        parentProvider: 'claude',
+        targetProvider: 'codex',
+        title: 'Build check',
+        promptPreview: 'Run the focused checks',
+        returnResultToParent: true,
+        resultReturned: true
+      })
+      expect(snap.rows[1]?.subThreadDelegation).toBeUndefined()
+    })
+
     it('projects returned sub-thread results as structured compact result rows', () => {
       const snap = project(
         { kind: 'latestN', n: 10 },

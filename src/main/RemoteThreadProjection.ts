@@ -531,6 +531,20 @@ export interface RemoteSubThreadReturnSummary {
   title?: string
 }
 
+/** Structured TaskWraith sub-thread invocation metadata. Lifecycle is resolved
+ * on the phone from the linked child task card; resultReturned is indexed
+ * across sibling transcript rows so a completed return is not mistaken for an
+ * ordinary terminal child run. */
+export interface RemoteSubThreadDelegationSummary {
+  subThreadId?: string
+  parentProvider?: ProviderId
+  targetProvider?: ProviderId
+  title?: string
+  promptPreview?: string
+  returnResultToParent?: boolean
+  resultReturned?: boolean
+}
+
 /** Structured identity for a mirrored guest-participant reply — lets remote
  * clients render the reply as a provider-tinted "Provider / Guest" bubble with
  * a model badge, matching the desktop guest-reply card. */
@@ -819,6 +833,8 @@ export interface RemoteThreadRow {
   peopleContribution?: RemotePeopleContributionSummary
   /** Structured metadata for returned TaskWraith sub-thread output. */
   subThreadReturn?: RemoteSubThreadReturnSummary
+  /** Structured metadata for a TaskWraith Agent Invocation card. */
+  subThreadDelegation?: RemoteSubThreadDelegationSummary
   /** Present for a mirrored guest-participant reply — the guest's identity so
    * remote clients render it inline like the desktop guest bubble. */
   guestReply?: RemoteGuestReplySummary
@@ -1623,6 +1639,35 @@ function buildSubThreadReturn(
   return { summary, body: subThreadReturnBody(message.content || '') }
 }
 
+function buildSubThreadDelegation(
+  message: ChatMessage,
+  returnedSubThreadIds?: ReadonlySet<string>
+): RemoteSubThreadDelegationSummary | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  // The child run's own first USER prompt also carries this metadata kind.
+  // Desktop selects only the parent transcript's SYSTEM projection, so remote
+  // clients must make the same distinction.
+  if (message.role !== 'system' || metadata?.kind !== 'subThreadDelegation') return undefined
+  const summary: RemoteSubThreadDelegationSummary = {}
+  const subThreadId = stringField(metadata.subThreadId, 120)
+  if (subThreadId) {
+    summary.subThreadId = subThreadId
+    if (returnedSubThreadIds?.has(subThreadId)) summary.resultReturned = true
+  }
+  const parentProvider = providerField(metadata.parentProvider)
+  if (parentProvider) summary.parentProvider = parentProvider
+  const targetProvider = providerField(metadata.subThreadProvider)
+  if (targetProvider) summary.targetProvider = targetProvider
+  const title = stringField(metadata.subThreadTitle, 160)
+  if (title) summary.title = title
+  const promptPreview =
+    stringField(metadata.delegationPromptPreview, 240) ||
+    stringField(metadata.delegationPrompt, 240)
+  if (promptPreview) summary.promptPreview = promptPreview
+  if (metadata.returnResultToParent === true) summary.returnResultToParent = true
+  return summary
+}
+
 function buildGuestReply(
   message: ChatMessage
 ): { summary: RemoteGuestReplySummary; speaker?: string } | undefined {
@@ -2119,11 +2164,13 @@ function buildRow(
   attentionKind: RemoteAttentionKind | null,
   fallbackPooledAgentIdentity?: RemotePooledAgentIdentity,
   questionAnswers?: RemoteAgentQuestionAnswers,
-  runProviderHueClasses?: ReadonlyMap<string, string>
+  runProviderHueClasses?: ReadonlyMap<string, string>,
+  returnedSubThreadIds?: ReadonlySet<string>
 ): RemoteThreadRow {
   const threadMessage = buildThreadMessage(message)
   const peopleContribution = buildPeopleContribution(message)
   const subThreadReturn = buildSubThreadReturn(message)
+  const subThreadDelegation = buildSubThreadDelegation(message, returnedSubThreadIds)
   const guestReply = buildGuestReply(message)
   const { preview, truncated } = sanitizePreview(subThreadReturn?.body ?? message.content, previewMax)
   const row: RemoteThreadRow = {
@@ -2241,6 +2288,7 @@ function buildRow(
   }
   if (peopleContribution) row.peopleContribution = peopleContribution
   if (subThreadReturn) row.subThreadReturn = subThreadReturn.summary
+  if (subThreadDelegation) row.subThreadDelegation = subThreadDelegation
   if (guestReply) {
     row.guestReply = guestReply.summary
     // soloSpeakerForMessage skips system rows, so the caller never sets a
@@ -3097,6 +3145,13 @@ export function projectRemoteThread(
   // Built once over the WHOLE message list: buildRow sees one message at a
   // time, and a question's answer lives on a separate reply row.
   const questionAnswers = indexRemoteAgentQuestionAnswers(all)
+  const returnedSubThreadIds = new Set(
+    all
+      .filter((message) => message.metadata?.kind === 'subThreadReturn')
+      .map((message) => stringField(message.metadata?.subThreadId, 120))
+      .filter((id): id is string => Boolean(id))
+  )
+
   const pinnedRows = capRowThumbnails(
     all
       .filter(
@@ -3116,7 +3171,8 @@ export function projectRemoteThread(
           null,
           fallbackPooledAgentIdentity,
           questionAnswers,
-          runProviderHueClasses
+          runProviderHueClasses,
+          returnedSubThreadIds
         )
       ),
     MAX_PINNED_THUMBNAIL_BASE64
@@ -3182,7 +3238,8 @@ export function projectRemoteThread(
       att,
       fallbackPooledAgentIdentity,
       questionAnswers,
-      runProviderHueClasses
+      runProviderHueClasses,
+      returnedSubThreadIds
     )
     const speaker = row.pooledAgentIdentity?.nickname || opts.speakerForMessage?.(message)
     if (speaker) row.speaker = speaker

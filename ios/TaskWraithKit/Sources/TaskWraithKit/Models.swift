@@ -1606,6 +1606,18 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let title: String?
         }
         public let subThreadReturn: SubThreadReturn?
+        /// Structured TaskWraith Agent Invocation metadata. Lifecycle is
+        /// joined to the linked child task card by the UI adapter.
+        public struct SubThreadDelegation: Codable, Sendable, Equatable {
+            public let subThreadId: String?
+            public let parentProvider: String?
+            public let targetProvider: String?
+            public let title: String?
+            public let promptPreview: String?
+            public let returnResultToParent: Bool?
+            public let resultReturned: Bool?
+        }
+        public let subThreadDelegation: SubThreadDelegation?
         /// Structured Codex-style proposed-plan card — the desktop
         /// ProposedPlanCard's persisted state, projected so the phone renders
         /// the same inline collapsible plan card and can round-trip the
