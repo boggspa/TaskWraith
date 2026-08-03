@@ -65,6 +65,43 @@ describe('CodexMcpRouting', () => {
     ).toEqual(route)
   })
 
+  it('preserves the route when portable Ensemble control arguments are flattened', () => {
+    const route = {
+      appRunId: 'run-boss',
+      appChatId: 'chat-boss',
+      ensembleParticipantId: 'participant-boss'
+    }
+    const hints: CodexMcpRouteHint[] = [
+      {
+        itemId: 'item-boss',
+        toolName: 'ensemble_control',
+        args: {
+          action: 'fanout',
+          params: {
+            participantRoles: ['worker'],
+            reason: 'Dispatch the approved implementation lanes.'
+          }
+        },
+        route,
+        startedAtMs: 1_000
+      }
+    ]
+
+    expect(
+      resolveCodexMcpRouteHint({
+        hints,
+        nowMs: 1_500,
+        toolName: 'ensemble_bossman_control',
+        args: {
+          action: 'fanout',
+          participantRoles: ['worker'],
+          reason: 'Dispatch the approved implementation lanes.'
+        },
+        maxAgeMs: 5_000
+      })
+    ).toEqual(route)
+  })
+
   it('fails closed when the match is ambiguous', () => {
     const hints: CodexMcpRouteHint[] = [
       {
