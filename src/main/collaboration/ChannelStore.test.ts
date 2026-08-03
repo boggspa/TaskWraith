@@ -179,6 +179,94 @@ describe('ChannelStore', () => {
     }))
     expect(available).toMatchObject({ state: 'available', value: { redacted: true } })
   })
+
+  it('isolates envelope drift to one channel and preserves the others', () => {
+    const directory = temporaryDirectory()
+    const storePath = join(directory, 'channels.json')
+    const store = new ChannelStore(storePath)
+    const a = store.createChannel({
+      chatId: 'chat-a',
+      owner: { displayName: 'Host A', identityPublicKey: 'ed25519:a' },
+      title: 'Room A',
+      now: 1_000
+    })
+    const b = store.createChannel({
+      chatId: 'chat-b',
+      owner: { displayName: 'Host B', identityPublicKey: 'ed25519:b' },
+      title: 'Room B',
+      now: 2_000
+    })
+
+    const onDisk = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      channels: Array<{ channelId: string; display: { messageCount: number } }>
+    }
+    const drifted = onDisk.channels.find((channel) => channel.channelId === a.channel.channelId)
+    expect(drifted).toBeDefined()
+    drifted!.display.messageCount = 999
+    writeFileSync(storePath, JSON.stringify(onDisk), 'utf8')
+
+    const reloaded = new ChannelStore(storePath)
+    expectCode(() => reloaded.getDisplayEnvelope(a.channel.channelId), 'recovery_blocked')
+    expectCode(
+      () =>
+        reloaded.admitMember({
+          channelId: a.channel.channelId,
+          displayName: 'X',
+          identityPublicKey: 'ed25519:x',
+          roomId: 'room-x'
+        }),
+      'recovery_blocked'
+    )
+    expect(reloaded.getDisplayEnvelope(b.channel.channelId)).toEqual({
+      title: 'Room B',
+      status: 'active',
+      memberCount: 1,
+      messageCount: 0
+    })
+    expect(reloaded.listMembers(b.channel.channelId)).toHaveLength(1)
+    expect(reloaded.getChannel(b.channel.channelId)?.chatId).toBe('chat-b')
+  })
+
+  it('marks the whole store recovery-blocked when the snapshot is fully corrupt', () => {
+    const directory = temporaryDirectory()
+    const storePath = join(directory, 'channels.json')
+    writeFileSync(storePath, JSON.stringify({ garbage: true }), 'utf8')
+
+    const store = new ChannelStore(storePath)
+    expectCode(
+      () =>
+        store.createChannel({
+          chatId: 'any',
+          owner: { displayName: 'Host', identityPublicKey: 'ed25519:host' },
+          title: 'Nope'
+        }),
+      'recovery_blocked'
+    )
+    expectCode(() => store.getDisplayEnvelope('missing'), 'recovery_blocked')
+  })
+
+  it('loads a missing or empty store as a fresh empty store without error', () => {
+    const directory = temporaryDirectory()
+    const missingPath = join(directory, 'missing-channels.json')
+    const missing = new ChannelStore(missingPath)
+    expect(missing.getChannel('none')).toBeNull()
+
+    const emptyPath = join(directory, 'empty-channels.json')
+    writeFileSync(
+      emptyPath,
+      JSON.stringify({ schemaVersion: 1, channels: [], members: [] }),
+      'utf8'
+    )
+    const empty = new ChannelStore(emptyPath)
+    const created = empty.createChannel({
+      chatId: 'fresh-chat',
+      owner: { displayName: 'Host', identityPublicKey: 'ed25519:host' },
+      title: 'Fresh room',
+      now: 3_000
+    })
+    expect(created.channel.chatId).toBe('fresh-chat')
+    expect(empty.getDisplayEnvelope(created.channel.channelId).title).toBe('Fresh room')
+  })
 })
 
 describe('ChannelMessageLog', () => {

@@ -162,6 +162,8 @@ export class ChannelStore {
     members: []
   }
   private recoveryBlocked = false
+  /** Per-channel isolation when one channel's display envelope drifts on disk. */
+  private channelRecoveryBlocked = new Set<string>()
 
   constructor(private readonly storagePath?: string) {
     this.snapshot = this.load()
@@ -377,7 +379,11 @@ export class ChannelStore {
 
   private requireChannel(channelId: string): Channel {
     this.assertHealthy()
-    const channel = this.findChannel(nonBlank(channelId, 'channel id'))
+    const id = nonBlank(channelId, 'channel id')
+    if (this.channelRecoveryBlocked.has(id)) {
+      throw new ChannelError('recovery_blocked', 'Channel metadata could not be recovered safely')
+    }
+    const channel = this.findChannel(id)
     if (!channel) throw new ChannelError('not_member', 'Channel was not found')
     return channel
   }
@@ -408,9 +414,12 @@ export class ChannelStore {
     }
     try {
       const parsed = JSON.parse(readFileSync(this.storagePath, 'utf8')) as unknown
-      const normalized = normalizeSnapshot(parsed)
-      if (!normalized) throw new Error('invalid snapshot')
-      return normalized
+      const result = normalizeSnapshot(parsed)
+      if (!result) throw new Error('invalid snapshot')
+      for (const channelId of result.driftedChannelIds) {
+        this.channelRecoveryBlocked.add(channelId)
+      }
+      return result.snapshot
     } catch {
       this.recoveryBlocked = true
       return { schemaVersion: CHANNEL_SCHEMA_VERSION, channels: [], members: [] }
@@ -426,7 +435,9 @@ export class ChannelStore {
   }
 }
 
-function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
+function normalizeSnapshot(
+  value: unknown
+): { snapshot: ChannelStoreSnapshot; driftedChannelIds: string[] } | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   if (
@@ -439,6 +450,7 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
 
   const channels: Channel[] = []
   const channelIds = new Set<string>()
+  const driftedChannelIds: string[] = []
   for (const candidate of raw.channels) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
     const channel = candidate as Record<string, unknown>
@@ -446,6 +458,7 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
       typeof channel.channelId !== 'string' ||
       !channel.channelId ||
       channelIds.has(channel.channelId) ||
+      driftedChannelIds.includes(channel.channelId) ||
       typeof channel.chatId !== 'string' ||
       !channel.chatId ||
       typeof channel.ownerMemberId !== 'string' ||
@@ -464,18 +477,20 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
       return null
     }
     const display = channel.display as Record<string, unknown>
-    if (
-      typeof display.title !== 'string' ||
-      !display.title ||
-      display.title.length > MAX_TITLE_LENGTH ||
-      display.status !== channel.status ||
-      !Number.isInteger(display.memberCount) ||
-      (display.memberCount as number) < 0 ||
-      !Number.isInteger(display.messageCount) ||
-      display.messageCount !== channel.messageCount ||
-      (channel.reference !== undefined && !isReference(channel.reference))
-    ) {
-      return null
+    const envelopeValid =
+      typeof display.title === 'string' &&
+      Boolean(display.title) &&
+      display.title.length <= MAX_TITLE_LENGTH &&
+      display.status === channel.status &&
+      Number.isInteger(display.memberCount) &&
+      (display.memberCount as number) >= 0 &&
+      Number.isInteger(display.messageCount) &&
+      display.messageCount === channel.messageCount &&
+      (channel.reference === undefined || isReference(channel.reference))
+    if (!envelopeValid) {
+      // Per-channel skip — never brick the whole snapshot for one channel's drift.
+      driftedChannelIds.push(channel.channelId)
+      continue
     }
     channelIds.add(channel.channelId)
     channels.push({
@@ -489,7 +504,7 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
       messageCount: channel.messageCount as number,
       ...(channel.reference ? { reference: clone(channel.reference as TaskWraithReference) } : {}),
       display: {
-        title: display.title,
+        title: display.title as string,
         status: display.status as ChannelStatus,
         memberCount: display.memberCount as number,
         messageCount: display.messageCount as number
@@ -497,11 +512,16 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
     })
   }
 
+  const driftedSet = new Set(driftedChannelIds)
   const members: ChannelMember[] = []
   const memberIds = new Set<string>()
   for (const candidate of raw.members) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null
     const member = candidate as Record<string, unknown>
+    // Members of a drifted channel are dropped with that channel; do not fail the snapshot.
+    if (typeof member.channelId === 'string' && driftedSet.has(member.channelId)) {
+      continue
+    }
     if (
       typeof member.memberId !== 'string' ||
       !member.memberId ||
@@ -547,5 +567,8 @@ function normalizeSnapshot(value: unknown): ChannelStoreSnapshot | null {
       return null
   }
 
-  return { schemaVersion: CHANNEL_SCHEMA_VERSION, channels, members }
+  return {
+    snapshot: { schemaVersion: CHANNEL_SCHEMA_VERSION, channels, members },
+    driftedChannelIds
+  }
 }
