@@ -33,6 +33,19 @@ export type EnsembleYieldOutcome =
   | { kind: 'no_active_run' }
   | { kind: 'already_settled' }
   | {
+      /**
+       * A Boss/Captain tried to leave the authority ring while fan-out work
+       * was still unsettled. This is an acknowledged, NON-terminal hold: the
+       * provider keeps its turn and may monitor the lanes or target another
+       * available authority seat.
+       */
+      kind: 'fanout_handoff_held'
+      message: string
+      activeLaneCount: number
+      eligibleManagerParticipantIds: string[]
+      suggestedAliases: string[]
+    }
+  | {
       kind: 'authority_routing_decision_required'
       pass: number
       requirement: 'later_pass_selection' | 'tagged_intervention'

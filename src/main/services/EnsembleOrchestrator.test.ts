@@ -16628,6 +16628,154 @@ Next action:
     completeDispatchedRun(harness, 2)
   })
 
+  it('holds a Boss-to-worker yield while fan-out is active, then restores normal routing', async () => {
+    const harness = makeFanoutRaceHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    const { fanout } = await startUnresolvedReviewerFanout(harness)
+    const ownerRunId = harness.dispatched[0].appRunId!
+
+    expect(harness.orchestrator.markYielded(ownerRunId, 'No target yet.')).toMatchObject({
+      kind: 'fanout_handoff_held'
+    })
+    expect(
+      harness.orchestrator.markYielded(ownerRunId, 'Return control early.', 'user')
+    ).toMatchObject({ kind: 'fanout_handoff_held' })
+    const held = harness.orchestrator.markYielded(
+      ownerRunId,
+      'Researcher should review next.',
+      'Researcher'
+    )
+    expect(held).toMatchObject({
+      kind: 'fanout_handoff_held',
+      activeLaneCount: 1,
+      eligibleManagerParticipantIds: []
+    })
+    if (held.kind === 'fanout_handoff_held') {
+      expect(held.message).toContain('remains responsible')
+      expect(held.message).toContain('normal serial routing resumes')
+    }
+    expect(harness.orchestrator.getParticipantIdForRun(ownerRunId)).toBe('codex')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    completeDispatchedRun(harness, 1)
+    await expect(fanout).resolves.toMatchObject({ ok: true })
+
+    expectYielded(
+      harness.orchestrator.markYielded(
+        ownerRunId,
+        'The fan-out settled; Researcher can review now.',
+        'Researcher'
+      )
+    )
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('gemini')
+    completeDispatchedRun(harness, 2)
+  })
+
+  it('keeps both Boss and Captain inside the active fan-out authority ring', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.secondInCommandParticipantId = 'captain'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Lead.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'captain',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Captain',
+        instructions: 'Coordinate.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'worker',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 4,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Managers retain the fan-out baton.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const bossRunId = harness.dispatched[0].appRunId!
+    const bossFanout = harness.orchestrator.fanoutForRun(bossRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Review while management remains active.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+    const toCaptain = harness.orchestrator.markYielded(
+      bossRunId,
+      'Captain owns the next authority turn.',
+      'Captain'
+    )
+    expect(toCaptain).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, targetParticipantId: 'captain' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(2)
+
+    completeDispatchedRun(harness, 1)
+    await expect(bossFanout).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3), { timeout: 1000 })
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('captain')
+
+    const captainRunId = harness.dispatched[2].appRunId!
+    const captainFanout = harness.orchestrator.fanoutForRun(captainRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Second review wave while Captain holds authority.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+
+    expect(
+      harness.orchestrator.markYielded(captainRunId, 'Worker should start early.', 'Worker')
+    ).toMatchObject({
+      kind: 'fanout_handoff_held',
+      eligibleManagerParticipantIds: ['boss']
+    })
+    expect(
+      harness.orchestrator.markYielded(captainRunId, 'Return the authority baton to Boss.', 'Boss')
+    ).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, action: 'resummoned', targetParticipantId: 'boss' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(4)
+
+    completeDispatchedRun(harness, 3)
+    await expect(captainFanout).resolves.toMatchObject({ ok: true })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5), { timeout: 1000 })
+    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('boss')
+    await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
+  })
+
   it('defers an @mention handoff until the caller\'s fan-out lane returns', async () => {
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)

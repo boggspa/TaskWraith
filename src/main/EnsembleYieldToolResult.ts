@@ -11,8 +11,10 @@ export type EnsembleYieldToolResult = {
   target?: string
   message?: string
   error?: EnsembleYieldRejectReason
-  action?: EnsembleYieldRouteAction
+  action?: EnsembleYieldRouteAction | 'held_for_active_fanout'
   targetParticipantId?: string
+  activeLaneCount?: number
+  eligibleManagerParticipantIds?: string[]
   suggestedAliases?: string[]
 }
 
@@ -46,6 +48,20 @@ export function buildEnsembleYieldToolResult(input: {
       ...base,
       ok: true,
       message: ENSEMBLE_YIELD_ALREADY_SETTLED_MESSAGE
+    }
+  }
+
+  if (input.outcome.kind === 'fanout_handoff_held') {
+    return {
+      ...base,
+      ok: true,
+      action: 'held_for_active_fanout',
+      message: input.outcome.message,
+      activeLaneCount: input.outcome.activeLaneCount,
+      eligibleManagerParticipantIds: input.outcome.eligibleManagerParticipantIds,
+      ...(input.outcome.suggestedAliases.length
+        ? { suggestedAliases: input.outcome.suggestedAliases }
+        : {})
     }
   }
 

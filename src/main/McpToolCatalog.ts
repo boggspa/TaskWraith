@@ -2324,7 +2324,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_yield',
       description:
-        'In Ensemble Mode, explicitly pass this participant turn to the next participant. Optional reason explains why; optional target names the participant/provider that should speak next.',
+        'In Ensemble Mode, explicitly pass this participant turn to the next participant. Optional reason explains why; optional target names the participant/provider that should speak next. While any fan-out lane or dispatch remains unsettled, a configured Boss/Captain may yield only to another available Boss/Captain: a targetless or non-manager handoff is acknowledged as held without ending the current authority turn. Use ensemble_await and ensemble_lane_result when listed to monitor and synthesize the wave; normal serial routing resumes after every lane settles.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,

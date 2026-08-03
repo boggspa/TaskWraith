@@ -4817,12 +4817,42 @@ export class EnsembleOrchestrator {
         ? { kind: 'already_settled' }
         : { kind: 'no_active_run' }
     }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    const chat = this.deps.getChat(run.chatId)
+    const isFanoutLane = Boolean(run.laneId) || Boolean(runtime?.activeScoutRunIds?.has(runId))
+    if (runtime && chat?.ensemble) {
+      const fanoutHandoffHold = this.activeFanoutManagerHandoffHold(
+        chat,
+        runtime,
+        run,
+        target,
+        isFanoutLane
+      )
+      if (fanoutHandoffHold) {
+        this.appendRoundStatus(run.chatId, run.roundId, fanoutHandoffHold.message)
+        this.completePendingYieldActivity(run, reason, target, {
+          content: fanoutHandoffHold.message,
+          result: {
+            ok: true,
+            tool: 'ensemble_yield',
+            action: 'held_for_active_fanout',
+            ...(reason ? { reason } : {}),
+            ...(target ? { target } : {}),
+            activeLaneCount: fanoutHandoffHold.activeLaneCount,
+            eligibleManagerParticipantIds: fanoutHandoffHold.eligibleManagerParticipantIds,
+            ...(fanoutHandoffHold.suggestedAliases.length
+              ? { suggestedAliases: fanoutHandoffHold.suggestedAliases }
+              : {})
+          }
+        })
+        return fanoutHandoffHold
+      }
+    }
     const checkpoint = run.authorityRoutingCheckpoint
-    const chatForCheckpoint = this.deps.getChat(run.chatId)
     const explicitCheckpointTarget = target
       ? resolveYieldTargetDetail(
           target,
-          chatForCheckpoint?.ensemble?.participants || [],
+          chat?.ensemble?.participants || [],
           new Set([run.participant.id])
         )
       : undefined
@@ -4852,9 +4882,6 @@ export class EnsembleOrchestrator {
       }
     }
     run.status = 'yielded'
-    const runtime = this.roundsByChatId.get(run.chatId)
-    const chat = this.deps.getChat(run.chatId)
-    const isFanoutLane = Boolean(run.laneId) || Boolean(runtime?.activeScoutRunIds?.has(runId))
     let routing: EnsembleYieldRoutingResult | undefined
 
     if (target && runtime && chat?.ensemble) {
@@ -4889,6 +4916,108 @@ export class EnsembleOrchestrator {
       void this.requestExactRunCancellation(run).catch(() => undefined)
     }
     return { kind: 'yielded', ...(routing ? { routing } : {}) }
+  }
+
+  /**
+   * Keep an unsettled fan-out wave inside its configured authority ring.
+   *
+   * Ordinary yields remain unchanged once every lane/dispatch settles. While
+   * work is live, however, a configured Boss or Captain may hand off only to
+   * the OTHER currently-routable authority seat. Every other request is an
+   * acknowledged, non-terminal hold: the provider remains alive so it can use
+   * ensemble_await / ensemble_lane_result and synthesize before serial work or
+   * review begins.
+   */
+  private activeFanoutManagerHandoffHold(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun,
+    target: string | undefined,
+    isFanoutLane: boolean
+  ): Extract<EnsembleYieldOutcome, { kind: 'fanout_handoff_held' }> | undefined {
+    if (isFanoutLane) return undefined
+    if (!this.fanoutAuthorityRoleForCaller(chat, runtime, run.participant.id)) return undefined
+
+    const activeLaneCount = this.unsettledFanoutLaneCount(runtime, run)
+    if (activeLaneCount === 0) return undefined
+
+    const participants = chat.ensemble?.participants || []
+    const configuredManagerIds = [
+      this.activeBossmanParticipantId(chat, runtime),
+      this.activeSecondInCommandParticipantId(chat, runtime)
+    ].filter(
+      (participantId, index, all): participantId is string =>
+        typeof participantId === 'string' &&
+        participantId !== run.participant.id &&
+        all.indexOf(participantId) === index
+    )
+    const eligibleManagers = configuredManagerIds
+      .map((participantId) => participants.find((participant) => participant.id === participantId))
+      .filter((participant): participant is EnsembleParticipant => Boolean(participant))
+      .filter((participant) =>
+        this.canReceiveActiveFanoutManagerHandoff(chat, runtime, participant)
+      )
+    const eligibleManagerIds = new Set(eligibleManagers.map((participant) => participant.id))
+    const detail =
+      target && !isUserYieldTarget(target)
+        ? resolveYieldTargetDetail(target, participants, new Set([run.participant.id]))
+        : undefined
+    if (detail?.kind === 'resolved' && eligibleManagerIds.has(detail.participant.id)) {
+      return undefined
+    }
+
+    const suggestedAliases = suggestUniqueYieldAliases(eligibleManagers)
+    const laneLabel = `${activeLaneCount} fan-out lane${activeLaneCount === 1 ? '' : 's'}`
+    const attemptedTarget = target?.trim()
+      ? ` Target "${target.trim()}" is not an available Boss/Captain handoff.`
+      : ' An explicit Boss/Captain target is required.'
+    const nextAction = suggestedAliases.length
+      ? ` Available manager target${eligibleManagers.length === 1 ? '' : 's'}: ${suggestedAliases.join(', ')}.`
+      : ' No peer Boss/Captain is currently routable, so keep this authority turn active.'
+    const message =
+      `Fan-out handoff held: ${participantDisplayName(run.participant)} remains responsible while ${laneLabel} ${activeLaneCount === 1 ? 'remains' : 'remain'} unsettled.` +
+      `${attemptedTarget} During an active fan-out, Boss/Captain may yield only to another available Boss/Captain.` +
+      `${nextAction} Use ensemble_await and ensemble_lane_result when listed to monitor and synthesize the wave; normal serial routing resumes after every lane settles.`
+    return {
+      kind: 'fanout_handoff_held',
+      message,
+      activeLaneCount,
+      eligibleManagerParticipantIds: eligibleManagers.map((participant) => participant.id),
+      suggestedAliases
+    }
+  }
+
+  private unsettledFanoutLaneCount(runtime: ActiveRoundRuntime, run: ActiveParticipantRun): number {
+    const round = this.deps.getChat(runtime.chatId)?.ensemble?.activeRound
+    if (!round || round.roundId !== runtime.roundId || round.status !== 'running') return 0
+    const activeLanes = Object.values(round.lanes || {}).filter(
+      (lane) => !isTerminalLaneStatus(lane.status)
+    )
+    const activeParticipantIds = new Set(activeLanes.map((lane) => lane.participantId))
+    let count = activeLanes.length
+    for (const participantId of runtime.fanoutReservedParticipantIds || []) {
+      if (!activeParticipantIds.has(participantId)) count += 1
+    }
+    return Math.max(count, run.pendingFanoutDispatches?.size || 0)
+  }
+
+  private canReceiveActiveFanoutManagerHandoff(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    participant: EnsembleParticipant
+  ): boolean {
+    if (!participant.enabled) return false
+    if (runtime.unreachableParticipantIds?.has(participant.id)) return false
+    if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) return false
+    if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
+      return false
+    }
+    if (this.participantFanoutDispatchState(runtime, participant.id)) return false
+    if (runtime.remainingParticipants?.some((entry) => entry.id === participant.id)) return true
+    return this.evaluateContinuationTurnEligibility(runtime, participant, {
+      allowAnsweredParticipant: true,
+      allowYieldedParticipant: true
+    }).appended
   }
 
   private applyYieldTargetRouting(
@@ -5111,14 +5240,15 @@ export class EnsembleOrchestrator {
   private completePendingYieldActivity(
     run: ActiveParticipantRun,
     reason?: string,
-    target?: string
+    target?: string,
+    override?: { content: string; result: Record<string, unknown> }
   ): void {
     if (!run.toolActivities || run.toolActivities.length === 0) return
     for (let index = run.toolActivities.length - 1; index >= 0; index -= 1) {
       const activity = run.toolActivities[index]
       if (stripToolNamespace(activity.toolName) !== 'ensemble_yield') continue
       if (activity.status !== 'running' && activity.status !== 'pending') return
-      const content = reason || (target ? `Yielded to ${target}.` : 'Yielded.')
+      const content = override?.content || reason || (target ? `Yielded to ${target}.` : 'Yielded.')
       run.toolActivities[index] = pairEnsembleToolResult(
         activity,
         {
@@ -5126,7 +5256,7 @@ export class EnsembleOrchestrator {
           tool_id: activity.id,
           success: true,
           content,
-          result: {
+          result: override?.result || {
             ok: true,
             tool: 'ensemble_yield',
             ...(reason ? { reason } : {}),

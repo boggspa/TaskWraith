@@ -47,6 +47,18 @@ describe('TaskWraith MCP tool registry', () => {
     expect(TASKWRAITH_MCP_TOOLS).toContain('ensemble_poll_response')
   })
 
+  it('advertises the active-fan-out Boss/Captain handoff boundary', () => {
+    const yieldTool = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'ensemble_yield'
+    )
+
+    expect(yieldTool?.description).toContain(
+      'a configured Boss/Captain may yield only to another available Boss/Captain'
+    )
+    expect(yieldTool?.description).toContain('acknowledged as held')
+    expect(yieldTool?.description).toContain('normal serial routing resumes')
+  })
+
   it('offers a compact portable control front door without duplicating authority logic', () => {
     const portable = createTaskWraithMcpToolDefinitions().find(
       (tool) => tool.name === 'ensemble_control'

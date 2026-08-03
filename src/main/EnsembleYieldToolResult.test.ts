@@ -61,6 +61,34 @@ describe('buildEnsembleYieldToolResult', () => {
     })
   })
 
+  it('acknowledges an active-fan-out authority hold without failing or settling the provider', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'fanout_handoff_held',
+          message:
+            'Fan-out handoff held: the current Boss/Captain remains responsible until the wave settles.',
+          activeLaneCount: 3,
+          eligibleManagerParticipantIds: ['captain'],
+          suggestedAliases: ['Captain', 'Kimi K3']
+        },
+        reason: 'Let the reviewer take over.',
+        target: 'Reviewer'
+      })
+    ).toEqual({
+      ok: true,
+      tool: 'ensemble_yield',
+      reason: 'Let the reviewer take over.',
+      target: 'Reviewer',
+      action: 'held_for_active_fanout',
+      message:
+        'Fan-out handoff held: the current Boss/Captain remains responsible until the wave settles.',
+      activeLaneCount: 3,
+      eligibleManagerParticipantIds: ['captain'],
+      suggestedAliases: ['Captain', 'Kimi K3']
+    })
+  })
+
   it('marks unresolved authority yields as tool errors', () => {
     expect(
       buildEnsembleYieldToolResult({
