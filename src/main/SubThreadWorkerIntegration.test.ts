@@ -102,6 +102,8 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'function isChatRunLive(')
     expectContains(indexSource, 'function reconcileStaleChatRunsProjection(')
     expectContains(indexSource, 'reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    expectContains(indexSource, 'getRunSession: (runId) => runManager.get(runId)')
+    expectContains(indexSource, "eventType: 'chat_run_terminal_recovered'")
     expectContains(indexSource, 'chatRunReconcilerInterval = setInterval')
     expectContains(indexSource, 'pushBridgeRunTaskCardDelta?.(saved.appChatId)')
     expectContains(indexSource, 'broadcastThreadList()')

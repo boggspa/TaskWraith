@@ -9226,13 +9226,16 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
   // needs it.
   settleOrphanedRunQueueJobsProjection(fencedForErasure)
   const nowIso = new Date().toISOString()
-  const { chats, settlements } = reconcileStaleChatRuns(
+  const { chats, settlements, terminalRecoveries } = reconcileStaleChatRuns(
     AppStore.getChats().filter((chat) => !fencedForErasure(chat)),
     isChatRunLive,
     nowIso,
-    { minAgeMs: options.minAgeMs ?? 0 }
+    {
+      minAgeMs: options.minAgeMs ?? 0,
+      getRunSession: (runId) => runManager.get(runId)
+    }
   )
-  if (settlements.length === 0) return 0
+  if (chats.length === 0) return 0
 
   for (const chat of chats) {
     const saved = saveAndBroadcastChat(chat)
@@ -9256,6 +9259,26 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
       '[chat-run-reconciler] thread-list/snapshot broadcast failed:',
       err instanceof Error ? err.message : String(err)
     )
+  }
+
+  for (const recovery of terminalRecoveries) {
+    console.warn(
+      `[chat-run-reconciler] recovered terminal ChatRun chat=${recovery.chatId} run=${recovery.runId} ${recovery.previousStatus} -> ${recovery.recoveredStatus} from exact RunManager evidence`
+    )
+    appendDurableRunEvent({
+      runId: recovery.runId,
+      chatId: recovery.chatId,
+      kind: 'lifecycle',
+      phase: 'control',
+      source: 'main',
+      summary: 'Recovered lagging ChatRun from exact terminal RunManager session',
+      payload: {
+        eventType: 'chat_run_terminal_recovered',
+        previousStatus: recovery.previousStatus,
+        recoveredStatus: recovery.recoveredStatus,
+        reason: 'Exact matching terminal RunManager session outranked the stale-run fallback.'
+      }
+    })
   }
 
   for (const settlement of settlements) {
@@ -9299,7 +9322,7 @@ function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): 
     })
   }
 
-  return settlements.length
+  return settlements.length + terminalRecoveries.length
 }
 
 function recoverPendingSubThreadMailboxes(): void {

@@ -11,7 +11,8 @@ import {
   reconcileOrphanedRunQueueJobs,
   reconcileStaleChatRuns,
   sealChatRunTerminalFields,
-  settleStaleChatRun
+  settleStaleChatRun,
+  terminalChatRunSealFromExactSession
 } from './ChatRunReconciler'
 import { staleRunSettlementNoticeId } from './RunFailureNotice'
 import type { ChatMessage, ChatRecord, ChatRun } from './store/types'
@@ -191,7 +192,62 @@ describe('reconcileStaleChatRuns', () => {
       () => false,
       NOW
     )
-    expect(result).toEqual({ chats: [], settlements: [] })
+    expect(result).toEqual({ chats: [], settlements: [], terminalRecoveries: [] })
+  })
+
+  it('recovers a lagging active projection from an exact terminal session', () => {
+    const existingMessage: ChatMessage = {
+      id: 'a1',
+      role: 'assistant',
+      content: 'The completed answer',
+      timestamp: RECENT,
+      runId: 'r1'
+    }
+    const result = reconcileStaleChatRuns(
+      [
+        chat(
+          'c1',
+          [
+            run({
+              runId: 'r1',
+              provider: 'codex',
+              status: 'running',
+              endedAt: RECENT,
+              stats: { totalTokens: 42 }
+            })
+          ],
+          { messages: [existingMessage] }
+        )
+      ],
+      () => false,
+      NOW,
+      {
+        getRunSession: () => ({
+          runId: 'r1',
+          appChatId: 'c1',
+          provider: 'codex',
+          status: 'completed',
+          updatedAt: NOW_MS
+        })
+      }
+    )
+
+    expect(result.settlements).toEqual([])
+    expect(result.terminalRecoveries).toEqual([
+      {
+        chatId: 'c1',
+        runId: 'r1',
+        previousStatus: 'running',
+        recoveredStatus: 'success'
+      }
+    ])
+    expect(result.chats[0].runs[0]).toMatchObject({
+      status: 'success',
+      endedAt: RECENT,
+      stats: { totalTokens: 42 }
+    })
+    expect(result.chats[0].runs[0].exitCode).toBeUndefined()
+    expect(result.chats[0].messages).toEqual([existingMessage])
   })
 
   describe('settlement transcript notice', () => {
@@ -294,6 +350,67 @@ describe('reconcileStaleChatRuns', () => {
       )
       expect(result.chats).toEqual([])
     })
+  })
+})
+
+describe('terminalChatRunSealFromExactSession', () => {
+  const targetChat = chat('c1', [])
+  const targetRun = run({ runId: 'r1', provider: 'codex' })
+
+  it.each([
+    ['completed', 'success'],
+    ['failed', 'failed'],
+    ['cancelled', 'cancelled']
+  ] as const)('maps exact terminal session status %s to %s', (status, expected) => {
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        runId: 'r1',
+        appChatId: 'c1',
+        provider: 'codex',
+        status,
+        updatedAt: NOW_MS
+      })
+    ).toEqual({ status: expected, endedAt: NOW })
+  })
+
+  it('rejects active, mismatched, and malformed session evidence', () => {
+    const exact = {
+      runId: 'r1',
+      appChatId: 'c1',
+      provider: 'codex',
+      status: 'completed',
+      updatedAt: NOW_MS
+    }
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        ...exact,
+        status: 'running'
+      })
+    ).toBeUndefined()
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        ...exact,
+        runId: 'other-run'
+      })
+    ).toBeUndefined()
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        ...exact,
+        appChatId: 'other-chat'
+      })
+    ).toBeUndefined()
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        ...exact,
+        provider: 'claude'
+      })
+    ).toBeUndefined()
+    expect(
+      terminalChatRunSealFromExactSession(targetChat, targetRun, {
+        ...exact,
+        updatedAt: Number.NaN
+      })
+    ).toBeUndefined()
   })
 })
 

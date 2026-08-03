@@ -63,10 +63,18 @@ export interface StaleChatRunSettlement {
   previousStatus: string
 }
 
+export interface TerminalChatRunRecovery {
+  chatId: string
+  runId: string
+  previousStatus: string
+  recoveredStatus: ChatRunTerminalSeal['status']
+}
+
 export interface ReconcileStaleChatRunsResult {
-  /** Chats that need to be persisted (only those with at least one settlement). */
+  /** Chats that need to be persisted after a recovery or stale settlement. */
   chats: ChatRecord[]
   settlements: StaleChatRunSettlement[]
+  terminalRecoveries: TerminalChatRunRecovery[]
 }
 
 export interface ReconcileStaleChatRunsOptions {
@@ -78,6 +86,12 @@ export interface ReconcileStaleChatRunsOptions {
   minAgeMs?: number
   /** Override wall clock for age checks (defaults to `Date.parse(nowIso)`). */
   nowMs?: number
+  /**
+   * Exact RunManager lookup used to recover a lagging active ChatRun from a
+   * terminal session. Queue rows are deliberately not accepted here: startup
+   * recovery can mark a queue job terminal without provider completion.
+   */
+  getRunSession?: (runId: string) => TerminalChatRunSessionLike | undefined
 }
 
 export function settleStaleChatRun(run: ChatRun, nowIso: string): ChatRun {
@@ -143,6 +157,14 @@ export interface ChatRunTerminalSeal {
   exitCode?: number
 }
 
+export interface TerminalChatRunSessionLike {
+  runId: string
+  appChatId?: string
+  provider?: string
+  status?: string
+  updatedAt: number
+}
+
 /**
  * Idempotent fill of a ChatRun's terminal fields — the direct-seal fallback
  * for when the bridge lane's terminal flush cannot run. Only fields the live
@@ -165,6 +187,34 @@ export function sealChatRunTerminalFields(run: ChatRun, seal: ChatRunTerminalSea
     ...(needsExitCode ? { exitCode: seal.exitCode } : {}),
     ...(needsStatus && seal.status === 'cancelled' ? { cancelled: true } : {})
   }
+}
+
+/**
+ * Convert only an exact matching terminal RunManager session into a ChatRun
+ * seal. Run id, chat id, and every available provider identity must agree;
+ * active sessions and malformed terminal timestamps are not recovery evidence.
+ */
+export function terminalChatRunSealFromExactSession(
+  chat: Pick<ChatRecord, 'appChatId' | 'provider'>,
+  run: Pick<ChatRun, 'runId' | 'provider'>,
+  session: TerminalChatRunSessionLike | undefined
+): ChatRunTerminalSeal | undefined {
+  if (!session || session.runId !== run.runId || session.appChatId !== chat.appChatId) {
+    return undefined
+  }
+  const expectedProvider = run.provider ?? chat.provider
+  if (expectedProvider && session.provider !== expectedProvider) return undefined
+
+  const status: ChatRunTerminalSeal['status'] | undefined =
+    session.status === 'completed'
+      ? 'success'
+      : session.status === 'failed' || session.status === 'cancelled'
+        ? session.status
+        : undefined
+  if (!status || !Number.isFinite(session.updatedAt)) return undefined
+  const endedAt = new Date(session.updatedAt)
+  if (!Number.isFinite(endedAt.getTime())) return undefined
+  return { status, endedAt: endedAt.toISOString() }
 }
 
 /**
@@ -220,6 +270,7 @@ export function reconcileStaleChatRuns(
   const updatedAtMs = Number.isFinite(nowMs) ? nowMs : Date.now()
 
   const settlements: StaleChatRunSettlement[] = []
+  const terminalRecoveries: TerminalChatRunRecovery[] = []
   const out: ChatRecord[] = []
 
   for (const chat of chats) {
@@ -233,6 +284,25 @@ export function reconcileStaleChatRuns(
       if (!run || typeof run.runId !== 'string' || !run.runId.trim()) return run
       if (!isActiveChatRunStatus(run.status)) return run
       if (isRunLive(run.runId)) return run
+
+      const terminalSeal = terminalChatRunSealFromExactSession(
+        chat,
+        run,
+        options.getRunSession?.(run.runId)
+      )
+      if (terminalSeal) {
+        const recovered = sealChatRunTerminalFields(run, terminalSeal)
+        if (recovered) {
+          changed = true
+          terminalRecoveries.push({
+            chatId: chat.appChatId,
+            runId: run.runId,
+            previousStatus: String(run.status),
+            recoveredStatus: terminalSeal.status
+          })
+          return recovered
+        }
+      }
 
       if (minAgeMs > 0) {
         const startedMs = Date.parse(run.startedAt || '')
@@ -271,7 +341,7 @@ export function reconcileStaleChatRuns(
     }
   }
 
-  return { chats: out, settlements }
+  return { chats: out, settlements, terminalRecoveries }
 }
 
 // ---------------------------------------------------------------------------
