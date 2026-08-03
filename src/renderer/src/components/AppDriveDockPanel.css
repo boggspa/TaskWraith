@@ -74,6 +74,37 @@
   opacity: 0.88;
 }
 
+.appdrive-dock-honesty {
+  margin: 0;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+  opacity: 0.82;
+}
+
+.appdrive-dock-live-region {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.appdrive-dock-controls-help {
+  flex: 1 0 100%;
+  margin: 0 0 2px;
+  font:
+    10px/1.4 system-ui,
+    sans-serif;
+  color: var(--text-secondary, inherit);
+  opacity: 0.88;
+}
+
 .appdrive-dock-section {
   display: flex;
   flex-direction: column;

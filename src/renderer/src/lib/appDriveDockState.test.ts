@@ -2,17 +2,24 @@ import { describe, expect, it } from 'vitest'
 
 import {
   APP_DRIVE_MODE,
+  MODE_HONESTY_DESCRIPTION,
+  PAUSE_VS_TAKEOVER_HELP,
+  PERMISSION_HONESTY_DESCRIPTION,
+  activityDisplayLabel,
   deriveAppDriveLifecycle,
   formatExpiry,
   formatStepsRemaining,
   formatVerbList,
   isAppDriveControlVerb,
+  isAppDriveSessionLifecycle,
   lifecycleActionAvailability,
+  lifecycleChangeAnnouncement,
   lifecycleStatusLabel,
   modeChipLabel,
   normalizeVirtualCursorPoint,
   permissionDisclosureLabel,
   sanitizeControlVerbs,
+  stopControlLabel,
   targetPrimaryLabel,
   targetSecondaryLabel,
   type AppDriveDockControlView,
@@ -41,6 +48,8 @@ describe('appDriveDockState', () => {
     expect(APP_DRIVE_MODE).toBe('foreground')
     expect(modeChipLabel()).toBe('Foreground Drive')
     expect(modeChipLabel('foreground')).toBe('Foreground Drive')
+    expect(MODE_HONESTY_DESCRIPTION).toContain('frontmost')
+    expect(MODE_HONESTY_DESCRIPTION).not.toMatch(/Background Drive is shipped/i)
   })
 
   it('discloses current-launch permission without durable app trust', () => {
@@ -51,12 +60,17 @@ describe('appDriveDockState', () => {
     expect(permissionDisclosureLabel({ observation: target, control })).toBe(
       'View & Control · current launch'
     )
+    expect(PERMISSION_HONESTY_DESCRIPTION).toContain('current managed launch')
+    expect(PERMISSION_HONESTY_DESCRIPTION).toContain('not durable app-keyed trust')
   })
 
-  it('derives lifecycle from observation/control and explicit session flags', () => {
+  it('uses canonical lifecycle idle|active|paused|takeover|stopped only', () => {
+    expect(isAppDriveSessionLifecycle('active')).toBe(true)
+    expect(isAppDriveSessionLifecycle('viewing')).toBe(false)
+    expect(isAppDriveSessionLifecycle('driving')).toBe(false)
     expect(deriveAppDriveLifecycle({ observation: null, control: null })).toBe('idle')
-    expect(deriveAppDriveLifecycle({ observation: target, control: null })).toBe('viewing')
-    expect(deriveAppDriveLifecycle({ observation: target, control })).toBe('driving')
+    expect(deriveAppDriveLifecycle({ observation: target, control: null })).toBe('active')
+    expect(deriveAppDriveLifecycle({ observation: target, control })).toBe('active')
     expect(deriveAppDriveLifecycle({ observation: target, control, paused: true })).toBe('paused')
     expect(deriveAppDriveLifecycle({ observation: target, control, takeover: true })).toBe(
       'takeover'
@@ -67,13 +81,34 @@ describe('appDriveDockState', () => {
     expect(deriveAppDriveLifecycle({ observation: target, control, stopped: true })).toBe('stopped')
   })
 
+  it('derives Viewing/Driving labels from observation/control, not lifecycle states', () => {
+    expect(activityDisplayLabel({ lifecycle: 'active', observation: target, control: null })).toBe(
+      'Viewing'
+    )
+    expect(activityDisplayLabel({ lifecycle: 'active', observation: target, control })).toBe(
+      'Driving'
+    )
+    expect(activityDisplayLabel({ lifecycle: 'paused', observation: target, control })).toBeNull()
+    expect(lifecycleStatusLabel('active', { observation: target, control: null })).toBe('Viewing')
+    expect(lifecycleStatusLabel('active', { observation: target, control })).toBe('Driving')
+    expect(lifecycleStatusLabel('paused')).toBe('Paused')
+    expect(lifecycleStatusLabel('takeover')).toBe('Takeover')
+  })
+
   it('exposes pause/resume/takeover/stop without implying target-scoped HID', () => {
-    expect(lifecycleActionAvailability('driving')).toEqual({
+    expect(lifecycleActionAvailability('active', { observation: target, control })).toEqual({
       canPause: true,
       canResume: false,
       canTakeOver: true,
       canStop: true,
       agentActionsRefused: false
+    })
+    expect(lifecycleActionAvailability('active', { observation: target, control: null })).toEqual({
+      canPause: false,
+      canResume: false,
+      canTakeOver: false,
+      canStop: true,
+      agentActionsRefused: true
     })
     expect(lifecycleActionAvailability('paused').agentActionsRefused).toBe(true)
     expect(lifecycleActionAvailability('takeover')).toMatchObject({
@@ -82,7 +117,25 @@ describe('appDriveDockState', () => {
       agentActionsRefused: true
     })
     expect(lifecycleActionAvailability('idle').canStop).toBe(false)
-    expect(lifecycleStatusLabel('takeover')).toBe('Takeover')
+    expect(PAUSE_VS_TAKEOVER_HELP).toContain('Pause holds agent')
+    expect(PAUSE_VS_TAKEOVER_HELP).toContain('machine-wide')
+  })
+
+  it('uses context-specific Detach vs Stop control wording', () => {
+    expect(stopControlLabel({ observation: target, control: null })).toBe('Detach')
+    expect(stopControlLabel({ observation: target, control })).toBe('Stop control')
+    expect(stopControlLabel({ observation: null, control: null })).toBe('Stop')
+  })
+
+  it('announces lifecycle changes for assistive tech', () => {
+    expect(lifecycleChangeAnnouncement('paused')).toContain('paused')
+    expect(lifecycleChangeAnnouncement('takeover')).toContain('Human takeover')
+    expect(lifecycleChangeAnnouncement('active', { observation: target, control })).toContain(
+      'driving'
+    )
+    expect(lifecycleChangeAnnouncement('active', { observation: target, control: null })).toContain(
+      'viewing'
+    )
   })
 
   it('formats steps, expiry, verbs, and target labels for the dock chrome', () => {

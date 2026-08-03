@@ -7,6 +7,11 @@
  *
  * Mode honesty for this slice: native Tier 4 is always labeled Foreground Drive.
  * Pause / Takeover / Stop are explicit session chrome; they do not expand input.
+ *
+ * Canonical lifecycle matches main session/authority models:
+ * `idle | active | paused | takeover | stopped`.
+ * Visible "Viewing" / "Driving" labels are derived from observation/control
+ * presence while lifecycle is `active` — they are not separate states.
  */
 
 export const APP_DRIVE_MODE = 'foreground' as const
@@ -14,14 +19,11 @@ export type AppDriveMode = typeof APP_DRIVE_MODE
 
 export type AppDriveControlVerb = 'observe' | 'inspect' | 'click' | 'fill'
 
-/** Explicit session chrome — not lease minting and not HID arbitration. */
-export type AppDriveSessionLifecycle =
-  | 'idle'
-  | 'viewing'
-  | 'driving'
-  | 'paused'
-  | 'takeover'
-  | 'stopped'
+/**
+ * Canonical session chrome lifecycle — aligned with AppDriveSession /
+ * AppDriveAuthorityModel. Do not reintroduce viewing/driving as states.
+ */
+export type AppDriveSessionLifecycle = 'idle' | 'active' | 'paused' | 'takeover' | 'stopped'
 
 export interface AppDriveDockTarget {
   readonly applicationName: string
@@ -73,6 +75,9 @@ export interface AppDriveLifecycleActionAvailability {
   readonly agentActionsRefused: boolean
 }
 
+/** Visible activity label while lifecycle is active (not a state machine value). */
+export type AppDriveActivityLabel = 'Viewing' | 'Driving' | null
+
 const CONTROL_VERBS: readonly AppDriveControlVerb[] = Object.freeze([
   'observe',
   'inspect',
@@ -80,8 +85,27 @@ const CONTROL_VERBS: readonly AppDriveControlVerb[] = Object.freeze([
   'fill'
 ])
 
+export const MODE_HONESTY_DESCRIPTION =
+  'Native Tier 4 requires the selected app to be frontmost and focused. Background and Isolated Drive are not shipped in this panel.'
+
+export const PERMISSION_HONESTY_DESCRIPTION =
+  'Permission is for the current managed launch only — not durable app-keyed trust. Bundle ID is display metadata, not an approval key.'
+
+export const PAUSE_VS_TAKEOVER_HELP =
+  'Pause holds agent click/fill until Resume. Take Over marks you as driving; Resume returns agent control. Neither is target-scoped HID arbitration — native idle remains machine-wide.'
+
 export function isAppDriveControlVerb(value: unknown): value is AppDriveControlVerb {
   return value === 'observe' || value === 'inspect' || value === 'click' || value === 'fill'
+}
+
+export function isAppDriveSessionLifecycle(value: unknown): value is AppDriveSessionLifecycle {
+  return (
+    value === 'idle' ||
+    value === 'active' ||
+    value === 'paused' ||
+    value === 'takeover' ||
+    value === 'stopped'
+  )
 }
 
 export function modeChipLabel(mode: AppDriveMode = APP_DRIVE_MODE): string {
@@ -100,14 +124,34 @@ export function permissionDisclosureLabel(
   return 'No attachment'
 }
 
-export function lifecycleStatusLabel(lifecycle: AppDriveSessionLifecycle): string {
+/**
+ * Derive Viewing/Driving display labels from attachment presence while the
+ * canonical lifecycle is `active`. Other lifecycles keep their own labels.
+ */
+export function activityDisplayLabel(
+  status: Pick<AppDriveDockStatus, 'observation' | 'control' | 'lifecycle'>
+): AppDriveActivityLabel {
+  if (status.lifecycle !== 'active') return null
+  if (status.control) return 'Driving'
+  if (status.observation) return 'Viewing'
+  return null
+}
+
+export function lifecycleStatusLabel(
+  lifecycle: AppDriveSessionLifecycle,
+  status?: Pick<AppDriveDockStatus, 'observation' | 'control'>
+): string {
   switch (lifecycle) {
     case 'idle':
       return 'Idle'
-    case 'viewing':
-      return 'Viewing'
-    case 'driving':
-      return 'Driving'
+    case 'active': {
+      const activity = activityDisplayLabel({
+        lifecycle: 'active',
+        observation: status?.observation ?? null,
+        control: status?.control ?? null
+      })
+      return activity ?? 'Active'
+    }
     case 'paused':
       return 'Paused'
     case 'takeover':
@@ -118,8 +162,21 @@ export function lifecycleStatusLabel(lifecycle: AppDriveSessionLifecycle): strin
 }
 
 /**
+ * Context-specific stop control label.
+ * Observation-only → Detach Screen Watch; control lease → Stop control.
+ */
+export function stopControlLabel(
+  status: Pick<AppDriveDockStatus, 'observation' | 'control'>
+): string {
+  if (status.control) return 'Stop control'
+  if (status.observation) return 'Detach'
+  return 'Stop'
+}
+
+/**
  * Derive a UI lifecycle when the host has not yet wired an explicit session
  * flag. Prefer an explicit lifecycle from the main session layer when present.
+ * Returns only canonical states — never viewing/driving.
  */
 export function deriveAppDriveLifecycle(input: {
   observation: AppDriveDockTarget | null
@@ -132,21 +189,34 @@ export function deriveAppDriveLifecycle(input: {
   if (!input.observation && !input.control) return 'idle'
   if (input.takeover) return 'takeover'
   if (input.paused) return 'paused'
-  if (input.control) return 'driving'
-  return 'viewing'
+  return 'active'
 }
 
 export function lifecycleActionAvailability(
-  lifecycle: AppDriveSessionLifecycle
+  lifecycle: AppDriveSessionLifecycle,
+  status?: Pick<AppDriveDockStatus, 'observation' | 'control'>
 ): AppDriveLifecycleActionAvailability {
+  const hasControl = Boolean(status?.control)
+  const hasObservation = Boolean(status?.observation)
+
   switch (lifecycle) {
-    case 'driving':
+    case 'active':
+      if (hasControl) {
+        return {
+          canPause: true,
+          canResume: false,
+          canTakeOver: true,
+          canStop: true,
+          agentActionsRefused: false
+        }
+      }
+      // Observation-only: Detach is available; pause/takeover need control.
       return {
-        canPause: true,
+        canPause: false,
         canResume: false,
-        canTakeOver: true,
-        canStop: true,
-        agentActionsRefused: false
+        canTakeOver: false,
+        canStop: hasObservation,
+        agentActionsRefused: true
       }
     case 'paused':
       return {
@@ -160,14 +230,6 @@ export function lifecycleActionAvailability(
       return {
         canPause: false,
         canResume: true,
-        canTakeOver: false,
-        canStop: true,
-        agentActionsRefused: true
-      }
-    case 'viewing':
-      return {
-        canPause: false,
-        canResume: false,
         canTakeOver: false,
         canStop: true,
         agentActionsRefused: true
@@ -181,6 +243,28 @@ export function lifecycleActionAvailability(
         canStop: false,
         agentActionsRefused: true
       }
+  }
+}
+
+/**
+ * Announce lifecycle transitions for assistive tech (role=status consumers).
+ */
+export function lifecycleChangeAnnouncement(
+  lifecycle: AppDriveSessionLifecycle,
+  status?: Pick<AppDriveDockStatus, 'observation' | 'control'>
+): string {
+  const label = lifecycleStatusLabel(lifecycle, status)
+  switch (lifecycle) {
+    case 'idle':
+      return 'App Drive idle. No target attached.'
+    case 'active':
+      return `App Drive ${label.toLowerCase()}.`
+    case 'paused':
+      return 'App Drive paused. Agent click and fill are held until Resume.'
+    case 'takeover':
+      return 'Human takeover active. You are driving; agent click and fill are refused until Resume.'
+    case 'stopped':
+      return 'App Drive stopped. Re-attach and approve View & Control to continue.'
   }
 }
 

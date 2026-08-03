@@ -11,13 +11,18 @@
 import type { ReactNode } from 'react'
 import { AppDriveVirtualCursor } from './AppDriveVirtualCursor'
 import {
+  MODE_HONESTY_DESCRIPTION,
+  PAUSE_VS_TAKEOVER_HELP,
+  PERMISSION_HONESTY_DESCRIPTION,
   formatExpiry,
   formatStepsRemaining,
   formatVerbList,
   lifecycleActionAvailability,
+  lifecycleChangeAnnouncement,
   lifecycleStatusLabel,
   modeChipLabel,
   permissionDisclosureLabel,
+  stopControlLabel,
   targetPrimaryLabel,
   targetSecondaryLabel,
   type AppDriveDockStatus
@@ -42,12 +47,24 @@ export function AppDriveDockPanel({
   onTakeOver,
   onStop
 }: AppDriveDockPanelProps): ReactNode {
-  const actions = lifecycleActionAvailability(status.lifecycle)
+  const attachment = { observation: status.observation, control: status.control }
+  const actions = lifecycleActionAvailability(status.lifecycle, attachment)
   const hasAttachment = Boolean(status.observation || status.control)
   const modeLabel = modeChipLabel(status.mode)
   const permissionLabel = permissionDisclosureLabel(status)
   const primary = targetPrimaryLabel(status.observation)
   const secondary = targetSecondaryLabel(status.observation)
+  const lifecycleLabel = lifecycleStatusLabel(status.lifecycle, attachment)
+  const stopLabel = stopControlLabel(attachment)
+  const announcement = lifecycleChangeAnnouncement(status.lifecycle, attachment)
+
+  // Hide actions when handlers are absent — disabled buttons look broken (U6).
+  const showPause = actions.canPause && Boolean(onPause)
+  const showResume = actions.canResume && Boolean(onResume)
+  const showTakeOver = actions.canTakeOver && Boolean(onTakeOver)
+  const showStop = actions.canStop && Boolean(onStop)
+  const showControlsHelp = showPause || showResume || showTakeOver
+  const anyControlVisible = showPause || showResume || showTakeOver || showStop
 
   return (
     <div className="appdrive-dock-panel" aria-label="App Drive panel">
@@ -57,18 +74,42 @@ export function AppDriveDockPanel({
           <span
             className="appdrive-dock-mode-chip"
             data-testid="appdrive-mode-chip"
-            title="Native Tier 4 requires the selected app to be frontmost. Non-disruptive and VM-isolated modes are not shipped."
+            aria-describedby="appdrive-mode-honesty"
           >
             {modeLabel}
           </span>
         </div>
+        <p
+          id="appdrive-mode-honesty"
+          className="appdrive-dock-honesty"
+          data-testid="appdrive-mode-honesty"
+        >
+          {MODE_HONESTY_DESCRIPTION}
+        </p>
         <div className="appdrive-dock-status-row" data-testid="appdrive-lifecycle">
-          <span className={`appdrive-dock-lifecycle is-${status.lifecycle}`}>
-            {lifecycleStatusLabel(status.lifecycle)}
-          </span>
-          <span className="appdrive-dock-permission" data-testid="appdrive-permission">
+          <span className={`appdrive-dock-lifecycle is-${status.lifecycle}`}>{lifecycleLabel}</span>
+          <span
+            className="appdrive-dock-permission"
+            data-testid="appdrive-permission"
+            aria-describedby="appdrive-permission-honesty"
+          >
             {permissionLabel}
           </span>
+        </div>
+        <p
+          id="appdrive-permission-honesty"
+          className="appdrive-dock-honesty"
+          data-testid="appdrive-permission-honesty"
+        >
+          {PERMISSION_HONESTY_DESCRIPTION}
+        </p>
+        <div
+          className="appdrive-dock-live-region"
+          role="status"
+          aria-live="polite"
+          data-testid="appdrive-lifecycle-announce"
+        >
+          {announcement}
         </div>
       </header>
 
@@ -87,10 +128,20 @@ export function AppDriveDockPanel({
               {status.observation?.bundleID ? (
                 <div
                   className="appdrive-dock-target-meta"
-                  title="Display only — not an approval key"
+                  data-testid="appdrive-bundle-meta"
+                  aria-describedby="appdrive-bundle-honesty"
                 >
                   {status.observation.bundleID}
                 </div>
+              ) : null}
+              {status.observation?.bundleID ? (
+                <p
+                  id="appdrive-bundle-honesty"
+                  className="appdrive-dock-honesty"
+                  data-testid="appdrive-bundle-honesty"
+                >
+                  Display only — not an approval key.
+                </p>
               ) : null}
             </div>
           </section>
@@ -145,9 +196,9 @@ export function AppDriveDockPanel({
             </dl>
             {actions.agentActionsRefused && status.control ? (
               <div className="appdrive-dock-note" data-testid="appdrive-refuse-note">
-                Agent actuation is refused while this session is{' '}
-                {lifecycleStatusLabel(status.lifecycle).toLowerCase()}. Explicit Pause / Takeover is
-                session chrome — native HID arbitration remains machine-wide.
+                Agent actuation is refused while this session is {lifecycleLabel.toLowerCase()}.
+                Explicit Pause / Takeover is session chrome — native HID arbitration remains
+                machine-wide.
               </div>
             ) : null}
           </section>
@@ -161,52 +212,57 @@ export function AppDriveDockPanel({
       ) : null}
 
       <footer className="appdrive-dock-controls" aria-label="App Drive controls">
-        {actions.canPause ? (
+        {showControlsHelp ? (
+          <p className="appdrive-dock-controls-help" data-testid="appdrive-controls-help">
+            {PAUSE_VS_TAKEOVER_HELP}
+          </p>
+        ) : null}
+        {showPause ? (
           <button
             type="button"
             className="appdrive-dock-button"
             data-testid="appdrive-pause"
             onClick={onPause}
-            disabled={!onPause}
           >
             Pause
           </button>
         ) : null}
-        {actions.canResume ? (
+        {showResume ? (
           <button
             type="button"
             className="appdrive-dock-button"
             data-testid="appdrive-resume"
             onClick={onResume}
-            disabled={!onResume}
           >
             Resume
           </button>
         ) : null}
-        {actions.canTakeOver ? (
+        {showTakeOver ? (
           <button
             type="button"
             className="appdrive-dock-button"
             data-testid="appdrive-takeover"
             onClick={onTakeOver}
-            disabled={!onTakeOver}
           >
             Take Over
           </button>
         ) : null}
-        {actions.canStop ? (
+        {showStop ? (
           <button
             type="button"
             className="appdrive-dock-button is-danger"
             data-testid="appdrive-stop"
             onClick={onStop}
-            disabled={!onStop}
           >
-            Stop
+            {stopLabel}
           </button>
         ) : null}
-        {!actions.canPause && !actions.canResume && !actions.canTakeOver && !actions.canStop ? (
-          <span className="appdrive-dock-controls-idle">No active control session</span>
+        {!anyControlVisible ? (
+          <span className="appdrive-dock-controls-idle">
+            {actions.canPause || actions.canResume || actions.canTakeOver || actions.canStop
+              ? 'Controls unavailable until the session API is wired'
+              : 'No active control session'}
+          </span>
         ) : null}
       </footer>
     </div>
