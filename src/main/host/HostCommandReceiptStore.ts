@@ -46,6 +46,15 @@ const MAX_SUMMARY_CHARS = 500
 const MAX_ERROR_CHARS = 500
 const MAX_KIND_CHARS = 80
 
+/**
+ * Fixed non-grant authority on durable conflict receipts. Callers may have
+ * supplied `allowed`; the conflict path never persists a grant.
+ */
+const CONFLICT_RECEIPT_AUTHORITY: HostCommandReceiptAuthority = {
+  decision: 'denied',
+  reason: 'idempotency_key_command_mismatch'
+}
+
 export type HostCommandReceiptStatus =
   | 'pending'
   | 'succeeded'
@@ -221,7 +230,16 @@ export class HostCommandReceiptStore {
           if (!retain.has(commandId)) {
             const existing = this.recordsByCommandId.get(commandId)
             if (existing) {
-              this.commandIdByIdempotencyKey.delete(existing.idempotencyKey)
+              // Delete the idempotency mapping only when it currently maps to
+              // this removed non-conflict owner. Evicting a conflict must not
+              // erase a live owner's key.
+              if (
+                existing.status !== 'conflict' &&
+                this.commandIdByIdempotencyKey.get(existing.idempotencyKey) ===
+                  commandId
+              ) {
+                this.commandIdByIdempotencyKey.delete(existing.idempotencyKey)
+              }
               this.recordsByCommandId.delete(commandId)
             }
           }
@@ -312,6 +330,8 @@ export class HostCommandReceiptStore {
         // Distinct commandId + same key + different fingerprint → durable conflict.
         // If a prior conflict receipt for this commandId already exists it would
         // have been caught by byId; we write once and keep the original key map.
+        // Conflicts always persist fixed non-grant authority (denied), even when
+        // the caller supplied allowed/deferred — never grant via conflict path.
         const createdAt = input.createdAt ?? this.now()
         const conflictRecord: HostCommandReceiptRecord = {
           schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
@@ -321,7 +341,7 @@ export class HostCommandReceiptStore {
           status: 'conflict',
           actor: normalizeActor(input.actor),
           target: normalizeTarget(input.target),
-          authority: normalizeAuthority(input.authority),
+          authority: CONFLICT_RECEIPT_AUTHORITY,
           createdAt,
           updatedAt: createdAt,
           completedAt: createdAt,
@@ -438,15 +458,54 @@ export class HostCommandReceiptStore {
     }
   }
 
-  private writeCheckpointAndResetJournal(): void {
-    let records = [...this.recordsByCommandId.values()].sort((a, b) => {
+  /**
+   * Bounded retention that prefers non-conflict idempotency owners over
+   * conflicts. A retained conflict never outlives its conflictCommandId owner:
+   * if maxRecords cannot hold both (including maxRecords=1), the conflict is
+   * evicted and the owner is kept. Never exceeds the configured bound.
+   */
+  private selectRecordsForRetention(
+    all: HostCommandReceiptRecord[]
+  ): HostCommandReceiptRecord[] {
+    if (all.length <= this.maxRecords) {
+      return all
+    }
+
+    const sorted = [...all].sort((a, b) => {
       const byUpdated = b.updatedAt.localeCompare(a.updatedAt)
       if (byUpdated !== 0) return byUpdated
       return b.createdAt.localeCompare(a.createdAt)
     })
-    if (records.length > this.maxRecords) {
-      records = records.slice(0, this.maxRecords)
+
+    const selected = new Map<string, HostCommandReceiptRecord>()
+
+    // Phase 1: retain non-conflict owners newest-first (prefer original owners).
+    for (const record of sorted) {
+      if (record.status === 'conflict') continue
+      if (selected.size >= this.maxRecords) break
+      selected.set(record.commandId, record)
     }
+
+    // Phase 2: fill remaining slots with conflicts whose owners are retained.
+    // Never retain a conflict without its conflictCommandId owner in the set.
+    if (selected.size < this.maxRecords) {
+      for (const record of sorted) {
+        if (record.status !== 'conflict') continue
+        if (selected.has(record.commandId)) continue
+        const ownerId = record.conflictCommandId
+        if (!ownerId || !selected.has(ownerId)) continue
+        if (selected.size >= this.maxRecords) break
+        selected.set(record.commandId, record)
+      }
+    }
+
+    return [...selected.values()]
+  }
+
+  private writeCheckpointAndResetJournal(): void {
+    const records = this.selectRecordsForRetention([
+      ...this.recordsByCommandId.values()
+    ])
 
     this.recordsByCommandId = new Map()
     this.commandIdByIdempotencyKey = new Map()
@@ -591,13 +650,18 @@ function normalizeId(value: string, field: string): string {
   return trimmed
 }
 
+/** Exact SHA-256 hex acceptance: 64 lowercase [a-f0-9] characters. */
+const COMMAND_FINGERPRINT_HEX_RE = /^[a-f0-9]{64}$/
+
 function normalizeFingerprint(value: string): string {
   if (typeof value !== 'string') {
     throw new Error('HostCommandReceiptStore: commandFingerprint is required')
   }
   const trimmed = value.trim().toLowerCase()
-  if (!trimmed || trimmed.length > 128 || !/^[a-f0-9]+$/.test(trimmed)) {
-    throw new Error('HostCommandReceiptStore: commandFingerprint must be a hex digest')
+  if (!COMMAND_FINGERPRINT_HEX_RE.test(trimmed)) {
+    throw new Error(
+      'HostCommandReceiptStore: commandFingerprint must be a 64-char lowercase hex SHA-256 digest'
+    )
   }
   return trimmed
 }

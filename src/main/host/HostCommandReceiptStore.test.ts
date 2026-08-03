@@ -127,17 +127,210 @@ describe('HostCommandReceiptStore', () => {
     expect(conflict.receipt?.commandFingerprint).toBe(otherFp)
     expect(conflict.receipt?.actor.clientId).toBe('client-attacker')
     expect(conflict.receipt?.target.id).toBe('thread-other')
+    // Fixed non-grant authority even when caller supplied allowed.
+    expect(conflict.receipt?.authority.decision).toBe('denied')
+    expect(conflict.receipt?.authority.reason).toBe('idempotency_key_command_mismatch')
 
     // Durable by distinct commandId; original remains sole idempotency owner.
     const durable = store.getByCommandId('cmd-2')
     expect(durable?.status).toBe('conflict')
     expect(durable?.conflictCommandId).toBe('cmd-1')
+    expect(durable?.authority.decision).toBe('denied')
     expect(store.getByIdempotencyKey('idem-1')?.commandId).toBe('cmd-1')
     expect(store.getByIdempotencyKey('idem-1')?.status).not.toBe('conflict')
 
     // No raw command body fields.
     const json = JSON.stringify(durable)
     expect(json).not.toMatch(/args|toolOutput|hiddenReasoning|DIFFERENT/)
+  })
+
+  it('persists fixed denied conflict authority even when caller supplied allowed', () => {
+    const store = openStore()
+    store.begin(baseInput())
+
+    const otherFp = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'ATTACK'
+    })
+    const conflict = store.begin(
+      baseInput({
+        commandId: 'cmd-attack',
+        idempotencyKey: 'idem-1',
+        commandFingerprint: otherFp,
+        authority: { decision: 'allowed', reason: 'spoofed grant', policy: 'workspace' }
+      })
+    )
+    expect(conflict.kind).toBe('conflict')
+    if (conflict.kind !== 'conflict') return
+    expect(conflict.receipt?.authority.decision).toBe('denied')
+    expect(conflict.receipt?.authority.reason).toBe('idempotency_key_command_mismatch')
+    // Caller-supplied allowed reason must not leak onto the conflict receipt.
+    expect(conflict.receipt?.authority.reason).not.toBe('spoofed grant')
+    expect(conflict.receipt?.authority.policy).toBeUndefined()
+
+    const reopened = openStore()
+    expect(reopened.getByCommandId('cmd-attack')?.authority.decision).toBe('denied')
+    expect(reopened.getByCommandId('cmd-attack')?.authority.reason).toBe(
+      'idempotency_key_command_mismatch'
+    )
+  })
+
+  it('at maxRecords=1 retains original owner over conflict and blocks fresh pending mint', () => {
+    // Prefer original non-conflict idempotency owner when both cannot fit.
+    const store = openStore({ maxRecords: 1, compactAfterRecords: 1000 })
+    const first = store.begin(baseInput())
+    expect(first.kind).toBe('created')
+    store.complete({ commandId: 'cmd-1', status: 'succeeded', resultSummary: 'owner' })
+
+    const otherFp = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'CONFLICT-AT-BOUND'
+    })
+    const conflict = store.begin(
+      baseInput({
+        commandId: 'cmd-2',
+        idempotencyKey: 'idem-1',
+        commandFingerprint: otherFp
+      })
+    )
+    expect(conflict.kind).toBe('conflict')
+
+    // Compaction under maxRecords=1 must keep owner, drop conflict, never exceed bound.
+    store.compact()
+    expect(store.size).toBe(1)
+    expect(store.getByCommandId('cmd-1')?.status).toBe('succeeded')
+    expect(store.getByCommandId('cmd-2')).toBeNull()
+    expect(store.getByIdempotencyKey('idem-1')?.commandId).toBe('cmd-1')
+    expect(store.getByIdempotencyKey('idem-1')?.status).toBe('succeeded')
+
+    // Exact repeat returns existing owner; cannot mint a fresh pending under the key.
+    const again = store.begin(baseInput())
+    expect(again.kind).toBe('existing')
+    if (again.kind !== 'existing') return
+    expect(again.receipt.commandId).toBe('cmd-1')
+    expect(again.receipt.status).toBe('succeeded')
+    expect(again.receipt.status).not.toBe('pending')
+
+    // Checkpoint-only reopen preserves the same invariants.
+    const reopened = openStore({ maxRecords: 1 })
+    expect(reopened.size).toBe(1)
+    expect(reopened.getByIdempotencyKey('idem-1')?.commandId).toBe('cmd-1')
+    expect(reopened.getByCommandId('cmd-2')).toBeNull()
+    const replay = reopened.begin(baseInput())
+    expect(replay.kind).toBe('existing')
+    if (replay.kind !== 'existing') return
+    expect(replay.receipt.status).toBe('succeeded')
+  })
+
+  it('compact-journal replay does not erase live owner when removing a conflict', () => {
+    const store = openStore({ maxRecords: 10, compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+    const otherFp = hostCommandFingerprint({
+      type: 'composer.send',
+      targetKind: 'thread',
+      targetId: 'thread-1',
+      argsDigest: 'JOURNAL-COMPACT-CONFLICT'
+    })
+    store.begin(
+      baseInput({
+        commandId: 'cmd-2',
+        idempotencyKey: 'idem-1',
+        commandFingerprint: otherFp
+      })
+    )
+    expect(store.getByCommandId('cmd-2')?.status).toBe('conflict')
+    expect(store.getByIdempotencyKey('idem-1')?.commandId).toBe('cmd-1')
+
+    // Append a compact journal event that retains only the owner (drops conflict).
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const compactEvent = JSON.stringify({
+      op: 'compact',
+      retainedCommandIds: ['cmd-1'],
+      at: '2026-08-03T17:00:50.000Z'
+    })
+    writeFileSync(journalPath, `${readFileSync(journalPath, 'utf8')}${compactEvent}\n`)
+
+    const reopened = openStore({ maxRecords: 10, compactAfterRecords: 1000 })
+    expect(reopened.getByCommandId('cmd-2')).toBeNull()
+    expect(reopened.getByCommandId('cmd-1')?.status).toBe('succeeded')
+    // Critical: removing the conflict must not delete the owner's idempotency map.
+    expect(reopened.getByIdempotencyKey('idem-1')?.commandId).toBe('cmd-1')
+    expect(reopened.getByIdempotencyKey('idem-1')?.status).toBe('succeeded')
+  })
+
+  it('rejects malformed commandFingerprint that is not exact 64 lowercase hex', () => {
+    const store = openStore()
+    expect(() =>
+      store.begin(
+        baseInput({
+          commandFingerprint: 'not-a-sha256'
+        })
+      )
+    ).toThrow(/64-char lowercase hex SHA-256/)
+
+    expect(() =>
+      store.begin(
+        baseInput({
+          // 63 hex chars — too short
+          commandFingerprint: 'a'.repeat(63)
+        })
+      )
+    ).toThrow(/64-char lowercase hex SHA-256/)
+
+    expect(() =>
+      store.begin(
+        baseInput({
+          // 65 hex chars — too long
+          commandFingerprint: 'a'.repeat(65)
+        })
+      )
+    ).toThrow(/64-char lowercase hex SHA-256/)
+
+    expect(() =>
+      store.begin(
+        baseInput({
+          // uppercase accepted only after normalize lowercases — but 'G' is invalid
+          commandFingerprint: 'g'.repeat(64)
+        })
+      )
+    ).toThrow(/64-char lowercase hex SHA-256/)
+  })
+
+  it('skips legacy/malformed fingerprint records on reopen honestly', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const badFp = 'deadbeef' // not 64 hex
+    const malformed = JSON.stringify({
+      op: 'upsert',
+      record: {
+        schemaVersion: 1,
+        commandId: 'cmd-bad-fp',
+        idempotencyKey: 'idem-bad-fp',
+        commandFingerprint: badFp,
+        status: 'succeeded',
+        actor: { clientId: 'client-tui-1' },
+        target: { kind: 'host', id: 'n' },
+        authority: { decision: 'allowed' },
+        createdAt: '2026-08-03T17:00:20.000Z',
+        updatedAt: '2026-08-03T17:00:20.000Z',
+        completedAt: '2026-08-03T17:00:20.000Z'
+      }
+    })
+    writeFileSync(journalPath, `${readFileSync(journalPath, 'utf8')}${malformed}\n`)
+
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    // Good prior receipt retained; malformed fingerprint skipped (not loaded).
+    expect(reopened.getByCommandId('cmd-1')?.status).toBe('succeeded')
+    expect(reopened.getByCommandId('cmd-bad-fp')).toBeNull()
   })
 
   it('treats cancelled as a normal terminal complete status and is idempotent on replay', () => {
@@ -398,7 +591,7 @@ describe('HostCommandReceiptStore', () => {
     expect(begun.receipt).not.toHaveProperty('args')
     expect(begun.receipt).not.toHaveProperty('toolOutput')
     expect(begun.receipt).not.toHaveProperty('hiddenReasoning')
-    // Fingerprint is a digest, not raw args.
-    expect(begun.receipt.commandFingerprint).toMatch(/^[a-f0-9]+$/)
+    // Fingerprint is an exact SHA-256 digest, not raw args.
+    expect(begun.receipt.commandFingerprint).toMatch(/^[a-f0-9]{64}$/)
   })
 })
