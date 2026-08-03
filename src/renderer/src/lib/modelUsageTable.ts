@@ -824,7 +824,6 @@ export function buildModelUsageWorkspaceMatrix(
     if (!Number.isFinite(timestamp) || timestamp > now || timestamp < cutoff) continue
     const tokensIn = usageRecordInputTokens(record)
     const tokensOut = toNonNegative(record.outputTokens)
-    const totalTokens = tokensIn + tokensOut
     const costUsd = recordCostUsd(record, rates)
     if (!hasReportableModelUsage(record, tokensIn, tokensOut, costUsd)) continue
 
