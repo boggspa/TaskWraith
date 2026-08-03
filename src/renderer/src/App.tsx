@@ -21505,8 +21505,8 @@ function App(): React.JSX.Element {
     ? sideChat?.ensemble?.activeRound?.startedAt || sideRun?.startedAt || null
     : null
   const sideCumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(sideChat?.runs),
-    [sideChat?.runs]
+    () => computeCumulativeRunBaseMs(sideChat?.runs, sideComposerRunTimecodeStartedAt),
+    [sideChat?.runs, sideComposerRunTimecodeStartedAt]
   )
   const sideChatTokenTally = useMemo(
     () => buildChatTokenTally(sideChat?.runs || [], { providerRates }),
@@ -21593,13 +21593,13 @@ function App(): React.JSX.Element {
     currentRun?.runId,
     isCurrentChatRunning
   ])
-  // 1.0.4-AR10 — cumulative session timecode base. Derived from the
-  // sealed run records (`endedAt - startedAt` per run, summed) so it
-  // survives reloads automatically and pauses naturally between runs
-  // (the in-flight run is added live inside the component itself).
+  // 1.0.4-AR10 — cumulative session timecode base. Completed-run intervals
+  // are merged so parallel Ensemble seats count as one thread wall-time span.
+  // The active run/round stays out of the base and is added live by the
+  // timecode component, preserving a ticking display without redrawing App.
   const cumulativeRunBaseMs = useMemo(
-    () => computeCumulativeRunBaseMs(currentChat?.runs),
-    [currentChat?.runs]
+    () => computeCumulativeRunBaseMs(currentChat?.runs, composerRunTimecodeStartedAt),
+    [currentChat?.runs, composerRunTimecodeStartedAt]
   )
   const cumulativeChatTokens =
     chatTokenTally.totalTokens + (isCurrentChatRunning ? liveRunOutputTokens : 0)
@@ -27439,7 +27439,10 @@ function App(): React.JSX.Element {
     const viewerRunStartedAt = viewerIsRunning
       ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
       : null
-    const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(viewerChat.runs)
+    const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(
+      viewerChat.runs,
+      viewerRunStartedAt
+    )
     const viewerShouldShowWelcomeUsageDashboard =
       viewerIsWelcomeChat &&
       usageInitialized &&
@@ -28956,7 +28959,10 @@ function App(): React.JSX.Element {
       const viewerRunStartedAt = viewerIsRunning
         ? viewerChat.ensemble?.activeRound?.startedAt || viewerRun?.startedAt || null
         : null
-      const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(viewerChat.runs)
+      const viewerCumulativeRunBaseMs = computeCumulativeRunBaseMs(
+        viewerChat.runs,
+        viewerRunStartedAt
+      )
       const viewerShouldShowWelcomeUsageDashboard =
         viewerIsWelcomeChat &&
         usageInitialized &&
