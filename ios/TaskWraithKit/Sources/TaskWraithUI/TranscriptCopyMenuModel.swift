@@ -1,9 +1,8 @@
 // Presentation model for the desktop Copy transcript menu
 // (`CopyTranscriptButton.tsx`): Copy Messages vs Copy handoff Markdown.
 //
-// Extracted for Priority-4 so Boss can replace the single-purpose iOS
-// "Copy transcript" toolbar button with a two-format menu without growing
-// ThreadDetailViews / RemoteSessionModel in this lane.
+// Extracted for Priority-4 so the two-format menu stays independently
+// testable while ThreadDetailViews owns only its callbacks and popover wiring.
 //
 // Callbacks only — this model never serializes transcript bytes, never
 // touches the pasteboard, and never invents bridge capabilities. The host

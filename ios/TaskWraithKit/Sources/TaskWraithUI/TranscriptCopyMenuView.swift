@@ -1,12 +1,10 @@
 // Extracted Copy transcript menu — iOS mirror of desktop `CopyTranscriptButton`.
 //
-// Integrator supplies callbacks only:
-//   onCopyMessages        → Mac `copy-chat-messages` / raw prose export
+// ThreadDetail supplies callbacks:
+//   onCopyMessages        → Mac `chatMessageTranscript` / raw prose export
 //   onCopyHandoffMarkdown → Mac `chatMarkdownTranscript` / scrubbed handoff
 //
-// This view never serializes rows, never invents pasteboard content, and never
-// grows ThreadDetailViews. Wire later by replacing the single toolbar Copy
-// button with this menu surface.
+// This view never serializes rows or invents pasteboard content.
 
 import SwiftUI
 

@@ -311,6 +311,8 @@ struct ThreadDetailView: View {
     @State private var activeTranscriptFilterKeys: Set<String> = []
     /// Last scrubber jump, used as a compact active-turn cue.
     @State private var activeTurnScrubberMarkerKey: String?
+    /// Two-format transcript export popover state (raw Messages / handoff Markdown).
+    @State private var transcriptCopyMenuState = TranscriptCopyMenuState()
     /// Canonical pinned source row temporarily materialized when it falls
     /// outside the phone's latest-N transcript window.
     @State private var pinnedJumpSourceRow: RemoteThreadSnapshot.Row?
@@ -1509,6 +1511,7 @@ struct ThreadDetailView: View {
             store.bind(model: model, taskId: newTaskId)
             activeTranscriptFilterKeys.removeAll()
             activeTurnScrubberMarkerKey = nil
+            transcriptCopyMenuState = TranscriptCopyMenuState()
             pinnedJumpSourceRow = nil
         }
         .onChange(of: transcriptFilterItemKeys) {
@@ -2772,6 +2775,47 @@ struct ThreadDetailView: View {
         }
     #endif
 
+    private func copyTranscriptMessages(_ card: RemoteTaskCard) {
+        model.fetchChatMessageTranscript(card) { transcript in
+            transcriptCopyMenuState.isBusy = false
+            guard let transcript else {
+                transcriptCopyMenuState.lastError =
+                    model.lastActionMessage ?? "Messages could not be copied."
+                return
+            }
+            writeTranscriptPasteboard(transcript.text)
+            transcriptCopyMenuState.copiedFormat = .messages
+            transcriptCopyMenuState.lastSuccess = TranscriptCopySuccessSummary(
+                messageCount: transcript.messageCount ?? 0,
+                charCount: transcript.charCount ?? transcript.text.count
+            )
+        }
+    }
+
+    private func copyHandoffMarkdown(_ card: RemoteTaskCard) {
+        model.fetchChatMarkdownTranscript(card) { transcript in
+            transcriptCopyMenuState.isBusy = false
+            guard let transcript else {
+                transcriptCopyMenuState.lastError =
+                    model.lastActionMessage ?? "Handoff Markdown could not be copied."
+                return
+            }
+            writeTranscriptPasteboard(transcript.markdown)
+            transcriptCopyMenuState.copiedFormat = .handoff
+            transcriptCopyMenuState.lastSuccess = TranscriptCopySuccessSummary(
+                messageCount: transcript.messageCount ?? 0,
+                charCount: transcript.charCount ?? transcript.markdown.count,
+                omissions: transcript.omissions
+            )
+        }
+    }
+
+    private func writeTranscriptPasteboard(_ text: String) {
+        #if canImport(UIKit)
+            UIPasteboard.general.string = text
+        #endif
+    }
+
     private func toolbarChrome(_ base: AnyView) -> some View {
         base
         .toolbar {
@@ -2855,33 +2899,33 @@ struct ThreadDetailView: View {
                     }
                 }
             }
-            // T2 — full-transcript export. The markdown comes from the Mac's
-            // existing builder (desktop-identical bytes, paths scrubbed); a
-            // local build over the 24-row snapshot window would silently
-            // truncate (ios-t2-transcript-wire-ruling). Failure copy rides
-            // the ack banner verbatim. Individual pill (landmine ④).
-            // Use a Button (not a one-item Menu) so toolbar chrome matches
-            // Files / Diffs / Inspector — Menu labels can drop the circular
-            // pill treatment in the glass nav bar.
+            // Full-transcript export is always Mac-built: raw user/assistant
+            // Messages or scrubbed handoff Markdown. A phone-window rebuild
+            // would silently truncate old rows (ios-t2-transcript-wire-ruling).
             if let card {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        model.fetchChatMarkdownTranscript(card) { transcript in
-                            guard let transcript else { return }
-                            #if canImport(UIKit)
-                                UIPasteboard.general.string = transcript.markdown
-                            #endif
-                            // Ack banner copy ("Transcript copied.") is posted
-                            // by the model's successLabel — the setter is
-                            // private(set) out here by design.
-                        }
+                        transcriptCopyMenuState.isOpen.toggle()
                     } label: {
                         ToolbarIconPillLabel(
                             "Transcript", systemImage: "square.and.arrow.up.on.square")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Copy transcript")
-                    .accessibilityHint("Copies the full chat transcript as Markdown.")
+                    .accessibilityLabel(
+                        TranscriptCopyMenuModel.triggerAccessibilityLabel(
+                            copiedFormat: transcriptCopyMenuState.copiedFormat)
+                    )
+                    .accessibilityHint(TranscriptCopyMenuCopy.dialogDescription)
+                    .popover(isPresented: $transcriptCopyMenuState.isOpen) {
+                        TranscriptCopyMenuView(
+                            state: $transcriptCopyMenuState,
+                            onCopyMessages: { copyTranscriptMessages(card) },
+                            onCopyHandoffMarkdown: { copyHandoffMarkdown(card) }
+                        )
+                        .frame(width: hSizeClass == .regular ? 420 : nil)
+                        .presentationCompactAdaptation(.sheet)
+                        .twSheetLiquidGlass(detents: [.medium])
+                    }
                 }
             }
             ToolbarItem(placement: .primaryAction) {
