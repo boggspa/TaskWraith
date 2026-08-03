@@ -4933,3 +4933,37 @@
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
+
+/* Concurrent Ensemble seats share the same live transcript tail. Keep the
+ * existing single-row presentation for solo chats, but use the available
+ * width when several seats are working at once instead of growing a tall
+ * vertical column. */
+.message-working-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: clamp(var(--space-md), 3vw, var(--space-xl));
+  row-gap: var(--space-md);
+  width: 100%;
+  min-width: 0;
+}
+
+.message-working-stack-row {
+  min-width: 0;
+}
+
+.message-working-stack-row .message-meta {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.message-working-stack-row .message-working {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 620px) {
+  .message-working-stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
