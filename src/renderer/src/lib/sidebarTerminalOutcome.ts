@@ -1,0 +1,254 @@
+import type { ChatListItem, ChatRecord, ChatRun } from '../../../main/store/types'
+
+export const SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY =
+  'taskwraith-sidebar-terminal-outcome-acknowledgements-v1'
+
+export type SidebarTerminalOutcomeTone = 'success' | 'failure'
+
+export interface SidebarTerminalOutcomeProjection {
+  fingerprint: string
+  source: 'goal' | 'round' | 'run'
+  tone: SidebarTerminalOutcomeTone
+}
+
+export type SidebarTerminalOutcomeAcknowledgements = Record<string, string>
+
+interface SidebarTerminalOutcomeStorage {
+  getItem(key: string): string | null
+  setItem(key: string, value: string): void
+}
+
+interface TerminalEvidence {
+  activeGoalId?: string
+  fingerprint: string
+  startedAt?: string
+  tone: SidebarTerminalOutcomeTone | null
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  'cancelled',
+  'completed',
+  'failed',
+  'success',
+  'success_with_warnings'
+])
+
+const FAILURE_BLOCKER_KINDS = new Set(['looping', 'stuck', 'tool-error-cluster'])
+
+function latestSidebarRun(chat: ChatRecord): ChatRun | undefined {
+  return (chat as Partial<ChatListItem>).lastRun || chat.runs?.[chat.runs.length - 1]
+}
+
+function terminalRunEvidence(run: ChatRun | undefined): TerminalEvidence | null {
+  if (!run) return null
+  const status = String(run.status || '').toLowerCase()
+  const isTerminal = Boolean(run.endedAt || run.cancelled || TERMINAL_RUN_STATUSES.has(status))
+  if (!isTerminal || status === 'sleeping') return null
+
+  const exitCode = typeof run.exitCode === 'number' ? run.exitCode : null
+  const cancelled = Boolean(run.cancelled || status === 'cancelled' || exitCode === 130)
+  const failed = status === 'failed' || (exitCode !== null && exitCode !== 0 && exitCode !== 130)
+  const tone: SidebarTerminalOutcomeTone | null = run.suppressRunSummary
+    ? null
+    : cancelled
+      ? null
+      : failed
+        ? 'failure'
+        : 'success'
+
+  return {
+    ...(run.activeGoalId ? { activeGoalId: run.activeGoalId } : {}),
+    ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+    fingerprint: [
+      'run',
+      run.runId,
+      status || 'ended',
+      run.endedAt || '',
+      exitCode ?? '',
+      run.cancelled ? 'cancelled' : '',
+      run.suppressRunSummary ? 'summary-suppressed' : ''
+    ].join(':'),
+    tone
+  }
+}
+
+function terminalRoundEvidence(chat: ChatRecord): TerminalEvidence | null {
+  const round = chat.ensemble?.activeRound
+  if (!round || round.status === 'running') return null
+
+  const hasQueuedFollowup = Boolean(round.queuedPrompt || round.queuedPrompts?.length)
+  if (hasQueuedFollowup) return null
+
+  const blockerKinds = (chat.ensemble?.escalationSignals || [])
+    .filter(
+      (signal) => signal.roundId === round.roundId && FAILURE_BLOCKER_KINDS.has(String(signal.kind))
+    )
+    .map((signal) => signal.kind)
+    .sort()
+  const tone: SidebarTerminalOutcomeTone | null =
+    round.status === 'failed' || blockerKinds.length > 0
+      ? 'failure'
+      : round.status === 'completed'
+        ? 'success'
+        : null
+
+  return {
+    fingerprint: [
+      'round',
+      round.roundId,
+      round.status,
+      round.endedAt || '',
+      blockerKinds.join(',')
+    ].join(':'),
+    startedAt: round.startedAt,
+    tone
+  }
+}
+
+function terminalEvidenceForChat(chat: ChatRecord): TerminalEvidence | null {
+  if (chat.ensemble?.activeRound) return terminalRoundEvidence(chat)
+  return terminalRunEvidence(latestSidebarRun(chat))
+}
+
+function chatHasUnsettledTerminalUnit(chat: ChatRecord): boolean {
+  const round = chat.ensemble?.activeRound
+  if (round) {
+    return Boolean(round.status === 'running' || round.queuedPrompt || round.queuedPrompts?.length)
+  }
+  const run = latestSidebarRun(chat)
+  return Boolean(run && !terminalRunEvidence(run))
+}
+
+function parseTimestamp(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function terminalGoalTimestamp(chat: ChatRecord): string | undefined {
+  const goal = chat.activeGoal
+  if (!goal) return undefined
+  if (goal.status === 'completed') return goal.completedAt || goal.updatedAt
+  if (goal.status === 'blocked') return goal.blockedAt || goal.updatedAt
+  return undefined
+}
+
+function terminalGoalAppliesToEvidence(
+  chat: ChatRecord,
+  evidence: TerminalEvidence | null
+): boolean {
+  const goal = chat.activeGoal
+  if (!goal || (goal.status !== 'completed' && goal.status !== 'blocked')) return false
+  if (goal.status === 'blocked') return true
+  if (!evidence) return true
+  if (evidence.activeGoalId === goal.id) return true
+
+  const goalAt = parseTimestamp(terminalGoalTimestamp(chat))
+  const evidenceStartedAt = parseTimestamp(evidence.startedAt)
+  if (goalAt === null) return false
+  return evidenceStartedAt === null || goalAt >= evidenceStartedAt
+}
+
+/**
+ * Projects the latest durable terminal result into the sidebar's two attention
+ * tones. This never mutates the run/round history: a completed goal may win the
+ * PRESENTATION tone over a failed terminal run from that same goal, while the
+ * underlying failed run remains failed everywhere else.
+ *
+ * Active/paused goals intentionally suppress ordinary successful-turn green —
+ * a provider turn ending is not the same thing as the goal succeeding. Concrete
+ * failure evidence still surfaces red. Cancelled runs and intentional steer
+ * handoffs are terminal but neutral, matching the Task Complete card.
+ */
+export function projectSidebarTerminalOutcome(
+  chat: ChatRecord
+): SidebarTerminalOutcomeProjection | null {
+  if (chatHasUnsettledTerminalUnit(chat)) return null
+  const evidence = terminalEvidenceForChat(chat)
+  const goal = chat.activeGoal
+
+  if (goal && terminalGoalAppliesToEvidence(chat, evidence)) {
+    const goalTimestamp = terminalGoalTimestamp(chat) || ''
+    return {
+      fingerprint: [
+        'goal',
+        goal.id,
+        goal.status,
+        goalTimestamp,
+        evidence?.fingerprint || 'standalone'
+      ].join(':'),
+      source: 'goal',
+      tone: goal.status === 'completed' ? 'success' : 'failure'
+    }
+  }
+
+  if (!evidence?.tone) return null
+  if (
+    goal &&
+    (goal.status === 'active' || goal.status === 'paused') &&
+    evidence.tone === 'success'
+  ) {
+    return null
+  }
+
+  return {
+    fingerprint: evidence.fingerprint,
+    source: chat.ensemble?.activeRound ? 'round' : 'run',
+    tone: evidence.tone
+  }
+}
+
+function defaultStorage(): SidebarTerminalOutcomeStorage | null {
+  return typeof localStorage === 'undefined' ? null : localStorage
+}
+
+export function loadSidebarTerminalOutcomeAcknowledgements(
+  storage: SidebarTerminalOutcomeStorage | null = defaultStorage()
+): SidebarTerminalOutcomeAcknowledgements {
+  if (!storage) return {}
+  try {
+    const raw = storage.getItem(SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+
+    const acknowledgements: SidebarTerminalOutcomeAcknowledgements = {}
+    for (const [chatId, fingerprint] of Object.entries(parsed).slice(-2_000)) {
+      if (typeof fingerprint === 'string' && fingerprint.length <= 2_048) {
+        acknowledgements[chatId] = fingerprint
+      }
+    }
+    return acknowledgements
+  } catch {
+    return {}
+  }
+}
+
+export function persistSidebarTerminalOutcomeAcknowledgements(
+  acknowledgements: SidebarTerminalOutcomeAcknowledgements,
+  storage: SidebarTerminalOutcomeStorage | null = defaultStorage()
+): void {
+  if (!storage) return
+  try {
+    storage.setItem(SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY, JSON.stringify(acknowledgements))
+  } catch {
+    // Renderer-local acknowledgement is best effort when storage is unavailable.
+  }
+}
+
+export function acknowledgeSidebarTerminalOutcome(
+  acknowledgements: SidebarTerminalOutcomeAcknowledgements,
+  chatId: string,
+  outcome: SidebarTerminalOutcomeProjection
+): SidebarTerminalOutcomeAcknowledgements {
+  if (acknowledgements[chatId] === outcome.fingerprint) return acknowledgements
+  return { ...acknowledgements, [chatId]: outcome.fingerprint }
+}
+
+export function isSidebarTerminalOutcomeUnread(
+  acknowledgements: SidebarTerminalOutcomeAcknowledgements,
+  chatId: string,
+  outcome: SidebarTerminalOutcomeProjection
+): boolean {
+  return acknowledgements[chatId] !== outcome.fingerprint
+}

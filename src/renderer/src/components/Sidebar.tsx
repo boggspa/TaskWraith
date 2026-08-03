@@ -87,6 +87,14 @@ import type { HumanCollaborationShare } from '../../../main/collaboration/HumanC
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 import { isCanvasEvalApprovalToolName } from '../lib/agentApprovalPreview'
+import {
+  acknowledgeSidebarTerminalOutcome,
+  isSidebarTerminalOutcomeUnread,
+  loadSidebarTerminalOutcomeAcknowledgements,
+  persistSidebarTerminalOutcomeAcknowledgements,
+  projectSidebarTerminalOutcome,
+  type SidebarTerminalOutcomeTone
+} from '../lib/sidebarTerminalOutcome'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
 
@@ -1507,6 +1515,7 @@ interface SidebarCompactChatRowProps {
   surfaceId: string
   isSelected: boolean
   isRunning: boolean
+  terminalOutcomeTone: SidebarTerminalOutcomeTone | null
   /** True when an agent is blocked on `ask_user_question` in this chat. */
   needsInput: boolean
   isEditing: boolean
@@ -1546,6 +1555,7 @@ function SidebarCompactChatRowInner({
   surfaceId,
   isSelected,
   isRunning,
+  terminalOutcomeTone,
   needsInput,
   isEditing,
   query,
@@ -1562,6 +1572,9 @@ function SidebarCompactChatRowInner({
   const gitMarker = chatGitWorkflowMarker(chat)
   const baseClass = variant === 'pinned' ? 'sidebar-pinned-item' : 'sidebar-recents-item'
   const labelClass = variant === 'pinned' ? 'sidebar-pinned-label' : 'sidebar-recents-label'
+  const terminalOutcomeClass = terminalOutcomeTone
+    ? ` sidebar-terminal-outcome-${terminalOutcomeTone}`
+    : ''
   const editableTitle = (
     <SidebarChatTitleEditable
       chat={chat}
@@ -1579,7 +1592,7 @@ function SidebarCompactChatRowInner({
       tabIndex={0}
       className={`${baseClass} provider-${badgeId} ${isSelected ? 'active' : ''}${
         needsInput ? ' needs-input' : ''
-      }`}
+      }${terminalOutcomeClass}`}
       onClick={() => onSelect(chat)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
@@ -1595,7 +1608,11 @@ function SidebarCompactChatRowInner({
           ? `${chat.title}, needs input`
           : isRunning
             ? `${chat.title}, running`
-            : chat.title
+            : terminalOutcomeTone === 'success'
+              ? `${chat.title}, completed successfully, unread`
+              : terminalOutcomeTone === 'failure'
+                ? `${chat.title}, blocked or failed, unread`
+                : chat.title
       }
       {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
     >
@@ -1638,6 +1655,7 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.surfaceId === b.surfaceId &&
     a.isSelected === b.isSelected &&
     a.isRunning === b.isRunning &&
+    a.terminalOutcomeTone === b.terminalOutcomeTone &&
     a.needsInput === b.needsInput &&
     a.isEditing === b.isEditing &&
     a.draggable === b.draggable &&
@@ -1656,6 +1674,7 @@ interface SidebarChatRowProps {
   surfaceId: string
   isSelected: boolean
   isRunning: boolean
+  terminalOutcomeTone: SidebarTerminalOutcomeTone | null
   /** True when an agent is blocked on `ask_user_question` in this chat. */
   needsInput: boolean
   isEditing: boolean
@@ -1699,6 +1718,7 @@ function SidebarChatRowInner({
   surfaceId,
   isSelected,
   isRunning,
+  terminalOutcomeTone,
   needsInput,
   isEditing,
   isCollaborating,
@@ -1730,6 +1750,7 @@ function SidebarChatRowInner({
           isRunning,
           needsInput,
           lastRunStatus,
+          terminalOutcomeTone,
           prefix: 'People'
         }
       : {
@@ -1739,19 +1760,21 @@ function SidebarChatRowInner({
           selected: isSelected,
           isRunning,
           needsInput,
-          lastRunStatus
+          lastRunStatus,
+          terminalOutcomeTone
         }
   )
-  // Per-variant className construction — preserved EXACTLY: workspace/global
-  // use ` ${x ? 'active' : ''}` (space-before-slot, so empty slots leave
-  // trailing/double spaces); shared uses `${x ? ' active' : ''}` (no trailing
-  // space). These strings must stay byte-identical.
+  // Preserve each variant's existing active/running spacing, then append the
+  // outcome hook as a suffix so ordinary rows remain byte-identical.
+  const terminalOutcomeClass = terminalOutcomeTone
+    ? ` sidebar-terminal-outcome-${terminalOutcomeTone}`
+    : ''
   const className =
     variant === 'workspace'
-      ? `sidebar-item sidebar-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}`
+      ? `sidebar-item sidebar-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}${terminalOutcomeClass}`
       : variant === 'global'
-        ? `sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}`
-        : `sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${provider}${isSelected ? ' active' : ''}${isRunning ? ' running' : ''}`
+        ? `sidebar-item sidebar-chat-item sidebar-global-chat-item provider-${provider} ${isSelected ? 'active' : ''} ${isRunning ? 'running' : ''}${terminalOutcomeClass}`
+        : `sidebar-item sidebar-chat-item sidebar-shared-chat-item provider-${provider}${isSelected ? ' active' : ''}${isRunning ? ' running' : ''}${terminalOutcomeClass}`
   const showStatus =
     lastRunStatus && lastRunStatus.tone !== 'success' && lastRunStatus.tone !== 'muted'
   const showSubline =
@@ -1890,6 +1913,7 @@ export function sidebarChatRowPropsAreEqual(
     a.surfaceId === b.surfaceId &&
     a.isSelected === b.isSelected &&
     a.isRunning === b.isRunning &&
+    a.terminalOutcomeTone === b.terminalOutcomeTone &&
     a.needsInput === b.needsInput &&
     a.isEditing === b.isEditing &&
     a.isCollaborating === b.isCollaborating &&
@@ -2410,6 +2434,7 @@ function buildSidebarChatRowA11y(args: {
   isRunning: boolean
   needsInput?: boolean
   lastRunStatus: SidebarRunStatusSnapshot
+  terminalOutcomeTone?: SidebarTerminalOutcomeTone | null
   prefix?: string
 }): {
   ariaLabel: string
@@ -2426,6 +2451,8 @@ function buildSidebarChatRowA11y(args: {
   const titlePart = args.prefix ? `${args.prefix}: ${args.title}` : args.title
   const parts = [titlePart, provider]
   if (statusText) parts.push(statusText)
+  if (args.terminalOutcomeTone === 'success') parts.push('goal or task completed, unread')
+  if (args.terminalOutcomeTone === 'failure') parts.push('goal blocked or task failed, unread')
   if (args.selected) parts.push('selected')
   const failed = !args.isRunning && !args.needsInput && args.lastRunStatus?.tone === 'danger'
   return {
@@ -3097,6 +3124,10 @@ export function Sidebar({
     chatId: string
     surfaceId: string
   } | null>(null)
+  const [terminalOutcomeAcknowledgements, setTerminalOutcomeAcknowledgements] =
+    useState(loadSidebarTerminalOutcomeAcknowledgements)
+  const terminalOutcomeAcknowledgementsRef = useRef(terminalOutcomeAcknowledgements)
+  terminalOutcomeAcknowledgementsRef.current = terminalOutcomeAcknowledgements
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   // Wrap ref for the `+ New` menu so an outside-click / Escape listener
   // can dismiss the popover without each menu item having to remember
@@ -3645,6 +3676,72 @@ export function Sidebar({
   }, [chats])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
   const selectedChat = chats.find((chat) => chat.appChatId === selectedChatId) || currentChat || null
+  const acknowledgeTerminalOutcomeProjection = useCallback(
+    (chatId: string, outcome: NonNullable<ReturnType<typeof projectSidebarTerminalOutcome>>) => {
+      const current = terminalOutcomeAcknowledgementsRef.current
+      const next = acknowledgeSidebarTerminalOutcome(current, chatId, outcome)
+      if (next === current) return
+      terminalOutcomeAcknowledgementsRef.current = next
+      setTerminalOutcomeAcknowledgements(next)
+      persistSidebarTerminalOutcomeAcknowledgements(next)
+    },
+    []
+  )
+  const acknowledgeChatTerminalOutcome = useCallback(
+    (chat: ChatRecord): void => {
+      const outcome = projectSidebarTerminalOutcome(chat)
+      if (outcome) acknowledgeTerminalOutcomeProjection(chat.appChatId, outcome)
+    },
+    [acknowledgeTerminalOutcomeProjection]
+  )
+  const selectAndAcknowledgeChat = useCallback(
+    (chat: ChatRecord): void => {
+      acknowledgeChatTerminalOutcome(chat)
+      onSelectChat(chat)
+    },
+    [acknowledgeChatTerminalOutcome, onSelectChat]
+  )
+  const selectedTerminalOutcome = useMemo(
+    () => (selectedChat ? projectSidebarTerminalOutcome(selectedChat) : null),
+    [selectedChat]
+  )
+  useEffect(() => {
+    if (!selectedChatId || !selectedTerminalOutcome) return
+    acknowledgeTerminalOutcomeProjection(selectedChatId, selectedTerminalOutcome)
+  }, [acknowledgeTerminalOutcomeProjection, selectedChatId, selectedTerminalOutcome])
+  const terminalOutcomeToneByChatId = useMemo(() => {
+    const tones = new Map<string, SidebarTerminalOutcomeTone>()
+    const runningIds = new Set(runningChatIds)
+    for (const chat of chats) {
+      if (chat.appChatId === selectedChatId || runningIds.has(chat.appChatId)) continue
+      const outcome = projectSidebarTerminalOutcome(chat)
+      const awaitingAnswer = chatHasPendingAgentQuestion(
+        pendingAgentQuestionsByChatId,
+        chat.appChatId
+      )
+      // Awaiting an answer is the Task Complete card's neutral pause. Keep
+      // explicit goal outcomes and concrete failures visible, but never paint a
+      // goal-less successful provider turn green while it is asking the user.
+      if (
+        outcome &&
+        !(awaitingAnswer && outcome.source !== 'goal' && outcome.tone === 'success') &&
+        isSidebarTerminalOutcomeUnread(
+          terminalOutcomeAcknowledgements,
+          chat.appChatId,
+          outcome
+        )
+      ) {
+        tones.set(chat.appChatId, outcome.tone)
+      }
+    }
+    return tones
+  }, [
+    chats,
+    pendingAgentQuestionsByChatId,
+    runningChatIds,
+    selectedChatId,
+    terminalOutcomeAcknowledgements
+  ])
   const selectedChatSurfaceKey = selectedChat
     ? `${selectedChat.appChatId}:${getChatSidebarTab(selectedChat)}`
     : null
@@ -4185,13 +4282,19 @@ export function Sidebar({
         id: 'open-side-panel',
         label: 'Open beside parent',
         group: 'primary',
-        onSelect: () => onOpenChatInSidePanel(chat, 'split')
+        onSelect: () => {
+          acknowledgeChatTerminalOutcome(chat)
+          onOpenChatInSidePanel(chat, 'split')
+        }
       })
       items.push({
         id: 'open-side-drawer',
         label: 'Open drawer beside parent',
         group: 'primary',
-        onSelect: () => onOpenChatInSidePanel(chat, 'drawer')
+        onSelect: () => {
+          acknowledgeChatTerminalOutcome(chat)
+          onOpenChatInSidePanel(chat, 'drawer')
+        }
       })
     }
     if (onOpenInMultiview) {
@@ -4199,7 +4302,10 @@ export function Sidebar({
         id: 'open-in-multiview',
         label: 'Open in Multiview pane',
         group: 'primary',
-        onSelect: () => onOpenInMultiview(chat)
+        onSelect: () => {
+          acknowledgeChatTerminalOutcome(chat)
+          onOpenInMultiview(chat)
+        }
       })
     }
     if (hasWorkspaceDirectory) {
@@ -4258,7 +4364,7 @@ export function Sidebar({
     if (event.target !== event.currentTarget) return
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      onSelectChat(chat)
+      selectAndAcknowledgeChat(chat)
     }
   }
 
@@ -4370,6 +4476,7 @@ export function Sidebar({
 
   const renderLinkedChildChat = (subChat: ChatRecord): ReactNode => {
     const subRunning = runningChatIdSet.has(subChat.appChatId)
+    const subTerminalOutcomeTone = terminalOutcomeToneByChatId.get(subChat.appChatId) ?? null
     const subLastStatus = getLastRunStatus(subChat)
     const subIsSideChat = isSideChatRecord(subChat)
     const subKindLabel = subIsSideChat ? getSideChatChildKindLabel(subChat) : 'Sub-thread'
@@ -4399,6 +4506,7 @@ export function Sidebar({
       isRunning: subRunning,
       needsInput: subNeedsInput,
       lastRunStatus: subLastStatus,
+      terminalOutcomeTone: subTerminalOutcomeTone,
       prefix: subKindLabel
     })
     return (
@@ -4410,8 +4518,12 @@ export function Sidebar({
           subIsSideChat ? 'sidebar-side-chat-child' : ''
         } provider-${subChat.provider || 'gemini'} ${
           selectedChatId === subChat.appChatId ? 'active' : ''
-        } ${subRunning ? 'running' : ''}`}
-        onClick={() => onSelectChat(subChat)}
+        } ${subRunning ? 'running' : ''}${
+          subTerminalOutcomeTone
+            ? ` sidebar-terminal-outcome-${subTerminalOutcomeTone}`
+            : ''
+        }`}
+        onClick={() => selectAndAcknowledgeChat(subChat)}
         onKeyDown={(event) => handleChatRowKeyDown(event, subChat)}
         aria-label={subRowA11y.ariaLabel}
         aria-current={subRowA11y.ariaCurrent}
@@ -4923,7 +5035,7 @@ export function Sidebar({
                 runningChatIds={runningChatIds}
                 searchQuery={sidebarSearchQuery}
                 isSearchActive={isSidebarSearchActive}
-                onSelectChat={onSelectChat}
+                onSelectChat={selectAndAcknowledgeChat}
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
@@ -4979,7 +5091,7 @@ export function Sidebar({
               currentChat={currentChat}
               runningChatIds={runningChatIds}
               surface={activeSidebarTab === 'chat' ? 'chat' : 'code'}
-              onSelectChat={onSelectChat}
+              onSelectChat={selectAndAcknowledgeChat}
               onInspectRun={onInspectRun}
               onAddRunQueueJobToWorkspaceBoard={onAddRunQueueJobToWorkspaceBoard}
             />
@@ -5092,7 +5204,7 @@ export function Sidebar({
                               (chat) => chat.appChatId === workflow.template.chatId
                             )
                             if (workflowChat && currentChat?.appChatId !== workflowChat.appChatId) {
-                              onSelectChat(workflowChat)
+                              selectAndAcknowledgeChat(workflowChat)
                             }
                           }}
                           aria-expanded={selected}
@@ -5474,6 +5586,7 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        terminalOutcomeTone={terminalOutcomeToneByChatId.get(chat.appChatId) ?? null}
                         needsInput={chatHasPendingAgentQuestion(
                           pendingAgentQuestionsByChatId,
                           chat.appChatId
@@ -5488,7 +5601,7 @@ export function Sidebar({
                         }
                         draggable={false}
                         isDragging={false}
-                        onSelect={onSelectChat}
+                        onSelect={selectAndAcknowledgeChat}
                         onStartRename={startChatRename}
                         onSubmitRename={commitChatRename}
                         onCancelRename={cancelChatRename}
@@ -5560,6 +5673,9 @@ export function Sidebar({
                             surfaceId={renameSurfaceId}
                             isSelected={selectedChatId === chat.appChatId}
                             isRunning={runningChatIdSet.has(chat.appChatId)}
+                            terminalOutcomeTone={
+                              terminalOutcomeToneByChatId.get(chat.appChatId) ?? null
+                            }
                             needsInput={chatHasPendingAgentQuestion(
                               pendingAgentQuestionsByChatId,
                               chat.appChatId
@@ -5574,7 +5690,7 @@ export function Sidebar({
                             }
                             draggable={false}
                             isDragging={false}
-                            onSelect={onSelectChat}
+                            onSelect={selectAndAcknowledgeChat}
                             onStartRename={startChatRename}
                             onSubmitRename={commitChatRename}
                             onCancelRename={cancelChatRename}
@@ -5632,6 +5748,7 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        terminalOutcomeTone={terminalOutcomeToneByChatId.get(chat.appChatId) ?? null}
                         needsInput={chatHasPendingAgentQuestion(
                           pendingAgentQuestionsByChatId,
                           chat.appChatId
@@ -5647,7 +5764,7 @@ export function Sidebar({
                         draggable={dragHandlers.draggable}
                         isDragging={dragHandlers['data-dragging'] === 'true'}
                         dragHandlers={dragHandlers}
-                        onSelect={onSelectChat}
+                        onSelect={selectAndAcknowledgeChat}
                         onStartRename={startChatRename}
                         onSubmitRename={commitChatRename}
                         onCancelRename={cancelChatRename}
@@ -5726,6 +5843,11 @@ export function Sidebar({
                         (participant) => participant.id === activeRound?.activeParticipantId
                       )
                       const isRunning = isEnsembleActiveRoundDispatchLive(activeRound)
+                      const terminalOutcomeTone =
+                        terminalOutcomeToneByChatId.get(chat.appChatId) ?? null
+                      const terminalOutcomeClass = terminalOutcomeTone
+                        ? ` sidebar-terminal-outcome-${terminalOutcomeTone}`
+                        : ''
                       // Trim the role so a blank/whitespace role doesn't
                       // render a dangling "Provider / " — fall back to
                       // just the provider name in that case.
@@ -5753,6 +5875,7 @@ export function Sidebar({
                         selected: selectedChatId === chat.appChatId,
                         isRunning,
                         needsInput: ensembleNeedsInput,
+                        terminalOutcomeTone,
                         lastRunStatus: isRunning
                           ? { label: 'Running', tone: 'warning' }
                           : null,
@@ -5763,8 +5886,8 @@ export function Sidebar({
                           <div
                             role="button"
                             tabIndex={0}
-                            className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}`}
-                            onClick={() => onSelectChat(chat)}
+                            className={`sidebar-item sidebar-chat-item sidebar-ensemble-item provider-ensemble ${selectedChatId === chat.appChatId ? 'active' : ''} ${isRunning ? 'running' : ''}${terminalOutcomeClass}`}
+                            onClick={() => selectAndAcknowledgeChat(chat)}
                             onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                             aria-label={ensembleRowA11y.ariaLabel}
                             aria-current={ensembleRowA11y.ariaCurrent}
@@ -6067,6 +6190,9 @@ export function Sidebar({
                                     surfaceId={renameSurfaceId}
                                     isSelected={selectedChatId === chat.appChatId}
                                     isRunning={runningChatIdSet.has(chat.appChatId)}
+                                    terminalOutcomeTone={
+                                      terminalOutcomeToneByChatId.get(chat.appChatId) ?? null
+                                    }
                                     needsInput={chatHasPendingAgentQuestion(
                                       pendingAgentQuestionsByChatId,
                                       chat.appChatId
@@ -6087,7 +6213,7 @@ export function Sidebar({
                                         ? activeChatIdentityGitIndicators
                                         : null
                                     }
-                                    onSelect={onSelectChat}
+                                    onSelect={selectAndAcknowledgeChat}
                                     onRowKeyDown={handleChatRowKeyDown}
                                     onToggleSubThreads={toggleSubThreadsExpanded}
                                     onStartRename={startChatRename}
@@ -6160,6 +6286,7 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        terminalOutcomeTone={terminalOutcomeToneByChatId.get(chat.appChatId) ?? null}
                         needsInput={chatHasPendingAgentQuestion(
                           pendingAgentQuestionsByChatId,
                           chat.appChatId
@@ -6176,7 +6303,7 @@ export function Sidebar({
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
-                        onSelect={onSelectChat}
+                        onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}
                         onStartRename={startChatRename}
@@ -6276,6 +6403,7 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        terminalOutcomeTone={terminalOutcomeToneByChatId.get(chat.appChatId) ?? null}
                         needsInput={chatHasPendingAgentQuestion(
                           pendingAgentQuestionsByChatId,
                           chat.appChatId
@@ -6292,7 +6420,7 @@ export function Sidebar({
                         identityGitIndicators={
                           selectedChatId === chat.appChatId ? activeChatIdentityGitIndicators : null
                         }
-                        onSelect={onSelectChat}
+                        onSelect={selectAndAcknowledgeChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}
                         onStartRename={startChatRename}
@@ -6434,7 +6562,7 @@ export function Sidebar({
                   onJumpToChat={(chatId) => {
                     setApprovalsPopoverOpen(false)
                     const chat = chats.find((candidate) => candidate.appChatId === chatId)
-                    if (chat) onSelectChat(chat)
+                    if (chat) selectAndAcknowledgeChat(chat)
                   }}
                   onRespondApproval={onRespondAgentApproval}
                   onAnswerQuestion={onAnswerAgentQuestion}
@@ -6479,7 +6607,7 @@ export function Sidebar({
                   onJumpToChat={(chatId) => {
                     setSharesPopoverOpen(false)
                     const chat = chats.find((candidate) => candidate.appChatId === chatId)
-                    if (chat) onSelectChat(chat)
+                    if (chat) selectAndAcknowledgeChat(chat)
                   }}
                   onRevokeShare={onRevokeShare}
                   onOpenSettings={() => {

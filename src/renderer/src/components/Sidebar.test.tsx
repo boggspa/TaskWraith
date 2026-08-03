@@ -22,6 +22,10 @@ import {
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
 import type { UpdateStateSnapshot } from '../../../main/UpdateService'
+import {
+  SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY,
+  projectSidebarTerminalOutcome
+} from '../lib/sidebarTerminalOutcome'
 
 const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sections'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
@@ -573,6 +577,7 @@ describe('sidebar row memo comparators', () => {
     surfaceId: 'workspace-ws-1-a',
     isSelected: false,
     isRunning: false,
+    terminalOutcomeTone: null,
     needsInput: false,
     isEditing: false,
     isCollaborating: false,
@@ -609,6 +614,7 @@ describe('sidebar row memo comparators', () => {
       { surfaceId: 'global-a' },
       { isSelected: true },
       { isRunning: true },
+      { terminalOutcomeTone: 'success' as const },
       { needsInput: true },
       { isEditing: true },
       { isCollaborating: true },
@@ -628,6 +634,7 @@ describe('sidebar row memo comparators', () => {
       surfaceId: 'recent-a',
       isSelected: false,
       isRunning: false,
+      terminalOutcomeTone: null,
       needsInput: false,
       isEditing: false,
       query: '',
@@ -649,6 +656,7 @@ describe('sidebar row memo comparators', () => {
       { variant: 'pinned' as const },
       { isSelected: true },
       { isRunning: true },
+      { terminalOutcomeTone: 'failure' as const },
       { needsInput: true },
       { isEditing: true },
       { draggable: false },
@@ -1567,6 +1575,148 @@ describe('Sidebar running indicator', () => {
     })
     expect(html).toContain('sidebar-chat-running')
     expect(html).toContain('aria-busy')
+  })
+})
+
+describe('Sidebar unread terminal outcome accent', () => {
+  const startedAt = '2026-08-03T20:00:00.000Z'
+  const endedAt = '2026-08-03T20:05:00.000Z'
+  const finishedRun = (
+    runId: string,
+    status: 'success' | 'failed' = 'success',
+    exitCode = status === 'success' ? 0 : 1
+  ) => ({ runId, startedAt, endedAt, status, exitCode })
+
+  it('renders configured success/failure title hooks while leaving non-terminal titles ordinary', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'success-thread',
+          title: 'Succeeded thread',
+          updatedAt: 4,
+          runs: [finishedRun('success-run')]
+        }),
+        makeChat({
+          appChatId: 'failed-thread',
+          title: 'Failed thread',
+          updatedAt: 3,
+          runs: [finishedRun('failed-run', 'failed')]
+        }),
+        makeChat({
+          appChatId: 'non-terminal-thread',
+          title: 'Still ordinary',
+          updatedAt: 2,
+          runs: [{ runId: 'active-run', startedAt, status: 'running' }]
+        }),
+        makeChat({ appChatId: 'viewer', title: 'Viewer', updatedAt: 1 })
+      ],
+      { activeChatId: 'viewer' }
+    )
+
+    expect(html).toContain('sidebar-terminal-outcome-success')
+    expect(html).toContain('sidebar-terminal-outcome-failure')
+    expect(html).toContain('Succeeded thread, completed successfully, unread')
+    expect(html).toContain('Failed thread, blocked or failed, unread')
+    const ordinaryTitle = html.indexOf('Still ordinary')
+    const ordinaryRow = html.lastIndexOf('<div role="button"', ordinaryTitle)
+    expect(html.slice(ordinaryRow, ordinaryTitle)).not.toContain('sidebar-terminal-outcome-')
+  })
+
+  it('shows completed-goal green when its actual terminal run failed', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    const completedGoalChat = makeChat({
+      appChatId: 'goal-thread',
+      title: 'Goal won',
+      updatedAt: 2,
+      activeGoal: {
+        id: 'goal-1',
+        objective: 'Ship it',
+        objectiveSource: 'user',
+        status: 'completed',
+        mode: 'codex_native',
+        provider: 'codex',
+        createdAt: startedAt,
+        updatedAt: endedAt,
+        completedAt: endedAt
+      },
+      runs: [{ ...finishedRun('mixed-run', 'failed'), activeGoalId: 'goal-1' }]
+    })
+    const html = renderSidebar(
+      [completedGoalChat, makeChat({ appChatId: 'viewer', updatedAt: 1 })],
+      { activeChatId: 'viewer' }
+    )
+    const titleIndex = html.indexOf('Goal won')
+    const rowIndex = html.lastIndexOf('<div role="button"', titleIndex)
+    const rowPrefix = html.slice(rowIndex, titleIndex)
+
+    expect(rowPrefix).toContain('sidebar-terminal-outcome-success')
+    expect(rowPrefix).not.toContain('sidebar-terminal-outcome-failure')
+    expect(completedGoalChat.runs[0].status).toBe('failed')
+  })
+
+  it('suppresses the accent for selected, running, or already-acknowledged fingerprints', () => {
+    const completed = makeChat({
+      appChatId: 'done-thread',
+      title: 'Already seen',
+      updatedAt: 2,
+      runs: [finishedRun('done-run')]
+    })
+    const viewer = makeChat({ appChatId: 'viewer', updatedAt: 1 })
+
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(renderSidebar([completed, viewer], { activeChatId: 'done-thread' })).not.toContain(
+      'sidebar-terminal-outcome-success'
+    )
+
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar([completed, viewer], {
+        activeChatId: 'viewer',
+        runningChatIds: ['done-thread']
+      })
+    ).not.toContain('sidebar-terminal-outcome-success')
+
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+    expect(
+      renderSidebar([completed, viewer], {
+        activeChatId: 'viewer',
+        pendingAgentQuestionsByChatId: {
+          'done-thread': [
+            {
+              questionId: 'question-1',
+              appRunId: 'done-run',
+              messageId: 'question-message-1',
+              provider: 'codex',
+              question: 'Which option?',
+              options: ['A', 'B'],
+              askedAt: 1
+            }
+          ]
+        }
+      })
+    ).not.toContain('sidebar-terminal-outcome-success')
+
+    const outcome = projectSidebarTerminalOutcome(completed)!
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents'),
+      [SIDEBAR_TERMINAL_OUTCOME_ACK_STORAGE_KEY]: JSON.stringify({
+        'done-thread': outcome.fingerprint
+      })
+    })
+    expect(renderSidebar([completed, viewer], { activeChatId: 'viewer' })).not.toContain(
+      'sidebar-terminal-outcome-success'
+    )
   })
 })
 

@@ -2133,3 +2133,60 @@ button.sidebar-item {
     animation: none;
   }
 }
+
+/* Finished-but-unseen thread outcome — text ink only. The row keeps its normal
+ * transparent/selected chrome so the accent can never be mistaken for focus.
+ * The hues are the user's Settings → Appearance diff colors; the moving highlight
+ * deliberately reuses the transcript Working… label's `text-shimmer-sweep`. */
+.app-sidebar .sidebar-terminal-outcome-success {
+  --sidebar-terminal-outcome-color: var(--diff-stat-add-color, #2db777);
+}
+
+.app-sidebar .sidebar-terminal-outcome-failure {
+  --sidebar-terminal-outcome-color: var(--diff-stat-del-color, #ec3d35);
+}
+
+.app-sidebar
+  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+  :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
+  color: var(--sidebar-terminal-outcome-color);
+  background-image: linear-gradient(
+    105deg,
+    var(--sidebar-terminal-outcome-color) 0%,
+    var(--sidebar-terminal-outcome-color) 38%,
+    color-mix(in srgb, var(--text-primary) 42%, var(--sidebar-terminal-outcome-color)) 50%,
+    var(--sidebar-terminal-outcome-color) 62%,
+    var(--sidebar-terminal-outcome-color) 100%
+  );
+  background-size: 260% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer-sweep 2.4s ease-in-out infinite;
+  filter: drop-shadow(
+    0 0 6px color-mix(in srgb, var(--sidebar-terminal-outcome-color) 22%, transparent)
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-sidebar
+    :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+    :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
+    animation: none;
+    background-image: none;
+    color: var(--sidebar-terminal-outcome-color);
+    -webkit-text-fill-color: var(--sidebar-terminal-outcome-color);
+    filter: none;
+  }
+}
+
+:root[data-reduce-motion='true']
+  .app-sidebar
+  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)
+  :is(.sidebar-pinned-label, .sidebar-recents-label, .sidebar-chat-title) {
+  animation: none;
+  background-image: none;
+  color: var(--sidebar-terminal-outcome-color);
+  -webkit-text-fill-color: var(--sidebar-terminal-outcome-color);
+  filter: none;
+}
