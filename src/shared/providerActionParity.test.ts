@@ -188,9 +188,7 @@ describe('provider action parity (orchestration)', () => {
             nativeAction
           })
           if (resolved.ok) {
-            expect(resolved.action).toBe(
-              TASKWRAITH_TOOL_ACTIONS[mapping.catalogTool].operation
-            )
+            expect(resolved.action).toBe(TASKWRAITH_TOOL_ACTIONS[mapping.catalogTool].operation)
             expect(resolved.metadata).toEqual(TASKWRAITH_TOOL_ACTIONS[mapping.catalogTool])
           }
         }
@@ -208,9 +206,7 @@ describe('provider action parity (orchestration)', () => {
             // catalog-only adapters close the whole native surface; others leave
             // denied spellings outside the active native index (or structured gate).
             if (declaration.nativeSurface === 'catalog-only') {
-              expect(resolved.code, `${provider}:denied:${spelling}`).toBe(
-                'native_surface_closed'
-              )
+              expect(resolved.code, `${provider}:denied:${spelling}`).toBe('native_surface_closed')
             } else {
               expect(resolved.code, `${provider}:denied:${spelling}`).toBe(
                 'native_action_not_declared'

@@ -207,9 +207,9 @@ describe('ChannelHostTransport', () => {
     )
     expect(batchesB).toHaveLength(1)
     expect(socketC.sent).toHaveLength(0)
-    expect(logs.some((line) => line.includes('room-c') && line.includes('socket send failed'))).toBe(
-      true
-    )
+    expect(
+      logs.some((line) => line.includes('room-c') && line.includes('socket send failed'))
+    ).toBe(true)
 
     transport.dispose()
   })
@@ -239,10 +239,7 @@ describe('ChannelHostTransport', () => {
     transport.openMemberRoom(channel.channelId, memberC.memberId, 'ws://relay', 'room-c')
     const socketC = sockets.get('room-c')!
 
-    deliver(
-      socketC,
-      makeChannelRequest('req-resume', 'channel.log.resume', { resumeAfter: 0 })
-    )
+    deliver(socketC, makeChannelRequest('req-resume', 'channel.log.resume', { resumeAfter: 0 }))
     await flush()
 
     const batches = parseSent(socketC).filter(
@@ -262,7 +259,9 @@ describe('ChannelHostTransport', () => {
       }
     })
 
-    const resumeOk = parseSent(socketC).find((m) => m.t === 'channel.res' && m.reqId === 'req-resume')
+    const resumeOk = parseSent(socketC).find(
+      (m) => m.t === 'channel.res' && m.reqId === 'req-resume'
+    )
     expect(resumeOk).toMatchObject({
       ok: true,
       result: { highWaterSequence: 2, live: true }
@@ -363,7 +362,9 @@ describe('ChannelHostTransport', () => {
     deliver(socketB, makeChannelRequest('req-re', 'channel.reconnect', {}))
     await flush()
 
-    const reconnectOk = parseSent(socketB).find((m) => m.t === 'channel.res' && m.reqId === 'req-re')
+    const reconnectOk = parseSent(socketB).find(
+      (m) => m.t === 'channel.res' && m.reqId === 'req-re'
+    )
     expect(reconnectOk).toMatchObject({
       ok: true,
       result: {

@@ -26,11 +26,7 @@ import {
   type ChannelWireError,
   type ChannelWireRequest
 } from '../../shared/collaboration/ChannelWireProtocol'
-import {
-  ChannelError,
-  type ChannelMember,
-  type ChannelStore
-} from './ChannelStore'
+import { ChannelError, type ChannelMember, type ChannelStore } from './ChannelStore'
 import type { ChannelMessage, ChannelMessageLog } from './ChannelMessageLog'
 
 const RECONNECT_BASE_MS = 1_000
@@ -179,9 +175,7 @@ export class ChannelHostTransport {
           }
         },
         onError: (err) =>
-          this.opts.logger?.(
-            `[channel-transport] room ${state.roomId} error: ${err.message}`
-          )
+          this.opts.logger?.(`[channel-transport] room ${state.roomId} error: ${err.message}`)
       }
     )
     state.socket = socket
@@ -274,15 +268,11 @@ export class ChannelHostTransport {
 
   private safeSend(room: MemberRoomState, payload: string, context: string): boolean {
     if (!room.socket) {
-      this.opts.logger?.(
-        `[channel-transport] drop ${context} room ${room.roomId}: no socket`
-      )
+      this.opts.logger?.(`[channel-transport] drop ${context} room ${room.roomId}: no socket`)
       return false
     }
     if (Buffer.byteLength(payload, 'utf8') > MAX_OUTBOUND_FRAME_BYTES) {
-      this.opts.logger?.(
-        `[channel-transport] drop ${context} room ${room.roomId}: frame too large`
-      )
+      this.opts.logger?.(`[channel-transport] drop ${context} room ${room.roomId}: frame too large`)
       return false
     }
     try {
@@ -290,9 +280,7 @@ export class ChannelHostTransport {
       return true
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      this.opts.logger?.(
-        `[channel-transport] drop ${context} room ${room.roomId}: ${message}`
-      )
+      this.opts.logger?.(`[channel-transport] drop ${context} room ${room.roomId}: ${message}`)
       return false
     }
   }
@@ -485,10 +473,6 @@ export class ChannelHostTransport {
   }
 
   private replyError(room: MemberRoomState, reqId: string, error: ChannelWireError): void {
-    this.safeSend(
-      room,
-      JSON.stringify(makeChannelResponse(reqId, { ok: false, error })),
-      'res-err'
-    )
+    this.safeSend(room, JSON.stringify(makeChannelResponse(reqId, { ok: false, error })), 'res-err')
   }
 }

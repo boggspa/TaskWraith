@@ -178,9 +178,7 @@ export function makeChannelRequest(
 
 export function makeChannelResponse(
   reqId: string,
-  outcome:
-    | { ok: true; result: unknown }
-    | { ok: false; error: ChannelWireError }
+  outcome: { ok: true; result: unknown } | { ok: false; error: ChannelWireError }
 ): ChannelWireResponse {
   return outcome.ok
     ? {
@@ -247,7 +245,8 @@ export function parseChannelWireMessage(data: string): ChannelWireMessage | null
     const error =
       parsed.error && isPlainObject(parsed.error) && typeof parsed.error.message === 'string'
         ? {
-            code: typeof parsed.error.code === 'string' ? parsed.error.code : 'protocol_unsupported',
+            code:
+              typeof parsed.error.code === 'string' ? parsed.error.code : 'protocol_unsupported',
             message: parsed.error.message
           }
         : undefined
