@@ -158,7 +158,12 @@ describe('provider action taxonomy', () => {
     const piAliases = PROVIDER_ACTION_ADAPTERS.pi.declaredNativeActions.flatMap(
       (action) => PROVIDER_ACTION_ADAPTERS.pi.nativeActionMappings[action].aliases
     )
+    const piNonLaunchableAliases = PROVIDER_ACTION_ADAPTERS.pi.declaredDeniedNativeActions.flatMap(
+      (action) => PROVIDER_ACTION_ADAPTERS.pi.deniedNativeActionMappings[action].aliases
+    )
+    expect(PI_WRITE_TOOLS).toEqual(PI_READ_ONLY_TOOLS)
     expect(new Set(piAliases)).toEqual(new Set([...PI_READ_ONLY_TOOLS, ...PI_WRITE_TOOLS]))
+    expect(new Set(piNonLaunchableAliases)).toEqual(new Set(['write', 'edit', 'bash']))
   })
 
   it('pins every Cursor parser-known native base to an explicit display disposition', () => {
@@ -645,7 +650,7 @@ describe('provider action taxonomy', () => {
     expect(resolveProviderNativeActionStrict('pi', 'edit')).toMatchObject({
       ok: false,
       denied: true,
-      code: 'native_surface_unobservable',
+      code: 'native_action_not_declared',
       provider: 'pi'
     })
     expect(resolveProviderNativeActionForDisplay('pi', 'edit')).toMatchObject({

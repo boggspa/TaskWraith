@@ -428,7 +428,7 @@ describe('preflightNativeWorkspaceTool', () => {
     expect(
       preflightNativeWorkspaceTool({
         provider: 'pi',
-        toolName: 'edit',
+        toolName: 'read',
         rawToolCall: { rawInput: { path: 'src/inside.txt' } },
         workspacePath: root
       })

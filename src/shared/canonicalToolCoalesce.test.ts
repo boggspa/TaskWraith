@@ -75,7 +75,7 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveStrictProviderNativeToolAction('pi', 'edit')).toMatchObject({
       ok: false,
       denied: true,
-      code: 'native_surface_unobservable'
+      code: 'native_action_not_declared'
     })
     expect(resolveStrictProviderNativeToolAction('codex', 'fileChange')).toMatchObject({
       ok: true,

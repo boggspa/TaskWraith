@@ -529,9 +529,25 @@ export const PROVIDER_ACTION_ADAPTERS = {
     mcpAttachment: 'none',
     nativeMediation: 'provider-runtime-containment',
     structuredKindMappings: {},
-    declaredDeniedNativeActions: NO_NATIVE_ACTIONS,
-    deniedNativeActionMappings: {},
-    declaredNativeActions: ['read', 'list', 'find', 'search', 'write', 'edit', 'shell'] as const,
+    declaredDeniedNativeActions: ['write', 'edit', 'shell'] as const,
+    deniedNativeActionMappings: {
+      write: {
+        aliases: ['write'],
+        catalogTool: 'write_file',
+        action: 'workspace.mutate'
+      },
+      edit: {
+        aliases: ['edit'],
+        catalogTool: 'replace',
+        action: 'workspace.mutate'
+      },
+      shell: {
+        aliases: ['bash'],
+        catalogTool: 'run_shell_command',
+        action: 'shell.execute'
+      }
+    },
+    declaredNativeActions: ['read', 'list', 'find', 'search'] as const,
     nativeActionMappings: {
       read: {
         aliases: ['read'],
@@ -552,21 +568,6 @@ export const PROVIDER_ACTION_ADAPTERS = {
         aliases: ['grep'],
         catalogTool: 'workspace_search',
         action: 'workspace.search'
-      },
-      write: {
-        aliases: ['write'],
-        catalogTool: 'write_file',
-        action: 'workspace.mutate'
-      },
-      edit: {
-        aliases: ['edit'],
-        catalogTool: 'replace',
-        action: 'workspace.mutate'
-      },
-      shell: {
-        aliases: ['bash'],
-        catalogTool: 'run_shell_command',
-        action: 'shell.execute'
       }
     }
   }),
