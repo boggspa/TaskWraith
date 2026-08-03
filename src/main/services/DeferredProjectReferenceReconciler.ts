@@ -36,10 +36,13 @@ export class DeferredProjectReferenceReconciler {
 
   scheduleAfterFirstPaint(): void {
     if (this.startPromise || this.settleTimer) return
-    this.settleTimer = setTimeout(() => {
-      this.settleTimer = null
-      void this.start().catch(this.deps.onFailure)
-    }, Math.max(0, this.deps.settleMs ?? 3_000))
+    this.settleTimer = setTimeout(
+      () => {
+        this.settleTimer = null
+        void this.start().catch(this.deps.onFailure)
+      },
+      Math.max(0, this.deps.settleMs ?? 15_000)
+    )
     this.settleTimer.unref?.()
   }
 

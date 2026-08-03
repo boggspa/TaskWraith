@@ -50,6 +50,12 @@ export default defineConfig(({ mode }) => {
             // utilityProcess entry: the 90-day external-activity scan runs
             // off the main event loop (see ExternalActivityWorkerScan.ts).
             externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts'),
+            // Project-reference ownership is rebuilt from the append-only
+            // run-event archive on startup. Keep that multi-gigabyte stream
+            // away from Electron main just like the usage/activity scans.
+            projectReferenceOwnershipWorker: resolve(
+              'src/main/workers/projectReferenceOwnershipWorker.ts'
+            ),
             // Workspace activity may need a cold git/filesystem walk too.
             // Bundle it as its own utilityProcess entry so the renderer's
             // 90-day heatmap only ever reads a main-process cache.

@@ -8,13 +8,13 @@ export const PROJECT_REFERENCE_PURGE_JOURNAL_FILE = '.purge-v1.json'
 
 const LEDGER_VERSION = 1
 const JOURNAL_VERSION = 1
-const LEDGER_MAX_BYTES = 8 * 1024 * 1024
+export const PROJECT_REFERENCE_OWNERSHIP_LEDGER_MAX_BYTES = 8 * 1024 * 1024
 const JOURNAL_MAX_BYTES = 16 * 1024 * 1024
-const MAX_ARTIFACTS = 50_000
+export const PROJECT_REFERENCE_OWNERSHIP_MAX_ARTIFACTS = 50_000
 // The serialized 8 MiB ledger is the effective bound. A low per-SHA cap would
 // reject a legitimate long-lived reference reused across many durable runs.
-const MAX_OWNERS_PER_ARTIFACT = 50_000
-const MAX_ID_BYTES = 512
+export const PROJECT_REFERENCE_OWNERSHIP_MAX_OWNERS_PER_ARTIFACT = 50_000
+export const PROJECT_REFERENCE_OWNERSHIP_MAX_ID_BYTES = 512
 const SHA256_HEX = /^[0-9a-f]{64}$/
 const SNAPSHOT_NAME = /^([0-9a-f]{64})\.snapshot$/
 
@@ -83,7 +83,10 @@ function digest(buffer: Buffer): string {
 }
 
 function safeOpaqueId(value: unknown): value is string {
-  return isSafeChatId(value) && Buffer.byteLength(value, 'utf8') <= MAX_ID_BYTES
+  return (
+    isSafeChatId(value) &&
+    Buffer.byteLength(value, 'utf8') <= PROJECT_REFERENCE_OWNERSHIP_MAX_ID_BYTES
+  )
 }
 
 function safeOwner(owner: ProjectReferenceArtifactOwner): boolean {
@@ -300,13 +303,13 @@ function serialize(ownership: Map<string, Set<string>>): Buffer | null {
   }
   if (snapshot.artifacts.some((artifact) => artifact.owners.length === 0)) return null
   const buffer = Buffer.from(JSON.stringify(snapshot), 'utf8')
-  return buffer.length <= LEDGER_MAX_BYTES ? buffer : null
+  return buffer.length <= PROJECT_REFERENCE_OWNERSHIP_LEDGER_MAX_BYTES ? buffer : null
 }
 
 function ledgerState(root: string): LedgerState {
   const filePath = path.join(root, PROJECT_REFERENCE_OWNERSHIP_FILE)
   if (pathMissing(filePath)) return { status: 'missing' }
-  const file = strictFile(filePath, undefined, LEDGER_MAX_BYTES)
+  const file = strictFile(filePath, undefined, PROJECT_REFERENCE_OWNERSHIP_LEDGER_MAX_BYTES)
   return file?.buffer
     ? { status: 'present', ...file, digest: digest(file.buffer) }
     : { status: 'unsafe' }
@@ -321,7 +324,7 @@ function loadLedger(root: string): { ok: true; ownership: Map<string, Set<string
     if (
       parsed.version !== LEDGER_VERSION ||
       !Array.isArray(parsed.artifacts) ||
-      parsed.artifacts.length > MAX_ARTIFACTS
+      parsed.artifacts.length > PROJECT_REFERENCE_OWNERSHIP_MAX_ARTIFACTS
     ) {
       return { ok: false }
     }
@@ -332,7 +335,8 @@ function loadLedger(root: string): { ok: true; ownership: Map<string, Set<string
         !SHA256_HEX.test(artifact.sha256) ||
         !Array.isArray(artifact.owners) ||
         artifact.owners.length === 0 ||
-        artifact.owners.length > MAX_OWNERS_PER_ARTIFACT ||
+        artifact.owners.length >
+          PROJECT_REFERENCE_OWNERSHIP_MAX_OWNERS_PER_ARTIFACT ||
         ownership.has(artifact.sha256)
       ) {
         return { ok: false }
@@ -466,7 +470,7 @@ function validateJournal(value: unknown): value is PurgeJournal {
     typeof journal.rootIdentity.dev !== 'string' ||
     typeof journal.rootIdentity.ino !== 'string' ||
     !Array.isArray(journal.files) ||
-    journal.files.length > MAX_ARTIFACTS + 1024
+    journal.files.length > PROJECT_REFERENCE_OWNERSHIP_MAX_ARTIFACTS + 1024
   ) {
     return false
   }
@@ -636,7 +640,11 @@ export class ProjectReferenceArtifactLedger {
     if (!root) throw new Error('Project-reference artifact root is unsafe.')
     const next = new Map<string, Set<string>>()
     for (const [sha256, owners] of ownership) {
-      if (!SHA256_HEX.test(sha256) || owners.size === 0 || owners.size > MAX_OWNERS_PER_ARTIFACT) {
+      if (
+        !SHA256_HEX.test(sha256) ||
+        owners.size === 0 ||
+        owners.size > PROJECT_REFERENCE_OWNERSHIP_MAX_OWNERS_PER_ARTIFACT
+      ) {
         throw new Error('Project-reference legacy ownership input is invalid.')
       }
       const keys = new Set<string>()
@@ -644,12 +652,15 @@ export class ProjectReferenceArtifactLedger {
         if (!safeOwner(owner)) throw new Error('Project-reference legacy owner is invalid.')
         keys.add(ownerKey(owner))
       }
-      if (keys.size === 0 || keys.size > MAX_OWNERS_PER_ARTIFACT) {
+      if (
+        keys.size === 0 ||
+        keys.size > PROJECT_REFERENCE_OWNERSHIP_MAX_OWNERS_PER_ARTIFACT
+      ) {
         throw new Error('Project-reference legacy owner count is invalid.')
       }
       next.set(sha256, keys)
     }
-    if (next.size > MAX_ARTIFACTS) {
+    if (next.size > PROJECT_REFERENCE_OWNERSHIP_MAX_ARTIFACTS) {
       throw new Error('Project-reference legacy artifact count exceeds its cap.')
     }
     const snapshotEntries = fs.readdirSync(root.path).filter((entry) => SNAPSHOT_NAME.test(entry))
@@ -721,8 +732,12 @@ export class ProjectReferenceArtifactLedger {
     for (const sha256 of assets) {
       const current = this.ownership.get(sha256)
       if (current?.has(key)) continue
-      if (!current && next.size >= MAX_ARTIFACTS) return { ok: false, reason: 'limit' }
-      if ((current?.size ?? 0) >= MAX_OWNERS_PER_ARTIFACT) return { ok: false, reason: 'limit' }
+      if (!current && next.size >= PROJECT_REFERENCE_OWNERSHIP_MAX_ARTIFACTS) {
+        return { ok: false, reason: 'limit' }
+      }
+      if ((current?.size ?? 0) >= PROJECT_REFERENCE_OWNERSHIP_MAX_OWNERS_PER_ARTIFACT) {
+        return { ok: false, reason: 'limit' }
+      }
       const owners = new Set(current ?? [])
       owners.add(key)
       next.set(sha256, owners)

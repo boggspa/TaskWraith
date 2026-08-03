@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const electronViteConfigSource = readFileSync(
+  new URL('../../electron.vite.config.ts', import.meta.url),
+  'utf8'
+)
 
 // The startup recovery gates are a moving target: the 1.9.2 arc widened every
 // one of them from `if (!historyDeletionStartupRecoveryBlockedReason)` to a
@@ -59,7 +63,10 @@ describe('history deletion startup integration', () => {
     expect(projectReferenceNeedCheck).toBeGreaterThan(pendingReachability)
     expect(projectReferenceReconciliation).toBeGreaterThan(pendingReachability)
     expect(projectReferenceReconciliation).toBeLessThan(deferredReconciliation)
-    expect(indexSource).toContain(
+    expect(indexSource).toContain('createProjectReferenceOwnershipWorkerLoader(')
+    expect(indexSource).toContain("join(__dirname, 'projectReferenceOwnershipWorker.js')")
+    expect(indexSource).toContain('filterProjectReferenceLegacyArtifactRefsForPendingDeletion(')
+    expect(indexSource).not.toContain(
       "await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] })"
     )
     expect(deferredReconciliation).toBeLessThan(innerUsageRecovery)
@@ -89,8 +96,14 @@ describe('history deletion startup integration', () => {
     expect(startupSource).toContain('pendingDeletionForProjectReferenceReachability')
     expect(startupSource).toContain('DeferredProjectReferenceReconciler.prepare({')
     expect(startupSource).toContain('projectReferenceArtifactStore.beginStartupReconciliation()')
-    expect(startupSource).toContain('loadOwnership: async () =>')
+    expect(startupSource).toContain('loadOwnership: loadProjectReferenceLegacyOwnership')
     expect(startupSource).toContain('endCaptureHold: (hold) =>')
+  })
+
+  it('bundles the ownership scanner as a dedicated utility-process entry', () => {
+    expect(electronViteConfigSource).toContain(
+      "projectReferenceOwnershipWorker: resolve(\n              'src/main/workers/projectReferenceOwnershipWorker.ts'"
+    )
   })
 
   it('keeps startup alive but skips resurrection recovery when strict deletion replay fails', () => {

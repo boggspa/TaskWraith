@@ -7,61 +7,11 @@ import {
 } from '../../shared/projectReferenceContext'
 import type { Project, ProjectReference } from '../../shared/projects'
 import type { AgentRunPayload } from '../run/AgentRunTypes'
-import type { HistoryDeletionPreparation } from '../store'
-import type {
-  ChatRecord,
-  RunEventArtifactRef,
-  RunEventInput,
-  RunEventRecord
-} from '../store/types'
-import {
-  ProjectReferenceArtifactStore,
-  type ProjectReferenceLegacyArtifactRef
-} from './ProjectReferenceArtifactStore'
+import type { ChatRecord, RunEventArtifactRef, RunEventInput, RunEventRecord } from '../store/types'
+import { ProjectReferenceArtifactStore } from './ProjectReferenceArtifactStore'
 import { resolveProjectReferenceContext } from './ProjectReferenceContextService'
 
-/**
- * Project-reference ownership is reconstructed from the durable run-event
- * ledger on every startup. Approval-link events can repeat an artifact; the
- * ownership ledger deliberately deduplicates the same chat/run pair.
- */
-export function projectReferenceOwnedArtifactRefsFromRunEvents(
-  events: readonly RunEventRecord[],
-  pendingDeletion?: Pick<HistoryDeletionPreparation, 'kind' | 'chatIds' | 'runIds'> | null
-): ProjectReferenceLegacyArtifactRef[] {
-  const references = events.flatMap((event) => {
-    if (
-      event.kind !== 'reference_context' ||
-      event.phase !== 'artifact' ||
-      event.source !== 'main' ||
-      !event.chatId ||
-      !event.runId
-    ) return []
-    return (event.artifacts || []).flatMap((artifact) =>
-      artifact.kind === 'snapshot' &&
-      artifact.metadata?.source === 'project_reference_context' &&
-      artifact.metadata?.storage === 'main_owned_snapshot'
-        ? [
-            {
-              sha256: artifact.sha256,
-              path: artifact.path,
-              sizeBytes: artifact.sizeBytes,
-              appChatId: event.chatId!,
-              runId: event.runId
-            }
-          ]
-        : []
-    )
-  })
-  if (!pendingDeletion) return references
-  if (pendingDeletion.kind === 'global') return []
-  const deletedChatIds = new Set(pendingDeletion.chatIds)
-  const deletedRunIds = new Set(pendingDeletion.runIds)
-  return references.filter(
-    (reference) =>
-      !deletedChatIds.has(reference.appChatId) && !deletedRunIds.has(reference.runId)
-  )
-}
+export { projectReferenceOwnedArtifactRefsFromRunEvents } from './ProjectReferenceLegacyOwnership'
 
 interface CapturedReferenceContext {
   runId: string

@@ -66,6 +66,18 @@ describe('DeferredProjectReferenceReconciler', () => {
     expect(deps.endCaptureHold).toHaveBeenCalledWith(hold)
   })
 
+  it('gives the first frame fifteen seconds to settle by default', async () => {
+    vi.useFakeTimers()
+    const { deps, reconciler } = fixture({ settleMs: undefined })
+
+    reconciler?.scheduleAfterFirstPaint()
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(deps.loadOwnership).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(deps.loadOwnership).toHaveBeenCalledOnce()
+  })
+
   it('runs at most once when first-paint scheduling and a direct start race', async () => {
     vi.useFakeTimers()
     const { deps, reconciler } = fixture()

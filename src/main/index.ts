@@ -717,10 +717,9 @@ import {
   type ProjectReferenceHistoryMutationHold
 } from './services/ProjectReferenceArtifactStore'
 import { DeferredProjectReferenceReconciler } from './services/DeferredProjectReferenceReconciler'
-import {
-  ProjectReferenceContextAuditService,
-  projectReferenceOwnedArtifactRefsFromRunEvents
-} from './services/ProjectReferenceContextAuditService'
+import { ProjectReferenceContextAuditService } from './services/ProjectReferenceContextAuditService'
+import { filterProjectReferenceLegacyArtifactRefsForPendingDeletion } from './services/ProjectReferenceLegacyOwnership'
+import { createProjectReferenceOwnershipWorkerLoader } from './ProjectReferenceOwnershipWorkerScan'
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
@@ -45768,6 +45767,10 @@ if (isGeminiMcpBridgeProcess) {
     const projectReferenceArtifactStore = new ProjectReferenceArtifactStore(
       join(app.getPath('userData'), 'project-reference-context-artifacts')
     )
+    const loadProjectReferenceLegacyOwnership = createProjectReferenceOwnershipWorkerLoader(
+      join(__dirname, 'projectReferenceOwnershipWorker.js'),
+      { runEventsDirectory: join(app.getPath('userData'), 'run-events') }
+    )
     type BroadHistoryDeletionHolds = {
       codexAdmissionHold: CodexThreadAdmissionHistoryHold
       maintenanceCompactionHold: MaintenanceCompactionHistoryHold
@@ -46831,8 +46834,10 @@ if (isGeminiMcpBridgeProcess) {
         // events remain durable until replay commits, so rebuild ownership with
         // the frozen deletion scope before any outer recovery sink can run.
         projectReferenceArtifactStore.reconcileLegacyOwnership(
-          projectReferenceOwnedArtifactRefsFromRunEvents(
-            await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] }),
+          filterProjectReferenceLegacyArtifactRefsForPendingDeletion(
+            pendingDeletionForProjectReferenceReachability.kind === 'global'
+              ? []
+              : await loadProjectReferenceLegacyOwnership(),
             pendingDeletionForProjectReferenceReachability
           )
         )
@@ -46845,10 +46850,7 @@ if (isGeminiMcpBridgeProcess) {
             projectReferenceArtifactStore.needsLegacyReconciliation(),
           beginStartupReconciliation: () =>
             projectReferenceArtifactStore.beginStartupReconciliation(),
-          loadOwnership: async () =>
-            projectReferenceOwnedArtifactRefsFromRunEvents(
-              await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] })
-            ),
+          loadOwnership: loadProjectReferenceLegacyOwnership,
           reconcile: (references) =>
             projectReferenceArtifactStore.reconcileLegacyOwnership(references),
           endCaptureHold: (hold) => projectReferenceArtifactStore.endHistoryMutation(hold),
