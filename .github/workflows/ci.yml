@@ -62,6 +62,21 @@ jobs:
           node-version: '22.23.2'
           cache: npm
       - run: npm ci
+      # Configuration-honest breadcrumb for the platform-evidence loop: records
+      # which matrix leg and runner host executed this job. Does not prove local
+      # countermeasures; the local platform-evidence guard only checks that this
+      # step still exists and never claims remote legs ran.
+      - name: Record runner identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "matrix.name=${{ matrix.name }}"
+          echo "matrix.os=${{ matrix.os }}"
+          echo "runner.os=${{ runner.os }}"
+          echo "runner.arch=${{ runner.arch }}"
+          echo "runner.name=${{ runner.name }}"
+          uname -a || true
+          node -p "'node ' + process.version + ' ' + process.platform + '/' + process.arch"
       - run: npm run ci
       # The native macOS bridge daemon gates Screen Watch / creative-app /
       # editor actions, so its Swift unit tests must pass before changes land.

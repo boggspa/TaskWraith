@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "description": "1.9.3 cross-platform evidence loop: scheduled multi-OS matrix + local countermeasures for the 1.9.0 failure classes. This contract is configuration truth only — local tooling must never claim that remote CI legs ran.",
+  "schedule": {
+    "cron": "17 3 * * *",
+    "workflowPath": ".github/workflows/ci.yml",
+    "note": "03:17 UTC daily — off the hour; GitHub runs schedules on the default branch only."
+  },
+  "matrix": {
+    "jobId": "test",
+    "runners": [
+      {
+        "name": "Linux",
+        "os": "ubuntu-latest",
+        "failureClasses": ["posix-shebang", "inode-identity", "encryption-availability"]
+      },
+      {
+        "name": "macOS Apple Silicon",
+        "os": "macos-15",
+        "failureClasses": []
+      },
+      {
+        "name": "macOS Intel",
+        "os": "macos-15-intel",
+        "failureClasses": ["buffer-structural-equality"]
+      },
+      {
+        "name": "Windows",
+        "os": "windows-latest",
+        "failureClasses": [
+          "real-fs-mode",
+          "posix-shebang",
+          "system-path-literal-expectation",
+          "executable-path-literal"
+        ]
+      }
+    ]
+  },
+  "localCountermeasures": {
+    "portabilityGuard": {
+      "scriptPath": "scripts/platform-portability-guard.cjs",
+      "npmScript": "guard:platform-portability",
+      "ruleIds": [
+        "real-fs-mode",
+        "posix-shebang",
+        "system-path-literal-expectation",
+        "executable-path-literal",
+        "inode-identity",
+        "encryption-availability",
+        "buffer-structural-equality"
+      ]
+    },
+    "pathLiteralGuard": {
+      "scriptPath": "scripts/platform-path-literal-guard.cjs",
+      "npmScript": "guard:platform-path-literals"
+    }
+  },
+  "ciEvidence": {
+    "runnerIdentityStepName": "Record runner identity",
+    "honesty": "A green local guard proves configuration drift is absent. It does not prove that any remote matrix leg executed, passed, or recorded identity."
+  }
+}
