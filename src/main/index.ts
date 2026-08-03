@@ -1944,6 +1944,12 @@ import { registerWorkLockHandlers } from './ipc/workLockHandlers'
 import { recoverWorkspaceLock } from './WorkspaceLockRecovery'
 import { providerRunRequiresCoarseWorkspaceLock } from './WorkspaceLockProviderPolicy'
 import {
+  settleWorkProvenanceWithin,
+  WorkProvenanceRecorder,
+  type WorkProvenanceObservedRunHandle,
+  type WorkProvenanceOperation
+} from './workProvenance/WorkProvenanceLedger'
+import {
   resolveToolDispatchContractStrict,
   type CanonicalDispatchOwner,
   type ResolvedToolDispatchContract
@@ -2179,6 +2185,15 @@ function poisonWorkspaceLockMutationAdmission(reason: string): void {
   workspaceLockRuntimeRef?.markUnhealthy(message)
   workspaceLockMutationAdmissionPoisonReason ||= message
 }
+
+const workProvenanceRecorder = new WorkProvenanceRecorder({
+  logError: (scope, error) => {
+    console.warn(
+      `[work-provenance] ${scope}:`,
+      error instanceof Error ? error.message : String(error)
+    )
+  }
+})
 
 const workspaceLockRunLifecycle = new WorkspaceLockRunLifecycleTracker({
   unresolvedOperationTimeoutMs: 35 * 60_000,
@@ -34765,62 +34780,93 @@ async function executeGeminiMcpTool(
   let hostCommandProjection: HostCommandProjectionScope | null = null
   let workspaceMutationFence: WorkspaceMutationCommitFenceAcquisition | null = null
   let workspaceMutationTransitionId = workspaceMutationAdmission.acquiredTransitionId
+  let workProvenanceOperation: WorkProvenanceOperation | null = null
+  let workProvenanceCaptureBeforeRelease = false
+  let workProvenancePersisted = false
+  let workProvenanceAuthorityInstanceId: string | undefined
+  let workProvenanceLeaseIds: string[] = []
   let workspaceLockLifecycleResolved = true
-  const releaseWorkspaceMutationTransaction = async (): Promise<void> => {
-    if (!workspaceLockLifecycleResolved) return
-    if (workspaceMutationFence) {
-      if (!workspaceLockRuntimeRef) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(
-          'Mutation-fence ownership became unresolved because the runtime disappeared.'
+  const releaseWorkspaceMutationTransaction = async (
+    provenanceOutcome = 'error'
+  ): Promise<void> => {
+    let capturedProvenance = workProvenanceCaptureBeforeRelease
+      ? await settleWorkProvenanceWithin(
+          async () => (await workProvenanceOperation?.capture(provenanceOutcome)) || null
         )
-        return
-      }
-      try {
-        workspaceLockRuntimeRef.releaseMutationFence(workspaceMutationFence)
-        workspaceMutationFence = null
-      } catch (error) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(error instanceof Error ? error.message : String(error))
-        console.error('[workspace-lock] mutation-fence release failed:', error)
-        return
-      }
-    }
-    if (
-      workspaceMutationAdmission.releaseAfterOperation &&
-      workspaceMutationTransitionId &&
-      workspaceMutationAdmission.owner
-    ) {
-      if (!workspaceLockRuntimeRef) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(
-          'Exact acquisition ownership became unresolved because the runtime disappeared.'
-        )
-        return
-      }
-      try {
-        const released = await workspaceLockRuntimeRef.releaseAcquisition(
-          workspaceMutationAdmission.owner.runId,
-          workspaceMutationTransitionId
-        )
-        if (!released.ok) {
+      : null
+    try {
+      if (!workspaceLockLifecycleResolved) return
+      if (workspaceMutationFence) {
+        if (!workspaceLockRuntimeRef) {
           workspaceLockLifecycleResolved = false
-          poisonWorkspaceLockMutationAdmission(released.message)
-          console.error(
-            '[workspace-lock] operation lease release failed:',
-            new Error(released.message)
+          poisonWorkspaceLockMutationAdmission(
+            'Mutation-fence ownership became unresolved because the runtime disappeared.'
           )
           return
         }
-        workspaceMutationTransitionId = undefined
-      } catch (error) {
-        workspaceLockLifecycleResolved = false
-        poisonWorkspaceLockMutationAdmission(error instanceof Error ? error.message : String(error))
-        console.error('[workspace-lock] operation lease release failed:', error)
-        return
+        try {
+          workspaceLockRuntimeRef.releaseMutationFence(workspaceMutationFence)
+          workspaceMutationFence = null
+        } catch (error) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(
+            error instanceof Error ? error.message : String(error)
+          )
+          console.error('[workspace-lock] mutation-fence release failed:', error)
+          return
+        }
+      }
+      if (
+        workspaceMutationAdmission.releaseAfterOperation &&
+        workspaceMutationTransitionId &&
+        workspaceMutationAdmission.owner
+      ) {
+        if (!workspaceLockRuntimeRef) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(
+            'Exact acquisition ownership became unresolved because the runtime disappeared.'
+          )
+          return
+        }
+        try {
+          const released = await workspaceLockRuntimeRef.releaseAcquisition(
+            workspaceMutationAdmission.owner.runId,
+            workspaceMutationTransitionId
+          )
+          if (!released.ok) {
+            workspaceLockLifecycleResolved = false
+            poisonWorkspaceLockMutationAdmission(released.message)
+            console.error(
+              '[workspace-lock] operation lease release failed:',
+              new Error(released.message)
+            )
+            return
+          }
+          workspaceMutationTransitionId = undefined
+        } catch (error) {
+          workspaceLockLifecycleResolved = false
+          poisonWorkspaceLockMutationAdmission(
+            error instanceof Error ? error.message : String(error)
+          )
+          console.error('[workspace-lock] operation lease release failed:', error)
+          return
+        }
+      }
+      workspaceMutationOperationDone?.finish()
+    } finally {
+      // Persist only after the exact mutation fence and operation acquisition
+      // have been released. Receipt I/O never extends contention or turns an
+      // otherwise valid provider/tool result into a failure.
+      if (!workProvenanceCaptureBeforeRelease) {
+        capturedProvenance = await settleWorkProvenanceWithin(
+          async () => (await workProvenanceOperation?.capture(provenanceOutcome)) || null
+        )
+      }
+      if (!workProvenancePersisted && capturedProvenance) {
+        workProvenancePersisted = true
+        await settleWorkProvenanceWithin(() => workProvenanceRecorder.persist(capturedProvenance))
       }
     }
-    workspaceMutationOperationDone?.finish()
   }
   try {
     if (workspaceMutationAdmission.owner) {
@@ -34850,6 +34896,14 @@ async function executeGeminiMcpTool(
         if (!verified.ok) {
           throw new Error(`Workspace mutation verification failed: ${verified.message}`)
         }
+        workProvenanceLeaseIds = verified.capabilities.map((capability) => capability.leaseId)
+        const provenanceAuthorityInstances = [
+          ...new Set(
+            verified.capabilities.map((capability) => capability.token.authorityInstanceId)
+          )
+        ]
+        workProvenanceAuthorityInstanceId =
+          provenanceAuthorityInstances.length === 1 ? provenanceAuthorityInstances[0] : undefined
         const externalAuthority = workspaceMutationAdmission.runtimeInput.externalMutationAuthority
         if (externalAuthority && (toolName === 'write_file' || toolName === 'replace')) {
           const workspaceCapability = verified.capabilities.find(
@@ -34977,6 +35031,85 @@ async function executeGeminiMcpTool(
       if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
         throw new Error('Workspace mutation authority expired before executor dispatch.')
       }
+    }
+    const provenanceTracksWorkspaceMutation =
+      dispatchContract &&
+      (dispatchContract.lock === 'workspace-paths' ||
+        dispatchContract.lock === 'workspace-repository' ||
+        dispatchContract.lock === 'workspace-runtime')
+    if (provenanceTracksWorkspaceMutation) {
+      const provenanceOwner = workspaceMutationAdmission.owner
+      const provenanceChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+      const exactTargets = workspaceMutationAdmission.canonicalClaims
+        .filter((claim) => claim.kind === 'file' || claim.kind === 'hunk')
+        .map((claim) => ({
+          path: claim.targetCanonicalPath,
+          kind: claim.kind,
+          ...(claim.hunk ? { hunk: { ...claim.hunk } } : {})
+        }))
+      // Exact file/hunk evidence must fingerprint the post-edit bytes while
+      // their tiny commit fence is still held. Opaque shell/repository
+      // observation is deliberately weaker and samples only after release so
+      // provenance can never retain broad ownership while hashing a tree.
+      workProvenanceCaptureBeforeRelease = exactTargets.length > 0
+      workProvenanceOperation = await settleWorkProvenanceWithin(() =>
+        workProvenanceRecorder.beginBrokeredMutation({
+          workspacePath: resolve(workspaceExecutionContext.workspacePath || cwd),
+          operationId: toolId,
+          toolName,
+          actor: {
+            ...(context.providerSessionId ? { sessionId: context.providerSessionId } : {}),
+            ...(context.appChatId ? { taskId: context.appChatId, chatId: context.appChatId } : {}),
+            ...(context.appRunId ? { runId: context.appRunId } : {}),
+            ...(provenanceOwner?.chatTitle || provenanceChat?.title
+              ? { chatTitle: provenanceOwner?.chatTitle || provenanceChat?.title }
+              : {}),
+            provider: parentProvider,
+            ...(provenanceOwner?.participantId || context.ensembleRun?.participantId
+              ? {
+                  participantId:
+                    provenanceOwner?.participantId || context.ensembleRun?.participantId
+                }
+              : {}),
+            ...(context.ensembleRun?.role ? { participantRole: context.ensembleRun.role } : {}),
+            ...(provenanceOwner?.laneId || context.ensembleRun?.laneId
+              ? { laneId: provenanceOwner?.laneId || context.ensembleRun?.laneId }
+              : {}),
+            ...(provenanceOwner?.displayName || context.ensembleRun?.role
+              ? { displayName: provenanceOwner?.displayName || context.ensembleRun?.role }
+              : {}),
+            ...(provenanceOwner?.lockOwnerId ? { lockOwnerId: provenanceOwner.lockOwnerId } : {}),
+            ...(provenanceOwner?.processBirthIdentity
+              ? {
+                  processBirthReceiptHash: createHash('sha256')
+                    .update(provenanceOwner.processBirthIdentity)
+                    .digest('hex')
+                }
+              : {}),
+            ...(workProvenanceAuthorityInstanceId
+              ? { authorityInstanceId: workProvenanceAuthorityInstanceId }
+              : {})
+          },
+          targets: exactTargets,
+          observeWorkspaceWhenUnscoped: exactTargets.length === 0,
+          ...(provenanceOwner || workspaceMutationTransitionId
+            ? {
+                authority: {
+                  ...(provenanceOwner?.lockOwnerId
+                    ? { lockOwnerId: provenanceOwner.lockOwnerId }
+                    : {}),
+                  ...(workspaceMutationTransitionId
+                    ? { acquisitionTransitionId: workspaceMutationTransitionId }
+                    : {}),
+                  ...(workProvenanceAuthorityInstanceId
+                    ? { authorityInstanceId: workProvenanceAuthorityInstanceId }
+                    : {}),
+                  ...(workProvenanceLeaseIds.length ? { leaseIds: workProvenanceLeaseIds } : {})
+                }
+              }
+            : {})
+        })
+      )
     }
     let text = ''
     let toolIsError = false
@@ -35163,6 +35296,7 @@ async function executeGeminiMcpTool(
       const isError = Boolean(
         result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
       )
+      await releaseWorkspaceMutationTransaction(isError ? 'error' : 'success')
       emitMcpToolTranscriptEvent({
         type: 'tool_result',
         tool_id: toolId,
@@ -37227,7 +37361,7 @@ async function executeGeminiMcpTool(
     // The executor has completed its filesystem/repository mutation. Release
     // every exact partition and lease before transcript projection, media
     // persistence, or other post-operation work can extend contention.
-    await releaseWorkspaceMutationTransaction()
+    await releaseWorkspaceMutationTransaction(toolIsError ? 'error' : 'success')
 
     const finalRichResult = richResult as McpToolExecutionResult | null
     const finalPermissionRetryResult = permissionRetryResult as McpToolExecutionResult | null
@@ -51007,9 +51141,58 @@ if (isGeminiMcpBridgeProcess) {
                   route,
                   providerRunLifecycleOwnershipDeps
                 )
+                const observeNativeWorkspace =
+                  payload.scope === 'workspace' &&
+                  Boolean(payload.runtimeWorktree?.effectiveWorkspacePath || payload.workspace) &&
+                  payload.effectivePermissions?.readOnly !== true &&
+                  (payload.effectivePermissions?.agenticServices?.fileChanges !== 'deny' ||
+                    payload.effectivePermissions?.agenticServices?.shellCommands !== 'deny')
+                let workProvenanceObservedRun: WorkProvenanceObservedRunHandle | null = null
+                if (observeNativeWorkspace) {
+                  const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+                  workProvenanceObservedRun = await settleWorkProvenanceWithin(() =>
+                    workProvenanceRecorder.beginObservedNativeRun({
+                      workspacePath: resolve(
+                        payload.runtimeWorktree?.effectiveWorkspacePath || payload.workspace!
+                      ),
+                      runId: appRunId,
+                      actor: {
+                        ...(payload.providerSessionId
+                          ? { sessionId: payload.providerSessionId }
+                          : {}),
+                        ...(payload.appChatId
+                          ? { taskId: payload.appChatId, chatId: payload.appChatId }
+                          : {}),
+                        runId: appRunId,
+                        ...(chat?.title ? { chatTitle: chat.title } : {}),
+                        provider: payload.provider,
+                        ...(payload.ensembleRun?.participantId
+                          ? { participantId: payload.ensembleRun.participantId }
+                          : {}),
+                        ...(payload.ensembleRun?.role
+                          ? {
+                              participantRole: payload.ensembleRun.role,
+                              displayName: payload.ensembleRun.role
+                            }
+                          : { displayName: providerDisplayName(payload.provider) }),
+                        ...(payload.ensembleRun?.laneId
+                          ? { laneId: payload.ensembleRun.laneId }
+                          : {})
+                      }
+                    })
+                  )
+                }
                 try {
                   return await run()
                 } finally {
+                  if (workProvenanceObservedRun) {
+                    await settleWorkProvenanceWithin(() =>
+                      workProvenanceRecorder.finishObservedNativeRun(
+                        workProvenanceObservedRun,
+                        runManager.get(appRunId)?.status || 'adapter-settled'
+                      )
+                    )
+                  }
                   ownership.settleIfUnclaimed()
                 }
               }

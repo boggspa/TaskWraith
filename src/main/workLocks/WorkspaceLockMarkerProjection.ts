@@ -165,6 +165,7 @@ function projectGroup(group: MarkerGroup, expiresAt: string): WorkspaceLockMarke
     '---',
     'derived: true',
     `lockOwnerId: ${yamlString(group.lockOwnerId)}`,
+    `authorityInstanceId: ${yamlString(group.authorityInstanceId)}`,
     `session: ${yamlString(group.ownerRunId)}`,
     'agent: "taskwraith-runtime"',
     `pid: ${representative.owner.pid}`,
@@ -190,8 +191,22 @@ function projectGroup(group: MarkerGroup, expiresAt: string): WorkspaceLockMarke
     lines.push(`owner: ${yamlString(representative.owner.displayName.trim())}`)
   }
   lines.push(`runId: ${yamlString(group.ownerRunId)}`)
+  if (representative.owner.chatId) {
+    lines.push(`taskId: ${yamlString(representative.owner.chatId)}`)
+    lines.push(`chatId: ${yamlString(representative.owner.chatId)}`)
+  }
+  if (representative.owner.chatTitle?.trim()) {
+    lines.push(`task: ${yamlString(representative.owner.chatTitle.trim())}`)
+    lines.push(`chatTitle: ${yamlString(representative.owner.chatTitle.trim())}`)
+  }
   if (representative.owner.provider) {
     lines.push(`provider: ${yamlString(representative.owner.provider)}`)
+  }
+  if (representative.owner.participantId) {
+    lines.push(`participantId: ${yamlString(representative.owner.participantId)}`)
+  }
+  if (representative.owner.laneId) {
+    lines.push(`laneId: ${yamlString(representative.owner.laneId)}`)
   }
   lines.push(`birthReceiptHash: ${yamlString(sha256(representative.owner.processBirthIdentity))}`)
   if (hunks.length) {

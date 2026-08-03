@@ -182,14 +182,34 @@ describe('provider dispatch integration', () => {
       'async function executeGeminiMcpTool(',
       'async function startGeminiMcpBroker()'
     )
-    const immediateRelease = executor.indexOf('await releaseWorkspaceMutationTransaction()')
-
-    expect(immediateRelease).toBeGreaterThan(
-      executor.indexOf('if (dispatchContract && String(handledDispatchOwner)')
+    const dispatchCompletion = executor.indexOf(
+      'if (dispatchContract && String(handledDispatchOwner)'
     )
+    const immediateRelease = executor.indexOf(
+      "await releaseWorkspaceMutationTransaction(toolIsError ? 'error' : 'success')",
+      dispatchCompletion
+    )
+    const releaseHelper = sourceBetween(
+      'const releaseWorkspaceMutationTransaction = async (',
+      'try {\n    if (workspaceMutationAdmission.owner)'
+    )
+
+    expect(immediateRelease).toBeGreaterThan(dispatchCompletion)
     expect(immediateRelease).toBeLessThan(executor.indexOf('const finalRichResult ='))
     expect(executor.slice(executor.indexOf('} finally {'))).toContain(
       'await releaseWorkspaceMutationTransaction()'
+    )
+    expect(releaseHelper.indexOf('workProvenanceOperation?.capture')).toBeLessThan(
+      releaseHelper.indexOf('releaseMutationFence')
+    )
+    expect(releaseHelper.indexOf('settleWorkProvenanceWithin')).toBeLessThan(
+      releaseHelper.indexOf('releaseMutationFence')
+    )
+    expect(releaseHelper.indexOf('workProvenanceRecorder.persist')).toBeGreaterThan(
+      releaseHelper.indexOf('releaseAcquisition')
+    )
+    expect(releaseHelper.lastIndexOf('workProvenanceOperation?.capture')).toBeGreaterThan(
+      releaseHelper.indexOf('releaseAcquisition')
     )
   })
 

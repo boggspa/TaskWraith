@@ -18,8 +18,12 @@ function lease(overrides: Partial<WorkspaceLockLease> = {}): WorkspaceLockLease 
     owner: {
       lockOwnerId: 'owner-lane-1',
       runId: 'run-1',
+      laneId: 'lane-1',
+      chatId: 'chat-1',
       displayName: 'Builder',
+      chatTitle: 'Fix workspace accounting',
       provider: 'codex',
+      participantId: 'writer-1',
       pid: 4102,
       processBirthIdentity: 'private-birth-receipt'
     },
@@ -96,7 +100,14 @@ describe('WorkspaceLockMarkerProjection', () => {
         .digest('hex')}-${createHash('sha256').update('owner-lane-1').digest('hex')}.md`
     )
     expect(markers[1].content).toContain('lockOwnerId: "owner-lane-1"')
+    expect(markers[1].content).toContain('authorityInstanceId: "desktop/one"')
     expect(markers[1].content).toContain('runId: "run-1"')
+    expect(markers[1].content).toContain('taskId: "chat-1"')
+    expect(markers[1].content).toContain('chatId: "chat-1"')
+    expect(markers[1].content).toContain('task: "Fix workspace accounting"')
+    expect(markers[1].content).toContain('chatTitle: "Fix workspace accounting"')
+    expect(markers[1].content).toContain('participantId: "writer-1"')
+    expect(markers[1].content).toContain('laneId: "lane-1"')
     expect(markers[1].content).toContain('lifecycle: "run"')
   })
 

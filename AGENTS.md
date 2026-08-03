@@ -143,6 +143,11 @@ frontmatter:
 ---
 session: <session id>
 agent: <provider/model, e.g. claude, codex>
+task: <stable human task/chat label — presentation only>
+taskId: <opaque task/chat id, when available>
+runId: <opaque provider run id, when available>
+participantId: <opaque ensemble participant id, when applicable>
+laneId: <opaque ensemble lane id, when applicable>
 pid: <the long-lived session host pid — ownership is recognized by ancestry from it>
 started: <ISO-8601 UTC>
 expires: <ISO-8601 UTC — the moment rescuers should move in, not the task's outer bound>
@@ -152,6 +157,11 @@ paths:
 ---
 one line on what you are doing and what you are NOT touching
 ```
+
+`task` is the durable human breadcrumb for finding the originating transcript;
+the opaque IDs disambiguate similarly titled tasks and multi-participant runs.
+They are attribution metadata only: none grants authority, extends liveness, or
+changes claim scope. Older markers without them remain valid.
 
 A reader treats a marker as **blocking** only if the pid is alive *and* the
 clock is inside `expires`; otherwise it is advisory. That way a crashed or
@@ -318,6 +328,50 @@ git for-each-ref --format='%(refname) %(committerdate:relative)' refs/wip/
 git show refs/wip/<stamp>:path/to/file
 git checkout refs/wip/<stamp> -- path/to/file
 ```
+
+**Provenance makes stranded work traceable.** TaskWraith's broker writes an
+immutable local receipt for an exact verified file/hunk edit, including its
+before/after fingerprint and opaque task/run/participant identity. Opaque native
+provider runs can produce only a weaker run-bound observation. When a marker
+vanishes while matching dirty bytes remain, work-guard retains a tombstone and
+records the weaker marker correlation instead of dropping the last breadcrumb.
+None of these receipts contains transcript text, diff bodies, file contents, or
+secrets; they live under the repository's Git common directory and are never
+committed or pushed.
+
+The first observed dirty state is retained separately from the marker's final
+state. If a path was already dirty when the marker appeared, closing or adopting
+that marker does not silently award the pre-existing bytes to the new task: the
+projection preserves the known predecessor, or emits an explicit unattributed
+pre-existing contributor when no earlier receipt exists.
+
+Confidence is explicit and must not be inflated: `exact`, `observed-native`,
+`correlated-claim`, `ambiguous`, or `unknown`. Multiple contributors are retained;
+there is no “last marker wins” blame. Marker disappearance is only an observation,
+never proof that work was resolved. Clean/committed/reverted bytes resolve the
+matching origin; a later defensible contributor can adopt or supersede it.
+
+```bash
+node scripts/work-guard.cjs provenance
+node scripts/work-guard.cjs provenance --json --limit=200
+```
+
+The JSON form is the supported, versioned, bounded read-only projection for local
+tools such as Observatory. One invocation describes one canonical Git worktree.
+It brackets HEAD/status/numstat/fingerprints into a coherent generation and
+partitions every dirty path exactly once into unique, shared/ambiguous, or
+unclaimed/unknown totals; raw marker-scope totals may overlap and are secondary.
+Read-only Git sampling disables repository fsmonitor execution and optional index
+locks, and provider-seam receipt capture has a hard deadline: accountability may
+lose evidence, but it may never run workspace-controlled hooks or retain edit
+ownership while waiting on audit I/O.
+Each unresolved origin pins the whole-tree recovery
+commit under `refs/taskwraith/work-provenance/`; resolution releases that pin.
+The projection returns both the friendly ref and immutable commit/tree IDs, so a
+consumer can distinguish “recorded” from “still recoverable.” Provenance is
+additive assurance only: receipt/query failure must never grant authority, retain
+a workspace lock, deny a provider, cancel a run, or change a user-approved
+permission posture.
 
 Note that `git stash create` is **not** what this uses: measured on git 2.49.0
 it does not capture untracked files, which is precisely where new work lives.

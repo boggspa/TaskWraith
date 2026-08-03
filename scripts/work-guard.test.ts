@@ -1,6 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync
+} from 'node:fs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +19,8 @@ const require = createRequire(import.meta.url)
 
 type Marker = {
   file: string
+  task?: string | null
+  worktree?: string | null
   pid: number | null
   expiresMs: number | null
   paths: string[]
@@ -39,7 +50,9 @@ const {
   TICK_STALE_MS,
   timerHealth,
   writeTickRecord,
-  stableNodePath
+  stableNodePath,
+  dirtyEntries,
+  advanceHeartbeats
 } = require('./work-guard.cjs') as {
   HEARTBEAT_STALE_MS: number
   ORPHAN_WARN_MS: number
@@ -72,6 +85,13 @@ const {
   }
   writeTickRecord: (root: string, now: number) => void
   stableNodePath: (execPath: string, probe: (p: string) => string | null) => string
+  dirtyEntries: (root: string) => Array<{ path: string; status: string; mtimeMs: number | null }>
+  advanceHeartbeats: (
+    root: string,
+    markers: Marker[],
+    dirty: Array<{ path: string; status: string; mtimeMs: number | null }>,
+    now: number
+  ) => any
 }
 
 const DEAD_PID = 2147483646 // far above any real pid; process.kill(_, 0) must reject
@@ -138,6 +158,7 @@ describe('claim matching', () => {
       'scripts/work-guard.cjs'
     )
     expect(normaliseClaim("'quoted/path.ts'")).toBe('quoted/path.ts')
+    expect(normaliseClaim(JSON.stringify('quoted/"path".ts'))).toBe('quoted/"path".ts')
   })
 
   it('matches directories, globs and plain files', () => {
@@ -285,6 +306,44 @@ describe('orphan alarm', () => {
     expect(result.orphans.map((o) => o.path)).not.toContain('src/claimed.ts')
   })
 
+  it('does not let a marker for another declared worktree cover this checkout', () => {
+    const root = makeRepo()
+    const otherRoot = join(root, 'other-worktree')
+    mkdirSync(otherRoot)
+    writeFileSync(join(root, 'src', 'claimed.ts'), 'export const claimed = 1\n')
+    const file = writeMarker(root, 'other-worktree', {
+      pid: process.pid,
+      expires: iso(Date.now() + 3_600_000),
+      paths: ['src/']
+    })
+    const markerPath = join(root, file)
+    writeFileSync(
+      markerPath,
+      readFileSync(markerPath, 'utf8').replace(
+        'agent: test agent\n',
+        `agent: test agent\nworktree: ${otherRoot}\n`
+      )
+    )
+
+    const result = evaluate(root, Date.now())
+    expect(result.orphans.map((o) => o.path)).toContain('src/claimed.ts')
+  })
+
+  it('does not invoke repository fsmonitor code while checking dirty paths', () => {
+    const root = makeRepo()
+    const sentinel = join(root, 'fsmonitor-invoked')
+    const hook = join(root, '.git', 'fsmonitor-probe.sh')
+    writeFileSync(hook, `#!/bin/sh\nprintf invoked > ${JSON.stringify(sentinel)}\nexit 1\n`)
+    chmodSync(hook, 0o755)
+    execFileSync('git', ['config', 'core.fsmonitor', hook], { cwd: root })
+    writeFileSync(join(root, 'src', 'claimed.ts'), 'export const claimed = 1\n')
+
+    expect(evaluate(root, Date.now()).orphans.map((entry) => entry.path)).toContain(
+      'src/claimed.ts'
+    )
+    expect(existsSync(sentinel)).toBe(false)
+  })
+
   it('flags work whose only claim has DECAYED — an abandoned promise protects nothing', () => {
     // This is the Codex case: a session stops, its claim rots, and 8,600 lines
     // sit uncommitted looking owned.
@@ -368,6 +427,38 @@ describe('timer liveness', () => {
       { cwd: outside, encoding: 'utf8' }
     )
     expect(output).toContain(`self-check ok under ${process.version}`)
+  })
+})
+
+describe('versioned marker observations', () => {
+  it('keeps the legacy heartbeat entry while retaining a vanished marker tombstone', () => {
+    const root = makeRepo()
+    writeFileSync(join(root, 'src', 'claimed.ts'), 'export const claimed = 1\n')
+    const file = writeMarker(root, 'observed', {
+      pid: process.pid,
+      expires: iso(NOW + 60_000),
+      paths: ['src/claimed.ts']
+    })
+    const parsed = markerFor(root, file)
+    const current = advanceHeartbeats(root, [parsed], dirtyEntries(root), NOW)
+
+    expect(current).toMatchObject({
+      schemaVersion: 2,
+      [file]: { session: 'test-observed', claimedDirty: 1 },
+      markers: {
+        [file]: {
+          present: true,
+          marker: { session: 'test-observed' }
+        }
+      }
+    })
+    const observationId = current.markers[file].observationId
+    const vanished = advanceHeartbeats(root, [], dirtyEntries(root), NOW + 1_000)
+    expect(vanished.markers).toEqual({})
+    expect(vanished.tombstones[observationId]).toMatchObject({
+      present: false,
+      marker: { session: 'test-observed' }
+    })
   })
 })
 
@@ -568,6 +659,16 @@ describe('runtime marker dialect', () => {
     const marker = markerFor(root, file)
     expect(marker.expiresMs).toBe(Date.parse(when))
     expect(marker.expiresMs).not.toBeNaN()
+  })
+
+  it('decodes JSON-quoted task labels without retaining escape syntax', () => {
+    const root = makeRepo()
+    const task = 'Fix "quoted" workspace paths'
+    const file = writeRuntimeMarker(
+      root,
+      `session: "s"\nagent: "taskwraith-runtime"\ntask: ${JSON.stringify(task)}\npid: 1\nderived: true\nexpires: "2099-01-01T00:00:00Z"\npaths:\n  - "src/app.ts"\n`
+    )
+    expect(markerFor(root, file).task).toBe(task)
   })
 
   it('claims tree leases, which never appear under paths:', () => {

@@ -36,6 +36,7 @@
  *   node scripts/work-guard.cjs tick       heartbeat + snapshot + prune (timer)
  *   node scripts/work-guard.cjs snapshot   one-shot snapshot
  *   node scripts/work-guard.cjs check      exit 1 on aged orphans (ship gate)
+ *   node scripts/work-guard.cjs provenance versioned local attribution projection
  *   node scripts/work-guard.cjs self-check prove current file parses + runs (CI/local)
  *
  * DIAGNOSIS NOTE. launchd writes stdout+stderr to `.work-guard/tick.log`.
@@ -48,6 +49,11 @@ const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const {
+  advanceMarkerObservations,
+  queryWorkProvenance,
+  reconcileWorkProvenance
+} = require('./work-provenance.cjs')
 
 /** A claim whose heartbeat is older than this is no longer self-evidently live. */
 const HEARTBEAT_STALE_MS = 20 * 60 * 1000
@@ -84,11 +90,11 @@ function isRuntimeClaimMarkerName(name) {
 // ── git plumbing ────────────────────────────────────────────────────────────
 
 function git(root, args, extraEnv) {
-  return execFileSync('git', args, {
+  return execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], {
     cwd: root,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
-    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', ...(extraEnv || {}) },
     stdio: ['ignore', 'pipe', 'pipe']
   })
 }
@@ -103,8 +109,9 @@ function gitQuiet(root, args, extraEnv) {
 
 function repoRoot() {
   try {
-    return execFileSync('git', ['rev-parse', '--show-toplevel'], {
+    return execFileSync('git', ['-c', 'core.fsmonitor=false', 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8',
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
       stdio: ['ignore', 'pipe', 'ignore']
     }).trim()
   } catch {
@@ -127,7 +134,9 @@ function dirtyEntries(root) {
     if (!field || field.length < 4) continue
     const status = field.slice(0, 2)
     let file = field.slice(3)
+    let renamedFrom = null
     if (status[0] === 'R' || status[0] === 'C') {
+      renamedFrom = fields[i + 1] || null
       i += 1 // the following field is the rename SOURCE; the slice above is the destination
     }
     if (!file) continue
@@ -137,7 +146,7 @@ function dirtyEntries(root) {
     } catch {
       mtimeMs = null // deleted paths have no mtime; still dirty, just ageless
     }
-    out.push({ status, path: file, mtimeMs })
+    out.push({ status, path: file, mtimeMs, ...(renamedFrom ? { renamedFrom } : {}) })
   }
   return out
 }
@@ -163,7 +172,15 @@ function parseIsoMs(value) {
 function normaliseClaim(raw) {
   let claim = raw.trim()
   claim = claim.replace(/\s+\([^)]*\)\s*$/, '')
-  claim = claim.replace(/^["']|["']$/g, '')
+  if (claim.startsWith('"') && claim.endsWith('"')) {
+    try {
+      claim = JSON.parse(claim)
+    } catch {
+      claim = claim.slice(1, -1)
+    }
+  } else if (claim.startsWith("'") && claim.endsWith("'")) {
+    claim = claim.slice(1, -1)
+  }
   return claim.trim()
 }
 
@@ -184,6 +201,11 @@ function claimToMatcher(claim) {
   return (file) => file === claim || file.startsWith(`${claim}/`)
 }
 
+function markerTargetsRoot(root, marker) {
+  const declaredRoot = marker.worktree ? path.resolve(root, marker.worktree) : path.resolve(root)
+  return (realpathProbe(declaredRoot) || declaredRoot) === (realpathProbe(root) || path.resolve(root))
+}
+
 function parseMarker(root, file) {
   let text
   try {
@@ -194,15 +216,22 @@ function parseMarker(root, file) {
   const scalar = (key) => {
     const m = text.match(new RegExp(`^${key}:[ \\t]*(.+)$`, 'm'))
     if (!m) return null
-    // Strip a matched surrounding quote pair, exactly as normaliseClaim already
-    // does for list items. TaskWraith's own runtime markers come from a projector
-    // whose YAML scalar helper is JSON.stringify, so EVERY scalar arrives quoted
+    // Decode the JSON-quoted dialect emitted by TaskWraith's projector (with a
+    // small single-quote fallback for manual markers). EVERY runtime scalar arrives quoted
     // — and an unstripped `expires: "2026-…"` parses to NaN, which meant a runtime
     // marker could never decay by clock.
-    const value = m[1]
-      .trim()
-      .replace(/^(["'])([\s\S]*)\1$/, '$2')
-      .trim()
+    const raw = m[1].trim()
+    let value = raw
+    if (raw.startsWith('"') && raw.endsWith('"')) {
+      try {
+        value = JSON.parse(raw)
+      } catch {
+        value = raw.slice(1, -1)
+      }
+    } else if (raw.startsWith("'") && raw.endsWith("'")) {
+      value = raw.slice(1, -1)
+    }
+    value = String(value).trim()
     return value || null
   }
   const lines = text.split(/\r?\n/)
@@ -241,7 +270,22 @@ function parseMarker(root, file) {
   return {
     file,
     session: scalar('session'),
+    taskId: scalar('taskId'),
+    task: scalar('task'),
+    chatId: scalar('chatId'),
+    chatTitle: scalar('chatTitle'),
     agent: scalar('agent'),
+    owner: scalar('owner'),
+    runId: scalar('runId'),
+    provider: scalar('provider'),
+    participantId: scalar('participantId'),
+    participantRole: scalar('participantRole'),
+    laneId: scalar('laneId'),
+    lockOwnerId: scalar('lockOwnerId'),
+    authorityInstanceId: scalar('authorityInstanceId'),
+    processBirthReceiptHash: scalar('birthReceiptHash'),
+    started: scalar('started'),
+    worktree: scalar('worktree'),
     pid,
     expires: scalar('expires'),
     expiresMs: parseIsoMs(scalar('expires')),
@@ -421,24 +465,21 @@ function realpathProbe(candidate) {
  */
 function advanceHeartbeats(root, markers, dirty, now) {
   const side = readSidecar(root)
-  const next = {}
-  for (const marker of markers) {
-    const claimed = dirty.filter((d) => marker.matchers.some((match) => match(d.path)))
-    const newestClaimed = claimed.reduce((acc, d) => Math.max(acc, d.mtimeMs || 0), 0)
-    const previous = Number(side[marker.file]?.lastSeen) || 0
-    const observed = Math.max(previous, newestClaimed, pidAlive(marker.pid) ? now : 0)
-    next[marker.file] = {
-      lastSeen: observed || null,
-      session: marker.session || null,
-      claimedDirty: claimed.length
-    }
-  }
-  writeSidecar(root, next) // entries for vanished markers are dropped by omission
+  const next = advanceMarkerObservations({
+    root,
+    markers,
+    dirty,
+    previousSidecar: side,
+    now,
+    pidAlive
+  })
+  writeSidecar(root, next)
   return next
 }
 
 function liveness(marker, side, now) {
-  const lastSeen = Number(side[marker.file]?.lastSeen) || null
+  const entry = side?.schemaVersion === 2 ? side.markers?.[marker.file] : side?.[marker.file]
+  const lastSeen = Number(entry?.lastSeen) || null
   const heartbeatFresh = lastSeen !== null && now - lastSeen < HEARTBEAT_STALE_MS
   const alive = pidAlive(marker.pid)
   const expired = marker.expiresMs !== null && now > marker.expiresMs
@@ -567,8 +608,14 @@ function evaluate(root, now) {
   const markers = listMarkers(root)
   const dirty = dirtyEntries(root)
   const side = readSidecar(root)
-  const assessed = markers.map((marker) => ({ marker, state: liveness(marker, side, now) }))
-  const liveMarkers = assessed.filter((entry) => entry.state.live).map((entry) => entry.marker)
+  const assessed = markers.map((marker) => ({
+    marker,
+    state: liveness(marker, side, now),
+    observationId: side?.markers?.[marker.file]?.observationId || null
+  }))
+  const liveMarkers = assessed
+    .filter((entry) => entry.state.live && markerTargetsRoot(root, entry.marker))
+    .map((entry) => entry.marker)
   const orphans = dirty
     .filter((d) => !isMarkerFile(d.path))
     .filter((d) => !liveMarkers.some((m) => m.matchers.some((match) => match(d.path))))
@@ -595,26 +642,6 @@ function humanAge(ms) {
 
 function cmdStatus(root, now, { json, hook }) {
   const result = evaluate(root, now)
-  if (json) {
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          markers: result.markers.map((entry) => ({
-            file: entry.marker.file,
-            agent: entry.marker.agent,
-            pid: entry.marker.pid,
-            ...entry.state
-          })),
-          orphans: result.orphans,
-          agedOrphanCount: result.aged.length
-        },
-        null,
-        2
-      )}\n`
-    )
-    return 0
-  }
-
   if (hook) {
     // Terse, advisory, and silent when there is nothing to say — a hook that
     // cries wolf gets disabled, and a disabled hook protects nothing.
@@ -635,6 +662,31 @@ function cmdStatus(root, now, { json, hook }) {
         )} ago. Snapshots are NOT being taken.\n`
       )
     }
+    return 0
+  }
+
+  const provenance = queryWorkProvenance(root, {
+    markers: result.markers,
+    now
+  })
+  if (json) {
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          markers: result.markers.map((entry) => ({
+            file: entry.marker.file,
+            agent: entry.marker.agent,
+            pid: entry.marker.pid,
+            ...entry.state
+          })),
+          orphans: result.orphans,
+          agedOrphanCount: result.aged.length,
+          workProvenance: provenance
+        },
+        null,
+        2
+      )}\n`
+    )
     return 0
   }
 
@@ -660,7 +712,15 @@ function cmdStatus(root, now, { json, hook }) {
   if (!result.orphans.length) lines.push('  (none — every dirty path is claimed by a live session)')
   for (const orphan of result.orphans.slice(0, 40)) {
     const flag = (orphan.ageMs || 0) > ORPHAN_WARN_MS ? '  <-- aged' : ''
-    lines.push(`  ${orphan.status}  ${humanAge(orphan.ageMs).padStart(7)}  ${orphan.path}${flag}`)
+    const origin = provenance.workItems.find(
+      (item) => item.path === orphan.path && item.lifecycle === 'unresolved'
+    )
+    const attribution = origin
+      ? ` — ${origin.confidence}: ${provenanceContributorLabel(origin)}`
+      : ''
+    lines.push(
+      `  ${orphan.status}  ${humanAge(orphan.ageMs).padStart(7)}  ${orphan.path}${flag}${attribution}`
+    )
   }
   if (result.orphans.length > 40) lines.push(`  … and ${result.orphans.length - 40} more`)
   const snaps = listSnapshots(root)
@@ -686,12 +746,67 @@ function cmdStatus(root, now, { json, hook }) {
   return 0
 }
 
+function provenanceContributorLabel(item) {
+  const names = (item.contributors || [])
+    .map(
+      (contributor) =>
+        contributor.actor?.displayName ||
+        contributor.actor?.participantId ||
+        contributor.actor?.provider ||
+        contributor.actor?.sessionId
+    )
+    .filter(Boolean)
+  return names.length ? [...new Set(names)].join(', ') : 'unknown contributor'
+}
+
+function cmdProvenance(root, now, { json, limit }) {
+  const result = evaluate(root, now)
+  const projection = queryWorkProvenance(root, {
+    markers: result.markers,
+    now,
+    limit
+  })
+  if (json) {
+    process.stdout.write(`${JSON.stringify(projection, null, 2)}\n`)
+    return 0
+  }
+  const lines = [
+    `WORK PROVENANCE v${projection.projectionVersion} (${projection.workItems.length}/${projection.window.totalItems})`
+  ]
+  if (!projection.workItems.length) lines.push('  (no provenance receipts; current dirt is unknown)')
+  for (const item of projection.workItems) {
+    lines.push(
+      `  ${item.lifecycle.toUpperCase().padEnd(10)} ${item.confidence.padEnd(16)} ${item.path}`
+    )
+    lines.push(`             ${provenanceContributorLabel(item)}`)
+    if (item.recovery?.pinned) {
+      lines.push(`             recovery ${item.recovery.ref} (${item.recovery.commit.slice(0, 12)})`)
+    }
+  }
+  process.stdout.write(`${lines.join('\n')}\n`)
+  return 0
+}
+
 function cmdTick(root, now) {
   const markers = listMarkers(root)
   const dirty = dirtyEntries(root)
-  advanceHeartbeats(root, markers, dirty, now)
+  const sidecar = advanceHeartbeats(root, markers, dirty, now)
   const label = `work-guard snapshot — ${dirty.length} dirty, ${markers.length} claim(s)`
   const snap = takeSnapshot(root, label)
+  try {
+    reconcileWorkProvenance({ root, markers, dirty, sidecar, snapshot: snap, now })
+  } catch (error) {
+    // Accountability is additive assurance. A receipt failure must never turn
+    // a successful snapshot/timer cycle into a provider or workspace failure.
+    process.stderr.write(
+      `work-guard: provenance reconciliation unavailable (${error instanceof Error ? error.message : String(error)})\n`
+    )
+  } finally {
+    // Provenance is additive assurance. Its local event store can fail without
+    // suppressing the heartbeat that prevents a demonstrably active claim from
+    // decaying and blocking another session's commit.
+    writeSidecar(root, sidecar)
+  }
   pruneSnapshots(root, now)
   // Publish liveness only after the full tick completes. Reaching here proves
   // parse/load AND heartbeat/snapshot/prune completion; a crash in any earlier
@@ -771,6 +886,8 @@ function main(argv) {
   const command = args.find((a) => !a.startsWith('-')) || 'status'
   const json = args.includes('--json')
   const hook = args.includes('--hook')
+  const limitArg = args.find((arg) => arg.startsWith('--limit='))
+  const provenanceLimit = limitArg ? Number(limitArg.slice('--limit='.length)) : undefined
   if (command === 'self-check') {
     // This is intentionally repository-independent: CI and launchd diagnosis
     // need to prove that the CURRENT file parses and loads even when invoked
@@ -807,6 +924,8 @@ function main(argv) {
       return cmdCheck(root, now)
     case 'timer':
       return cmdTimer(root)
+    case 'provenance':
+      return cmdProvenance(root, now, { json, limit: provenanceLimit })
     default:
       process.stderr.write(`work-guard: unknown command '${command}'\n`)
       return 1
@@ -833,6 +952,8 @@ module.exports = {
   timerHealth,
   writeTickRecord,
   stableNodePath,
+  dirtyEntries,
+  advanceHeartbeats,
   isMarkerFile,
   isHumanClaimMarkerName,
   isRuntimeClaimMarkerName
