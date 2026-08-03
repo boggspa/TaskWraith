@@ -418,11 +418,79 @@ export type HostDeltaApplyOutcome =
         | 'previous_cursor_mismatch'
         | 'generation_reset'
         | 'projection_version_mismatch'
-        | 'cursor_regression'
       generation: HostGeneration
       cursor: HostCursor
     }
   | { outcome: 'rejected'; reason: string }
+
+/**
+ * Wire result for `deltas.since` — mirrors HostDeltaStore.since() semantics
+ * without importing main/Node. Cursor regressions on the client apply path
+ * remain `late` (see applyHostDeltaCursor); they are not a since-result reason.
+ */
+export type HostDeltasSinceResult =
+  | {
+      kind: 'deltas'
+      generation: HostGeneration
+      fromCursor: HostCursor
+      toCursor: HostCursor
+      deltas: HostDeltaEnvelope[]
+    }
+  | {
+      kind: 'full_resnapshot_required'
+      reason:
+        | 'generation_mismatch'
+        | 'previous_cursor_mismatch'
+        | 'retention_gap'
+        | 'generation_reset'
+      generation: HostGeneration
+      cursor: HostCursor
+      clientGeneration: HostGeneration
+      clientCursor: HostCursor
+    }
+
+export type HostDeltasSinceResnapshotReason = Extract<
+  HostDeltasSinceResult,
+  { kind: 'full_resnapshot_required' }
+>['reason']
+
+/**
+ * Typed `question.answer` arguments — Bridge questionReply / questionReject donors.
+ * `answer` carries free-text or option chip text; `dismiss` is an explicit reject.
+ */
+export type HostQuestionAnswerDecision = 'answer' | 'dismiss'
+
+/**
+ * Typed `approval.decide` arguments — Bridge approvalReply core approve/deny set.
+ * Path-grant and provider-route Bridge decisions are intentionally excluded so
+ * this command cannot widen permission ceilings from the wire alone.
+ */
+export type HostApprovalDecideDecision =
+  | 'accept'
+  | 'acceptForSession'
+  | 'acceptForWorkspace'
+  | 'decline'
+  | 'cancel'
+
+/** Matches Bridge questionReply answer bound (BRIDGE_QUESTION_ANSWER_MAX_CHARS). */
+export const HOST_QUESTION_ANSWER_MAX_CHARS = 8_000
+/** Matches Bridge questionReject message bound. */
+export const HOST_QUESTION_DISMISS_MESSAGE_MAX_CHARS = 1_000
+/** Optional note on approval.decide — keep compact. */
+export const HOST_APPROVAL_DECIDE_MESSAGE_MAX_CHARS = 1_000
+
+export const HOST_QUESTION_ANSWER_DECISIONS: readonly HostQuestionAnswerDecision[] = [
+  'answer',
+  'dismiss'
+] as const
+
+export const HOST_APPROVAL_DECIDE_DECISIONS: readonly HostApprovalDecideDecision[] = [
+  'accept',
+  'acceptForSession',
+  'acceptForWorkspace',
+  'decline',
+  'cancel'
+] as const
 
 export type HostCommandName =
   | 'snapshot.get'
@@ -538,7 +606,8 @@ function isClientClass(value: unknown): value is HostClientClass {
   return value === 'desktop' || value === 'tui' || value === 'ios' || value === 'test'
 }
 
-const HOST_CAPABILITIES = new Set<string>([
+/** Canonical host capability offer order (stable intersect ordering). */
+export const HOST_CAPABILITY_ORDER: readonly HostCapability[] = [
   'bootstrap',
   'snapshot',
   'deltas',
@@ -554,7 +623,12 @@ const HOST_CAPABILITIES = new Set<string>([
   'artifacts',
   'recovery',
   'compact-export'
-])
+] as const
+
+const HOST_CAPABILITIES = new Set<string>(HOST_CAPABILITY_ORDER)
+
+const HOST_QUESTION_ANSWER_DECISION_SET = new Set<string>(HOST_QUESTION_ANSWER_DECISIONS)
+const HOST_APPROVAL_DECIDE_DECISION_SET = new Set<string>(HOST_APPROVAL_DECIDE_DECISIONS)
 
 const HOST_COMMAND_NAMES = new Set<string>([
   'snapshot.get',
@@ -690,6 +764,181 @@ function decodeArgumentsMap(value: unknown): HostDecodeResult<Record<string, unk
     }
   }
   return { ok: true, value: value as Record<string, unknown> }
+}
+
+function decodeQuestionAnswerArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const decision = value.decision
+  if (typeof decision !== 'string' || !HOST_QUESTION_ANSWER_DECISION_SET.has(decision)) {
+    return { ok: false, error: 'question.answer decision must be answer or dismiss' }
+  }
+  for (const key of Object.keys(value)) {
+    if (key !== 'decision' && key !== 'answer' && key !== 'isCustom' && key !== 'message') {
+      return { ok: false, error: 'question.answer has unknown argument keys' }
+    }
+  }
+  if (decision === 'answer') {
+    if (value.message !== undefined) {
+      return { ok: false, error: 'question.answer answer must not include dismiss message' }
+    }
+    const answer = value.answer
+    if (
+      typeof answer !== 'string' ||
+      answer.length === 0 ||
+      answer.length > HOST_QUESTION_ANSWER_MAX_CHARS
+    ) {
+      return { ok: false, error: 'question.answer answer text is required and bounded' }
+    }
+    if (!answer.trim()) {
+      return { ok: false, error: 'question.answer answer text is required and bounded' }
+    }
+    if (value.isCustom !== undefined && typeof value.isCustom !== 'boolean') {
+      return { ok: false, error: 'question.answer isCustom must be boolean' }
+    }
+    const out: Record<string, unknown> = { decision: 'answer', answer }
+    if (value.isCustom !== undefined) out.isCustom = value.isCustom
+    return { ok: true, value: out }
+  }
+  // dismiss
+  if (value.answer !== undefined || value.isCustom !== undefined) {
+    return { ok: false, error: 'question.answer dismiss must not include answer fields' }
+  }
+  if (
+    value.message !== undefined &&
+    (typeof value.message !== 'string' ||
+      value.message.length === 0 ||
+      value.message.length > HOST_QUESTION_DISMISS_MESSAGE_MAX_CHARS)
+  ) {
+    return { ok: false, error: 'question.answer dismiss message is invalid' }
+  }
+  const out: Record<string, unknown> = { decision: 'dismiss' }
+  if (value.message !== undefined) out.message = value.message
+  return { ok: true, value: out }
+}
+
+function decodeApprovalDecideArguments(
+  value: Record<string, unknown>
+): HostDecodeResult<Record<string, unknown>> {
+  const decision = value.decision
+  if (typeof decision !== 'string' || !HOST_APPROVAL_DECIDE_DECISION_SET.has(decision)) {
+    return { ok: false, error: 'approval.decide decision is invalid' }
+  }
+  if (
+    value.message !== undefined &&
+    (typeof value.message !== 'string' ||
+      value.message.length === 0 ||
+      value.message.length > HOST_APPROVAL_DECIDE_MESSAGE_MAX_CHARS)
+  ) {
+    return { ok: false, error: 'approval.decide message is invalid' }
+  }
+  // Reject unknown keys so clients cannot smuggle path grants or wideners.
+  for (const key of Object.keys(value)) {
+    if (key !== 'decision' && key !== 'message') {
+      return { ok: false, error: 'approval.decide has unknown argument keys' }
+    }
+  }
+  const out: Record<string, unknown> = { decision }
+  if (value.message !== undefined) out.message = value.message
+  return { ok: true, value: out }
+}
+
+/**
+ * Deterministic capability intersection: host offer ∩ client request.
+ * Preserves host offer order, dedupes, and never invents capabilities.
+ * Effective Welcome.capabilities remain an adapter obligation when constructing
+ * the handshake response (this helper does not mint Welcome frames).
+ */
+export function intersectHostCapabilities(
+  hostOffer: readonly HostCapability[],
+  clientRequest: readonly HostCapability[]
+): HostCapability[] {
+  const requested = new Set<HostCapability>()
+  for (const entry of clientRequest) {
+    if (HOST_CAPABILITIES.has(entry)) requested.add(entry)
+  }
+  const out: HostCapability[] = []
+  const seen = new Set<HostCapability>()
+  for (const entry of hostOffer) {
+    if (!HOST_CAPABILITIES.has(entry) || !requested.has(entry) || seen.has(entry)) continue
+    seen.add(entry)
+    out.push(entry)
+  }
+  return out
+}
+
+const HOST_DELTAS_SINCE_RESNAPSHOT_REASONS = new Set<string>([
+  'generation_mismatch',
+  'previous_cursor_mismatch',
+  'retention_gap',
+  'generation_reset'
+])
+
+export function decodeHostDeltasSinceResult(
+  value: unknown
+): HostDecodeResult<HostDeltasSinceResult> {
+  if (!isRecord(value)) return { ok: false, error: 'deltas-since result must be an object' }
+  if (value.kind === 'deltas') {
+    if (!isNonNegativeInt(value.generation) || !isNonNegativeInt(value.fromCursor)) {
+      return { ok: false, error: 'deltas-since deltas requires generation and fromCursor' }
+    }
+    if (!isNonNegativeInt(value.toCursor)) {
+      return { ok: false, error: 'deltas-since deltas requires toCursor' }
+    }
+    if (value.toCursor < value.fromCursor) {
+      return { ok: false, error: 'deltas-since toCursor must be >= fromCursor' }
+    }
+    if (!Array.isArray(value.deltas) || value.deltas.length > HOST_PROTOCOL_MAX_DELTAS) {
+      return { ok: false, error: 'deltas-since deltas must be a bounded array' }
+    }
+    const deltas: HostDeltaEnvelope[] = []
+    for (const entry of value.deltas) {
+      const decoded = decodeHostDeltaEnvelope(entry)
+      if (!decoded.ok) return decoded
+      if (decoded.value.generation !== value.generation) {
+        return { ok: false, error: 'deltas-since delta generation mismatch' }
+      }
+      deltas.push(decoded.value)
+    }
+    return {
+      ok: true,
+      value: {
+        kind: 'deltas',
+        generation: value.generation,
+        fromCursor: value.fromCursor,
+        toCursor: value.toCursor,
+        deltas
+      }
+    }
+  }
+  if (value.kind === 'full_resnapshot_required') {
+    if (
+      typeof value.reason !== 'string' ||
+      !HOST_DELTAS_SINCE_RESNAPSHOT_REASONS.has(value.reason)
+    ) {
+      return { ok: false, error: 'deltas-since resnapshot reason is invalid' }
+    }
+    if (
+      !isNonNegativeInt(value.generation) ||
+      !isNonNegativeInt(value.cursor) ||
+      !isNonNegativeInt(value.clientGeneration) ||
+      !isNonNegativeInt(value.clientCursor)
+    ) {
+      return { ok: false, error: 'deltas-since resnapshot position fields are required' }
+    }
+    return {
+      ok: true,
+      value: {
+        kind: 'full_resnapshot_required',
+        reason: value.reason as HostDeltasSinceResnapshotReason,
+        generation: value.generation,
+        cursor: value.cursor,
+        clientGeneration: value.clientGeneration,
+        clientCursor: value.clientCursor
+      }
+    }
+  }
+  return { ok: false, error: 'deltas-since kind is invalid' }
 }
 
 export function decodeHostBootstrapHello(value: unknown): HostDecodeResult<HostBootstrapHello> {
@@ -854,7 +1103,7 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
   if (!actor.ok) return actor
   const target = decodeStringMap(value.target, 'target')
   if (!target.ok) return target
-  const args = decodeArgumentsMap(value.arguments)
+  let args = decodeArgumentsMap(value.arguments)
   if (!args.ok) return args
 
   if (value.name === 'composer.send') {
@@ -880,11 +1129,21 @@ export function decodeHostCommand(value: unknown): HostDecodeResult<HostCommand>
   ) {
     return { ok: false, error: 'target.questionId is required' }
   }
+  if (value.name === 'question.answer') {
+    const questionArgs = decodeQuestionAnswerArguments(args.value)
+    if (!questionArgs.ok) return questionArgs
+    args = { ok: true, value: questionArgs.value }
+  }
   if (
     value.name === 'approval.decide' &&
     !isNonEmptyString(target.value.approvalId, HOST_PROTOCOL_MAX_ID)
   ) {
     return { ok: false, error: 'target.approvalId is required' }
+  }
+  if (value.name === 'approval.decide') {
+    const approvalArgs = decodeApprovalDecideArguments(args.value)
+    if (!approvalArgs.ok) return approvalArgs
+    args = { ok: true, value: approvalArgs.value }
   }
   if (value.name === 'receipt.lookup') {
     const hasCommand = isNonEmptyString(target.value.commandId, HOST_PROTOCOL_MAX_ID)

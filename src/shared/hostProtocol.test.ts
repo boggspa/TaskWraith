@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  HOST_APPROVAL_DECIDE_DECISIONS,
+  HOST_CAPABILITY_ORDER,
   HOST_COMMAND_FINGERPRINT_HEX_LENGTH,
   HOST_CONTROL_PROTOCOL_COMPAT_VERSION,
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  HOST_QUESTION_ANSWER_MAX_CHARS,
   HOST_RECEIPT_STATUSES,
   applyHostDeltaCursor,
   assertHostSnapshotFamilies,
@@ -13,8 +16,10 @@ import {
   decodeHostCommand,
   decodeHostCommandReceipt,
   decodeHostDeltaEnvelope,
+  decodeHostDeltasSinceResult,
   evaluateHostIdempotencyFingerprints,
   evaluateHostIdempotencyReplay,
+  intersectHostCapabilities,
   isHostCommandFingerprint,
   normalizeHostCommandFingerprint,
   type HostCommand,
@@ -254,7 +259,7 @@ describe('Host protocol Wave 2A contract', () => {
     expect(
       applyHostDeltaCursor(
         current,
-        sampleDelta({ kind: 'generation-reset', generation: 4, previousCursor: 0, cursor: 0 })
+        sampleDelta({ kind: 'generation-reset', generation: 4, previousCursor: 0, cursor: 1 })
       )
     ).toMatchObject({
       outcome: 'require_resnapshot',
@@ -429,5 +434,199 @@ describe('Host protocol Wave 2A contract', () => {
       ok: false,
       error: 'thread preview exceeds compact bound'
     })
+  })
+
+  it('round-trips deltas-since results including retention_gap', () => {
+    const available = decodeHostDeltasSinceResult({
+      kind: 'deltas',
+      generation: 3,
+      fromCursor: 10,
+      toCursor: 11,
+      deltas: [sampleDelta()]
+    })
+    expect(available.ok).toBe(true)
+    if (available.ok) {
+      expect(available.value.kind).toBe('deltas')
+      if (available.value.kind === 'deltas') {
+        expect(available.value.deltas).toHaveLength(1)
+        expect(available.value.toCursor).toBe(11)
+      }
+    }
+
+    const gap = decodeHostDeltasSinceResult({
+      kind: 'full_resnapshot_required',
+      reason: 'retention_gap',
+      generation: 5,
+      cursor: 40,
+      clientGeneration: 5,
+      clientCursor: 2
+    })
+    expect(gap).toEqual({
+      ok: true,
+      value: {
+        kind: 'full_resnapshot_required',
+        reason: 'retention_gap',
+        generation: 5,
+        cursor: 40,
+        clientGeneration: 5,
+        clientCursor: 2
+      }
+    })
+
+    expect(
+      decodeHostDeltasSinceResult({
+        kind: 'full_resnapshot_required',
+        reason: 'cursor_regression',
+        generation: 1,
+        cursor: 0,
+        clientGeneration: 1,
+        clientCursor: 3
+      })
+    ).toMatchObject({ ok: false, error: 'deltas-since resnapshot reason is invalid' })
+  })
+
+  it('maps cursor regressions to late rather than a dead cursor_regression reason', () => {
+    const current = { generation: 3, cursor: 10 }
+    expect(applyHostDeltaCursor(current, sampleDelta({ cursor: 9, previousCursor: 8 }))).toEqual({
+      outcome: 'late',
+      generation: 3,
+      cursor: 10
+    })
+  })
+
+  it('requires typed question.answer and approval.decide arguments', () => {
+    const answered = decodeHostCommand(
+      sampleCommand({
+        name: 'question.answer',
+        target: { questionId: 'q-1' },
+        arguments: { decision: 'answer', answer: 'ship it', isCustom: false }
+      })
+    )
+    expect(answered.ok).toBe(true)
+    if (answered.ok) {
+      expect(answered.value.arguments).toEqual({
+        decision: 'answer',
+        answer: 'ship it',
+        isCustom: false
+      })
+    }
+
+    const dismissed = decodeHostCommand(
+      sampleCommand({
+        name: 'question.answer',
+        target: { questionId: 'q-1' },
+        arguments: { decision: 'dismiss', message: 'later' }
+      })
+    )
+    expect(dismissed.ok).toBe(true)
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'question.answer',
+          target: { questionId: 'q-1' },
+          arguments: {}
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'question.answer decision must be answer or dismiss'
+    })
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'question.answer',
+          target: { questionId: 'q-1' },
+          arguments: { decision: 'answer', answer: 'x'.repeat(HOST_QUESTION_ANSWER_MAX_CHARS + 1) }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'question.answer answer text is required and bounded'
+    })
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'question.answer',
+          target: { questionId: 'q-1' },
+          arguments: { decision: 'answer', answer: 'yes', message: 'nope' }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'question.answer answer must not include dismiss message'
+    })
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'question.answer',
+          target: { questionId: 'q-1' },
+          arguments: { decision: 'dismiss', answer: 'leftover' }
+        })
+      )
+    ).toMatchObject({
+      ok: false,
+      error: 'question.answer dismiss must not include answer fields'
+    })
+
+    for (const decision of HOST_APPROVAL_DECIDE_DECISIONS) {
+      const decoded = decodeHostCommand(
+        sampleCommand({
+          name: 'approval.decide',
+          target: { approvalId: 'appr-1' },
+          arguments: { decision, message: 'from phone' }
+        })
+      )
+      expect(decoded.ok).toBe(true)
+    }
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'approval.decide',
+          target: { approvalId: 'appr-1' },
+          arguments: { decision: 'grantExternalPathEdit' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'approval.decide decision is invalid' })
+
+    expect(
+      decodeHostCommand(
+        sampleCommand({
+          name: 'approval.decide',
+          target: { approvalId: 'appr-1' },
+          arguments: { decision: 'accept', path: '/tmp' }
+        })
+      )
+    ).toMatchObject({ ok: false, error: 'approval.decide has unknown argument keys' })
+  })
+
+  it('intersects capabilities in stable host order without inventing entries', () => {
+    expect(
+      intersectHostCapabilities(
+        ['snapshot', 'deltas', 'commands', 'receipts', 'health'],
+        ['health', 'commands', 'health', 'deltas']
+      )
+    ).toEqual(['deltas', 'commands', 'health'])
+
+    // Runtime unknown strings are ignored (decode already rejects them on the wire).
+    expect(
+      intersectHostCapabilities(HOST_CAPABILITY_ORDER, [
+        'snapshot',
+        'not-a-cap' as (typeof HOST_CAPABILITY_ORDER)[number]
+      ])
+    ).toEqual(['snapshot'])
+
+    expect(intersectHostCapabilities(HOST_CAPABILITY_ORDER, [])).toEqual([])
+    expect(intersectHostCapabilities([], ['snapshot', 'deltas'])).toEqual([])
+    expect(
+      intersectHostCapabilities(
+        ['snapshot', 'snapshot', 'deltas'],
+        ['deltas', 'snapshot', 'compact-export']
+      )
+    ).toEqual(['snapshot', 'deltas'])
   })
 })
