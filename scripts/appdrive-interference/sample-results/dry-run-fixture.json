@@ -1,0 +1,268 @@
+{
+  "schemaVersion": 1,
+  "harness": "scripts/appdrive-interference",
+  "prototype": "prototypes/appdrive-background",
+  "generatedAtMs": 1785788488486,
+  "defaultDryRun": true,
+  "results": [
+    {
+      "schemaVersion": 1,
+      "modeClaimed": "background",
+      "productionAuthority": false,
+      "appId": "com.taskwraith.harness.AppDriveFixture",
+      "appLabel": "AppDrive Interference Fixture",
+      "targetPid": null,
+      "fixtureOwned": true,
+      "actuation": "dry_run_cgevent_post_to_pid",
+      "dryRun": true,
+      "startedAtMs": 1785788488487,
+      "finishedAtMs": 1785788488488,
+      "dimensions": [
+        {
+          "dimension": "focus",
+          "verdict": "not_measured",
+          "before": "win-terminal-1",
+          "after": "win-terminal-1",
+          "detail": "Focused window unchanged."
+        },
+        {
+          "dimension": "frontmostApp",
+          "verdict": "not_measured",
+          "before": "com.apple.Terminal",
+          "after": "com.apple.Terminal",
+          "detail": "Frontmost app unchanged."
+        },
+        {
+          "dimension": "hostCursor",
+          "verdict": "not_measured",
+          "before": {
+            "x": 100,
+            "y": 200
+          },
+          "after": {
+            "x": 100,
+            "y": 200
+          },
+          "detail": "Host cursor unchanged."
+        },
+        {
+          "dimension": "keyboardTarget",
+          "verdict": "not_measured",
+          "before": 4242,
+          "after": 4242,
+          "detail": "Keyboard target unchanged."
+        },
+        {
+          "dimension": "clipboardHash",
+          "verdict": "not_measured",
+          "before": "sha256:dryrun-clipboard-placeholder",
+          "after": "sha256:dryrun-clipboard-placeholder",
+          "detail": "Clipboard hash unchanged."
+        },
+        {
+          "dimension": "activation",
+          "verdict": "not_measured",
+          "before": false,
+          "after": false,
+          "detail": "Dry-run: activation not measured."
+        },
+        {
+          "dimension": "targetSuccess",
+          "verdict": "not_measured",
+          "before": null,
+          "after": null,
+          "detail": "Dry-run does not deliver events."
+        },
+        {
+          "dimension": "targetScopedHumanArbitration",
+          "verdict": "fail",
+          "before": "global_hid",
+          "after": "global_hid",
+          "detail": "Only global HID idle available — not target-scoped."
+        }
+      ],
+      "nonInterferenceProven": false,
+      "refused": [],
+      "notes": [
+        "Dry-run: would CGEventPostToPid(pid=null) — not posted.",
+        "Dry-run/observe-only cannot set nonInterferenceProven=true; live proof required.",
+        "Human arbitration scope is global_hid (production-like); Background Drive target-only pause is not claimable."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "modeClaimed": "background",
+      "productionAuthority": false,
+      "appId": "com.apple.TextEdit",
+      "appLabel": "TextEdit (catalog only — never auto-targeted for live post)",
+      "targetPid": null,
+      "fixtureOwned": true,
+      "actuation": "dry_run_cgevent_post_to_pid",
+      "dryRun": true,
+      "startedAtMs": 1785788488489,
+      "finishedAtMs": 1785788488490,
+      "dimensions": [
+        {
+          "dimension": "focus",
+          "verdict": "not_measured",
+          "before": "win-terminal-1",
+          "after": "win-terminal-1",
+          "detail": "Focused window unchanged."
+        },
+        {
+          "dimension": "frontmostApp",
+          "verdict": "not_measured",
+          "before": "com.apple.Terminal",
+          "after": "com.apple.Terminal",
+          "detail": "Frontmost app unchanged."
+        },
+        {
+          "dimension": "hostCursor",
+          "verdict": "not_measured",
+          "before": {
+            "x": 100,
+            "y": 200
+          },
+          "after": {
+            "x": 100,
+            "y": 200
+          },
+          "detail": "Host cursor unchanged."
+        },
+        {
+          "dimension": "keyboardTarget",
+          "verdict": "not_measured",
+          "before": 4242,
+          "after": 4242,
+          "detail": "Keyboard target unchanged."
+        },
+        {
+          "dimension": "clipboardHash",
+          "verdict": "not_measured",
+          "before": "sha256:dryrun-clipboard-placeholder",
+          "after": "sha256:dryrun-clipboard-placeholder",
+          "detail": "Clipboard hash unchanged."
+        },
+        {
+          "dimension": "activation",
+          "verdict": "not_measured",
+          "before": false,
+          "after": false,
+          "detail": "Dry-run: activation not measured."
+        },
+        {
+          "dimension": "targetSuccess",
+          "verdict": "not_measured",
+          "before": null,
+          "after": null,
+          "detail": "Dry-run does not deliver events."
+        },
+        {
+          "dimension": "targetScopedHumanArbitration",
+          "verdict": "fail",
+          "before": "global_hid",
+          "after": "global_hid",
+          "detail": "Only global HID idle available — not target-scoped."
+        }
+      ],
+      "nonInterferenceProven": false,
+      "refused": [],
+      "notes": [
+        "Dry-run: would CGEventPostToPid(pid=null) — not posted.",
+        "Dry-run/observe-only cannot set nonInterferenceProven=true; live proof required.",
+        "Human arbitration scope is global_hid (production-like); Background Drive target-only pause is not claimable."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "modeClaimed": "background",
+      "productionAuthority": false,
+      "appId": "com.apple.Safari",
+      "appLabel": "Safari (catalog only — never auto-targeted for live post)",
+      "targetPid": null,
+      "fixtureOwned": true,
+      "actuation": "dry_run_cgevent_post_to_pid",
+      "dryRun": true,
+      "startedAtMs": 1785788488491,
+      "finishedAtMs": 1785788488492,
+      "dimensions": [
+        {
+          "dimension": "focus",
+          "verdict": "not_measured",
+          "before": "win-terminal-1",
+          "after": "win-terminal-1",
+          "detail": "Focused window unchanged."
+        },
+        {
+          "dimension": "frontmostApp",
+          "verdict": "not_measured",
+          "before": "com.apple.Terminal",
+          "after": "com.apple.Terminal",
+          "detail": "Frontmost app unchanged."
+        },
+        {
+          "dimension": "hostCursor",
+          "verdict": "not_measured",
+          "before": {
+            "x": 100,
+            "y": 200
+          },
+          "after": {
+            "x": 100,
+            "y": 200
+          },
+          "detail": "Host cursor unchanged."
+        },
+        {
+          "dimension": "keyboardTarget",
+          "verdict": "not_measured",
+          "before": 4242,
+          "after": 4242,
+          "detail": "Keyboard target unchanged."
+        },
+        {
+          "dimension": "clipboardHash",
+          "verdict": "not_measured",
+          "before": "sha256:dryrun-clipboard-placeholder",
+          "after": "sha256:dryrun-clipboard-placeholder",
+          "detail": "Clipboard hash unchanged."
+        },
+        {
+          "dimension": "activation",
+          "verdict": "not_measured",
+          "before": false,
+          "after": false,
+          "detail": "Dry-run: activation not measured."
+        },
+        {
+          "dimension": "targetSuccess",
+          "verdict": "not_measured",
+          "before": null,
+          "after": null,
+          "detail": "Dry-run does not deliver events."
+        },
+        {
+          "dimension": "targetScopedHumanArbitration",
+          "verdict": "fail",
+          "before": "global_hid",
+          "after": "global_hid",
+          "detail": "Only global HID idle available — not target-scoped."
+        }
+      ],
+      "nonInterferenceProven": false,
+      "refused": [],
+      "notes": [
+        "Dry-run: would CGEventPostToPid(pid=null) — not posted.",
+        "Dry-run/observe-only cannot set nonInterferenceProven=true; live proof required.",
+        "Human arbitration scope is global_hid (production-like); Background Drive target-only pause is not claimable."
+      ]
+    }
+  ],
+  "summary": {
+    "appsMeasured": 3,
+    "provenNonInterference": 0,
+    "failed": 3,
+    "unknown": 0,
+    "dryRunOnly": 3
+  }
+}

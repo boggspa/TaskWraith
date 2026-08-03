@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "description": "Offline catalog for dry-run interference scenarios. Not production authority.",
+  "apps": [
+    {
+      "appId": "com.taskwraith.harness.AppDriveFixture",
+      "appLabel": "AppDrive Interference Fixture"
+    },
+    {
+      "appId": "com.apple.TextEdit",
+      "appLabel": "TextEdit (catalog only — never auto-targeted for live post)"
+    },
+    {
+      "appId": "com.apple.Safari",
+      "appLabel": "Safari (catalog only — never auto-targeted for live post)"
+    }
+  ]
+}

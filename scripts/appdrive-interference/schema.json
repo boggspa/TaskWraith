@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "taskwraith.appdrive.interference.report.v1",
+  "title": "AppDriveInterferenceReport",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "harness",
+    "prototype",
+    "generatedAtMs",
+    "defaultDryRun",
+    "results",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "harness": {
+      "const": "scripts/appdrive-interference"
+    },
+    "prototype": {
+      "const": "prototypes/appdrive-background"
+    },
+    "generatedAtMs": {
+      "type": "number"
+    },
+    "defaultDryRun": {
+      "const": true
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PerAppInterferenceResult"
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "appsMeasured",
+        "provenNonInterference",
+        "failed",
+        "unknown",
+        "dryRunOnly"
+      ],
+      "properties": {
+        "appsMeasured": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "provenNonInterference": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dryRunOnly": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+  "$defs": {
+    "InterferenceDimension": {
+      "type": "string",
+      "enum": [
+        "focus",
+        "frontmostApp",
+        "hostCursor",
+        "keyboardTarget",
+        "clipboardHash",
+        "activation",
+        "targetSuccess",
+        "targetScopedHumanArbitration"
+      ]
+    },
+    "DimensionResult": {
+      "type": "object",
+      "required": [
+        "dimension",
+        "verdict",
+        "before",
+        "after",
+        "detail"
+      ],
+      "properties": {
+        "dimension": {
+          "$ref": "#/$defs/InterferenceDimension"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "unknown",
+            "not_measured"
+          ]
+        },
+        "before": {},
+        "after": {},
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "PerAppInterferenceResult": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "modeClaimed",
+        "productionAuthority",
+        "appId",
+        "appLabel",
+        "targetPid",
+        "fixtureOwned",
+        "actuation",
+        "dryRun",
+        "startedAtMs",
+        "finishedAtMs",
+        "dimensions",
+        "nonInterferenceProven",
+        "refused",
+        "notes"
+      ],
+      "properties": {
+        "schemaVersion": {
+          "const": 1
+        },
+        "modeClaimed": {
+          "const": "background"
+        },
+        "productionAuthority": {
+          "const": false
+        },
+        "appId": {
+          "type": "string"
+        },
+        "appLabel": {
+          "type": "string"
+        },
+        "targetPid": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fixtureOwned": {
+          "type": "boolean"
+        },
+        "actuation": {
+          "type": "string",
+          "enum": [
+            "observe_only",
+            "dry_run_cgevent_post_to_pid",
+            "cgevent_post_to_pid"
+          ]
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "startedAtMs": {
+          "type": "number"
+        },
+        "finishedAtMs": {
+          "type": "number"
+        },
+        "dimensions": {
+          "type": "array",
+          "minItems": 8,
+          "items": {
+            "$ref": "#/$defs/DimensionResult"
+          }
+        },
+        "nonInterferenceProven": {
+          "type": "boolean"
+        },
+        "refused": {
+          "type": "array"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
