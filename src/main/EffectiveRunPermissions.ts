@@ -152,7 +152,7 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
   read_only: {
     id: 'read_only',
-    label: 'Read only',
+    label: 'Ask',
     approvalMode: 'plan',
     agenticServices: READ_ONLY_AGENTIC_SERVICES,
     // Web reads (web_search/web_fetch/github_ci_status) are non-mutating retrospection — a
@@ -175,12 +175,26 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
   },
   default: {
     id: 'default',
-    label: 'Default',
-    approvalMode: 'default'
+    label: 'Accept Edits',
+    approvalMode: 'default',
+    // Accept Edits' defining behavior (user decision 2026-08-04): choosing the
+    // preset IS the run-level authorization for in-workspace file edits — no
+    // per-edit prompt, mirroring the workspace_write rationale above but ONLY
+    // for fileChanges. Everything else (shell, media, canvas, publish, …) keeps
+    // resolving from the user's globals/grants exactly as before.
+    //
+    // Security that still holds under this posture:
+    //   - global fileChanges 'deny' remains absolute (preserveExplicitDeny)
+    //   - tool executors reject outside-workspace paths; external-path
+    //     detection force-prompts (never auto-allows escapes)
+    //   - preview-risk models clamp fileChanges back to 'ask'
+    agenticServices: {
+      fileChanges: 'allow'
+    }
   },
   workspace_write: {
     id: 'workspace_write',
-    label: 'Workspace write',
+    label: 'Full WS Access',
     approvalMode: 'auto_edit',
     // Selecting Full WS Access IS the user's run-level authorization for
     // in-workspace shell / file / media edits. Policy value 'workspace' still
@@ -219,7 +233,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
   },
   full_access: {
     id: 'full_access',
-    label: 'Full access',
+    label: 'Full Access',
     approvalMode: 'auto_edit',
     agenticServices: {
       shellCommands: 'allow',

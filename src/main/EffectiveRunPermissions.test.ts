@@ -181,6 +181,39 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(globallyDenied.agenticServices.sketchCanvas).toBe('deny')
   })
 
+  it('pins the file-changes ladder: Accept Edits auto-accepts in-workspace edits', () => {
+    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+      resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      }).agenticServices.fileChanges
+
+    expect(policyFor('read_only')).toBe('deny')
+    expect(policyFor('plan')).toBe('deny')
+    // Accept Edits' defining behavior (user decision 2026-08-04): selecting the
+    // preset IS the authorization for in-workspace file edits — no per-edit
+    // prompt. Outside-workspace writes still force the external-path prompt at
+    // the executors, and the global kill switch below still wins.
+    expect(policyFor('default')).toBe('allow')
+    expect(policyFor('workspace_write')).toBe('allow')
+    expect(policyFor('full_access')).toBe('allow')
+
+    const globallyDenied = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          ...settings().agenticServices,
+          fileChanges: 'deny'
+        }
+      }),
+      presetId: 'default'
+    })
+    expect(globallyDenied.agenticServices.fileChanges).toBe('deny')
+  })
+
   it('pins the Browser navigation (webBrowsing) ladder across every permission preset', () => {
     const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
       resolveEffectiveRunPermissions({
@@ -739,7 +772,11 @@ describe('resolveEffectiveRunPermissions', () => {
       ]
     })
     expect(resolved.workspaceGrantServiceIds).toEqual(['fileChanges'])
-    expect(resolved.agenticServices.fileChanges).toBe('workspace')
+    // Accept Edits now auto-allows in-workspace edits at the preset layer, so
+    // the standing workspace grant is redundant for the POLICY value ('allow'
+    // is strictly more permissive than grant-scoped 'workspace') while the
+    // grant itself stays recorded above for the Tool-Grants UI and audit.
+    expect(resolved.agenticServices.fileChanges).toBe('allow')
     expect(resolved.externalPathGrants).toEqual([grant])
   })
 
