@@ -164,11 +164,13 @@ function open(
   const executor = new HostBridgeCommandExecutor({
     bridge,
     resolvers: makeResolvers(resolverOverrides),
-    nowMs: () => 1_700_000_000_000,
-    actionIdFactory: () => 'fixed-action-id'
+    nowMs: () => 1_700_000_000_000
   })
   return { executor, bridge }
 }
+
+const FIXED_COMMAND_ID = '11111111-1111-4111-8111-111111111111'
+const EXPECTED_ACTION_ID = `host:command:${FIXED_COMMAND_ID}`
 
 describe('mapBridgeExecutionResult', () => {
   it('maps executed:true to succeeded without leaking data bags', () => {
@@ -332,7 +334,7 @@ describe('composer.send', () => {
       provider: 'codex',
       model: 'gpt-custom',
       reasoningEffort: 'medium',
-      actionId: 'host:composer:fixed-action-id'
+      actionId: EXPECTED_ACTION_ID
     })
   })
 
@@ -578,6 +580,144 @@ describe('thread.select', () => {
   })
 })
 
+describe('deterministic host:command:<commandId> actionId (Wave 2E-2A Lane B)', () => {
+  const FIXED_ID = FIXED_COMMAND_ID
+  const EXPECTED = EXPECTED_ACTION_ID
+
+  it.each([
+    {
+      label: 'composer.send',
+      cmd: () => command('composer.send', { threadId: 'thread-1' }, { text: 'hi' }),
+      method: 'executeComposerPrompt'
+    },
+    {
+      label: 'run.cancel',
+      cmd: () => command('run.cancel', { threadId: 'thread-1' }),
+      method: 'executeCancelRun'
+    },
+    {
+      label: 'approval.decide',
+      cmd: () => command('approval.decide', { approvalId: 'approval-1' }, { decision: 'accept' }),
+      method: 'executeApprovalReply'
+    },
+    {
+      label: 'question.answer',
+      cmd: () =>
+        command(
+          'question.answer',
+          { questionId: 'question-1' },
+          { decision: 'answer', answer: 'yes' }
+        ),
+      method: 'executeQuestionReply'
+    },
+    {
+      label: 'ensemble.seat.toggle',
+      cmd: () =>
+        command(
+          'ensemble.seat.toggle',
+          { threadId: 'thread-1' },
+          { participantId: 'p2', enabled: true }
+        ),
+      method: 'executeEnsembleRosterUpdate'
+    },
+    {
+      label: 'thread.select',
+      cmd: () => command('thread.select', { threadId: 'thread-1' }),
+      method: 'executeSetWatchedThread'
+    }
+  ] as const)(
+    '$label binds actionId to host:command:<commandId> with no random suffix',
+    async ({ cmd, method }) => {
+      const { executor, bridge } = open()
+      const result = await executor.execute(cmd())
+      expect(result.status).toBe('succeeded')
+      expect(bridge.calls).toHaveLength(1)
+      expect(bridge.calls[0]?.method).toBe(method)
+      const action = bridge.calls[0]?.action as { actionId?: string }
+      expect(action.actionId).toBe(EXPECTED)
+      expect(action.actionId).toBe(`host:command:${FIXED_ID}`)
+      // No legacy host:<prefix>:<random> form, no actor/args leakage into id.
+      expect(action.actionId).not.toMatch(
+        /^host:(composer|cancel|approval|question|seat|thread-select):/
+      )
+      expect(action.actionId).not.toContain('actor')
+      expect(action.actionId).not.toContain('hello')
+      expect(action.actionId).not.toContain(ACTOR.actorId)
+    }
+  )
+
+  it('binds the same commandId consistently across repeated dispatches', async () => {
+    const { executor, bridge } = open()
+    await executor.execute(command('composer.send', { threadId: 'thread-1' }, { text: 'a' }))
+    await executor.execute(command('composer.send', { threadId: 'thread-1' }, { text: 'b' }))
+    expect((bridge.calls[0]?.action as { actionId: string }).actionId).toBe(EXPECTED)
+    expect((bridge.calls[1]?.action as { actionId: string }).actionId).toBe(EXPECTED)
+  })
+
+  it('uses a different commandId when the Host commandId differs', async () => {
+    const otherId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    const { executor, bridge } = open()
+    await executor.execute(
+      command('composer.send', { threadId: 'thread-1' }, { text: 'x' }, { commandId: otherId })
+    )
+    expect((bridge.calls[0]?.action as { actionId: string }).actionId).toBe(
+      `host:command:${otherId}`
+    )
+  })
+
+  it('fails closed for non-UUID commandId without Bridge dispatch', async () => {
+    const resolveComposerSend = vi.fn(() =>
+      ok({
+        mode: 'solo' as const,
+        workspaceId: 'ws-1',
+        provider: 'codex'
+      })
+    )
+    const { executor, bridge } = open({}, { resolveComposerSend })
+    // Invalid commandId is checked only at actionMeta (after arg validation + resolve).
+    // Use a string that is not a UUID but is safe enough to pass identity checks elsewhere.
+    const result = await executor.execute(
+      command(
+        'composer.send',
+        { threadId: 'thread-1' },
+        { text: 'hi' },
+        { commandId: 'not-a-uuid' }
+      )
+    )
+    expect(result).toEqual({
+      status: 'failed',
+      errorCode: 'invalid_command_id',
+      errorMessage: 'commandId is missing, unsafe, or not a UUID'
+    })
+    expect(bridge.calls).toEqual([])
+  })
+
+  it('fails closed for empty commandId without Bridge dispatch', async () => {
+    const { executor, bridge } = open()
+    const result = await executor.execute(
+      command('run.cancel', { threadId: 'thread-1' }, {}, { commandId: '' })
+    )
+    // Empty may fail at argument validation or actionMeta; either is fail-closed.
+    expect(['invalid_command_id', 'invalid_command_arguments']).toContain(result.errorCode)
+    expect(result.status).toBe('failed')
+    expect(bridge.calls).toEqual([])
+  })
+
+  it('fails closed for commandId with control characters', async () => {
+    const { executor, bridge } = open()
+    const result = await executor.execute(
+      command(
+        'thread.select',
+        { threadId: 'thread-1' },
+        {},
+        { commandId: '11111111-1111-4111-8111-11111111111\u0000' }
+      )
+    )
+    expect(result.errorCode).toBe('invalid_command_id')
+    expect(bridge.calls).toEqual([])
+  })
+})
+
 describe('honesty and isolation', () => {
   it('maps thrown Bridge calls to failed without inventing success', async () => {
     const { executor } = open({
@@ -644,11 +784,16 @@ describe('honesty and isolation', () => {
     expect(source).toContain('parseGovernedMutationCommandName')
     expect(source).toContain('resolveHostApprovalId')
     expect(source).toContain('resolveHostQuestionId')
+    expect(source).toContain('host:command:')
+    expect(source).toContain('isHostUuid')
+    expect(source).not.toContain('actionIdFactory')
+    expect(source).not.toContain('randomUUID')
   })
 
   it('has no production consumers yet outside its test pair', () => {
-    // Substrate-only: production wiring stays Wave 2E-2+.
+    // Substrate-only: production wiring stays later 2E-2 assembly.
     const self = readFileSync(join(__dirname, 'HostBridgeCommandExecutor.ts'), 'utf8')
     expect(self).toContain('Wave 2E-1 Lane H')
+    expect(self).toContain('host:command:')
   })
 })

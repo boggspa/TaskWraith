@@ -1,5 +1,5 @@
 /**
- * Host → Bridge governed-mutation adapter (Wave 2E-1 Lane H).
+ * Host → Bridge governed-mutation adapter (Wave 2E-1 Lane H; 2E-2A Lane B pin).
  *
  * Transport-neutral: validates HostCommand arguments + governed-mutation
  * routing, resolves host-owned context the wire omits, then dispatches to a
@@ -7,6 +7,10 @@
  * compatible terminal semantics ({status, resultSummary?, errorCode?,
  * errorMessage?}) without fabricating domain deltas/effects or exposing
  * unrestricted Bridge data.
+ *
+ * Bridge actionId is deterministically joined to the Host command as
+ * `host:command:<commandId>` (validated UUID, bounded, no random suffix,
+ * no raw args/actor data in the id).
  *
  * Non-goals (fail closed / never implemented here):
  * - Authority / receipt / delta / session wiring
@@ -17,8 +21,6 @@
  * - Provider launch
  * - Reserved Authority-RPC read aliases entering Bridge
  */
-
-import { randomUUID } from 'node:crypto'
 
 import type {
   BridgeApprovalReplyAction,
@@ -36,10 +38,16 @@ import type { BridgeActionExecutionResult, BridgeActionExecutor } from '../Bridg
 import type { HostActorIdentity, HostCommand, HostDecodeResult } from '../../shared/hostProtocol'
 import {
   HOST_APPROVAL_DECIDE_DECISIONS,
+  HOST_PROTOCOL_MAX_ID,
   type HostApprovalDecideDecision
 } from '../../shared/hostProtocol'
 import { validateHostCommandArguments } from './HostCommandArguments'
-import { resolveHostApprovalId, resolveHostQuestionId } from './HostCommandIdentity'
+import {
+  isHostUuid,
+  isSafeHostIdentifier,
+  resolveHostApprovalId,
+  resolveHostQuestionId
+} from './HostCommandIdentity'
 import { parseGovernedMutationCommandName } from './HostCommandRouting'
 
 /** Matches the migration authority executor result shape — kept local (no Authority import). */
@@ -167,8 +175,6 @@ export interface HostBridgeCommandExecutorOptions {
   readonly resolvers: HostBridgeContextResolvers
   /** Optional clock for Bridge action issuedAt (ms). */
   readonly nowMs?: () => number
-  /** Optional action-id factory (default randomUUID). */
-  readonly actionIdFactory?: () => string
 }
 
 const RESULT_SUMMARY_MAX = 200
@@ -247,7 +253,6 @@ export class HostBridgeCommandExecutor {
   private readonly bridge: HostBridgeActionPort
   private readonly resolvers: HostBridgeContextResolvers
   private readonly nowMs: () => number
-  private readonly actionIdFactory: () => string
 
   constructor(options: HostBridgeCommandExecutorOptions) {
     if (!options || typeof options !== 'object') {
@@ -283,8 +288,6 @@ export class HostBridgeCommandExecutor {
     this.bridge = bridge
     this.resolvers = resolvers
     this.nowMs = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now()
-    this.actionIdFactory =
-      typeof options.actionIdFactory === 'function' ? options.actionIdFactory : () => randomUUID()
   }
 
   /**
@@ -333,12 +336,33 @@ export class HostBridgeCommandExecutor {
     }
   }
 
-  private actionMeta(prefix: string): { actionId: string; issuedAt: number; expiresAt: number } {
+  /**
+   * Deterministic Host↔Bridge join key: `host:command:<commandId>`.
+   * Fail-closed when commandId is missing, unsafe, non-UUID, or the bound
+   * actionId exceeds the protocol identifier ceiling. Never embeds random
+   * suffixes, raw args, or actor material.
+   */
+  private actionMeta(
+    commandId: string
+  ): HostDecodeResult<{ actionId: string; issuedAt: number; expiresAt: number }> {
+    if (!isSafeHostIdentifier(commandId) || !isHostUuid(commandId)) {
+      return {
+        ok: false,
+        error: 'commandId is missing, unsafe, or not a UUID'
+      }
+    }
+    const actionId = `host:command:${commandId}`
+    if (actionId.length > HOST_PROTOCOL_MAX_ID || !isSafeHostIdentifier(actionId)) {
+      return { ok: false, error: 'actionId exceeds protocol bound or is unsafe' }
+    }
     const issuedAt = this.nowMs()
     return {
-      actionId: `host:${prefix}:${this.actionIdFactory()}`,
-      issuedAt,
-      expiresAt: issuedAt + BRIDGE_ACTION_TTL_MS
+      ok: true,
+      value: {
+        actionId,
+        issuedAt,
+        expiresAt: issuedAt + BRIDGE_ACTION_TTL_MS
+      }
     }
   }
 
@@ -355,7 +379,11 @@ export class HostBridgeCommandExecutor {
     }
 
     const text = String(command.arguments.text ?? '')
-    const meta = this.actionMeta('composer')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     const ctx = resolved.value
 
     if (ctx.mode === 'ensemble') {
@@ -412,7 +440,11 @@ export class HostBridgeCommandExecutor {
       }
     }
 
-    const meta = this.actionMeta('cancel')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     if (ctx.mode === 'ensemble') {
       const action: BridgeEnsembleCancelRoundAction = {
         kind: 'ensembleCancelRound',
@@ -466,7 +498,11 @@ export class HostBridgeCommandExecutor {
       return failResult('approval_alias_conflict', aliasCheck.error)
     }
 
-    const meta = this.actionMeta('approval')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     const action: BridgeApprovalReplyAction = {
       kind: 'approvalReply',
       ...meta,
@@ -504,7 +540,11 @@ export class HostBridgeCommandExecutor {
       return failResult('question_alias_conflict', aliasCheck.error)
     }
 
-    const meta = this.actionMeta('question')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     const decision = command.arguments.decision
 
     if (decision === 'dismiss') {
@@ -560,7 +600,11 @@ export class HostBridgeCommandExecutor {
       return failResult('context_resolve_failed', resolved.error)
     }
 
-    const meta = this.actionMeta('seat')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     const action: BridgeEnsembleRosterUpdateAction = {
       kind: 'ensembleRosterUpdate',
       ...meta,
@@ -584,7 +628,11 @@ export class HostBridgeCommandExecutor {
       return failResult('context_resolve_failed', resolved.error)
     }
 
-    const meta = this.actionMeta('thread-select')
+    const metaResolved = this.actionMeta(command.commandId)
+    if (!metaResolved.ok) {
+      return failResult('invalid_command_id', metaResolved.error)
+    }
+    const meta = metaResolved.value
     const action: BridgeSetWatchedThreadAction = {
       kind: 'setWatchedThread',
       ...meta,
