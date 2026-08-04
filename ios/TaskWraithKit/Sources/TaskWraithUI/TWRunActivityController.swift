@@ -27,23 +27,23 @@
     public final class TWRunActivityController {
         public static let shared = TWRunActivityController()
 
-        private var activities: [String: Activity<TWRunActivityAttributes>] = [:]
-        /// Last state actually handed to ActivityKit, per thread. The planner
+        private var activities: [TWActivitySubject: Activity<TWRunActivityAttributes>] = [:]
+        /// Last state actually handed to ActivityKit, per subject. The planner
         /// diffs against this so an unchanged projection snapshot costs nothing.
-        private var pushed: [String: TWRunActivityState] = [:]
+        private var pushed: [TWActivitySubject: TWRunActivityState] = [:]
         /// When this device first saw the current run of a thread, and which run
         /// that was — a follow-up turn is a new run, so the clock restarts.
         private var runStarts: [String: (runId: String, at: Date)] = [:]
         private var heartbeat: Task<Void, Never>?
         /// Retained so the heartbeat can re-push without the caller re-supplying
         /// the projection.
-        private var lastPlans: [String: TWActivityPlan] = [:]
+        private var lastPlans: [TWActivitySubject: TWActivityPlan] = [:]
         /// One per activity, cancelled when it ends. `pushTokenUpdates` is an
         /// endless AsyncSequence — leaving these running would leak a task per
         /// activity for the life of the process.
-        private var tokenObservers: [String: Task<Void, Never>] = [:]
-        /// The opaque ref the token belongs to, per thread.
-        private var activityRefs: [String: String] = [:]
+        private var tokenObservers: [TWActivitySubject: Task<Void, Never>] = [:]
+        /// The opaque ref the token belongs to, per local routing subject.
+        private var activityRefs: [TWActivitySubject: String] = [:]
 
         /// Called with the activity's push token so the host can keep the card
         /// fresh once this device stops being able to. `token == nil` means the
@@ -53,7 +53,7 @@
         /// RemoteSessionModel, and this type must stay linkable from anywhere
         /// that can see ActivityKit.
         public var onPushToken:
-            ((_ activityRef: String, _ threadId: String, _ token: String?) -> Void)?
+            ((_ activityRef: String, _ subject: TWActivitySubject, _ token: String?) -> Void)?
 
         /// Called with the app-wide push-to-START token (iOS 17.2+) and this
         /// device's whole provider→accent map, so the Mac can raise an activity
@@ -80,6 +80,7 @@
             cards: [RemoteTaskCard],
             diffs: [String: MobileDiffSummary],
             ensembles: [String: RemoteEnsembleState],
+            gitSnapshots: [String: GitWorkspaceSnapshot],
             isDemo: Bool,
             now: Date = Date()
         ) {
@@ -91,21 +92,23 @@
             reconcileOrphans()
             observePushToStartToken()
 
-            // Most-recently-touched first: when more runs are live than there are
-            // slots, the ones the user is most likely watching win them.
-            let ordered = cards.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
-            let plans = ordered.compactMap { card -> TWActivityPlan? in
-                TWRunActivityPlanner.plan(
-                    card: card,
-                    diff: diffs[card.id],
-                    ensemble: ensembles[card.id],
-                    startedAt: startDate(for: card, now: now))
-            }
-            lastPlans = Dictionary(plans.map { ($0.threadId, $0) }, uniquingKeysWith: { a, _ in a })
+            let plans = TWRunActivityPlanner.plans(
+                cards: cards,
+                diffs: diffs,
+                ensembles: ensembles,
+                gitSnapshots: gitSnapshots,
+                startedAt: { [weak self] card in self?.startDate(for: card, now: now) ?? now })
+            lastPlans = Dictionary(
+                plans.map { ($0.subject, $0) }, uniquingKeysWith: { a, _ in a })
 
             for action in TWRunActivityPlanner.actions(plans: plans, owned: pushed) {
                 apply(action, now: now)
             }
+            let projectedRunIds = Set(
+                cards.compactMap { card in
+                    TWRunActivityPlanner.phase(forCardStatus: card.status) == nil ? nil : card.id
+                })
+            runStarts = runStarts.filter { projectedRunIds.contains($0.key) }
             refreshHeartbeat()
         }
 
@@ -117,7 +120,7 @@
             heartbeat?.cancel()
             heartbeat = nil
             let live = activities
-            for threadId in live.keys { releaseToken(threadId: threadId) }
+            for subject in live.keys { releaseToken(subject: subject) }
             activities = [:]
             pushed = [:]
             runStarts = [:]
@@ -140,8 +143,8 @@
                 update(plan, now: now)
             case .finish(let plan):
                 finish(plan)
-            case .abandon(let threadId):
-                abandon(threadId)
+            case .abandon(let subject):
+                abandon(subject)
             }
         }
 
@@ -153,7 +156,9 @@
                 // have nowhere to put per-seat state, so honouring a "minimal"
                 // preference here would silently drop the only thing that makes
                 // an ensemble worth watching.
-                archetype: plan.isEnsemble ? .ensemble : TWActivityPreferences.archetype(),
+                archetype: plan.isWorkspace
+                    ? .workspace
+                    : (plan.isEnsemble ? .ensemble : TWActivityPreferences.archetype()),
                 palette: palette(for: plan),
                 activityRef: activityRef)
             do {
@@ -164,31 +169,31 @@
                     // moment we can no longer reach it — which is as soon as the
                     // phone locks and the relay socket drops.
                     pushType: .token)
-                activities[plan.threadId] = activity
-                activityRefs[plan.threadId] = activityRef
-                pushed[plan.threadId] = plan.state
-                observeToken(for: activity, threadId: plan.threadId, activityRef: activityRef)
+                activities[plan.subject] = activity
+                activityRefs[plan.subject] = activityRef
+                pushed[plan.subject] = plan.state
+                observeToken(for: activity, subject: plan.subject, activityRef: activityRef)
             } catch {
                 // Throws when the user has Live Activities off system-wide, or
                 // when the app is over its concurrent limit. Neither is worth
                 // surfacing — the run is visible everywhere else in the app.
-                pushed[plan.threadId] = nil
+                pushed[plan.subject] = nil
             }
         }
 
         private func update(_ plan: TWActivityPlan, now: Date) {
-            guard let activity = activities[plan.threadId] else { return }
-            pushed[plan.threadId] = plan.state
+            guard let activity = activities[plan.subject] else { return }
+            pushed[plan.subject] = plan.state
             let content = content(plan.state, now: now)
             let alert = alertConfiguration(for: plan.state.phase)
             Task { await activity.update(content, alertConfiguration: alert) }
         }
 
         private func finish(_ plan: TWActivityPlan) {
-            guard let activity = activities.removeValue(forKey: plan.threadId) else { return }
-            pushed[plan.threadId] = nil
-            runStarts[plan.threadId] = nil
-            releaseToken(threadId: plan.threadId)
+            guard let activity = activities.removeValue(forKey: plan.subject) else { return }
+            pushed[plan.subject] = nil
+            if let threadId = plan.subject.threadId { runStarts[threadId] = nil }
+            releaseToken(subject: plan.subject)
             // No staleDate on the terminal push: the run is over, so the state
             // cannot go out of date. Giving it one would grey out a perfectly
             // accurate outcome after eight minutes.
@@ -201,11 +206,10 @@
             }
         }
 
-        private func abandon(_ threadId: String) {
-            guard let activity = activities.removeValue(forKey: threadId) else { return }
-            pushed[threadId] = nil
-            runStarts[threadId] = nil
-            releaseToken(threadId: threadId)
+        private func abandon(_ subject: TWActivitySubject) {
+            guard let activity = activities.removeValue(forKey: subject) else { return }
+            pushed[subject] = nil
+            releaseToken(subject: subject)
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
         }
 
@@ -250,32 +254,35 @@
         }
 
         private func observeToken(
-            for activity: Activity<TWRunActivityAttributes>, threadId: String, activityRef: String
+            for activity: Activity<TWRunActivityAttributes>, subject: TWActivitySubject,
+            activityRef: String
         ) {
-            tokenObservers[threadId]?.cancel()
-            tokenObservers[threadId] = Task { [weak self] in
+            tokenObservers[subject]?.cancel()
+            tokenObservers[subject] = Task { [weak self] in
                 // Endless sequence: iOS re-issues on rotation. It only completes
                 // when the activity ends, so the cancel in `releaseToken` is what
                 // actually stops it in the common case.
                 for await tokenData in activity.pushTokenUpdates {
                     if Task.isCancelled { return }
                     let hex = tokenData.map { String(format: "%02x", $0) }.joined()
-                    await self?.emitToken(activityRef: activityRef, threadId: threadId, token: hex)
+                    await self?.emitToken(activityRef: activityRef, subject: subject, token: hex)
                 }
             }
         }
 
-        private func emitToken(activityRef: String, threadId: String, token: String?) {
-            onPushToken?(activityRef, threadId, token)
+        private func emitToken(
+            activityRef: String, subject: TWActivitySubject, token: String?
+        ) {
+            onPushToken?(activityRef, subject, token)
         }
 
         /// Tell the host to forget this activity, and stop watching for tokens.
         /// Called on every teardown path — miss one and the Mac keeps pushing
         /// into a card that no longer exists.
-        private func releaseToken(threadId: String) {
-            tokenObservers.removeValue(forKey: threadId)?.cancel()
-            guard let activityRef = activityRefs.removeValue(forKey: threadId) else { return }
-            onPushToken?(activityRef, threadId, nil)
+        private func releaseToken(subject: TWActivitySubject) {
+            tokenObservers.removeValue(forKey: subject)?.cancel()
+            guard let activityRef = activityRefs.removeValue(forKey: subject) else { return }
+            onPushToken?(activityRef, subject, nil)
         }
 
         // MARK: - Freshness
@@ -317,8 +324,8 @@
                 return
             }
             let now = Date()
-            for (threadId, activity) in activities {
-                guard let state = pushed[threadId] else { continue }
+            for (subject, activity) in activities {
+                guard let state = pushed[subject] else { continue }
                 let content = content(state, now: now)
                 Task { await activity.update(content) }
             }

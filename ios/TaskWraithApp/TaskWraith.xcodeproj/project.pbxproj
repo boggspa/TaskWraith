@@ -8,18 +8,32 @@
 
 /* Begin PBXBuildFile section */
 		12299021B552490B2C1C4F17 /* TaskWraithApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */; };
+		1A0CA0B0706ED1DE186D786F /* provider-glyph-ensemble.png in Resources */ = {isa = PBXBuildFile; fileRef = 192EE2F7D076B57A39F73907 /* provider-glyph-ensemble.png */; };
 		1DB4ACF723233A3BCFB7BDDC /* TaskWraithKit in Frameworks */ = {isa = PBXBuildFile; productRef = 85C703EACF11FF91D8FE4DBE /* TaskWraithKit */; };
+		28F6E9422027353588A2A26E /* provider-logo-kimi.png in Resources */ = {isa = PBXBuildFile; fileRef = 58A519DB220134BB0C83943E /* provider-logo-kimi.png */; };
+		2CE811D05C688E80557F2B0B /* provider-logo-antigravity.png in Resources */ = {isa = PBXBuildFile; fileRef = 537422D1C8348D497E748718 /* provider-logo-antigravity.png */; };
 		4A61C43FA6F6EFB08305AF86 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E7841161EEA2E7F087A1915 /* NotificationService.swift */; };
 		54644332E7359BDF2EBA0662 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */; };
 		600CA3765FCBC9EF601930C5 /* TaskWraithNotificationService.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		60CE03A63F335E5453303EB0 /* provider-logo-cerebras-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = CDC22EF041D30DC6BBBFB99E /* provider-logo-cerebras-on-dark.png */; };
+		6F1AAC07F3EA7B5C6B5CFCD6 /* provider-logo-grok-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = 0626712C6C23FB0C1B1751EF /* provider-logo-grok-on-dark.png */; };
+		719DBE44E22BF5320B838E13 /* provider-logo-mistral.png in Resources */ = {isa = PBXBuildFile; fileRef = C38EDEB93B6A399608C04430 /* provider-logo-mistral.png */; };
 		752E552999FC62154FDF7C52 /* TaskWraithWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE8CDB2A8A295B8926BFD2B2 /* TaskWraithWidgetBundle.swift */; };
+		7C07103461E541166448D22C /* provider-logo-codex.png in Resources */ = {isa = PBXBuildFile; fileRef = 8193BEDAE918983BD1A057EB /* provider-logo-codex.png */; };
 		86FFF3D3461B52C64C62367A /* TaskWraithKit in Frameworks */ = {isa = PBXBuildFile; productRef = 82D6D74C2FEF1679DD51831D /* TaskWraithKit */; };
+		8C067CEEF27B1D5972BDB55C /* provider-logo-cursor-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = EF415D323FEA48F243CF2532 /* provider-logo-cursor-on-dark.png */; };
+		942D0D45FCF67BE980CF6C2D /* provider-logo-claude.png in Resources */ = {isa = PBXBuildFile; fileRef = 7E50B8B4E67393923998599C /* provider-logo-claude.png */; };
 		9F4932E7183327339A41AF84 /* TaskWraithAppLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */; };
+		A32F328BF2D56E18A73A7C2B /* provider-logo-deepseek.png in Resources */ = {isa = PBXBuildFile; fileRef = 92F4982ACD01C6FD7493C206 /* provider-logo-deepseek.png */; };
 		A4DCD2CE78DEEEB16D3B82C8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */; };
+		B3FB6A651C315C1ABCEAA4BB /* provider-logo-gemini.png in Resources */ = {isa = PBXBuildFile; fileRef = DCAEF1E2913532E7372E49E9 /* provider-logo-gemini.png */; };
 		BB498271F052F45C5816493E /* TaskWraithLaunchUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */; };
+		BD9FB315B47912A00DBAD964 /* provider-logo-pi-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = F0D1B2EFD879E8AD1C78903E /* provider-logo-pi-on-dark.png */; };
 		CE7101A9804142C180B58774 /* TaskWraithUI in Frameworks */ = {isa = PBXBuildFile; productRef = AF7441603810B23EE879F5FE /* TaskWraithUI */; };
 		D3C65E3606B5C1D0FF6FB26E /* TaskWraithWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BC066D02334072C38238A911 /* TaskWraithWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ECCE3FAEE9057736707525F5 /* provider-logo-ollama-on-dark.png in Resources */ = {isa = PBXBuildFile; fileRef = AF822C5E457358FC76934791 /* provider-logo-ollama-on-dark.png */; };
 		F127F9C53C22A51EE33F9BD4 /* TWRunActivityWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDDF9CE2EA2908102BB2355C /* TWRunActivityWidget.swift */; };
+		F129965AB44ABFFE6E01CCF1 /* ghost-mark-monoline.png in Resources */ = {isa = PBXBuildFile; fileRef = 6ACD92CC544DF6D159616F6F /* ghost-mark-monoline.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,22 +83,36 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0626712C6C23FB0C1B1751EF /* provider-logo-grok-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-grok-on-dark.png"; sourceTree = "<group>"; };
+		192EE2F7D076B57A39F73907 /* provider-glyph-ensemble.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-glyph-ensemble.png"; sourceTree = "<group>"; };
 		1E7841161EEA2E7F087A1915 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
 		2740C3085DB5AC121E98C173 /* TaskWraithNotificationService.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = TaskWraithNotificationService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3370BF58F95DC204BE950651 /* TaskWraith.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TaskWraith.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithApp.swift; sourceTree = "<group>"; };
 		3AC061527DD5E03FB2CB5FB6 /* TaskWraithLaunchUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithLaunchUITests.swift; sourceTree = "<group>"; };
+		537422D1C8348D497E748718 /* provider-logo-antigravity.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-antigravity.png"; sourceTree = "<group>"; };
 		5829A7D0E9EA0BDA0DEB9BE3 /* TaskWraithKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TaskWraithKit; path = ../TaskWraithKit; sourceTree = SOURCE_ROOT; };
+		58A519DB220134BB0C83943E /* provider-logo-kimi.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-kimi.png"; sourceTree = "<group>"; };
+		6ACD92CC544DF6D159616F6F /* ghost-mark-monoline.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "ghost-mark-monoline.png"; sourceTree = "<group>"; };
 		70D53F402BCC1456A7E9D116 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		78BF908D657E6E232AEF0972 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		7E50B8B4E67393923998599C /* provider-logo-claude.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-claude.png"; sourceTree = "<group>"; };
+		8193BEDAE918983BD1A057EB /* provider-logo-codex.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-codex.png"; sourceTree = "<group>"; };
 		8738F17EF74CF59C08107065 /* TaskWraithAppLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithAppLifecycleTests.swift; sourceTree = "<group>"; };
+		92F4982ACD01C6FD7493C206 /* provider-logo-deepseek.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-deepseek.png"; sourceTree = "<group>"; };
 		A12FB9A2BBEAC31DB7D439FE /* TaskWraithUnitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUnitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AF822C5E457358FC76934791 /* provider-logo-ollama-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-ollama-on-dark.png"; sourceTree = "<group>"; };
 		BC066D02334072C38238A911 /* TaskWraithWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = TaskWraithWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C38EDEB93B6A399608C04430 /* provider-logo-mistral.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-mistral.png"; sourceTree = "<group>"; };
+		CDC22EF041D30DC6BBBFB99E /* provider-logo-cerebras-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-cerebras-on-dark.png"; sourceTree = "<group>"; };
 		CDDF9CE2EA2908102BB2355C /* TWRunActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TWRunActivityWidget.swift; sourceTree = "<group>"; };
+		DCAEF1E2913532E7372E49E9 /* provider-logo-gemini.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-gemini.png"; sourceTree = "<group>"; };
 		EC686CDBC90A3E52328C5DBA /* TaskWraithWidgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TaskWraithWidgets.entitlements; sourceTree = "<group>"; };
 		EE8CDB2A8A295B8926BFD2B2 /* TaskWraithWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskWraithWidgetBundle.swift; sourceTree = "<group>"; };
+		EF415D323FEA48F243CF2532 /* provider-logo-cursor-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-cursor-on-dark.png"; sourceTree = "<group>"; };
+		F0D1B2EFD879E8AD1C78903E /* provider-logo-pi-on-dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "provider-logo-pi-on-dark.png"; sourceTree = "<group>"; };
 		F52EAA275EC223F7FEF2C488 /* TaskWraithUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TaskWraithUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FAD184B8DAC8733EE42CBCA3 /* NotificationService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotificationService.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -117,6 +145,44 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0A902D502E20FF902DF16674 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				6ACD92CC544DF6D159616F6F /* ghost-mark-monoline.png */,
+				192EE2F7D076B57A39F73907 /* provider-glyph-ensemble.png */,
+				537422D1C8348D497E748718 /* provider-logo-antigravity.png */,
+				CDC22EF041D30DC6BBBFB99E /* provider-logo-cerebras-on-dark.png */,
+				7E50B8B4E67393923998599C /* provider-logo-claude.png */,
+				8193BEDAE918983BD1A057EB /* provider-logo-codex.png */,
+				EF415D323FEA48F243CF2532 /* provider-logo-cursor-on-dark.png */,
+				92F4982ACD01C6FD7493C206 /* provider-logo-deepseek.png */,
+				DCAEF1E2913532E7372E49E9 /* provider-logo-gemini.png */,
+				0626712C6C23FB0C1B1751EF /* provider-logo-grok-on-dark.png */,
+				58A519DB220134BB0C83943E /* provider-logo-kimi.png */,
+				C38EDEB93B6A399608C04430 /* provider-logo-mistral.png */,
+				AF822C5E457358FC76934791 /* provider-logo-ollama-on-dark.png */,
+				F0D1B2EFD879E8AD1C78903E /* provider-logo-pi-on-dark.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		15FD91E11A292BA2745DD85A /* ios */ = {
+			isa = PBXGroup;
+			children = (
+				E97432B1527634E5F38E44F4 /* TaskWraithKit */,
+			);
+			name = ios;
+			path = ..;
+			sourceTree = "<group>";
+		};
+		1E63E46C215D30A2EF493566 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				B73943453DC2D78273C854D4 /* TaskWraithUI */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
 		41DE9D4170EB82221270AD35 /* NotificationService */ = {
 			isa = PBXGroup;
 			children = (
@@ -146,6 +212,14 @@
 			name = Packages;
 			sourceTree = "<group>";
 		};
+		B73943453DC2D78273C854D4 /* TaskWraithUI */ = {
+			isa = PBXGroup;
+			children = (
+				0A902D502E20FF902DF16674 /* Resources */,
+			);
+			path = TaskWraithUI;
+			sourceTree = "<group>";
+		};
 		C279D506DC9E5BEE0A688F02 /* UITests */ = {
 			isa = PBXGroup;
 			children = (
@@ -167,6 +241,7 @@
 			children = (
 				2F7552D09A7EE4DFE7C62B6F /* Assets.xcassets */,
 				793E610251E2C2C41B44C224 /* PrivacyInfo.xcprivacy */,
+				15FD91E11A292BA2745DD85A /* ios */,
 				41DE9D4170EB82221270AD35 /* NotificationService */,
 				9CCA702279B1520D4D4FA69B /* Packages */,
 				E5A6165A2A67DB975B626F53 /* Sources */,
@@ -183,6 +258,14 @@
 				37C10FF27BC422B0B9C03EBE /* TaskWraithApp.swift */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		E97432B1527634E5F38E44F4 /* TaskWraithKit */ = {
+			isa = PBXGroup;
+			children = (
+				1E63E46C215D30A2EF493566 /* Sources */,
+			);
+			path = TaskWraithKit;
 			sourceTree = "<group>";
 		};
 		ED8B6943A8048572BE4B3966 /* Products */ = {
@@ -242,6 +325,7 @@
 			buildConfigurationList = E4D3C3677F7EAC37DA26074A /* Build configuration list for PBXNativeTarget "TaskWraithWidgets" */;
 			buildPhases = (
 				3D6230230558A86EFEF95886 /* Sources */,
+				A850DCB55FC288A7FC4B9AF5 /* Resources */,
 				823059CB16694EAD592C0B0E /* Frameworks */,
 			);
 			buildRules = (
@@ -354,6 +438,27 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		A850DCB55FC288A7FC4B9AF5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F129965AB44ABFFE6E01CCF1 /* ghost-mark-monoline.png in Resources */,
+				1A0CA0B0706ED1DE186D786F /* provider-glyph-ensemble.png in Resources */,
+				2CE811D05C688E80557F2B0B /* provider-logo-antigravity.png in Resources */,
+				60CE03A63F335E5453303EB0 /* provider-logo-cerebras-on-dark.png in Resources */,
+				942D0D45FCF67BE980CF6C2D /* provider-logo-claude.png in Resources */,
+				7C07103461E541166448D22C /* provider-logo-codex.png in Resources */,
+				8C067CEEF27B1D5972BDB55C /* provider-logo-cursor-on-dark.png in Resources */,
+				A32F328BF2D56E18A73A7C2B /* provider-logo-deepseek.png in Resources */,
+				B3FB6A651C315C1ABCEAA4BB /* provider-logo-gemini.png in Resources */,
+				6F1AAC07F3EA7B5C6B5CFCD6 /* provider-logo-grok-on-dark.png in Resources */,
+				28F6E9422027353588A2A26E /* provider-logo-kimi.png in Resources */,
+				719DBE44E22BF5320B838E13 /* provider-logo-mistral.png in Resources */,
+				ECCE3FAEE9057736707525F5 /* provider-logo-ollama-on-dark.png in Resources */,
+				BD9FB315B47912A00DBAD964 /* provider-logo-pi-on-dark.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		EB2DC7118F9AA76C6B6BD2F7 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

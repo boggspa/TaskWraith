@@ -592,6 +592,9 @@ export interface BridgeRegisterLiveActivityTokenAction extends BridgeActionMetad
    *  NOT in the activity's content-state or attributes, so the push payload
    *  itself still carries no link back to a conversation. */
   threadId?: string
+  /** Anonymous workspace-summary route. Mac-side only, mutually exclusive with
+   *  `threadId`, and never copied into the ActivityKit payload. */
+  workspaceId?: string
   env: 'production' | 'sandbox'
 }
 
@@ -2773,8 +2776,15 @@ function isRegisterLiveActivityToken(v: Record<string, unknown>): boolean {
     // the 64-char device-token length: an ActivityKit push token is its own
     // thing and is routinely a different size, so pinning 64 here would reject
     // every real token.
-    (v.token === undefined || (typeof v.token === 'string' && /^[0-9a-fA-F]{32,256}$/.test(v.token))) &&
-    (v.threadId === undefined || typeof v.threadId === 'string') &&
+    (v.token === undefined ||
+      (typeof v.token === 'string' && /^[0-9a-fA-F]{32,256}$/.test(v.token))) &&
+    (v.threadId === undefined ||
+      (typeof v.threadId === 'string' && v.threadId.length > 0 && v.threadId.length <= 512)) &&
+    (v.workspaceId === undefined ||
+      (typeof v.workspaceId === 'string' &&
+        v.workspaceId.length > 0 &&
+        v.workspaceId.length <= 512)) &&
+    !(typeof v.threadId === 'string' && typeof v.workspaceId === 'string') &&
     (v.env === 'production' || v.env === 'sandbox')
   )
 }

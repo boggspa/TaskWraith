@@ -40,6 +40,10 @@ public enum TWActivityArchetype: String, Codable, Sendable, CaseIterable {
     case attention
     /// Per-seat state for an ensemble, with a real finished/total bar.
     case ensemble
+    /// A privacy-safe roll-up for two or more monitor-authorized runs in one
+    /// workspace. It carries counts and provider product names only; the
+    /// workspace identity remains in TaskWraith's encrypted/local state.
+    case workspace
 
     public static let fallback: TWActivityArchetype = .diff
 }
@@ -209,6 +213,56 @@ public struct TWRunActivityState: Codable, Hashable, Sendable {
     public let deletions: Int
     /// Ensemble seats, empty for a solo run. Capped by `makeContentState`.
     public let seats: [TWSeatState]
+    /// Number of live runs represented by this card. One for the existing
+    /// per-run activity; two or more for the workspace roll-up.
+    public let activeRuns: Int
+    /// Local Git divergence. Counts only — no ref, branch, or remote name.
+    public let ahead: Int
+    public let behind: Int
+    /// Distinguishes an unavailable Git observation from a genuinely clean
+    /// snapshot. Zero is never allowed to impersonate unavailable.
+    public let hasGitSnapshot: Bool
+
+    public init(
+        phase: TWRunPhase,
+        startedAtUnix: Int,
+        filesChanged: Int,
+        additions: Int,
+        deletions: Int,
+        seats: [TWSeatState],
+        activeRuns: Int,
+        ahead: Int,
+        behind: Int,
+        hasGitSnapshot: Bool
+    ) {
+        self.phase = phase
+        self.startedAtUnix = startedAtUnix
+        self.filesChanged = filesChanged
+        self.additions = additions
+        self.deletions = deletions
+        self.seats = seats
+        self.activeRuns = activeRuns
+        self.ahead = ahead
+        self.behind = behind
+        self.hasGitSnapshot = hasGitSnapshot
+    }
+
+    /// ActivityKit can restore content written by an older app build. New
+    /// anonymous counters therefore default rather than making an otherwise
+    /// endable legacy activity disappear from `Activity.activities`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        phase = (try? c.decode(TWRunPhase.self, forKey: .phase)) ?? .running
+        startedAtUnix = (try? c.decode(Int.self, forKey: .startedAtUnix)) ?? 0
+        filesChanged = (try? c.decode(Int.self, forKey: .filesChanged)) ?? 0
+        additions = (try? c.decode(Int.self, forKey: .additions)) ?? 0
+        deletions = (try? c.decode(Int.self, forKey: .deletions)) ?? 0
+        seats = (try? c.decode([TWSeatState].self, forKey: .seats)) ?? []
+        activeRuns = (try? c.decode(Int.self, forKey: .activeRuns)) ?? 1
+        ahead = (try? c.decode(Int.self, forKey: .ahead)) ?? 0
+        behind = (try? c.decode(Int.self, forKey: .behind)) ?? 0
+        hasGitSnapshot = (try? c.decode(Bool.self, forKey: .hasGitSnapshot)) ?? false
+    }
 
     /// ONLY set where a real denominator exists — today that is ensemble seats
     /// finished / total. An agent run has no meaningful percentage, and a bar
@@ -334,7 +388,11 @@ public func makeContentState(
     filesChanged: Int = 0,
     additions: Int = 0,
     deletions: Int = 0,
-    seats: [TWSeatState] = []
+    seats: [TWSeatState] = [],
+    activeRuns: Int = 1,
+    ahead: Int = 0,
+    behind: Int = 0,
+    hasGitSnapshot: Bool = false
 ) -> TWRunActivityState {
     TWRunActivityState(
         phase: phase,
@@ -342,7 +400,11 @@ public func makeContentState(
         filesChanged: max(0, filesChanged),
         additions: max(0, additions),
         deletions: max(0, deletions),
-        seats: Array(seats.prefix(TWRunActivityLimits.maxSeats))
+        seats: Array(seats.prefix(TWRunActivityLimits.maxSeats)),
+        activeRuns: max(0, activeRuns),
+        ahead: max(0, ahead),
+        behind: max(0, behind),
+        hasGitSnapshot: hasGitSnapshot
     )
 }
 

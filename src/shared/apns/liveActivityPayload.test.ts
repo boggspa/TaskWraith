@@ -29,9 +29,13 @@ describe('live activity content state', () => {
       ...({ title: 'Fix the auth bug', path: '/Users/me/secret', threadId: 't-1' } as object)
     } as never)
     expect(Object.keys(state).sort()).toEqual([
+      'activeRuns',
       'additions',
+      'ahead',
+      'behind',
       'deletions',
       'filesChanged',
+      'hasGitSnapshot',
       'phase',
       'seats',
       'startedAtUnix'
@@ -58,6 +62,24 @@ describe('live activity content state', () => {
     expect(state.phase).toBe('running')
     expect(state.startedAtUnix).toBe(0)
     expect(state).toMatchObject({ filesChanged: 0, additions: 0, deletions: 2 })
+  })
+
+  it('carries only anonymous workspace counters and distinguishes unavailable Git', () => {
+    const state = buildLiveActivityContentState({
+      phase: 'running',
+      startedAtUnix: 1,
+      activeRuns: 3,
+      ahead: 8,
+      behind: 2,
+      hasGitSnapshot: true,
+      ...({ workspaceId: 'secret-id', branch: 'secret-branch' } as object)
+    } as never)
+    expect(state).toMatchObject({ activeRuns: 3, ahead: 8, behind: 2, hasGitSnapshot: true })
+    expect(JSON.stringify(state)).not.toContain('secret')
+    expect(buildLiveActivityContentState({ phase: 'running', startedAtUnix: 1 })).toMatchObject({
+      activeRuns: 1,
+      hasGitSnapshot: false
+    })
   })
 
   it('coerces a non-string provider so a malformed projection cannot smuggle an object', () => {

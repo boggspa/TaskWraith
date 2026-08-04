@@ -79,7 +79,8 @@ struct TWRunActivityTests {
             try JSONSerialization.jsonObject(with: data) as? [String: Any])
         #expect(
             Set(object.keys) == [
-                "phase", "startedAtUnix", "filesChanged", "additions", "deletions", "seats"
+                "phase", "startedAtUnix", "filesChanged", "additions", "deletions", "seats",
+                "activeRuns", "ahead", "behind", "hasGitSnapshot",
             ])
         // Must serialise as a NUMBER of unix seconds. A `Date` here would encode
         // via whatever strategy the decoder uses; ActivityKit's default reads a
@@ -87,6 +88,28 @@ struct TWRunActivityTests {
         #expect(object["startedAtUnix"] as? Int == 1_700_000_000)
         let seats = try #require(object["seats"] as? [[String: Any]])
         #expect(Set(seats[0].keys) == ["provider", "phase"])
+    }
+
+    @Test("a content state written by an older build still decodes")
+    func stateDecodesWithoutWorkspaceCounters() throws {
+        let legacy = Data(
+            #"{"phase":"running","startedAtUnix":1700000000,"filesChanged":2,"additions":3,"deletions":1,"seats":[]}"#.utf8)
+        let decoded = try JSONDecoder().decode(TWRunActivityState.self, from: legacy)
+        #expect(decoded.activeRuns == 1)
+        #expect(decoded.ahead == 0)
+        #expect(decoded.behind == 0)
+        #expect(!decoded.hasGitSnapshot)
+    }
+
+    @Test("workspace counters are clamped and remain anonymous")
+    func workspaceCountersAreSafe() {
+        let state = makeContentState(
+            phase: .running, startedAt: start, activeRuns: 3, ahead: -4, behind: 5,
+            hasGitSnapshot: true)
+        #expect(state.activeRuns == 3)
+        #expect(state.ahead == 0)
+        #expect(state.behind == 5)
+        #expect(state.hasGitSnapshot)
     }
 
     @Test("config carries an opaque ref, and round-trips")
@@ -137,7 +160,7 @@ struct TWRunActivityTests {
     func archetypeIds() {
         #expect(
             Set(TWActivityArchetype.allCases.map(\.rawValue))
-                == ["minimal", "diff", "attention", "ensemble"])
+                == ["minimal", "diff", "attention", "ensemble", "workspace"])
         // A template synced from a newer build naming an unknown archetype must
         // decode to nil so the widget can fall back rather than fail to render.
         #expect(TWActivityArchetype(rawValue: "holographic") == nil)

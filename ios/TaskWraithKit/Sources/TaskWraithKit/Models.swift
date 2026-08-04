@@ -2075,11 +2075,12 @@ public enum BridgeAction {
     /// `token: nil` means the activity ENDED here — the Mac must forget it
     /// rather than keep pushing into a card that no longer exists.
     ///
-    /// `threadId` is Mac-side routing ONLY. It deliberately never enters the
+    /// `threadId` / `workspaceId` are Mac-side routing ONLY. Neither enters the
     /// activity's attributes or content-state, so the push payload itself still
-    /// carries no link back to a conversation.
+    /// carries no link back to a conversation or repository.
     public static func registerLiveActivityToken(
-        activityRef: String, token: String?, threadId: String?, env: String,
+        activityRef: String, token: String?, threadId: String?, workspaceId: String? = nil,
+        env: String,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -2088,6 +2089,7 @@ public enum BridgeAction {
         ]
         if let token, !token.isEmpty { payload["token"] = token }
         if let threadId, !threadId.isEmpty { payload["threadId"] = threadId }
+        if let workspaceId, !workspaceId.isEmpty { payload["workspaceId"] = workspaceId }
         return encode(payload)
     }
 

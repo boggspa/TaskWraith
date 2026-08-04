@@ -1848,6 +1848,57 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    it('decodes a workspace-routed Live Activity token without workspace gating', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'registerLiveActivityToken',
+          pairID: 'pair-1',
+          activityRef: 'opaque-ref',
+          token: 'ab'.repeat(32),
+          workspaceId: 'workspace-secret',
+          env: 'sandbox'
+        })
+      )
+      expect(payload.kind).toBe('registerLiveActivityToken')
+      if (payload.kind !== 'registerLiveActivityToken') throw new Error('discriminant')
+      expect(payload.workspaceId).toBe('workspace-secret')
+      // Registration stores a routing key; the independently monitor-gated
+      // projection decides whether any workspace state may be sent.
+      expect(workspaceIdFromPayload(payload)).toBeNull()
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(false)
+    })
+
+    it('rejects a Live Activity token claiming both thread and workspace routes', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'registerLiveActivityToken',
+          pairID: 'pair-1',
+          activityRef: 'opaque-ref',
+          token: 'ab'.repeat(32),
+          threadId: 'thread-1',
+          workspaceId: 'workspace-1',
+          env: 'sandbox'
+        })
+      )
+      expect(payload.kind).toBe('unknown')
+    })
+
+    it('rejects empty Live Activity routing identifiers', () => {
+      for (const route of [{ threadId: '' }, { workspaceId: '' }]) {
+        const { payload } = decodeBridgeActionPayload(
+          encode({
+            kind: 'registerLiveActivityToken',
+            pairID: 'pair-1',
+            activityRef: 'opaque-ref',
+            token: 'ab'.repeat(32),
+            ...route,
+            env: 'sandbox'
+          })
+        )
+        expect(payload.kind).toBe('unknown')
+      }
+    })
+
     it('decodes setWatchedThread as a read-only pair-scoped action', () => {
       const wire = encode({ kind: 'setWatchedThread', appChatId: 'chat-1' })
       const { payload } = decodeBridgeActionPayload(wire)

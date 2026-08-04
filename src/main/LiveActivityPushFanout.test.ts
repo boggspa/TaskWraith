@@ -114,6 +114,48 @@ describe('live activity fanout', () => {
     dead.fanout.onTaskCard({ id: 'chat-1', status: 'running' })
     await vi.waitFor(() => expect(dead.store.forThread('chat-1')).toHaveLength(0))
   })
+
+  it('updates an anonymous workspace card without serialising its routing id', async () => {
+    h.store.register({
+      pairID: 'pair-1',
+      activityRef: 'workspace-ref',
+      token: 'workspace-token',
+      env: 'sandbox',
+      workspaceId: 'workspace-secret'
+    })
+    h.fanout.onWorkspaceActivity({
+      workspaceId: 'workspace-secret',
+      phase: 'awaitingApproval',
+      startedAtUnix: 10,
+      activeRuns: 3,
+      filesChanged: 12,
+      additions: 539,
+      deletions: 202,
+      ahead: 89,
+      behind: 0,
+      hasGitSnapshot: true,
+      seats: [
+        { provider: 'codex', phase: 'running' },
+        { provider: 'grok', phase: 'awaitingApproval' }
+      ]
+    })
+    await vi.waitFor(() => expect(h.pushLiveActivityToToken).toHaveBeenCalledTimes(1))
+    const payload = (h.pushLiveActivityToToken.mock.calls[0] as unknown as unknown[])[2]
+    expect(payload).toMatchObject({
+      event: 'update',
+      needsUser: true,
+      contentState: {
+        activeRuns: 3,
+        filesChanged: 12,
+        additions: 539,
+        deletions: 202,
+        ahead: 89,
+        behind: 0,
+        hasGitSnapshot: true
+      }
+    })
+    expect(JSON.stringify(payload)).not.toContain('workspace-secret')
+  })
 })
 
 describe('token store', () => {
@@ -155,6 +197,30 @@ describe('token store', () => {
     store.register({ pairID: 'b', activityRef: '2', token: 't', env: 'sandbox', threadId: 'c' })
     store.forgetPair('a')
     expect(store.forThread('c').map((r) => r.pairID)).toEqual(['b'])
+  })
+
+  it('routes workspace and thread activities independently', () => {
+    const store = new LiveActivityTokenStore()
+    store.register({
+      pairID: 'p',
+      activityRef: 'thread-ref',
+      token: 't',
+      env: 'sandbox',
+      threadId: 'same-looking-id'
+    })
+    store.register({
+      pairID: 'p',
+      activityRef: 'workspace-ref',
+      token: 'w',
+      env: 'sandbox',
+      workspaceId: 'same-looking-id'
+    })
+    expect(store.forThread('same-looking-id').map((entry) => entry.activityRef)).toEqual([
+      'thread-ref'
+    ])
+    expect(store.forWorkspace('same-looking-id').map((entry) => entry.activityRef)).toEqual([
+      'workspace-ref'
+    ])
   })
 })
 
@@ -314,5 +380,34 @@ describe('push-to-start', () => {
       unknown
     >
     expect(second.event).toBe('update')
+  })
+
+  it('push-starts a workspace archetype and keeps workspace identity off APNs', async () => {
+    const h = startHarness()
+    h.fanout.onWorkspaceActivity({
+      workspaceId: 'workspace-secret',
+      phase: 'running',
+      startedAtUnix: 10,
+      activeRuns: 2,
+      filesChanged: 4,
+      additions: 20,
+      deletions: 3,
+      ahead: 2,
+      behind: 1,
+      hasGitSnapshot: true,
+      seats: [
+        { provider: 'codex', phase: 'running' },
+        { provider: 'grok', phase: 'running' }
+      ]
+    })
+    h.fire()
+    await vi.waitFor(() => expect(h.pushLiveActivityToToken).toHaveBeenCalledTimes(1))
+    const payload = (h.pushLiveActivityToToken.mock.calls[0] as unknown as unknown[])[2] as Record<
+      string,
+      unknown
+    >
+    expect(payload.attributes).toMatchObject({ provider: 'taskwraith', archetype: 'workspace' })
+    expect(JSON.stringify(payload)).not.toContain('workspace-secret')
+    expect(h.store.hasActivityForWorkspace('pair-1', 'workspace-secret')).toBe(true)
   })
 })

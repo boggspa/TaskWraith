@@ -169,6 +169,36 @@ targets:
     platform: iOS
     sources:
       - path: Widgets
+      # Reuse the canonical packaged artwork; these same source PNGs are copied
+      # into the widget bundle without linking heavyweight TaskWraithUI.
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/ghost-mark-monoline.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-glyph-ensemble.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-antigravity.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-cerebras-on-dark.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-claude.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-codex.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-cursor-on-dark.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-deepseek.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-gemini.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-grok-on-dark.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-kimi.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-mistral.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-ollama-on-dark.png
+        buildPhase: resources
+      - path: ../TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-pi-on-dark.png
+        buildPhase: resources
     dependencies:
       - package: TaskWraithKit
         product: TaskWraithKit

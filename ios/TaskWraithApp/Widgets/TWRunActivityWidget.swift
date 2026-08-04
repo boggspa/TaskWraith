@@ -1,6 +1,6 @@
 // The Live Activity widget: lock screen + Dynamic Island for an in-flight run.
 //
-// Four PRECOMPILED archetypes, selected by `context.attributes.config.archetype`.
+// Five PRECOMPILED archetypes, selected by `context.attributes.config.archetype`.
 // A layout cannot travel over the wire — it is compiled SwiftUI — so the user's
 // choice arrives as an id and this file switches on it. Adding an archetype is
 // an app update; that is ActivityKit, not a limitation of the design.
@@ -129,6 +129,21 @@ private struct ElapsedText: View {
     }
 }
 
+/// ActivityKit animates content-state changes; numericText gives changing
+/// counters the same rolling-digit feel as TaskWraith's DigitOdometer without
+/// spending extra pushes or running a local timer.
+private struct OdometerMetric: View {
+    let value: Int
+    var prefix = ""
+    var suffix = ""
+
+    var body: some View {
+        Text("\(prefix)\(value)\(suffix)")
+            .monospacedDigit()
+            .contentTransition(.numericText())
+    }
+}
+
 private struct DiffCounts: View {
     let state: TWRunActivityState
     let palette: TWActivityPalette
@@ -136,16 +151,17 @@ private struct DiffCounts: View {
     var body: some View {
         HStack(spacing: 6) {
             if state.filesChanged > 0 {
-                Text("\(state.filesChanged)f")
+                OdometerMetric(value: state.filesChanged, suffix: "f")
             }
             if state.additions > 0 {
-                Text("+\(state.additions)").foregroundStyle(Color(rgb: palette.success))
+                OdometerMetric(value: state.additions, prefix: "+")
+                    .foregroundStyle(Color(rgb: palette.success))
             }
             if state.deletions > 0 {
-                Text("-\(state.deletions)").foregroundStyle(Color(rgb: palette.failure))
+                OdometerMetric(value: state.deletions, prefix: "-")
+                    .foregroundStyle(Color(rgb: palette.failure))
             }
         }
-        .monospacedDigit()
     }
 }
 
@@ -165,6 +181,87 @@ private struct SeatDots: View {
     }
 }
 
+/// The real TaskWraith monoline mark, rendered as a template so ActivityKit's
+/// light/dark/vibrancy treatments remain legible. Intentionally no container:
+/// boxing this fine linework makes it disappear at lock-screen scale.
+private struct GhostMark: View {
+    let tint: Color
+
+    var body: some View {
+        Image("ghost-mark-monoline")
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .foregroundStyle(tint)
+    }
+}
+
+private func providerArtwork(_ provider: String) -> String? {
+    switch provider.lowercased() {
+    case "codex", "openai": return "provider-logo-codex"
+    case "claude", "anthropic": return "provider-logo-claude"
+    case "kimi", "moonshot": return "provider-logo-kimi"
+    case "cursor": return "provider-logo-cursor-on-dark"
+    case "grok", "xai": return "provider-logo-grok-on-dark"
+    case "mistral": return "provider-logo-mistral"
+    case "gemini", "google": return "provider-logo-gemini"
+    case "antigravity": return "provider-logo-antigravity"
+    case "deepseek": return "provider-logo-deepseek"
+    case "cerebras": return "provider-logo-cerebras-on-dark"
+    case "ollama": return "provider-logo-ollama-on-dark"
+    case "pi": return "provider-logo-pi-on-dark"
+    case "ensemble": return "provider-glyph-ensemble"
+    default: return nil
+    }
+}
+
+private struct ProviderStack: View {
+    let seats: [TWSeatState]
+    let palette: TWActivityPalette
+
+    private var shown: ArraySlice<TWSeatState> { seats.prefix(5) }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            ForEach(Array(shown.enumerated()), id: \.offset) { index, seat in
+                Group {
+                    if let artwork = providerArtwork(seat.provider) {
+                        Image(artwork)
+                            .resizable()
+                            .scaledToFit()
+                            .padding(2.5)
+                    } else {
+                        Circle()
+                            .fill(phaseTint(seat.phase, palette: palette))
+                            .padding(4)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .background(.black.opacity(0.68), in: Circle())
+                .overlay(Circle().stroke(.white.opacity(0.18), lineWidth: 0.75))
+                .offset(x: CGFloat(index) * 14)
+                .zIndex(Double(shown.count - index))
+            }
+        }
+        .frame(width: shown.isEmpty ? 0 : CGFloat(22 + max(0, shown.count - 1) * 14), height: 22)
+        .accessibilityLabel("\(seats.count) active providers")
+    }
+}
+
+private struct GitDivergence: View {
+    let ahead: Int
+    let behind: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            OdometerMetric(value: ahead, prefix: "↑")
+                .foregroundStyle(Color(rgb: 0xF5A623))
+            OdometerMetric(value: behind, prefix: "↓")
+                .foregroundStyle(Color(rgb: 0x5A8CFF))
+        }
+    }
+}
+
 // MARK: - Lock screen
 
 private struct LockScreenView: View {
@@ -173,20 +270,25 @@ private struct LockScreenView: View {
     let isStale: Bool
 
     private var palette: TWActivityPalette { config.palette }
+    private var isWorkspace: Bool { config.archetype == .workspace }
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(systemName: state.phase.glyph)
-                .font(.title3)
-                .foregroundStyle(phaseTint(state.phase, palette: palette))
+            if isWorkspace {
+                GhostMark(tint: phaseTint(state.phase, palette: palette))
+                    .frame(width: 28, height: 28)
+            } else {
+                Image(systemName: state.phase.glyph)
+                    .font(.title3)
+                    .foregroundStyle(phaseTint(state.phase, palette: palette))
+            }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(config.provider.capitalized).font(.headline)
+                    Text(isWorkspace ? "TaskWraith" : config.provider.capitalized).font(.headline)
                     if config.archetype != .attention {
-                        Text(isStale ? "Out of contact" : state.phase.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        statusLabel
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 detail
@@ -204,6 +306,22 @@ private struct LockScreenView: View {
         // Desaturating the whole card is the strongest "do not trust this"
         // signal available without a second layout.
         .opacity(isStale ? 0.55 : 1)
+    }
+
+    @ViewBuilder
+    private var statusLabel: some View {
+        if isStale {
+            Text("Out of contact")
+        } else if isWorkspace, state.phase.needsUser {
+            Text("Needs you")
+        } else if isWorkspace {
+            HStack(spacing: 3) {
+                OdometerMetric(value: state.activeRuns)
+                Text(state.activeRuns == 1 ? "run active" : "runs active")
+            }
+        } else {
+            Text(state.phase.label)
+        }
     }
 
     @ViewBuilder
@@ -233,6 +351,20 @@ private struct LockScreenView: View {
                         .frame(maxWidth: 160)
                 }
             }
+        case .workspace:
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    ProviderStack(seats: state.seats, palette: palette)
+                    if state.hasGitSnapshot {
+                        DiffCounts(state: state, palette: palette)
+                        GitDivergence(ahead: state.ahead, behind: state.behind)
+                    } else {
+                        Text("Git snapshot unavailable")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.caption)
+            }
         }
     }
 }
@@ -256,9 +388,18 @@ struct TWRunActivityWidget: Widget {
 
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(config.provider.capitalized, systemImage: state.phase.glyph)
+                    if config.archetype == .workspace {
+                        HStack(spacing: 5) {
+                            GhostMark(tint: tint).frame(width: 18, height: 18)
+                            Text("Workspace activity")
+                        }
                         .font(.caption)
                         .foregroundStyle(tint)
+                    } else {
+                        Label(config.provider.capitalized, systemImage: state.phase.glyph)
+                            .font(.caption)
+                            .foregroundStyle(tint)
+                    }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     ElapsedText(startedAt: state.startedAt, phase: state.phase, isStale: isStale)
@@ -286,17 +427,50 @@ struct TWRunActivityWidget: Widget {
                                 Text("\(state.seatsFinished)/\(state.seats.count)")
                                     .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
                             }
+                        case .workspace:
+                            HStack(spacing: 8) {
+                                ProviderStack(seats: state.seats, palette: palette)
+                                if state.phase.needsUser {
+                                    Text("Needs you")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(tint)
+                                } else {
+                                    HStack(spacing: 3) {
+                                        OdometerMetric(value: state.activeRuns)
+                                        Text(state.activeRuns == 1 ? "run" : "runs")
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                }
+                                if state.hasGitSnapshot {
+                                    DiffCounts(state: state, palette: palette).font(.caption)
+                                    GitDivergence(ahead: state.ahead, behind: state.behind)
+                                        .font(.caption)
+                                }
+                            }
                         }
                     }
                 }
             } compactLeading: {
-                Image(systemName: state.phase.glyph)
-                    .foregroundStyle(tint)
+                if config.archetype == .workspace {
+                    GhostMark(tint: tint).frame(width: 18, height: 18)
+                } else {
+                    Image(systemName: state.phase.glyph)
+                        .foregroundStyle(tint)
+                }
             } compactTrailing: {
                 // The compact region is a few points wide — one signal only.
                 // Elapsed beats counts here: it is legible at a glance and does
                 // not change width as the numbers grow.
-                if config.archetype == .ensemble, !state.seats.isEmpty, !isStale {
+                if config.archetype == .workspace, !isStale {
+                    if state.phase.needsUser {
+                        Text("!").font(.caption2.weight(.semibold)).foregroundStyle(tint)
+                    } else {
+                        OdometerMetric(value: state.activeRuns)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                } else if config.archetype == .ensemble, !state.seats.isEmpty, !isStale {
                     Text("\(state.seatsFinished)/\(state.seats.count)")
                         .font(.caption2).monospacedDigit()
                 } else {
@@ -305,8 +479,12 @@ struct TWRunActivityWidget: Widget {
                         .frame(maxWidth: 44)
                 }
             } minimal: {
-                Image(systemName: state.phase.glyph)
-                    .foregroundStyle(tint)
+                if config.archetype == .workspace {
+                    GhostMark(tint: tint).frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: state.phase.glyph)
+                        .foregroundStyle(tint)
+                }
             }
             .keylineTint(chromeTint(state.phase, palette: palette))
         }

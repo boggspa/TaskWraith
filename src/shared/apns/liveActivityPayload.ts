@@ -61,6 +61,13 @@ export interface LiveActivityContentState {
   additions: number
   deletions: number
   seats: LiveActivitySeat[]
+  /** One for the existing run card; 2+ for an anonymous workspace summary. */
+  activeRuns: number
+  /** Local Git divergence counts. Ref/branch/upstream names never travel. */
+  ahead: number
+  behind: number
+  /** False means unavailable, not clean. */
+  hasGitSnapshot: boolean
 }
 
 export type LiveActivityEvent = 'start' | 'update' | 'end'
@@ -124,6 +131,10 @@ export function buildLiveActivityContentState(input: {
   additions?: unknown
   deletions?: unknown
   seats?: readonly { provider?: unknown; phase?: unknown }[]
+  activeRuns?: unknown
+  ahead?: unknown
+  behind?: unknown
+  hasGitSnapshot?: unknown
 }): LiveActivityContentState {
   const startedAtUnix =
     typeof input.startedAtUnix === 'number' && Number.isFinite(input.startedAtUnix)
@@ -135,6 +146,10 @@ export function buildLiveActivityContentState(input: {
     filesChanged: clampCount(input.filesChanged),
     additions: clampCount(input.additions),
     deletions: clampCount(input.deletions),
+    activeRuns: input.activeRuns === undefined ? 1 : clampCount(input.activeRuns),
+    ahead: clampCount(input.ahead),
+    behind: clampCount(input.behind),
+    hasGitSnapshot: input.hasGitSnapshot === true,
     seats: (input.seats ?? []).slice(0, MAX_LIVE_ACTIVITY_SEATS).map((seat) => ({
       // A provider id is a PRODUCT name ("codex"), not user content. Coerced to
       // a string so a malformed projection cannot smuggle an object through.

@@ -64,6 +64,10 @@ export function contentFingerprint(state: LiveActivityContentState): string {
     state.filesChanged,
     state.additions,
     state.deletions,
+    state.activeRuns,
+    state.ahead,
+    state.behind,
+    state.hasGitSnapshot ? 1 : 0,
     state.seats.map((s) => `${s.provider}:${s.phase}`).join(',')
   ].join('|')
 }
@@ -109,6 +113,20 @@ export interface LiveActivityFanoutDeps {
   log?: (line: string) => void
 }
 
+export interface WorkspaceLiveActivityInput {
+  workspaceId: string
+  phase: LiveActivityPhase
+  startedAtUnix: number
+  activeRuns: number
+  filesChanged: number
+  additions: number
+  deletions: number
+  ahead: number
+  behind: number
+  hasGitSnapshot: boolean
+  seats: readonly { provider?: unknown; phase?: unknown }[]
+}
+
 /** Mirrors TWRunActivityLimits so a pushed state ages out on the same schedule
  *  the on-device one does. */
 export const LIVE_ACTIVITY_STALE_WINDOW_SECONDS = 8 * 60
@@ -132,7 +150,7 @@ export class LiveActivityPushFanout {
   private readonly now: () => number
   private readonly scheduleFn: (fn: () => void, ms: number) => { cancel: () => void }
   private readonly log: (line: string) => void
-  /** `pairID|threadId` -> the pending push-to-start, cancelled the moment the
+  /** `pairID|subject` -> the pending push-to-start, cancelled the moment the
    *  phone proves it is awake or the run ends. */
   private readonly pendingStarts = new Map<string, { cancel: () => void }>()
 
@@ -217,6 +235,63 @@ export class LiveActivityPushFanout {
     }
   }
 
+  /** Update one anonymous workspace summary. `workspaceId` is routing-only and
+   *  never survives the content-state whitelist below. */
+  onWorkspaceActivity(summary: WorkspaceLiveActivityInput): void {
+    if (!this.appearanceFn().enabled) return
+    if (summary.activeRuns < 2) {
+      this.abandonWorkspace(summary.workspaceId)
+      return
+    }
+
+    const registrations = this.store.forWorkspace(summary.workspaceId)
+    if (!isTerminalLiveActivityPhase(summary.phase)) {
+      this.considerWorkspaceStart(summary)
+    } else {
+      this.cancelPendingWorkspaceStarts(summary.workspaceId)
+    }
+
+    if (registrations.length === 0) return
+    const state = buildLiveActivityContentState({
+      phase: summary.phase,
+      startedAtUnix: summary.startedAtUnix,
+      filesChanged: summary.filesChanged,
+      additions: summary.additions,
+      deletions: summary.deletions,
+      seats: summary.seats,
+      activeRuns: summary.activeRuns,
+      ahead: summary.ahead,
+      behind: summary.behind,
+      hasGitSnapshot: summary.hasGitSnapshot
+    })
+    const fingerprint = contentFingerprint(state)
+    const terminal = isTerminalLiveActivityPhase(summary.phase)
+    const needsUser = summary.phase === 'awaitingApproval' || summary.phase === 'awaitingQuestion'
+    for (const reg of registrations) {
+      if (!this.store.markPushed(reg.pairID, reg.activityRef, fingerprint)) continue
+      void this.send(reg, terminal ? 'end' : 'update', state, needsUser)
+      if (terminal) this.store.forget(reg.pairID, reg.activityRef)
+    }
+  }
+
+  /** Tear down a per-run card because its run is now represented by a workspace
+   *  summary. This is presentation reconciliation, never cancellation. */
+  abandonThread(threadId: string): void {
+    this.cancelPendingStarts(threadId)
+    for (const reg of this.store.forThread(threadId)) {
+      void this.send(reg, 'end', this.emptyState(), false)
+      this.store.forget(reg.pairID, reg.activityRef)
+    }
+  }
+
+  abandonWorkspace(workspaceId: string): void {
+    this.cancelPendingWorkspaceStarts(workspaceId)
+    for (const reg of this.store.forWorkspace(workspaceId)) {
+      void this.send(reg, 'end', this.emptyState(), false)
+      this.store.forget(reg.pairID, reg.activityRef)
+    }
+  }
+
   /**
    * Schedule a push-to-start for every paired device that could show this run
    * but is not already showing it.
@@ -241,7 +316,7 @@ export class LiveActivityPushFanout {
   ): void {
     for (const reg of this.store.startRegistrations()) {
       if (this.store.hasActivityForThread(reg.pairID, card.id)) continue
-      const key = `${reg.pairID}|${card.id}`
+      const key = `${reg.pairID}|thread:${card.id}`
       if (this.pendingStarts.has(key)) continue
       const handle = this.scheduleFn(() => {
         this.pendingStarts.delete(key)
@@ -257,7 +332,31 @@ export class LiveActivityPushFanout {
 
   private cancelPendingStarts(threadId: string): void {
     for (const [key, handle] of this.pendingStarts) {
-      if (key.endsWith(`|${threadId}`)) {
+      if (key.endsWith(`|thread:${threadId}`)) {
+        handle.cancel()
+        this.pendingStarts.delete(key)
+      }
+    }
+  }
+
+  private considerWorkspaceStart(summary: WorkspaceLiveActivityInput): void {
+    for (const reg of this.store.startRegistrations()) {
+      if (this.store.hasActivityForWorkspace(reg.pairID, summary.workspaceId)) continue
+      const key = `${reg.pairID}|workspace:${summary.workspaceId}`
+      if (this.pendingStarts.has(key)) continue
+      const handle = this.scheduleFn(() => {
+        this.pendingStarts.delete(key)
+        if (this.store.hasActivityForWorkspace(reg.pairID, summary.workspaceId)) return
+        if (!this.appearanceFn().enabled) return
+        void this.sendWorkspaceStart(reg, summary)
+      }, LIVE_ACTIVITY_START_GRACE_SECONDS * 1000)
+      this.pendingStarts.set(key, handle)
+    }
+  }
+
+  private cancelPendingWorkspaceStarts(workspaceId: string): void {
+    for (const [key, handle] of this.pendingStarts) {
+      if (key.endsWith(`|workspace:${workspaceId}`)) {
         handle.cancel()
         this.pendingStarts.delete(key)
       }
@@ -337,8 +436,64 @@ export class LiveActivityPushFanout {
     })
   }
 
-  private emptyState(card: { id: string }): LiveActivityContentState {
-    void card
+  private async sendWorkspaceStart(
+    reg: {
+      pairID: string
+      token: string
+      env: 'production' | 'sandbox'
+      providerAccents: Record<string, number>
+    },
+    summary: WorkspaceLiveActivityInput
+  ): Promise<void> {
+    const sender = this.senderFn()
+    if (!sender) return
+    const appearance = this.appearanceFn()
+    const now = this.now()
+    const activityRef = `w${now.toString(36)}${Math.random().toString(36).slice(2, 10)}`
+    const attributes: LiveActivityAttributes = {
+      provider: 'taskwraith',
+      archetype: 'workspace',
+      palette: {
+        accent: reg.providerAccents.taskwraith ?? 0x5a8cff,
+        success: appearance.successHex,
+        failure: appearance.failureHex,
+        attention: 0xf5a623
+      },
+      activityRef
+    }
+    const result = await sender.pushLiveActivityToToken(reg.token, reg.env, {
+      event: 'start',
+      contentState: buildLiveActivityContentState({
+        phase: summary.phase,
+        startedAtUnix: summary.startedAtUnix,
+        filesChanged: summary.filesChanged,
+        additions: summary.additions,
+        deletions: summary.deletions,
+        seats: summary.seats,
+        activeRuns: summary.activeRuns,
+        ahead: summary.ahead,
+        behind: summary.behind,
+        hasGitSnapshot: summary.hasGitSnapshot
+      }),
+      collapseId: activityRef,
+      needsUser: summary.phase === 'awaitingApproval' || summary.phase === 'awaitingQuestion',
+      staleAtUnix: now + LIVE_ACTIVITY_STALE_WINDOW_SECONDS,
+      attributes
+    })
+    if (!result.delivered) {
+      this.log(`[LiveActivityPushFanout] workspace start failed: ${result.reason ?? 'unknown'}`)
+      return
+    }
+    this.store.register({
+      pairID: reg.pairID,
+      activityRef,
+      token: reg.token,
+      env: reg.env,
+      workspaceId: summary.workspaceId
+    })
+  }
+
+  private emptyState(_card?: { id: string }): LiveActivityContentState {
     return buildLiveActivityContentState({ phase: 'cancelled', startedAtUnix: this.now() })
   }
 

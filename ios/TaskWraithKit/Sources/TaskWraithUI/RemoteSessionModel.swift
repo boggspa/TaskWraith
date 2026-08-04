@@ -642,7 +642,9 @@ public final class RemoteSessionModel: ObservableObject {
     }
     /// Git status snapshots keyed by workspace id. Composer rows use this for
     /// branch/upstream/worktree parity with the desktop native composer.
-    @Published public private(set) var gitSnapshots: [String: GitWorkspaceSnapshot] = [:]
+    @Published public private(set) var gitSnapshots: [String: GitWorkspaceSnapshot] = [:] {
+        didSet { syncRunActivities() }
+    }
     /// Latest composer shellAppearance projected by the Mac (drives the
     /// "Follow Mac" composer style); stale re-broadcasts ignored via generatedAt.
     @Published public private(set) var projectedShellAppearance: TWRemoteShellAppearance?
@@ -989,7 +991,7 @@ public final class RemoteSessionModel: ObservableObject {
         /// tokens back through this and we ship them to the Mac.
         private func bindRunActivityTokenSink() {
             guard TWRunActivityController.shared.onPushToken == nil else { return }
-            TWRunActivityController.shared.onPushToken = { [weak self] ref, threadId, token in
+            TWRunActivityController.shared.onPushToken = { [weak self] ref, subject, token in
                 guard let self else { return }
                 // Fire-and-forget: if it does not land, the card simply stays
                 // device-updated (and goes stale when the phone sleeps) rather
@@ -999,7 +1001,8 @@ public final class RemoteSessionModel: ObservableObject {
                     BridgeAction.registerLiveActivityToken(
                         activityRef: ref,
                         token: token,
-                        threadId: threadId,
+                        threadId: subject.threadId,
+                        workspaceId: subject.workspaceId,
                         env: self.apnsEnvironment),
                     navigateOnAck: false,
                     silent: true)
@@ -1023,6 +1026,7 @@ public final class RemoteSessionModel: ObservableObject {
                 cards: taskCards,
                 diffs: diffSummaries,
                 ensembles: ensembleStates,
+                gitSnapshots: gitSnapshots,
                 isDemo: isDemo)
         #endif
     }

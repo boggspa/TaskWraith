@@ -19,6 +19,9 @@ export interface LiveActivityRegistration {
    *  from the activity's own attributes and content-state, so the push payload
    *  carries no link back to a conversation even though we can route by one. */
   threadId?: string
+  /** Workspace summary route. Mac-side ONLY and mutually exclusive with
+   *  `threadId`; never copied into ActivityKit attributes/content-state. */
+  workspaceId?: string
   registeredAt: number
   /** Last content-state we successfully pushed, so an unchanged projection
    *  spends no push. Compared by value. */
@@ -58,6 +61,7 @@ export class LiveActivityTokenStore {
     token: string
     env: 'production' | 'sandbox'
     threadId?: string
+    workspaceId?: string
   }): void {
     const key = LiveActivityTokenStore.key(entry.pairID, entry.activityRef)
     if (!this.byRef.has(key) && this.byRef.size >= LiveActivityTokenStore.MAX_ENTRIES) {
@@ -98,6 +102,15 @@ export class LiveActivityTokenStore {
     return out
   }
 
+  /** Every activity currently showing an anonymous summary for a workspace. */
+  forWorkspace(workspaceId: string): LiveActivityRegistration[] {
+    const out: LiveActivityRegistration[] = []
+    for (const entry of this.byRef.values()) {
+      if (entry.workspaceId === workspaceId) out.push(entry)
+    }
+    return out
+  }
+
   /** Returns false when the fingerprint is unchanged, so the caller can skip
    *  the push. Records it as pushed either way. */
   markPushed(pairID: string, activityRef: string, fingerprint: string): boolean {
@@ -127,6 +140,13 @@ export class LiveActivityTokenStore {
   hasActivityForThread(pairID: string, threadId: string): boolean {
     for (const entry of this.byRef.values()) {
       if (entry.pairID === pairID && entry.threadId === threadId) return true
+    }
+    return false
+  }
+
+  hasActivityForWorkspace(pairID: string, workspaceId: string): boolean {
+    for (const entry of this.byRef.values()) {
+      if (entry.pairID === pairID && entry.workspaceId === workspaceId) return true
     }
     return false
   }

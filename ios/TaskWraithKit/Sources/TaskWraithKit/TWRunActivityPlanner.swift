@@ -9,23 +9,50 @@
 
 import Foundation
 
+/// Local routing identity for an activity. This is deliberately richer than
+/// the ActivityKit payload: the phone may remember which local projection owns
+/// a card, but neither id is encoded into attributes or content-state.
+public enum TWActivitySubject: Hashable, Sendable {
+    case thread(String)
+    case workspace(String)
+
+    public var key: String {
+        switch self {
+        case .thread(let id): return "thread:\(id)"
+        case .workspace(let id): return "workspace:\(id)"
+        }
+    }
+
+    public var threadId: String? {
+        guard case .thread(let id) = self else { return nil }
+        return id
+    }
+
+    public var workspaceId: String? {
+        guard case .workspace(let id) = self else { return nil }
+        return id
+    }
+}
+
 /// One thread that should own a Live Activity, plus the state to show.
 ///
 /// `provider` / `model` are brand-resolution INPUTS for the driver (it turns
 /// them into a palette); they are not additional wire content — `provider`
 /// already travels inside the config.
 public struct TWActivityPlan: Hashable, Sendable {
-    public let threadId: String
+    public let subject: TWActivitySubject
     public let provider: String
     public let model: String?
     public let isEnsemble: Bool
     public let state: TWRunActivityState
 
+    public var isWorkspace: Bool { subject.workspaceId != nil }
+
     public init(
-        threadId: String, provider: String, model: String?, isEnsemble: Bool,
+        subject: TWActivitySubject, provider: String, model: String?, isEnsemble: Bool,
         state: TWRunActivityState
     ) {
-        self.threadId = threadId
+        self.subject = subject
         self.provider = provider
         self.model = model
         self.isEnsemble = isEnsemble
@@ -41,7 +68,7 @@ public enum TWActivityAction: Hashable, Sendable {
     /// The thread stopped being projected at all (host switch, forget, chat
     /// deleted, run reset to idle). There is no outcome to show, so tear it
     /// down immediately rather than leave a frozen run on the lock screen.
-    case abandon(threadId: String)
+    case abandon(subject: TWActivitySubject)
 }
 
 public enum TWRunActivityPlanner {
@@ -107,7 +134,7 @@ public enum TWRunActivityPlanner {
         guard card.isDraft != true, card.archived != true else { return nil }
         guard let phase = phase(forCardStatus: card.status) else { return nil }
         return TWActivityPlan(
-            threadId: card.id,
+            subject: .thread(card.id),
             provider: card.provider ?? (card.isEnsemble ? "ensemble" : "codex"),
             model: card.customModel,
             isEnsemble: card.isEnsemble,
@@ -120,49 +147,152 @@ public enum TWRunActivityPlanner {
                 seats: card.isEnsemble ? seats(from: ensemble) : []))
     }
 
+    /// Builds the whole desired projection, collapsing two or more active runs
+    /// in the same monitor-authorized workspace into one anonymous summary.
+    ///
+    /// The aggregate uses ONE workspace Git snapshot. Per-run diffs are never
+    /// added together: overlapping work would inflate them and imply
+    /// attribution Git cannot prove.
+    public static func plans(
+        cards: [RemoteTaskCard],
+        diffs: [String: MobileDiffSummary],
+        ensembles: [String: RemoteEnsembleState],
+        gitSnapshots: [String: GitWorkspaceSnapshot],
+        startedAt: (RemoteTaskCard) -> Date
+    ) -> [TWActivityPlan] {
+        let visibleCards = cards.filter { $0.isDraft != true && $0.archived != true }
+        let activeCards = visibleCards.filter {
+            guard let phase = phase(forCardStatus: $0.status) else { return false }
+            return !phase.isTerminal
+        }
+        let byWorkspace = Dictionary(
+            grouping: activeCards.filter { !$0.isGlobalScope },
+            by: { $0.workspaceId ?? "" })
+        let aggregateWorkspaceIds = Set(
+            byWorkspace.compactMap { workspaceId, members -> String? in
+                guard !workspaceId.isEmpty, members.count >= 2 else { return nil }
+                // Capability is projected from the active allowlist. Requiring
+                // every member to carry it fails closed during mixed-version or
+                // mid-reconciliation snapshots.
+                guard members.allSatisfy({ $0.capabilities?.monitor == true }) else { return nil }
+                return workspaceId
+            })
+
+        var ranked: [(updatedAt: String, plan: TWActivityPlan)] = []
+
+        for workspaceId in aggregateWorkspaceIds.sorted() {
+            guard let members = byWorkspace[workspaceId], !members.isEmpty else { continue }
+            let memberPhases = members.compactMap {
+                TWRunActivityPlanner.phase(forCardStatus: $0.status)
+            }
+            let phase: TWRunPhase
+            if memberPhases.contains(.awaitingApproval) {
+                phase = .awaitingApproval
+            } else if memberPhases.contains(.awaitingQuestion) {
+                phase = .awaitingQuestion
+            } else {
+                phase = .running
+            }
+            let orderedMembers = members.sorted {
+                (($0.updatedAt ?? ""), $0.id) > (($1.updatedAt ?? ""), $1.id)
+            }
+            guard let firstSeen = orderedMembers.map(startedAt).min() else { continue }
+            let git = gitSnapshots[workspaceId]
+            let seats = orderedMembers.map {
+                TWSeatState(
+                    provider: $0.provider ?? ($0.isEnsemble ? "ensemble" : "codex"),
+                    phase: TWRunActivityPlanner.phase(forCardStatus: $0.status) ?? .running)
+            }
+            ranked.append(
+                (
+                    updatedAt: orderedMembers.first?.updatedAt ?? "",
+                    plan: TWActivityPlan(
+                        subject: .workspace(workspaceId),
+                        provider: "taskwraith",
+                        model: nil,
+                        isEnsemble: false,
+                        state: makeContentState(
+                            phase: phase,
+                            startedAt: firstSeen,
+                            filesChanged: git?.counts?.changed ?? git?.files?.count ?? 0,
+                            additions: git?.lineStats?.additions ?? 0,
+                            deletions: git?.lineStats?.deletions ?? 0,
+                            seats: seats,
+                            activeRuns: members.count,
+                            ahead: git?.ahead ?? 0,
+                            behind: git?.behind ?? 0,
+                            hasGitSnapshot: git != nil))))
+        }
+
+        for card in visibleCards {
+            let isAggregatedActiveMember =
+                !card.isGlobalScope
+                && aggregateWorkspaceIds.contains(card.workspaceId ?? "")
+                && TWRunActivityPlanner.phase(forCardStatus: card.status)?.isTerminal == false
+            if isAggregatedActiveMember { continue }
+            guard
+                let plan = plan(
+                    card: card,
+                    diff: diffs[card.id],
+                    ensemble: ensembles[card.id],
+                    startedAt: startedAt(card))
+            else { continue }
+            ranked.append((updatedAt: card.updatedAt ?? "", plan: plan))
+        }
+
+        return ranked.sorted {
+            if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+            return $0.plan.subject.key < $1.plan.subject.key
+        }.map(\.plan)
+    }
+
     /// Reconcile desired plans against what is currently on screen.
     ///
     /// `plans` must arrive most-relevant-first: when more runs are active than
     /// `limit`, the ones at the front get the slots.
     ///
-    /// `owned` is threadId → the last state actually pushed. Comparing against
+    /// `owned` is subject → the last state actually pushed. Comparing against
     /// it is what keeps a projection snapshot that changed nothing (they arrive
     /// constantly) from spending an ActivityKit update.
     public static func actions(
         plans: [TWActivityPlan],
-        owned: [String: TWRunActivityState],
+        owned: [TWActivitySubject: TWRunActivityState],
         limit: Int = TWRunActivityLimits.maxConcurrent
     ) -> [TWActivityAction] {
-        var out: [TWActivityAction] = []
-        var planned: Set<String> = []
-        var slots = max(0, limit - owned.count)
+        var teardown: [TWActivityAction] = []
+        var active: [TWActivityAction] = []
+        let planned = Set(plans.map(\.subject))
+        let retained = plans.filter { !$0.state.phase.isTerminal && owned[$0.subject] != nil }.count
+        var slots = max(0, limit - retained)
 
         for plan in plans {
-            planned.insert(plan.threadId)
-            let known = owned[plan.threadId]
+            let known = owned[plan.subject]
 
             if plan.state.phase.isTerminal {
                 // NEVER start one just to finish it. A run that was already over
                 // when the phone first saw it is history, not news — that is the
                 // same rule the completion banner follows for the first snapshot.
-                if known != nil { out.append(.finish(plan)) }
+                if known != nil { teardown.append(.finish(plan)) }
                 continue
             }
 
             if known == nil {
                 guard slots > 0 else { continue }
                 slots -= 1
-                out.append(.start(plan))
+                active.append(.start(plan))
             } else if known != plan.state {
-                out.append(.update(plan))
+                active.append(.update(plan))
             }
         }
 
         // Sorted so the action list is deterministic — Dictionary key order is
         // not, and a test that asserts on it would pass or fail by luck.
-        for threadId in owned.keys.sorted() where !planned.contains(threadId) {
-            out.append(.abandon(threadId: threadId))
+        for subject in owned.keys.sorted(by: { $0.key < $1.key }) where !planned.contains(subject) {
+            teardown.append(.abandon(subject: subject))
         }
-        return out
+        // Release obsolete cards before starting replacements. This makes the
+        // single→workspace and workspace→single transitions fit ActivityKit's
+        // concurrent-card cap in one reconciliation pass.
+        return teardown + active
     }
 }

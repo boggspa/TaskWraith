@@ -1,0 +1,173 @@
+import { describe, expect, it, vi } from 'vitest'
+import type { RemoteTaskCard } from './RemoteTaskProjection'
+import type { LiveActivityPushFanout } from './LiveActivityPushFanout'
+import {
+  projectWorkspaceLiveActivities,
+  WorkspaceLiveActivityCoordinator
+} from './WorkspaceLiveActivityCoordinator'
+
+function card(
+  id: string,
+  status: RemoteTaskCard['status'],
+  options: {
+    workspaceId?: string
+    monitor?: boolean
+    provider?: RemoteTaskCard['provider']
+    startedAt?: string
+    updatedAt?: string
+    additions?: number
+    deletions?: number
+  } = {}
+): RemoteTaskCard {
+  return {
+    id,
+    threadId: id,
+    title: `private-${id}`,
+    status,
+    workspaceId: options.workspaceId ?? 'workspace-secret',
+    provider: options.provider ?? 'codex',
+    preview: `private-preview-${id}`,
+    previewTruncated: false,
+    pendingApprovalCount: 0,
+    pendingQuestionCount: 0,
+    runStartedAt: options.startedAt,
+    updatedAt: options.updatedAt,
+    capabilities: { monitor: options.monitor ?? true } as RemoteTaskCard['capabilities'],
+    diffSummary: {
+      filesChanged: 99,
+      additions: options.additions ?? 900,
+      deletions: options.deletions ?? 90,
+      files: [{ path: `/private/${id}.ts`, additions: 900, deletions: 90, status: 'modified' }]
+    }
+  } as RemoteTaskCard
+}
+
+function fanoutSpy(): LiveActivityPushFanout & {
+  onTaskCard: ReturnType<typeof vi.fn>
+  onWorkspaceActivity: ReturnType<typeof vi.fn>
+  abandonThread: ReturnType<typeof vi.fn>
+  abandonWorkspace: ReturnType<typeof vi.fn>
+} {
+  return {
+    onTaskCard: vi.fn(),
+    onWorkspaceActivity: vi.fn(),
+    abandonThread: vi.fn(),
+    abandonWorkspace: vi.fn()
+  } as unknown as LiveActivityPushFanout & {
+    onTaskCard: ReturnType<typeof vi.fn>
+    onWorkspaceActivity: ReturnType<typeof vi.fn>
+    abandonThread: ReturnType<typeof vi.fn>
+    abandonWorkspace: ReturnType<typeof vi.fn>
+  }
+}
+
+describe('workspace Live Activity projection', () => {
+  it('keeps one run per-run and collapses two monitor-authorized runs', () => {
+    const one = projectWorkspaceLiveActivities([card('a', 'running')], new Map(), 100)
+    expect(one).toEqual([])
+
+    const two = projectWorkspaceLiveActivities(
+      [
+        card('a', 'running', {
+          provider: 'codex',
+          startedAt: '2026-08-04T02:00:00.000Z',
+          updatedAt: '1'
+        }),
+        card('b', 'awaitingQuestion', {
+          provider: 'grok',
+          startedAt: '2026-08-04T02:01:00.000Z',
+          updatedAt: '2'
+        })
+      ],
+      new Map([
+        [
+          'workspace-secret',
+          {
+            counts: { changed: 12 },
+            lineStats: { additions: 539, deletions: 202 },
+            ahead: 89,
+            behind: 3
+          }
+        ]
+      ]),
+      100
+    )
+    expect(two).toHaveLength(1)
+    expect(two[0].summary).toMatchObject({
+      phase: 'awaitingQuestion',
+      activeRuns: 2,
+      filesChanged: 12,
+      additions: 539,
+      deletions: 202,
+      ahead: 89,
+      behind: 3,
+      hasGitSnapshot: true
+    })
+    expect(two[0].summary.seats.map((seat) => seat.provider)).toEqual(['grok', 'codex'])
+    // Per-run diffs were 900 each; the summary uses Git once, never 1,800.
+    expect(two[0].summary.additions).not.toBe(1_800)
+  })
+
+  it('fails closed when any active member lacks monitor capability', () => {
+    const projected = projectWorkspaceLiveActivities(
+      [card('a', 'running'), card('b', 'running', { monitor: false })],
+      new Map(),
+      100
+    )
+    expect(projected).toEqual([])
+  })
+
+  it('uses unavailable rather than zero when no Git snapshot exists', () => {
+    const projected = projectWorkspaceLiveActivities(
+      [card('a', 'running'), card('b', 'running')],
+      new Map(),
+      100
+    )[0]
+    expect(projected.summary).toMatchObject({
+      filesChanged: 0,
+      additions: 0,
+      deletions: 0,
+      ahead: 0,
+      behind: 0,
+      hasGitSnapshot: false
+    })
+  })
+})
+
+describe('workspace Live Activity reconciliation', () => {
+  it('replaces member cards with one summary and restores a single run later', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+    const first = card('a', 'running')
+    const second = card('b', 'running')
+
+    coordinator.reconcile([first, second], new Map())
+    expect(fanout.abandonThread).toHaveBeenCalledWith('a')
+    expect(fanout.abandonThread).toHaveBeenCalledWith('b')
+    expect(fanout.onWorkspaceActivity).toHaveBeenCalledTimes(1)
+    expect(fanout.onTaskCard).not.toHaveBeenCalled()
+
+    coordinator.reconcile([first], new Map())
+    expect(fanout.abandonWorkspace).toHaveBeenCalledWith('workspace-secret')
+    expect(fanout.onTaskCard).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }))
+  })
+
+  it('refreshes only the active workspace summary on a Git watcher tick', () => {
+    const fanout = fanoutSpy()
+    const coordinator = new WorkspaceLiveActivityCoordinator({ fanout, now: () => 100 })
+    coordinator.reconcile([card('a', 'running'), card('b', 'running')], new Map())
+    fanout.onWorkspaceActivity.mockClear()
+    fanout.onTaskCard.mockClear()
+
+    coordinator.updateGitSnapshot('workspace-secret', {
+      counts: { changed: 4 },
+      lineStats: { additions: 20, deletions: 3 },
+      ahead: 2,
+      behind: 1
+    })
+    expect(fanout.onWorkspaceActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ filesChanged: 4, additions: 20, deletions: 3 })
+    )
+    expect(fanout.onTaskCard).not.toHaveBeenCalled()
+  })
+})
