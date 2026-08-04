@@ -35,6 +35,12 @@ const FAILED_EXECUTION: HostBridgeCommandExecutorResult = {
   errorMessage: 'nope'
 }
 
+const CANCELLED_EXECUTION: HostBridgeCommandExecutorResult = {
+  status: 'cancelled',
+  errorCode: 'user_declined',
+  errorMessage: 'declined'
+}
+
 function baseSnapshot(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
   return {
     ...createEmptyHostSnapshot({
@@ -355,6 +361,92 @@ describe('HostObservedMutationExecutor execute once + after capture', () => {
     })
     expect(captures).toBe(2)
     expect(executeCommand).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves failed outcome with coherent nonempty actual effects', async () => {
+    const command = sampleCommand()
+    const frozen = JSON.stringify(command)
+    const before = baseSnapshot()
+    const after = cloneSnapshot(before)
+    after.workspaces = [
+      {
+        id: 'ws-from-after',
+        name: 'Observed',
+        path: '/tmp/observed',
+        pinned: true,
+        updatedAt: 2
+      }
+    ]
+
+    let captures = 0
+    const executeCommand = vi.fn(async () => FAILED_EXECUTION)
+    const executor = new HostObservedMutationExecutor({
+      captureSnapshot: () => {
+        captures += 1
+        return captures === 1 ? before : after
+      },
+      executeCommand
+    })
+
+    const result = await executor.execute(command)
+    expect(result.kind).toBe('observed')
+    if (result.kind !== 'observed') return
+    expect(result.execution).toEqual(FAILED_EXECUTION)
+    expect(
+      result.effects.map((effect) => `${effect.family}:${effect.kind}:${effect.entityId}`)
+    ).toEqual(['workspace:upsert:ws-from-after'])
+    expect(result.effects[0]?.payload).toMatchObject({
+      id: 'ws-from-after',
+      path: '/tmp/observed'
+    })
+    expect(JSON.stringify(result.effects)).not.toContain('hello')
+    expect(executeCommand).toHaveBeenCalledTimes(1)
+    expect(captures).toBe(2)
+    expect(JSON.stringify(command)).toBe(frozen)
+    assertBodyFree(result)
+  })
+
+  it('preserves cancelled outcome with coherent nonempty actual effects', async () => {
+    const command = sampleCommand()
+    const frozen = JSON.stringify(command)
+    const before = baseSnapshot()
+    const after = cloneSnapshot(before)
+    after.workspaces = [
+      {
+        id: 'ws-from-after',
+        name: 'Observed',
+        path: '/tmp/observed',
+        pinned: true,
+        updatedAt: 2
+      }
+    ]
+
+    let captures = 0
+    const executeCommand = vi.fn(async () => CANCELLED_EXECUTION)
+    const executor = new HostObservedMutationExecutor({
+      captureSnapshot: () => {
+        captures += 1
+        return captures === 1 ? before : after
+      },
+      executeCommand
+    })
+
+    const result = await executor.execute(command)
+    expect(result.kind).toBe('observed')
+    if (result.kind !== 'observed') return
+    expect(result.execution).toEqual(CANCELLED_EXECUTION)
+    expect(
+      result.effects.map((effect) => `${effect.family}:${effect.kind}:${effect.entityId}`)
+    ).toEqual(['workspace:upsert:ws-from-after'])
+    expect(result.effects[0]?.payload).toMatchObject({
+      id: 'ws-from-after',
+      path: '/tmp/observed'
+    })
+    expect(JSON.stringify(result.effects)).not.toContain('hello')
+    expect(executeCommand).toHaveBeenCalledTimes(1)
+    expect(captures).toBe(2)
+    expect(JSON.stringify(command)).toBe(frozen)
+    assertBodyFree(result)
   })
 
   it('attempts after capture when executor throws and never leaks thrown secrets', async () => {
