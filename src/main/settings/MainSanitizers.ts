@@ -59,7 +59,7 @@ import {
   type AntigravityOptInSettingsLike
 } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
-import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
+import { isAppIconVariant } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
 import {
   copyResolvedScheduledAttachments,
@@ -1841,13 +1841,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       if (value !== 'plan' && value !== 'spend' && value !== 'context') delete sanitized.modelUsagePanelView
     }
     if ('appIconVariant' in sanitized) {
-      // Drop invalid ids, and refuse a NEW wwdc26 selection once the limited-time
-      // window has closed. This gates the incoming patch (an OFFER surface) only —
-      // an already-stored wwdc26 value is never touched, so it stays grandfathered.
-      const value = sanitized.appIconVariant
-      if (!isAppIconVariant(value)) {
-        delete sanitized.appIconVariant
-      } else if (value === 'wwdc26' && !isWwdc26IconAvailable(Date.now())) {
+      // Drop invalid ids (including the retired wwdc26 — its assets are gone, so
+      // both a NEW selection and a stale persisted value fall back to the default).
+      if (!isAppIconVariant(sanitized.appIconVariant)) {
         delete sanitized.appIconVariant
       }
     }

@@ -4,58 +4,43 @@ import { describe, expect, it } from 'vitest'
 import {
   APP_ICON_VARIANTS,
   DEFAULT_APP_ICON_VARIANT,
-  WWDC26_AVAILABLE_UNTIL_MS,
   availableIconVariants,
-  isAppIconVariant,
-  isWwdc26IconAvailable
+  isAppIconVariant
 } from './iconVariants'
 
 describe('iconVariants', () => {
-  it('exposes the four variants with regular as the default', () => {
-    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual(['regular', 'wwdc26', 'monoline', 'glass'])
-    expect(DEFAULT_APP_ICON_VARIANT).toBe('regular')
-    expect(APP_ICON_VARIANTS.find((v) => v.id === 'wwdc26')?.limitedTime).toBe(true)
+  it('exposes the three variants with monoline as the default', () => {
+    expect(APP_ICON_VARIANTS.map((v) => v.id)).toEqual(['monoline', 'regular', 'glass'])
+    expect(DEFAULT_APP_ICON_VARIANT).toBe('monoline')
   })
 
-  it('validates variant ids', () => {
+  it('validates variant ids and rejects the retired wwdc26', () => {
     expect(isAppIconVariant('regular')).toBe(true)
-    expect(isAppIconVariant('wwdc26')).toBe(true)
     expect(isAppIconVariant('monoline')).toBe(true)
     expect(isAppIconVariant('glass')).toBe(true)
+    expect(isAppIconVariant('wwdc26')).toBe(false)
     expect(isAppIconVariant('nope')).toBe(false)
     expect(isAppIconVariant(undefined)).toBe(false)
     expect(isAppIconVariant(null)).toBe(false)
   })
 
-  it('pins the WWDC26 cutoff to 2026-09-01T00:00:00Z', () => {
-    expect(WWDC26_AVAILABLE_UNTIL_MS).toBe(Date.UTC(2026, 8, 1))
-    expect(new Date(WWDC26_AVAILABLE_UNTIL_MS).toISOString()).toBe('2026-09-01T00:00:00.000Z')
+  it('offers every variant unconditionally (no limited-time gate remains)', () => {
+    expect(availableIconVariants().map((v) => v.id)).toEqual(['monoline', 'regular', 'glass'])
   })
 
-  it('offers WWDC26 before the cutoff and hides it after (auto mode)', () => {
-    const before = Date.UTC(2026, 7, 31) // Aug 31 2026
-    const after = Date.UTC(2026, 8, 2) // Sep 2 2026
-    expect(isWwdc26IconAvailable(before)).toBe(true)
-    expect(isWwdc26IconAvailable(after)).toBe(false)
-    expect(availableIconVariants(before).map((v) => v.id)).toEqual([
-      'regular',
-      'wwdc26',
-      'monoline',
-      'glass'
-    ])
-    expect(availableIconVariants(after).map((v) => v.id)).toEqual(['regular', 'monoline', 'glass'])
-  })
-
-  it('keeps the Swift twin cutoff in sync (drift guard)', () => {
-    // The iOS gate has no way to import this module, so the cutoff is duplicated
-    // in AppIconAvailability.swift. This guard fails CI if the two diverge.
+  it('keeps the Swift twin in sync (drift guard)', () => {
+    // iOS cannot import this module, so the variant set is duplicated in
+    // AppIconVariant.swift. This guard fails CI if the two diverge.
     const swift = readFileSync(
-      join(process.cwd(), 'ios/TaskWraithKit/Sources/TaskWraithUI/AppIconAvailability.swift'),
+      join(process.cwd(), 'ios/TaskWraithKit/Sources/TaskWraithUI/AppIconVariant.swift'),
       'utf8'
     )
-    const match = swift.match(/timeIntervalSince1970:\s*([0-9_]+)/)
-    expect(match, 'AppIconAvailability.swift must declare wwdc26AvailableUntil').toBeTruthy()
-    const swiftSeconds = Number(match![1].replace(/_/g, ''))
-    expect(swiftSeconds * 1000).toBe(WWDC26_AVAILABLE_UNTIL_MS)
+    const cases = [...swift.matchAll(/^\s*case (\w+)$/gm)].map((m) => m[1])
+    expect(cases.sort()).toEqual([...APP_ICON_VARIANTS.map((v) => v.id)].sort())
+    expect(cases).not.toContain('wwdc26')
+    // Monoline is the primary appiconset on iOS (nil = no alternate icon), and
+    // the retired-variant fallback resolves to it.
+    expect(swift).toMatch(/case \.monoline: return nil/)
+    expect(swift).toMatch(/\?\? \.monoline/)
   })
 })

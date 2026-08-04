@@ -12,7 +12,7 @@ import type {
   VisualEffectStyle
 } from '../../../main/store/types'
 import type { DiffStatColors } from '../../../shared/diffStatColors'
-import type { AppIconVariant } from '../../../shared/iconVariants'
+import { DEFAULT_APP_ICON_VARIANT, type AppIconVariant } from '../../../shared/iconVariants'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../../shared/diffStatColors'
 import {
   normalizeAgentThemeTokenOverrides,
@@ -149,7 +149,7 @@ function getInitialState(): AppearanceState {
     userBubbleColor: 'system',
     diffStatColors: DEFAULT_DIFF_STAT_COLORS,
     agentThemeTokens: {},
-    appIconVariant: 'regular',
+    appIconVariant: DEFAULT_APP_ICON_VARIANT,
     promptSurfaceStyle: 'liquid_glass',
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
@@ -234,7 +234,7 @@ export function useAppearance() {
           themeCornerStyle: settings.themeCornerStyle || 'rounded',
           themeAccentStyle: settings.themeAccentStyle || 'system',
           toolIconAccent: settings.toolIconAccent || 'system',
-          appIconVariant: settings.appIconVariant || 'regular',
+          appIconVariant: settings.appIconVariant || DEFAULT_APP_ICON_VARIANT,
           userBubbleColor: settings.userBubbleColor || 'system',
           diffStatColors: normalizeDiffStatColors(settings.diffStatColors),
           agentThemeTokens: normalizeAgentThemeTokenOverrides(settings.agentThemeTokens),

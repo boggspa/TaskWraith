@@ -1892,7 +1892,7 @@ const defaultSettings: AppSettings = {
   toolIconAccent: 'system',
   userBubbleColor: 'system',
   diffStatColors: DEFAULT_DIFF_STAT_COLORS,
-  appIconVariant: 'regular',
+  appIconVariant: 'monoline',
   promptSurfaceStyle: 'liquid_glass',
   composerStyle: 'default',
   transcriptFontFamily: TASKWRAITH_DEFAULT_FONT_STACK,

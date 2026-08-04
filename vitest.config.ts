@@ -24,6 +24,9 @@ export default defineConfig({
       // assertion validation (e.g. the provider-containment canary rejects
       // "live assertion titles were duplicated"). Implements the file header.
       '**/.claude/worktrees/**',
+      // Fan-out lane worktrees are the same class of copy (their stale tests
+      // read main-tree files via process.cwd() and rot as the main tree moves).
+      '**/.taskwraith-worktrees/**',
       ...(includeSwiftInterop ? [] : ['ios/**'])
     ]
   }

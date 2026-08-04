@@ -53,7 +53,6 @@ import {
 import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../../../shared/retiredProviders'
 import { availableIconVariants, type AppIconVariant } from '../../../shared/iconVariants'
 import appIconRegularThumb from '../assets/app-icons/regular.png'
-import appIconWwdc26Thumb from '../assets/app-icons/wwdc26.png'
 import appIconMonolineThumb from '../assets/app-icons/monoline.png'
 import appIconGlassThumb from '../assets/app-icons/glass.png'
 import {
@@ -583,7 +582,6 @@ const ACCENT_OPTIONS: Array<{ value: ThemeAccentStyle; label: string }> = [
  */
 const APP_ICON_THUMBS: Record<AppIconVariant, string> = {
   regular: appIconRegularThumb,
-  wwdc26: appIconWwdc26Thumb,
   monoline: appIconMonolineThumb,
   glass: appIconGlassThumb
 }
@@ -3926,7 +3924,6 @@ export function SettingsPanel({
   pinnedMessageGroups = [],
   onOpenPinnedMessage
 }: SettingsPanelProps): React.JSX.Element {
-  const [appIconOfferNowMs] = useState(() => Date.now())
   const [claudeKeyInput, setClaudeKeyInput] = useState('')
   const [kimiKeyInput, setKimiKeyInput] = useState('')
   // Optional host CLI presence for the Providers tab's tools card. Probed
@@ -5650,7 +5647,7 @@ export function SettingsPanel({
               <div className="settings-group">
                 <label className="settings-label">App icon</label>
                 <div className="settings-option-grid settings-app-icon-grid">
-                  {availableIconVariants(appIconOfferNowMs).map((variant) => (
+                  {availableIconVariants().map((variant) => (
                     <button
                       key={variant.id}
                       type="button"

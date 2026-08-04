@@ -1021,18 +1021,12 @@ describe('MainSanitizers settings patches', () => {
     ).toEqual([])
   })
 
-  it('gates a NEW wwdc26 selection by the limited-time window', () => {
+  it('drops the retired wwdc26 variant and other invalid app-icon ids', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)
-    vi.useFakeTimers()
-    try {
-      vi.setSystemTime(new Date('2026-08-31T12:00:00Z'))
-      expect(sanitizeSettingsPatch({ appIconVariant: 'wwdc26' }).appIconVariant).toBe('wwdc26')
-      vi.setSystemTime(new Date('2026-09-02T12:00:00Z'))
-      expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'wwdc26' })).toBe(false)
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(sanitizeSettingsPatch({ appIconVariant: 'monoline' }).appIconVariant).toBe('monoline')
+    expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'wwdc26' })).toBe(false)
+    expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'nope' })).toBe(false)
   })
 
   it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {

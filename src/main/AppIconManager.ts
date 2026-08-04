@@ -8,8 +8,6 @@ import type { AppIconVariant } from '../shared/iconVariants'
 // builds (same mechanism as the build-time `resources/icon.png`).
 import iconRegularLight from '../../resources/app-icon/icon-regular-light.png?asset'
 import iconRegularDark from '../../resources/app-icon/icon-regular-dark.png?asset'
-import iconWwdc26Light from '../../resources/app-icon/icon-wwdc26-light.png?asset'
-import iconWwdc26Dark from '../../resources/app-icon/icon-wwdc26-dark.png?asset'
 import iconMonolineLight from '../../resources/app-icon/icon-monoline-light.png?asset'
 import iconMonolineDark from '../../resources/app-icon/icon-monoline-dark.png?asset'
 import iconGlassLight from '../../resources/app-icon/icon-glass-light.png?asset'
@@ -17,7 +15,6 @@ import iconGlassDark from '../../resources/app-icon/icon-glass-dark.png?asset'
 
 const ICON_PATHS: Record<AppIconVariant, { light: string; dark: string }> = {
   regular: { light: iconRegularLight, dark: iconRegularDark },
-  wwdc26: { light: iconWwdc26Light, dark: iconWwdc26Dark },
   monoline: { light: iconMonolineLight, dark: iconMonolineDark },
   glass: { light: iconGlassLight, dark: iconGlassDark }
 }
@@ -49,7 +46,7 @@ export function resolveEffectiveDark(themeAppearance: string, osDark: boolean): 
 }
 
 function loadIcon(variant: AppIconVariant, dark: boolean): NativeImage {
-  const set = ICON_PATHS[variant] ?? ICON_PATHS.regular
+  const set = ICON_PATHS[variant] ?? ICON_PATHS.monoline
   return nativeImage.createFromPath(dark ? set.dark : set.light)
 }
 
