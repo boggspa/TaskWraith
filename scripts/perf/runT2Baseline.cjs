@@ -971,7 +971,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   report.environment.endedAt = new Date().toISOString()
   const gateProbe = evaluatePerfGates({
     report,
-    claimMetricsCollected: false
+    claimMetricsCollected: false,
+    fsAdapter: {
+      statSync: fs.statSync,
+      readFileSync: fs.readFileSync
+    }
   })
   report.gates = gateProbe.gates
 
