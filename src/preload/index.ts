@@ -1150,6 +1150,23 @@ const api = {
       ipcRenderer.invoke('canvas:list-chat', chatId),
     closeForChat: (chatId: string, canvasId: string): Promise<void> =>
       ipcRenderer.invoke('canvas:close-chat', chatId, canvasId),
+    // Browser chrome for the Canvas Browser: navigate any web canvas in the
+    // sender's chat (address bar / back / forward / reload / stop).
+    navigateForChat: (
+      chatId: string,
+      canvasId: string,
+      input: { url?: string; action?: 'back' | 'forward' | 'reload' | 'stop' }
+    ): Promise<
+      | {
+          ok: true
+          url: string
+          title: string
+          isLoading: boolean
+          canGoBack: boolean
+          canGoForward: boolean
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:navigate-chat', chatId, canvasId, input),
     setBounds: (
       canvasId: string,
       rect: { x: number; y: number; width: number; height: number }
@@ -1162,6 +1179,13 @@ const api = {
       const wrapped = (_event: unknown, payload: unknown) => handler(payload)
       ipcRenderer.on('canvas-event', wrapped)
       return () => ipcRenderer.removeListener('canvas-event', wrapped)
+    },
+    // Ephemeral browser-chrome state pushed by main (never persisted): url,
+    // title, isLoading, canGoBack, canGoForward per canvasId.
+    onNavState: (handler: (payload: unknown) => void) => {
+      const wrapped = (_event: unknown, payload: unknown) => handler(payload)
+      ipcRenderer.on('canvas-nav-state', wrapped)
+      return () => ipcRenderer.removeListener('canvas-nav-state', wrapped)
     }
   },
 

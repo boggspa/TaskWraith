@@ -1188,6 +1188,21 @@ declare global {
         >
         listForChat: (chatId: string) => Promise<unknown[]>
         closeForChat: (chatId: string, canvasId: string) => Promise<void>
+        navigateForChat: (
+          chatId: string,
+          canvasId: string,
+          input: { url?: string; action?: 'back' | 'forward' | 'reload' | 'stop' }
+        ) => Promise<
+          | {
+              ok: true
+              url: string
+              title: string
+              isLoading: boolean
+              canGoBack: boolean
+              canGoForward: boolean
+            }
+          | { ok: false; error: string }
+        >
         setBounds: (
           canvasId: string,
           rect: { x: number; y: number; width: number; height: number }
@@ -1196,6 +1211,7 @@ declare global {
         close: (canvasId: string) => Promise<void>
         list: () => Promise<unknown[]>
         onEvent: (handler: (event: unknown) => void) => () => void
+        onNavState: (handler: (payload: unknown) => void) => () => void
       }
       meshCanvas: {
         listForChat: (chatId: string) => Promise<unknown[]>

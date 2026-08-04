@@ -1208,6 +1208,7 @@ import type {
   CanvasDriverKind,
   CanvasEvalApprovalReceipt,
   CanvasEventRecord,
+  CanvasNavState,
   CanvasSketchDocument,
   CanvasWindowOpenTarget
 } from './canvas/canvasTypes'
@@ -4032,6 +4033,8 @@ const canvasService = new CanvasService({
       windowTarget?: CanvasWindowOpenTarget
       initialSketchDocument?: CanvasSketchDocument
       onSketchDocumentChange?: (document: CanvasSketchDocument) => void
+      onNavState?: (state: CanvasNavState) => void
+      onNavigationCommitted?: (state: CanvasNavState) => void
     }
   ) => {
     if (kind === 'window') {
@@ -4092,11 +4095,11 @@ const canvasService = new CanvasService({
       })
     }
     if (kind === 'web') {
-      return opts?.embedded
-        ? new CanvasWebDriver(sessionId, {
-            createSurface: canvasEmbedController.surfaceFor(sessionId)
-          })
-        : new CanvasWebDriver(sessionId)
+      return new CanvasWebDriver(sessionId, {
+        ...(opts?.embedded ? { createSurface: canvasEmbedController.surfaceFor(sessionId) } : {}),
+        onNavState: opts?.onNavState,
+        onNavigationCommitted: opts?.onNavigationCommitted
+      })
     }
     throw new Error(`Canvas driver "${kind}" is not available in this build.`)
   },
@@ -4105,6 +4108,9 @@ const canvasService = new CanvasService({
   now: () => new Date().toISOString(),
   broadcast: (event: CanvasEventRecord) => {
     safeSendToWebContents(mainWindow, 'canvas-event', event)
+  },
+  broadcastNavState: (payload) => {
+    safeSendToWebContents(mainWindow, 'canvas-nav-state', payload)
   },
   historyParticipants: [meshSceneService],
   logger: console
