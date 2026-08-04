@@ -26,6 +26,7 @@ import {
   type UsageHistoryPurgeReport
 } from './UsageJournalStore'
 import { coerceProviderForPersistence } from './ProviderOfferPersistence'
+import { beginPersistenceWrite } from './persistenceProbes'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -2309,14 +2310,24 @@ function normalizeSettingsFontFamily(value: unknown, fallback: string): string {
 function writeJson<T>(filePath: string, data: T) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   let fd: number | null = null
+  // T3a probe: null unless PERF_PRELOAD_PROBE=1, so the production path pays a
+  // null check and nothing more. Measures the wall time a V8 CPU profile
+  // structurally cannot see (blocked write/fsync/rename), which is the gap the
+  // T2 baseline left un-attributed.
+  const probe = beginPersistenceWrite(filePath)
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     fd = fs.openSync(tempPath, 'w', 0o600)
-    fs.writeFileSync(fd, JSON.stringify(data, null, 2), 'utf-8')
+    const serialized = JSON.stringify(data, null, 2)
+    probe?.afterSerialize(Buffer.byteLength(serialized, 'utf-8'))
+    fs.writeFileSync(fd, serialized, 'utf-8')
+    probe?.afterWrite()
     fs.fsyncSync(fd)
+    probe?.afterFsync()
     fs.closeSync(fd)
     fd = null
     fs.renameSync(tempPath, filePath)
+    probe?.afterRename()
     if (filePath === settingsPath) invalidateSettingsFileCache()
     try {
       fs.chmodSync(filePath, 0o600)
@@ -2330,6 +2341,11 @@ function writeJson<T>(filePath: string, data: T) {
     } catch {
       // Directory fsync is best effort on some filesystems.
     }
+    // totalMs spans the whole durable write, so it exceeds the sum of the named
+    // phases by the mkdir/open/close/chmod/dir-fsync remainder. That remainder
+    // is real durability cost and is deliberately not discarded. A write that
+    // throws never reaches end(), so failed writes contribute no sample.
+    probe?.end()
   } catch (e) {
     console.error(`Failed to write ${filePath}`, e)
     if (fd !== null) {
