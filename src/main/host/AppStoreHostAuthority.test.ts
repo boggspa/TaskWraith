@@ -15,7 +15,8 @@ import {
   AppStoreHostAuthority,
   type AppStoreHostAuthorityOptions,
   type AppStoreHostAuthorityPorts,
-  type AppStoreHostAuthoritySnapshotDonorFamilies
+  type AppStoreHostAuthoritySnapshotDonorFamilies,
+  type HostDeferredAskPorts
 } from './AppStoreHostAuthority'
 import { hostAuthorityReceiptResultHasBody, type HostAuthorityCallContext } from './HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
@@ -40,6 +41,17 @@ const CLIENT_A: HostAuthenticatedClientIdentity = {
 }
 
 const NOW = '2026-08-03T22:10:00.000Z'
+
+const DEFERRED_COMMAND_ID = '11111111-1111-4111-8111-111111111111'
+const DEFERRED_IDEMPOTENCY_KEY = 'desktop:client-a:22222222-2222-4222-8222-222222222222'
+
+function makeDeferredCommand(): HostCommand {
+  return makeCommand({
+    commandId: DEFERRED_COMMAND_ID,
+    idempotencyKey: DEFERRED_IDEMPOTENCY_KEY,
+    actor: ACTOR_A
+  })
+}
 
 function contextFor(
   actor: HostActorIdentity,
@@ -455,6 +467,166 @@ describe('AppStoreHostAuthority', () => {
     expect(second.value.status).toBe('succeeded')
     expect(second.value.commandFingerprint).toBe(first.value.commandFingerprint)
     expect(executorCalls).toBe(1)
+  })
+
+  it('runs typed deferred S2-S5 in durable order and projects the pending ask last', async () => {
+    const events: string[] = []
+    let putInput: Parameters<HostDeferredAskPorts['envelopeStorePut']>[0] | undefined
+    let registerInput: Parameters<HostDeferredAskPorts['bridgeRegister']>[0] | undefined
+    const envelopeStorePut = vi.fn(
+      async (input: Parameters<HostDeferredAskPorts['envelopeStorePut']>[0]) => {
+        events.push('put')
+        putInput = input
+        return { kind: 'created' as const }
+      }
+    )
+    const bridgeRegister = vi.fn(
+      async (input: Parameters<HostDeferredAskPorts['bridgeRegister']>[0]) => {
+        events.push('register')
+        registerInput = input
+        return { kind: 'created' as const, record: {} as never }
+      }
+    )
+    const authority = open({
+      ports: {
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'approval' }),
+        deferredAsk: { envelopeStorePut, bridgeRegister }
+      }
+    })
+
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), makeDeferredCommand())
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.status).toBe('pending')
+    expect(events).toEqual(['put', 'register'])
+    expect(putInput).toBeDefined()
+    expect(registerInput).toBeDefined()
+    if (!putInput || !registerInput) return
+    expect(putInput.deferredId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    expect(putInput.challengeId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    )
+    expect(putInput.deferredId).toBe(registerInput.deferredId)
+    expect(putInput.challengeId).toBe(registerInput.challengeId)
+    expect(putInput.challengeKind).toBe('approval')
+    expect(registerInput.commandId).toBe(DEFERRED_COMMAND_ID)
+    expect(registerInput.idempotencyKey).toBe(DEFERRED_IDEMPOTENCY_KEY)
+    expect(registerInput.actor).toEqual(ACTOR_A)
+    expect(executorCalls).toBe(0)
+  })
+
+  it('fails closed on an untyped deferred ask without creating envelope or bridge state', async () => {
+    const envelopeStorePut = vi.fn()
+    const bridgeRegister = vi.fn()
+    const authority = open({
+      ports: {
+        authorityEvaluator: () => ({ decision: 'deferred' }),
+        deferredAsk: { envelopeStorePut, bridgeRegister }
+      }
+    })
+
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), makeDeferredCommand())
+
+    expect(result).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(envelopeStorePut).not.toHaveBeenCalled()
+    expect(bridgeRegister).not.toHaveBeenCalled()
+    expect(executorCalls).toBe(0)
+    const receipt = runtime.receiptStore.getByCommandId(DEFERRED_COMMAND_ID, ACTOR_A)
+    expect(receipt.kind).toBe('found')
+    if (receipt.kind !== 'found') return
+    expect(receipt.receipt.status).toBe('indeterminate')
+    expect(receipt.receipt.errorCode).toBe('deferred_envelope_unavailable')
+  })
+
+  it('marks the receipt indeterminate when envelope persistence fails and never registers the bridge', async () => {
+    const envelopeStorePut = vi.fn(
+      async (_input: Parameters<HostDeferredAskPorts['envelopeStorePut']>[0]) => ({
+        kind: 'conflict' as const,
+        code: 'command_id_collision' as const
+      })
+    )
+    const bridgeRegister = vi.fn()
+    const authority = open({
+      ports: {
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'question' }),
+        deferredAsk: { envelopeStorePut, bridgeRegister }
+      }
+    })
+
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), makeDeferredCommand())
+
+    expect(result).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(envelopeStorePut).toHaveBeenCalledTimes(1)
+    expect(bridgeRegister).not.toHaveBeenCalled()
+    expect(executorCalls).toBe(0)
+    const receipt = runtime.receiptStore.getByCommandId(DEFERRED_COMMAND_ID, ACTOR_A)
+    expect(receipt.kind).toBe('found')
+    if (receipt.kind !== 'found') return
+    expect(receipt.receipt.errorCode).toBe('deferred_envelope_unavailable')
+  })
+
+  it('marks the receipt indeterminate when bridge registration fails after envelope storage', async () => {
+    const envelopeStorePut = vi.fn(
+      async (_input: Parameters<HostDeferredAskPorts['envelopeStorePut']>[0]) => ({
+        kind: 'created' as const
+      })
+    )
+    const bridgeRegister = vi.fn(
+      async (_input: Parameters<HostDeferredAskPorts['bridgeRegister']>[0]) => ({
+        kind: 'conflict' as const,
+        reason: 'command_mismatch' as const
+      })
+    )
+    const authority = open({
+      ports: {
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'approval' }),
+        deferredAsk: { envelopeStorePut, bridgeRegister }
+      }
+    })
+
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), makeDeferredCommand())
+
+    expect(result).toEqual({ ok: false, error: 'host_unavailable' })
+    expect(envelopeStorePut).toHaveBeenCalledTimes(1)
+    expect(bridgeRegister).toHaveBeenCalledTimes(1)
+    expect(executorCalls).toBe(0)
+    const receipt = runtime.receiptStore.getByCommandId(DEFERRED_COMMAND_ID, ACTOR_A)
+    expect(receipt.kind).toBe('found')
+    if (receipt.kind !== 'found') return
+    expect(receipt.receipt.errorCode).toBe('deferred_envelope_unavailable')
+  })
+
+  it('replay never re-puts or re-registers a deferred command', async () => {
+    const envelopeStorePut = vi.fn(
+      async (_input: Parameters<HostDeferredAskPorts['envelopeStorePut']>[0]) => ({
+        kind: 'created' as const
+      })
+    )
+    const bridgeRegister = vi.fn(
+      async (_input: Parameters<HostDeferredAskPorts['bridgeRegister']>[0]) => ({
+        kind: 'created' as const,
+        record: {} as never
+      })
+    )
+    const authority = open({
+      ports: {
+        authorityEvaluator: () => ({ decision: 'deferred', challengeKind: 'question' }),
+        deferredAsk: { envelopeStorePut, bridgeRegister }
+      }
+    })
+    const command = makeDeferredCommand()
+
+    const first = await authority.command(contextFor(ACTOR_A, CLIENT_A), command)
+    const second = await authority.command(contextFor(ACTOR_A, CLIENT_A), command)
+
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    expect(envelopeStorePut).toHaveBeenCalledTimes(1)
+    expect(bridgeRegister).toHaveBeenCalledTimes(1)
+    expect(executorCalls).toBe(0)
   })
 
   it('allowed / denied / deferred authority paths', async () => {

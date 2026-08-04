@@ -32,6 +32,16 @@ import {
 import { fingerprintHostCommand } from './HostCommandFingerprint'
 import { parseGovernedMutationCommandName } from './HostCommandRouting'
 import { projectHostCommandReceipt } from './HostCommandReceiptProjection'
+import { mintHostCommandId } from './HostCommandIdentity'
+import type {
+  HostDeferredChallengeKind,
+  HostDeferredCommandRegisterInput,
+  HostDeferredCommandRegisterResult
+} from './HostDeferredCommandBridge'
+import type {
+  HostDeferredCommandEnvelopePutInput,
+  HostDeferredCommandEnvelopePutResult
+} from './HostDeferredCommandEnvelopeStore'
 import type {
   HostCommandAuthorityDecision,
   HostCommandReceiptActor,
@@ -67,6 +77,8 @@ export interface AppStoreHostAuthorityEvaluation {
   readonly decision: HostCommandAuthorityDecision
   readonly reason?: string
   readonly policy?: string
+  /** Typed deferred challenge source; untyped asks fail closed when wired. */
+  readonly challengeKind?: HostDeferredChallengeKind
 }
 
 export type AppStoreHostAuthorityEvaluator = (
@@ -94,6 +106,21 @@ export type AppStoreHostAuthorityHealthProvider = () =>
 export type AppStoreHostAuthorityShutdownCallback = () => void | Promise<void>
 
 /**
+ * Advisory: HostDeferredCommandEnvelopeStore declares the identical
+ * challenge-kind union; Bridge is canonical here and the duplicate remains
+ * intentionally ununified in this scope.
+ */
+/** Narrow deferred ask ports; Authority constructs neither store nor bridge. */
+export interface HostDeferredAskPorts {
+  readonly envelopeStorePut: (
+    input: HostDeferredCommandEnvelopePutInput
+  ) => HostDeferredCommandEnvelopePutResult | Promise<HostDeferredCommandEnvelopePutResult>
+  readonly bridgeRegister: (
+    input: HostDeferredCommandRegisterInput
+  ) => HostDeferredCommandRegisterResult | Promise<HostDeferredCommandRegisterResult>
+}
+
+/**
  * Narrow injected ports so a later composition root can wrap AppStore/Bridge
  * without this module importing them.
  */
@@ -104,6 +131,8 @@ export interface AppStoreHostAuthorityPorts {
   readonly commandExecutor: AppStoreHostAuthorityExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
+  /** Optional only for pre-cutover compatibility; present enables S2–S5. */
+  readonly deferredAsk?: HostDeferredAskPorts
 }
 
 export interface AppStoreHostAuthorityOptions {
@@ -164,6 +193,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly commandExecutor: AppStoreHostAuthorityExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
+  private readonly deferredAsk?: HostDeferredAskPorts
   private readonly now: () => string
   private stopped = false
 
@@ -189,7 +219,11 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.authorityEvaluator !== 'function' ||
       typeof ports.commandExecutor !== 'function' ||
       typeof ports.healthProvider !== 'function' ||
-      typeof ports.onShutdown !== 'function'
+      typeof ports.onShutdown !== 'function' ||
+      (ports.deferredAsk !== undefined &&
+        (!ports.deferredAsk ||
+          typeof ports.deferredAsk.envelopeStorePut !== 'function' ||
+          typeof ports.deferredAsk.bridgeRegister !== 'function'))
     ) {
       throw new Error('AppStoreHostAuthority requires complete injected ports')
     }
@@ -199,6 +233,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.commandExecutor = ports.commandExecutor
     this.healthProvider = ports.healthProvider
     this.onShutdown = ports.onShutdown
+    this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
   }
 
@@ -383,8 +418,15 @@ export class AppStoreHostAuthority implements HostAuthority {
     }
 
     if (evaluation.decision === 'deferred') {
-      // Durable pending/ask — do not execute.
-      return projectFoundReceipt(begin.receipt)
+      // Preserve the pre-cutover dead-end exactly when ask ports are absent.
+      if (!this.deferredAsk) return projectFoundReceipt(begin.receipt)
+      return this.persistDeferredAsk(
+        hostCommand,
+        context,
+        evaluation,
+        begin.receipt,
+        fingerprintResult.fingerprint
+      )
     }
 
     // allowed — execute once
@@ -434,6 +476,93 @@ export class AppStoreHostAuthority implements HostAuthority {
     })
     if (!completed) return { ok: false, error: 'host_unavailable' }
     return projectFoundReceipt(completed)
+  }
+
+  private async persistDeferredAsk(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext,
+    evaluation: AppStoreHostAuthorityEvaluation,
+    pendingReceipt: HostCommandReceiptRecord,
+    commandFingerprint: string
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    const deferredAsk = this.deferredAsk
+    if (!deferredAsk) return projectFoundReceipt(pendingReceipt)
+
+    const challengeKind = evaluation.challengeKind
+    if (challengeKind !== 'approval' && challengeKind !== 'question') {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+
+    // S2: mint both durable correlation IDs before exposing an envelope or ask.
+    const deferredId = mintHostCommandId()
+    const challengeId = mintHostCommandId()
+    if (!deferredId.ok || !challengeId.ok) {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+
+    const envelopeInput: HostDeferredCommandEnvelopePutInput = {
+      deferredId: deferredId.value,
+      challengeId: challengeId.value,
+      challengeKind,
+      commandFingerprint,
+      command: hostCommand
+    }
+
+    // S3: the durable body must exist before the compact bridge row.
+    let envelopeResult: HostDeferredCommandEnvelopePutResult
+    try {
+      envelopeResult = await deferredAsk.envelopeStorePut(envelopeInput)
+    } catch {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+    if (envelopeResult.kind !== 'created' && envelopeResult.kind !== 'existing') {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+
+    const bridgeInput: HostDeferredCommandRegisterInput = {
+      deferredId: deferredId.value,
+      commandId: hostCommand.commandId,
+      idempotencyKey: hostCommand.idempotencyKey,
+      commandFingerprint,
+      commandName: hostCommand.name,
+      actor: {
+        actorId: context.actor.actorId,
+        clientId: context.actor.clientId,
+        clientClass: context.actor.clientClass
+      },
+      challengeId: challengeId.value,
+      challengeKind,
+      createdAt: this.now()
+    }
+
+    // S4: publish the awaiting bridge row only after S3 succeeds.
+    let bridgeResult: HostDeferredCommandRegisterResult
+    try {
+      bridgeResult = await deferredAsk.bridgeRegister(bridgeInput)
+    } catch {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+    if (bridgeResult.kind !== 'created' && bridgeResult.kind !== 'existing') {
+      return this.markDeferredUnavailable(hostCommand.commandId)
+    }
+
+    // S5: expose the pending ask only after both durable writes succeed.
+    return projectFoundReceipt(pendingReceipt)
+  }
+
+  /** Promote a deferred receipt to the closed, recoverable unavailable state. */
+  private markDeferredUnavailable(commandId: string): HostAuthorityResult<HostCommandReceipt> {
+    try {
+      this.runtime.receiptStore.markIndeterminate({
+        commandId,
+        position: this.runtime.getPosition(),
+        errorCode: 'deferred_envelope_unavailable',
+        updatedAt: this.now()
+      })
+    } catch {
+      // Keep the external result body-free even if durable promotion fails.
+    }
+    return { ok: false, error: 'host_unavailable' }
   }
 
   /**
