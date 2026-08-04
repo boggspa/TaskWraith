@@ -119,7 +119,11 @@ describe('HostDomainDeltaPublisher', () => {
     const { store, publisher } = openPublisher()
     const result = publisher.publish([
       upsert('ok', { title: 'ok' }),
-      { kind: 'generation-reset', family: 'snapshot-meta', entityId: 'fence' } as HostDomainEffectDto
+      {
+        kind: 'generation-reset',
+        family: 'snapshot-meta',
+        entityId: 'fence'
+      } as HostDomainEffectDto
     ])
     expect(result.kind).toBe('rejected')
     if (result.kind !== 'rejected') return
@@ -129,7 +133,9 @@ describe('HostDomainDeltaPublisher', () => {
     expect(store.getPosition().cursor).toBe(0)
     expect(existsSync(join(dataDir, HOST_DELTA_JOURNAL_FILENAME))).toBe(false)
 
-    const badKind = publisher.publish([{ kind: 'mutate', family: 'thread', entityId: 'x' } as never])
+    const badKind = publisher.publish([
+      { kind: 'mutate', family: 'thread', entityId: 'x' } as never
+    ])
     expect(badKind.kind).toBe('rejected')
     if (badKind.kind !== 'rejected') return
     expect(badKind.failures[0]?.reason).toBe('invalid_kind')
@@ -137,10 +143,22 @@ describe('HostDomainDeltaPublisher', () => {
 
   it('requires exact family and bounded non-empty entityId', () => {
     const cases: Array<{ dto: unknown; reason: string }> = [
-      { dto: { kind: 'upsert', family: 'threads', entityId: 't1', payload: {} }, reason: 'invalid_family' },
-      { dto: { kind: 'upsert', family: 'THREAD', entityId: 't1', payload: {} }, reason: 'invalid_family' },
-      { dto: { kind: 'upsert', family: 'thread', entityId: '', payload: {} }, reason: 'invalid_entity_id' },
-      { dto: { kind: 'upsert', family: 'thread', entityId: '   ', payload: {} }, reason: 'invalid_entity_id' },
+      {
+        dto: { kind: 'upsert', family: 'threads', entityId: 't1', payload: {} },
+        reason: 'invalid_family'
+      },
+      {
+        dto: { kind: 'upsert', family: 'THREAD', entityId: 't1', payload: {} },
+        reason: 'invalid_family'
+      },
+      {
+        dto: { kind: 'upsert', family: 'thread', entityId: '', payload: {} },
+        reason: 'invalid_entity_id'
+      },
+      {
+        dto: { kind: 'upsert', family: 'thread', entityId: '   ', payload: {} },
+        reason: 'invalid_entity_id'
+      },
       {
         dto: { kind: 'upsert', family: 'thread', entityId: 'e'.repeat(513), payload: {} },
         reason: 'invalid_entity_id'
@@ -262,9 +280,7 @@ describe('HostDomainDeltaPublisher', () => {
   it('oversized safe payload persists digest/length only with no raw prefix', () => {
     const { store, publisher } = openPublisher()
     const bigNote = 'n'.repeat(9000)
-    const result = publisher.publish([
-      upsert('big', { title: 'safe-oversize', note: bigNote })
-    ])
+    const result = publisher.publish([upsert('big', { title: 'safe-oversize', note: bigNote })])
     expect(result.kind).toBe('published')
     if (result.kind !== 'published') return
 
@@ -314,12 +330,7 @@ describe('HostDomainDeltaPublisher', () => {
       }
     }
     const publisher = new HostDomainDeltaPublisher({ store: port })
-    const result = publisher.publish([
-      upsert('a'),
-      upsert('b'),
-      upsert('c'),
-      upsert('d')
-    ])
+    const result = publisher.publish([upsert('a'), upsert('b'), upsert('c'), upsert('d')])
 
     expect(result.kind).toBe('partial')
     if (result.kind !== 'partial') return
@@ -388,7 +399,10 @@ describe('HostDomainDeltaPublisher', () => {
       append: (input) => real.append(input)
     }
     const publisher = new HostDomainDeltaPublisher({ store: port })
-    const result = publisher.publish([upsert('x'), { kind: 'remove', family: 'thread', entityId: 'x' }])
+    const result = publisher.publish([
+      upsert('x'),
+      { kind: 'remove', family: 'thread', entityId: 'x' }
+    ])
     expect(result.kind).toBe('published')
     if (result.kind !== 'published') return
     expect(result.position).toEqual(real.getPosition())

@@ -138,7 +138,9 @@ interface PreparedDomainEffect {
 export function validateHostDomainEffect(
   effect: unknown,
   index = 0
-): { ok: true; prepared: PreparedDomainEffect } | { ok: false; failure: HostDomainDeltaValidationFailure } {
+):
+  | { ok: true; prepared: PreparedDomainEffect }
+  | { ok: false; failure: HostDomainDeltaValidationFailure } {
   if (!effect || typeof effect !== 'object' || Array.isArray(effect)) {
     return {
       ok: false,
@@ -159,7 +161,8 @@ export function validateHostDomainEffect(
       failure: {
         index,
         reason: 'generation_reset_forbidden',
-        detail: 'domain effects cannot publish generation-reset; HostDeltaStore owns generation fences'
+        detail:
+          'domain effects cannot publish generation-reset; HostDeltaStore owns generation fences'
       }
     }
   }
@@ -283,7 +286,9 @@ export function validateHostDomainEffect(
  */
 export function validateHostDomainEffectBatch(
   effects: readonly unknown[]
-): { ok: true; prepared: PreparedDomainEffect[] } | { ok: false; failures: HostDomainDeltaValidationFailure[] } {
+):
+  | { ok: true; prepared: PreparedDomainEffect[] }
+  | { ok: false; failures: HostDomainDeltaValidationFailure[] } {
   if (!Array.isArray(effects)) {
     return {
       ok: false,
@@ -322,7 +327,10 @@ export class HostDomainDeltaPublisher {
     if (!options?.store) {
       throw new Error('HostDomainDeltaPublisher requires an injected HostDeltaStore port')
     }
-    if (typeof options.store.append !== 'function' || typeof options.store.getPosition !== 'function') {
+    if (
+      typeof options.store.append !== 'function' ||
+      typeof options.store.getPosition !== 'function'
+    ) {
       throw new Error('HostDomainDeltaPublisher store must provide append and getPosition')
     }
     this.store = options.store
@@ -337,7 +345,9 @@ export class HostDomainDeltaPublisher {
    * Publish a batch of domain effects through the sole HostDeltaStore journal.
    * Validates the full batch first; appends only when every DTO is valid.
    */
-  publish(effects: readonly HostDomainEffectDto[] | readonly unknown[]): HostDomainDeltaPublishResult {
+  publish(
+    effects: readonly HostDomainEffectDto[] | readonly unknown[]
+  ): HostDomainDeltaPublishResult {
     let prePosition: HostCursorPosition
     try {
       prePosition = this.store.getPosition()

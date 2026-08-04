@@ -179,9 +179,7 @@ describe('hostActorIdentityFromVerifiedContext', () => {
         clientClass: 'web' as HostClientClass
       }).ok
     ).toBe(false)
-    expect(
-      hostActorIdentityFromVerifiedContext(desktopContext({ subjectId: '\n' })).ok
-    ).toBe(false)
+    expect(hostActorIdentityFromVerifiedContext(desktopContext({ subjectId: '\n' })).ok).toBe(false)
   })
 
   it('does not accept a wire actor object as authority (constructs only from context fields)', () => {

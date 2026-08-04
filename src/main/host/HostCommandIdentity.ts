@@ -51,16 +51,10 @@ export const HOST_QUESTION_ID_MIGRATION_ALIAS = {
   legacyField: HOST_QUESTION_ID_LEGACY_ALIAS
 } as const
 
-const HOST_CLIENT_CLASSES: ReadonlySet<HostClientClass> = new Set([
-  'desktop',
-  'tui',
-  'ios',
-  'test'
-])
+const HOST_CLIENT_CLASSES: ReadonlySet<HostClientClass> = new Set(['desktop', 'tui', 'ios', 'test'])
 
 /** RFC 4122 UUID shape (hex + hyphens). Case-insensitive. */
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 /** ASCII C0 controls + DEL — never allowed inside Host identity material. */
 const UNSAFE_CONTROL_RE = /[\u0000-\u001f\u007f]/
@@ -225,9 +219,7 @@ export function hostActorIdentityFromVerifiedContext(
 /**
  * Mint a UUID commandId. Inject `uuid` only in tests.
  */
-export function mintHostCommandId(
-  uuid: HostUuidFactory = randomUUID
-): HostDecodeResult<string> {
+export function mintHostCommandId(uuid: HostUuidFactory = randomUUID): HostDecodeResult<string> {
   let raw: string
   try {
     raw = uuid()
@@ -283,9 +275,7 @@ export function mintHostIdempotencyKey(
  * clientClass is the first colon segment; uuid is the last; clientId is the middle
  * (may itself contain colons).
  */
-export function parseHostIdempotencyKey(
-  key: unknown
-): HostDecodeResult<HostParsedIdempotencyKey> {
+export function parseHostIdempotencyKey(key: unknown): HostDecodeResult<HostParsedIdempotencyKey> {
   if (!isSafeHostIdentifier(key)) {
     return fail('idempotencyKey is empty, oversized, or unsafe')
   }
@@ -333,10 +323,7 @@ export function mintHostCommandIdentity(
   const commandId = mintHostCommandId(options?.commandIdUuid ?? randomUUID)
   if (!commandId.ok) return commandId
 
-  const idempotencyKey = mintHostIdempotencyKey(
-    context,
-    options?.idempotencyUuid ?? randomUUID
-  )
+  const idempotencyKey = mintHostIdempotencyKey(context, options?.idempotencyUuid ?? randomUUID)
   if (!idempotencyKey.ok) return idempotencyKey
 
   return {
