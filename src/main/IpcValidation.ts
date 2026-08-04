@@ -347,6 +347,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
   'canvas:close': ['nonEmptyString'],
   'canvas:close-chat': ['nonEmptyString', 'nonEmptyString'],
+  'canvas:navigate-chat': ['nonEmptyString', 'nonEmptyString', 'object'],
   'canvas:list': [],
   'canvas:list-chat': ['nonEmptyString'],
   // Mesh Canvas is a main-window dock. Native pickers supply external model or
