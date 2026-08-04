@@ -36,6 +36,9 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
     expect(markup).toContain('github-satellite-row')
     expect(markup).toContain('tone-muted')
     expect(markup).not.toContain('tone-warning')
+    // Dotless at rest: the status dot is reserved for live CI monitoring
+    // (the CI indicator and an armed watch), not the discoverability affordance.
+    expect(markup).not.toContain('github-satellite-dot')
   })
 
   it('escalates the affordance to warning amber once watching is actually ON', () => {
@@ -50,6 +53,8 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
       />
     )
     expect(markup).toContain('tone-warning')
+    // An armed watch IS monitoring — it keeps its dot.
+    expect(markup).toContain('github-satellite-dot')
   })
 
   it('stays silent (returns null) when there is no PR/CI AND no watch reason — behavior unchanged', () => {
@@ -124,6 +129,6 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
       />
     )
     expect(markup).toContain('github-satellite-row')
-    expect(markup).toContain("GitHub CLI isn&#x27;t authenticated")
+    expect(markup).toContain('GitHub CLI isn&#x27;t authenticated')
   })
 })

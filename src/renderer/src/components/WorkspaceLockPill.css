@@ -29,7 +29,6 @@
   color: var(--text-primary);
 }
 
-.workspace-lock-pill-dot,
 .workspace-lock-status-dot {
   display: inline-block;
   width: 6px;
@@ -39,7 +38,13 @@
   background: color-mix(in srgb, var(--accent-color) 78%, var(--text-primary));
 }
 
-.workspace-lock-trigger.has-recovery-attention .workspace-lock-pill-dot,
+/* The trigger itself is dotless — recovery attention tints its text instead
+ * (after the hover rule so the amber survives hover/focus). Popover rows keep
+ * their per-status dots above. */
+.workspace-lock-trigger.has-recovery-attention {
+  color: var(--warning, #d6a23a);
+}
+
 .workspace-lock-row.tone-attention .workspace-lock-status-dot {
   background: var(--warning, #d6a23a);
 }

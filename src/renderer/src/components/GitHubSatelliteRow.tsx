@@ -264,10 +264,10 @@ export function GitHubSatelliteRow({
           onHoverStart={hover.show}
           onHoverEnd={hover.scheduleClose}
         >
-          <span
-            className={`github-satellite-dot tone-${isWatching ? 'warning' : 'muted'}`}
-            aria-hidden
-          />
+          {/* The status dot means "monitoring": an armed watch keeps it, the
+              quiet discoverability affordance sits dotless like the PR
+              lifecycle satellite. */}
+          {isWatching && <span className="github-satellite-dot tone-warning" aria-hidden />}
           <ToolFamilyIcon family="pull-request" size={14} />
         </SatelliteIndicator>
       )}

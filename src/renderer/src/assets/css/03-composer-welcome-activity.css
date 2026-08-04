@@ -5291,6 +5291,11 @@
   align-items: center;
   gap: 5px;
   min-width: 0;
+  /* The satellites are UI chrome between two timecodes: PR/CI and the
+   * active-edits pill share the app sans face (--font-sans = the SF Pro
+   * stack) instead of inheriting the bar's mono timecode face. The lock
+   * pill's `font: inherit` trigger picks this up, so one rule covers both. */
+  font-family: var(--font-sans);
 }
 /* Strip the spacing the GitHub row carried when it lived independently above
  * the composer. The active-edit control is intentionally bare at rest, like

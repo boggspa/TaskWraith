@@ -90,6 +90,9 @@ describe('WorkspaceLockPillView', () => {
     expect(html).toContain('workspace-lock-trigger')
     expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toContain('aria-expanded="false"')
+    // The trigger is text-only: no status dot at rest — recovery attention
+    // tints the label instead (pinned against the CSS below).
+    expect(html).not.toContain('workspace-lock-pill-dot')
     expect(html).not.toContain('disabled=""')
     expect(html).not.toContain('<details')
     expect(html).not.toContain('8821')
@@ -217,5 +220,10 @@ describe('WorkspaceLockPillView', () => {
     expect(css).toMatch(/isolation: isolate;/)
     expect(css).toMatch(/max-height: min\(25rem, calc\(100vh - 2rem\)\);/)
     expect(css).toMatch(/width: min\(24rem, calc\(100vw - 1\.5rem\)\);/)
+    // The trigger dot is gone for good; the popover row dots stay, and the
+    // recovery-attention state now tints the trigger text instead.
+    expect(css).not.toContain('.workspace-lock-pill-dot')
+    expect(css).toContain('.workspace-lock-status-dot')
+    expect(css).toMatch(/\.workspace-lock-trigger\.has-recovery-attention\s*\{[^}]*var\(--warning/s)
   })
 })

@@ -195,7 +195,6 @@ export function WorkspaceLockPillView({
         disabled={!hasDetails}
         onClick={togglePopover}
       >
-        <span className="workspace-lock-pill-dot" aria-hidden="true" />
         <span>
           <DigitOdometer value={activeCount} ariaLabel={String(activeCount)} />
           <span aria-hidden="true"> active edit{activeCount === 1 ? '' : 's'}</span>
