@@ -129,6 +129,26 @@ describe('HostRuntimeBootstrap', () => {
     })
   })
 
+  it('fails closed when deferred recovery exceeds the bounded record limit', () => {
+    const runtime = new HostRuntimeBootstrap({
+      hostDataDir,
+      deferredRecovery: {
+        list: () =>
+          Array.from({ length: 2_001 }, (_, index) => ({
+            commandId: `command-${index}`,
+            state: 'indeterminate' as const
+          }))
+      }
+    })
+
+    expect(runtime.getRecoverySummary().deferred).toEqual({
+      availability: 'unavailable',
+      size: null,
+      indeterminate: null,
+      uniqueIndeterminateCommandCount: null
+    })
+  })
+
   it('reconstructs delta position and promotes pending receipts to indeterminate', () => {
     const first = new HostRuntimeBootstrap({ hostDataDir })
     first.deltaStore.append({
