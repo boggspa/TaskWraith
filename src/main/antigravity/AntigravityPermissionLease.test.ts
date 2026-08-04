@@ -3,10 +3,13 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  AGY_READ_ONLY_SHELL_PROJECTION_RULES,
   AntigravityPermissionLeaseAbortedError,
   AntigravityPermissionLeaseCoordinator,
   recoverInterruptedAntigravityPermissionLease
 } from './AntigravityPermissionLease'
+import { isReadOnlyGitShellCommand } from '../ReadOnlyGitShellCommand'
+import { isInspectionShellCommand } from '../ShellCommandTierPolicy'
 
 const tempDirectories: string[] = []
 
@@ -53,9 +56,9 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
       allow: [
         'command(git status)',
         'read_file(/Users/test/Project)',
+        ...AGY_READ_ONLY_SHELL_PROJECTION_RULES.filter((rule) => rule !== 'command(git status)'),
         'write_file(/Users/test/Project)',
-        'command(*)',
-        'unsandboxed(git status --porcelain)'
+        'command(*)'
       ],
       ask: ['command(rm)'],
       deny: ['read_file(/secrets/**)']
@@ -65,6 +68,52 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
 
     await lease.release()
     expect(await readFile(settingsPath, 'utf8')).toBe(original)
+  })
+
+  it('installs the read-only shell projection under a fully read-only posture without shell or write widening', async () => {
+    const { settingsPath, original } = await makeSettings({ model: 'gemini-3.1-pro-high' })
+    const coordinator = new AntigravityPermissionLeaseCoordinator()
+    const lease = await coordinator.acquire({
+      settingsPath,
+      workspacePath: '/Users/test/Project',
+      allowShell: false,
+      allowWrite: false
+    })
+
+    const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
+    expect(installed.permissions.allow).toEqual([
+      'read_file(/Users/test/Project)',
+      ...AGY_READ_ONLY_SHELL_PROJECTION_RULES
+    ])
+    expect(installed.permissions.allow).toContain('command(git log)')
+    expect(installed.permissions.allow).toContain('unsandboxed(git status --porcelain)')
+    expect(installed.permissions.allow).not.toContain('command(*)')
+    expect(installed.permissions.allow).not.toContain('write_file(/Users/test/Project)')
+    expect(installed).not.toHaveProperty('toolPermission')
+    expect(installed).not.toHaveProperty('artifactReviewPolicy')
+
+    await lease.release()
+    expect(await readFile(settingsPath, 'utf8')).toBe(original)
+  })
+
+  it('projects only command prefixes the universal read-only fast path classifiers accept', () => {
+    for (const rule of AGY_READ_ONLY_SHELL_PROJECTION_RULES) {
+      const match = rule.match(/^(command|unsandboxed)\((.+)\)$/)
+      expect(match, `rule shape: ${rule}`).not.toBeNull()
+      const target = match![2]
+      expect(target, `wildcard leaked into projection: ${rule}`).not.toBe('*')
+      if (target.startsWith('git')) {
+        // agy prefix-matches binary+subcommand, so the projected git prefixes
+        // must be forms the read-only git classifier itself accepts.
+        expect(isReadOnlyGitShellCommand(target), `not read-only git: ${target}`).toBe(true)
+      } else {
+        expect(isInspectionShellCommand(target), `not inspection-safe: ${target}`).toBe(true)
+      }
+    }
+    // Prefix rules cannot express per-token screening, so the heads the
+    // classifier admits only conditionally must never be projected.
+    expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain('command(rg)')
+    expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain('command(env)')
   })
 
   it('preserves user edits made during a run while removing only its temporary overlay', async () => {
@@ -154,7 +203,7 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     const installed = JSON.parse(await readFile(settingsPath, 'utf8'))
     expect(installed.permissions.allow).toContain('read_file(/Users/test/Second)')
     expect(installed.permissions.allow).not.toContain('read_file(/Users/test/First)')
-    expect(installed.permissions.allow).not.toContain('unsandboxed(git status --porcelain)')
+    expect(installed.permissions.allow).not.toContain('command(*)')
     expect(installed).not.toHaveProperty('toolPermission')
     await second.release()
   })

@@ -6,11 +6,81 @@ const RECEIPT_SCHEMA_VERSION = 1
 const MAX_SETTINGS_BYTES = 1024 * 1024
 const MAX_RECEIPT_BYTES = 2 * 1024 * 1024
 /**
- * The exact read-only command observed in the official agy failure ledger.
- * Keep this native unsandboxed grant narrow: the signed shell posture does not
- * authorize an arbitrary unsandboxed command or an outside-workspace target.
+ * The exact read-only command observed in the official agy failure ledger:
+ * agy issues it for its own trajectory bookkeeping outside the terminal
+ * sandbox, so the grant stays this one read-only invocation, never a broader
+ * unsandboxed target.
  */
 const AGY_WORKSPACE_STATUS_COMMAND = 'git status --porcelain'
+
+/**
+ * Always-installed projection of TaskWraith's universal read-only shell fast
+ * path (ApprovalOrchestration `readonly_shell` / `inspection_shell`: pure
+ * `git status`/`git diff`/`git log` and the inspection heads run prompt-free
+ * under EVERY posture, read_only and plan included). Official agy has no
+ * per-command approval bridge — headless print mode auto-denies any command
+ * without a matching allow rule and the turn dies with no output — so these
+ * rules are the only way the signed posture's own fast path can reach an agy
+ * run.
+ *
+ * agy matches command rules by binary+subcommand prefix ("'git' matches
+ * 'git add', 'git commit'", agy 1.1.10), so one projected prefix admits every
+ * flag completion; flag-level screening is inexpressible here. Two bounds keep
+ * the projection inside the fast path it mirrors:
+ *  - `command(...)` targets run INSIDE agy's terminal sandbox — narrower
+ *    containment than the host shell the classifiers already bless; and
+ *  - only heads whose every completion the classifiers accept unconditionally
+ *    are projected. `rg` (`--pre` executes a command per file) and `env`
+ *    (`env X=1 cmd` executes) are admitted by the classifier per-token only,
+ *    so they are deliberately absent. A test pins the subset relation.
+ */
+const AGY_READ_ONLY_GIT_COMMAND_PREFIXES = ['git status', 'git log', 'git diff'] as const
+
+const AGY_INSPECTION_COMMAND_HEADS = [
+  'ls',
+  'pwd',
+  'cat',
+  'head',
+  'tail',
+  'wc',
+  'file',
+  'stat',
+  'du',
+  'df',
+  'sort',
+  'uniq',
+  'cut',
+  'comm',
+  'diff',
+  'cmp',
+  'nl',
+  'strings',
+  'which',
+  'whoami',
+  'hostname',
+  'uname',
+  'date',
+  'id',
+  'groups',
+  'basename',
+  'dirname',
+  'readlink',
+  'realpath',
+  'tree',
+  'printenv',
+  'shasum',
+  'cksum',
+  'echo',
+  'grep',
+  'egrep',
+  'fgrep'
+] as const
+
+export const AGY_READ_ONLY_SHELL_PROJECTION_RULES: readonly string[] = Object.freeze([
+  ...AGY_READ_ONLY_GIT_COMMAND_PREFIXES.map((prefix) => `command(${prefix})`),
+  `unsandboxed(${AGY_WORKSPACE_STATUS_COMMAND})`,
+  ...AGY_INSPECTION_COMMAND_HEADS.map((head) => `command(${head})`)
+])
 
 type JsonObject = Record<string, unknown>
 
@@ -129,12 +199,12 @@ function workspaceRules(input: AntigravityPermissionLeaseRequest): string[] {
   // agy 1.1.10 rejects path globs while constructing its terminal sandbox.
   // A directory rule is the supported recursive workspace boundary; adding
   // `/**` makes the entire launch fail before a tool can run.
-  const rules = [`read_file(${workspacePath})`]
+  const rules = [`read_file(${workspacePath})`, ...AGY_READ_ONLY_SHELL_PROJECTION_RULES]
   if (input.allowWrite) {
     rules.push(`write_file(${workspacePath})`)
   }
   if (input.allowShell) {
-    rules.push('command(*)', `unsandboxed(${AGY_WORKSPACE_STATUS_COMMAND})`)
+    rules.push('command(*)')
   }
   return rules
 }

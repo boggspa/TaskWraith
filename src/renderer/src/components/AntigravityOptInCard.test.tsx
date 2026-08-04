@@ -15,6 +15,12 @@ describe('AntigravityOptInCard', () => {
     expect(html).toContain('February 2026')
     expect(html).toContain('not ToS-approved or ban-safe')
     expect(html).toContain('TaskWraith never reads, copies, or stores')
+    // The card is the lane's consent document: every local read/write the
+    // adapter performs must stay disclosed here. The settings lease writes a
+    // temporary permission overlay into agy's own settings file each run.
+    expect(html).toContain('~/.gemini/antigravity-cli/settings.json')
+    expect(html).toContain('restoring your original settings')
+    expect(html).toContain('pre-authorized inside')
     expect(html).toContain('Accept risk and enable')
     expect(html).toContain('disabled=""')
     expect(html).not.toContain('Open Terminal to sign in')

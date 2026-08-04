@@ -340,19 +340,26 @@ export function AntigravityOptInCard({
         AntiGravity OAuth credentials, and never reads your AntiGravity conversation transcripts.
       </p>
       <p className="settings-provider-auth-hint">
-        For completeness, it does two other things on your machine: enabling this lane runs{' '}
-        <code>agy models</code> to list what your account can use, and continuing a conversation
-        reads one non-secret entry from <code>agy</code>&apos;s own cache — the workspace-to-
+        For completeness, it does a few other things on your machine: enabling this lane runs{' '}
+        <code>agy models</code> to list what your account can use; continuing a conversation reads
+        one non-secret entry from <code>agy</code>&apos;s own cache — the workspace-to-
         conversation-ID map it writes at <code>~/.gemini/antigravity-cli/cache/</code> — so a
-        follow-up turn resumes instead of starting over. No credentials, no transcripts, and no
-        plugins or hooks are installed into <code>agy</code>.
+        follow-up turn resumes instead of starting over; and each run temporarily writes this
+        run&apos;s signed permissions into <code>agy</code>&apos;s settings file at{' '}
+        <code>~/.gemini/antigravity-cli/settings.json</code>, restoring your original settings when
+        the run ends (or at the next TaskWraith launch after a crash). No credentials, no
+        transcripts, and no plugins or hooks are installed into <code>agy</code>.
       </p>
       <p className="settings-provider-auth-hint">
         TaskWraith&apos;s own per-tool approval cards do not apply inside <code>agy</code> — it has
         no approval bridge, so its own sandbox and permission rules govern once a turn starts.
         TaskWraith still owns run admission, cancellation and the audit trail, and if you set Shell
         commands or File changes to <strong>Deny</strong> under Agentic services, this lane launches
-        read-only rather than ignoring you.
+        read-only rather than ignoring you. Read-only inspection commands (<code>git status</code> /{' '}
+        <code>git log</code> / <code>git diff</code>, <code>ls</code>, <code>cat</code>,{' '}
+        <code>grep</code>, …) are pre-authorized inside <code>agy</code>&apos;s sandbox at every
+        permission tier — the same universal read-only fast path TaskWraith&apos;s own shell gate
+        applies — while anything broader stays denied unless your tier pre-grants it.
       </p>
 
       {!consentRecorded ? (

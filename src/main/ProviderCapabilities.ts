@@ -654,7 +654,7 @@ function approvalContract(
       inAppApprovals: false,
       supportsWorkspaceGrants: true,
       notes: [
-        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Signed in-workspace read/shell grants are projected through a temporary, merge-safe official-agy settings lease; shared checkouts still use plan mode because agy has no exact per-edit bridge, while sandboxed accept-edits is retained for main-verified isolated worktrees; no credential access or permission-bypass flag is used.'
+        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. Signed in-workspace read grants, the universal read-only inspection shell fast path, and posture-granted shell/write access are projected through a temporary, merge-safe official-agy settings lease; shared checkouts still use plan mode because agy has no exact per-edit bridge, while sandboxed accept-edits is retained for main-verified isolated worktrees; no credential access or permission-bypass flag is used.'
       ]
     }
   }
