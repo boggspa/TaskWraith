@@ -27,6 +27,9 @@ interface RegisteredExplicitExternalPath {
 type PickAndPersistResult =
   | { ok: true; grants: ExternalPathGrant[]; path: string; selectionReceipt?: string }
   | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
+  // The explicit path came from an existing main-signed grant but no longer
+  // resolves on disk — the renderer offers removal instead of looping.
+  | { ok: false; reason: 'missing-path'; path: string }
 
 interface ExternalPathGrantPersistPayload {
   chatId?: string
@@ -77,6 +80,11 @@ export interface ExternalPathGrantHandlersDeps {
   }) => RegisteredExplicitExternalPath | null
   findRegisteredWorkspace: (workspacePath: string) => WorkspaceRecord | undefined
   canonicalPath: (value: string) => string
+  /**
+   * Signature-only verification of a persisted grant row (no run binding) —
+   * the provenance check behind the preflight card's receipt-less re-grant.
+   */
+  verifyExternalPathGrantSignatureForGrant: (grant: ExternalPathGrant) => boolean
   optionalString: (value: unknown) => string | undefined
   randomBytes: (size: number) => Buffer
   securityScopedBookmarks: boolean
@@ -214,6 +222,52 @@ export function registerExternalPathGrantHandlers(deps: ExternalPathGrantHandler
             return { ok: false, reason: 'cancelled' }
           }
           bookmark = undefined
+        } else if (
+          (() => {
+            // Third provenance (grant-card repair, 2026-08-04): the renderer
+            // may re-grant a path the user ALREADY consented to — an existing
+            // main-signed grant row for this chat and exact path — to the
+            // chat's CURRENT provider set (e.g. the ensemble gained seats
+            // after the original OS-dialog consent). This is re-derivation
+            // from main-verified state, not renderer-forged authority: the
+            // signature is verified, access never widens beyond what was
+            // consented, and the path must still resolve on disk. A vanished
+            // path returns 'missing-path' so the card can offer removal
+            // instead of silently looping.
+            const existingForPath = deps
+              .collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+              .filter(
+                (grant) =>
+                  grant.path?.trim() === explicitPath &&
+                  grant.issuedBy === 'main' &&
+                  typeof grant.signature === 'string' &&
+                  grant.signature.length > 0 &&
+                  deps.verifyExternalPathGrantSignatureForGrant(grant)
+              )
+            const accessSatisfied =
+              access === 'read' || existingForPath.some((grant) => grant.access === 'write')
+            return existingForPath.length > 0 && accessSatisfied
+          })()
+        ) {
+          let currentRealPath: string
+          let currentStat: ExternalPathGrantStatLike
+          try {
+            currentRealPath = await deps.realpath(explicitPath)
+            currentStat = await deps.stat(currentRealPath)
+          } catch {
+            return { ok: false, reason: 'missing-path', path: explicitPath }
+          }
+          selectedPath = currentRealPath
+          selectedKind = currentStat.isDirectory() ? 'directory' : 'file'
+          if (currentStat.dev !== undefined && currentStat.ino !== undefined) {
+            selectedIdentity = { device: String(currentStat.dev), inode: String(currentStat.ino) }
+          }
+          selectedPathIsCanonical = true
+          bookmark = deps
+            .collectExternalPathGrantsFromMetadata(chat.providerMetadata)
+            .find(
+              (grant) => grant.path?.trim() === explicitPath && grant.securityScopedBookmark
+            )?.securityScopedBookmark
         } else {
           const receiptId = deps.optionalString(payload?.selectionReceipt)
           const receipt = receiptId ? selectionReceipts.get(receiptId) : undefined

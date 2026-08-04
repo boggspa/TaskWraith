@@ -3415,8 +3415,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         gaps={externalPathGrantPrompt.gaps}
                         trigger={externalPathGrantPrompt.trigger}
                         busy={externalPathGrantPromptBusy}
+                        error={externalPathGrantPrompt.error}
                         onGrant={() => void persistExternalPathGrantPrompt()}
                         onDismiss={() => clearExternalPathGrantPrompt()}
+                        onRemoveMissingPath={(path) => {
+                          handleRemoveExternalPathGrantsByPath(path)
+                          clearExternalPathGrantPrompt()
+                        }}
                       />
                     )}
                     {permissionRequestPaths.length > 0 && (

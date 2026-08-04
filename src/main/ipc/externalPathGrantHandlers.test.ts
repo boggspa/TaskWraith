@@ -115,6 +115,7 @@ function createDeps() {
     ),
     resolveRegisteredExplicitExternalPath,
     findRegisteredWorkspace: vi.fn(() => undefined),
+    verifyExternalPathGrantSignatureForGrant: vi.fn(() => true),
     canonicalPath: vi.fn((value: string) => `/canonical${value}`),
     optionalString: vi.fn((value: unknown) =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined
@@ -632,5 +633,93 @@ describe('registerExternalPathGrantHandlers', () => {
       handlerFor('probe-external-path')({ sender: { id: 99 } }, '/private/secret')
     ).rejects.toThrow('Only the main renderer can probe external paths.')
     expect(deps.probeExternalPath).not.toHaveBeenCalledWith('/private/secret')
+  })
+})
+
+describe('external-path:pick-and-persist — existing-grant provenance (grant card repair)', () => {
+  // The preflight "Additional workspace access required" card re-grants a path
+  // the user ALREADY consented to (a main-signed grant row exists for this
+  // chat) to the chat's current provider set. That provenance must work
+  // without a fresh picker receipt — and a vanished path must surface as
+  // 'missing-path' so the renderer can offer removal instead of looping.
+  const legacyPath = '/tmp/legacy-extra'
+
+  function primedDeps() {
+    const { deps, setChat } = createDeps()
+    setChat(
+      createChat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          participants: [createParticipant('codex', 0), createParticipant('claude', 1)]
+        }
+      } as unknown as Partial<ChatRecord>)
+    )
+    deps.resolveRegisteredExplicitExternalPath.mockReturnValue(null)
+    deps.collectExternalPathGrantsFromMetadata.mockReturnValue([
+      createGrant({ id: 'grant-legacy', provider: 'codex', path: legacyPath, access: 'read' })
+    ])
+    deps.realpath.mockImplementation(async (value: string) => value)
+    return { deps }
+  }
+
+  it('re-persists a previously granted path for the current provider set without a receipt', async () => {
+    const { deps } = primedDeps()
+    registerExternalPathGrantHandlers(deps as unknown as ExternalPathGrantHandlersDeps)
+    const result = await handlerFor('external-path:pick-and-persist')(
+      { sender: { id: 7 } },
+      { chatId: 'chat-1', path: legacyPath, access: 'read' }
+    )
+    expect(result).toMatchObject({ ok: true, path: legacyPath })
+    const minted = deps.issueExternalPathGrant.mock.calls.map(([grant]) => grant.provider)
+    expect(new Set(minted)).toEqual(new Set(['codex', 'claude']))
+    expect(deps.saveChat).toHaveBeenCalled()
+  })
+
+  it("returns 'missing-path' (not silent cancelled) when the granted path no longer resolves", async () => {
+    const { deps } = primedDeps()
+    deps.realpath.mockImplementation(async () => {
+      throw new Error('ENOENT')
+    })
+    registerExternalPathGrantHandlers(deps as unknown as ExternalPathGrantHandlersDeps)
+    const result = await handlerFor('external-path:pick-and-persist')(
+      { sender: { id: 7 } },
+      { chatId: 'chat-1', path: legacyPath, access: 'read' }
+    )
+    expect(result).toEqual({ ok: false, reason: 'missing-path', path: legacyPath })
+    expect(deps.issueExternalPathGrant).not.toHaveBeenCalled()
+  })
+
+  it('still fails closed without any provenance: no receipt, not registered, no existing grant', async () => {
+    const { deps } = primedDeps()
+    deps.collectExternalPathGrantsFromMetadata.mockReturnValue([])
+    registerExternalPathGrantHandlers(deps as unknown as ExternalPathGrantHandlersDeps)
+    const result = await handlerFor('external-path:pick-and-persist')(
+      { sender: { id: 7 } },
+      { chatId: 'chat-1', path: legacyPath, access: 'read' }
+    )
+    expect(result).toEqual({ ok: false, reason: 'cancelled' })
+  })
+
+  it('rejects tampered existing grants and access widening', async () => {
+    const { deps } = primedDeps()
+    deps.verifyExternalPathGrantSignatureForGrant.mockReturnValue(false)
+    registerExternalPathGrantHandlers(deps as unknown as ExternalPathGrantHandlersDeps)
+    expect(
+      await handlerFor('external-path:pick-and-persist')(
+        { sender: { id: 7 } },
+        { chatId: 'chat-1', path: legacyPath, access: 'read' }
+      )
+    ).toEqual({ ok: false, reason: 'cancelled' })
+
+    const { deps: deps2 } = primedDeps()
+    registerExternalPathGrantHandlers(deps2 as unknown as ExternalPathGrantHandlersDeps)
+    expect(
+      await handlerFor('external-path:pick-and-persist')(
+        { sender: { id: 7 } },
+        // existing grant is read-only; asking to mint WRITE would widen — refuse.
+        { chatId: 'chat-1', path: legacyPath, access: 'write' }
+      )
+    ).toEqual({ ok: false, reason: 'cancelled' })
   })
 })

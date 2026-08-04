@@ -571,6 +571,7 @@ const api = {
   }): Promise<
     | { ok: true; grants: unknown[]; path: string; selectionReceipt?: string }
     | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
+    | { ok: false; reason: 'missing-path'; path: string }
   > => ipcRenderer.invoke('external-path:pick-and-persist', payload),
   revokeExternalPathGrants: (payload: {
     chatId: string

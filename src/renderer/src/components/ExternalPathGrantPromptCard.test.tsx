@@ -28,3 +28,35 @@ describe('ExternalPathGrantPromptCard', () => {
     expect(html).not.toContain('panelist')
   })
 })
+
+describe('ExternalPathGrantPromptCard — grant failure surface', () => {
+  it('renders the missing-path remedy instead of the dead Grant action', () => {
+    const html = renderToStaticMarkup(
+      <ExternalPathGrantPromptCard
+        gaps={[{ path: '/gone/workspace', access: 'read', missingProviders: ['codex'] }]}
+        trigger="preflight"
+        error={{ reason: 'missing-path', path: '/gone/workspace' }}
+        onGrant={() => {}}
+        onDismiss={() => {}}
+        onRemoveMissingPath={() => {}}
+      />
+    )
+    expect(html).toContain('no longer exists on disk')
+    expect(html).toContain('Remove missing workspace')
+    expect(html).not.toContain('Grant workspace access')
+  })
+
+  it('renders a generic failure line for non-missing reasons and keeps the Grant action', () => {
+    const html = renderToStaticMarkup(
+      <ExternalPathGrantPromptCard
+        gaps={[{ path: '/tmp/extra', access: 'read', missingProviders: ['codex'] }]}
+        trigger="preflight"
+        error={{ reason: 'cancelled' }}
+        onGrant={() => {}}
+        onDismiss={() => {}}
+      />
+    )
+    expect(html).toContain('grant access (cancelled)')
+    expect(html).toContain('Grant workspace access')
+  })
+})

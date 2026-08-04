@@ -6,6 +6,10 @@ export interface ExternalPathGrantPromptCardProps {
   trigger: 'preflight' | 'attach'
   onGrant: () => void
   onDismiss: () => void
+  /** Last grant attempt's failure — rendered instead of failing silently. */
+  error?: { reason: string; path?: string }
+  /** Remove every grant for a path that no longer exists on disk. */
+  onRemoveMissingPath?: (path: string) => void
   busy?: boolean
 }
 
@@ -14,9 +18,13 @@ export function ExternalPathGrantPromptCard({
   trigger,
   onGrant,
   onDismiss,
+  error,
+  onRemoveMissingPath,
   busy = false
 }: ExternalPathGrantPromptCardProps): React.JSX.Element | null {
   if (gaps.length === 0) return null
+
+  const missingPath = error?.reason === 'missing-path' ? error.path : undefined
 
   const title =
     trigger === 'attach'
@@ -42,15 +50,33 @@ export function ExternalPathGrantPromptCard({
           </div>
         ))}
       </div>
+      {error && (
+        <div className="composer-permission-message composer-permission-error">
+          {missingPath
+            ? 'This workspace path no longer exists on disk. Remove it from the chat to continue.'
+            : `Couldn't grant access (${error.reason}). Re-select the folder from the workspace picker to re-consent.`}
+        </div>
+      )}
       <div className="composer-permission-actions">
-        <PillButton
-          variant="primary"
-          size="compact"
-          disabled={busy}
-          onClick={onGrant}
-        >
-          {trigger === 'attach' ? 'Attach workspace' : 'Grant workspace access'}
-        </PillButton>
+        {missingPath && onRemoveMissingPath ? (
+          <PillButton
+            variant="primary"
+            size="compact"
+            disabled={busy}
+            onClick={() => onRemoveMissingPath(missingPath)}
+          >
+            Remove missing workspace
+          </PillButton>
+        ) : (
+          <PillButton
+            variant="primary"
+            size="compact"
+            disabled={busy}
+            onClick={onGrant}
+          >
+            {trigger === 'attach' ? 'Attach workspace' : 'Grant workspace access'}
+          </PillButton>
+        )}
         <PillButton size="compact" disabled={busy} onClick={onDismiss}>
           {trigger === 'attach' ? 'Cancel' : 'Dismiss'}
         </PillButton>

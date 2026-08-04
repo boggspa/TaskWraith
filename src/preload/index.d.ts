@@ -644,6 +644,7 @@ declare global {
             selectionReceipt?: string
           }
         | { ok: false; reason: 'no-chat' | 'cancelled' | 'no-provider' | 'no-window' }
+        | { ok: false; reason: 'missing-path'; path: string }
       >
       revokeExternalPathGrants: (payload: {
         chatId: string

@@ -50429,6 +50429,9 @@ if (isGeminiMcpBridgeProcess) {
       showOpenDialog: (window, options) => dialog.showOpenDialog(window, options),
       stat: (pathValue) => fs.stat(pathValue),
       realpath: (pathValue) => fs.realpath(pathValue),
+      // Signature-only provenance check for the preflight card's receipt-less
+      // re-grant of an already-consented path (no run binding).
+      verifyExternalPathGrantSignatureForGrant: (grant) => isMainIssuedExternalPathGrant(grant),
       resolvePath: (pathValue) => resolve(pathValue),
       providerLabel,
       issueExternalPathGrant,

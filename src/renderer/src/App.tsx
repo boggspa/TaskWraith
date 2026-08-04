@@ -2543,6 +2543,8 @@ function App(): React.JSX.Element {
         gaps: ExternalPathGrantGap[]
         pendingRun: QueuedRunRequest | null
         trigger: 'preflight' | 'attach'
+        /** Last grant attempt's failure — surfaced on the card instead of a silent no-op. */
+        error?: { reason: string; path?: string }
       } | null
     >
   >({})
@@ -9135,7 +9137,25 @@ function App(): React.JSX.Element {
           path: gap.path,
           selectionReceipt: gap.selectionReceipt
         })
-        if (!result.ok) return
+        if (!result.ok) {
+          // Surface the failure on the card (a silent return here is exactly
+          // the "Grant does nothing" dead-end): 'missing-path' offers the
+          // remove-workspace remedy, everything else explains itself.
+          if (externalPathGrantPromptByChatIdRef.current[chatId] !== prompt) return
+          const errored = {
+            ...prompt,
+            error: {
+              reason: result.reason,
+              path: result.reason === 'missing-path' ? result.path : gap.path
+            }
+          }
+          externalPathGrantPromptByChatIdRef.current = {
+            ...externalPathGrantPromptByChatIdRef.current,
+            [chatId]: errored
+          }
+          setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [chatId]: errored }))
+          return
+        }
       }
       if (externalPathGrantPromptByChatIdRef.current[chatId] !== prompt) return
       const resumeRun = prompt.pendingRun
