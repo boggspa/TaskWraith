@@ -53,7 +53,8 @@ export const SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS = [
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
-  'mediaRecording'
+  'mediaRecording',
+  'webBrowsing'
 ] as const satisfies readonly AgenticServiceId[]
 
 const POSTURE_CONTEXT_KEYS = [

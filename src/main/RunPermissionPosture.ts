@@ -563,7 +563,8 @@ const EFFECTIVE_RUN_AGENTIC_SERVICE_ID_RECORD = {
   crossThreadRead: true,
   threadMessage: true,
   mediaEditing: true,
-  mediaRecording: true
+  mediaRecording: true,
+  webBrowsing: true
 } as const satisfies Record<AgenticServiceId, true>
 
 const EFFECTIVE_RUN_AGENTIC_SERVICE_IDS = Object.keys(

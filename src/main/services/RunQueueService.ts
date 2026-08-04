@@ -91,7 +91,8 @@ const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'crossThreadRead',
   'threadMessage',
   'mediaEditing',
-  'mediaRecording'
+  'mediaRecording',
+  'webBrowsing'
 ])
 const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>([
   'ask',

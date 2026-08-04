@@ -689,7 +689,8 @@ function effectivePermissions(
       crossThreadRead: 'deny',
       threadMessage: 'deny',
       mediaEditing: 'deny',
-      mediaRecording: 'deny'
+      mediaRecording: 'deny',
+      webBrowsing: 'deny'
     },
     networkAccess: 'deny',
     externalPathGrants: [],

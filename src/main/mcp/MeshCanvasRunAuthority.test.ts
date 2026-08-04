@@ -23,7 +23,8 @@ function permissions(
       crossThreadRead: 'ask',
       threadMessage: 'ask',
       mediaEditing: 'ask',
-      mediaRecording: 'deny'
+      mediaRecording: 'deny',
+      webBrowsing: 'ask'
     },
     networkAccess: 'allow',
     externalPathGrants: [],

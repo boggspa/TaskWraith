@@ -1341,7 +1341,8 @@ describe('composeRun frozen execution-graph permission posture', () => {
       threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [frozenGrant],
@@ -1491,7 +1492,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],
@@ -1775,7 +1777,8 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
             threadMessage: 'ask',
             mediaEditing: 'allow',
             mediaRecording: 'deny',
-            canvasEval: 'ask'
+            canvasEval: 'ask',
+            webBrowsing: 'allow'
           },
           networkAccess: 'allow',
           readOnly: false

@@ -76,7 +76,8 @@ function makeEffectivePermissions(
       threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants,

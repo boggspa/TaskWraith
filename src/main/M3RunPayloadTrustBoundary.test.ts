@@ -28,7 +28,8 @@ function readOnlyPerms(): EffectiveRunPermissions {
       threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],
@@ -56,7 +57,8 @@ function fullAccessPerms(
       threadMessage: 'ask',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'allow'
     },
     networkAccess: 'allow',
     externalPathGrants,

@@ -89,6 +89,7 @@ const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
   threadMessage: true,
   mediaEditing: true,
   mediaRecording: true,
+  webBrowsing: true,
   networkAccess: true
 } as const satisfies Record<keyof Required<AgenticServicesSettings>, true>
 

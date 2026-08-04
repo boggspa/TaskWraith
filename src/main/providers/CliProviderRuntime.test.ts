@@ -73,7 +73,8 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       crossThreadRead: 'allow',
       threadMessage: 'allow',
       mediaEditing: 'allow',
-      mediaRecording: 'deny'
+      mediaRecording: 'deny',
+      webBrowsing: 'allow'
     },
     networkAccess: 'allow',
     externalPathGrants: [],

@@ -97,6 +97,9 @@ export function effectiveAgenticSettings(
       // Same as canvasInteraction: the read_only preset's canvasEval:'deny' must
       // survive this key-by-key rebuild, or read-only eval would only prompt.
       canvasEval: preserveCurrentDeny(current.canvasEval, effective.canvasEval),
+      // Browser navigation: a global webBrowsing 'deny' (kill switch) must
+      // survive the rebuild, or a denied browser would come back as a prompt.
+      webBrowsing: preserveCurrentDeny(current.webBrowsing, effective.webBrowsing),
       networkAccess: current.networkAccess === 'deny' ? 'deny' : effectivePermissions.networkAccess
     }
   }

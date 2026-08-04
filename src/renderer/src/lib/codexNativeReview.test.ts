@@ -31,7 +31,8 @@ function composedPayload(): AgentRunPayload {
         crossThreadRead: 'deny',
         threadMessage: 'deny',
         mediaEditing: 'deny',
-        mediaRecording: 'deny'
+        mediaRecording: 'deny',
+        webBrowsing: 'deny'
       },
       externalPathGrants: [],
       workspaceGrantServiceIds: []

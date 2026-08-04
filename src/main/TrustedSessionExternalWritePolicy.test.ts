@@ -19,7 +19,8 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       threadMessage: 'allow',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'allow'
     },
     networkAccess: 'allow',
     externalPathGrants: [],

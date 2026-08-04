@@ -24,7 +24,8 @@ const services = {
   crossThreadRead: 'deny',
   threadMessage: 'deny',
   mediaEditing: 'deny',
-  mediaRecording: 'deny'
+  mediaRecording: 'deny',
+  webBrowsing: 'deny'
 } as const
 
 const common = (model: string) => ({

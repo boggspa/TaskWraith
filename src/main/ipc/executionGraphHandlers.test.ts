@@ -174,7 +174,8 @@ function createDeps(): ExecutionGraphHandlersDeps {
           threadMessage: 'ask',
           mediaEditing: 'workspace',
           mediaRecording: 'deny',
-          canvasEval: 'ask'
+          canvasEval: 'ask',
+          webBrowsing: 'ask'
         },
         networkAccess: 'allow',
         externalPathGrantCount: 0,

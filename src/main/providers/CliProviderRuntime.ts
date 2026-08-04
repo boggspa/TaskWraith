@@ -356,6 +356,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.canvasEval,
         profile.agenticServices.canvasEval
       ),
+      webBrowsing: stricterServicePolicy(
+        base.agenticServices?.webBrowsing,
+        profile.agenticServices.webBrowsing
+      ),
       networkAccess:
         base.agenticServices?.networkAccess === 'deny'
           ? 'deny'

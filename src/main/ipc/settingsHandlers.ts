@@ -252,6 +252,7 @@ function rendererChatSettings(
       ...(services.threadMessage ? { threadMessage: services.threadMessage } : {}),
       ...(services.mediaEditing ? { mediaEditing: services.mediaEditing } : {}),
       ...(services.mediaRecording ? { mediaRecording: services.mediaRecording } : {}),
+      ...(services.webBrowsing ? { webBrowsing: services.webBrowsing } : {}),
       networkAccess: services.networkAccess
     },
     ...(settings.nativeSubAgentRequests

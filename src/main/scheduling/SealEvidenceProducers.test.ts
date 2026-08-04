@@ -130,7 +130,8 @@ function readOnlyPermissions(): EffectiveRunPermissions {
       crossThreadRead: 'deny',
       threadMessage: 'deny',
       mediaEditing: 'deny',
-      mediaRecording: 'deny'
+      mediaRecording: 'deny',
+      webBrowsing: 'deny'
     },
     networkAccess: 'deny',
     externalPathGrants: [],

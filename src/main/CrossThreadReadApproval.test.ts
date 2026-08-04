@@ -54,6 +54,7 @@ function effectiveServices(
     mediaEditing: 'ask',
     mediaRecording: 'deny',
     canvasEval: 'ask',
+    webBrowsing: 'ask',
     ...over
   }
 }

@@ -65,7 +65,8 @@ const VALID_PERMS: EffectiveRunPermissions = {
     threadMessage: 'ask',
     mediaEditing: 'allow',
     mediaRecording: 'deny',
-    canvasEval: 'ask'
+    canvasEval: 'ask',
+    webBrowsing: 'allow'
   },
   networkAccess: 'allow',
   externalPathGrants: [],

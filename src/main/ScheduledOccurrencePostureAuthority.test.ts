@@ -36,7 +36,8 @@ function permissions(
       crossThreadRead: 'deny',
       threadMessage: 'deny',
       mediaEditing: 'ask',
-      mediaRecording: 'deny'
+      mediaRecording: 'deny',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],

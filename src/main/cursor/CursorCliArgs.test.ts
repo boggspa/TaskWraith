@@ -22,7 +22,8 @@ const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices'> = {
     threadMessage: 'deny',
     mediaEditing: 'deny',
     mediaRecording: 'deny',
-    canvasEval: 'deny'
+    canvasEval: 'deny',
+    webBrowsing: 'deny'
   }
 }
 

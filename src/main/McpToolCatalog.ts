@@ -1752,7 +1752,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'crossThreadRead',
               'mediaEditing',
               'mediaRecording',
-              'canvasEval'
+              'canvasEval',
+              'webBrowsing'
             ],
             description: 'Filter to one approval-service kind. Omit to return all kinds.'
           },

@@ -13,5 +13,6 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   threadMessage: 'Thread message',
   mediaEditing: 'Media editing',
   mediaRecording: 'Media recording',
-  canvasEval: 'Canvas eval'
+  canvasEval: 'Canvas eval',
+  webBrowsing: 'Browser navigation'
 }

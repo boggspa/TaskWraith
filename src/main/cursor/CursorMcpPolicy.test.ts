@@ -28,7 +28,8 @@ function permissions(mcpTools: 'deny' | 'ask'): EffectiveRunPermissions {
       threadMessage: 'deny',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'deny'
+      canvasEval: 'deny',
+      webBrowsing: 'deny'
     },
     networkAccess: 'deny',
     externalPathGrants: [],

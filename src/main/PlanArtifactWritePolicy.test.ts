@@ -22,7 +22,8 @@ const readOnlyPermissions: EffectiveRunPermissions = {
     threadMessage: 'deny',
     mediaEditing: 'deny',
     mediaRecording: 'deny',
-    canvasEval: 'deny'
+    canvasEval: 'deny',
+    webBrowsing: 'ask'
   },
   networkAccess: 'deny',
   externalPathGrants: [],

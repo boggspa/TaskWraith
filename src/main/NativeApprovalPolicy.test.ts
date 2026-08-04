@@ -41,7 +41,8 @@ const effectivePermissions = (
     threadMessage: 'deny',
     mediaEditing: 'deny',
     mediaRecording: 'deny',
-    canvasEval: 'deny'
+    canvasEval: 'deny',
+    webBrowsing: 'deny'
   }
 ): EffectiveRunPermissions => ({
   presetId: readOnly ? 'read_only' : 'default',
@@ -545,7 +546,8 @@ describe('effectiveAgenticSettings', () => {
       threadMessage: 'ask',
       mediaEditing: 'ask',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     })
     effective.networkAccess = 'allow'
 

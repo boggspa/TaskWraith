@@ -181,6 +181,69 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(globallyDenied.agenticServices.sketchCanvas).toBe('deny')
   })
 
+  it('pins the Browser navigation (webBrowsing) ladder across every permission preset', () => {
+    const policyFor = (presetId: Parameters<typeof resolveEffectiveRunPermissions>[0]['presetId']) =>
+      resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings(),
+        presetId
+      }).agenticServices.webBrowsing
+
+    // The one deliberate Recon instrument (user decision 2026-08-04): ASK, not
+    // deny — read-class browsing in the sandboxed Canvas Browser is the same
+    // reach web_fetch already has prompt-free, with a visible surface attached.
+    expect(policyFor('read_only')).toBe('ask')
+    expect(policyFor('plan')).toBe('ask')
+    expect(policyFor('default')).toBe('ask')
+    expect(policyFor('workspace_write')).toBe('allow')
+    expect(policyFor('full_access')).toBe('allow')
+
+    // The global kill switch still forces deny in every preset.
+    const globallyDenied = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          ...settings().agenticServices,
+          webBrowsing: 'deny'
+        }
+      }),
+      presetId: 'full_access'
+    })
+    expect(globallyDenied.agenticServices.webBrowsing).toBe('deny')
+  })
+
+  it('webBrowsing stays per-invocation under read_only/plan — grants promote it only under default', () => {
+    const grants = [
+      {
+        id: 'grant-browse',
+        provider: 'claude' as const,
+        workspacePath: '/repo',
+        service: 'webBrowsing' as const,
+        createdAt: '2026-08-04T00:00:00.000Z',
+        updatedAt: '2026-08-04T00:00:00.000Z'
+      }
+    ]
+    for (const presetId of ['read_only', 'plan'] as const) {
+      const held = resolveEffectiveRunPermissions({
+        provider: 'claude',
+        workspacePath: '/repo',
+        settings: settings({ agenticWorkspaceGrants: grants }),
+        presetId
+      })
+      expect(held.agenticServices.webBrowsing).toBe('ask')
+    }
+    // The SAME grant is real: under default it promotes to the workspace tier.
+    const def = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({ agenticWorkspaceGrants: grants }),
+      presetId: 'default'
+    })
+    expect(def.agenticServices.webBrowsing).toBe('workspace')
+  })
+
   it('read_only and plan differ ONLY on the instrument services (guard against re-merge/drift)', () => {
     const base = { provider: 'claude' as const, workspacePath: '/repo', settings: settings() }
     const readOnly = resolveEffectiveRunPermissions({ ...base, presetId: 'read_only' }).agenticServices
@@ -873,6 +936,15 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
     expect(isPlanInstrumentGrantHold('plan', 'sketchCanvas')).toBe(true)
     expect(isPlanInstrumentGrantHold('plan', 'meshCanvas')).toBe(true)
     expect(isPlanInstrumentGrantHold('plan', 'mediaEditing')).toBe(true)
+    expect(isPlanInstrumentGrantHold('plan', 'webBrowsing')).toBe(true)
+  })
+
+  it('holds for read_only + webBrowsing (the single Recon instrument) and nothing else there', () => {
+    expect(isPlanInstrumentGrantHold('read_only', 'webBrowsing')).toBe(true)
+    // Every other read_only service is DENY at the preset layer, so the hold is
+    // moot for them — assert it stays scoped to the one Recon instrument.
+    expect(isPlanInstrumentGrantHold('read_only', 'canvasInteraction')).toBe(false)
+    expect(isPlanInstrumentGrantHold('read_only', 'mediaEditing')).toBe(false)
   })
 
   it('does NOT hold for plan + non-instrument services (subthread was already grantable)', () => {
@@ -889,6 +961,9 @@ describe('isPlanInstrumentGrantHold — gate-level grant immunity for plan instr
       expect(isPlanInstrumentGrantHold(preset, 'sketchCanvas')).toBe(false)
       expect(isPlanInstrumentGrantHold(preset, 'meshCanvas')).toBe(false)
       expect(isPlanInstrumentGrantHold(preset, 'mediaEditing')).toBe(false)
+    }
+    for (const preset of ['default', 'workspace_write', 'full_access', 'custom']) {
+      expect(isPlanInstrumentGrantHold(preset, 'webBrowsing')).toBe(false)
     }
     expect(isPlanInstrumentGrantHold(undefined, 'canvasInteraction')).toBe(false)
     expect(isPlanInstrumentGrantHold(null, 'mediaEditing')).toBe(false)

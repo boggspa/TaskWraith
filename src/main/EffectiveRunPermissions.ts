@@ -28,7 +28,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'threadMessage',
   'mediaEditing',
   'mediaRecording',
-  'canvasEval'
+  'canvasEval',
+  'webBrowsing'
 ]
 
 // Posture split (roadmap T1 / W7 down-payment). `read_only` and `plan` used to
@@ -92,7 +93,15 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // stays DENY here: read_only's load-bearing property is that it offers no
   // elevation path at all, so a read_only seat may not even ask to reach a
   // code-execution boundary.
-  canvasEval: 'deny'
+  canvasEval: 'deny',
+  // Canvas Browser navigation (canvas_navigate) is the ONE deliberate exception
+  // to "no instruments under Recon" (user decision 2026-08-04): it is a
+  // read-class egress verb — the same class of reach web_fetch already has
+  // prompt-free — rendered in the sandboxed, SSRF-guarded preview surface, with
+  // no click/fill/eval actuation attached. ASK, per-invocation only: the
+  // grant-hold below keeps standing/session grants from ever auto-allowing it
+  // in this posture, and the global kill switch still forces deny.
+  webBrowsing: 'ask'
 }
 
 // `plan` = read_only PLUS the approval-gated instrument belt (W7 down-payment).
@@ -134,7 +143,10 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // script is shown only on the transient desktop approval, and
   // `preserveExplicitDeny` still lets the global kill switch force it back to
   // deny. Deliberately NOT relaxed under read_only; see that map.
-  canvasEval: 'ask'
+  canvasEval: 'ask',
+  // Instrument: Canvas Browser navigation, per-invocation ask (same rationale
+  // and grant-hold as under read_only above).
+  webBrowsing: 'ask'
 }
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
@@ -198,7 +210,11 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Sketch documents are chat-owned, structured UI state with no shell,
       // filesystem, or network execution surface.
       sketchCanvas: 'allow',
-      externalPublish: 'allow'
+      externalPublish: 'allow',
+      // Browser navigation adds no egress a workspace_write seat lacks (shell
+      // 'allow' already reaches the network); the surface itself stays
+      // sandboxed + SSRF-guarded, and actuation remains separately gated.
+      webBrowsing: 'allow'
     }
   },
   full_access: {
@@ -224,7 +240,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // shell/file). DELIBERATELY no mediaRecording here — modelled on canvasEval:
       // even Full access must NOT auto-allow capture; it stays at its default-deny
       // so every (future) mic/camera capture still prompts/denies.
-      mediaEditing: 'allow'
+      mediaEditing: 'allow',
+      // Browser navigation is grantable; Trusted Session auto-allows it (it
+      // already auto-allows the strictly-more-powerful mcpTools surface).
+      webBrowsing: 'allow'
     },
     networkAccess: 'allow'
   },
@@ -256,7 +275,8 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'meshCanvas',
   'crossThreadRead',
   'threadMessage',
-  'mediaEditing'
+  'mediaEditing',
+  'webBrowsing'
 ]
 
 // The `plan` preset relaxes these instrument services from read_only's DENY to
@@ -272,8 +292,16 @@ export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceI
     'canvasInteraction',
     'sketchCanvas',
     'meshCanvas',
-    'mediaEditing'
+    'mediaEditing',
+    'webBrowsing'
   ])
+
+// The one Recon instrument (see READ_ONLY_AGENTIC_SERVICES.webBrowsing): under
+// `read_only` it must be reachable ONLY as a per-invocation prompt, so the same
+// grant-hold that protects plan instruments applies. Every other service in the
+// read_only map is DENY, which needs no hold.
+export const READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
+  new Set<AgenticServiceId>(['webBrowsing'])
 
 const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>(['externalPublish'])
@@ -298,7 +326,12 @@ export function isPlanInstrumentGrantHold(
   presetId: string | null | undefined,
   service: AgenticServiceId | null | undefined
 ): boolean {
-  return presetId === 'plan' && !!service && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
+  if (!service) return false
+  if (presetId === 'plan') return PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
+  // read_only carries the same hold for its single ASK instrument, so a grant
+  // minted under default can never silently auto-allow browsing on a Recon seat.
+  if (presetId === 'read_only') return READ_ONLY_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
+  return false
 }
 
 export function isPostureApprovalOnlyService(
@@ -361,7 +394,7 @@ export function resolveEffectiveRunPermissions(
     if (
       workspaceGrantServiceIds.includes(service) &&
       agenticServices[service] === 'ask' &&
-      !(presetId === 'plan' && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service))
+      !isPlanInstrumentGrantHold(presetId, service)
     ) {
       agenticServices[service] = 'workspace'
     }
@@ -451,7 +484,9 @@ function servicesFromSettings(
     // policy so it can only ever be 'ask' or 'deny' — a settings value (or import)
     // of 'allow'/'workspace' must not be able to contradict that guarantee at the
     // policy layer, even though both approval gates would also override it.
-    canvasEval: clampNonGrantablePolicy(normalizePolicy(settings?.canvasEval, 'ask'))
+    canvasEval: clampNonGrantablePolicy(normalizePolicy(settings?.canvasEval, 'ask')),
+    // Browser navigation defaults to 'ask' (grantable, like crossThreadRead).
+    webBrowsing: normalizePolicy(settings?.webBrowsing, 'ask')
   }
 }
 

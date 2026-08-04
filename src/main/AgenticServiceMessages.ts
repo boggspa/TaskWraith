@@ -17,7 +17,8 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
     service === 'threadMessage' ||
     service === 'mediaEditing' ||
     service === 'mediaRecording' ||
-    service === 'canvasEval'
+    service === 'canvasEval' ||
+    service === 'webBrowsing'
   ) {
     return `${AGENTIC_SERVICE_LABELS[service]} is disabled in TaskWraith settings.`
   }
@@ -37,7 +38,8 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'threadMessage',
   'mediaEditing',
   'mediaRecording',
-  'canvasEval'
+  'canvasEval',
+  'webBrowsing'
 ])
 
 export function assertAgenticServiceId(value: unknown): AgenticServiceId {

@@ -5241,6 +5241,7 @@ export function SettingsPanel({
   const sketchCanvasPolicy = agenticServices.sketchCanvas ?? 'allow'
   const externalPublishPolicy = agenticServices.externalPublish ?? 'ask'
   const mediaEditingPolicy = agenticServices.mediaEditing ?? 'ask'
+  const webBrowsingPolicy = agenticServices.webBrowsing ?? 'ask'
   const safetyPolicyRows = [
     {
       id: 'shell',
@@ -5296,6 +5297,16 @@ export function SettingsPanel({
       display: agenticPolicyLabel(canvasInteractionPolicy),
       tone: policyTone(canvasInteractionPolicy),
       description: 'Agents can click and fill preview UI when the workspace policy permits it.'
+    },
+    {
+      id: 'browser',
+      label: 'Browser navigation',
+      scope: 'Workspace',
+      value: webBrowsingPolicy,
+      display: agenticPolicyLabel(webBrowsingPolicy),
+      tone: policyTone(webBrowsingPolicy),
+      description:
+        'Agents can open and navigate websites in the sandboxed Canvas Browser; clicking and typing stay under Canvas interaction.'
     },
     {
       id: 'sketch',
@@ -7632,6 +7643,35 @@ export function SettingsPanel({
                       onChange={(e) =>
                         updateAgenticService(
                           'canvasInteraction',
+                          e.target.value as AgenticServicePolicy
+                        )
+                      }
+                    >
+                      {AGENTIC_SERVICE_POLICY_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="settings-service-row">
+                    <span>
+                      Browser navigation
+                      <small>
+                        Whether agents can open and navigate websites in the sandboxed Canvas
+                        Browser (no clicking or typing — that stays under Canvas interaction).
+                        Default &apos;ask&apos; prompts and can be granted per session or workspace;
+                        Read-Only (Recon) and Plan ask on every navigation.
+                      </small>
+                    </span>
+                    <select
+                      className="settings-select"
+                      value={agenticServices.webBrowsing ?? 'ask'}
+                      disabled={agenticServicesManagedLocked}
+                      onChange={(e) =>
+                        updateAgenticService(
+                          'webBrowsing',
                           e.target.value as AgenticServicePolicy
                         )
                       }

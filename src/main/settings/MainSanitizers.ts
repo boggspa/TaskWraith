@@ -103,6 +103,7 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   mediaEditing: 'ask',
   mediaRecording: 'deny',
   canvasEval: 'ask',
+  webBrowsing: 'ask',
   networkAccess: 'allow'
 }
 /** Services the workspace-grant picker may pre-authorise. Non-grantable
@@ -119,7 +120,8 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'meshCanvas',
   'crossThreadRead',
   'threadMessage',
-  'mediaEditing'
+  'mediaEditing',
+  'webBrowsing'
 ])
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'activeProvider',
@@ -1482,6 +1484,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.canvasEval,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.canvasEval
             ),
+            webBrowsing: sanitizeAgenticServicePolicy(
+              input.agenticServices.webBrowsing,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.webBrowsing ?? 'ask'
+            ),
             networkAccess: sanitizeAgenticNetworkPolicy(
               input.agenticServices.networkAccess,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.networkAccess
@@ -1790,6 +1796,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
           current.mediaRecording ?? 'deny'
         ),
         canvasEval: sanitizeAgenticServicePolicy(services.canvasEval, current.canvasEval),
+        webBrowsing: sanitizeAgenticServicePolicy(
+          services.webBrowsing,
+          current.webBrowsing ?? 'ask'
+        ),
         networkAccess: sanitizeAgenticNetworkPolicy(services.networkAccess, current.networkAccess)
       }
     }

@@ -152,6 +152,7 @@ const agenticServiceKeys = [
   'threadMessage',
   'mediaEditing',
   'mediaRecording',
+  'webBrowsing',
   'networkAccess'
 ] as const
 const managedPolicyPreferenceKeys = [

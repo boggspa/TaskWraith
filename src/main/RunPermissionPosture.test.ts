@@ -47,7 +47,8 @@ function readOnlyPerms(): EffectiveRunPermissions {
       threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'deny',
     externalPathGrants: [],
@@ -73,7 +74,8 @@ function fullAccessPerms(): EffectiveRunPermissions {
       threadMessage: 'ask',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'allow'
     },
     networkAccess: 'allow',
     externalPathGrants: [],
@@ -99,7 +101,8 @@ function defaultPerms(): EffectiveRunPermissions {
       threadMessage: 'ask',
       mediaEditing: 'ask',
       mediaRecording: 'deny',
-      canvasEval: 'ask'
+      canvasEval: 'ask',
+      webBrowsing: 'ask'
     },
     networkAccess: 'allow',
     externalPathGrants: [],
@@ -160,6 +163,7 @@ describe('canonical posture + sign/verify', () => {
       externalPathGrants: [],
       networkAccess: 'allow',
       agenticServices: {
+        webBrowsing: 'allow',
         subThreadDelegation: 'allow',
         canvasInteraction: 'ask',
         sketchCanvas: 'allow',

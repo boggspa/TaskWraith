@@ -43,7 +43,10 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   // mediaRecording is NON-GRANTABLE (default-deny capture scaffold), so — like
   // canvasEval — it is ABSENT from WORKSPACE_POLICY_SERVICES below; the label is
   // kept for audit/ledger rendering of any (future) mediaRecording rows.
-  mediaRecording: 'Media recording'
+  mediaRecording: 'Media recording',
+  // Browser navigation IS grantable per-workspace (read-class browsing in the
+  // sandboxed Canvas Browser) and has a row in WORKSPACE_POLICY_SERVICES below.
+  webBrowsing: 'Browser navigation'
 }
 
 export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
@@ -68,7 +71,9 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
     'Transcode, encode, probe, and mix workspace audio/video without asking again.',
   // Non-grantable: shown for completeness only; capture always re-prompts / is denied.
   mediaRecording:
-    'Microphone / camera capture always asks (cannot be pre-authorised). Coming soon.'
+    'Microphone / camera capture always asks (cannot be pre-authorised). Coming soon.',
+  webBrowsing:
+    'Open and navigate websites in the sandboxed Canvas Browser without asking again. Clicking, typing, and eval stay separately gated.'
 }
 
 export function getWorkspacePolicyServiceLabel(service: AgenticServiceId): string {
@@ -120,6 +125,11 @@ export const WORKSPACE_POLICY_SERVICES: WorkspacePolicyService[] = [
     id: 'mediaEditing',
     label: WORKSPACE_POLICY_SERVICE_LABELS.mediaEditing,
     help: WORKSPACE_POLICY_SERVICE_HELP.mediaEditing
+  },
+  {
+    id: 'webBrowsing',
+    label: WORKSPACE_POLICY_SERVICE_LABELS.webBrowsing,
+    help: WORKSPACE_POLICY_SERVICE_HELP.webBrowsing
   }
   // mediaRecording, canvasEval, crossThreadRead, and threadMessage are
   // deliberately absent: they are not pre-authorised from the workspace policy

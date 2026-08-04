@@ -473,6 +473,14 @@ export type AgenticServiceId =
   // capture tools classify to it yet; it reserves the grant bucket + posture so
   // the future mic/camera tools land default-closed.
   | 'mediaRecording'
+  // Canvas Browser navigation (canvas_navigate: open/goto/back/forward/reload/
+  // stop on the sandboxed web-preview surface). A DEDICATED grant bucket —
+  // grantable like crossThreadRead under Default Approval — kept separate from
+  // `canvasInteraction` so approving read-class browsing never grants click/fill
+  // actuation, and separate from `mcpTools` so Read-Only (Recon) and Plan can
+  // offer it as a per-invocation ASK instrument (user decision 2026-08-04)
+  // instead of the generic read-only hard-deny reroute.
+  | 'webBrowsing'
 export type OllamaToolControlTier =
   | 'read_only'
   | 'approved_edits'
@@ -639,6 +647,9 @@ export interface AgenticServicesSettings {
   // Optional for back-compat. Defaults to 'deny' via servicesFromSettings + the
   // sanitizer (default-closed). Non-grantable scaffold for future mic/camera capture.
   mediaRecording?: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before the Canvas Browser;
+  // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
+  webBrowsing?: AgenticServicePolicy
   networkAccess: AgenticNetworkPolicy
 }
 
@@ -1860,11 +1871,12 @@ export type ProviderCapabilityState =
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
   // canvasInteraction / sketchCanvas / meshCanvas / canvasEval / crossThreadRead /
-  // threadMessage / mediaEditing / mediaRecording are approval-grant buckets, not
-  // provider-capability contract rows — excluded like subThreadDelegation. (The
-  // media tools are already advertised under the MCP/tool surface; they don't get
-  // their own contract row. Thread messaging is harness-owned and identical on
-  // every provider, so it is not a per-provider capability either.)
+  // threadMessage / mediaEditing / mediaRecording / webBrowsing are approval-grant
+  // buckets, not provider-capability contract rows — excluded like
+  // subThreadDelegation. (The media tools are already advertised under the
+  // MCP/tool surface; they don't get their own contract row. Thread messaging and
+  // the Canvas Browser are harness-owned and identical on every provider, so they
+  // are not per-provider capabilities either.)
   | Exclude<
       AgenticServiceId,
       | 'subThreadDelegation'
@@ -1876,6 +1888,7 @@ export type ProviderToolingCapabilityId =
       | 'threadMessage'
       | 'mediaEditing'
       | 'mediaRecording'
+      | 'webBrowsing'
     >
   | 'creativeApps'
   | 'networkAccess'
