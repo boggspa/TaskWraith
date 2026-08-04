@@ -696,14 +696,10 @@
   --tw-glass-rim-light: color-mix(in srgb, var(--danger, #e5484d) 42%, #ffffff);
 }
 .approval-elevation-caution {
-  border-left: 3px solid var(--danger, #e5484d);
   background: color-mix(in srgb, var(--danger, #e5484d) 8%, transparent);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 9px 12px;
   font-weight: 600;
-}
-.trusted-session-modal .approval-elevation-caution {
-  border-left: 0;
 }
 .approval-elevation-ack {
   display: flex;
