@@ -86,4 +86,14 @@ describe('matchOllamaBrand', () => {
     expect(matchOllamaBrand('glm-4.7-flash:q4_K_M')?.providerClass).toBe('zai')
     expect(matchOllamaBrand('north-mini-code-1.0:q4_K_M')?.providerClass).toBe('cohere')
   })
+
+  it('reuses the existing upstream hues for the lightweight catalog', () => {
+    expect(matchOllamaBrand('ministral-3:3b')?.providerClass).toBe('mistral')
+    expect(matchOllamaBrand('granite4:3b')?.providerClass).toBe('ibm')
+    expect(matchOllamaBrand('qwen3.5:2b')?.providerClass).toBe('alibaba')
+    expect(matchOllamaBrand('deepseek-r1:1.5b')?.providerClass).toBe('deepseek')
+    expect(matchOllamaBrand('nemotron-3-nano:4b')?.providerClass).toBe('nvidia')
+    expect(matchOllamaBrand('lfm2.5-thinking:1.2b')?.providerClass).toBe('liquid')
+    expect(matchOllamaBrand('gemma3:4b')?.providerClass).toBe('google')
+  })
 })

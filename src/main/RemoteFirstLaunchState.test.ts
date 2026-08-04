@@ -131,6 +131,15 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
     expect(state.ollamaModelCommands).toEqual(
       expect.arrayContaining([
+        ...[
+          ['ministral-3:3b', 'Ministral 3 (3B Param)'],
+          ['granite4:3b', 'Granite 4.0 (3B Param)'],
+          ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
+          ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+          ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
+          ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
+          ['gemma3:4b', 'Gemma 3 (4B Param)']
+        ].map(([id, label]) => ({ id, label, command: `ollama run ${id}` })),
         {
           id: 'llama3.1:8b',
           label: 'Llama 3.1 (8B Param)',

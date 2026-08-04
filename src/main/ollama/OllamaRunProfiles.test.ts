@@ -145,13 +145,17 @@ describe('OllamaRunProfiles', () => {
     // thinking, so they MUST stay off — Ollama rejects a `think` request
     // outright on a tag that does not advertise it.
     //
-    // The qwen3.5 pair BOTH advertise thinking and were switched on together
-    // 2026-07-30. They move as a pair on purpose: splitting them would be a
-    // product difference the capabilities do not justify.
+    // The qwen3.5 dense sizes all advertise thinking and move together on
+    // purpose: splitting them would be a product difference the capabilities
+    // do not justify.
     expect(
       resolveOllamaThinkingLevel('qwen3.5:4b', OLLAMA_RUN_PROFILE_PRESETS.local_scout)
     ).toBe('medium')
     for (const modelId of [
+      'qwen3.5:2b',
+      'deepseek-r1:1.5b',
+      'nemotron-3-nano:4b',
+      'lfm2.5-thinking:1.2b',
       'deepseek-r1:8b',
       'glm-4.7-flash:q4_K_M',
       'north-mini-code-1.0:q4_K_M'
@@ -160,7 +164,14 @@ describe('OllamaRunProfiles', () => {
         'medium'
       )
     }
-    for (const modelId of ['llama3.1:8b', 'rnj-1', 'llama3.2:3b']) {
+    for (const modelId of [
+      'ministral-3:3b',
+      'granite4:3b',
+      'gemma3:4b',
+      'llama3.1:8b',
+      'rnj-1',
+      'llama3.2:3b'
+    ]) {
       expect(
         resolveOllamaThinkingLevel(modelId, OLLAMA_RUN_PROFILE_PRESETS.local_scout)
       ).toBeUndefined()

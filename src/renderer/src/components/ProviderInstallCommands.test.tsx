@@ -4,7 +4,7 @@ import type { TaskWraithPluginActivatedProviderSetup } from '../../../shared/plu
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 
 describe('ProviderInstallCommands', () => {
-  it('renders all six verified Ollama model commands with version guidance', () => {
+  it('renders the verified Ollama model commands with version guidance', () => {
     const html = renderToStaticMarkup(<ProviderInstallCommands providerSetup={[]} />)
 
     for (const command of [
@@ -13,7 +13,14 @@ describe('ProviderInstallCommands', () => {
       'ollama run rnj-1',
       'ollama run glm-4.7-flash:q4_K_M',
       'ollama run north-mini-code-1.0:q4_K_M',
-      'ollama run llama3.2:3b'
+      'ollama run llama3.2:3b',
+      'ollama run ministral-3:3b',
+      'ollama run granite4:3b',
+      'ollama run qwen3.5:2b',
+      'ollama run deepseek-r1:1.5b',
+      'ollama run nemotron-3-nano:4b',
+      'ollama run lfm2.5-thinking:1.2b',
+      'ollama run gemma3:4b'
     ]) {
       expect(html).toContain(command)
     }

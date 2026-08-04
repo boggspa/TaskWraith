@@ -24,6 +24,17 @@ describe('OllamaRetrievalFirst', () => {
     ]) {
       expect(ollamaEnforcesRetrievalFirst(modelId)).toBe(true)
     }
+    for (const modelId of [
+      'ministral-3:3b',
+      'granite4:3b',
+      'qwen3.5:2b',
+      'deepseek-r1:1.5b',
+      'nemotron-3-nano:4b',
+      'lfm2.5-thinking:1.2b',
+      'gemma3:4b'
+    ]) {
+      expect(ollamaEnforcesRetrievalFirst(modelId)).toBe(true)
+    }
     expect(ollamaReadFileExemptFromRetrievalFirst('README.md')).toBe(true)
     expect(ollamaReadFileExemptFromRetrievalFirst('src/main/Foo.ts')).toBe(false)
     expect(ollamaRetrievalFirstBlockedMessage('src/main/Foo.ts')).toContain('workspace_search')

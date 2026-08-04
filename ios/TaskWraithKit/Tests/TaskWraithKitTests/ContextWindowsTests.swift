@@ -31,6 +31,18 @@ struct ContextWindowsTests {
             ContextWindows.resolve(provider: "ollama", model: "north-mini-code-1.0:q4_K_M")
                 == 500_000)
         #expect(ContextWindows.resolve(provider: "ollama", model: "llama3.2:3b") == 131_072)
+        let lightweightWindows = [
+            "ministral-3:3b": 262_144,
+            "granite4:3b": 131_072,
+            "qwen3.5:2b": 262_144,
+            "deepseek-r1:1.5b": 131_072,
+            "nemotron-3-nano:4b": 262_144,
+            "lfm2.5-thinking:1.2b": 128_000,
+            "gemma3:4b": 131_072,
+        ]
+        for (modelId, window) in lightweightWindows {
+            #expect(ContextWindows.resolve(provider: "ollama", model: modelId) == window)
+        }
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.5") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)

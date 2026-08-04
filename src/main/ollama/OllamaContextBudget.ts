@@ -171,6 +171,7 @@ export function resolveOllamaContextBudget(
   const family = resolveOllamaModelFamily(trimmedModelId)
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_2b':
     case 'qwen3_5_4b':
       return qwen4Budget(trimmedModelId, measured)
     case 'qwen3_5_9b':
@@ -191,9 +192,15 @@ export function resolveOllamaContextBudget(
     case 'north_mini_code_1_0':
       return largeCodingBudget(trimmedModelId, measured)
     case 'minicpm_v45_8b':
+    case 'lfm2_5_thinking_1_2b':
+    case 'granite4_3b':
     case 'granite4_1_3b':
+    case 'nemotron3_nano_4b':
+    case 'ministral_3_3b':
+    case 'deepseek_r1_1_5b':
     case 'llama3_2_3b':
       return compactToolBudget(trimmedModelId, measured)
+    case 'gemma3_4b':
     case 'gemma4_12b':
       return multimodalBudget(trimmedModelId, measured)
     case 'gpt_oss_20b':

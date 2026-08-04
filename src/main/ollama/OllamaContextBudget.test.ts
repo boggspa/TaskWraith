@@ -67,6 +67,23 @@ describe('resolveOllamaContextBudget', () => {
     ).toBeGreaterThanOrEqual(30_000)
   })
 
+  it('uses compact known-family budgets for the lightweight catalog', () => {
+    const unknown = resolveOllamaContextBudget('unknown-local:latest')
+    for (const modelId of [
+      'ministral-3:3b',
+      'granite4:3b',
+      'qwen3.5:2b',
+      'deepseek-r1:1.5b',
+      'nemotron-3-nano:4b',
+      'lfm2.5-thinking:1.2b',
+      'gemma3:4b'
+    ]) {
+      expect(resolveOllamaContextBudget(modelId).maxBlockChars).toBeGreaterThan(
+        unknown.maxBlockChars
+      )
+    }
+  })
+
   it('keeps unknown local tags conservative until live model metadata is known', () => {
     const unknown = resolveOllamaContextBudget('unknown-local:latest')
     expect(unknown.maxTurns).toBe(8)

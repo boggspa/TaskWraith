@@ -51,6 +51,13 @@ export function ollamaModelFamilyPromptLines(
           ? 'Avoid wide refactors; prefer a short plan the user can run with an edit-capable tier or a wider local profile.'
           : 'You have edit tools in this tier — make small, localized, verified edits directly rather than only planning. For broad multi-file refactors, summarize progress and suggest delegation instead of guessing.'
       ]
+    case 'qwen3_5_2b':
+      return [
+        'Model profile (Qwen 3.5 2B): ultra-light local model; keep context compact, search first, and take one concrete step at a time.',
+        normalizedTier === 'read_only'
+          ? 'Prefer chat, quick lookups, and targeted reads; hand off a short plan when the task becomes multi-file.'
+          : 'Make only small localized edits and verify each one; summarize instead of entering a long autonomous loop.'
+      ]
     case 'qwen3_5_4b':
       return [
         'Model profile (Qwen 3.5 4B): stay lightweight — search first, read one file at a time, answer concisely.',
@@ -64,6 +71,13 @@ export function ollamaModelFamilyPromptLines(
         'Keep tool payloads compact and take one concrete step per turn rather than chaining speculative calls.',
         'For broad refactors, claim a clear slice and state what is left instead of attempting the whole pass at once.'
       ]
+    case 'ministral_3_3b':
+      return [
+        'Model profile (Ministral 3 3B): edge-sized multimodal model; search with a concrete query, read one target at a time, then act.',
+        normalizedTier === 'read_only'
+          ? 'Use it for chat, visual checks, and concise findings rather than broad changes.'
+          : 'Make one small localized edit at a time and state what you verified.'
+      ]
     case 'ministral_3_14b':
       return [
         'Model profile (Ministral 3 14B): compact tool-capable model; search with a concrete query, read targeted files, then act.',
@@ -75,6 +89,11 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Llama 3.1 8B): general tool-capable local model; search before reading and keep tool payloads focused.',
         'Use the long context for grounded review, but split broad implementation into small verified edits.'
+      ]
+    case 'deepseek_r1_1_5b':
+      return [
+        'Model profile (DeepSeek R1 1.5B): tiny distilled reasoning model; keep prompts and tool results compact and take one concrete step at a time.',
+        'Use it for private chat, narrow analysis, and short tool calls; stop with a concise handoff before multi-file execution.'
       ]
     case 'deepseek_r1_8b':
       return [
@@ -108,6 +127,11 @@ export function ollamaModelFamilyPromptLines(
         'Model profile (MiniCPM-V 4.5 8B): stay scoped; search/read with a concrete intent and use native tools when available.',
         'For code edits, prefer a concise plan or a single localized patch rather than broad autonomous changes.'
       ]
+    case 'gemma3_4b':
+      return [
+        'Model profile (Gemma 3 4B): lightweight multimodal model; use it for chat, image understanding, and focused analysis.',
+        'Search before reading workspace files and avoid long speculative tool chains.'
+      ]
     case 'gemma4_12b':
       return [
         'Model profile (Gemma 4 12B): search with a concrete query, then read targeted files before editing.',
@@ -130,10 +154,22 @@ export function ollamaModelFamilyPromptLines(
         'Search/read before editing, keep tool payloads focused, and use its context for grounded review rather than broad speculative changes.',
         'For release-critical edits, state verification gaps and run targeted checks when the selected tier allows it.'
       ]
+    case 'lfm2_5_thinking_1_2b':
+      return [
+        'Model profile (LFM 2.5 Thinking 1.2B): ultra-light reasoning model; keep context and tool outputs compact.',
+        'Use one short tool step at a time and stop with a concise handoff when the task becomes broad.'
+      ]
     case 'lfm2_5_8b':
       return [
         'Model profile (LFM 2.5 8B-A1B): long-context local model with tool-chaining training; search/read before editing and keep each tool step concrete.',
         'Use the long context for grounded local review, but keep broad implementation work sliced with explicit verification notes.'
+      ]
+    case 'granite4_3b':
+      return [
+        'Model profile (Granite 4.0 3B): lightweight tool model; list/search first and read only the files relevant to the task.',
+        normalizedTier === 'read_only'
+          ? 'Use it for chat, retrieval, and concise findings rather than broad edits.'
+          : 'Make small structured changes directly; avoid long edit-and-test loops.'
       ]
     case 'granite4_1_3b':
       return [
@@ -146,6 +182,11 @@ export function ollamaModelFamilyPromptLines(
       return [
         'Model profile (Granite 4.1 30B): strong for local review, RAG-style search, and structured tool use.',
         'Read targeted files before editing and summarize any assumptions before broad changes.'
+      ]
+    case 'nemotron3_nano_4b':
+      return [
+        'Model profile (Nemotron 3 Nano 4B): small reasoning model with native tools and configurable thinking.',
+        'Keep each tool call narrow, preserve supplied thinking across turns, and make verification gaps explicit.'
       ]
     case 'nemotron3_33b':
       return [
@@ -180,7 +221,9 @@ export function ollamaModelFamilyPromptLines(
 export function ollamaModelFamilyTemperature(modelId: string): number | undefined {
   const family = resolveOllamaModelFamily(modelId)
   if (family === 'gpt_oss_20b') return 0.15
-  if (family === 'qwen3_4b' || family === 'qwen3_5_4b') return 0.25
+  if (family === 'qwen3_4b' || family === 'qwen3_5_2b' || family === 'qwen3_5_4b') {
+    return 0.25
+  }
   return undefined
 }
 
@@ -440,18 +483,25 @@ export function ollamaTierAwareWorkflowHint(
     family === 'qwen3_5_9b' ||
     family === 'qwen3_6_35b' ||
     family === 'qwen3_4b' ||
+    family === 'qwen3_5_2b' ||
     family === 'minicpm_v45_8b' ||
+    family === 'gemma3_4b' ||
     family === 'gemma4_12b' ||
     family === 'ornith_9b' ||
     family === 'ornith_35b' ||
     family === 'laguna_xs_2_1' ||
+    family === 'lfm2_5_thinking_1_2b' ||
     family === 'lfm2_5_8b' ||
+    family === 'granite4_3b' ||
     family === 'granite4_1_3b' ||
     family === 'granite4_1_30b' ||
+    family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
     family === 'qwen3_5_4b' ||
     family === 'devstral_small_2_24b' ||
-    family === 'ministral_3_14b'
+    family === 'ministral_3_3b' ||
+    family === 'ministral_3_14b' ||
+    family === 'deepseek_r1_1_5b'
   if (intent === 'recon') {
     return [
       'TaskWraith local-recon workflow:',

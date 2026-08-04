@@ -324,6 +324,13 @@ describe('BAKED_IN_RATES', () => {
   it('has zero-cost local entries for curated Ollama tags', () => {
     expect(BAKED_IN_RATES.ollama.models.map((model) => model.modelId)).toEqual(
       expect.arrayContaining([
+        'qwen3.5:2b',
+        'gemma3:4b',
+        'lfm2.5-thinking:1.2b',
+        'granite4:3b',
+        'nemotron-3-nano:4b',
+        'ministral-3:3b',
+        'deepseek-r1:1.5b',
         'qwen3.6:35b',
         'ornith',
         'ornith:latest',

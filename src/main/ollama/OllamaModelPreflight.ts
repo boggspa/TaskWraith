@@ -3,22 +3,29 @@ import type { ProviderCapabilityWarning } from '../store/types'
 
 export type OllamaModelFamily =
   | 'qwen3_4b'
+  | 'qwen3_5_2b'
   | 'qwen3_5_4b'
   | 'qwen3_5_9b'
   | 'qwen3_6_35b'
+  | 'gemma3_4b'
   | 'gemma4_12b'
   | 'ornith_9b'
   | 'ornith_35b'
   | 'laguna_xs_2_1'
   | 'gpt_oss_20b'
+  | 'lfm2_5_thinking_1_2b'
   | 'lfm2_5_8b'
   | 'minicpm_v45_8b'
+  | 'granite4_3b'
   | 'granite4_1_3b'
   | 'granite4_1_30b'
+  | 'nemotron3_nano_4b'
   | 'nemotron3_33b'
   | 'devstral_small_2_24b'
+  | 'ministral_3_3b'
   | 'ministral_3_14b'
   | 'llama3_1_8b'
+  | 'deepseek_r1_1_5b'
   | 'deepseek_r1_8b'
   | 'rnj_1_8b'
   | 'glm_4_7_flash'
@@ -82,6 +89,9 @@ export function resolveOllamaModelFamily(
 ): OllamaModelFamily {
   const key = modelId.trim().toLowerCase()
   if (key === 'llama3.1:8b' || key.startsWith('llama3.1:8b-')) return 'llama3_1_8b'
+  if (key === 'deepseek-r1:1.5b' || key.startsWith('deepseek-r1:1.5b-')) {
+    return 'deepseek_r1_1_5b'
+  }
   if (key === 'deepseek-r1:8b' || key.startsWith('deepseek-r1:8b-')) return 'deepseek_r1_8b'
   if (key === 'rnj-1' || key === 'rnj-1:latest' || key === 'rnj-1:8b') return 'rnj_1_8b'
   if (key === 'glm-4.7-flash:q4_k_m' || key.startsWith('glm-4.7-flash:q4_k_m-')) {
@@ -96,18 +106,25 @@ export function resolveOllamaModelFamily(
   if (key === 'llama3.2:3b' || key.startsWith('llama3.2:3b-')) return 'llama3_2_3b'
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) return 'qwen3_6_35b'
   if (key === 'minicpm-v4.5:8b' || key.startsWith('minicpm-v4.5:8b-')) return 'minicpm_v45_8b'
+  if (key === 'granite4:3b' || key.startsWith('granite4:3b-')) return 'granite4_3b'
   if (key === 'granite4.1:3b' || key.startsWith('granite4.1:3b-')) return 'granite4_1_3b'
   if (key === 'granite4.1:30b' || key.startsWith('granite4.1:30b-')) return 'granite4_1_30b'
+  if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
+    return 'nemotron3_nano_4b'
+  }
   if (key === 'nemotron3:33b' || key.startsWith('nemotron3:33b-')) return 'nemotron3_33b'
   if (key === 'qwen3:4b-instruct' || key.startsWith('qwen3:4b')) return 'qwen3_4b'
-  // The 3.5 sizes must be matched BEFORE the bare `qwen3` metadata fallbacks
-  // below, and 4b before 9b is only cosmetic — the tags do not overlap.
+  // The dense 3.5 sizes must be matched BEFORE the bare `qwen3` metadata
+  // fallbacks below; their order is cosmetic because the tags do not overlap.
+  if (key === 'qwen3.5:2b' || key.startsWith('qwen3.5:2b')) return 'qwen3_5_2b'
   if (key === 'qwen3.5:4b' || key.startsWith('qwen3.5:4b')) return 'qwen3_5_4b'
   if (key === 'qwen3.5:9b' || key.startsWith('qwen3.5:9b')) return 'qwen3_5_9b'
   if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
     return 'devstral_small_2_24b'
   }
+  if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) return 'ministral_3_3b'
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) return 'ministral_3_14b'
+  if (key === 'gemma3:4b' || key.startsWith('gemma3:4b')) return 'gemma3_4b'
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b')) return 'gemma4_12b'
   if (
     key === 'ornith' ||
@@ -129,6 +146,12 @@ export function resolveOllamaModelFamily(
     return 'gpt_oss_20b'
   }
   if (
+    key === 'lfm2.5-thinking:1.2b' ||
+    key.startsWith('lfm2.5-thinking:1.2b-')
+  ) {
+    return 'lfm2_5_thinking_1_2b'
+  }
+  if (
     key === 'lfm2.5' ||
     key === 'lfm2.5:latest' ||
     key === 'lfm2.5:8b' ||
@@ -137,7 +160,10 @@ export function resolveOllamaModelFamily(
     return 'lfm2_5_8b'
   }
   const meta = metadataText(modelInfo)
-  if (meta.includes('deepseek-r1') || meta.includes('deepseek r1')) return 'deepseek_r1_8b'
+  if (meta.includes('deepseek-r1') || meta.includes('deepseek r1')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 4 ? 'deepseek_r1_1_5b' : 'deepseek_r1_8b'
+  }
   if (meta.includes('rnj-1') || meta.includes('rnj 1')) return 'rnj_1_8b'
   if (meta.includes('glm4moelite') || meta.includes('glm-4.7-flash')) return 'glm_4_7_flash'
   if (meta.includes('cohere2moe') || meta.includes('north mini code')) {
@@ -161,26 +187,33 @@ export function resolveOllamaModelFamily(
   // names it in its own metadata.
   if (meta.includes('mistral3') || meta.includes('devstral') || meta.includes('ministral')) {
     if (meta.includes('devstral')) return 'devstral_small_2_24b'
-    if (meta.includes('ministral')) return 'ministral_3_14b'
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    if (meta.includes('ministral') && billions != null && billions < 6) return 'ministral_3_3b'
+    if (meta.includes('ministral')) return 'ministral_3_14b'
+    if (billions != null && billions < 6) return 'ministral_3_3b'
     return billions != null && billions < 20 ? 'ministral_3_14b' : 'devstral_small_2_24b'
   }
   if (meta.includes('qwen35moe') || meta.includes('qwen3.6')) return 'qwen3_6_35b'
-  // `qwen35` covers BOTH 3.5 sizes (the 35B MoE tags report `qwen35moe` and are
-  // caught above), so the 3.5 pair also splits on parameter size. Without this
-  // arm the generic `qwen3` fallbacks below sent every 3.5 tag to the 4B
-  // profile — including the 9B, whose "9.7B" never matched their `9b` needle.
+  // `qwen35` covers all three dense 3.5 sizes (the 35B MoE tags report
+  // `qwen35moe` and are caught above), so the family splits on parameter size.
+  // Without this arm the generic `qwen3` fallbacks below sent every 3.5 tag to
+  // the 4B profile — including the 9B, whose "9.7B" never matched its `9b` needle.
   if (meta.includes('qwen35') || meta.includes('qwen3.5')) {
     const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    if (billions != null && billions < 3) return 'qwen3_5_2b'
     return billions != null && billions < 7 ? 'qwen3_5_4b' : 'qwen3_5_9b'
   }
-  if (meta.includes('nemotron')) return 'nemotron3_33b'
+  if (meta.includes('nemotron')) {
+    const billions = parseOllamaParameterBillions(modelInfo?.parameterSize)
+    return billions != null && billions < 10 ? 'nemotron3_nano_4b' : 'nemotron3_33b'
+  }
   if (meta.includes('granite') && (meta.includes('3.4b') || meta.includes('3b'))) {
     return 'granite4_1_3b'
   }
   if (meta.includes('granite')) return 'granite4_1_30b'
   if (meta.includes('qwen3') && meta.includes('9b')) return 'qwen3_5_9b'
   if (meta.includes('qwen3')) return 'qwen3_4b'
+  if (meta.includes('gemma3')) return 'gemma3_4b'
   if (meta.includes('gemma')) return 'gemma4_12b'
   return 'unknown'
 }
@@ -284,6 +317,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For edits, shell work, or multi-step refactors, choose an edit-capable Ollama tier and a model/profile sized for the scope.'
       }
+    case 'qwen3_5_2b':
+      return {
+        guidance: `${modelLabel} is a very small long-context local model for chat, quick lookups, and tightly scoped reads.`,
+        delegateHint:
+          'Keep workspace work to one small step at a time; hand off a concise plan when the task becomes multi-file or verification-heavy.'
+      }
     case 'qwen3_5_4b':
       return {
         guidance: `${modelLabel} is a small long-context local model — good for quick lookups, targeted reads, and short focused patches.`,
@@ -295,6 +334,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a compact multimodal local model with tools and thinking support.`,
         delegateHint:
           'Use it for scoped reads, visual/local checks, and quick analysis; for broad code edits, confirm the coding model/profile or split the work into clear local slices.'
+      }
+    case 'gemma3_4b':
+      return {
+        guidance: `${modelLabel} is a lightweight multimodal local model for chat, image understanding, and focused analysis.`,
+        delegateHint:
+          'Use it for bounded tasks; split broad code changes into small verified slices or use a coding-tuned local model.'
       }
     case 'gemma4_12b':
       return {
@@ -314,6 +359,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For release-critical changes, pair it with an explicit verification pass before landing broad edits.'
       }
+    case 'lfm2_5_thinking_1_2b':
+      return {
+        guidance: `${modelLabel} is an ultra-light reasoning model for private local chat and short tool-assisted tasks.`,
+        delegateHint:
+          'Keep prompts and tool results compact; stop with a concise handoff when the task grows beyond one focused slice.'
+      }
     case 'lfm2_5_8b':
       return {
         guidance: `${modelLabel} is a compact local model with a long context window and tool-chaining training.`,
@@ -325,6 +376,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a long-context local reasoning model with native tools and thinking support.`,
         delegateHint:
           'Use it for deeper local review and scoped implementation; on macOS/Metal, watch for empty chat responses from this tag and verify the first run before long work.'
+      }
+    case 'granite4_3b':
+      return {
+        guidance: `${modelLabel} is a lightweight tool-capable local model for chat, retrieval, and small structured tasks.`,
+        delegateHint:
+          'Use it for fast reads and bounded actions; avoid long autonomous edit-and-test loops.'
       }
     case 'granite4_1_3b':
       return {
@@ -338,6 +395,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'For release-critical patches, use it as a local reviewer or pair it with a separate verification pass.'
       }
+    case 'nemotron3_nano_4b':
+      return {
+        guidance: `${modelLabel} is a small local reasoning model with native tools and configurable thinking.`,
+        delegateHint:
+          'Keep tool calls narrow and verification explicit; slice multi-file implementation into separate passes.'
+      }
     case 'nemotron3_33b':
       return {
         guidance: `${modelLabel} is a multimodal local reasoning model with native tools and thinking support.`,
@@ -350,6 +413,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         delegateHint:
           'Use it for scoped implementation: search, read the exact target, patch, then state what you verified. Slice broad refactors rather than running them in one pass.'
       }
+    case 'ministral_3_3b':
+      return {
+        guidance: `${modelLabel} is an edge-sized multimodal model with native tools for fast chat, reads, and small actions.`,
+        delegateHint:
+          'Use it as a lightweight local scout or patcher; keep changes localized and verification short.'
+      }
     case 'ministral_3_14b':
       return {
         guidance: `${modelLabel} is a compact tool-capable local model for fast reads, planning, and small focused edits.`,
@@ -361,6 +430,12 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
         guidance: `${modelLabel} is a tool-capable general local model with a 131K context window.`,
         delegateHint:
           'Use it for scoped local exploration, planning, and focused edits; keep broad repository changes split into verified slices.'
+      }
+    case 'deepseek_r1_1_5b':
+      return {
+        guidance: `${modelLabel} is a tiny distilled reasoning model for private local chat and short, concrete tool steps.`,
+        delegateHint:
+          'Keep context and tool output compact; use a larger local model when the task needs reliable multi-file execution.'
       }
     case 'deepseek_r1_8b':
       return {
@@ -410,14 +485,17 @@ function familyGuidance(family: OllamaModelFamily, modelLabel: string): {
 function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | null {
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_2b':
     case 'qwen3_5_4b':
-      return 4
+      return family === 'qwen3_5_2b' ? 2 : 4
     case 'qwen3_5_9b':
       return 9
     case 'qwen3_6_35b':
       return 36
     case 'minicpm_v45_8b':
       return 8
+    case 'gemma3_4b':
+      return 4
     case 'gemma4_12b':
       return 12
     case 'ornith_9b':
@@ -426,18 +504,28 @@ function defaultParameterBillionsForFamily(family: OllamaModelFamily): number | 
       return 35
     case 'laguna_xs_2_1':
       return 33
+    case 'lfm2_5_thinking_1_2b':
+      return 1.2
     case 'lfm2_5_8b':
       return 8
+    case 'granite4_3b':
+      return 3
     case 'granite4_1_3b':
       return 3
     case 'granite4_1_30b':
       return 30
+    case 'nemotron3_nano_4b':
+      return 4
     case 'nemotron3_33b':
       return 33
     case 'devstral_small_2_24b':
       return 24
+    case 'ministral_3_3b':
+      return 3
     case 'ministral_3_14b':
       return 14
+    case 'deepseek_r1_1_5b':
+      return 1.5
     case 'llama3_1_8b':
     case 'deepseek_r1_8b':
     case 'rnj_1_8b':

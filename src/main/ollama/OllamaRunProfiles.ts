@@ -189,17 +189,21 @@ export function resolveOllamaThinkingLevel(
   const family = resolveOllamaModelFamily(modelId)
   return family === 'gpt_oss_20b' ||
     family === 'qwen3_6_35b' ||
-    // The 3.5 pair joined 2026-07-30: `/api/show` reports `thinking` in
-    // `capabilities` for both sizes, and the pair moves together — a size split
+    // The 3.5 family reports `thinking` in `/api/show` capabilities for all
+    // three dense sizes, and the family moves together — a size split
     // here would be an undocumented product difference, not a capability one.
     family === 'qwen3_5_9b' ||
+    family === 'qwen3_5_2b' ||
     family === 'qwen3_5_4b' ||
     family === 'minicpm_v45_8b' ||
+    family === 'lfm2_5_thinking_1_2b' ||
     family === 'lfm2_5_8b' ||
     family === 'laguna_xs_2_1' ||
     family === 'ornith_9b' ||
     family === 'ornith_35b' ||
+    family === 'nemotron3_nano_4b' ||
     family === 'nemotron3_33b' ||
+    family === 'deepseek_r1_1_5b' ||
     family === 'deepseek_r1_8b' ||
     family === 'glm_4_7_flash' ||
     family === 'north_mini_code_1_0'

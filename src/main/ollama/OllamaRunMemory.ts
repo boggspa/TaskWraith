@@ -141,8 +141,15 @@ export function resolveOllamaWorkingMemoryLimits(modelId?: string | null): Ollam
   const family = resolveOllamaModelFamily(trimmedModelId)
   switch (family) {
     case 'qwen3_4b':
+    case 'qwen3_5_2b':
     case 'qwen3_5_4b':
+    case 'gemma3_4b':
+    case 'lfm2_5_thinking_1_2b':
+    case 'granite4_3b':
     case 'granite4_1_3b':
+    case 'nemotron3_nano_4b':
+    case 'ministral_3_3b':
+    case 'deepseek_r1_1_5b':
     case 'llama3_2_3b':
       return scaledWorkingMemoryLimits(trimmedModelId, {
         toolResultMaxChars: 420,

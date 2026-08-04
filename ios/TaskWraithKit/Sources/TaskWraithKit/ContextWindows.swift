@@ -106,10 +106,12 @@ public enum ContextWindows {
         // Ollama local defaults — conservative UI fallbacks when no live limit
         // is known.
         "qwen3:4b-instruct": 262_144,
+        "qwen3.5:2b": 262_144,
         "qwen3.5:4b": 262_144,
         "qwen3.5:9b": 262_144,
         "qwen3.6:35b": 262_144,
         "qwen3.6:35b-a3b": 262_144,
+        "gemma3:4b": 131_072,
         "gemma4:12b": 262_144,
         "gemma4:12b-it-qat": 262_144,
         "gemma4:12b-it-q4_k_m": 262_144,
@@ -130,15 +132,22 @@ public enum ContextWindows {
         "lfm2.5": 128_000,
         "lfm2.5:8b": 128_000,
         "lfm2.5:latest": 128_000,
+        // Ollama stretches the 32,768-token base model to a round 128,000-token
+        // runtime window (shown as 125K in its registry card).
+        "lfm2.5-thinking:1.2b": 128_000,
         "minicpm-v4.5:8b": 40_960,
+        "granite4:3b": 131_072,
         "granite4.1:3b": 131_072,
         "granite4.1:30b": 131_072,
+        "nemotron-3-nano:4b": 262_144,
         "nemotron3:33b": 131_072,
         "devstral-small-2:24b": 393_216,
+        "ministral-3:3b": 262_144,
         "ministral-3:14b": 262_144,
         // Exact GGUF metadata (`*.context_length`) from the Ollama registry /
         // local daemon on 2026-08-02. GLM/North's pages round to 198K/488K.
         "llama3.1:8b": 131_072,
+        "deepseek-r1:1.5b": 131_072,
         "deepseek-r1:8b": 131_072,
         "rnj-1": 32_768,
         "rnj-1:latest": 32_768,

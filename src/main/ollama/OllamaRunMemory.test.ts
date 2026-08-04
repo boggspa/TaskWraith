@@ -75,6 +75,17 @@ describe('OllamaRunMemory', () => {
     expect(
       resolveOllamaWorkingMemoryLimits('north-mini-code-1.0:q4_K_M').workingMemoryMaxChars
     ).toBeGreaterThan(10_000)
+    for (const modelId of [
+      'ministral-3:3b',
+      'granite4:3b',
+      'qwen3.5:2b',
+      'deepseek-r1:1.5b',
+      'nemotron-3-nano:4b',
+      'lfm2.5-thinking:1.2b',
+      'gemma3:4b'
+    ]) {
+      expect(resolveOllamaWorkingMemoryLimits(modelId).toolResultMaxChars).toBe(420)
+    }
 
     const output = 'A'.repeat(1600)
     const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('ornith:35b'), {

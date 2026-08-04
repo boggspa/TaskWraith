@@ -362,6 +362,26 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
+    @Test("ollama lightweight catalogue uses verified labels and runtime windows")
+    func ollamaLightweightCatalogue() {
+        let models = ModelContextLengths.buildGroups(includeOllama: true)
+            .first { $0.provider == "ollama" }?.models ?? []
+        let expected: [String: (label: String, window: Int)] = [
+            "ministral-3:3b": ("Ministral 3 (3B Param)", 262_144),
+            "granite4:3b": ("Granite 4.0 (3B Param)", 131_072),
+            "qwen3.5:2b": ("Qwen 3.5 (2B Param)", 262_144),
+            "deepseek-r1:1.5b": ("DeepSeek R1 (1.5B Param)", 131_072),
+            "nemotron-3-nano:4b": ("Nemotron 3 Nano (4B Param)", 262_144),
+            "lfm2.5-thinking:1.2b": ("LFM 2.5 Thinking (1.2B Param)", 128_000),
+            "gemma3:4b": ("Gemma 3 (4B Param)", 131_072),
+        ]
+        for (modelId, value) in expected {
+            let row = models.first { $0.modelId == modelId }
+            #expect(row?.label == value.label)
+            #expect(row?.contextWindow == value.window)
+        }
+    }
+
     @Test("ollama six-model catalogue uses verified labels and daemon windows")
     func ollamaSixModelCatalogue() {
         let models = ModelContextLengths.buildGroups(includeOllama: true)

@@ -74,9 +74,11 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
 
 export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)', command: 'ollama run qwen3:4b-instruct' },
+  { id: 'qwen3.5:2b', label: 'Qwen 3.5 (2B Param)', command: 'ollama run qwen3.5:2b' },
   { id: 'qwen3.5:4b', label: 'Qwen 3.5 (4B Param)', command: 'ollama run qwen3.5:4b' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)', command: 'ollama run qwen3.5:9b' },
   { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)', command: 'ollama run qwen3.6:35b' },
+  { id: 'gemma3:4b', label: 'Gemma 3 (4B Param)', command: 'ollama run gemma3:4b' },
   { id: 'gemma4:12b', label: 'Gemma 4 (12B Param)', command: 'ollama run gemma4:12b' },
   { id: 'ornith:9b', label: 'Ornith 1.0 (9B Param)', command: 'ollama run ornith:9b' },
   { id: 'ornith:35b', label: 'Ornith 1.0 (35B Param)', command: 'ollama run ornith:35b' },
@@ -86,18 +88,35 @@ export const OLLAMA_MODEL_COMMANDS: readonly OllamaModelEntry[] = [
     command: 'ollama run laguna-xs-2.1:q8_0'
   },
   { id: 'gpt-oss:20b', label: 'GPT OSS (20B Param)', command: 'ollama run gpt-oss:20b' },
+  {
+    id: 'lfm2.5-thinking:1.2b',
+    label: 'LFM 2.5 Thinking (1.2B Param)',
+    command: 'ollama run lfm2.5-thinking:1.2b'
+  },
   { id: 'lfm2.5:8b', label: 'LFM 2.5 (8B-A1B)', command: 'ollama run lfm2.5:8b' },
   { id: 'minicpm-v4.5:8b', label: 'MiniCPM-V 4.5 (8B Param)', command: 'ollama run minicpm-v4.5:8b' },
+  { id: 'granite4:3b', label: 'Granite 4.0 (3B Param)', command: 'ollama run granite4:3b' },
   { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)', command: 'ollama run granite4.1:3b' },
   { id: 'granite4.1:30b', label: 'Granite 4.1 (30B Param)', command: 'ollama run granite4.1:30b' },
+  {
+    id: 'nemotron-3-nano:4b',
+    label: 'Nemotron 3 Nano (4B Param)',
+    command: 'ollama run nemotron-3-nano:4b'
+  },
   { id: 'nemotron3:33b', label: 'Nemotron 3 Nano Omni (33B Param)', command: 'ollama run nemotron3:33b' },
   {
     id: 'devstral-small-2:24b',
     label: 'Devstral Small 2 (24B Param)',
     command: 'ollama run devstral-small-2:24b'
   },
+  { id: 'ministral-3:3b', label: 'Ministral 3 (3B Param)', command: 'ollama run ministral-3:3b' },
   { id: 'ministral-3:14b', label: 'Ministral 3 (14B Param)', command: 'ollama run ministral-3:14b' },
   { id: 'llama3.1:8b', label: 'Llama 3.1 (8B Param)', command: 'ollama run llama3.1:8b' },
+  {
+    id: 'deepseek-r1:1.5b',
+    label: 'DeepSeek R1 (1.5B Param)',
+    command: 'ollama run deepseek-r1:1.5b'
+  },
   { id: 'deepseek-r1:8b', label: 'DeepSeek R1 (8B Param)', command: 'ollama run deepseek-r1:8b' },
   {
     id: 'rnj-1',

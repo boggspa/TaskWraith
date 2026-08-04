@@ -70,5 +70,16 @@ describe('TaskWraith TUI provider presentation', () => {
       'North Mini Code 1.0 (30B-A3B Q4)'
     )
     expect(taskWraithModelLabel('ollama', 'llama3.2:3b')).toBe('Llama 3.2 (3B Param)')
+    for (const [modelId, label] of [
+      ['ministral-3:3b', 'Ministral 3 (3B Param)'],
+      ['granite4:3b', 'Granite 4.0 (3B Param)'],
+      ['qwen3.5:2b', 'Qwen 3.5 (2B Param)'],
+      ['deepseek-r1:1.5b', 'DeepSeek R1 (1.5B Param)'],
+      ['nemotron-3-nano:4b', 'Nemotron 3 Nano (4B Param)'],
+      ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking (1.2B Param)'],
+      ['gemma3:4b', 'Gemma 3 (4B Param)']
+    ]) {
+      expect(taskWraithModelLabel('ollama', modelId)).toBe(label)
+    }
   })
 })

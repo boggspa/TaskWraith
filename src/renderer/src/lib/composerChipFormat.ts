@@ -154,6 +154,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
 
   if (provider === 'ollama') {
     if (id === 'qwen3:4b-instruct') return 'Qwen 3 (4B Param)'
+    if (id === 'qwen3.5:2b' || id.startsWith('qwen3.5:2b-')) {
+      return 'Qwen 3.5 (2B Param)'
+    }
     if (id === 'qwen3.5:4b' || id.startsWith('qwen3.5:4b-')) {
       return 'Qwen 3.5 (4B Param)'
     }
@@ -162,6 +165,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     }
     if (id === 'qwen3.6:35b' || id.startsWith('qwen3.6:35b-')) {
       return 'Qwen 3.6 (35B-A3B)'
+    }
+    if (id === 'gemma3:4b' || id.startsWith('gemma3:4b-')) {
+      return 'Gemma 3 (4B Param)'
     }
     if (id === 'gemma4:12b' || id.startsWith('gemma4:12b-')) {
       return 'Gemma 4 (12B Param)'
@@ -188,6 +194,9 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     ) {
       return 'GPT OSS (20B Param)'
     }
+    if (id === 'lfm2.5-thinking:1.2b' || id.startsWith('lfm2.5-thinking:1.2b-')) {
+      return 'LFM 2.5 Thinking (1.2B Param)'
+    }
     if (
       id === 'lfm2.5' ||
       id === 'lfm2.5:latest' ||
@@ -199,11 +208,17 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'minicpm-v4.5:8b' || id.startsWith('minicpm-v4.5:8b-')) {
       return 'MiniCPM-V 4.5 (8B Param)'
     }
+    if (id === 'granite4:3b' || id.startsWith('granite4:3b-')) {
+      return 'Granite 4.0 (3B Param)'
+    }
     if (id === 'granite4.1:3b' || id.startsWith('granite4.1:3b-')) {
       return 'Granite 4.1 (3B Param)'
     }
     if (id === 'granite4.1:30b' || id.startsWith('granite4.1:30b-')) {
       return 'Granite 4.1 (30B Param)'
+    }
+    if (id === 'nemotron-3-nano:4b' || id.startsWith('nemotron-3-nano:4b-')) {
+      return 'Nemotron 3 Nano (4B Param)'
     }
     if (id === 'nemotron3:33b' || id.startsWith('nemotron3:33b-')) {
       return 'Nemotron 3 Nano Omni (33B Param)'
@@ -211,11 +226,17 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'devstral-small-2:24b' || id.startsWith('devstral-small-2:24b-')) {
       return 'Devstral Small 2 (24B Param)'
     }
+    if (id === 'ministral-3:3b' || id.startsWith('ministral-3:3b-')) {
+      return 'Ministral 3 (3B Param)'
+    }
     if (id === 'ministral-3:14b' || id.startsWith('ministral-3:14b-')) {
       return 'Ministral 3 (14B Param)'
     }
     if (id === 'llama3.1:8b' || id.startsWith('llama3.1:8b-')) {
       return 'Llama 3.1 (8B Param)'
+    }
+    if (id === 'deepseek-r1:1.5b' || id.startsWith('deepseek-r1:1.5b-')) {
+      return 'DeepSeek R1 (1.5B Param)'
     }
     if (id === 'deepseek-r1:8b' || id.startsWith('deepseek-r1:8b-')) {
       return 'DeepSeek R1 (8B Param)'

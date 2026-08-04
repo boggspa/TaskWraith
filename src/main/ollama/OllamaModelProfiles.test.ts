@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ollamaLocalToolSystemPrompt,
   ollamaModelFamilyPromptLines,
+  ollamaModelFamilyTemperature,
   ollamaScoutDelegateWorkflowHint,
   ollamaTierAwareWorkflowHint
 } from './OllamaModelProfiles'
@@ -107,6 +108,24 @@ describe('ollamaModelFamilyPromptLines', () => {
     expect(ollamaModelFamilyPromptLines('north-mini-code-1.0:q4_K_M').join(' ')).toContain(
       'Carry supplied thinking content between turns'
     )
+  })
+
+  it('gives every lightweight tag a size-correct profile', () => {
+    const expected = new Map([
+      ['ministral-3:3b', 'Ministral 3 3B'],
+      ['granite4:3b', 'Granite 4.0 3B'],
+      ['qwen3.5:2b', 'Qwen 3.5 2B'],
+      ['deepseek-r1:1.5b', 'DeepSeek R1 1.5B'],
+      ['nemotron-3-nano:4b', 'Nemotron 3 Nano 4B'],
+      ['lfm2.5-thinking:1.2b', 'LFM 2.5 Thinking 1.2B'],
+      ['gemma3:4b', 'Gemma 3 4B']
+    ])
+    for (const [modelId, marker] of expected) {
+      const lines = ollamaModelFamilyPromptLines(modelId).join(' ')
+      expect(lines).toContain(marker)
+      expect(lines).not.toContain('Model profile (local)')
+    }
+    expect(ollamaModelFamilyTemperature('qwen3.5:2b')).toBe(0.25)
   })
 
   it('keeps only tool-call discipline for conversational GPT-OSS turns', () => {

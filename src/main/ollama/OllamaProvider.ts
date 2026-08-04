@@ -675,6 +675,9 @@ export function humanizeOllamaModelId(model: string): string {
   const id = model.trim()
   const key = id.toLowerCase()
   if (key === 'qwen3:4b-instruct') return 'Qwen 3 (4B Param)'
+  if (key === 'qwen3.5:2b' || key.startsWith('qwen3.5:2b-')) {
+    return 'Qwen 3.5 (2B Param)'
+  }
   if (key === 'qwen3.5:4b' || key.startsWith('qwen3.5:4b-')) {
     return 'Qwen 3.5 (4B Param)'
   }
@@ -683,6 +686,9 @@ export function humanizeOllamaModelId(model: string): string {
   }
   if (key === 'qwen3.6:35b' || key.startsWith('qwen3.6:35b-')) {
     return 'Qwen 3.6 (35B-A3B)'
+  }
+  if (key === 'gemma3:4b' || key.startsWith('gemma3:4b-')) {
+    return 'Gemma 3 (4B Param)'
   }
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b-')) {
     return 'Gemma 4 (12B Param)'
@@ -709,8 +715,14 @@ export function humanizeOllamaModelId(model: string): string {
   ) {
     return 'GPT OSS (20B Param)'
   }
+  if (key === 'lfm2.5-thinking:1.2b' || key.startsWith('lfm2.5-thinking:1.2b-')) {
+    return 'LFM 2.5 Thinking (1.2B Param)'
+  }
   if (key === 'minicpm-v4.5:8b' || key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'
+  }
+  if (key === 'granite4:3b' || key.startsWith('granite4:3b-')) {
+    return 'Granite 4.0 (3B Param)'
   }
   if (key === 'granite4.1:3b' || key.startsWith('granite4.1:3b-')) {
     return 'Granite 4.1 (3B Param)'
@@ -718,17 +730,26 @@ export function humanizeOllamaModelId(model: string): string {
   if (key === 'granite4.1:30b' || key.startsWith('granite4.1:30b-')) {
     return 'Granite 4.1 (30B Param)'
   }
+  if (key === 'nemotron-3-nano:4b' || key.startsWith('nemotron-3-nano:4b-')) {
+    return 'Nemotron 3 Nano (4B Param)'
+  }
   if (key === 'nemotron3:33b' || key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
   }
   if (key === 'devstral-small-2:24b' || key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
   }
+  if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) {
+    return 'Ministral 3 (3B Param)'
+  }
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
   }
   if (key === 'llama3.1:8b' || key.startsWith('llama3.1:8b-')) {
     return 'Llama 3.1 (8B Param)'
+  }
+  if (key === 'deepseek-r1:1.5b' || key.startsWith('deepseek-r1:1.5b-')) {
+    return 'DeepSeek R1 (1.5B Param)'
   }
   if (key === 'deepseek-r1:8b' || key.startsWith('deepseek-r1:8b-')) {
     return 'DeepSeek R1 (8B Param)'

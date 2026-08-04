@@ -139,9 +139,11 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
 
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
+  'qwen3.5:2b': 'Qwen 3.5 (2B Param)',
   'qwen3.5:4b': 'Qwen 3.5 (4B Param)',
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
   'qwen3.6:35b': 'Qwen 3.6 (35B-A3B)',
+  'gemma3:4b': 'Gemma 3 (4B Param)',
   'gemma4:12b': 'Gemma 4 (12B Param)',
   'gemma4:12b-it-qat': 'Gemma 4 (12B Param)',
   'gemma4:12b-it-q4_k_m': 'Gemma 4 (12B Param)',
@@ -160,17 +162,22 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'gpt-oss:20b': 'GPT OSS (20B Param)',
   'gpt-oss:latest': 'GPT OSS (20B Param)',
   'openai/gpt-oss-20b': 'GPT OSS (20B Param)',
+  'lfm2.5-thinking:1.2b': 'LFM 2.5 Thinking (1.2B Param)',
   'lfm2.5:8b': 'LFM 2.5 (8B-A1B)',
   'lfm2.5:latest': 'LFM 2.5 (8B-A1B)',
   'minicpm-v4.5:8b': 'MiniCPM-V 4.5 (8B Param)',
+  'granite4:3b': 'Granite 4.0 (3B Param)',
   'granite4.1:3b': 'Granite 4.1 (3B Param)',
   'granite4.1:30b': 'Granite 4.1 (30B Param)',
+  'nemotron-3-nano:4b': 'Nemotron 3 Nano (4B Param)',
   'nemotron3:33b': 'Nemotron 3 Nano Omni (33B Param)',
   // Ollama-hosted Mistral tags. Distinct ids from the Mistral Vibe seat's own
   // `devstral-small` row above — same brand, different runtime.
   'devstral-small-2:24b': 'Devstral Small 2 (24B Param)',
+  'ministral-3:3b': 'Ministral 3 (3B Param)',
   'ministral-3:14b': 'Ministral 3 (14B Param)',
   'llama3.1:8b': 'Llama 3.1 (8B Param)',
+  'deepseek-r1:1.5b': 'DeepSeek R1 (1.5B Param)',
   'deepseek-r1:8b': 'DeepSeek R1 (8B Param)',
   'rnj-1': 'Rnj-1 (8B Param)',
   'rnj-1:latest': 'Rnj-1 (8B Param)',
@@ -328,6 +335,9 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('qwen3.5:9b-')) {
     return 'Qwen 3.5 (9B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('qwen3.5:2b-')) {
+    return 'Qwen 3.5 (2B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('qwen3.5:4b-')) {
     return 'Qwen 3.5 (4B Param)'
   }
@@ -336,6 +346,15 @@ export function humaniseModelId(
   }
   if (provider === 'ollama' && key.startsWith('minicpm-v4.5:8b-')) {
     return 'MiniCPM-V 4.5 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('gemma3:4b-')) {
+    return 'Gemma 3 (4B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('lfm2.5-thinking:1.2b-')) {
+    return 'LFM 2.5 Thinking (1.2B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('granite4:3b-')) {
+    return 'Granite 4.0 (3B Param)'
   }
   if (
     provider === 'ollama' &&
@@ -358,17 +377,26 @@ export function humaniseModelId(
   if (provider === 'ollama' && key.startsWith('nemotron3:33b-')) {
     return 'Nemotron 3 Nano Omni (33B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('nemotron-3-nano:4b-')) {
+    return 'Nemotron 3 Nano (4B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('devstral-small-2:24b-')) {
     return 'Devstral Small 2 (24B Param)'
   }
   if (provider === 'ollama' && key.startsWith('ministral-3:14b-')) {
     return 'Ministral 3 (14B Param)'
   }
+  if (provider === 'ollama' && key.startsWith('ministral-3:3b-')) {
+    return 'Ministral 3 (3B Param)'
+  }
   if (provider === 'ollama' && key.startsWith('llama3.1:8b-')) {
     return 'Llama 3.1 (8B Param)'
   }
   if (provider === 'ollama' && key.startsWith('deepseek-r1:8b-')) {
     return 'DeepSeek R1 (8B Param)'
+  }
+  if (provider === 'ollama' && key.startsWith('deepseek-r1:1.5b-')) {
+    return 'DeepSeek R1 (1.5B Param)'
   }
   if (provider === 'ollama' && key.startsWith('glm-4.7-flash:q4_k_m-')) {
     return 'GLM-4.7-Flash (30B-A3B Q4)'

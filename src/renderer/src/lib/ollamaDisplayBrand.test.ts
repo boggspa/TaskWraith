@@ -74,6 +74,21 @@ describe('resolveOllamaDisplayBrand', () => {
     expect(resolveOllamaDisplayBrand('devstral-small-2:24b')?.providerClass).toBe('mistral')
   })
 
+  it('reuses the existing upstream hues for the lightweight catalog', () => {
+    const expected = new Map([
+      ['ministral-3:3b', 'mistral'],
+      ['granite4:3b', 'ibm'],
+      ['qwen3.5:2b', 'alibaba'],
+      ['deepseek-r1:1.5b', 'deepseek'],
+      ['nemotron-3-nano:4b', 'nvidia'],
+      ['lfm2.5-thinking:1.2b', 'liquid'],
+      ['gemma3:4b', 'google']
+    ])
+    for (const [modelId, providerClass] of expected) {
+      expect(resolveOllamaDisplayBrand(modelId)?.providerClass).toBe(providerClass)
+    }
+  })
+
   it('keeps the provider picker order explicit', () => {
     expect(OLLAMA_DISPLAY_BRANDS.map((brand) => brand.id)).toEqual([
       'alibaba',

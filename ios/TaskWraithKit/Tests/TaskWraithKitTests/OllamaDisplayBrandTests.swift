@@ -49,6 +49,22 @@ struct OllamaDisplayBrandTests {
                 == "cohere")
     }
 
+    @Test("reuses existing upstream hues for the lightweight catalog")
+    func lightweightCatalogHues() {
+        let expected = [
+            "ministral-3:3b": "mistral",
+            "granite4:3b": "ibm",
+            "qwen3.5:2b": "alibaba",
+            "deepseek-r1:1.5b": "deepseek",
+            "nemotron-3-nano:4b": "nvidia",
+            "lfm2.5-thinking:1.2b": "liquid",
+            "gemma3:4b": "google",
+        ]
+        for (modelId, providerClass) in expected {
+            #expect(OllamaDisplayBrands.resolve(modelId: modelId)?.providerClass == providerClass)
+        }
+    }
+
     @Test("returns nil for unbranded / empty models")
     func returnsNilForUnknown() {
         #expect(OllamaDisplayBrands.resolve(modelId: "mystery-local") == nil)

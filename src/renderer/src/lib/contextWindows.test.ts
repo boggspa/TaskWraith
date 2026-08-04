@@ -54,11 +54,18 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'granite4.1:30b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'nemotron3:33b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'qwen3.5:4b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'qwen3.5:2b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'gemma3:4b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'lfm2.5-thinking:1.2b')).toBe(128_000)
+    expect(resolveContextWindow('ollama', 'granite4:3b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'nemotron-3-nano:4b')).toBe(262_144)
     // Both read off the live daemon's `mistral3.context_length`, not the
     // upstream Mistral API tier — Devstral Small 2 is 384k locally.
     expect(resolveContextWindow('ollama', 'devstral-small-2:24b')).toBe(393_216)
     expect(resolveContextWindow('ollama', 'ministral-3:14b')).toBe(262_144)
+    expect(resolveContextWindow('ollama', 'ministral-3:3b')).toBe(262_144)
     expect(resolveContextWindow('ollama', 'llama3.1:8b')).toBe(131_072)
+    expect(resolveContextWindow('ollama', 'deepseek-r1:1.5b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'deepseek-r1:8b')).toBe(131_072)
     expect(resolveContextWindow('ollama', 'rnj-1')).toBe(32_768)
     expect(resolveContextWindow('ollama', 'rnj-1:latest')).toBe(32_768)

@@ -615,6 +615,11 @@ const OLLAMA_STATIC_MODELS = [
     isDefault: true
   },
   {
+    id: 'qwen3.5:2b',
+    label: 'Qwen 3.5 (2B Param)',
+    description: 'Qwen 3.5 2B via Ollama · 262k context · vision/tools/thinking'
+  },
+  {
     id: 'qwen3.5:4b',
     label: 'Qwen 3.5 (4B Param)',
     description: 'Qwen 3.5 4B via Ollama · 262k context'
@@ -628,6 +633,11 @@ const OLLAMA_STATIC_MODELS = [
     id: 'qwen3.6:35b',
     label: 'Qwen 3.6 (35B-A3B)',
     description: 'Qwen 3.6 35B-A3B via Ollama · 262k context · vision/tools/thinking'
+  },
+  {
+    id: 'gemma3:4b',
+    label: 'Gemma 3 (4B Param)',
+    description: 'Google Gemma 3 4B via Ollama · 131k context · vision'
   },
   {
     id: 'gemma4:12b',
@@ -655,6 +665,11 @@ const OLLAMA_STATIC_MODELS = [
     description: 'OpenAI gpt-oss 20B via Ollama · 131k context'
   },
   {
+    id: 'lfm2.5-thinking:1.2b',
+    label: 'LFM 2.5 Thinking (1.2B Param)',
+    description: 'Liquid LFM2.5 Thinking 1.2B via Ollama · 128k context · tools/thinking'
+  },
+  {
     id: 'lfm2.5:8b',
     label: 'LFM 2.5 (8B-A1B)',
     description: 'Liquid LFM2.5 8B-A1B via Ollama · 128k context · tools/thinking'
@@ -665,6 +680,11 @@ const OLLAMA_STATIC_MODELS = [
     description: 'MiniCPM-V 4.5 8B via Ollama · 40k context · vision/tools/thinking'
   },
   {
+    id: 'granite4:3b',
+    label: 'Granite 4.0 (3B Param)',
+    description: 'IBM Granite 4.0 3B via Ollama · 131k context · tools'
+  },
+  {
     id: 'granite4.1:3b',
     label: 'Granite 4.1 (3B Param)',
     description: 'IBM Granite 4.1 3B via Ollama · 131k context · tools'
@@ -673,6 +693,11 @@ const OLLAMA_STATIC_MODELS = [
     id: 'granite4.1:30b',
     label: 'Granite 4.1 (30B Param)',
     description: 'IBM Granite 4.1 30B via Ollama · 131k context · tools'
+  },
+  {
+    id: 'nemotron-3-nano:4b',
+    label: 'Nemotron 3 Nano (4B Param)',
+    description: 'NVIDIA Nemotron 3 Nano 4B via Ollama · 262k context · tools/thinking'
   },
   {
     id: 'nemotron3:33b',
@@ -686,6 +711,11 @@ const OLLAMA_STATIC_MODELS = [
       'Mistral Devstral Small 2 24B via Ollama · 393k context · vision/tools · agentic coding'
   },
   {
+    id: 'ministral-3:3b',
+    label: 'Ministral 3 (3B Param)',
+    description: 'Mistral Ministral 3 3B via Ollama · 262k context · vision/tools'
+  },
+  {
     id: 'ministral-3:14b',
     label: 'Ministral 3 (14B Param)',
     description: 'Mistral Ministral 3 14B via Ollama · 262k context · vision/tools'
@@ -694,6 +724,11 @@ const OLLAMA_STATIC_MODELS = [
     id: 'llama3.1:8b',
     label: 'Llama 3.1 (8B Param)',
     description: 'Meta Llama 3.1 8B via Ollama · 131k context · tools'
+  },
+  {
+    id: 'deepseek-r1:1.5b',
+    label: 'DeepSeek R1 (1.5B Param)',
+    description: 'DeepSeek R1 Distill Qwen 1.5B via Ollama · 131k context · tools/thinking'
   },
   {
     id: 'deepseek-r1:8b',

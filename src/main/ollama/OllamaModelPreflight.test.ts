@@ -42,6 +42,13 @@ describe('resolveOllamaModelFamily', () => {
       'north_mini_code_1_0'
     )
     expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('llama3_2_3b')
+    expect(resolveOllamaModelFamily('qwen3.5:2b')).toBe('qwen3_5_2b')
+    expect(resolveOllamaModelFamily('gemma3:4b')).toBe('gemma3_4b')
+    expect(resolveOllamaModelFamily('lfm2.5-thinking:1.2b')).toBe('lfm2_5_thinking_1_2b')
+    expect(resolveOllamaModelFamily('granite4:3b')).toBe('granite4_3b')
+    expect(resolveOllamaModelFamily('nemotron-3-nano:4b')).toBe('nemotron3_nano_4b')
+    expect(resolveOllamaModelFamily('ministral-3:3b')).toBe('ministral_3_3b')
+    expect(resolveOllamaModelFamily('deepseek-r1:1.5b')).toBe('deepseek_r1_1_5b')
   })
 
   it('recognizes live daemon architectures for the new families', () => {
@@ -111,6 +118,14 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '13.9B'
       })
     ).toBe('ministral_3_14b')
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'mistral3',
+        parameterSize: '3.4B'
+      })
+    ).toBe('ministral_3_3b')
     // An explicit brand word in a custom tag's own metadata still wins.
     expect(
       resolveOllamaModelFamily('local-custom:latest', {
@@ -123,9 +138,18 @@ describe('resolveOllamaModelFamily', () => {
   })
 
   it('splits the shared qwen35 architecture by parameter size', () => {
-    // `qwen35` is what the daemon reports for BOTH 3.5 sizes. Before this arm
-    // the generic `qwen3` fallback sent every 3.5 tag to the 4B profile — the
-    // 9B included, because its real "9.7B" never matched the `9b` needle.
+    // `qwen35` is what the daemon reports for all three dense 3.5 sizes. Before
+    // this arm the generic `qwen3` fallback sent every 3.5 tag to the 4B
+    // profile — the 9B included, because its real "9.7B" never matched the
+    // `9b` needle.
+    expect(
+      resolveOllamaModelFamily('local-custom:latest', {
+        id: 'local-custom:latest',
+        label: 'Local Custom',
+        family: 'qwen35',
+        parameterSize: '2.2B'
+      })
+    ).toBe('qwen3_5_2b')
     expect(
       resolveOllamaModelFamily('local-custom:latest', {
         id: 'local-custom:latest',
@@ -151,6 +175,25 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '36.0B'
       })
     ).toBe('qwen3_6_35b')
+  })
+
+  it('splits small DeepSeek and Nemotron metadata from their larger siblings', () => {
+    expect(
+      resolveOllamaModelFamily('local-deepseek:latest', {
+        id: 'local-deepseek:latest',
+        label: 'DeepSeek R1 local',
+        family: 'deepseek-r1',
+        parameterSize: '1.8B'
+      })
+    ).toBe('deepseek_r1_1_5b')
+    expect(
+      resolveOllamaModelFamily('local-nemotron:latest', {
+        id: 'local-nemotron:latest',
+        label: 'Nemotron local',
+        family: 'nemotron_h',
+        parameterSize: '4.0B'
+      })
+    ).toBe('nemotron3_nano_4b')
   })
 
   it('uses exact tags before architecture metadata that could be ambiguous', () => {
@@ -228,6 +271,29 @@ describe('estimateOllamaModelRamGb', () => {
 })
 
 describe('evaluateOllamaModelPreflight', () => {
+  it('keeps every lightweight tag on its small family and RAM estimate', () => {
+    const cases = new Map([
+      ['ministral-3:3b', 'ministral_3_3b'],
+      ['granite4:3b', 'granite4_3b'],
+      ['qwen3.5:2b', 'qwen3_5_2b'],
+      ['deepseek-r1:1.5b', 'deepseek_r1_1_5b'],
+      ['nemotron-3-nano:4b', 'nemotron3_nano_4b'],
+      ['lfm2.5-thinking:1.2b', 'lfm2_5_thinking_1_2b'],
+      ['gemma3:4b', 'gemma3_4b']
+    ])
+    for (const [modelId, family] of cases) {
+      const result = evaluateOllamaModelPreflight({
+        modelId,
+        modelLabel: modelId,
+        installedModelIds: [modelId],
+        totalMemoryBytes: 8 * GB
+      })
+      expect(result.family).toBe(family)
+      expect(result.guidance).not.toContain('is a local model. Match the selected tier')
+      expect(result.warnings.some((entry) => entry.id === 'ollama-ram-tight')).toBe(false)
+    }
+  })
+
   it('surfaces honest Qwen 3.5 guidance and scope hint', () => {
     const result = evaluateOllamaModelPreflight({
       modelId: 'qwen3.5:9b',
