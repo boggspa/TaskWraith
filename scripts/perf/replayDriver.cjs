@@ -14,6 +14,85 @@
 const DEFAULT_BATCH_SIZE = 8
 
 /**
+ * Apply one replay event with an optional no-progress deadline.
+ * The caller still owns transport teardown; this helper only makes a hung
+ * save/get operation observable and rejects with the exact event identity.
+ *
+ * @param {object} ctx
+ * @param {object} event
+ * @param {{ eventNumber: number, totalEvents: number, startedAtMs: number }} meta
+ * @param {object} options
+ */
+function applyReplayEventWithTimeout(ctx, event, meta, options) {
+  const rawTimeout = options.eventTimeoutMs
+  if (rawTimeout == null) return applyReplayEvent(ctx, event)
+
+  const timeoutMs = Number(rawTimeout)
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('eventTimeoutMs must be a positive finite number when provided')
+  }
+
+  const timers = options.timers || {
+    setTimeout,
+    clearTimeout
+  }
+  const nowMs = typeof options.nowMs === 'function' ? options.nowMs : Date.now
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = timers.setTimeout(() => {
+      if (settled) return
+      settled = true
+      const timedOutAtMs = nowMs()
+      const error = new Error(
+        `T2 replay made no progress for ${timeoutMs}ms at event ${meta.eventNumber}/${meta.totalEvents} (seq=${String(event.seq)}, kind=${String(event.kind)})`
+      )
+      error.code = 'T2_REPLAY_STALL_TIMEOUT'
+      error.replayEvent = {
+        eventNumber: meta.eventNumber,
+        totalEvents: meta.totalEvents,
+        seq: event.seq,
+        kind: event.kind,
+        timeoutMs,
+        startedAtMs: meta.startedAtMs,
+        timedOutAtMs
+      }
+      if (typeof options.onStall === 'function') {
+        try {
+          options.onStall({
+            ...error.replayEvent,
+            elapsedMs: Math.max(0, timedOutAtMs - meta.startedAtMs),
+            error
+          })
+        } catch (callbackError) {
+          error.progressCallbackError = String(
+            callbackError && callbackError.message ? callbackError.message : callbackError
+          )
+        }
+      }
+      reject(error)
+    }, timeoutMs)
+
+    Promise.resolve()
+      .then(() => applyReplayEvent(ctx, event))
+      .then(
+        (result) => {
+          if (settled) return
+          settled = true
+          timers.clearTimeout(timer)
+          resolve(result)
+        },
+        (error) => {
+          if (settled) return
+          settled = true
+          timers.clearTimeout(timer)
+          reject(error)
+        }
+      )
+  })
+}
+
+/**
  * @typedef {object} PageApiAdapter
  * @property {(chatId: string) => Promise<object|null>} getChat
  * @property {(chat: object) => Promise<object|unknown>} saveChat
@@ -210,6 +289,11 @@ function structuredCloneChat(chat) {
  * @param {number} [options.batchSize]
  * @param {number} [options.maxEvents] — optional cap for smoke
  * @param {(info: object) => void} [options.onProgress]
+ * @param {(info: object) => void} [options.onEventStart]
+ * @param {(info: object) => void} [options.onStall]
+ * @param {number} [options.eventTimeoutMs] — per-event no-progress deadline
+ * @param {() => number} [options.nowMs]
+ * @param {{ setTimeout: Function, clearTimeout: Function }} [options.timers]
  */
 async function runDeterministicReplay(options) {
   const fixture = options.fixture
@@ -248,11 +332,40 @@ async function runDeterministicReplay(options) {
     }))
   }))
 
-  for (const event of events) {
-    const result = await applyReplayEvent(ctx, event)
+  const nowMs = typeof options.nowMs === 'function' ? options.nowMs : Date.now
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+    const event = events[eventIndex]
+    const eventNumber = eventIndex + 1
+    const startedAtMs = nowMs()
+    if (typeof options.onEventStart === 'function') {
+      options.onEventStart({
+        eventNumber,
+        totalEvents: events.length,
+        seq: event.seq,
+        kind: event.kind,
+        startedAtMs
+      })
+    }
+    const result = await applyReplayEventWithTimeout(
+      ctx,
+      event,
+      { eventNumber, totalEvents: events.length, startedAtMs },
+      options
+    )
+    const completedAtMs = nowMs()
     results.push({ seq: event.seq, kind: event.kind, ...result })
     if (typeof options.onProgress === 'function') {
-      options.onProgress({ seq: event.seq, kind: event.kind, result })
+      options.onProgress({
+        eventNumber,
+        completedEvents: eventNumber,
+        totalEvents: events.length,
+        seq: event.seq,
+        kind: event.kind,
+        startedAtMs,
+        completedAtMs,
+        elapsedMs: Math.max(0, completedAtMs - startedAtMs),
+        result
+      })
     }
   }
 

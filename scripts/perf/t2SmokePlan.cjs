@@ -81,7 +81,10 @@ function buildT2SmokePlan(options = {}) {
         id: 'replay',
         action: 'runDeterministicReplay',
         maxEvents: 24,
-        note: 'Bounded prefix/tail saveChat batches; no provider spawns'
+        noProgressWatchdog: 'per-event bounded deadline',
+        progressArtifact: 'perf-t2-progress.json',
+        progressIsAuthoritativeEvidence: false,
+        note: 'Literal replay schedule with diagnostic phase/event progress; no provider spawns and progress never satisfies an authority gate'
       },
       {
         id: 'report',

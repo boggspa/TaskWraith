@@ -68,6 +68,69 @@ const {
 const { applyUnsupportedAnnotations, finalizePartialT2Report } = require('./unsupportedMetrics.cjs')
 const { buildT2SmokePlan, summarizeT2SmokePlan } = require('./t2SmokePlan.cjs')
 
+const DEFAULT_REPLAY_STALL_TIMEOUT_MS = 5 * 60 * 1000
+const DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL = 100
+const DEFAULT_REPLAY_PROGRESS_INTERVAL_MS = 10 * 1000
+
+/**
+ * Atomic, explicitly non-authoritative phase/replay heartbeat.
+ * Writes through a sibling temp file so readers never observe partial JSON.
+ *
+ * @param {object} options
+ */
+function createT2ProgressJournal(options) {
+  const fsApi = options.fs || fs
+  const nowMs = typeof options.nowMs === 'function' ? options.nowMs : Date.now
+  const progressPath = path.join(options.artifactDir, 'perf-t2-progress.json')
+  const tempPath = `${progressPath}.tmp-${process.pid}`
+  const log = typeof options.log === 'function' ? options.log : null
+  let state = {
+    schemaVersion: 1,
+    kind: 'taskwraith-perf-t2-progress',
+    status: 'running',
+    phase: 'prepared',
+    completedEvents: 0,
+    currentEvent: null,
+    ...options.initial,
+    diagnosticOnly: true,
+    authoritativeEvidence: false,
+    updatedAt: new Date(nowMs()).toISOString()
+  }
+
+  function update(patch, control = {}) {
+    const timestampMs = nowMs()
+    state = {
+      ...state,
+      ...patch,
+      schemaVersion: 1,
+      kind: 'taskwraith-perf-t2-progress',
+      diagnosticOnly: true,
+      authoritativeEvidence: false,
+      updatedAt: new Date(timestampMs).toISOString()
+    }
+    fsApi.writeFileSync(tempPath, `${JSON.stringify(state, null, 2)}\n`, 'utf8')
+    fsApi.renameSync(tempPath, progressPath)
+    if (log && control.log !== false) {
+      const total = Number(state.totalEvents) || 0
+      const completed = Number(state.completedEvents) || 0
+      const percent = total > 0 ? ((completed / total) * 100).toFixed(1) : '0.0'
+      const event = state.currentEvent
+        ? ` seq=${String(state.currentEvent.seq)} kind=${String(state.currentEvent.kind)}`
+        : ''
+      log(
+        `[T2] ${String(state.status)}/${String(state.phase)} ${completed}/${total} (${percent}%)${event}`
+      )
+    }
+    return state
+  }
+
+  return {
+    path: progressPath,
+    update,
+    snapshot: () => state
+  }
+}
+
 function parseArgs(argv) {
   /** @type {Record<string, string | boolean | number>} */
   const out = {
@@ -107,6 +170,8 @@ function parseArgs(argv) {
     else if (arg.startsWith('--scale-down=')) out.scaleDown = arg.slice('--scale-down='.length)
     else if (arg.startsWith('--max-replay-events=')) {
       out.maxReplayEvents = arg.slice('--max-replay-events='.length)
+    } else if (arg.startsWith('--replay-stall-timeout-ms=')) {
+      out.replayStallTimeoutMs = arg.slice('--replay-stall-timeout-ms='.length)
     } else if (arg.startsWith('--home=')) out.home = arg.slice('--home='.length)
     else {
       throw new Error(`Unknown argument: ${arg}`)
@@ -147,6 +212,7 @@ Options:
   --port=<n>                        Renderer CDP port
   --inspect-port=<n>                Main inspector port (must differ)
   --workload=… --seed=… --mode=… --fx-posture=… --lean --scale-down=… --max-replay-events=…
+  --replay-stall-timeout-ms=<n>     Fail closed if one replay event makes no progress (default: 300000)
   --skip-build                      Skip build (NON-AUTHORITATIVE; refuses official-baseline path)
   --help
 `.trim()
@@ -201,6 +267,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const scaleDown = args.scaleDown == null ? undefined : Number(args.scaleDown)
   if (scaleDown != null && (!Number.isFinite(scaleDown) || scaleDown < 1)) {
     throw new Error('--scale-down must be >= 1')
+  }
+
+  const replayStallTimeoutMs = Number(
+    args.replayStallTimeoutMs == null
+      ? options.replayStallTimeoutMs == null
+        ? DEFAULT_REPLAY_STALL_TIMEOUT_MS
+        : options.replayStallTimeoutMs
+      : args.replayStallTimeoutMs
+  )
+  if (!Number.isFinite(replayStallTimeoutMs) || replayStallTimeoutMs <= 0) {
+    throw new Error('--replay-stall-timeout-ms must be a positive finite number')
   }
 
   const repoRoot = options.repoRoot || path.resolve(__dirname, '..', '..')
@@ -400,6 +477,81 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
   report.isolation = isolationVerification
 
+  const progressJournal = willLaunch
+    ? createT2ProgressJournal({
+        artifactDir,
+        fs: options.progressFs,
+        nowMs: options.progressNowMs,
+        log:
+          options.progressLog === undefined
+            ? require.main === module
+              ? console.error
+              : null
+            : options.progressLog,
+        initial: {
+          runId: env.runId,
+          gitSha,
+          instanceId: userDataResolved.sanitizedInstanceId,
+          workload,
+          totalEvents: fixture.replaySchedule.length,
+          stallTimeoutMs: replayStallTimeoutMs,
+          startedAt,
+          note: 'Diagnostic progress only; never satisfies authoritativeBaseline or metricsCollected.'
+        }
+      })
+    : null
+  const progressPath = progressJournal ? progressJournal.path : null
+  let capturePhase = 'prepared'
+
+  function updateProgress(patch, control) {
+    if (!progressJournal) return null
+    return progressJournal.update(patch, control)
+  }
+
+  function setCapturePhase(phase, patch = {}, control = {}) {
+    capturePhase = phase
+    return updateProgress({ phase, ...patch }, control)
+  }
+
+  function recordProgressFailure(error) {
+    if (!progressJournal) return
+    const replayEvent = error && error.replayEvent ? error.replayEvent : null
+    try {
+      updateProgress(
+        {
+          status: 'failed',
+          phase: replayEvent ? 'replay_stalled' : capturePhase,
+          currentEvent: replayEvent
+            ? {
+                eventNumber: replayEvent.eventNumber,
+                totalEvents: replayEvent.totalEvents,
+                seq: replayEvent.seq,
+                kind: replayEvent.kind,
+                startedAtMs: replayEvent.startedAtMs,
+                elapsedMs: Math.max(0, replayEvent.timedOutAtMs - replayEvent.startedAtMs)
+              }
+            : progressJournal.snapshot().currentEvent,
+          error: {
+            code: error && error.code ? String(error.code) : null,
+            message: String(error && error.message ? error.message : error)
+          },
+          failedAt: new Date(
+            typeof options.progressNowMs === 'function' ? options.progressNowMs() : Date.now()
+          ).toISOString()
+        },
+        { log: true }
+      )
+    } catch (progressError) {
+      if (error && typeof error === 'object') {
+        error.progressJournalError = String(
+          progressError && progressError.message ? progressError.message : progressError
+        )
+      }
+    }
+  }
+
+  if (progressJournal) updateProgress({}, { log: true })
+
   /** @type {object|null} */
   let childSession = null
   /** @type {object|null} */
@@ -418,6 +570,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     /** @type {object|null} */
     let mainInspector = null
     try {
+      setCapturePhase('preflight', {}, { log: true })
       await assertLaunchPortsFree(
         {
           remoteDebuggingPort: spawnPlan.remoteDebuggingPort,
@@ -428,6 +581,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       )
 
       if (skipBuild) {
+        setCapturePhase('build_skipped', {}, { log: true })
         buildResult = {
           skipped: true,
           authoritative: false,
@@ -440,6 +594,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
       } else {
         // A: authoritative --launch builds the required Swift daemon and Electron; fail closed.
+        setCapturePhase('build', {}, { log: true })
         buildResult = await runIsolatedBuild({
           repoRoot,
           adapters: options.buildAdapters || {},
@@ -451,9 +606,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             'Refusing --launch: build skipped — would launch stale out/. Remove --skip-build or provide a real build adapter.'
           )
         }
+        setCapturePhase('build_complete', {}, { log: true })
       }
 
       // Blocker G: re-prove containment immediately before Electron spawn.
+      setCapturePhase('isolation_pre_spawn', {}, { log: true })
       if (homeResolved.authoritativeHome) {
         homeContainment = assertFilesystemIsolatedHomeContainment({
           home,
@@ -472,6 +629,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         report.isolation = isolationVerification
       }
 
+      setCapturePhase('launch', {}, { log: true })
       childSession = spawnExactElectronChild({
         spawnPlan,
         adapters: options.spawnAdapters || {}
@@ -481,8 +639,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         remoteDebuggingPort: spawnPlan.remoteDebuggingPort,
         mainInspectorPort: spawnPlan.mainInspectorPort
       })
+      updateProgress({ childPid: childSession.pid }, { log: false })
+      setCapturePhase('port_ownership', {}, { log: true })
       await assertExactChildOwnsDebugPorts(childSession, options.portOwnershipAdapters || {})
 
+      setCapturePhase('renderer_attach', {}, { log: true })
       renderer = await attachRendererCdpSession({
         port: spawnPlan.remoteDebuggingPort,
         WebSocket: options.WebSocket,
@@ -494,12 +655,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
           port: spawnPlan.mainInspectorPort,
           adapters: options.cdpAdapters || {}
         }))
+      setCapturePhase('main_inspector_attach', {}, { log: true })
       mainInspector = await attachMainInspectorSession({
         webSocketDebuggerUrl: inspectorUrl,
         WebSocket: options.WebSocket
       })
 
       // Blocker F+G: fail closed unless child lexical + canonical HOME/userData match.
+      setCapturePhase('isolation_verify', {}, { log: true })
       const expectedHomeRealpath =
         (homeContainment && homeContainment.canonicalHome) ||
         isolationVerification.expectedHomeRealpath
@@ -543,6 +706,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         report.environment.authoritativeBaseline = true
         env.authoritativeBaseline = true
       }
+      setCapturePhase(
+        'isolation_verified',
+        { authoritativeBaseline: report.environment.authoritativeBaseline === true },
+        { log: true }
+      )
 
       const profileDir = path.join(artifactDir, 'profiles')
       fs.mkdirSync(profileDir, { recursive: true })
@@ -550,6 +718,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       const rendererCpuPath = path.join(profileDir, 'renderer.cpuprofile')
       const heapPath = path.join(profileDir, 'renderer.heapsnapshot')
 
+      setCapturePhase('profiles_start', {}, { log: true })
       const rendererCpu = await collectRendererCpuProfile(renderer, {
         cpuProfilePath: rendererCpuPath,
         fs
@@ -564,15 +733,115 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       const api = createCdpPageApiAdapter(page)
       const maxReplayEvents =
         args.maxReplayEvents == null ? undefined : Number(args.maxReplayEvents)
+      const replayEventTotal =
+        maxReplayEvents == null
+          ? fixture.replaySchedule.length
+          : Math.min(fixture.replaySchedule.length, maxReplayEvents)
+      const replayNowMs =
+        typeof options.replayNowMs === 'function'
+          ? options.replayNowMs
+          : typeof options.progressNowMs === 'function'
+            ? options.progressNowMs
+            : Date.now
+      const progressEventInterval = Number(
+        options.progressEventInterval == null
+          ? DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL
+          : options.progressEventInterval
+      )
+      const progressIntervalMs = Number(
+        options.progressIntervalMs == null
+          ? DEFAULT_REPLAY_PROGRESS_INTERVAL_MS
+          : options.progressIntervalMs
+      )
+      if (!Number.isFinite(progressEventInterval) || progressEventInterval < 1) {
+        throw new Error('progressEventInterval must be a positive finite number')
+      }
+      if (!Number.isFinite(progressIntervalMs) || progressIntervalMs < 1) {
+        throw new Error('progressIntervalMs must be a positive finite number')
+      }
+      const replayStartedAtMs = replayNowMs()
+      let lastPublishedAtMs = replayStartedAtMs
+      setCapturePhase(
+        'replay',
+        {
+          totalEvents: replayEventTotal,
+          completedEvents: 0,
+          currentEvent: null,
+          replayStartedAt: new Date(replayStartedAtMs).toISOString()
+        },
+        { log: true }
+      )
       replayResult = await runDeterministicReplay({
         fixture,
         api,
         maxEvents: maxReplayEvents,
-        batchSize: 8
+        batchSize: 8,
+        eventTimeoutMs: replayStallTimeoutMs,
+        nowMs: replayNowMs,
+        timers: options.replayTimerAdapters,
+        onEventStart(info) {
+          if (info.eventNumber !== 1) return
+          updateProgress(
+            {
+              currentEvent: {
+                eventNumber: info.eventNumber,
+                totalEvents: info.totalEvents,
+                seq: info.seq,
+                kind: info.kind,
+                startedAtMs: info.startedAtMs
+              }
+            },
+            { log: true }
+          )
+        },
+        onProgress(info) {
+          const now = info.completedAtMs
+          const shouldPublish =
+            info.completedEvents === 1 ||
+            info.completedEvents === info.totalEvents ||
+            info.completedEvents % progressEventInterval === 0 ||
+            now - lastPublishedAtMs >= progressIntervalMs
+          if (!shouldPublish) return
+          const elapsedMs = Math.max(1, now - replayStartedAtMs)
+          const eventsPerSecond = (info.completedEvents * 1000) / elapsedMs
+          const remainingEvents = Math.max(0, info.totalEvents - info.completedEvents)
+          const etaMs =
+            eventsPerSecond > 0 ? Math.round((remainingEvents / eventsPerSecond) * 1000) : null
+          lastPublishedAtMs = now
+          updateProgress(
+            {
+              completedEvents: info.completedEvents,
+              currentEvent: {
+                eventNumber: info.eventNumber,
+                totalEvents: info.totalEvents,
+                seq: info.seq,
+                kind: info.kind,
+                startedAtMs: info.startedAtMs,
+                completedAtMs: info.completedAtMs,
+                elapsedMs: info.elapsedMs
+              },
+              replayElapsedMs: elapsedMs,
+              eventsPerSecond,
+              etaMs
+            },
+            { log: true }
+          )
+        }
       })
 
+      setCapturePhase(
+        'replay_complete',
+        {
+          completedEvents: replayResult.eventCount,
+          currentEvent: null,
+          replayCompletedAt: new Date(replayNowMs()).toISOString()
+        },
+        { log: true }
+      )
+      setCapturePhase('profiles_stop', {}, { log: true })
       const rendererStopped = await rendererCpu.stop()
       const mainStopped = await mainCpu.stop()
+      setCapturePhase('heap_snapshot', {}, { log: true })
       const heapResult = await collectRendererHeapSnapshot(renderer, {
         heapSnapshotPath: heapPath,
         fs
@@ -600,11 +869,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }
       }
       profilesCaptured = true
+      setCapturePhase('capture_complete', {}, { log: true })
     } catch (error) {
       launchError = error instanceof Error ? error : new Error(String(error))
+      recordProgressFailure(launchError)
       throw launchError
     } finally {
       // C: always close sessions + terminate exact owned tree; preserve primary error.
+      let childTerminationSucceeded = childSession == null
       if (renderer && typeof renderer.close === 'function') {
         try {
           renderer.close()
@@ -628,6 +900,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       if (childSession) {
         try {
           await terminateExactChild(childSession, options.terminateOptions || {})
+          childTerminationSucceeded = true
         } catch (error) {
           cleanupFailures.push({
             phase: 'terminateExactChild',
@@ -639,6 +912,29 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         report.cleanupFailures = cleanupFailures
         if (launchError) {
           launchError.cleanupFailures = cleanupFailures
+        }
+      }
+      if (progressJournal) {
+        try {
+          updateProgress(
+            {
+              cleanup: {
+                completed: true,
+                childTerminationAttempted: Boolean(childSession),
+                childTerminationSucceeded,
+                failures: cleanupFailures
+              }
+            },
+            { log: false }
+          )
+        } catch (progressError) {
+          if (launchError) {
+            launchError.progressJournalCleanupError = String(
+              progressError && progressError.message ? progressError.message : progressError
+            )
+          } else {
+            throw progressError
+          }
         }
       }
       // never auto-delete artifacts
@@ -664,6 +960,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     report.replay = {
       eventCount: replayResult.eventCount,
       saveCount: replayResult.saveCount,
+      stallTimeoutMs: replayStallTimeoutMs,
+      progressPath,
+      progressIsAuthoritativeEvidence: false,
       unsupportedCount: replayResult.unsupported.length,
       unsupported: replayResult.unsupported.slice(0, 50)
     }
@@ -680,6 +979,20 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   const planPath = path.join(artifactDir, 'perf-t2-launch-plan.json')
   fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8')
   fs.writeFileSync(planPath, `${JSON.stringify(spawnPlan, null, 2)}\n`, 'utf8')
+  if (progressJournal) {
+    setCapturePhase(
+      'completed',
+      {
+        status: 'completed',
+        completedEvents: replayResult ? replayResult.eventCount : 0,
+        currentEvent: null,
+        reportPath,
+        planPath,
+        completedAt: report.environment.endedAt
+      },
+      { log: true }
+    )
+  }
 
   return {
     ok: true,
@@ -692,6 +1005,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     isolation: isolationVerification,
     reportPath,
     planPath,
+    progressPath,
     report,
     spawnPlan,
     materializeResult,
@@ -731,6 +1045,7 @@ if (require.main === module) {
             authoritativeBaseline: result.provenance.authoritativeBaseline,
             reportPath: result.reportPath,
             planPath: result.planPath,
+            progressPath: result.progressPath,
             shellCommand: result.spawnPlan.shellCommand,
             gatesEvaluated: result.gateProbe.gates && result.gateProbe.gates.evaluated,
             replaySaveCount: result.replayResult ? result.replayResult.saveCount : null
@@ -747,6 +1062,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_REPLAY_STALL_TIMEOUT_MS,
+  DEFAULT_REPLAY_PROGRESS_EVENT_INTERVAL,
+  DEFAULT_REPLAY_PROGRESS_INTERVAL_MS,
+  createT2ProgressJournal,
   parseArgs,
   runT2BaselineCli
 }

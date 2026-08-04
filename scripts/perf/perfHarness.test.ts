@@ -889,7 +889,11 @@ describe('T2 runner (no Electron launch)', () => {
     collectRendererHeapSnapshot,
     verifyArtifactFile
   } = require('./collectors/cdpRendererCollector.cjs')
-  const { runT2BaselineCli } = require('./runT2Baseline.cjs')
+  const {
+    DEFAULT_REPLAY_STALL_TIMEOUT_MS,
+    createT2ProgressJournal,
+    runT2BaselineCli
+  } = require('./runT2Baseline.cjs')
   const {
     applyUnsupportedAnnotations,
     createUnsupportedObservationLedger
@@ -1181,6 +1185,144 @@ describe('T2 runner (no Electron launch)', () => {
     }
   })
 
+  it('replay driver reports exact event starts and completed progress', async () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 43,
+      lean: true,
+      scaleDown: 40,
+      baseTimestamp: 1_700_000_000_000
+    })
+    const starts = []
+    const completed = []
+    let clock = 1_000
+    const saved = new Map()
+    const result = await runDeterministicReplay({
+      fixture,
+      maxEvents: 3,
+      nowMs: () => {
+        clock += 10
+        return clock
+      },
+      api: {
+        getChat: async (id) => saved.get(id) || null,
+        saveChat: async (chat) => {
+          saved.set(chat.appChatId, chat)
+          return { ok: true }
+        }
+      },
+      onEventStart: (info) => starts.push(info),
+      onProgress: (info) => completed.push(info)
+    })
+
+    expect(result.eventCount).toBe(3)
+    expect(starts.map((row) => row.eventNumber)).toEqual([1, 2, 3])
+    expect(completed.map((row) => row.completedEvents)).toEqual([1, 2, 3])
+    expect(starts.every((row) => row.totalEvents === 3)).toBe(true)
+    expect(completed.every((row) => row.totalEvents === 3 && row.elapsedMs === 10)).toBe(true)
+    expect(completed.map((row) => [row.seq, row.kind])).toEqual(
+      fixture.replaySchedule.slice(0, 3).map((event) => [event.seq, event.kind])
+    )
+  })
+
+  it('replay watchdog fails closed with the exact stalled event identity', async () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 44,
+      lean: true,
+      scaleDown: 40,
+      baseTimestamp: 1_700_000_000_000
+    })
+    const firstEvent = fixture.replaySchedule[0]
+    const stalls = []
+    let nowCalls = 0
+
+    await expect(
+      runDeterministicReplay({
+        fixture,
+        maxEvents: 1,
+        eventTimeoutMs: 25,
+        nowMs: () => (nowCalls++ === 0 ? 1_000 : 1_025),
+        timers: {
+          setTimeout(handler, timeoutMs) {
+            expect(timeoutMs).toBe(25)
+            queueMicrotask(handler)
+            return 1
+          },
+          clearTimeout() {}
+        },
+        api: {
+          getChat: async () => null,
+          saveChat: async () => new Promise(() => {})
+        },
+        onStall: (info) => stalls.push(info)
+      })
+    ).rejects.toMatchObject({
+      code: 'T2_REPLAY_STALL_TIMEOUT',
+      replayEvent: {
+        eventNumber: 1,
+        totalEvents: 1,
+        seq: firstEvent.seq,
+        kind: firstEvent.kind,
+        timeoutMs: 25,
+        startedAtMs: 1_000,
+        timedOutAtMs: 1_025
+      }
+    })
+    expect(stalls).toHaveLength(1)
+    expect(stalls[0]).toMatchObject({
+      eventNumber: 1,
+      seq: firstEvent.seq,
+      kind: firstEvent.kind,
+      elapsedMs: 25
+    })
+  })
+
+  it('writes atomic diagnostic-only T2 progress without granting authority', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'tw-t2-progress-'))
+    const logs = []
+    let clock = Date.parse('2026-08-04T05:00:00.000Z')
+    try {
+      const journal = createT2ProgressJournal({
+        artifactDir: dir,
+        nowMs: () => clock,
+        log: (line) => logs.push(line),
+        initial: {
+          runId: 'perf-t2-test',
+          totalEvents: 10,
+          stallTimeoutMs: DEFAULT_REPLAY_STALL_TIMEOUT_MS
+        }
+      })
+      journal.update({ phase: 'replay', completedEvents: 4 }, { log: true })
+      clock += 25
+      journal.update(
+        {
+          status: 'failed',
+          phase: 'replay_stalled',
+          currentEvent: { eventNumber: 5, totalEvents: 10, seq: 5, kind: 'append_user' }
+        },
+        { log: true }
+      )
+
+      const projection = JSON.parse(readFileSync(journal.path, 'utf8'))
+      expect(projection).toMatchObject({
+        schemaVersion: 1,
+        kind: 'taskwraith-perf-t2-progress',
+        diagnosticOnly: true,
+        authoritativeEvidence: false,
+        status: 'failed',
+        phase: 'replay_stalled',
+        completedEvents: 4,
+        currentEvent: { eventNumber: 5, seq: 5, kind: 'append_user' },
+        stallTimeoutMs: DEFAULT_REPLAY_STALL_TIMEOUT_MS
+      })
+      expect(existsSync(`${journal.path}.tmp-${process.pid}`)).toBe(false)
+      expect(logs.at(-1)).toContain('[T2] failed/replay_stalled 4/10 (40.0%)')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('port preflight refuses occupied / answering CDP via adapters', async () => {
     await expect(
       assertLaunchPortsFree(
@@ -1213,6 +1355,10 @@ describe('T2 runner (no Electron launch)', () => {
   it('smoke plan never launches Electron and CLI defaults refuse --launch', async () => {
     const plan = buildT2SmokePlan({ workload: 'dual_run', seed: 1, scaleDown: 40 })
     expect(plan.doesNotLaunchElectron).toBe(true)
+    expect(plan.steps.find((step) => step.id === 'replay')).toMatchObject({
+      progressArtifact: 'perf-t2-progress.json',
+      progressIsAuthoritativeEvidence: false
+    })
     const summary = summarizeT2SmokePlan(plan)
     expect(summary.electronSkippedStepIds).toEqual(
       expect.arrayContaining(['build', 'launch', 'attach', 'profiles', 'terminate'])
@@ -1224,6 +1370,10 @@ describe('T2 runner (no Electron launch)', () => {
         forceIsolated: true
       })
     ).rejects.toThrow(/i-accept-isolated-launch/)
+
+    await expect(
+      runT2BaselineCli(['--workload=dual_run', '--dry-run', '--replay-stall-timeout-ms=0'])
+    ).rejects.toThrow(/positive finite number/)
 
     const dry = await runT2BaselineCli(
       [
