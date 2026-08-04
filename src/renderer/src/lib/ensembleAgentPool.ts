@@ -661,6 +661,63 @@ export function createPooledAgentFromParticipant(
   return upsertPooledAgent(agent, { propagate: false })
 }
 
+/** A participant-chosen pool label must stay small enough for roster prompts. */
+export const MAX_AGENT_POOL_ROLE_LABEL_CHARS = 50
+
+export type PooledAgentRegistrationMode = 'created' | 'coalesced' | 'updated'
+
+export interface PooledAgentRegistrationResult {
+  agent: PooledAgent
+  mode: PooledAgentRegistrationMode
+}
+
+function normalizedPoolRole(role: string): string {
+  return role.trim().toLocaleLowerCase()
+}
+
+function roleLabelLength(role: string): number {
+  return Array.from(role.trim()).length
+}
+
+function configFieldsEqualIgnoringRole(a: PooledAgentConfig, b: PooledAgentConfig): boolean {
+  return configFieldsEqual({ ...a, role: '' }, { ...b, role: '' })
+}
+
+/**
+ * Register an already-configured Ensemble participant in the renderer-owned
+ * Agent Pool. An existing valid link is updated in place. Otherwise an exact
+ * role/config match reuses its existing Agent; a role-only clash deliberately
+ * diverges into a new Agent with the normal non-colliding nickname policy.
+ */
+export function registerParticipantInAgentPool(
+  source: Pick<EnsembleParticipant, keyof PooledAgentConfig | 'pooledAgentId'>
+): PooledAgentRegistrationResult {
+  const config = pooledAgentConfigFromLike(source)
+  const normalizedRole = normalizedPoolRole(config.role)
+  if (!normalizedRole) throw new Error('Agent Pool registration requires an assigned role.')
+  if (roleLabelLength(config.role) > MAX_AGENT_POOL_ROLE_LABEL_CHARS) {
+    throw new Error(
+      `Agent Pool registration requires a role of at most ${MAX_AGENT_POOL_ROLE_LABEL_CHARS} characters.`
+    )
+  }
+
+  const linked = source.pooledAgentId ? getPooledAgent(source.pooledAgentId) : null
+  if (linked) {
+    const agent = configFieldsEqual(linked.config, config)
+      ? linked
+      : upsertPooledAgent({ ...linked, config }, { propagate: true })
+    return { agent, mode: configFieldsEqual(linked.config, config) ? 'coalesced' : 'updated' }
+  }
+
+  const matching = listPooledAgents().find(
+    (agent) =>
+      normalizedPoolRole(agent.config.role) === normalizedRole &&
+      configFieldsEqualIgnoringRole(agent.config, config)
+  )
+  if (matching) return { agent: matching, mode: 'coalesced' }
+  return { agent: createPooledAgentFromParticipant(source), mode: 'created' }
+}
+
 // ── linked propagation ──────────────────────────────────────────────────────
 
 /** Deterministic JSON with recursively-sorted keys, so two structurally-equal

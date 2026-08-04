@@ -2462,6 +2462,22 @@ const api = {
     presetName?: string
     error?: string
   }) => ipcRenderer.send('ensemble-roster-presets:import-result', payload),
+  onEnsembleAgentPoolRegistrationRequested: (
+    callback: (payload: { requestId: string; participant: unknown }) => void
+  ) => {
+    const wrapped = (_event: unknown, payload: { requestId: string; participant: unknown }): void =>
+      callback(payload)
+    ipcRenderer.on('ensemble-agent-pool:registration-requested', wrapped)
+    return () => ipcRenderer.removeListener('ensemble-agent-pool:registration-requested', wrapped)
+  },
+  sendEnsembleAgentPoolRegistrationResult: (payload: {
+    requestId: string
+    ok: boolean
+    pooledAgentId?: string
+    pooledAgentIdentity?: unknown
+    mode?: 'created' | 'coalesced' | 'updated'
+    error?: string
+  }) => ipcRenderer.send('ensemble-agent-pool:registration-result', payload),
   onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => {
     const wrapped = (_event: unknown, presetId: string): void => callback(presetId)
     ipcRenderer.on('ensemble-roster-presets:delete-requested', wrapped)

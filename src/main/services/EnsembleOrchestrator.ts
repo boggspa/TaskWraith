@@ -1245,6 +1245,32 @@ export interface EnsembleRosterEditResult {
     | 'participant_unreachable'
 }
 
+export interface EnsembleAgentPoolRegistrationCandidateResult {
+  ok: boolean
+  tool: 'ensemble_roster_edit'
+  action: 'register_in_agent_pool'
+  message: string
+  roundId?: string
+  participantId?: string
+  participant?: EnsembleParticipant
+  error?: 'no_active_run' | 'not_ensemble' | 'no_active_round' | 'stale_round' | 'role_required' | 'role_too_long'
+}
+
+export interface EnsembleAgentPoolRegistrationResult
+  extends Omit<EnsembleAgentPoolRegistrationCandidateResult, 'participant' | 'error'> {
+  pooledAgentId?: string
+  mode?: 'created' | 'coalesced' | 'updated'
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'no_active_round'
+    | 'stale_round'
+    | 'role_required'
+    | 'role_too_long'
+    | 'stale_participant'
+    | 'invalid_pool_receipt'
+}
+
 export interface EnsembleRosterPresetImportInput {
   roundId?: string
   preset: EnsembleRosterPreset
@@ -5709,6 +5735,191 @@ export class EnsembleOrchestrator {
       roundId: runtime.roundId,
       message: `ensemble_bossman_control: unsupported action "${action}".`,
       error: 'invalid_action'
+    }
+  }
+
+  agentPoolRegistrationCandidateForRun(
+    runId: string | undefined,
+    input: { roundId?: string } = {}
+  ): EnsembleAgentPoolRegistrationCandidateResult {
+    const action = 'register_in_agent_pool' as const
+    const caller = this.actionableRunForTool(runId)
+    if (!caller) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'Agent Pool registration requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const chat = this.deps.getChat(caller.chatId)
+    if (!chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'The active chat is not an Ensemble chat.',
+        error: 'not_ensemble'
+      }
+    }
+    const runtime = this.roundsByChatId.get(caller.chatId)
+    if (!runtime || runtime.roundId !== caller.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        message: 'There is no active Ensemble round for this Agent Pool registration.',
+        error: 'no_active_round'
+      }
+    }
+    if (input.roundId && input.roundId !== runtime.roundId) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        message: 'Agent Pool registration rejected: roundId is no longer active.',
+        error: 'stale_round'
+      }
+    }
+    const participant = chat.ensemble.participants.find(
+      (candidate) => candidate.id === caller.participant.id
+    )
+    if (!participant) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: caller.participant.id,
+        message: 'Agent Pool registration rejected: the calling participant is no longer in the roster.',
+        error: 'no_active_run'
+      }
+    }
+    const role = participant.role.trim()
+    if (!role) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: participant.id,
+        message: 'Agent Pool registration requires the participant to have an assigned role.',
+        error: 'role_required'
+      }
+    }
+    if (Array.from(role).length > 50) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: runtime.roundId,
+        participantId: participant.id,
+        message: 'Agent Pool registration requires a role of at most 50 characters; shorten the assigned role first.',
+        error: 'role_too_long'
+      }
+    }
+    return {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action,
+      roundId: runtime.roundId,
+      participantId: participant.id,
+      participant,
+      message: 'The calling participant is eligible to register its assigned role in the Agent Pool.'
+    }
+  }
+
+  registerParticipantInAgentPoolForRun(
+    runId: string | undefined,
+    input: {
+      roundId?: string
+      expectedRole: string
+      pooledAgentId: string
+      pooledAgentIdentity: PooledAgentIdentitySnapshot
+      mode: 'created' | 'coalesced' | 'updated'
+    }
+  ): EnsembleAgentPoolRegistrationResult {
+    const candidate = this.agentPoolRegistrationCandidateForRun(runId, input)
+    const action = 'register_in_agent_pool' as const
+    if (!candidate.ok || !candidate.participant || !candidate.roundId || !candidate.participantId) {
+      return candidate
+    }
+    if (candidate.participant.role !== input.expectedRole) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: candidate.roundId,
+        participantId: candidate.participantId,
+        message: 'Agent Pool registration rejected because the participant role changed while the pool was updating.',
+        error: 'stale_participant'
+      }
+    }
+    if (!isPooledAgentRegistrationReceipt(input)) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: candidate.roundId,
+        participantId: candidate.participantId,
+        message: 'Agent Pool registration rejected an invalid renderer receipt.',
+        error: 'invalid_pool_receipt'
+      }
+    }
+    const activeCaller = this.actionableRunForTool(runId)
+    const chat = activeCaller ? this.deps.getChat(activeCaller.chatId) : undefined
+    const runtime = activeCaller ? this.roundsByChatId.get(activeCaller.chatId) : undefined
+    if (!chat?.ensemble || !runtime || runtime.roundId !== candidate.roundId || runtime.cancelled) {
+      return {
+        ok: false,
+        tool: 'ensemble_roster_edit',
+        action,
+        roundId: candidate.roundId,
+        participantId: candidate.participantId,
+        message: 'There is no active Ensemble round for this Agent Pool registration.',
+        error: 'no_active_round'
+      }
+    }
+    const nextParticipant = {
+      ...candidate.participant,
+      pooledAgentId: input.pooledAgentId,
+      pooledAgentIdentity: input.pooledAgentIdentity
+    }
+    const nextParticipants = chat.ensemble.participants.map((participant) =>
+      participant.id === candidate.participantId ? nextParticipant : participant
+    )
+    this.applyRosterEditToRuntime(runtime, 'edit_participant', candidate.participantId, nextParticipants)
+    const activeRound = this.applyRosterEditToActiveRound(
+      chat.ensemble.activeRound,
+      runtime.roundId,
+      nextParticipants
+    )
+    this.saveChatWithCheckpoint(
+      {
+        ...chat,
+        ensemble: { ...chat.ensemble, participants: nextParticipants, activeRound },
+        updatedAt: this.deps.now()
+      },
+      'participant-updated'
+    )
+    const caller = this.actionableRunForTool(runId)
+    if (caller?.participant.id === candidate.participantId) caller.participant = nextParticipant
+    return {
+      ok: true,
+      tool: 'ensemble_roster_edit',
+      action,
+      roundId: runtime.roundId,
+      participantId: candidate.participantId,
+      pooledAgentId: input.pooledAgentId,
+      mode: input.mode,
+      message:
+        input.mode === 'coalesced'
+          ? 'Linked this participant to the matching Agent Pool entry.'
+          : input.mode === 'updated'
+            ? 'Updated this participant’s linked Agent Pool entry.'
+            : 'Registered this participant in the Agent Pool.'
     }
   }
 
@@ -18811,6 +19022,26 @@ function pooledAgentTranscriptMetadata(participant: EnsembleParticipant): Record
     ...(typeof snapshot.hueEnabled === 'boolean' ? { hueEnabled: snapshot.hueEnabled } : {})
   }
   return { pooledAgentId: agentId, pooledAgentIdentity }
+}
+
+function isPooledAgentRegistrationReceipt(input: {
+  pooledAgentId: string
+  pooledAgentIdentity: PooledAgentIdentitySnapshot
+  mode: 'created' | 'coalesced' | 'updated'
+}): boolean {
+  const identity = input.pooledAgentIdentity
+  return (
+    typeof input.pooledAgentId === 'string' &&
+    input.pooledAgentId.startsWith('pooled-agent-') &&
+    input.pooledAgentId.length > 'pooled-agent-'.length &&
+    identity?.schemaVersion === 1 &&
+    identity.agentId === input.pooledAgentId &&
+    typeof identity.nickname === 'string' &&
+    Boolean(identity.nickname.trim()) &&
+    (identity.iconKind === 'named' || identity.iconKind === 'seed' || identity.iconKind === 'asset') &&
+    typeof identity.hue === 'number' &&
+    Number.isFinite(identity.hue)
+  )
 }
 
 function ensembleOllamaRunControls(participant: EnsembleParticipant): Partial<AgentRunPayload> {

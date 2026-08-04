@@ -2385,6 +2385,17 @@ declare global {
         presetName?: string
         error?: string
       }) => void
+      onEnsembleAgentPoolRegistrationRequested: (
+        callback: (payload: { requestId: string; participant: unknown }) => void
+      ) => () => void
+      sendEnsembleAgentPoolRegistrationResult: (payload: {
+        requestId: string
+        ok: boolean
+        pooledAgentId?: string
+        pooledAgentIdentity?: unknown
+        mode?: 'created' | 'coalesced' | 'updated'
+        error?: string
+      }) => void
       onEnsembleRosterPresetDeleteRequested: (callback: (presetId: string) => void) => () => void
       onWorkflowDefinitionsChanged: (
         callback: (payload: WorkflowDefinition[]) => void

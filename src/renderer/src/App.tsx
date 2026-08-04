@@ -504,7 +504,11 @@ import {
   subscribeEnsembleRosterPresets,
   type EnsembleRosterPreset
 } from './lib/ensembleRosterPresets'
-import { hydrateParticipantsWithPooledAgentIdentity } from './lib/ensembleAgentPool'
+import {
+  hydrateParticipantsWithPooledAgentIdentity,
+  pooledAgentIdentitySnapshot,
+  registerParticipantInAgentPool
+} from './lib/ensembleAgentPool'
 import {
   deriveActiveEnsembleWorkingPresentation,
   resolveWorkingIndicatorProviderPresentation
@@ -1506,6 +1510,26 @@ function App(): React.JSX.Element {
         })
       }
     })
+    const offPoolRegistration = window.api.onEnsembleAgentPoolRegistrationRequested?.((payload) => {
+      try {
+        const result = registerParticipantInAgentPool(
+          payload.participant as Parameters<typeof registerParticipantInAgentPool>[0]
+        )
+        window.api.sendEnsembleAgentPoolRegistrationResult({
+          requestId: payload.requestId,
+          ok: true,
+          pooledAgentId: result.agent.agentId,
+          pooledAgentIdentity: pooledAgentIdentitySnapshot(result.agent),
+          mode: result.mode
+        })
+      } catch (error) {
+        window.api.sendEnsembleAgentPoolRegistrationResult({
+          requestId: payload.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : 'Agent Pool registration failed.'
+        })
+      }
+    })
     const offDelete = window.api.onEnsembleRosterPresetDeleteRequested?.((presetId) => {
       try {
         deleteEnsembleRosterPreset(presetId)
@@ -1517,6 +1541,7 @@ function App(): React.JSX.Element {
       unsubscribe()
       offSave?.()
       offImport?.()
+      offPoolRegistration?.()
       offDelete?.()
     }
   }, [isChatPopoutWindow])

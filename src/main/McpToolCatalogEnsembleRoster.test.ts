@@ -17,6 +17,7 @@ describe('agent-authored Ensemble roster MCP schema', () => {
     const properties = rosterSchema?.properties
 
     expect(properties?.action?.enum).toContain('import_preset')
+    expect(properties?.action?.enum).toContain('register_in_agent_pool')
     expect(properties?.path?.type).toBe('string')
     expect(properties?.json).toMatchObject({ type: 'string', maxLength: 1_000_000 })
     expect(properties?.preset?.type).toBe('object')
@@ -35,6 +36,7 @@ describe('agent-authored Ensemble roster MCP schema', () => {
     expect(properties?.apply?.type).toBe('boolean')
     expect(rosterEdit?.description).toMatch(/single-provider chat/i)
     expect(rosterEdit?.description).toMatch(/do not call shell, file, or time tools/i)
+    expect(rosterEdit?.description).toMatch(/role max 50 chars/i)
   })
 
   it('makes the discovery tool usable as the setup and quota-selection preflight', () => {

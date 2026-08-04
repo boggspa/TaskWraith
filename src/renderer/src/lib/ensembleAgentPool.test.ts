@@ -56,6 +56,7 @@ import {
   POOL_ICON_NEUTRAL,
   POOLED_AGENT_STORAGE_KEY,
   propagatePooledAgentToPresets,
+  registerParticipantInAgentPool,
   rgbStringFromHexColor,
   removePooledAgent,
   subscribeEnsembleAgentPool,
@@ -122,6 +123,58 @@ describe('createPooledAgentFromParticipant', () => {
       sampleParticipant({ pooledAgentId: 'pooled-agent-source' })
     )
     expect((agent.config as Record<string, unknown>).pooledAgentId).toBeUndefined()
+  })
+})
+
+describe('registerParticipantInAgentPool', () => {
+  it('coalesces an equivalent role/config despite role casing', () => {
+    const existing = createPooledAgentFromParticipant(sampleParticipant({ role: 'Reviewer' }))
+    const result = registerParticipantInAgentPool(sampleParticipant({ role: ' reviewer ' }))
+
+    expect(result.mode).toBe('coalesced')
+    expect(result.agent.agentId).toBe(existing.agentId)
+    expect(listPooledAgents()).toHaveLength(1)
+  })
+
+  it('diverges a same-role participant whose configuration differs', () => {
+    const existing = createPooledAgentFromParticipant(sampleParticipant({ role: 'Reviewer' }))
+    const result = registerParticipantInAgentPool(
+      sampleParticipant({ role: 'Reviewer', instructions: 'Review only TypeScript.' })
+    )
+
+    expect(result.mode).toBe('created')
+    expect(result.agent.agentId).not.toBe(existing.agentId)
+    expect(listPooledAgents()).toHaveLength(2)
+  })
+
+  it('updates an explicitly linked Agent in place', () => {
+    const existing = createPooledAgentFromParticipant(sampleParticipant())
+    const result = registerParticipantInAgentPool(
+      sampleParticipant({ pooledAgentId: existing.agentId, instructions: 'Review carefully and report.' })
+    )
+
+    expect(result.mode).toBe('updated')
+    expect(result.agent.agentId).toBe(existing.agentId)
+    expect(getPooledAgent(existing.agentId)?.config.instructions).toBe('Review carefully and report.')
+  })
+
+  it('creates a fresh Agent when a participant link is orphaned', () => {
+    const result = registerParticipantInAgentPool(
+      sampleParticipant({ pooledAgentId: 'pooled-agent-no-longer-present' })
+    )
+
+    expect(result.mode).toBe('created')
+    expect(result.agent.agentId).not.toBe('pooled-agent-no-longer-present')
+  })
+
+  it('rejects a missing or overlong role instead of truncating it', () => {
+    expect(() => registerParticipantInAgentPool(sampleParticipant({ role: '  ' }))).toThrow(/assigned role/i)
+    expect(registerParticipantInAgentPool(sampleParticipant({ role: '🙂'.repeat(50) })).agent.config.role).toBe(
+      '🙂'.repeat(50)
+    )
+    expect(() =>
+      registerParticipantInAgentPool(sampleParticipant({ role: '🙂'.repeat(51) }))
+    ).toThrow(/at most 50/i)
   })
 })
 

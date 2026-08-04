@@ -2806,7 +2806,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS.',
+        'Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. A role-assigned participant may register itself in the Agent Pool (role max 50 chars); that only links/reuses an Agent and never changes authority. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2818,9 +2818,15 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         properties: {
           action: {
             type: 'string',
-            enum: ['add_participant', 'remove_participant', 'edit_participant', 'import_preset'],
+            enum: [
+              'add_participant',
+              'remove_participant',
+              'edit_participant',
+              'import_preset',
+              'register_in_agent_pool'
+            ],
             description:
-              'add_participant creates a new enabled participant; remove_participant removes an existing non-Boss participant; edit_participant patches provider/model/role/reasoning/permission fields; import_preset validates, saves, and optionally activates one standard TaskWraith roster-export JSON.'
+              'add_participant creates a new enabled participant; remove_participant removes an existing non-Boss participant; edit_participant patches provider/model/role/reasoning/permission fields; import_preset validates, saves, and optionally activates one standard TaskWraith roster-export JSON; register_in_agent_pool is self-only and uses the caller’s already-assigned role/config.'
           },
           roundId: {
             type: 'string',

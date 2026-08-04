@@ -2804,6 +2804,89 @@ describe('EnsembleOrchestrator', () => {
     expect(imported.message).toContain('Captain imported')
   })
 
+  it('lets any active role-assigned participant link only itself to an Agent Pool entry', async () => {
+    const harness = makeHarness({ initialChat: makeChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    const candidate = harness.orchestrator.agentPoolRegistrationCandidateForRun(runId)
+    expect(candidate).toMatchObject({ ok: true, participantId: 'claude' })
+    if (!candidate.ok || !candidate.participant) throw new Error('Expected registration candidate')
+
+    const result = harness.orchestrator.registerParticipantInAgentPoolForRun(runId, {
+      expectedRole: candidate.participant.role,
+      pooledAgentId: 'pooled-agent-reviewer',
+      pooledAgentIdentity: {
+        schemaVersion: 1,
+        agentId: 'pooled-agent-reviewer',
+        nickname: 'Reviewer',
+        iconKind: 'seed',
+        seed: 'pooled-agent-reviewer',
+        hue: 120
+      },
+      mode: 'created'
+    })
+
+    expect(result).toMatchObject({ ok: true, participantId: 'claude', mode: 'created' })
+    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'claude')).toMatchObject({
+      pooledAgentId: 'pooled-agent-reviewer',
+      pooledAgentIdentity: { nickname: 'Reviewer' }
+    })
+    expect(harness.chat.ensemble?.participants.find((participant) => participant.id === 'codex')?.pooledAgentId).toBeUndefined()
+  })
+
+  it('rejects Agent Pool registration when the assigned role exceeds 50 characters', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants[0].role = 'x'.repeat(51)
+    const harness = makeHarness({ initialChat: chat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    expect(harness.orchestrator.agentPoolRegistrationCandidateForRun(harness.dispatched[0].appRunId)).toMatchObject({
+      ok: false,
+      error: 'role_too_long'
+    })
+  })
+
+  it('revalidates the participant role after the renderer registration round trip', async () => {
+    const harness = makeHarness({ initialChat: makeChat() })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runId = harness.dispatched[0].appRunId
+    const candidate = harness.orchestrator.agentPoolRegistrationCandidateForRun(runId)
+    if (!candidate.ok || !candidate.participant) throw new Error('Expected registration candidate')
+    const expectedRole = candidate.participant.role
+    harness.chat.ensemble!.participants[0].role = 'Changed role'
+
+    expect(
+      harness.orchestrator.registerParticipantInAgentPoolForRun(runId, {
+        expectedRole,
+        pooledAgentId: 'pooled-agent-reviewer',
+        pooledAgentIdentity: {
+          schemaVersion: 1,
+          agentId: 'pooled-agent-reviewer',
+          nickname: 'Reviewer',
+          iconKind: 'seed',
+          seed: 'pooled-agent-reviewer',
+          hue: 120
+        },
+        mode: 'created'
+      })
+    ).toMatchObject({ ok: false, error: 'stale_participant' })
+  })
+
   it('rejects Captain roster edit while Boss is available', async () => {
     const chat = makeChat()
     chat.ensemble!.participants = [

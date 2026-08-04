@@ -33923,6 +33923,111 @@ interface PendingRendererRosterPresetImport {
 const RENDERER_ROSTER_PRESET_IMPORT_TIMEOUT_MS = 10_000
 const pendingRendererRosterPresetImports = new Map<string, PendingRendererRosterPresetImport>()
 
+interface ConfirmedRendererAgentPoolRegistration {
+  pooledAgentId: string
+  pooledAgentIdentity: PooledAgentIdentitySnapshot
+  mode: 'created' | 'coalesced' | 'updated'
+}
+
+interface PendingRendererAgentPoolRegistration {
+  webContentsId: number
+  timer: NodeJS.Timeout
+  resolve: (result: ConfirmedRendererAgentPoolRegistration) => void
+  reject: (error: Error) => void
+}
+
+const RENDERER_AGENT_POOL_REGISTRATION_TIMEOUT_MS = 10_000
+const pendingRendererAgentPoolRegistrations = new Map<
+  string,
+  PendingRendererAgentPoolRegistration
+>()
+
+function rendererAgentPoolRegistrationReceipt(rawPayload: unknown): ConfirmedRendererAgentPoolRegistration | null {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return null
+  const payload = rawPayload as Record<string, unknown>
+  const pooledAgentId = optionalString(payload.pooledAgentId)
+  const identity = payload.pooledAgentIdentity
+  const mode = payload.mode
+  if (
+    !pooledAgentId ||
+    !pooledAgentId.startsWith('pooled-agent-') ||
+    !identity ||
+    typeof identity !== 'object' ||
+    Array.isArray(identity) ||
+    (mode !== 'created' && mode !== 'coalesced' && mode !== 'updated')
+  ) {
+    return null
+  }
+  const snapshot = identity as PooledAgentIdentitySnapshot
+  if (
+    snapshot.schemaVersion !== 1 ||
+    snapshot.agentId !== pooledAgentId ||
+    typeof snapshot.nickname !== 'string' ||
+    !snapshot.nickname.trim() ||
+    (snapshot.iconKind !== 'named' && snapshot.iconKind !== 'seed' && snapshot.iconKind !== 'asset') ||
+    typeof snapshot.hue !== 'number' ||
+    !Number.isFinite(snapshot.hue)
+  ) {
+    return null
+  }
+  return { pooledAgentId, pooledAgentIdentity: snapshot, mode }
+}
+
+function acknowledgeRendererAgentPoolRegistration(
+  sender: Electron.WebContents,
+  rawPayload: unknown
+): void {
+  if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return
+  const payload = rawPayload as Record<string, unknown>
+  const requestId = optionalString(payload.requestId)
+  if (!requestId) return
+  const pending = pendingRendererAgentPoolRegistrations.get(requestId)
+  if (!pending || sender.id !== pending.webContentsId) return
+  pendingRendererAgentPoolRegistrations.delete(requestId)
+  clearTimeout(pending.timer)
+  if (payload.ok !== true) {
+    pending.reject(new Error(optionalString(payload.error) || 'The renderer could not register the Agent Pool entry.'))
+    return
+  }
+  const receipt = rendererAgentPoolRegistrationReceipt(payload)
+  if (!receipt) {
+    pending.reject(new Error('The renderer returned an invalid Agent Pool registration receipt.'))
+    return
+  }
+  pending.resolve(receipt)
+}
+
+function requestRendererAgentPoolRegistration(
+  participant: EnsembleParticipant
+): Promise<ConfirmedRendererAgentPoolRegistration> {
+  const target = mainWindow
+  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) {
+    return Promise.reject(new Error('No active TaskWraith window can register the Agent Pool entry.'))
+  }
+  const requestId = randomUUID()
+  const webContentsId = target.webContents.id
+  return new Promise((resolveRegistration, rejectRegistration) => {
+    const timer = setTimeout(() => {
+      if (!pendingRendererAgentPoolRegistrations.delete(requestId)) return
+      rejectRegistration(new Error('Timed out waiting for Agent Pool registration.'))
+    }, RENDERER_AGENT_POOL_REGISTRATION_TIMEOUT_MS)
+    pendingRendererAgentPoolRegistrations.set(requestId, {
+      webContentsId,
+      timer,
+      resolve: resolveRegistration,
+      reject: rejectRegistration
+    })
+    const sent = safeSendToSender(target.webContents, 'ensemble-agent-pool:registration-requested', {
+      requestId,
+      participant
+    })
+    if (sent) return
+    pendingRendererAgentPoolRegistrations.delete(requestId)
+    clearTimeout(timer)
+    rejectRegistration(new Error('The TaskWraith window closed before Agent Pool registration completed.'))
+  })
+}
+
 function acknowledgeRendererRosterPresetImport(
   sender: Electron.WebContents,
   rawPayload: unknown
@@ -34199,6 +34304,53 @@ async function executeAgentRosterPresetImport(
     source: source.source,
     activate
   }
+}
+
+async function executeAgentPoolSelfRegistration(
+  args: Record<string, any>,
+  context: GeminiToolContext
+): Promise<Record<string, unknown>> {
+  const roundId = optionalString(args.roundId || args.round_id)
+  const candidate = ensembleOrchestratorRef?.agentPoolRegistrationCandidateForRun(
+    context.appRunId,
+    { roundId }
+  ) || {
+    ok: false,
+    tool: 'ensemble_roster_edit' as const,
+    action: 'register_in_agent_pool' as const,
+    message: 'Ensemble orchestrator is not available.',
+    error: 'no_active_run' as const
+  }
+  if (!candidate.ok || !candidate.participant) return { ...candidate }
+  const expectedRole = candidate.participant.role
+  let receipt: ConfirmedRendererAgentPoolRegistration
+  try {
+    receipt = await requestRendererAgentPoolRegistration(candidate.participant)
+  } catch (error) {
+    return {
+      ok: false,
+      tool: 'ensemble_roster_edit',
+      action: 'register_in_agent_pool',
+      roundId: candidate.roundId,
+      participantId: candidate.participantId,
+      error: 'pool_registration_failed',
+      message:
+        error instanceof Error ? error.message : 'The Agent Pool registration could not be completed.'
+    }
+  }
+  const result =
+    ensembleOrchestratorRef?.registerParticipantInAgentPoolForRun(context.appRunId, {
+      roundId,
+      expectedRole,
+      ...receipt
+    }) || {
+      ok: false,
+      tool: 'ensemble_roster_edit' as const,
+      action: 'register_in_agent_pool' as const,
+      message: 'Ensemble orchestrator is not available.',
+      error: 'no_active_run' as const
+    }
+  return { ...result }
 }
 
 /**
@@ -36304,6 +36456,8 @@ async function executeGeminiMcpTool(
       const result =
         args.action === 'import_preset'
           ? await executeAgentRosterPresetImport(args, context, parentProvider)
+          : args.action === 'register_in_agent_pool'
+            ? await executeAgentPoolSelfRegistration(args, context)
           : await (ensembleOrchestratorRef?.rosterEditForRun(context.appRunId, {
               action:
                 args.action === 'add_participant' ||
@@ -39389,6 +39543,9 @@ if (isGeminiMcpBridgeProcess) {
     )
     ipcMain.on('ensemble-roster-presets:import-result', (event, payload: unknown) => {
       acknowledgeRendererRosterPresetImport(event.sender, payload)
+    })
+    ipcMain.on('ensemble-agent-pool:registration-result', (event, payload: unknown) => {
+      acknowledgeRendererAgentPoolRegistration(event.sender, payload)
     })
 
     // Phase B1: centralize run-event fan-out via the bus. The Electron IPC
