@@ -47972,7 +47972,7 @@ if (isGeminiMcpBridgeProcess) {
             sanitizedPatch.themeAppearance !== undefined
           ) {
             // Re-apply the live Dock/taskbar icon when the variant OR the theme
-            // (light/dark) changes. Apply path is ungated — grandfathers WWDC26.
+            // (light/dark) changes.
             applyAppIcon(true)
           }
         }

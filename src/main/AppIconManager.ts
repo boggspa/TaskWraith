@@ -20,8 +20,8 @@ const ICON_PATHS: Record<AppIconVariant, { light: string; dark: string }> = {
 }
 
 export interface AppIconManagerDeps {
-  /** The persisted variant choice. NOTE: read directly — never gated by the
-   * WWDC26 availability window, so a grandfathered choice keeps applying. */
+  /** The persisted variant choice. A retired/unknown id falls back to the
+   * monoline default at load time (see ICON_PATHS lookup). */
   getVariant: () => AppIconVariant
   /** The app's theme appearance setting ('system' | 'light' | 'dark' | named). */
   getThemeAppearance: () => string
