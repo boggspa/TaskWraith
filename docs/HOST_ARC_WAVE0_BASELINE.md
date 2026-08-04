@@ -4,20 +4,22 @@ Captured by **@GrokBG** (background lane) for the TaskWraith Host Arc mission.
 Source goal (uncut): [`docs/HOST_ARC_GOAL.md`](./HOST_ARC_GOAL.md).
 Durable TaskWraith goal id: `goal-1785776581326-b5gik2` (store objective truncates at `"Do not remove,"`; this repo copy is authoritative for architecture, waves, and the 15 acceptance points).
 
+**Status tracker:** See [`HOST_ARC_STATUS.md`](./HOST_ARC_STATUS.md) for detailed progress through Wave 2E-1, substrate inventory, and remaining work.
+
 ## Snapshot (re-checked at documentation write)
 
 | Item | Value |
 | --- | --- |
-| **HEAD** | `f608f748f0ab1ea462eba5691dc322f15e4898ae` (`f608f748f`) |
-| **Tip subject** | `feat(renderer): polish fan-out disclosure` |
-| **Tip date** | 2026-08-03 17:38:28 +0100 |
+| **HEAD** | `7fcbc3344` (`7fcbc334`) |
+| **Tip subject** | `test(host): fix coordinator record cast` |
+| **Tip date** | 2026-08-04 08:12:15 +0100 |
 | **Branch** | `master` |
-| **vs origin** | **+58** commits ahead of `origin/master` |
+| **vs origin** | **+186** commits ahead of `origin/master` |
 | **Package** | `taskwraith@1.9.2` |
-| **Dirty (pre-existing)** | `?? Note for SolBoss and GrokCapt.md` **only** — do **not** stage, edit, or delete |
+| **Dirty (pre-existing)** | `docs/HOST_ARC_GOAL.md`, `docs/HOST_ARC_WAVE0_BASELINE.md` (current docs-lane scope) |
 | **Live markers (pre-write)** | none |
-| **work-guard (pre-write)** | no claims; 1 aged unclaimed dirty path (the note) |
-| **Documentation write claim** | `.WORK-IN-PROGRESS-host-arc-wave0-docs.md` claims only `docs/HOST_ARC_GOAL.md` and `docs/HOST_ARC_WAVE0_BASELINE.md` |
+| **work-guard (pre-write)** | no claims; no unowned aged-dirty paths |
+| **Documentation write claim** | `.WORK-IN-PROGRESS-host-arc-docs-refresh.md` claims `docs/HOST_ARC_GOAL.md` and `docs/HOST_ARC_WAVE0_BASELINE.md` |
 
 ## Forbidden zero-diff paths
 

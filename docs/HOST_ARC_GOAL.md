@@ -88,6 +88,29 @@ No worktrees. Preserve unrelated dirty/untracked work. Use exact markers, disjoi
 
 No version bump, release, publication, push or notarisation unless separately requested.
 
+## CURRENT STATUS
+
+**As of 2026-08-04 (Wave 2E-2A/2E-2B sequencing):**
+
+- **Overall completeness:** ~45-50%
+- **Wave 0:** ✅ Complete (baseline captured)
+- **Wave 1:** ✅ Complete (architecture proposal)
+- **Wave 2A–2B:** ✅ Complete (protocol types, durable stores, bootstrap, receipts, projection, fingerprint, decision map)
+- **Wave 2D-1:** ✅ Complete (routing, identity, arguments)
+- **Wave 2D-2:** ✅ Complete (snapshot apply, deferred bridge, delta publisher)
+- **Wave 2E-1:** ✅ **PASS** (HostSession + HostBridgeCommandExecutor, 5-reviewer formal PASS)
+- **Wave 2E-2A:** ✅ **PASS** (commandId binding, session rebind refresh, read-alias pre-gate, receipt position semantics and recovery composition)
+- **Wave 2E-2B:** 🔄 **OPEN**
+  - ✅ 4/5 lane substrates and `HostCommandMutationPipeline` (`8e5c75677`) are landed and verified
+  - 🔄 Next sequence: `HostDeferredCommandEnvelopeResolver.verifyCommand` split → `HostDeferredAllowPipeline` → deferred branch in `AppStoreHostAuthority`
+- **Wave 3–6:** Not started
+
+**Current activity:** The open slice is the resolver verification split to prevent double execution before allow/complete composition. After that, the deferred-allow adapter and authority branch remain to be integrated, then Wave 3+ client cutover work begins.
+
+**See [`HOST_ARC_STATUS.md`](./HOST_ARC_STATUS.md) for detailed inventory, test coverage, gate status, commit links and active lane assignments.**
+
+---
+
 ## EXECUTION
 
 ### Wave 0 — Baseline
@@ -218,3 +241,4 @@ Prove:
 When these criteria are met, @CodexBoss or @KimizCaptain must mark the goal complete and end the mission even if hops remain.
 
 Begin with Wave 0.
+
