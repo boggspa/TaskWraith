@@ -137,10 +137,13 @@ private struct OdometerMetric: View {
     var prefix = ""
     var suffix = ""
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
         Text("\(prefix)\(value)\(suffix)")
             .monospacedDigit()
-            .contentTransition(.numericText())
+            .contentTransition(reduceMotion ? .identity : .numericText(value: Double(value)))
+            .animation(reduceMotion ? .linear(duration: 0.12) : .snappy(duration: 0.25), value: value)
     }
 }
 
