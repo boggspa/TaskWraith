@@ -30,9 +30,11 @@ const AGY_WORKSPACE_STATUS_COMMAND = 'git status --porcelain'
  *  - `command(...)` targets run INSIDE agy's terminal sandbox — narrower
  *    containment than the host shell the classifiers already bless; and
  *  - only heads whose every completion the classifiers accept unconditionally
- *    are projected. `rg` (`--pre` executes a command per file) and `env`
- *    (`env X=1 cmd` executes) are admitted by the classifier per-token only,
- *    so they are deliberately absent. A test pins the subset relation.
+ *    are projected. The per-token/per-flag screened heads (`rg` `--pre`,
+ *    `env`-with-args, and the ShellCommandTierPolicy screened set — `sort`,
+ *    `uniq`, `tree`, `file`, `hostname`, `date`) are deliberately absent
+ *    because a prefix rule cannot carry their screens. A test pins the subset
+ *    relation and mechanically rejects flag-conditional heads.
  */
 const AGY_READ_ONLY_GIT_COMMAND_PREFIXES = ['git status', 'git log', 'git diff'] as const
 
@@ -43,12 +45,9 @@ const AGY_INSPECTION_COMMAND_HEADS = [
   'head',
   'tail',
   'wc',
-  'file',
   'stat',
   'du',
   'df',
-  'sort',
-  'uniq',
   'cut',
   'comm',
   'diff',
@@ -57,16 +56,13 @@ const AGY_INSPECTION_COMMAND_HEADS = [
   'strings',
   'which',
   'whoami',
-  'hostname',
   'uname',
-  'date',
   'id',
   'groups',
   'basename',
   'dirname',
   'readlink',
   'realpath',
-  'tree',
   'printenv',
   'shasum',
   'cksum',

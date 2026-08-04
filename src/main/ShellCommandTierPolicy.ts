@@ -42,7 +42,10 @@ function headOf(tokens: string[]): string {
  * system()), `xargs` (executes), `env` with arguments (executes), interpreters,
  * and anything that talks to the network (that's the remote-egress hold's
  * territory). Globs and redirects never reach these heads — the charset gate
- * rejects the whole command first.
+ * rejects the whole command first. Heads that are read-only EXCEPT for
+ * specific flag or operand shapes (`sort`, `uniq`, `tree`, `file`,
+ * `hostname`, `date`) live in the screened dispatch below instead, beside
+ * `rg`/`env` — membership here asserts the any-flags claim.
  */
 const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
   'ls',
@@ -51,12 +54,9 @@ const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
   'head',
   'tail',
   'wc',
-  'file',
   'stat',
   'du',
   'df',
-  'sort',
-  'uniq',
   'cut',
   'comm',
   'diff',
@@ -65,16 +65,13 @@ const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
   'strings',
   'which',
   'whoami',
-  'hostname',
   'uname',
-  'date',
   'id',
   'groups',
   'basename',
   'dirname',
   'readlink',
   'realpath',
-  'tree',
   'printenv',
   'shasum',
   'cksum',
@@ -83,6 +80,114 @@ const INSPECTION_HEADS_ANY_FLAGS: ReadonlySet<string> = new Set([
   'egrep',
   'fgrep'
 ])
+
+/**
+ * Screened inspection heads: read-only in ordinary use, but with a known
+ * write/exec completion that the per-head predicate must reject. Same
+ * allow-polarity discipline as the rg `--pre` screen — anything the predicate
+ * cannot positively clear fails closed to the ordinary prompt. Short-flag
+ * screens match bundled clusters (`sort -ro out` hides `-o` inside `-ro`) and
+ * attached values (`-oout.txt`), which is why they test for the letter
+ * anywhere in a single-dash token rather than an exact flag.
+ */
+function splitFlagsAndOperands(args: readonly string[]): {
+  flags: string[]
+  operands: string[]
+} {
+  const flags: string[] = []
+  const operands: string[] = []
+  let seenDashDash = false
+  for (const token of args) {
+    if (!seenDashDash && token === '--') {
+      seenDashDash = true
+      continue
+    }
+    if (!seenDashDash && token.startsWith('-')) flags.push(token)
+    else operands.push(token)
+  }
+  return { flags, operands }
+}
+
+// sort: `-o <file>`/`--output` write, `--compress-program` executes, and
+// `-T`/`--temporary-directory` spills temp files to a chosen directory. `-o`
+// is sort's only o-bearing short flag, so a cluster letter test is exact.
+function sortArgsAreReadOnly(args: readonly string[]): boolean {
+  return !args.some(
+    (token) =>
+      /^-[^-]*[oT]/.test(token) ||
+      token.startsWith('--output') ||
+      token.startsWith('--compress-program') ||
+      token.startsWith('--temporary-directory')
+  )
+}
+
+// uniq: a second operand is an OUTPUT file. The separate-argument forms of
+// `-f`/`-s`/`-w` make the operand count ambiguous, so they fail closed; the
+// attached (`-f2`) and `=` (`--skip-fields=2`) forms stay allowed.
+function uniqArgsAreReadOnly(args: readonly string[]): boolean {
+  const { flags, operands } = splitFlagsAndOperands(args)
+  if (flags.some((token) => token === '-f' || token === '-s' || token === '-w')) return false
+  return operands.length <= 1
+}
+
+// tree: `-o <file>` writes the report to disk; `-o` is tree's only o-bearing
+// short flag.
+function treeArgsAreReadOnly(args: readonly string[]): boolean {
+  return !args.some((token) => /^-[^-]*o/.test(token) || token.startsWith('--output'))
+}
+
+// file: `-C` compiles a .mgc magic file to disk (lowercase `-c` merely prints
+// the parsed magic — the screen is case-sensitive on purpose).
+function fileArgsAreReadOnly(args: readonly string[]): boolean {
+  return !args.some((token) => /^-[^-]*C/.test(token) || token.startsWith('--compile'))
+}
+
+// hostname: any operand is the set-hostname form; `-F <file>`/`--file` and
+// `-b`/`--boot` set it too. Lowercase `-f`/`-s` (FQDN/short) remain reads.
+function hostnameArgsAreReadOnly(args: readonly string[]): boolean {
+  const { flags, operands } = splitFlagsAndOperands(args)
+  if (operands.length > 0) return false
+  return !flags.some(
+    (token) => /^-[^-]*[Fb]/.test(token) || token.startsWith('--file') || token.startsWith('--boot')
+  )
+}
+
+// date: a bare operand is the BSD set-clock form and `-s`/`--set` is the GNU
+// one; `-f` is BSD parse-and-set (GNU reads dates from a file with it — fail
+// closed on both). `+format` operands and one value after the read-only
+// `-r`/`-d` flags stay allowed.
+function dateArgsAreReadOnly(args: readonly string[]): boolean {
+  let seenDashDash = false
+  let expectFlagValue = false
+  for (const token of args) {
+    if (expectFlagValue) {
+      expectFlagValue = false
+      continue
+    }
+    if (!seenDashDash && token === '--') {
+      seenDashDash = true
+      continue
+    }
+    if (!seenDashDash && token.startsWith('-')) {
+      if (/^-[^-]*[sf]/.test(token) || token.startsWith('--set') || token.startsWith('--file')) {
+        return false
+      }
+      if (token === '-r' || token === '-d') expectFlagValue = true
+      continue
+    }
+    if (!token.startsWith('+')) return false
+  }
+  return true
+}
+
+const SCREENED_INSPECTION_HEADS: Readonly<Record<string, (args: readonly string[]) => boolean>> = {
+  sort: sortArgsAreReadOnly,
+  uniq: uniqArgsAreReadOnly,
+  tree: treeArgsAreReadOnly,
+  file: fileArgsAreReadOnly,
+  hostname: hostnameArgsAreReadOnly,
+  date: dateArgsAreReadOnly
+}
 
 // rg is inspection-safe EXCEPT its preprocessor flags, which execute an
 // arbitrary command per file (`--pre <cmd>`): reject any token starting
@@ -114,6 +219,10 @@ export function isInspectionShellCommand(command: unknown): boolean {
     // Bare `env` prints the environment; `env X=1 cmd` EXECUTES cmd.
     return tokens.length === 1
   }
+  const screened = Object.prototype.hasOwnProperty.call(SCREENED_INSPECTION_HEADS, head)
+    ? SCREENED_INSPECTION_HEADS[head]
+    : undefined
+  if (screened) return screened(tokens.slice(1))
   return INSPECTION_HEADS_ANY_FLAGS.has(head)
 }
 
@@ -130,15 +239,18 @@ export function isCatastrophicDeletionShellCommand(command: unknown): boolean {
   if (head === 'shred') return true
   if (head === 'find') {
     return tokens.some(
-      (token) => token === '-delete' || token === '-exec' || token === '-execdir' || token === '-ok' || token === '-okdir'
+      (token) =>
+        token === '-delete' ||
+        token === '-exec' ||
+        token === '-execdir' ||
+        token === '-ok' ||
+        token === '-okdir'
     )
   }
   if (head !== 'rm') return false
-  return tokens.slice(1).some(
-    (token) =>
-      token === '--recursive' ||
-      (/^-[A-Za-z]+$/.test(token) && /[rR]/.test(token))
-  )
+  return tokens
+    .slice(1)
+    .some((token) => token === '--recursive' || (/^-[A-Za-z]+$/.test(token) && /[rR]/.test(token)))
 }
 
 /**
@@ -216,7 +328,9 @@ export function isRemoteEgressShellCommand(command: unknown): boolean {
   if (head !== 'rsync') return false
   return tokens
     .slice(1)
-    .some((token) => token === '-e' || token.startsWith('rsync://') || RSYNC_REMOTE_TARGET.test(token))
+    .some(
+      (token) => token === '-e' || token.startsWith('rsync://') || RSYNC_REMOTE_TARGET.test(token)
+    )
 }
 
 const PROCESS_MUTATION_HEADS: ReadonlySet<string> = new Set([

@@ -112,8 +112,29 @@ describe('AntigravityPermissionLeaseCoordinator', () => {
     }
     // Prefix rules cannot express per-token screening, so the heads the
     // classifier admits only conditionally must never be projected.
-    expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain('command(rg)')
-    expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain('command(env)')
+    for (const conditionalHead of [
+      'rg',
+      'env',
+      'sort',
+      'uniq',
+      'tree',
+      'file',
+      'hostname',
+      'date'
+    ]) {
+      expect(AGY_READ_ONLY_SHELL_PROJECTION_RULES).not.toContain(`command(${conditionalHead})`)
+    }
+    // Guard the invariant mechanically: a bare projected head must stay
+    // classifier-accepted even when followed by an arbitrary unknown flag,
+    // i.e. the head's classifier admission is genuinely unconditional.
+    for (const rule of AGY_READ_ONLY_SHELL_PROJECTION_RULES) {
+      const match = rule.match(/^command\(([a-z]+)\)$/)
+      if (!match) continue
+      expect(
+        isInspectionShellCommand(`${match[1]} -o probe.txt probe2.txt`),
+        `flag-conditional head projected: ${match[1]}`
+      ).toBe(true)
+    }
   })
 
   it('preserves user edits made during a run while removing only its temporary overlay', async () => {

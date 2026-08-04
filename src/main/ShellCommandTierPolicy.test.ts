@@ -60,6 +60,65 @@ describe('isInspectionShellCommand (allow polarity — fails closed)', () => {
     }
   })
 
+  it('rejects the write- and exec-capable completions of screened heads', () => {
+    for (const cmd of [
+      'sort -o out.txt in.txt', // -o writes <file>
+      'sort -oout.txt in.txt', // attached form
+      'sort -ro out.txt in.txt', // bundled short cluster hides -o
+      'sort --output=out.txt in.txt',
+      'sort --compress-program=gzip big.txt', // executes the named program
+      'sort -T /tmp big.txt', // spills temp files to a chosen directory
+      'uniq notes.txt dedup.txt', // second positional is an output file
+      'uniq -f 2 notes.txt', // separate-arg flag makes operand count ambiguous
+      'uniq -s 4 notes.txt',
+      'uniq -w 3 notes.txt',
+      'tree -o out.html', // -o writes <file>
+      'tree -oout.html',
+      'tree --output=out.html',
+      'file -C -m magic.src', // -C compiles a .mgc file to disk
+      'file -bC magic.src', // bundled cluster hides -C
+      'hostname new-host-name', // positional sets the hostname
+      'hostname -F name.txt', // sets from file
+      'hostname -b', // boot form may set
+      'date -s 2026-08-05', // GNU set
+      'date 0805120026', // BSD bare-positional set
+      'date -f fmt.txt 2026-08-05' // BSD parse-and-set (also GNU --file read; fail closed)
+    ]) {
+      expect(isInspectionShellCommand(cmd), cmd).toBe(false)
+    }
+  })
+
+  it('still accepts the read-only forms of screened heads and the verified-clean heads', () => {
+    for (const cmd of [
+      'sort -u -k2,2n file.txt',
+      'sort -r file.txt',
+      'sort file.txt',
+      'uniq -c file.txt',
+      'uniq -f2 file.txt', // attached form stays unambiguous
+      'uniq --skip-fields=2 file.txt',
+      'uniq file.txt',
+      'tree -L 2 src',
+      'tree src',
+      'file -b image.png',
+      'file src/main.ts',
+      'hostname',
+      'hostname -s',
+      'hostname -f', // lowercase -f is the FQDN read, distinct from -F
+      'date +%Y-%m-%d',
+      'date -u +%s',
+      'date -r 1690000000', // -r consumes one read-only value
+      'date -d yesterday',
+      'date -v+1d +%Y',
+      'cut -d: -f1 /etc/passwd',
+      'comm -12 a.txt b.txt',
+      'nl notes.txt',
+      'strings -n 8 bin/app',
+      '/usr/bin/sort -r file.txt'
+    ]) {
+      expect(isInspectionShellCommand(cmd), cmd).toBe(true)
+    }
+  })
+
   it('rejects non-strings and oversized commands', () => {
     expect(isInspectionShellCommand(undefined)).toBe(false)
     expect(isInspectionShellCommand(['ls'])).toBe(false)
@@ -87,7 +146,14 @@ describe('isCatastrophicDeletionShellCommand (hold polarity)', () => {
   })
 
   it('does not match plain deletes, reads, or unparseable input', () => {
-    for (const cmd of ['rm file.txt', 'rm -f file.txt', 'rmdir empty', 'ls -r', 'find . -name x', '']) {
+    for (const cmd of [
+      'rm file.txt',
+      'rm -f file.txt',
+      'rmdir empty',
+      'ls -r',
+      'find . -name x',
+      ''
+    ]) {
       expect(isCatastrophicDeletionShellCommand(cmd), cmd).toBe(false)
     }
   })
@@ -151,7 +217,13 @@ describe('isRemoteEgressShellCommand (hold polarity)', () => {
 
 describe('isSystemProcessMutationShellCommand (hold polarity)', () => {
   it('matches the kill family and service managers only', () => {
-    for (const cmd of ['kill -9 123', 'pkill node', 'killall TaskWraith', 'launchctl unload x', 'systemctl stop y']) {
+    for (const cmd of [
+      'kill -9 123',
+      'pkill node',
+      'killall TaskWraith',
+      'launchctl unload x',
+      'systemctl stop y'
+    ]) {
       expect(isSystemProcessMutationShellCommand(cmd), cmd).toBe(true)
     }
     for (const cmd of ['ps aux', 'top', 'ls', '']) {
@@ -165,7 +237,14 @@ describe('shellCommandTierHold (the gate fold)', () => {
     shellCommandTierHold({ presetId, service: 'shellCommands', shellCommand, workspacePath })
 
   it('holds remote egress at every tier', () => {
-    for (const presetId of ['read_only', 'plan', 'default', 'workspace_write', 'full_access', undefined]) {
+    for (const presetId of [
+      'read_only',
+      'plan',
+      'default',
+      'workspace_write',
+      'full_access',
+      undefined
+    ]) {
       expect(hold(presetId, 'ssh host uptime'), String(presetId)).toBe(true)
       expect(hold(presetId, 'curl https://example.com'), String(presetId)).toBe(true)
     }
