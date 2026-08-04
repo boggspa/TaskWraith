@@ -11007,29 +11007,32 @@
   text-align: center;
 }
 
+/* 1.25x readability pass (owner request 2026-08-05): the popover's compact
+ * variant scales with the dock styles it overrides — these values are the
+ * ones the board actually renders with. */
 .composer-blackboard-list .blackboard-card {
-  gap: 4px;
-  padding: 6px 7px;
-  border-radius: 7px;
+  gap: 5px;
+  padding: 8px 9px;
+  border-radius: 9px;
 }
 
 .composer-blackboard-list .blackboard-card-head {
   align-items: flex-start;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
 }
 
 .composer-blackboard-list .blackboard-card-head-meta {
   margin-left: auto;
-  gap: 4px;
+  gap: 5px;
 }
 
 .composer-blackboard-list .blackboard-card-key {
-  font-size: 10px;
+  font-size: 12.5px;
 }
 
 .composer-blackboard-list .blackboard-card-body {
-  font-size: 11px;
+  font-size: 13.75px;
   line-height: 1.35;
 }
 
