@@ -2136,8 +2136,20 @@ button.sidebar-item {
 
 /* Finished-but-unseen thread outcome — text ink only. The row keeps its normal
  * transparent/selected chrome so the accent can never be mistaken for focus.
- * The hues are the user's Settings → Appearance diff colors; the moving highlight
- * deliberately reuses the transcript Working… label's `text-shimmer-sweep`. */
+ * The hues are the user's Settings → Appearance diff colors. This uses a
+ * dedicated, deliberately slow single-band sweep: both iteration endpoints
+ * expose only the base colour, so the reset is visually seamless. */
+@keyframes sidebar-terminal-outcome-shimmer {
+  0%,
+  10% {
+    background-position: 0% 0;
+  }
+  90%,
+  100% {
+    background-position: 100% 0;
+  }
+}
+
 .app-sidebar .sidebar-terminal-outcome-success {
   --sidebar-terminal-outcome-color: var(--diff-stat-add-color, #2db777);
 }
@@ -2158,11 +2170,14 @@ button.sidebar-item {
     var(--sidebar-terminal-outcome-color) 62%,
     var(--sidebar-terminal-outcome-color) 100%
   );
-  background-size: 260% 100%;
+  /* At 300%, positions 0% and 100% both cover the whole title using only
+   * the solid-color thirds of the gradient. The iteration jump is invisible. */
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: text-shimmer-sweep 2.4s ease-in-out infinite;
+  animation: sidebar-terminal-outcome-shimmer 12s linear infinite;
   filter: drop-shadow(
     0 0 6px color-mix(in srgb, var(--sidebar-terminal-outcome-color) 22%, transparent)
   );

@@ -13,7 +13,7 @@ function cssBlockStartingAt(selector: string): string {
 }
 
 describe('sidebar terminal outcome title accent', () => {
-  it('uses appearance diff colors and the Working text shimmer on title ink only', () => {
+  it('uses appearance diff colors and one slow seamless shimmer on title ink only', () => {
     expect(cssBlockStartingAt('.app-sidebar .sidebar-terminal-outcome-success {')).toContain(
       'var(--diff-stat-add-color, #2db777)'
     )
@@ -25,7 +25,13 @@ describe('sidebar terminal outcome title accent', () => {
       '.app-sidebar\n  :is(.sidebar-terminal-outcome-success, .sidebar-terminal-outcome-failure)'
     )
     expect(ink).toContain('background-clip: text')
-    expect(ink).toContain('animation: text-shimmer-sweep 2.4s ease-in-out infinite')
+    expect(ink).toContain('background-size: 300% 100%')
+    expect(ink).toContain('background-repeat: no-repeat')
+    expect(ink).toContain('animation: sidebar-terminal-outcome-shimmer 12s linear infinite')
+    expect(ink).not.toContain('text-shimmer-sweep')
+    expect(css).toContain('@keyframes sidebar-terminal-outcome-shimmer')
+    expect(css).toContain('background-position: 0% 0')
+    expect(css).toContain('background-position: 100% 0')
     expect(ink).not.toMatch(/\b(border|border-radius|padding|box-shadow)\s*:/)
   })
 
