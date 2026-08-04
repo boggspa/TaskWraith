@@ -1243,7 +1243,8 @@ export class CanvasService implements CanvasController {
   async navigate(
     canvasId: string,
     input: CanvasNavigateInput,
-    ctx: CanvasCallContext
+    ctx: CanvasCallContext,
+    opts?: { chargeInteraction?: boolean }
   ): Promise<CanvasNavState> {
     return this.serializeInteraction(canvasId, async () => {
       const session = this.require(canvasId, ctx)
@@ -1252,7 +1253,9 @@ export class CanvasService implements CanvasController {
           'Only web canvases support navigation. Open one first (canvas_navigate with a url does this automatically).'
         )
       }
-      this.chargeInteraction(session)
+      // The runaway budget exists to stop a hijacked agent, not the human
+      // driving their own browser chrome; the renderer IPC opts out.
+      if (opts?.chargeInteraction !== false) this.chargeInteraction(session)
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')
       const state = await session.driver.navigate(input)
       this.assertLiveAfterAwait(canvasId, session, ctx, 'navigation')

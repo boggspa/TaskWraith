@@ -36,6 +36,16 @@ function fakeDeps() {
     list: (ctx: unknown) => {
       calls.push(['list', [ctx]])
       return [{ canvasId: 'c1' }]
+    },
+    navigate: async (id: string, input: unknown, ctx: unknown, opts: unknown) => {
+      calls.push(['navigate', [id, input, ctx, opts]])
+      return {
+        url: 'https://example.test/settled',
+        title: 'Settled',
+        isLoading: false,
+        canGoBack: true,
+        canGoForward: false
+      }
     }
   } as unknown as Parameters<typeof registerCanvasEmbedIpc>[1]['controller']
   const embed = {
@@ -63,11 +73,60 @@ describe('registerCanvasEmbedIpc', () => {
       'canvas:set-visible',
       'canvas:close',
       'canvas:close-chat',
+      'canvas:navigate-chat',
       'canvas:list',
       'canvas:list-chat'
     ]) {
       expect(ipc.has(channel)).toBe(true)
     }
+  })
+
+  it('navigates any chat canvas as the human, unmetered, with sanitized input', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    const result = await ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', {
+      url: '  https://example.test/page  '
+    })
+    expect(result).toMatchObject({ ok: true, url: 'https://example.test/settled', canGoBack: true })
+    expect(deps.calls.find((call) => call[0] === 'navigate')?.[1]).toEqual([
+      'c1',
+      { url: 'https://example.test/page' },
+      { chatId: 'chat-a', workspacePath: '/workspace/a' },
+      { chargeInteraction: false }
+    ])
+
+    const back = await ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', { action: 'back' })
+    expect(back).toMatchObject({ ok: true })
+    expect(deps.calls.filter((call) => call[0] === 'navigate').at(-1)?.[1]).toEqual([
+      'c1',
+      { action: 'back' },
+      { chatId: 'chat-a', workspacePath: '/workspace/a' },
+      { chargeInteraction: false }
+    ])
+  })
+
+  it('navigate-chat fails closed on bad ids, bad actions, and thrown authority errors', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    await expect(ipc.invoke('canvas:navigate-chat', 'chat-a', 7, { action: 'back' })).resolves.toMatchObject(
+      { ok: false }
+    )
+    await expect(
+      ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', { action: 'teleport' })
+    ).resolves.toMatchObject({ ok: false })
+    await expect(ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', {})).resolves.toMatchObject({
+      ok: false
+    })
+    // A cross-chat canvasId throws inside the controller; the handler returns a
+    // result-shaped error instead of rejecting the invoke.
+    ;(deps.controller as { navigate: unknown }).navigate = async () => {
+      throw new Error('No open canvas with id "c1". Call canvas_open first.')
+    }
+    await expect(
+      ipc.invoke('canvas:navigate-chat', 'chat-a', 'c1', { action: 'back' })
+    ).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/No open canvas/) })
   })
 
   it('opens a standalone web canvas under canonical chat/workspace authority', async () => {

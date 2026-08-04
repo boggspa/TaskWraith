@@ -12,6 +12,7 @@ import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import type {
   CanvasCallContext,
   CanvasController,
+  CanvasNavigateInput,
   CanvasSessionSummary
 } from './canvasTypes'
 import type { CanvasEmbedController, CanvasEmbedRect } from './CanvasEmbedController'
@@ -219,6 +220,43 @@ export function registerCanvasEmbedIpc(
     owned.delete(canvasId)
     deps.embed.detach(canvasId)
   })
+
+  // Browser-chrome navigation for ANY web canvas in the sender's chat — the
+  // human driving their own address bar / back / forward / reload / stop. The
+  // HUMAN action is un-gated (like open/close above) but the driver still
+  // enforces the full URL/DNS SSRF policy, and CanvasService still re-checks
+  // chat ownership and serializes against in-flight agent interactions. The
+  // human path never consumes the agent interaction budget.
+  ipcMain.handle(
+    'canvas:navigate-chat',
+    async (event, chatId: unknown, canvasId: unknown, rawInput: unknown) => {
+      if (typeof canvasId !== 'string' || !canvasId) {
+        return { ok: false, error: 'Canvas id is required.' }
+      }
+      try {
+        const context = deps.resolveContext(event, requiredChatId(chatId))
+        const record = (rawInput ?? {}) as { url?: unknown; action?: unknown }
+        const url = typeof record.url === 'string' ? record.url.trim() : ''
+        const action =
+          record.action === 'back' ||
+          record.action === 'forward' ||
+          record.action === 'reload' ||
+          record.action === 'stop'
+            ? record.action
+            : undefined
+        const input: CanvasNavigateInput = url ? { url } : { action }
+        if (!input.url && !input.action) {
+          return { ok: false, error: 'Provide a url or a navigation action.' }
+        }
+        const state = await deps.controller.navigate(canvasId, input, context, {
+          chargeInteraction: false
+        })
+        return { ok: true, ...state }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+  )
 
   ipcMain.handle('canvas:list', (event) => {
     const summaries = new Map<string, CanvasSessionSummary>()

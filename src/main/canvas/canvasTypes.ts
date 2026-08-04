@@ -584,11 +584,17 @@ export interface CanvasController {
     ctx: CanvasCallContext
   ): Promise<CanvasEvalResult>
   reload(canvasId: string, ctx: CanvasCallContext): Promise<void>
-  /** Browser navigation on a web canvas (goto/back/forward/reload/stop). */
+  /**
+   * Browser navigation on a web canvas (goto/back/forward/reload/stop).
+   * `chargeInteraction: false` is reserved for the HUMAN chrome path (the
+   * user browsing their own canvas is never metered by the agent runaway
+   * budget); agent verbs must keep the default.
+   */
   navigate(
     canvasId: string,
     input: CanvasNavigateInput,
-    ctx: CanvasCallContext
+    ctx: CanvasCallContext,
+    opts?: { chargeInteraction?: boolean }
   ): Promise<CanvasNavState>
   close(canvasId: string, ctx: CanvasCallContext): Promise<void>
 }
