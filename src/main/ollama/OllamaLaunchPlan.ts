@@ -1,4 +1,5 @@
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
+import { ollamaModelIdsMatch as modelIdsMatchByAvailability } from '../../shared/ollamaModelAvailability'
 import type {
   AgenticNetworkPolicy,
   OllamaReasoningLevel,
@@ -365,18 +366,7 @@ export function ollamaToolCallFormatSchema(toolNames: readonly string[]): Record
 }
 
 export function ollamaModelIdsMatch(a: string, b: string): boolean {
-  const left = a.trim().toLowerCase()
-  const right = b.trim().toLowerCase()
-  if (!left || !right) return false
-  if (left === right) return true
-  const withoutLatest = (value: string) => value.replace(/:latest$/, '')
-  if (withoutLatest(left) === withoutLatest(right)) return true
-  return (
-    (left === 'gpt-oss' && (right === 'gpt-oss:latest' || right === 'gpt-oss:20b')) ||
-    (right === 'gpt-oss' && (left === 'gpt-oss:latest' || left === 'gpt-oss:20b')) ||
-    ((left === 'ornith' || left === 'ornith:latest') && right === 'ornith:9b') ||
-    ((right === 'ornith' || right === 'ornith:latest') && left === 'ornith:9b')
-  )
+  return modelIdsMatchByAvailability(a, b)
 }
 
 export function resolveOllamaRequestedWireModel(

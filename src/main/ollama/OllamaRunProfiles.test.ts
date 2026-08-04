@@ -156,6 +156,8 @@ describe('OllamaRunProfiles', () => {
       'deepseek-r1:1.5b',
       'nemotron-3-nano:4b',
       'lfm2.5-thinking:1.2b',
+      'lfm2.5-thinking',
+      'lfm2.5-thinking:latest',
       'deepseek-r1:8b',
       'glm-4.7-flash:q4_K_M',
       'north-mini-code-1.0:q4_K_M'

@@ -124,7 +124,14 @@ export function resolveOllamaModelFamily(
   }
   if (key === 'ministral-3:3b' || key.startsWith('ministral-3:3b-')) return 'ministral_3_3b'
   if (key === 'ministral-3:14b' || key.startsWith('ministral-3:14b-')) return 'ministral_3_14b'
-  if (key === 'gemma3:4b' || key.startsWith('gemma3:4b')) return 'gemma3_4b'
+  if (
+    key === 'gemma3' ||
+    key === 'gemma3:latest' ||
+    key === 'gemma3:4b' ||
+    key.startsWith('gemma3:4b')
+  ) {
+    return 'gemma3_4b'
+  }
   if (key === 'gemma4:12b' || key.startsWith('gemma4:12b')) return 'gemma4_12b'
   if (
     key === 'ornith' ||
@@ -146,6 +153,8 @@ export function resolveOllamaModelFamily(
     return 'gpt_oss_20b'
   }
   if (
+    key === 'lfm2.5-thinking' ||
+    key === 'lfm2.5-thinking:latest' ||
     key === 'lfm2.5-thinking:1.2b' ||
     key.startsWith('lfm2.5-thinking:1.2b-')
   ) {
@@ -175,7 +184,7 @@ export function resolveOllamaModelFamily(
     return 'gpt_oss_20b'
   }
   if (meta.includes('lfm2.5') || meta.includes('lfm 2.5') || meta.includes('lfm2')) {
-    return 'lfm2_5_8b'
+    return meta.includes('thinking') ? 'lfm2_5_thinking_1_2b' : 'lfm2_5_8b'
   }
   if (meta.includes('ornith') && meta.includes('35b')) return 'ornith_35b'
   if (meta.includes('ornith') && meta.includes('9b')) return 'ornith_9b'
@@ -233,6 +242,20 @@ export function ollamaModelIdAliases(modelId: string): string[] {
     aliases.add('ornith')
     aliases.add('ornith:latest')
     aliases.add('ornith:9b')
+  }
+  if (lower === 'gemma3' || lower === 'gemma3:latest' || lower === 'gemma3:4b') {
+    aliases.add('gemma3')
+    aliases.add('gemma3:latest')
+    aliases.add('gemma3:4b')
+  }
+  if (
+    lower === 'lfm2.5-thinking' ||
+    lower === 'lfm2.5-thinking:latest' ||
+    lower === 'lfm2.5-thinking:1.2b'
+  ) {
+    aliases.add('lfm2.5-thinking')
+    aliases.add('lfm2.5-thinking:latest')
+    aliases.add('lfm2.5-thinking:1.2b')
   }
   if (lower === 'lfm2.5' || lower === 'lfm2.5:latest' || lower === 'lfm2.5:8b') {
     aliases.add('lfm2.5')

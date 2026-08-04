@@ -29,6 +29,20 @@ export function ollamaModelIdAliases(modelId?: string | null): string[] {
     aliases.add('ornith:latest')
     aliases.add('ornith:9b')
   }
+  if (key === 'gemma3' || key === 'gemma3:latest' || key === 'gemma3:4b') {
+    aliases.add('gemma3')
+    aliases.add('gemma3:latest')
+    aliases.add('gemma3:4b')
+  }
+  if (
+    key === 'lfm2.5-thinking' ||
+    key === 'lfm2.5-thinking:latest' ||
+    key === 'lfm2.5-thinking:1.2b'
+  ) {
+    aliases.add('lfm2.5-thinking')
+    aliases.add('lfm2.5-thinking:latest')
+    aliases.add('lfm2.5-thinking:1.2b')
+  }
   if (key === 'lfm2.5' || key === 'lfm2.5:latest' || key === 'lfm2.5:8b') {
     aliases.add('lfm2.5')
     aliases.add('lfm2.5:latest')

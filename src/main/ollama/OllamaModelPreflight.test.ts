@@ -44,7 +44,13 @@ describe('resolveOllamaModelFamily', () => {
     expect(resolveOllamaModelFamily('llama3.2:3b')).toBe('llama3_2_3b')
     expect(resolveOllamaModelFamily('qwen3.5:2b')).toBe('qwen3_5_2b')
     expect(resolveOllamaModelFamily('gemma3:4b')).toBe('gemma3_4b')
+    expect(resolveOllamaModelFamily('gemma3')).toBe('gemma3_4b')
+    expect(resolveOllamaModelFamily('gemma3:latest')).toBe('gemma3_4b')
     expect(resolveOllamaModelFamily('lfm2.5-thinking:1.2b')).toBe('lfm2_5_thinking_1_2b')
+    expect(resolveOllamaModelFamily('lfm2.5-thinking')).toBe('lfm2_5_thinking_1_2b')
+    expect(resolveOllamaModelFamily('lfm2.5-thinking:latest')).toBe(
+      'lfm2_5_thinking_1_2b'
+    )
     expect(resolveOllamaModelFamily('granite4:3b')).toBe('granite4_3b')
     expect(resolveOllamaModelFamily('nemotron-3-nano:4b')).toBe('nemotron3_nano_4b')
     expect(resolveOllamaModelFamily('ministral-3:3b')).toBe('ministral_3_3b')
@@ -194,6 +200,18 @@ describe('resolveOllamaModelFamily', () => {
         parameterSize: '4.0B'
       })
     ).toBe('nemotron3_nano_4b')
+  })
+
+  it('preserves a retagged LFM 2.5 Thinking model from its model basename', () => {
+    expect(
+      resolveOllamaModelFamily('private-local:latest', {
+        id: 'private-local:latest',
+        label: 'Private local model',
+        family: 'lfm2',
+        parameterSize: '1.17B',
+        show: { model_info: { 'general.basename': 'LFM2.5-1.2B-Thinking' } }
+      })
+    ).toBe('lfm2_5_thinking_1_2b')
   })
 
   it('uses exact tags before architecture metadata that could be ambiguous', () => {
@@ -463,6 +481,23 @@ describe('evaluateOllamaModelPreflight', () => {
       totalMemoryBytes: 64 * GB
     })
     expect(result.checks.find((c) => c.id === 'installed')?.ok).toBe(true)
+  })
+
+  it('treats official lightweight aliases as the installed catalog tags', () => {
+    for (const [modelId, installedModelId] of [
+      ['gemma3:4b', 'gemma3:latest'],
+      ['gemma3', 'gemma3:4b'],
+      ['lfm2.5-thinking:1.2b', 'lfm2.5-thinking:latest'],
+      ['lfm2.5-thinking', 'lfm2.5-thinking:1.2b']
+    ]) {
+      const result = evaluateOllamaModelPreflight({
+        modelId,
+        modelLabel: modelId,
+        installedModelIds: [installedModelId],
+        totalMemoryBytes: 8 * GB
+      })
+      expect(result.checks.find((check) => check.id === 'installed')?.ok).toBe(true)
+    }
   })
 })
 

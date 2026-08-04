@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
   resolveOllamaFinalLaunchPlan,
+  resolveOllamaRequestedWireModel,
   type ResolveOllamaFinalLaunchPlanInput
 } from './OllamaLaunchPlan'
 import type { OllamaChatMessage, OllamaNativeToolDefinition } from './OllamaProvider'
@@ -175,6 +176,57 @@ describe('OllamaFinalLaunchPlan', () => {
 
     expect(plan?.temperature).toBe(0.2)
     expect(Object.isFrozen(plan)).toBe(true)
+  })
+
+  it('resolves official lightweight aliases to installed wires and preserves LFM thinking', async () => {
+    expect(
+      resolveOllamaRequestedWireModel('gemma3:4b', null, [
+        { id: 'gemma3:latest', label: 'Gemma 3' }
+      ])
+    ).toBe('gemma3:latest')
+
+    const loadModelShow = vi.fn(async (model: string) => {
+      expect(model).toBe('lfm2.5-thinking:latest')
+      return {
+        details: {
+          family: 'lfm2',
+          parameter_size: '1.17B',
+          context_length: 128_000
+        },
+        model_info: { 'general.basename': 'LFM2.5-1.2B-Thinking' },
+        capabilities: ['completion', 'tools', 'thinking']
+      }
+    })
+    const plan = await resolveOllamaFinalLaunchPlan(
+      {
+        ...BASE_INPUT,
+        requestedModel: 'lfm2.5-thinking:1.2b',
+        ensemble: { enabled: false }
+      },
+      {
+        loadInstalledModels: async () => [
+          { id: 'lfm2.5-thinking:latest', label: 'LFM 2.5 Thinking' }
+        ],
+        loadModelShow,
+        modelLabel: (model) => model,
+        buildNativeToolDefinitions: () => nativeDefinitions,
+        getSessionMemory: () => null,
+        prepareEnsemblePrompt: ({ prompt }) => prompt,
+        buildWorkspaceIndexBlock: () => '',
+        buildOpeningMessages: ({ userPrompt }) => [{ role: 'user', content: userPrompt }],
+        resolveNumCtx: () => 8192
+      }
+    )
+
+    expect(loadModelShow).toHaveBeenCalledWith('lfm2.5-thinking:latest')
+    expect(plan).toMatchObject({
+      model: 'lfm2.5-thinking:latest',
+      thinkingLevel: 'high',
+      firstRequest: {
+        model: 'lfm2.5-thinking:latest',
+        think: 'high'
+      }
+    })
   })
 
   it('is the sole launch-fact resolver used by production dispatch', () => {
