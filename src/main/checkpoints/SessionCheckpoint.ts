@@ -12,6 +12,7 @@ import type {
 
 export const SESSION_CHECKPOINT_SCHEMA_VERSION = 1
 export const SESSION_CHECKPOINT_FILENAME = 'session-checkpoints.json'
+export const SESSION_CHECKPOINT_ARCHIVE_FILENAME = 'session-checkpoints-archive.jsonl'
 
 export type SessionCheckpointStatus = 'available' | 'accepted' | 'dismissed' | 'superseded'
 
@@ -368,14 +369,80 @@ export class SessionCheckpointStore {
   }
 
   private readFromDisk(): SessionCheckpointRecord[] {
-    if (!this.storagePath || !existsSync(this.storagePath)) return []
+    if (!this.storagePath) return []
+
+    // T3b: migrate legacy single-file format on first load.
+    // If the hot file contains non-available records (old format), split them
+    // transparently into hot + archive and persist the new layout.
+    if (existsSync(this.storagePath) && !existsSync(this.archivePath ?? '')) {
+      const migrated = this.migrateLegacyFormat()
+      if (migrated) return migrated
+    }
+
+    const hot = this.readHotRecords()
+    const archive = this.readArchiveRecords()
+    return [...hot, ...archive]
+  }
+
+  /**
+   * One-shot migration: legacy session-checkpoints.json held all records in
+   * a single array. Split available → hot, everything else → archive JSONL.
+   */
+  private migrateLegacyFormat(): SessionCheckpointRecord[] | null {
     try {
-      const parsed = JSON.parse(readFileSync(this.storagePath, 'utf-8')) as unknown
+      const parsed = JSON.parse(readFileSync(this.storagePath!, 'utf-8')) as unknown
+      if (!Array.isArray(parsed)) return null
+      const all = parsed.filter(isSessionCheckpointRecord)
+      if (all.length === 0) return []
+      // Only migrate if we find non-available records in the hot file.
+      const hasArchive = all.some((r) => r.status !== 'available')
+      if (!hasArchive) return all // Already in new format.
+      this.records = all
+      this.persistOrThrow()
+      this.log(
+        `[SessionCheckpointStore] migrated ${all.length} records to hot/archive split (${all.filter((r) => r.status === 'available').length} hot, ${all.filter((r) => r.status !== 'available').length} archive)`
+      )
+      return all
+    } catch (err) {
+      this.log(
+        `[SessionCheckpointStore] migration failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+      this.records = []
+      return []
+    }
+  }
+
+  private readHotRecords(): SessionCheckpointRecord[] {
+    if (!existsSync(this.storagePath!)) return []
+    try {
+      const parsed = JSON.parse(readFileSync(this.storagePath!, 'utf-8')) as unknown
       if (!Array.isArray(parsed)) return []
       return parsed.filter(isSessionCheckpointRecord)
     } catch (err) {
       this.log(
-        `[SessionCheckpointStore] load failed (starting empty): ${err instanceof Error ? err.message : String(err)}`
+        `[SessionCheckpointStore] hot load failed: ${err instanceof Error ? err.message : String(err)}`
+      )
+      return []
+    }
+  }
+
+  private readArchiveRecords(): SessionCheckpointRecord[] {
+    if (!this.archivePath || !existsSync(this.archivePath)) return []
+    try {
+      const raw = readFileSync(this.archivePath, 'utf-8')
+      const lines = raw.split('\n').filter((line) => line.trim())
+      return lines
+        .map((line) => {
+          try {
+            return JSON.parse(line) as unknown
+          } catch {
+            return null
+          }
+        })
+        .filter((v): v is SessionCheckpointRecord => isSessionCheckpointRecord(v))
+    } catch (err) {
+      this.log(
+        `[SessionCheckpointStore] archive load failed: ${err instanceof Error ? err.message : String(err)}`
       )
       return []
     }
@@ -391,14 +458,48 @@ export class SessionCheckpointStore {
     }
   }
 
+  private get archivePath(): string | null {
+    if (!this.storagePath) return null
+    return join(dirname(this.storagePath), SESSION_CHECKPOINT_ARCHIVE_FILENAME)
+  }
+
   // Erasure paths need the write failure, not a log line: swallowing it would
   // let a deletion commit while checkpoint bytes survive on disk.
+  //
+  // T3b: split disk format so every upsert writes only the compact hot set
+  // (status='available' records) instead of the full 20 MB array. Terminal
+  // records (superseded/accepted/dismissed) are appended to a JSONL archive.
   private persistOrThrow(): void {
     if (!this.storagePath) return
+    const hot = this.records.filter((r) => r.status === 'available')
+    const archive = this.records.filter((r) => r.status !== 'available')
+
     mkdirSync(dirname(this.storagePath), { recursive: true })
+
+    // Hot store: compact JSON array of active checkpoints only.
     const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
-    writeFileSync(tmpPath, JSON.stringify(this.records), 'utf-8')
+    writeFileSync(tmpPath, JSON.stringify(hot), 'utf-8')
     renameSync(tmpPath, this.storagePath)
+
+    // Archive: append terminal records as JSONL (one line per record).
+    // This is a full rewrite of the archive file each persist — archive
+    // changes are rare (only on supersede/accept/dismiss/purge) and the
+    // file stays small because records are terminal and never updated.
+    if (this.archivePath) {
+      if (archive.length === 0) {
+        // Purge may have cleared all archive records.
+        try {
+          writeFileSync(this.archivePath, '', 'utf-8')
+        } catch {
+          // Best-effort: a missing archive is equivalent to empty.
+        }
+      } else {
+        const lines = archive.map((r) => JSON.stringify(r)).join('\n') + '\n'
+        const archTmpPath = `${this.archivePath}.${this.idFactory()}.tmp`
+        writeFileSync(archTmpPath, lines, 'utf-8')
+        renameSync(archTmpPath, this.archivePath)
+      }
+    }
   }
 }
 

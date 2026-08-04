@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -317,6 +317,240 @@ describe('SessionCheckpoint', () => {
       writeFileSync(tmp, 'not-a-directory', 'utf-8')
 
       expect(() => store.purgeForHistoryDeletionScope({ kind: 'global' })).toThrow()
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('SessionCheckpoint hot/archive split (T3b)', () => {
+  it('writes only available records to the hot JSON file', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      const hot = JSON.parse(readFileSync(storagePath, 'utf-8'))
+      expect(hot).toHaveLength(1)
+      expect(hot[0].status).toBe('available')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('appends superseded records to the archive JSONL', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const archivePath = join(tmp, 'session-checkpoints-archive.jsonl')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+
+      // Start a second round — supersedes the first.
+      const chat2 = makeCheckpointChat()
+      chat2.ensemble!.activeRound!.roundId = 'round-2'
+      store.upsertFromChat(chat2, 'round-started')
+
+      // Hot file: only the latest available record.
+      const hot = JSON.parse(readFileSync(storagePath, 'utf-8'))
+      expect(hot).toHaveLength(1)
+      expect(hot[0].roundId).toBe('round-2')
+
+      // Archive: the superseded record.
+      expect(existsSync(archivePath)).toBe(true)
+      const archiveLines = readFileSync(archivePath, 'utf-8')
+        .split('\n')
+        .filter((line) => line.trim())
+      expect(archiveLines).toHaveLength(1)
+      const archived = JSON.parse(archiveLines[0])
+      expect(archived.status).toBe('superseded')
+      expect(archived.roundId).toBe('round-1')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('returns all records from list() including archive', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+
+      // Supersede by starting a new round.
+      const chat2 = makeCheckpointChat()
+      chat2.ensemble!.activeRound!.roundId = 'round-2'
+      store.upsertFromChat(chat2, 'round-started')
+
+      const all = store.list()
+      expect(all).toHaveLength(2)
+      const statuses = all.map((r) => r.status).sort()
+      expect(statuses).toEqual(['available', 'superseded'])
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('migrates legacy single-file format to hot/archive split on first load', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const archivePath = join(tmp, 'session-checkpoints-archive.jsonl')
+
+      // Write a legacy-format file with mixed statuses.
+      const legacy = [
+        {
+          schemaVersion: 1,
+          id: 'ck-1',
+          chatId: 'chat-1',
+          roundId: 'round-1',
+          status: 'superseded',
+          reason: 'round-started',
+          createdAt: '2026-06-01T09:00:00.000Z',
+          updatedAt: '2026-06-01T09:00:00.000Z',
+          snapshot: {
+            blackboard: [],
+            openTasks: [],
+            queueState: {
+              roundStatus: 'completed',
+              prompt: 'old',
+              startedAt: '2026-06-01T09:00:00.000Z',
+              queuedPrompts: [],
+              sleepingParticipantIds: [],
+              pendingWakeupIds: [],
+              participants: []
+            }
+          }
+        },
+        {
+          schemaVersion: 1,
+          id: 'ck-2',
+          chatId: 'chat-1',
+          roundId: 'round-2',
+          status: 'available',
+          reason: 'round-started',
+          createdAt: '2026-06-01T09:01:00.000Z',
+          updatedAt: '2026-06-01T09:01:00.000Z',
+          snapshot: {
+            blackboard: [],
+            openTasks: [],
+            queueState: {
+              roundStatus: 'running',
+              prompt: 'current',
+              startedAt: '2026-06-01T09:01:00.000Z',
+              queuedPrompts: [],
+              sleepingParticipantIds: [],
+              pendingWakeupIds: [],
+              participants: []
+            }
+          }
+        }
+      ]
+      mkdirSync(tmp, { recursive: true })
+      writeFileSync(storagePath, JSON.stringify(legacy), 'utf-8')
+      // No archive file exists yet.
+      expect(existsSync(archivePath)).toBe(false)
+
+      // Loading should migrate transparently.
+      const store = new SessionCheckpointStore({ storagePath })
+      expect(store.list()).toHaveLength(2)
+
+      // Now the hot file has only the available record.
+      const hot = JSON.parse(readFileSync(storagePath, 'utf-8'))
+      expect(hot).toHaveLength(1)
+      expect(hot[0].status).toBe('available')
+
+      // Archive has the superseded record.
+      expect(existsSync(archivePath)).toBe(true)
+      const archiveLines = readFileSync(archivePath, 'utf-8')
+        .split('\n')
+        .filter((line) => line.trim())
+      expect(archiveLines).toHaveLength(1)
+      expect(JSON.parse(archiveLines[0]).status).toBe('superseded')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('survives round-trip reload with mixed hot/archive records', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-06-01T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+
+      // Supersede.
+      const chat2 = makeCheckpointChat()
+      chat2.ensemble!.activeRound!.roundId = 'round-2'
+      store.upsertFromChat(chat2, 'round-started')
+
+      // Reload from disk.
+      const reloaded = new SessionCheckpointStore({ storagePath })
+      expect(reloaded.list()).toHaveLength(2)
+      expect(reloaded.latestForChat('chat-1')?.roundId).toBe('round-2')
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('purges records across both hot and archive stores', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const archivePath = join(tmp, 'session-checkpoints-archive.jsonl')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-07-21T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      // Add a second chat so purge doesn't empty everything.
+      store.upsertFromChat(
+        { ...makeCheckpointChat(), appChatId: 'chat-2' },
+        'round-started'
+      )
+
+      // Supersede chat-1 by starting a new round.
+      const chat1b = makeCheckpointChat()
+      chat1b.ensemble!.activeRound!.roundId = 'round-2'
+      store.upsertFromChat(chat1b, 'round-started')
+
+      // Now chat-1 has one archive + one hot; chat-2 has one hot.
+      expect(store.list()).toHaveLength(3)
+
+      // Purge chat-1 entirely.
+      const removed = store.purgeForHistoryDeletionScope({
+        kind: 'chat',
+        chatIds: ['chat-1']
+      })
+      expect(removed).toBe(2)
+
+      // Hot file should only have chat-2.
+      const hot = JSON.parse(readFileSync(storagePath, 'utf-8'))
+      expect(hot).toHaveLength(1)
+      expect(hot[0].chatId).toBe('chat-2')
+
+      // Archive should be empty (or not exist).
+      const archiveSize = existsSync(archivePath)
+        ? readFileSync(archivePath, 'utf-8').trim().length
+        : 0
+      expect(archiveSize).toBe(0)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

@@ -3945,6 +3945,9 @@ export class EnsembleOrchestrator {
   private saveChatWithCheckpoint(chat: ChatRecord, reason: SessionCheckpointReason): void {
     this.deps.saveChat(chat)
     if (chat.ensemble?.activeRound?.status !== 'running') return
+    // T3b: skip checkpoint persist for participant-updated while round is
+    // running — checkpoints persist only at D2 lifecycle boundaries.
+    if (reason === 'participant-updated') return
     try {
       this.deps.persistSessionCheckpoint?.(chat, reason)
     } catch {
