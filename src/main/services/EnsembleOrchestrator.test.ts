@@ -2991,6 +2991,71 @@ describe('EnsembleOrchestrator', () => {
     )
   })
 
+  it('selects one later available Captain when earlier configured Captains are unavailable', async () => {
+    const chat = makeChat()
+    chat.ensemble!.participants = [
+      {
+        id: 'boss',
+        provider: 'claude',
+        enabled: false,
+        role: 'Boss',
+        instructions: 'Lead when available.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'captain-one',
+        provider: 'cursor',
+        enabled: false,
+        role: 'Captain One',
+        instructions: 'First fallback.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'captain-two',
+        provider: 'codex',
+        enabled: true,
+        role: 'Captain Two',
+        instructions: 'Second fallback.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'captain-three',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Captain Three',
+        instructions: 'Third fallback.',
+        order: 4,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    chat.ensemble!.bossmanParticipantId = 'boss'
+    chat.ensemble!.captainParticipantIds = ['captain-one', 'captain-two', 'captain-three']
+    chat.ensemble!.secondInCommandParticipantId = 'captain-one'
+    const harness = makeHarness({ initialChat: chat })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Continue with the first available authority seat.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('captain-two')
+
+    const listed = harness.orchestrator.listParticipantsForRun(
+      harness.dispatched[0].appRunId
+    )
+    expect(listed.captainParticipantIds).toEqual([
+      'captain-one',
+      'captain-two',
+      'captain-three'
+    ])
+    expect(listed.secondInCommandParticipantId).toBe('captain-one')
+    expect(listed.bossmanAuthorityRole).toBe('second_in_command')
+  })
+
   it('schedules a wakeup and resumes the same participant in the active round', async () => {
     const scheduled: EnsembleWakeupRecord[] = []
     const signRunPermissionPosture = vi.fn(() => 'd'.repeat(64))
@@ -8894,7 +8959,7 @@ Next action:
 
   it('applies idle Enabled and Stage edits immediately to the current round', async () => {
     const initialChat = makeChat()
-    initialChat.ensemble!.bossmanParticipantId = 'codex'
+    initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.bossmanAutoApprovals = {
       enabled: true,
       mode: 'permission_preset_once',
@@ -8917,8 +8982,8 @@ Next action:
     })
     expect(background).toMatchObject({ ok: true, status: 'applied' })
     expect(harness.chat.ensemble).toMatchObject({
-      bossmanParticipantId: undefined,
-      bossmanAutoApprovals: undefined
+      bossmanParticipantId: 'claude',
+      bossmanAutoApprovals: { enabled: true }
     })
     expect(
       harness.chat.ensemble!.activeRound?.participants.find(
@@ -9036,8 +9101,73 @@ Next action:
     completeDispatchedRun(harness, 1)
   })
 
+  it('synchronizes live Captain mutations into runtime and active-round authority', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.participants = [
+      {
+        ...initialChat.ensemble!.participants[1],
+        id: 'worker',
+        role: 'Worker',
+        order: 1
+      },
+      {
+        ...initialChat.ensemble!.participants[0],
+        id: 'boss',
+        role: 'Boss',
+        order: 2
+      }
+    ]
+    initialChat.ensemble!.bossmanParticipantId = 'boss'
+    initialChat.ensemble!.captainParticipantIds = []
+    initialChat.ensemble!.secondInCommandParticipantId = undefined
+    const harness = makeHarness({ initialChat })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep the live authority snapshot current.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('worker')
+
+    expect(
+      harness.orchestrator.requestUserRosterMutation({
+        chatId: 'ensemble-chat',
+        action: 'set_authority',
+        participantId: 'worker',
+        authority: 'captain'
+      })
+    ).toMatchObject({ ok: true, status: 'applied' })
+    expect(
+      harness.orchestrator.requestUserRosterMutation({
+        chatId: 'ensemble-chat',
+        action: 'add',
+        authority: 'captain',
+        participant: {
+          id: 'captain-added',
+          provider: 'kimi',
+          enabled: true,
+          role: 'Captain Added',
+          instructions: 'Coordinate the next lane.',
+          order: 3,
+          permissionPresetId: 'default'
+        }
+      })
+    ).toMatchObject({ ok: true, status: 'applied' })
+
+    const listed = harness.orchestrator.listParticipantsForRun(
+      harness.dispatched[0].appRunId
+    )
+    expect(listed.captainParticipantIds).toEqual(['worker', 'captain-added'])
+    expect(harness.chat.ensemble!.activeRound).toMatchObject({
+      bossmanParticipantId: 'boss',
+      captainParticipantIds: ['worker', 'captain-added'],
+      secondInCommandParticipantId: 'worker'
+    })
+  })
+
   it('queues active participant removal only until its execution boundary', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Plan and execute.',
@@ -15683,6 +15813,69 @@ Next action:
     completeDispatchedRun(harness, 1)
   })
 
+  it('lets every configured Captain fan out while Boss is available', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-primary', 'captain-secondary']
+    harness.chat.ensemble!.secondInCommandParticipantId = 'captain-primary'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'captain-primary',
+        provider: 'cursor',
+        enabled: false,
+        role: 'Captain One',
+        instructions: 'Coordinate when available.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'captain-secondary',
+        provider: 'codex',
+        enabled: true,
+        role: 'Captain Two',
+        instructions: 'Coordinate parallel work.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'boss',
+        provider: 'claude',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Own controlling authority.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'reviewer',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 4,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'The second configured Captain starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const captainRunId = harness.dispatched[0].appRunId
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('captain-secondary')
+
+    const result = await harness.orchestrator.fanoutForRun(captainRunId, {
+      targets: ['Reviewer'],
+      prompt: 'Review in parallel.'
+    })
+
+    expect(result).toMatchObject({ ok: true, participantIds: ['reviewer'] })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    completeDispatchedRun(harness, 1)
+  })
+
   it('1.0.8: ensemble_fanout dispatches an explicit read-only target in a lane', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
@@ -21015,7 +21208,8 @@ describe('assignment-aware continuation roster narrowing', () => {
       roundsByChatId: Map<string, object>
       narrowContinuationRosterToOpenWork: (
         chat: ChatRecord,
-        fullRoster: EnsembleParticipant[]
+        fullRoster: EnsembleParticipant[],
+        runtime?: object
       ) => EnsembleParticipant[]
       tryAutoContinueRound: (runtime: object, chat: ChatRecord) => EnsembleParticipant[] | null
     }
@@ -21137,6 +21331,61 @@ describe('assignment-aware continuation roster narrowing', () => {
     const rosterWithoutBoss = fullRoster.filter((entry) => entry.id !== 'boss')
     expect(narrow()(chat, rosterWithoutBoss).map((entry) => entry.id)).toEqual([
       'captain',
+      'worker1'
+    ])
+  })
+
+  it('admits only the first available Captain after a live-round Boss failure', async () => {
+    const harness = makeHarness()
+    const roster = [
+      seat('boss', 1),
+      seat('captain-one', 2),
+      seat('captain-two', 3),
+      seat('worker1', 4)
+    ]
+    harness.chat.ensemble!.participants = roster
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.ensemble!.captainParticipantIds = ['captain-one', 'captain-two']
+    harness.chat.ensemble!.secondInCommandParticipantId = 'captain-one'
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Work the assigned slice.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    harness.chat.ensemble!.activeRound!.participants =
+      harness.chat.ensemble!.activeRound!.participants.map((participant) => ({
+        ...participant,
+        status:
+          participant.participantId === 'boss'
+            ? 'failed'
+            : participant.participantId === 'captain-one'
+              ? 'skipped'
+              : 'idle'
+      }))
+    harness.chat.ensemble!.bossmanControlState = {
+      assignments: [
+        {
+          id: 'a1',
+          participantId: 'worker1',
+          objective: 'slice',
+          status: 'open',
+          ...stamp
+        }
+      ]
+    }
+
+    const narrowed = io.narrowContinuationRosterToOpenWork.call(
+      harness.orchestrator,
+      harness.chat,
+      roster,
+      runtime
+    )
+    expect(narrowed.map((participant) => participant.id)).toEqual([
+      'captain-two',
       'worker1'
     ])
   })

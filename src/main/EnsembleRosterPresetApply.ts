@@ -10,6 +10,7 @@ import {
 } from './EnsembleRosterPresetContract'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
 import { isLiveSelectableProvider } from '../shared/retiredProviders'
+import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import {
   AGENT_ROSTER_CONTEXT_MAX_CHARS,
   AGENT_ROSTER_CONTEXT_MIN_CHARS,
@@ -327,25 +328,28 @@ export function buildEnsembleRosterPresetApply(
   const captainIndexes = preset.participants
     .map((participant, index) => (participant.isSecondInCommand === true ? index : -1))
     .filter((index) => index >= 0)
-  if (captainIndexes.length > 1 || captainIndexes[0] === bossIndexes[0]) {
+  if (
+    captainIndexes.length > MAX_ENSEMBLE_CAPTAINS ||
+    captainIndexes.includes(bossIndexes[0])
+  ) {
     return fail(
       'invalid_preset',
-      'Roster preset import rejected: at most one non-Boss participant may set isSecondInCommand=true.'
+      `Roster preset import rejected: up to ${MAX_ENSEMBLE_CAPTAINS} non-Boss participants may set isSecondInCommand=true.`
     )
   }
   const bossSnapshot = preset.participants[bossIndexes[0]]
   if (!bossSnapshot.enabled) {
     return fail('invalid_preset', 'Roster preset import rejected: the Boss participant must be enabled.')
   }
-  if (captainIndexes.length === 1 && !preset.participants[captainIndexes[0]].enabled) {
-    return fail('invalid_preset', 'Roster preset import rejected: the Captain participant must be enabled.')
+  if (captainIndexes.some((index) => !preset.participants[index].enabled)) {
+    return fail('invalid_preset', 'Roster preset import rejected: Captain participants must be enabled.')
   }
 
   const isExistingEnsemble = input.chat.chatKind === 'ensemble'
   const currentEnsemble = input.chat.ensemble
   let authority: PendingEnsembleRosterPresetApply['authority']
   let bossmanParticipantId: string
-  let preservedCaptainParticipantId: string | undefined
+  let preservedCaptainParticipantIds: string[] = []
 
   if (!isExistingEnsemble) {
     const soloProvider = input.chat.provider
@@ -360,29 +364,39 @@ export function buildEnsembleRosterPresetApply(
   } else {
     const currentBossId = currentEnsemble?.bossmanParticipantId
     const currentBoss = currentEnsemble?.participants.find(
-      (participant) => participant.id === currentBossId && participant.enabled
+      (participant) => participant.id === currentBossId && participant.stageRole !== 'background'
     )
     if (!currentBossId || !currentBoss) {
       return fail(
         'bossman_not_configured',
-        'Roster preset import rejected: this Ensemble has no enabled assigned Boss.'
+        'Roster preset import rejected: this Ensemble has no configured foreground Boss.'
       )
     }
-    const currentCaptainId = currentEnsemble?.secondInCommandParticipantId
-    const currentCaptain = currentEnsemble?.participants.find(
-      (participant) => participant.id === currentCaptainId && participant.enabled
+    const currentCaptainIds = normalizeEnsembleAuthority({
+      participants: currentEnsemble?.participants || [],
+      bossmanParticipantId: currentBossId,
+      captainParticipantIds: currentEnsemble?.captainParticipantIds,
+      secondInCommandParticipantId: currentEnsemble?.secondInCommandParticipantId,
+      recoverBoss: false
+    }).captainParticipantIds
+    const callerIsCaptain = currentCaptainIds.some(
+      (participantId) =>
+        participantId === input.callerParticipantId &&
+        currentEnsemble?.participants.some(
+          (participant) => participant.id === participantId && participant.enabled
+        )
     )
     if (input.callerParticipantId === currentBossId) {
       authority = 'ensemble_boss'
-    } else if (input.callerParticipantId === currentCaptainId && currentCaptain) {
+    } else if (callerIsCaptain) {
       authority = 'ensemble_captain'
-      if (captainIndexes.length !== 1) {
+      if (captainIndexes.length !== currentCaptainIds.length) {
         return fail(
           'captain_assignment_forbidden',
-          'Roster preset import rejected: a Captain may refine the roster but must preserve one Captain marker; only the Boss may clear or allocate Captain authority.'
+          'Roster preset import rejected: a Captain may refine the roster but must preserve the complete configured Captain set; only the Boss may clear or allocate Captain authority.'
         )
       }
-      preservedCaptainParticipantId = currentCaptainId
+      preservedCaptainParticipantIds = currentCaptainIds
     } else {
       return fail(
         'not_authorized',
@@ -390,8 +404,8 @@ export function buildEnsembleRosterPresetApply(
       )
     }
     bossmanParticipantId = currentBossId
-    if (authority === 'ensemble_boss' && currentCaptain) {
-      preservedCaptainParticipantId = currentCaptain.id
+    if (authority === 'ensemble_boss') {
+      preservedCaptainParticipantIds = currentCaptainIds.slice(0, captainIndexes.length)
     }
   }
 
@@ -400,9 +414,10 @@ export function buildEnsembleRosterPresetApply(
     .sort((a, b) => a.participant.order - b.participant.order || a.index - b.index)
   const usedIds = new Set<string>()
   if (bossmanParticipantId) usedIds.add(bossmanParticipantId)
-  if (preservedCaptainParticipantId) usedIds.add(preservedCaptainParticipantId)
-  let secondInCommandParticipantId: string | undefined
+  for (const participantId of preservedCaptainParticipantIds) usedIds.add(participantId)
+  const captainParticipantIds: string[] = []
   const participants: EnsembleParticipant[] = []
+  let captainIndex = 0
 
   for (const [index, entry] of sortedSnapshots.entries()) {
     const snapshot = entry.participant
@@ -413,8 +428,11 @@ export function buildEnsembleRosterPresetApply(
         bossmanParticipantId = id
         usedIds.add(id)
       }
-    } else if (snapshot.isSecondInCommand === true && preservedCaptainParticipantId) {
-      id = preservedCaptainParticipantId
+    } else if (snapshot.isSecondInCommand === true) {
+      id =
+        preservedCaptainParticipantIds[captainIndex] ||
+        nextUniqueParticipantId(usedIds, input.makeParticipantId)
+      captainIndex += 1
     } else {
       id = nextUniqueParticipantId(usedIds, input.makeParticipantId)
     }
@@ -424,7 +442,7 @@ export function buildEnsembleRosterPresetApply(
         'Roster preset import rejected: could not allocate unique participant ids.'
       )
     }
-    if (snapshot.isSecondInCommand === true) secondInCommandParticipantId = id
+    if (snapshot.isSecondInCommand === true) captainParticipantIds.push(id)
     participants.push(materializeParticipant(snapshot, id, index + 1))
   }
 
@@ -459,7 +477,10 @@ export function buildEnsembleRosterPresetApply(
       authority,
       participants,
       bossmanParticipantId,
-      ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
+      captainParticipantIds,
+      ...(captainParticipantIds[0]
+        ? { secondInCommandParticipantId: captainParticipantIds[0] }
+        : {}),
       orchestrationMode:
         preset.orchestrationMode === 'continuous' ? 'continuous' : 'turn_bound',
       fanoutPolicy: normalizedFanoutPolicy(preset),
@@ -531,6 +552,7 @@ export function applyPendingEnsembleRosterPresetOnFinalize(chat: ChatRecord): Ch
     ensembleContextChars: plan.ensembleContextChars,
     participants: plan.participants.map((participant) => ({ ...participant })),
     bossmanParticipantId: plan.bossmanParticipantId,
+    captainParticipantIds: plan.captainParticipantIds,
     secondInCommandParticipantId: plan.secondInCommandParticipantId,
     bossmanAutoApprovals: undefined,
     updatedAt: nowIso
@@ -618,7 +640,7 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
     participantRules: {
       count: `1-${MAX_ROSTER_PRESET_PARTICIPANTS}`,
       exactlyOneIsBossman: true,
-      atMostOneIsSecondInCommand: true,
+      maxIsSecondInCommand: MAX_ENSEMBLE_CAPTAINS,
       permissions: ['read_only', 'plan', 'default'],
       stages: ['any (omit stageRole)', 'scout', 'worker', 'reviewer', 'background'],
       order: 'Use numeric order; import normalizes it to 1..N.',

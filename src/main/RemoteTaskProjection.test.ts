@@ -885,7 +885,16 @@ describe('RemoteTaskProjection', () => {
         ensemble: {
           enabled: true,
           maxParticipants: 2,
-          participants: [],
+          participants: [
+            {
+              id: 'p1',
+              provider: 'codex',
+              role: 'Boss',
+              instructions: 'Lead.',
+              enabled: true,
+              order: 1
+            }
+          ],
           bossmanParticipantId: 'p1',
           bossmanAutoApprovals: {
             enabled: true,
@@ -1607,6 +1616,35 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
       ['p1', false],
       ['p2', true]
     ])
+  })
+
+  it('projects every canonical Captain and the legacy first-Captain mirror', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          bossmanParticipantId: 'p1',
+          captainParticipantIds: ['p4', 'p2', 'p3'],
+          secondInCommandParticipantId: 'p4',
+          participants: [
+            { id: 'p1', provider: 'claude', role: 'Boss', enabled: true, order: 1 },
+            { id: 'p2', provider: 'codex', role: 'Captain A', enabled: true, order: 2 },
+            { id: 'p3', provider: 'kimi', role: 'Captain B', enabled: true, order: 3 },
+            { id: 'p4', provider: 'grok', role: 'Captain C', enabled: true, order: 4 }
+          ]
+        },
+        runs: []
+      } as unknown as Partial<ChatRecord>)
+    )
+
+    expect(state).toMatchObject({
+      bossmanParticipantId: 'p1',
+      captainParticipantIds: ['p2', 'p3', 'p4'],
+      secondInCommandParticipantId: 'p2'
+    })
+    expect(
+      state?.roster?.filter((entry) => entry.isSecondInCommand).map((entry) => entry.id)
+    ).toEqual(['p2', 'p3', 'p4'])
   })
 })
 

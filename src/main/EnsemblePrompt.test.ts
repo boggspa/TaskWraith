@@ -467,6 +467,7 @@ describe('Ensemble prompt composition', () => {
     const captainConfig: EnsembleConfig = {
       ...ensemble,
       bossmanParticipantId: 'claude',
+      captainParticipantIds: ['codex', 'gemini'],
       secondInCommandParticipantId: 'codex'
     }
     const prompt = buildEnsembleParticipantPrompt({
@@ -478,9 +479,10 @@ describe('Ensemble prompt composition', () => {
     })
 
     expect(prompt).toContain(
-      'you share all configured fan-out powers with Boss and may use listed fan-out tools even while Boss is available'
+      'you are a configured Captain'
     )
-    expect(prompt).toContain('For non-fan-out authority you remain standby')
+    expect(prompt).toContain('share all configured fan-out powers with Boss')
+    expect(prompt).toContain('only the first available Captain in this listed roster order acts')
     expect(prompt).toContain(
       'broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available'
     )
@@ -2836,6 +2838,23 @@ describe('computeEnsemblePromptShellStamp', () => {
     ).not.toBe(stamp)
     expect(
       computeEnsemblePromptShellStamp({ ...base, fanoutPolicy: 'read_only' as const })
+    ).not.toBe(stamp)
+  })
+
+  it('changes the shell stamp when canonical Captain membership changes', () => {
+    const base: EnsembleConfig = {
+      ...ensemble,
+      bossmanParticipantId: 'claude',
+      captainParticipantIds: ['codex'],
+      secondInCommandParticipantId: 'codex'
+    }
+    const stamp = computeEnsemblePromptShellStamp(base)
+
+    expect(
+      computeEnsemblePromptShellStamp({
+        ...base,
+        captainParticipantIds: ['codex', 'gemini']
+      })
     ).not.toBe(stamp)
   })
 })

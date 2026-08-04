@@ -45,6 +45,7 @@ import {
   contextUsageFromStats,
   latestContextCompactionUsageEvidence
 } from '../shared/contextUsage'
+import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 
 const MOBILE_DIFF_SUMMARY_FILE_LIMIT = 40
 
@@ -607,6 +608,7 @@ export interface RemoteEnsembleState {
    */
   workingParticipantIds?: string[]
   bossmanParticipantId?: string
+  captainParticipantIds?: string[]
   secondInCommandParticipantId?: string
   continuationHops?: number
   maxContinuationHops?: number
@@ -1584,6 +1586,13 @@ export function buildRemoteEnsembleState(
   const ensemble = chat.ensemble
   if (!ensemble) return undefined
   const activeRound = ensemble.activeRound
+  const authority = normalizeEnsembleAuthority({
+    participants: ensemble.participants,
+    bossmanParticipantId: ensemble.bossmanParticipantId,
+    captainParticipantIds: ensemble.captainParticipantIds,
+    secondInCommandParticipantId: ensemble.secondInCommandParticipantId
+  })
+  const captainParticipantIds = new Set(authority.captainParticipantIds)
   const projectedRoundStatus = projectEnsembleRoundStatus(activeRound)
   const queuedPrompts =
     projectedRoundStatus === 'running' || activeRound?.status === 'completed'
@@ -1601,8 +1610,9 @@ export function buildRemoteEnsembleState(
       const working = workingParticipantIdsForRound(activeRound, projectedRoundStatus)
       return working.length > 0 ? { workingParticipantIds: working } : {}
     })(),
-    bossmanParticipantId: ensemble.bossmanParticipantId,
-    secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
+    bossmanParticipantId: authority.bossmanParticipantId,
+    captainParticipantIds: authority.captainParticipantIds,
+    secondInCommandParticipantId: authority.secondInCommandParticipantId,
     continuationHops: activeRound?.continuationHops,
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
     continuationPass: activeRound?.continuationPass,
@@ -1643,8 +1653,8 @@ export function buildRemoteEnsembleState(
           role: participant.role,
           enabled: participant.enabled,
           order: participant.order,
-          ...(participant.id === ensemble.bossmanParticipantId ? { isBossman: true } : {}),
-          ...(participant.id === ensemble.secondInCommandParticipantId
+          ...(participant.id === authority.bossmanParticipantId ? { isBossman: true } : {}),
+          ...(captainParticipantIds.has(participant.id)
             ? { isSecondInCommand: true }
             : {}),
           ...(participant.model ? { model: participant.model } : {}),

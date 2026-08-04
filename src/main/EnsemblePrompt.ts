@@ -9,6 +9,7 @@ import type {
   ToolActivity
 } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: 'Gemini',
@@ -174,7 +175,7 @@ export interface BuildEnsemblePromptInput {
 // the exact runtime receipt and every native/degraded lane has an explicit
 // @Role/@Model fallback. Bump so resumed seats receive a full truthful briefing
 // instead of retaining the earlier hard-coded MCP claims through slim turns.
-export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v4'
+export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v5'
 export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v2'
 
 export interface EnsembleDynamicStateSnapshot {
@@ -192,6 +193,12 @@ export interface EnsembleDynamicStateSnapshot {
  * stamp, so the slim-turn gate falls back to a full briefing automatically.
  */
 export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string {
+  const authority = normalizeEnsembleAuthority({
+    participants: config.participants,
+    bossmanParticipantId: config.bossmanParticipantId,
+    captainParticipantIds: config.captainParticipantIds,
+    secondInCommandParticipantId: config.secondInCommandParticipantId
+  })
   const roster = (config.participants || [])
     .filter((participant) => participant.enabled)
     .map((participant) =>
@@ -213,8 +220,8 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     .join('\n')
   const shellIdentity = [
     roster,
-    config.bossmanParticipantId || '',
-    config.secondInCommandParticipantId || '',
+    authority.bossmanParticipantId || '',
+    authority.captainParticipantIds.join(','),
     config.synthesizerParticipantId || '',
     config.roundMode || 'roundtable',
     config.orchestrationMode || 'turn_bound',
@@ -408,15 +415,16 @@ function formatAuthorityLines(
   orderedParticipants: EnsembleParticipant[],
   currentParticipantId: string
 ): string[] {
-  const authorityIds = [
-    config.bossmanParticipantId,
-    config.secondInCommandParticipantId
+  const authority = normalizeEnsembleAuthority({
+    participants: config.participants,
+    bossmanParticipantId: config.bossmanParticipantId,
+    captainParticipantIds: config.captainParticipantIds,
+    secondInCommandParticipantId: config.secondInCommandParticipantId
+  })
+  const uniqueAuthorityIds = [
+    authority.bossmanParticipantId,
+    ...authority.captainParticipantIds
   ].filter(Boolean) as string[]
-  const uniqueAuthorityIds = [...new Set(authorityIds)].filter(
-    (participantId) =>
-      config.participants.find((candidate) => candidate.id === participantId)?.stageRole !==
-      'background'
-  )
   if (uniqueAuthorityIds.length === 0) return []
   const labels = uniqueAuthorityIds
     .map((id) => {
@@ -425,14 +433,21 @@ function formatAuthorityLines(
     })
     .join(', ')
   const isAuthority = uniqueAuthorityIds.includes(currentParticipantId)
+  const isCaptain = authority.captainParticipantIds.includes(currentParticipantId)
+  const captainLabels = authority.captainParticipantIds
+    .map((id) => {
+      const participant = orderedParticipants.find((candidate) => candidate.id === id)
+      return participant ? formatParticipantScopeName(participant) : id
+    })
+    .join(', ')
   return [
     isAuthority
       ? `- Authority rule: you are one of the configured Lead/Boss/manager seats (${labels}). Coordinate and verify before assigning broad execution.`
       : `- Authority rule: configured Lead/Boss/manager seat(s) are ${labels}. Do not override their plan, complete the session, or redirect broad work before they speak or explicitly assign it.`,
-    config.secondInCommandParticipantId
-      ? currentParticipantId === config.secondInCommandParticipantId
-        ? '- Captain rule: you share all configured fan-out powers with Boss and may use listed fan-out tools even while Boss is available. For non-fan-out authority you remain standby: do not use Boss control or roster-edit tools while the assigned Boss is available; if Boss is disabled, unreachable, failed, cancelled, skipped, or visibly rate-limited, you may act as Captain using the same permission ceilings.'
-        : '- Captain rule: the Captain remains standby while the assigned Boss is available and only becomes controlling authority when Boss is unavailable.'
+    authority.captainParticipantIds.length > 0
+      ? isCaptain
+        ? `- Captain rule: you are a configured Captain (${captainLabels}) and share all configured fan-out powers with Boss, including while Boss is available. For non-fan-out authority every Captain remains standby while Boss is available; when Boss is unavailable, only the first available Captain in this listed roster order acts with the same permission ceilings.`
+        : `- Captain rule: configured Captains are ${captainLabels}. They may all use configured fan-out powers, but only the first available Captain in this listed roster order becomes controlling authority while Boss is unavailable.`
       : ''
   ]
     .filter(Boolean)
@@ -1312,8 +1327,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       : []),
     '- When `ensemble_fanout` is listed, use it for targeted parallel work. Default read_only fan-out only targets read-only participants; broad fan-out and locked_writers fan-out may be called by either the assigned Boss or Captain, including while both are available. locked_writers remains feature-gated, requires explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background lanes stay read-only). When `ensemble_fanout` is absent, use explicit unique mentions and normal rotation instead.',
     '- When the listed tool surface includes the graph primitives, use ensemble_fanout → ensemble_await → ensemble_lane_result for multi-step work. If any of those names are absent, do not search for them or scrape shared history; continue with the available rotation and mention fallback.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
+    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, use ensemble_control only when it is listed for this run. Then set action plus only the fields that action needs inside params (for example action=set_round_plan, params={goal:"Review."}; or action=summon_participant, params={targetParticipantId:"…",reason:"…"}). Flat action fields are also accepted. If neither ensemble_control nor its legacy ensemble_bossman_control alias is listed, state the bounded orchestration decision in your response and use unique mentions/normal rotation rather than searching for a control tool. Do not merely narrate that @Worker still has work and wait for the rotation; use listed fan-out/yield tools when present, otherwise use direct unique mentions. Keep assignment statuses current when the listed control surface supports them; when it does not, report the assignment state plainly for later participants.',
+    '- If you are the assigned Boss, or the single acting Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants / ensemble_roster_edit / ensemble_brief_update only when those tools are listed. If they are absent, do not attempt a hidden seat mutation: state the requested provider/model/brief change for the user or the next managed participant.',
     '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may use the listed roster tools to inspect and import a task-specific TaskWraith roster export. If those tools are absent, propose the roster in visible text; do not invent a roster-management tool.',
     '- When blackboard_post/read or ensemble_poll_response are listed, use them only for durable shared facts, decisions, risks, do-not-repeat notes, and polls — not conversational side messages. If those tools are absent, place concise durable findings in your response for the later participants instead.',
     '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, use a listed goal-completion tool if available; otherwise report completion clearly and use a unique mention only to route a specific next actor.',

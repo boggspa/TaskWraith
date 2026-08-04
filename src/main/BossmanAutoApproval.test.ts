@@ -136,7 +136,7 @@ describe('evaluateBossmanAutoApproval', () => {
     })
   })
 
-  it('allows Captain consent when no Boss is assigned but Captain is live', () => {
+  it('does not treat Captain fallback as a substitute Boss configuration', () => {
     const result = evaluateBossmanAutoApproval(
       makeContext({
         bossmanParticipantId: undefined,
@@ -147,11 +147,7 @@ describe('evaluateBossmanAutoApproval', () => {
       })
     )
 
-    expect(result).toMatchObject({
-      approvalAuthorityRole: 'captain',
-      approvalAuthorityParticipantId: 'captain',
-      primaryBossUnavailableReason: 'no Boss is assigned'
-    })
+    expect(result).toBeNull()
   })
 
   it('returns null when the Boss is no longer in the roster (stale id)', () => {
@@ -202,6 +198,46 @@ describe('evaluateBossmanAutoApproval', () => {
         makeContext({ ...captainFallback, externalParticipantIds: ['olly'] })
       )
     ).toBeNull()
+  })
+
+  it('does not route approval around an external acting Captain', () => {
+    const result = evaluateBossmanAutoApproval(
+      makeContext({
+        captainParticipantIds: ['captain-a', 'captain-b', 'captain-c'],
+        secondInCommandParticipantId: 'captain-a',
+        unavailableCaptainParticipantIds: ['captain-a'],
+        externalParticipantIds: ['captain-b'],
+        primaryBossUnavailable: true,
+        primaryBossUnavailableReason: 'Boss hit a quota wall',
+        participantIds: ['boss', 'captain-a', 'captain-b', 'captain-c', 'worker']
+      })
+    )
+
+    expect(result).toBeNull()
+  })
+
+  it('uses roster order rather than physical array order for the acting Captain', () => {
+    const result = evaluateBossmanAutoApproval(
+      makeContext({
+        captainParticipantIds: ['captain-b', 'captain-a'],
+        secondInCommandParticipantId: 'captain-b',
+        primaryBossUnavailable: true,
+        participantIds: ['boss', 'captain-b', 'captain-a', 'worker'],
+        authorityParticipants: [
+          { id: 'boss', order: 1 },
+          { id: 'captain-b', order: 3 },
+          { id: 'captain-a', order: 2 },
+          { id: 'worker', order: 4 }
+        ]
+      })
+    )
+
+    expect(result).toMatchObject({
+      captainParticipantIds: ['captain-a', 'captain-b'],
+      secondInCommandParticipantId: 'captain-a',
+      approvalAuthorityRole: 'captain',
+      approvalAuthorityParticipantId: 'captain-a'
+    })
   })
 
   it('still auto-approves a model Boss when externals sit elsewhere in the roster', () => {

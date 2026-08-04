@@ -31,6 +31,10 @@ import {
   isAntigravityHeadlessPermissionNoOutput
 } from '../antigravity/AntigravityRunDiagnostics'
 import { evaluateBossQuotaSoftUnavailable } from '../BossQuotaSoftUnavailable'
+import {
+  configuredEnsembleCaptainParticipantIds,
+  resolveActingCaptainParticipantId
+} from '../EnsembleAuthorityResolution'
 import type {
   ActiveGoal,
   ActiveGoalStatus,
@@ -3136,6 +3140,7 @@ interface ActiveRoundRuntime {
   lastForegroundParticipantId?: string
   midRunSteeringBoundaryState?: EnsembleMidRunSteeringBoundaryState
   bossmanParticipantId?: string
+  captainParticipantIds?: string[]
   secondInCommandParticipantId?: string
   bossmanBaselineParticipantIds?: string[]
   bossmanBaselineParticipantCount?: number
@@ -5011,7 +5016,7 @@ export class EnsembleOrchestrator {
     const participants = chat.ensemble?.participants || []
     const configuredManagerIds = [
       this.activeBossmanParticipantId(chat, runtime),
-      this.activeSecondInCommandParticipantId(chat, runtime)
+      ...this.activeCaptainParticipantIds(chat, runtime)
     ].filter(
       (participantId, index, all): participantId is string =>
         typeof participantId === 'string' &&
@@ -5998,21 +6003,20 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       resolution.nextParticipants
     )
-    const nextSecondInCommandParticipantId =
-      latestChat.ensemble.secondInCommandParticipantId &&
-      latestChat.ensemble.secondInCommandParticipantId !== latestChat.ensemble.bossmanParticipantId &&
-      resolution.nextParticipants.some(
-        (participant) => participant.id === latestChat.ensemble!.secondInCommandParticipantId
-      )
-        ? latestChat.ensemble.secondInCommandParticipantId
-        : undefined
+    const nextCaptainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: resolution.nextParticipants,
+      bossmanParticipantId: latestChat.ensemble.bossmanParticipantId,
+      captainParticipantIds: latestChat.ensemble.captainParticipantIds,
+      secondInCommandParticipantId: latestChat.ensemble.secondInCommandParticipantId
+    })
     this.saveChatWithCheckpoint(
       {
         ...latestChat,
         ensemble: {
           ...latestChat.ensemble,
           participants: resolution.nextParticipants,
-          secondInCommandParticipantId: nextSecondInCommandParticipantId,
+          captainParticipantIds: nextCaptainParticipantIds,
+          secondInCommandParticipantId: nextCaptainParticipantIds[0],
           activeRound,
           ...(action === 'edit_participant' && affectedBefore && affectedAfter
             ? {
@@ -6741,7 +6745,7 @@ export class EnsembleOrchestrator {
         runtime.bossmanParticipantId = undefined
       }
     }
-    const activeRound =
+    const rosterUpdatedRound =
       runtime && runtimeAction
         ? this.applyRosterEditToActiveRound(
             chat.ensemble?.activeRound,
@@ -6749,6 +6753,20 @@ export class EnsembleOrchestrator {
             mutation.participants
           )
         : chat.ensemble?.activeRound
+    const activeRound =
+      runtime && rosterUpdatedRound?.roundId === runtime.roundId
+        ? {
+            ...rosterUpdatedRound,
+            bossmanParticipantId: mutation.bossmanParticipantId,
+            captainParticipantIds: [...mutation.captainParticipantIds],
+            secondInCommandParticipantId: mutation.secondInCommandParticipantId
+          }
+        : rosterUpdatedRound
+    if (runtime) {
+      runtime.bossmanParticipantId = mutation.bossmanParticipantId
+      runtime.captainParticipantIds = [...mutation.captainParticipantIds]
+      runtime.secondInCommandParticipantId = mutation.secondInCommandParticipantId
+    }
     const updated: ChatRecord = {
       ...chat,
       ensemble: {
@@ -6756,6 +6774,7 @@ export class EnsembleOrchestrator {
         participants: mutation.participants,
         maxParticipants: mutation.maxParticipants,
         bossmanParticipantId: mutation.bossmanParticipantId,
+        captainParticipantIds: mutation.captainParticipantIds,
         secondInCommandParticipantId: mutation.secondInCommandParticipantId,
         bossmanAutoApprovals: mutation.bossmanAutoApprovals,
         activeRound,
@@ -6804,6 +6823,20 @@ export class EnsembleOrchestrator {
     // execution boundary instead of letting the last click erase the first.
     const resolvedAfter =
       pendingChange && patch ? applySeatChangePatch(pendingTarget, patch) : after
+    if (
+      isBackgroundParticipant(resolvedAfter) &&
+      chat.ensemble?.bossmanParticipantId === before.id
+    ) {
+      return {
+        ok: false,
+        chat: this.deps.getChat(chat.appChatId) || chat,
+        message:
+          'Participant seat change rejected: replace the configured Boss before moving that seat to BG.',
+        participantId: before.id,
+        roundId: runtime?.roundId,
+        error: 'invalid_patch'
+      }
+    }
 
     // No-op / duplicate guard. Mid-execution the picker may re-submit the
     // running seat or the same pending target; neither should append another
@@ -6973,26 +7006,22 @@ export class EnsembleOrchestrator {
       reason,
       nowIso
     )
-    const backgroundRestricted = isBackgroundParticipant(after)
-    const bossmanParticipantId =
-      backgroundRestricted && chat.ensemble!.bossmanParticipantId === before.id
-        ? undefined
-        : chat.ensemble!.bossmanParticipantId
-    const secondInCommandParticipantId =
-      backgroundRestricted && chat.ensemble!.secondInCommandParticipantId === before.id
-        ? undefined
-        : chat.ensemble!.secondInCommandParticipantId
+    const bossmanParticipantId = chat.ensemble!.bossmanParticipantId
+    const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: nextParticipants,
+      bossmanParticipantId,
+      captainParticipantIds: chat.ensemble!.captainParticipantIds,
+      secondInCommandParticipantId: chat.ensemble!.secondInCommandParticipantId
+    })
     const saved: ChatRecord = {
       ...chat,
       ensemble: {
         ...chat.ensemble!,
         participants: nextParticipants,
         bossmanParticipantId,
-        secondInCommandParticipantId,
-        bossmanAutoApprovals:
-          bossmanParticipantId || secondInCommandParticipantId
-            ? chat.ensemble!.bossmanAutoApprovals
-            : undefined,
+        captainParticipantIds,
+        secondInCommandParticipantId: captainParticipantIds[0],
+        bossmanAutoApprovals: chat.ensemble!.bossmanAutoApprovals,
         activeRound,
         sessionActivityLedger: [
           ...(chat.ensemble!.sessionActivityLedger || []),
@@ -7126,6 +7155,13 @@ export class EnsembleOrchestrator {
     nextParticipants: EnsembleParticipant[]
   ): void {
     const remaining = runtime.remainingParticipants
+    runtime.captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: nextParticipants,
+      bossmanParticipantId: runtime.bossmanParticipantId,
+      captainParticipantIds: runtime.captainParticipantIds,
+      secondInCommandParticipantId: runtime.secondInCommandParticipantId
+    })
+    runtime.secondInCommandParticipantId = runtime.captainParticipantIds[0]
     if (!remaining) return
     const nextById = new Map(nextParticipants.map((participant) => [participant.id, participant]))
     const affected = nextById.get(affectedParticipantId)
@@ -7142,9 +7178,6 @@ export class EnsembleOrchestrator {
       const filtered = remaining.filter((participant) => participant.id !== affectedParticipantId)
       remaining.length = 0
       remaining.push(...filtered)
-      if (runtime.secondInCommandParticipantId === affectedParticipantId) {
-        runtime.secondInCommandParticipantId = undefined
-      }
     } else {
       const edited = remaining
         .map((participant) => nextById.get(participant.id) || participant)
@@ -7234,6 +7267,12 @@ export class EnsembleOrchestrator {
       )
       .map((participant) => roundParticipantStateFromParticipant(participant, 'idle'))
     const participantStates = [...existing, ...removed, ...added].sort((a, b) => a.order - b.order)
+    const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: nextParticipants,
+      bossmanParticipantId: round.bossmanParticipantId,
+      captainParticipantIds: round.captainParticipantIds,
+      secondInCommandParticipantId: round.secondInCommandParticipantId
+    })
     return {
       ...round,
       activeParticipantId:
@@ -7244,10 +7283,8 @@ export class EnsembleOrchestrator {
         round.bossmanParticipantId && nextById.has(round.bossmanParticipantId)
           ? round.bossmanParticipantId
           : undefined,
-      secondInCommandParticipantId:
-        round.secondInCommandParticipantId && nextById.has(round.secondInCommandParticipantId)
-          ? round.secondInCommandParticipantId
-          : undefined,
+      captainParticipantIds,
+      secondInCommandParticipantId: captainParticipantIds[0],
       participants: participantStates
     }
   }
@@ -9048,7 +9085,7 @@ export class EnsembleOrchestrator {
     const eligibleIds = this.bindingPollEligibleParticipantIds(chat, runtime)
     const authorityVoterIds = [
       chat.ensemble.bossmanParticipantId,
-      chat.ensemble.secondInCommandParticipantId
+      ...this.activeCaptainParticipantIds(chat, runtime)
     ].filter((id): id is string => Boolean(id))
     const timeoutSeconds =
       clampOptionalInteger(timeoutSecondsInput, 30, 24 * 60 * 60) ??
@@ -9875,11 +9912,34 @@ export class EnsembleOrchestrator {
       .concat(replacement)
       .sort((a, b) => a.order - b.order)
       .map((participant, index) => ({ ...participant, order: index + 1 }))
+    const nextBossmanParticipantId =
+      latestEnsemble.bossmanParticipantId === targetParticipantId
+        ? replacement.id
+        : latestEnsemble.bossmanParticipantId
+    const currentCaptainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: latestEnsemble.participants,
+      bossmanParticipantId: latestEnsemble.bossmanParticipantId,
+      captainParticipantIds: latestEnsemble.captainParticipantIds,
+      secondInCommandParticipantId: latestEnsemble.secondInCommandParticipantId
+    })
+    const nextCaptainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: nextParticipants,
+      bossmanParticipantId: nextBossmanParticipantId,
+      captainParticipantIds: currentCaptainParticipantIds.map((participantId) =>
+        participantId === targetParticipantId ? replacement.id : participantId
+      )
+    })
     const replacementOrder = nextParticipants.find((participant) => participant.id === replacement.id)?.order || replacement.order
     const activeRound =
       latestEnsemble.activeRound?.roundId === runtime.roundId
         ? {
             ...latestEnsemble.activeRound,
+            bossmanParticipantId:
+              latestEnsemble.activeRound.bossmanParticipantId === targetParticipantId
+                ? replacement.id
+                : latestEnsemble.activeRound.bossmanParticipantId,
+            captainParticipantIds: nextCaptainParticipantIds,
+            secondInCommandParticipantId: nextCaptainParticipantIds[0],
             participants: [
               ...latestEnsemble.activeRound.participants.map((participant) =>
                 participant.participantId === targetParticipantId && pendingIndex >= 0
@@ -9913,18 +9973,20 @@ export class EnsembleOrchestrator {
           ...latestEnsemble,
           participants: nextParticipants,
           activeRound,
-          ...(latestEnsemble.bossmanParticipantId === targetParticipantId
-            ? { bossmanParticipantId: undefined, bossmanAutoApprovals: undefined }
-            : {}),
-          ...(latestEnsemble.secondInCommandParticipantId === targetParticipantId
-            ? { secondInCommandParticipantId: undefined }
-            : {}),
+          bossmanParticipantId: nextBossmanParticipantId,
+          captainParticipantIds: nextCaptainParticipantIds,
+          secondInCommandParticipantId: nextCaptainParticipantIds[0],
           updatedAt: this.deps.nowIso()
         },
         updatedAt: this.deps.now()
       },
       'participant-updated'
     )
+    if (runtime.bossmanParticipantId === targetParticipantId) {
+      runtime.bossmanParticipantId = replacement.id
+    }
+    runtime.captainParticipantIds = nextCaptainParticipantIds
+    runtime.secondInCommandParticipantId = nextCaptainParticipantIds[0]
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
@@ -11151,18 +11213,29 @@ export class EnsembleOrchestrator {
     return participant && isBackgroundParticipant(participant) ? undefined : participantId
   }
 
+  private activeCaptainParticipantIds(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime
+  ): string[] {
+    return configuredEnsembleCaptainParticipantIds({
+      participants: chat.ensemble?.participants || [],
+      bossmanParticipantId: this.activeBossmanParticipantId(chat, runtime),
+      captainParticipantIds:
+        runtime.captainParticipantIds ??
+        chat.ensemble?.activeRound?.captainParticipantIds ??
+        chat.ensemble?.captainParticipantIds,
+      secondInCommandParticipantId:
+        runtime.secondInCommandParticipantId ||
+        chat.ensemble?.activeRound?.secondInCommandParticipantId ||
+        chat.ensemble?.secondInCommandParticipantId
+    })
+  }
+
   private activeSecondInCommandParticipantId(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime
   ): string | undefined {
-    const participantId =
-      runtime.secondInCommandParticipantId ||
-      chat.ensemble?.activeRound?.secondInCommandParticipantId ||
-      chat.ensemble?.secondInCommandParticipantId
-    const participant = chat.ensemble?.participants.find(
-      (candidate) => candidate.id === participantId
-    )
-    return participant && isBackgroundParticipant(participant) ? undefined : participantId
+    return this.activeCaptainParticipantIds(chat, runtime)[0]
   }
 
   private primaryBossUnavailable(
@@ -11239,6 +11312,39 @@ export class EnsembleOrchestrator {
     return { unavailable: false, liveBossmanParticipantId: bossmanParticipantId }
   }
 
+  private activeActingCaptainParticipantId(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime
+  ): string | undefined {
+    const captainParticipantIds = this.activeCaptainParticipantIds(chat, runtime)
+    const unavailableCaptainParticipantIds = new Set(runtime.unreachableParticipantIds || [])
+    const round = chat.ensemble?.activeRound
+    if (round?.roundId === runtime.roundId) {
+      for (const participantId of captainParticipantIds) {
+        const participant = chat.ensemble?.participants.find(
+          (candidate) => candidate.id === participantId
+        )
+        if (
+          participant &&
+          evaluateBossQuotaSoftUnavailable(chat, round.roundId, {
+            id: participant.id,
+            provider: participant.provider
+          })
+        ) {
+          unavailableCaptainParticipantIds.add(participantId)
+        }
+      }
+    }
+    return resolveActingCaptainParticipantId({
+      participants: chat.ensemble?.participants || [],
+      bossmanParticipantId: this.activeBossmanParticipantId(chat, runtime),
+      captainParticipantIds,
+      unavailableParticipantIds: unavailableCaptainParticipantIds,
+      roundParticipantStates: round?.participants,
+      roundLive: round?.roundId === runtime.roundId && round.status === 'running'
+    })
+  }
+
   private resolveBossAuthorityForCaller(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
@@ -11248,6 +11354,7 @@ export class EnsembleOrchestrator {
         ok: true
         role: 'boss' | 'second_in_command'
         bossmanParticipantId: string
+        captainParticipantIds: string[]
         secondInCommandParticipantId?: string
         rosterGuardParticipantId: string
         primaryUnavailableReason?: string
@@ -11257,17 +11364,21 @@ export class EnsembleOrchestrator {
         error: 'bossman_not_configured' | 'second_in_command_standby' | 'not_bossman'
         message: string
         bossmanParticipantId?: string
+        captainParticipantIds?: string[]
         secondInCommandParticipantId?: string
         primaryUnavailableReason?: string
       } {
     const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
+    const captainParticipantIds = this.activeCaptainParticipantIds(chat, runtime)
+    const secondInCommandParticipantId = captainParticipantIds[0]
     const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
+    const actingCaptainParticipantId = this.activeActingCaptainParticipantId(chat, runtime)
     if (!bossmanParticipantId) {
       return {
         ok: false,
         error: 'bossman_not_configured',
         message: 'no Boss is assigned for this Ensemble',
+        captainParticipantIds,
         secondInCommandParticipantId,
         primaryUnavailableReason: primary.reason
       }
@@ -11277,26 +11388,32 @@ export class EnsembleOrchestrator {
         ok: true,
         role: 'boss',
         bossmanParticipantId,
+        captainParticipantIds,
         secondInCommandParticipantId,
         rosterGuardParticipantId: bossmanParticipantId
       }
     }
-    if (callerParticipantId === secondInCommandParticipantId) {
-      if (primary.unavailable) {
+    if (captainParticipantIds.includes(callerParticipantId)) {
+      if (primary.unavailable && callerParticipantId === actingCaptainParticipantId) {
         return {
           ok: true,
           role: 'second_in_command',
           bossmanParticipantId,
+          captainParticipantIds,
           secondInCommandParticipantId,
-          rosterGuardParticipantId: primary.liveBossmanParticipantId || secondInCommandParticipantId,
+          rosterGuardParticipantId:
+            primary.liveBossmanParticipantId || actingCaptainParticipantId,
           primaryUnavailableReason: primary.reason
         }
       }
       return {
         ok: false,
         error: 'second_in_command_standby',
-        message: 'the assigned Boss is still available, so Captain remains standby',
+        message: primary.unavailable
+          ? 'another configured Captain has acting authority for this unavailable Boss'
+          : 'the assigned Boss is still available, so Captains remain standby',
         bossmanParticipantId,
+        captainParticipantIds,
         secondInCommandParticipantId
       }
     }
@@ -11304,8 +11421,9 @@ export class EnsembleOrchestrator {
       ok: false,
       error: 'not_bossman',
       message:
-        'only the assigned Boss, or Captain while the Boss is unavailable, may use this control',
+        'only the assigned Boss, or the single acting Captain while the Boss is unavailable, may use this control',
       bossmanParticipantId,
+      captainParticipantIds,
       secondInCommandParticipantId,
       primaryUnavailableReason: primary.unavailable ? primary.reason : undefined
     }
@@ -11326,7 +11444,7 @@ export class EnsembleOrchestrator {
     if (callerParticipantId === this.activeBossmanParticipantId(chat, runtime)) {
       return 'boss'
     }
-    if (callerParticipantId === this.activeSecondInCommandParticipantId(chat, runtime)) {
+    if (this.activeCaptainParticipantIds(chat, runtime).includes(callerParticipantId)) {
       return 'second_in_command'
     }
     return undefined
@@ -11423,11 +11541,10 @@ export class EnsembleOrchestrator {
     matches: ParticipantMentionMatch[]
   ): boolean {
     const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
     const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
     const authorityId =
-      primary.unavailable && secondInCommandParticipantId
-        ? secondInCommandParticipantId
+      primary.unavailable
+        ? this.activeActingCaptainParticipantId(chat, runtime)
         : bossmanParticipantId
     if (!authorityId) return false
     const authorityMatch = matches.find(
@@ -11835,6 +11952,7 @@ export class EnsembleOrchestrator {
     roundId?: string
     activeParticipantId?: string
     bossmanParticipantId?: string
+    captainParticipantIds?: string[]
     secondInCommandParticipantId?: string
     bossmanAuthorityRole?: 'boss' | 'second_in_command'
     bossmanPrimaryUnavailableReason?: string
@@ -11873,10 +11991,18 @@ export class EnsembleOrchestrator {
     const authority = runtime
       ? this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
       : null
+    const captainParticipantIds = runtime
+      ? this.activeCaptainParticipantIds(chat, runtime)
+      : configuredEnsembleCaptainParticipantIds({
+          participants: chat.ensemble.participants,
+          bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+          captainParticipantIds: chat.ensemble.captainParticipantIds,
+          secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
+        })
     const rosterPresetAuthorityRole =
       run.participant.id === chat.ensemble.bossmanParticipantId
         ? 'boss'
-        : run.participant.id === chat.ensemble.secondInCommandParticipantId
+        : captainParticipantIds.includes(run.participant.id)
           ? 'captain'
           : undefined
     return {
@@ -11885,7 +12011,8 @@ export class EnsembleOrchestrator {
       roundId: run.roundId,
       activeParticipantId: run.participant.id,
       bossmanParticipantId: chat.ensemble.bossmanParticipantId,
-      secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId,
+      captainParticipantIds,
+      secondInCommandParticipantId: captainParticipantIds[0],
       ...(authority?.ok ? { bossmanAuthorityRole: authority.role } : {}),
       ...(authority?.ok && authority.primaryUnavailableReason
         ? { bossmanPrimaryUnavailableReason: authority.primaryUnavailableReason }
@@ -13020,14 +13147,13 @@ export class EnsembleOrchestrator {
         throw new Error(concurrentCheck.reason || 'Concurrent Ensemble dispatch is not available.')
       }
     }
-    const secondInCommandParticipantId =
-      chat.ensemble.secondInCommandParticipantId &&
-      chat.ensemble.secondInCommandParticipantId !== chat.ensemble.bossmanParticipantId &&
-      roundParticipants.some(
-        (participant) => participant.id === chat.ensemble!.secondInCommandParticipantId
-      )
-        ? chat.ensemble.secondInCommandParticipantId
-        : undefined
+    const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+      participants: chat.ensemble.participants,
+      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+      captainParticipantIds: chat.ensemble.captainParticipantIds,
+      secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId
+    })
+    const secondInCommandParticipantId = captainParticipantIds[0]
     const round: EnsembleRoundState = {
       roundId,
       status: 'running',
@@ -13041,6 +13167,7 @@ export class EnsembleOrchestrator {
       ...(chat.ensemble.bossmanParticipantId
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
+      captainParticipantIds,
       ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
       bossmanBaselineParticipantIds: roundParticipants.map((participant) => participant.id),
       bossmanBaselineParticipantCount: roundParticipants.length,
@@ -13114,6 +13241,7 @@ export class EnsembleOrchestrator {
       ...(chat.ensemble.bossmanParticipantId
         ? { bossmanParticipantId: chat.ensemble.bossmanParticipantId }
         : {}),
+      captainParticipantIds,
       ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
       bossmanBaselineParticipantIds: roundParticipants.map((participant) => participant.id),
       bossmanBaselineParticipantCount: roundParticipants.length,
@@ -13148,9 +13276,18 @@ export class EnsembleOrchestrator {
             .join(', ')}). No background lane launched. Use a unique @role, @model, or @id.`
         )
       }
+      const configuredCaptainParticipantIds = Array.isArray(
+        chat.ensemble.captainParticipantIds
+      )
+        ? chat.ensemble.captainParticipantIds
+        : chat.ensemble.secondInCommandParticipantId
+          ? [chat.ensemble.secondInCommandParticipantId]
+          : []
       const backgroundAuthorityAssignments = [
         ['Boss', chat.ensemble.bossmanParticipantId],
-        ['Captain', chat.ensemble.secondInCommandParticipantId],
+        ...configuredCaptainParticipantIds.map(
+          (participantId): [string, string] => ['Captain', participantId]
+        ),
         ['synthesizer', chat.ensemble.synthesizerParticipantId]
       ]
         .filter((entry): entry is [string, string] => Boolean(entry[1]))
@@ -14325,11 +14462,10 @@ export class EnsembleOrchestrator {
 
       if (tagMatches.length > 0) {
         const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-        const secondInCommandParticipantId = this.activeSecondInCommandParticipantId(chat, runtime)
         const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
         const priorityAuthorityId =
-          primary.unavailable && secondInCommandParticipantId
-            ? secondInCommandParticipantId
+          primary.unavailable
+            ? this.activeActingCaptainParticipantId(chat, runtime)
             : bossmanParticipantId
         const priorityAuthorityMatch = priorityAuthorityId
           ? tagMatches.find((tagMatch) => tagMatch.participant.id === priorityAuthorityId)
@@ -14843,7 +14979,7 @@ export class EnsembleOrchestrator {
         runtime.dmTargetParticipantId,
         runtime.lastForegroundParticipantId,
         runtime.bossmanParticipantId,
-        runtime.secondInCommandParticipantId,
+        ...this.activeCaptainParticipantIds(chat, runtime),
         resolveForegroundSynthesizerParticipantId(chat.ensemble)
       ],
       dmTargetParticipantId: runtime.dmTargetParticipantId,
@@ -15053,7 +15189,12 @@ export class EnsembleOrchestrator {
     }
     return (
       ensemble.bossmanParticipantId === run.participant.id ||
-      ensemble.secondInCommandParticipantId === run.participant.id
+      configuredEnsembleCaptainParticipantIds({
+        participants: ensemble.participants,
+        bossmanParticipantId: ensemble.bossmanParticipantId,
+        captainParticipantIds: ensemble.captainParticipantIds,
+        secondInCommandParticipantId: ensemble.secondInCommandParticipantId
+      }).includes(run.participant.id)
     )
   }
 
@@ -16641,7 +16782,7 @@ export class EnsembleOrchestrator {
         !this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
     )
     if (fullRoster.length === 0) return null
-    const roster = this.narrowContinuationRosterToOpenWork(chat, fullRoster)
+    const roster = this.narrowContinuationRosterToOpenWork(chat, fullRoster, runtime)
     const fresh: EnsembleParticipant[] = []
     for (const participant of roster) {
       if (runtime.continuationHops >= runtime.maxContinuationHops) {
@@ -16701,8 +16842,8 @@ export class EnsembleOrchestrator {
    *  - targets of open TARGETED status requests (untargeted requests never
    *    auto-close — see reconcileBossmanControlAfterRun — so they must not pin
    *    the full roster forever);
-   *  - the Boss (decision/closure authority runs every pass), or the Captain
-   *    only when the Boss is absent from the eligible roster (standby Captain
+   *  - the Boss (decision/closure authority runs every pass), or exactly one
+   *    acting Captain when the Boss is unavailable (standby Captain
    *    confirmation turns were a measured waste pattern).
    *
    * Fail-open: rounds that never used assign_work keep full-roster passes; an
@@ -16713,7 +16854,8 @@ export class EnsembleOrchestrator {
    */
   private narrowContinuationRosterToOpenWork(
     chat: ChatRecord,
-    fullRoster: EnsembleParticipant[]
+    fullRoster: EnsembleParticipant[],
+    runtime?: ActiveRoundRuntime
   ): EnsembleParticipant[] {
     const control = chat.ensemble?.bossmanControlState
     const assignments = control?.assignments || []
@@ -16737,11 +16879,22 @@ export class EnsembleOrchestrator {
       }
     }
     const bossId = chat.ensemble?.bossmanParticipantId
-    const bossEligible = Boolean(
-      bossId && fullRoster.some((participant) => participant.id === bossId)
-    )
+    const bossEligible = runtime
+      ? !this.primaryBossUnavailable(chat, runtime, bossId).unavailable &&
+        fullRoster.some((participant) => participant.id === bossId)
+      : Boolean(bossId && fullRoster.some((participant) => participant.id === bossId))
     if (bossId && bossEligible) admitted.add(bossId)
-    const captainId = chat.ensemble?.secondInCommandParticipantId
+    const captainId = runtime
+      ? this.activeActingCaptainParticipantId(chat, runtime)
+      : resolveActingCaptainParticipantId({
+          participants: fullRoster,
+          captainParticipantIds: configuredEnsembleCaptainParticipantIds({
+            participants: fullRoster,
+            bossmanParticipantId: bossId,
+            captainParticipantIds: chat.ensemble?.captainParticipantIds,
+            secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId
+          })
+        })
     if (captainId && !bossEligible) admitted.add(captainId)
     const narrowed = fullRoster.filter((participant) => admitted.has(participant.id))
     if (narrowed.length === 0) return fullRoster

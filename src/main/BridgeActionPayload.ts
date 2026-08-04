@@ -739,7 +739,7 @@ export interface BridgeRosterParticipant {
   stageRole?: string
   /** Optional per-roster marker. Exactly one true value assigns Boss. */
   isBossman?: boolean
-  /** Optional per-roster marker. Exactly one true value assigns Captain. */
+  /** Optional per-roster marker. Up to three true values assign Captains. */
   isSecondInCommand?: boolean
 }
 
@@ -931,7 +931,7 @@ export interface BridgeEnsembleSettingsUpdateAction extends BridgeActionMetadata
   ensembleContextChars?: number
   /** Thread-wide Boss/Captain Auto Approvals consent. true = the device
    * showed the consent dialog and the user accepted (the handler stamps
-   * mode/confirmedAt and requires an assigned Boss or Captain); false =
+   * mode/confirmedAt and requires exactly one assigned Boss); false =
    * clear the consent. */
   bossmanAutoApprovals?: boolean
 }

@@ -1,3 +1,5 @@
+import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
+
 type BossmanRosterEntry = {
   isBossman?: boolean
   isSecondInCommand?: boolean
@@ -11,7 +13,8 @@ type BossmanRosterParticipant = {
 export type BossmanRosterUpdateResolution<TAutoApprovals = unknown> =
   | {
       ok: true
-      bossmanParticipantId?: string
+      bossmanParticipantId: string
+      captainParticipantIds: string[]
       secondInCommandParticipantId?: string
       bossmanAutoApprovals?: TAutoApprovals
     }
@@ -31,6 +34,7 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   participants: ReadonlyArray<BossmanRosterParticipant>,
   previous: {
     bossmanParticipantId?: string
+    captainParticipantIds?: string[]
     secondInCommandParticipantId?: string
     bossmanAutoApprovals?: TAutoApprovals
   }
@@ -43,6 +47,9 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
   if (markedIndexes.length > 1) {
     return { ok: false, error: 'Only one participant may be marked as Boss.' }
   }
+  if (markerWasSpecified && markedIndexes.length !== 1) {
+    return { ok: false, error: 'Exactly one participant must be marked as Boss.' }
+  }
   const secondMarkerWasSpecified = entries.some((entry) =>
     hasOwn.call(entry, 'isSecondInCommand')
   )
@@ -50,8 +57,11 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
     .map((entry, index) => (entry.isSecondInCommand === true ? index : -1))
     .filter((index) => index >= 0)
 
-  if (markedSecondIndexes.length > 1) {
-    return { ok: false, error: 'Only one participant may be marked as Captain.' }
+  if (markedSecondIndexes.length > MAX_ENSEMBLE_CAPTAINS) {
+    return {
+      ok: false,
+      error: `Up to ${MAX_ENSEMBLE_CAPTAINS} participants may be marked as Captain.`
+    }
   }
   if (
     [...markedIndexes, ...markedSecondIndexes].some(
@@ -75,38 +85,47 @@ export function resolveRosterUpdateBossmanAssignment<TAutoApprovals>(
     )
       ? previous.bossmanParticipantId
       : undefined
-  const bossmanParticipantId = markedBossmanParticipantId ?? preservedBossmanParticipantId
-  const markedSecondInCommandParticipantId =
-    markedSecondIndexes.length === 1 ? participants[markedSecondIndexes[0]]?.id : undefined
-  const preservedSecondInCommandParticipantId =
-    !secondMarkerWasSpecified &&
-    previous.secondInCommandParticipantId &&
-    previous.secondInCommandParticipantId !== bossmanParticipantId &&
-    participants.some(
-      (participant) =>
-        participant.id === previous.secondInCommandParticipantId &&
-        canOwnEnsembleAuthority(participant)
-    )
-      ? previous.secondInCommandParticipantId
-      : undefined
-  const secondInCommandParticipantId =
-    secondMarkerWasSpecified
-      ? markedSecondInCommandParticipantId !== bossmanParticipantId
-        ? markedSecondInCommandParticipantId
-        : undefined
-      : preservedSecondInCommandParticipantId
+  if (
+    !markerWasSpecified &&
+    previous.bossmanParticipantId &&
+    !preservedBossmanParticipantId
+  ) {
+    return {
+      ok: false,
+      error:
+        'Removing or demoting the configured Boss requires assigning its replacement in the same roster update.'
+    }
+  }
+  const recoveredBossmanParticipantId = participants.find(canOwnEnsembleAuthority)?.id
+  const bossmanParticipantId =
+    markedBossmanParticipantId ?? preservedBossmanParticipantId ?? recoveredBossmanParticipantId
+  if (!bossmanParticipantId) {
+    return { ok: false, error: 'An Ensemble roster requires one non-background Boss.' }
+  }
+  const authority = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId,
+    captainParticipantIds: secondMarkerWasSpecified
+      ? markedSecondIndexes
+          .map((index) => participants[index]?.id)
+          .filter((participantId): participantId is string => Boolean(participantId))
+      : previous.captainParticipantIds,
+    secondInCommandParticipantId: previous.secondInCommandParticipantId,
+    recoverBoss: false
+  })
   // Auto-approval consent belongs to the Ensemble, rather than to the
   // participant currently holding either leadership role. Keep it while a
   // valid Boss or Captain remains in the submitted roster; only clearing the
   // last leadership role revokes the thread-wide consent.
-  const hasLeadership = Boolean(bossmanParticipantId || secondInCommandParticipantId)
-  const bossmanAutoApprovals =
-    hasLeadership ? previous.bossmanAutoApprovals : undefined
+  const bossmanAutoApprovals = previous.bossmanAutoApprovals
 
   return {
     ok: true,
-    ...(bossmanParticipantId ? { bossmanParticipantId } : {}),
-    ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
-    ...(hasLeadership ? { bossmanAutoApprovals } : {})
+    bossmanParticipantId,
+    captainParticipantIds: authority.captainParticipantIds,
+    ...(authority.secondInCommandParticipantId
+      ? { secondInCommandParticipantId: authority.secondInCommandParticipantId }
+      : {}),
+    ...(bossmanAutoApprovals ? { bossmanAutoApprovals } : {})
   }
 }

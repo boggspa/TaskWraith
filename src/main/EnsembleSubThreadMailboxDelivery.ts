@@ -1,3 +1,5 @@
+import { resolveActingCaptainParticipantId } from './EnsembleAuthorityResolution'
+
 /**
  * EnsembleSubThreadMailboxDelivery — pure helpers for delivering queued
  * sub-thread mailbox events into an Ensemble parent's authority seat
@@ -29,7 +31,9 @@ export type EnsembleMailboxRosterParticipant = {
   id: string
   provider: string
   role?: string
+  order?: number
   enabled?: boolean
+  stageRole?: string
 }
 
 export type EnsembleMailboxRoundParticipantState = {
@@ -41,6 +45,7 @@ export type EnsembleMailboxRoundParticipantState = {
 
 export type ResolveAuthoritySeatInput = {
   bossmanParticipantId?: string | null
+  captainParticipantIds?: readonly string[] | null
   secondInCommandParticipantId?: string | null
   participants: readonly EnsembleMailboxRosterParticipant[]
   /**
@@ -49,6 +54,8 @@ export type ResolveAuthoritySeatInput = {
    * drift.
    */
   bossSoftUnavailable?: boolean
+  /** Captain ids blocked by quota/runtime admission for this delivery. */
+  unavailableCaptainParticipantIds?: readonly string[]
   /** Active-round participant rows; only consulted when `roundLive` is true. */
   roundParticipantStates?: readonly EnsembleMailboxRoundParticipantState[]
   /** When true, round-status failure/skip marks Boss unavailable. */
@@ -156,7 +163,7 @@ function bossHardUnavailable(
  *
  * Preference order:
  * 1. Assigned Boss when present, enabled, and not hard/soft-unavailable
- * 2. Captain (second-in-command) only while Boss is unavailable
+ * 2. First available configured Captain only while Boss is unavailable
  * 3. null when neither seat can own delivery
  *
  * BG seats must never appear as bossman/secondInCommand ids for delivery;
@@ -168,10 +175,6 @@ export function resolveAuthoritySeat(
   input: ResolveAuthoritySeatInput
 ): ResolvedAuthoritySeat | null {
   const boss = findRosterParticipant(input.participants, input.bossmanParticipantId)
-  const captain = findRosterParticipant(
-    input.participants,
-    input.secondInCommandParticipantId
-  )
   const primary = bossHardUnavailable(input, boss)
 
   if (boss && !primary.unavailable) {
@@ -183,7 +186,17 @@ export function resolveAuthoritySeat(
     }
   }
 
-  if (captain && captain.enabled !== false) {
+  const actingCaptainParticipantId = resolveActingCaptainParticipantId({
+    participants: input.participants,
+    bossmanParticipantId: input.bossmanParticipantId,
+    captainParticipantIds: input.captainParticipantIds,
+    secondInCommandParticipantId: input.secondInCommandParticipantId,
+    unavailableParticipantIds: input.unavailableCaptainParticipantIds,
+    roundParticipantStates: input.roundParticipantStates,
+    roundLive: input.roundLive
+  })
+  const captain = findRosterParticipant(input.participants, actingCaptainParticipantId)
+  if (captain) {
     // Captain must not equal Boss id — dual-role seats keep Boss ownership.
     if (boss && captain.id === boss.id) {
       return null

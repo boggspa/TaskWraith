@@ -1,4 +1,8 @@
 import type { AgenticServiceId } from './store/types'
+import {
+  configuredEnsembleCaptainParticipantIds,
+  resolveActingCaptainParticipantId
+} from './EnsembleAuthorityResolution'
 
 /**
  * Pure decision core for Boss Auto Approvals.
@@ -35,6 +39,10 @@ export interface BossmanAutoApprovalContext {
   bossmanParticipantId: string | undefined
   /** The Ensemble's configured Captain participant id (if any). */
   secondInCommandParticipantId?: string | undefined
+  /** Canonical configured Captain ids. The scalar above is legacy-only. */
+  captainParticipantIds?: readonly string[]
+  /** Captains unavailable for this approval (quota/runtime/round state). */
+  unavailableCaptainParticipantIds?: readonly string[]
   /** Whether the primary Boss is currently unavailable for this approval. */
   primaryBossUnavailable?: boolean
   primaryBossUnavailableReason?: string
@@ -42,6 +50,13 @@ export interface BossmanAutoApprovalContext {
   autoApprovals: { enabled?: boolean; mode?: string; confirmedAt?: string } | undefined
   /** All participant ids currently in the roster. */
   participantIds: string[]
+  /** Ordered authority projection; falls back to `participantIds` for legacy callers. */
+  authorityParticipants?: readonly {
+    id: string
+    order?: number
+    enabled?: boolean
+    stageRole?: string
+  }[]
   /**
    * Roster ids held by EXTERNAL human collaborators (the People/Shares
    * externals), when the caller can resolve them. Named `externalParticipant*`
@@ -99,28 +114,43 @@ export function evaluateBossmanAutoApproval(
   // MCP auto-allow surface or YOLO.
   if (ctx.service !== 'shellCommands' && ctx.service !== 'fileChanges') return null
 
-  const { bossmanParticipantId, secondInCommandParticipantId, autoApprovals } = ctx
+  const { bossmanParticipantId, autoApprovals } = ctx
   // Explicit, current user consent is mandatory.
   if (autoApprovals?.enabled !== true) return null
   if (autoApprovals.mode !== 'permission_preset_once') return null
+  // Persisted Ensembles require exactly one configured Boss. Captain fallback
+  // is availability routing, never a substitute configuration.
+  if (!bossmanParticipantId) return null
   // Boss remains primary. Captain only becomes the approval authority when
   // the primary Boss is unavailable, so the backup cannot silently compete
   // with an available Boss.
   const bossIsLive =
     Boolean(bossmanParticipantId) && ctx.participantIds.includes(bossmanParticipantId as string)
-  const captainIsLive =
-    Boolean(secondInCommandParticipantId) &&
-    secondInCommandParticipantId !== bossmanParticipantId &&
-    ctx.participantIds.includes(secondInCommandParticipantId as string)
+  const authorityParticipants =
+    ctx.authorityParticipants ?? ctx.participantIds.map((id, order) => ({ id, order }))
+  const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+    participants: authorityParticipants,
+    bossmanParticipantId,
+    captainParticipantIds: ctx.captainParticipantIds,
+    secondInCommandParticipantId: ctx.secondInCommandParticipantId
+  })
+  const secondInCommandParticipantId = captainParticipantIds[0]
+  const unavailableCaptainParticipantIds = new Set(ctx.unavailableCaptainParticipantIds || [])
+  const actingCaptainParticipantId = resolveActingCaptainParticipantId({
+    participants: authorityParticipants,
+    bossmanParticipantId,
+    captainParticipantIds,
+    unavailableParticipantIds: unavailableCaptainParticipantIds
+  })
   const authority = bossIsLive && ctx.primaryBossUnavailable !== true
     ? {
         role: 'boss' as const,
         participantId: bossmanParticipantId as string
       }
-    : captainIsLive && ctx.primaryBossUnavailable === true
+    : actingCaptainParticipantId && ctx.primaryBossUnavailable === true
       ? {
           role: 'captain' as const,
-          participantId: secondInCommandParticipantId as string
+          participantId: actingCaptainParticipantId
         }
       : null
   if (!authority) return null
@@ -157,6 +187,7 @@ export function evaluateBossmanAutoApproval(
     mode: autoApprovals.mode,
     confirmedAt: autoApprovals.confirmedAt,
     bossmanParticipantId,
+    captainParticipantIds,
     secondInCommandParticipantId,
     approvalAuthorityRole: authority.role,
     approvalAuthorityParticipantId: authority.participantId,

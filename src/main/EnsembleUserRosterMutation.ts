@@ -1,4 +1,5 @@
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
+import { MAX_ENSEMBLE_CAPTAINS, normalizeEnsembleAuthority } from '../shared/ensembleAuthority'
 import type { ChatRecord, EnsembleParticipant, PermissionPresetId } from './store/types'
 
 type EnsembleConfig = NonNullable<ChatRecord['ensemble']>
@@ -51,6 +52,7 @@ export interface ResolvedEnsembleUserRosterMutation {
   action: EnsembleUserRosterMutationInput['action']
   participants: EnsembleParticipant[]
   bossmanParticipantId?: string
+  captainParticipantIds: string[]
   secondInCommandParticipantId?: string
   bossmanAutoApprovals?: BossmanAutoApprovals
   maxParticipants: number
@@ -182,28 +184,27 @@ function normalizedMaxParticipants(config: EnsembleConfig, participantCount: num
 function normalizeAuthority(
   participants: EnsembleParticipant[],
   bossmanParticipantId: string | undefined,
+  captainParticipantIds: string[] | undefined,
   secondInCommandParticipantId: string | undefined,
   bossmanAutoApprovals: BossmanAutoApprovals
 ): Pick<
   ResolvedEnsembleUserRosterMutation,
-  'bossmanParticipantId' | 'secondInCommandParticipantId' | 'bossmanAutoApprovals'
+  | 'bossmanParticipantId'
+  | 'captainParticipantIds'
+  | 'secondInCommandParticipantId'
+  | 'bossmanAutoApprovals'
 > {
-  const eligible = (participantId: string | undefined): boolean =>
-    Boolean(
-      participantId &&
-      participants.some(
-        (participant) => participant.id === participantId && participant.stageRole !== 'background'
-      )
-    )
-  const boss = eligible(bossmanParticipantId) ? bossmanParticipantId : undefined
-  const captain =
-    secondInCommandParticipantId !== boss && eligible(secondInCommandParticipantId)
-      ? secondInCommandParticipantId
-      : undefined
+  const authority = normalizeEnsembleAuthority({
+    participants,
+    bossmanParticipantId,
+    captainParticipantIds,
+    secondInCommandParticipantId
+  })
   return {
-    bossmanParticipantId: boss,
-    secondInCommandParticipantId: captain,
-    bossmanAutoApprovals: boss || captain ? bossmanAutoApprovals : undefined
+    bossmanParticipantId: authority.bossmanParticipantId,
+    captainParticipantIds: authority.captainParticipantIds,
+    secondInCommandParticipantId: authority.secondInCommandParticipantId,
+    bossmanAutoApprovals: authority.bossmanParticipantId ? bossmanAutoApprovals : undefined
   }
 }
 
@@ -260,6 +261,7 @@ export function resolveEnsembleUserRosterMutation(
   const baseAuthority = normalizeAuthority(
     participants,
     config.bossmanParticipantId,
+    config.captainParticipantIds,
     config.secondInCommandParticipantId,
     config.bossmanAutoApprovals
   )
@@ -294,30 +296,32 @@ export function resolveEnsembleUserRosterMutation(
     next.splice(insertIndex, 0, validated)
     const normalized = normalizeOrder(next)
     let bossmanParticipantId = baseAuthority.bossmanParticipantId
-    let secondInCommandParticipantId = baseAuthority.secondInCommandParticipantId
+    let captainParticipantIds = [...baseAuthority.captainParticipantIds]
     if (input.authority === 'boss') {
       bossmanParticipantId = validated.id
-      if (secondInCommandParticipantId === validated.id) {
-        secondInCommandParticipantId = undefined
-      }
+      captainParticipantIds = captainParticipantIds.filter(
+        (participantId) => participantId !== validated.id
+      )
     } else if (input.authority === 'captain') {
-      secondInCommandParticipantId = validated.id
-      if (bossmanParticipantId === validated.id) bossmanParticipantId = undefined
+      if (captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS) {
+        return fail(
+          'invalid_request',
+          `Participant add rejected: Ensembles support up to ${MAX_ENSEMBLE_CAPTAINS} Captains.`
+        )
+      }
+      captainParticipantIds.push(validated.id)
     }
     const authority = normalizeAuthority(
       normalized,
       bossmanParticipantId,
-      secondInCommandParticipantId,
+      captainParticipantIds,
+      undefined,
       baseAuthority.bossmanAutoApprovals
     )
-    if (
-      input.autoApprovalsEnabled === true &&
-      !authority.bossmanParticipantId &&
-      !authority.secondInCommandParticipantId
-    ) {
+    if (!authority.bossmanParticipantId) {
       return fail(
         'invalid_request',
-        'Participant add rejected: assign a Boss or Captain before enabling Auto Approvals.'
+        'Participant add rejected: an Ensemble must retain exactly one foreground Boss.'
       )
     }
     return {
@@ -350,6 +354,12 @@ export function resolveEnsembleUserRosterMutation(
     if (participants.length <= 1) {
       return fail('roster_min', 'Participant remove rejected: an Ensemble must retain one seat.')
     }
+    if (participantId === baseAuthority.bossmanParticipantId) {
+      return fail(
+        'invalid_request',
+        'Participant remove rejected: replace the configured Boss before removing that seat.'
+      )
+    }
     const next = normalizeOrder(
       participants.filter((participant) => participant.id !== participantId)
     )
@@ -361,6 +371,7 @@ export function resolveEnsembleUserRosterMutation(
         ...normalizeAuthority(
           next,
           baseAuthority.bossmanParticipantId,
+          baseAuthority.captainParticipantIds,
           baseAuthority.secondInCommandParticipantId,
           baseAuthority.bossmanAutoApprovals
         ),
@@ -387,12 +398,19 @@ export function resolveEnsembleUserRosterMutation(
     }
     const byId = new Map(participants.map((participant) => [participant.id, participant]))
     const next = normalizeOrder(participantIds.map((participantId) => byId.get(participantId)!))
+    const authority = normalizeAuthority(
+      next,
+      baseAuthority.bossmanParticipantId,
+      baseAuthority.captainParticipantIds,
+      baseAuthority.secondInCommandParticipantId,
+      baseAuthority.bossmanAutoApprovals
+    )
     return {
       ok: true,
       value: {
         action: input.action,
         participants: next,
-        ...baseAuthority,
+        ...authority,
         maxParticipants: normalizedMaxParticipants(config, next.length)
       }
     }
@@ -415,20 +433,39 @@ export function resolveEnsembleUserRosterMutation(
       return fail('invalid_request', 'Authority change rejected: BG seats cannot lead the roster.')
     }
     let bossmanParticipantId = baseAuthority.bossmanParticipantId
-    let secondInCommandParticipantId = baseAuthority.secondInCommandParticipantId
+    let captainParticipantIds = [...baseAuthority.captainParticipantIds]
     if (input.authority === 'boss') {
       bossmanParticipantId = participantId
-      if (secondInCommandParticipantId === participantId) {
-        secondInCommandParticipantId = undefined
-      }
+      captainParticipantIds = captainParticipantIds.filter(
+        (captainParticipantId) => captainParticipantId !== participantId
+      )
     } else if (input.authority === 'captain') {
-      secondInCommandParticipantId = participantId
-      if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
-    } else {
-      if (bossmanParticipantId === participantId) bossmanParticipantId = undefined
-      if (secondInCommandParticipantId === participantId) {
-        secondInCommandParticipantId = undefined
+      if (bossmanParticipantId === participantId) {
+        return fail(
+          'invalid_request',
+          'Authority change rejected: install a replacement Boss in the same mutation before demoting the current Boss.'
+        )
       }
+      if (
+        !captainParticipantIds.includes(participantId) &&
+        captainParticipantIds.length >= MAX_ENSEMBLE_CAPTAINS
+      ) {
+        return fail(
+          'invalid_request',
+          `Authority change rejected: Ensembles support up to ${MAX_ENSEMBLE_CAPTAINS} Captains.`
+        )
+      }
+      captainParticipantIds.push(participantId)
+    } else {
+      if (bossmanParticipantId === participantId) {
+        return fail(
+          'invalid_request',
+          'Authority change rejected: install a replacement Boss in the same mutation before demoting the current Boss.'
+        )
+      }
+      captainParticipantIds = captainParticipantIds.filter(
+        (captainParticipantId) => captainParticipantId !== participantId
+      )
     }
     return {
       ok: true,
@@ -438,7 +475,8 @@ export function resolveEnsembleUserRosterMutation(
         ...normalizeAuthority(
           participants,
           bossmanParticipantId,
-          secondInCommandParticipantId,
+          captainParticipantIds,
+          undefined,
           baseAuthority.bossmanAutoApprovals
         ),
         maxParticipants: normalizedMaxParticipants(config, participants.length),
@@ -447,14 +485,10 @@ export function resolveEnsembleUserRosterMutation(
     }
   }
 
-  if (
-    input.enabled &&
-    !baseAuthority.bossmanParticipantId &&
-    !baseAuthority.secondInCommandParticipantId
-  ) {
+  if (input.enabled && !baseAuthority.bossmanParticipantId) {
     return fail(
       'invalid_request',
-      'Auto Approvals change rejected: assign a Boss or Captain first.'
+      'Auto Approvals change rejected: assign a configured Boss first.'
     )
   }
   return {

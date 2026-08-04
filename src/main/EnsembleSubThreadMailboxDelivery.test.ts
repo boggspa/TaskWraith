@@ -136,7 +136,8 @@ describe('resolveAuthoritySeat', () => {
         participants: [boss, captain],
         roundLive: true,
         roundParticipantStates: [
-          { participantId: boss.id, status: 'failed', lastFailureReason: 'provider crash' }
+          { participantId: boss.id, status: 'failed', lastFailureReason: 'provider crash' },
+          { participantId: captain.id, status: 'idle' }
         ]
       })
     ).toMatchObject({
@@ -206,6 +207,60 @@ describe('resolveAuthoritySeat', () => {
     })
     expect(seat?.role).toBe('boss')
     expect(seat?.participantId).toBe(boss.id)
+  })
+
+  it('selects one later Captain after earlier configured Captains are unavailable', () => {
+    const captainTwo = {
+      id: 'captain-two',
+      provider: 'kimi',
+      role: 'Captain Two',
+      enabled: true
+    }
+    const captainThree = {
+      id: 'captain-three',
+      provider: 'codex',
+      role: 'Captain Three',
+      enabled: true
+    }
+
+    expect(
+      resolveAuthoritySeat({
+        bossmanParticipantId: boss.id,
+        captainParticipantIds: [captain.id, captainTwo.id, captainThree.id],
+        secondInCommandParticipantId: captain.id,
+        participants: [{ ...boss, enabled: false }, captain, captainTwo, captainThree],
+        unavailableCaptainParticipantIds: [captain.id, captainTwo.id]
+      })
+    ).toMatchObject({
+      participantId: captainThree.id,
+      role: 'second_in_command',
+      provider: 'codex'
+    })
+  })
+
+  it('uses participant order instead of physical array order for Captain fallback', () => {
+    const captainTwo = {
+      id: 'captain-two',
+      provider: 'kimi',
+      role: 'Captain Two',
+      enabled: true,
+      order: 3
+    }
+
+    expect(
+      resolveAuthoritySeat({
+        bossmanParticipantId: boss.id,
+        captainParticipantIds: [captainTwo.id, captain.id],
+        participants: [
+          { ...boss, enabled: false, order: 1 },
+          captainTwo,
+          { ...captain, order: 2 }
+        ]
+      })
+    ).toMatchObject({
+      participantId: captain.id,
+      role: 'second_in_command'
+    })
   })
 })
 

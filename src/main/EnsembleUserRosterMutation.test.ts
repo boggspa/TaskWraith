@@ -30,6 +30,8 @@ function ensemble(
     enabled: true,
     participants: [participant('one', 1), participant('two', 2)],
     maxParticipants: 2,
+    bossmanParticipantId: 'one',
+    captainParticipantIds: [],
     ...patch
   }
 }
@@ -123,6 +125,7 @@ describe('resolveEnsembleUserRosterMutation', () => {
       ok: true,
       value: {
         bossmanParticipantId: 'new-boss',
+        captainParticipantIds: [],
         secondInCommandParticipantId: undefined,
         bossmanAutoApprovals: {
           enabled: true,
@@ -172,7 +175,7 @@ describe('resolveEnsembleUserRosterMutation', () => {
     ).toMatchObject({ ok: false, error: 'unknown_provider' })
   })
 
-  it('removes an idle target and clears authority that no longer resolves', () => {
+  it('rejects removing the configured Boss without an atomic replacement', () => {
     const result = resolve(
       ensemble({
         bossmanParticipantId: 'one',
@@ -190,13 +193,9 @@ describe('resolveEnsembleUserRosterMutation', () => {
     )
 
     expect(result).toMatchObject({
-      ok: true,
-      value: {
-        participants: [{ id: 'two', order: 1 }],
-        bossmanParticipantId: undefined,
-        secondInCommandParticipantId: undefined,
-        bossmanAutoApprovals: undefined
-      }
+      ok: false,
+      error: 'invalid_request',
+      message: 'Participant remove rejected: replace the configured Boss before removing that seat.'
     })
   })
 
@@ -225,18 +224,30 @@ describe('resolveEnsembleUserRosterMutation', () => {
     ).toMatchObject({ ok: false, error: 'invalid_request' })
   })
 
-  it('moves exclusive authority and stamps explicit Auto Approvals consent', () => {
-    const captain = resolve(ensemble({ bossmanParticipantId: 'one' }), {
+  it('keeps one Boss while adding/removing bounded Captain authority', () => {
+    const rejectedDemotion = resolve(ensemble(), {
       chatId: 'chat-1',
       action: 'set_authority',
       participantId: 'one',
       authority: 'captain'
     })
+    expect(rejectedDemotion).toMatchObject({
+      ok: false,
+      error: 'invalid_request'
+    })
+
+    const captain = resolve(ensemble(), {
+      chatId: 'chat-1',
+      action: 'set_authority',
+      participantId: 'two',
+      authority: 'captain'
+    })
     expect(captain).toMatchObject({
       ok: true,
       value: {
-        bossmanParticipantId: undefined,
-        secondInCommandParticipantId: 'one'
+        bossmanParticipantId: 'one',
+        captainParticipantIds: ['two'],
+        secondInCommandParticipantId: 'two'
       }
     })
     if (!captain.ok) return
@@ -262,6 +273,58 @@ describe('resolveEnsembleUserRosterMutation', () => {
           confirmedAt: '2026-07-29T01:00:00.000Z'
         }
       }
+    })
+  })
+
+  it('replaces Boss atomically and removes the replacement from Captains', () => {
+    expect(
+      resolve(
+        ensemble({
+          captainParticipantIds: ['two'],
+          secondInCommandParticipantId: 'two'
+        }),
+        {
+          chatId: 'chat-1',
+          action: 'set_authority',
+          participantId: 'two',
+          authority: 'boss'
+        }
+      )
+    ).toMatchObject({
+      ok: true,
+      value: {
+        bossmanParticipantId: 'two',
+        captainParticipantIds: [],
+        secondInCommandParticipantId: undefined
+      }
+    })
+  })
+
+  it('caps Captain assignments at three and keeps the compatibility mirror first', () => {
+    const config = ensemble({
+      participants: [
+        participant('one', 1),
+        participant('two', 2),
+        participant('three', 3),
+        participant('four', 4),
+        participant('five', 5)
+      ],
+      maxParticipants: 5,
+      captainParticipantIds: ['two', 'three', 'four'],
+      secondInCommandParticipantId: 'two'
+    })
+
+    expect(
+      resolve(config, {
+        chatId: 'chat-1',
+        action: 'set_authority',
+        participantId: 'five',
+        authority: 'captain'
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'invalid_request',
+      message: 'Authority change rejected: Ensembles support up to 3 Captains.'
     })
   })
 })

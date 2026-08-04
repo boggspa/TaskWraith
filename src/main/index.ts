@@ -1923,6 +1923,7 @@ import {
 } from './ClaudeTaskWraithMcp'
 import { tryRunGeminiApi } from './GeminiApiProvider'
 import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
+import { configuredEnsembleCaptainParticipantIds } from './EnsembleAuthorityResolution'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
@@ -5110,10 +5111,10 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
 /**
  * Does this chat have an approval authority that is NOT an external human?
  *
- * Boss is primary and Captain is the fallback, so either alone is enough — but
- * an authority held by an external is no authority at all for permission
- * purposes. If the only assigned leadership is external, consent recorded on
- * the ensemble must stop elevating anything.
+ * A configured Boss is mandatory; configured Captains are fallback seats. An
+ * authority held by an external is no authority at all for permission
+ * purposes. If every configured authority is external, consent recorded on the
+ * ensemble must stop elevating anything.
  *
  * Fails OPEN when the collaboration store is unreachable, matching the
  * behaviour before externals existed: the gate is only reachable during a live
@@ -5125,12 +5126,21 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
 function hasNonExternalApprovalAuthority(
   chatId: string | undefined,
   chat: {
-    ensemble?: { bossmanParticipantId?: string; secondInCommandParticipantId?: string }
+    ensemble?: {
+      bossmanParticipantId?: string
+      captainParticipantIds?: string[]
+      secondInCommandParticipantId?: string
+    }
   } | null
 ): boolean {
   const boss = chat?.ensemble?.bossmanParticipantId
-  const captain = chat?.ensemble?.secondInCommandParticipantId
-  const assigned = [boss, captain].filter((id): id is string => Boolean(id))
+  if (!boss) return false
+  const captains = Array.isArray(chat?.ensemble?.captainParticipantIds)
+    ? chat.ensemble.captainParticipantIds
+    : chat?.ensemble?.secondInCommandParticipantId
+      ? [chat.ensemble.secondInCommandParticipantId]
+      : []
+  const assigned = [boss, ...captains].filter((id): id is string => Boolean(id))
   if (assigned.length === 0) return false
   if (!chatId || !resolveExternalCollaboratorSeatIds) return true
   const externals = new Set(resolveExternalCollaboratorSeatIds(chatId))
@@ -8772,18 +8782,22 @@ async function maybeDrainEnsembleSubThreadMailbox(parentChatId: string): Promise
 
   const settings = AppStore.getSettings()
   const ensemble = parent.ensemble
+  const authorityChat = parent
   const bossParticipant = ensemble.participants.find(
     (participant) => participant.id === ensemble.bossmanParticipantId
   )
   const roundLive = isEnsembleRoundDispatchLive(ensemble.activeRound)
   const authority = resolveAuthoritySeat({
     bossmanParticipantId: ensemble.bossmanParticipantId,
+    captainParticipantIds: ensemble.captainParticipantIds,
     secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
     participants: ensemble.participants.map((participant) => ({
       id: participant.id,
       provider: participant.provider,
       role: participant.role,
-      enabled: participant.enabled
+      order: participant.order,
+      enabled: participant.enabled,
+      stageRole: participant.stageRole
     })),
     bossSoftUnavailable: evaluateBossQuotaSoftUnavailable(
       parent,
@@ -8796,6 +8810,21 @@ async function maybeDrainEnsembleSubThreadMailbox(parentChatId: string): Promise
       lastFailureReason: state.lastFailureReason,
       reason: state.reason
     })),
+    unavailableCaptainParticipantIds: configuredEnsembleCaptainParticipantIds({
+      participants: ensemble.participants,
+      bossmanParticipantId: ensemble.bossmanParticipantId,
+      captainParticipantIds: ensemble.captainParticipantIds,
+      secondInCommandParticipantId: ensemble.secondInCommandParticipantId
+    }).filter((participantId) => {
+      const participant = ensemble.participants.find((candidate) => candidate.id === participantId)
+      return Boolean(
+        participant &&
+        evaluateBossQuotaSoftUnavailable(authorityChat, ensemble.activeRound?.roundId, {
+          id: participant.id,
+          provider: participant.provider
+        })
+      )
+    }),
     roundLive
   })
   const parentBusy = isEnsembleParentBusy({
@@ -13224,6 +13253,36 @@ function bossmanAutoApprovalMetadata(input: {
   if (!chat?.ensemble) return null
   const ensemble = chat.ensemble
   const primary = bossmanAutoApprovalPrimaryState(chat)
+  const captainParticipantIds = configuredEnsembleCaptainParticipantIds({
+    participants: ensemble.participants,
+    bossmanParticipantId: ensemble.bossmanParticipantId,
+    captainParticipantIds: ensemble.captainParticipantIds,
+    secondInCommandParticipantId: ensemble.secondInCommandParticipantId
+  })
+  const roundLive = isEnsembleRoundDispatchLive(ensemble.activeRound)
+  const unavailableCaptainParticipantIds = captainParticipantIds.filter((participantId) => {
+    const participant = ensemble.participants.find((candidate) => candidate.id === participantId)
+    if (!participant || participant.enabled === false || participant.stageRole === 'background') {
+      return true
+    }
+    const roundState = ensemble.activeRound?.participants.find(
+      (candidate) => candidate.participantId === participantId
+    )
+    if (
+      roundLive &&
+      (!roundState ||
+        roundState.status === 'failed' ||
+        roundState.status === 'unreachable' ||
+        roundState.status === 'cancelled' ||
+        roundState.status === 'skipped')
+    ) {
+      return true
+    }
+    return evaluateBossQuotaSoftUnavailable(chat, ensemble.activeRound?.roundId, {
+      id: participant.id,
+      provider: participant.provider
+    })
+  })
   // The security-critical guard logic lives in the pure, unit-tested
   // `evaluateBossmanAutoApproval`. This wrapper only resolves the live
   // session/chat and forwards the relevant facts.
@@ -13236,11 +13295,19 @@ function bossmanAutoApprovalMetadata(input: {
     forcePrompt: request.forcePrompt === true,
     hasExternalPathDetection: Boolean(request.externalPathDetection),
     bossmanParticipantId: ensemble.bossmanParticipantId,
+    captainParticipantIds,
     secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
+    unavailableCaptainParticipantIds,
     primaryBossUnavailable: primary.unavailable,
     primaryBossUnavailableReason: primary.reason,
     autoApprovals: ensemble.bossmanAutoApprovals,
     participantIds: ensemble.participants.map((participant) => participant.id),
+    authorityParticipants: ensemble.participants.map((participant) => ({
+      id: participant.id,
+      order: participant.order,
+      enabled: participant.enabled,
+      stageRole: participant.stageRole
+    })),
     // An authority held by an external approves nothing for anybody. Passed
     // explicitly rather than relying on externals being absent from
     // `participantIds` — that is safety by representation, and this gate must
@@ -42110,6 +42177,7 @@ if (isGeminiMcpBridgeProcess) {
             next,
             {
               bossmanParticipantId: chat.ensemble.bossmanParticipantId,
+              captainParticipantIds: chat.ensemble.captainParticipantIds,
               secondInCommandParticipantId: chat.ensemble.secondInCommandParticipantId,
               bossmanAutoApprovals: chat.ensemble.bossmanAutoApprovals
             }
@@ -42123,6 +42191,7 @@ if (isGeminiMcpBridgeProcess) {
               ...chat.ensemble,
               participants: next,
               bossmanParticipantId: bossmanResolution.bossmanParticipantId,
+              captainParticipantIds: bossmanResolution.captainParticipantIds,
               secondInCommandParticipantId: bossmanResolution.secondInCommandParticipantId,
               bossmanAutoApprovals: bossmanResolution.bossmanAutoApprovals
             },
@@ -42185,14 +42254,12 @@ if (isGeminiMcpBridgeProcess) {
           ) {
             // Two different reasons reach this refusal and telling a host to
             // "assign a Boss" when they plainly have one is worse than useless.
-            const hasAnyLeadership = Boolean(
-              chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
-            )
+            const hasAnyLeadership = Boolean(chat.ensemble.bossmanParticipantId)
             return {
               ok: false,
               error: hasAnyLeadership
                 ? 'Auto Approvals needs a Boss or Captain who can answer prompts. An external collaborator cannot hold it.'
-                : 'Assign a Boss or Captain before enabling Auto Approvals.'
+                : 'Assign a Boss before enabling Auto Approvals.'
             }
           }
           const nextBossmanAutoApprovals =

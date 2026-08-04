@@ -69,6 +69,7 @@ function ensembleChat(): ChatRecord {
       orchestrationMode: 'turn_bound',
       participants: [boss, captain, worker],
       bossmanParticipantId: boss.id,
+      captainParticipantIds: [captain.id],
       secondInCommandParticipantId: captain.id,
       bossmanAutoApprovals: {
         enabled: true,
@@ -290,6 +291,7 @@ describe('EnsembleRosterPresetApply', () => {
     if (!result.ok) return
     expect(result.plan.authority).toBe('solo_inherited_boss')
     expect(result.plan.bossmanParticipantId).toBe('new-boss')
+    expect(result.plan.captainParticipantIds).toEqual(['new-captain'])
     expect(result.plan.secondInCommandParticipantId).toBe('new-captain')
 
     const queued = queuePendingEnsembleRosterPresetApply(chat, result.plan)
@@ -307,6 +309,7 @@ describe('EnsembleRosterPresetApply', () => {
       maxContinuationHops: 16,
       ensembleContextChars: 120_000,
       bossmanParticipantId: 'new-boss',
+      captainParticipantIds: ['new-captain'],
       secondInCommandParticipantId: 'new-captain'
     })
     expect(applied.ensemble?.participants.map((entry) => entry.role)).toEqual([
@@ -440,6 +443,7 @@ describe('EnsembleRosterPresetApply', () => {
     if (!result.ok) return
     expect(result.plan.authority).toBe('ensemble_boss')
     expect(result.plan.bossmanParticipantId).toBe('boss-id')
+    expect(result.plan.captainParticipantIds).toEqual(['captain-id'])
     expect(result.plan.secondInCommandParticipantId).toBe('captain-id')
     expect(result.plan.participants.map((entry) => entry.id)).toEqual([
       'boss-id',
@@ -476,6 +480,68 @@ describe('EnsembleRosterPresetApply', () => {
       makeParticipantId: idFactory('unused')
     })
     expect(rejected).toMatchObject({ ok: false, error: 'captain_assignment_forbidden' })
+  })
+
+  it('keeps a disabled Boss configured while an available Captain imports a roster', () => {
+    const chat = ensembleChat()
+    chat.ensemble!.participants[0].enabled = false
+
+    const result = buildEnsembleRosterPresetApply({
+      chat,
+      preset: preset(),
+      callerParticipantId: 'captain-id',
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      makeParticipantId: idFactory('fresh-scout')
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        authority: 'ensemble_captain',
+        bossmanParticipantId: 'boss-id',
+        captainParticipantIds: ['captain-id']
+      }
+    })
+  })
+
+  it('preserves the complete three-Captain set for a Captain-authored import', () => {
+    const chat = ensembleChat()
+    const captainTwo = participant('captain-two', 'kimi', 'Captain Two', 3)
+    const captainThree = participant('captain-three', 'grok', 'Captain Three', 4)
+    chat.ensemble = {
+      ...chat.ensemble!,
+      participants: [chat.ensemble!.participants[0], chat.ensemble!.participants[1], captainTwo, captainThree],
+      captainParticipantIds: ['captain-id', 'captain-two', 'captain-three'],
+      secondInCommandParticipantId: 'captain-id'
+    }
+    const source = preset()
+    source.participants[2].isSecondInCommand = true
+    source.participants.push({
+      provider: 'grok',
+      enabled: true,
+      role: 'Captain Three',
+      instructions: 'Review the panel outcome.',
+      order: 4,
+      isSecondInCommand: true,
+      permissionPresetId: 'default'
+    })
+
+    const result = buildEnsembleRosterPresetApply({
+      chat,
+      preset: source,
+      callerParticipantId: 'captain-two',
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      makeParticipantId: idFactory('unused')
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      plan: {
+        authority: 'ensemble_captain',
+        captainParticipantIds: ['captain-id', 'captain-two', 'captain-three'],
+        secondInCommandParticipantId: 'captain-id'
+      }
+    })
   })
 
   it('rejects non-authority callers and permission widening', () => {

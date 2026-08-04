@@ -9,7 +9,7 @@ const autoApprovals = {
 }
 
 describe('resolveRosterUpdateBossmanAssignment', () => {
-  it('clears thread-wide auto approval consent only when all leadership markers are explicitly cleared', () => {
+  it('rejects a mutation that explicitly clears the sole Boss', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [
         { isBossman: false, isSecondInCommand: false },
@@ -24,7 +24,10 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
       }
     )
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({
+      ok: false,
+      error: 'Exactly one participant must be marked as Boss.'
+    })
   })
 
   it('preserves an existing Boss when a legacy roster omits the marker entirely', () => {
@@ -41,16 +44,17 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toMatchObject({
       ok: true,
       bossmanParticipantId: 'claude',
+      captainParticipantIds: ['codex'],
       secondInCommandParticipantId: 'codex',
       bossmanAutoApprovals: { enabled: true }
     })
   })
 
-  it('moves Captain to the single true marker', () => {
+  it('moves Captains to up to three true markers in roster order', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [
         { isBossman: true, isSecondInCommand: false },
-        { isBossman: false, isSecondInCommand: false },
+        { isBossman: false, isSecondInCommand: true },
         { isBossman: false, isSecondInCommand: true }
       ],
       participants,
@@ -64,7 +68,8 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({
       ok: true,
       bossmanParticipantId: 'claude',
-      secondInCommandParticipantId: 'kimi',
+      captainParticipantIds: ['codex', 'kimi'],
+      secondInCommandParticipantId: 'codex',
       bossmanAutoApprovals: autoApprovals
     })
   })
@@ -82,11 +87,12 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({
       ok: true,
       bossmanParticipantId: 'codex',
+      captainParticipantIds: [],
       bossmanAutoApprovals: autoApprovals
     })
   })
 
-  it('keeps thread-global auto approval consent when only Captain remains', () => {
+  it('does not accept a Captain-only roster with no configured Boss', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [
         { isBossman: false, isSecondInCommand: false },
@@ -102,9 +108,8 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     )
 
     expect(result).toEqual({
-      ok: true,
-      secondInCommandParticipantId: 'codex',
-      bossmanAutoApprovals: autoApprovals
+      ok: false,
+      error: 'Exactly one participant must be marked as Boss.'
     })
   })
 
@@ -126,6 +131,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({
       ok: true,
       bossmanParticipantId: 'claude',
+      captainParticipantIds: [],
       bossmanAutoApprovals: autoApprovals
     })
   })
@@ -144,6 +150,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     expect(result).toEqual({
       ok: true,
       bossmanParticipantId: 'claude',
+      captainParticipantIds: [],
       bossmanAutoApprovals: autoApprovals
     })
   })
@@ -161,20 +168,43 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('rejects multiple Captain markers', () => {
+  it('allows three Captain markers', () => {
+    const fourParticipants = [...participants, { id: 'grok' }]
     const result = resolveRosterUpdateBossmanAssignment(
       [
+        { isBossman: true, isSecondInCommand: false },
         { isBossman: false, isSecondInCommand: true },
         { isBossman: false, isSecondInCommand: true },
-        { isBossman: false, isSecondInCommand: false }
+        { isBossman: false, isSecondInCommand: true }
       ],
-      participants,
+      fourParticipants,
+      {}
+    )
+
+    expect(result).toEqual({
+      ok: true,
+      bossmanParticipantId: 'claude',
+      captainParticipantIds: ['codex', 'kimi', 'grok'],
+      secondInCommandParticipantId: 'codex'
+    })
+  })
+
+  it('rejects a fourth Captain marker', () => {
+    const result = resolveRosterUpdateBossmanAssignment(
+      [
+        { isBossman: true },
+        { isSecondInCommand: true },
+        { isSecondInCommand: true },
+        { isSecondInCommand: true },
+        { isSecondInCommand: true }
+      ],
+      [...participants, { id: 'grok' }, { id: 'ollama' }],
       {}
     )
 
     expect(result).toEqual({
       ok: false,
-      error: 'Only one participant may be marked as Captain.'
+      error: 'Up to 3 participants may be marked as Captain.'
     })
   })
 
@@ -206,7 +236,7 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     })
   })
 
-  it('drops preserved authority when its participant becomes background', () => {
+  it('rejects demoting the configured Boss to background without an atomic replacement', () => {
     const result = resolveRosterUpdateBossmanAssignment(
       [{}, {}],
       [{ id: 'claude', stageRole: 'background' }, { id: 'codex' }],
@@ -218,9 +248,9 @@ describe('resolveRosterUpdateBossmanAssignment', () => {
     )
 
     expect(result).toEqual({
-      ok: true,
-      secondInCommandParticipantId: 'codex',
-      bossmanAutoApprovals: autoApprovals
+      ok: false,
+      error:
+        'Removing or demoting the configured Boss requires assigning its replacement in the same roster update.'
     })
   })
 })
