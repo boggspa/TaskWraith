@@ -3,11 +3,14 @@ import type { EnsembleStageRole } from '../../../main/store/types'
 /**
  * Shared copy for the stage-role pickers (participant chip popover +
  * Settings → Roster editor). Semantics live in the orchestrator (spike 4,
- * docs/ensemble-posture-fanout-preamble-design.md): scouts join the
- * round-start parallel read pass, workers always take a serial
- * implementation turn, reviewers wait until every non-reviewer finishes and
- * then run (as a parallel review wave when eligible), and background seats
- * run only when explicitly delegated or @mentioned. No stage = the pre-stage
+ * docs/ensemble-posture-fanout-preamble-design.md; permission-agnostic since
+ * 2026-08-04): a stage is a pure dispatch role any seat can hold on any
+ * permission preset. Scouts join the round-start parallel pass, workers
+ * always take a serial implementation turn, reviewers wait until every
+ * non-reviewer finishes and then run (as a parallel review wave), and
+ * background seats run only when explicitly delegated or @mentioned. Wave
+ * lanes always dispatch under the read-clamped ("Ask") lane posture; a
+ * seat's own preset governs its serial turns. No stage = the pre-stage
  * behavior, inferred purely from the seat's permissions.
  */
 export const ENSEMBLE_STAGE_ROLE_OPTIONS: ReadonlyArray<{
@@ -19,19 +22,19 @@ export const ENSEMBLE_STAGE_ROLE_OPTIONS: ReadonlyArray<{
     id: 'scout',
     label: 'Scout — investigates at round start',
     description:
-      'Joins the parallel read-only pass at the start of the round and reports findings for the workers.'
+      'Joins the parallel pass at the start of the round (any permission preset) and reports findings for the workers; scout lanes run read-clamped.'
   },
   {
     id: 'worker',
     label: 'Worker — serial implementation turn',
     description:
-      'Always takes a serial turn, even when its permissions would qualify it for the read-only fan-out pass.'
+      'Always takes a serial turn under its own permissions, even when they would qualify it for the round-start fan-out pass.'
   },
   {
     id: 'reviewer',
     label: 'Reviewer — runs after the others finish',
     description:
-      'Waits until every non-reviewer has spoken, then reviews what changed (parallel review wave when at least two eligible reviewers remain).'
+      'Waits until every non-reviewer has spoken, then reviews what changed (parallel read-clamped review wave when at least two reviewers remain).'
   },
   {
     id: 'background',

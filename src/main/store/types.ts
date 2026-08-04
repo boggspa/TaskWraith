@@ -784,18 +784,24 @@ export function resolveEnsembleFanoutIsolationPolicy(
 }
 
 /**
- * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4) —
- * optional per-participant dispatch stage:
+ * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4;
+ * permission-agnostic since 2026-08-04) — optional per-participant dispatch
+ * stage. A stage is a pure fan-out dispatch role with preferred tooling and
+ * NEVER a permission requirement: any seat, on any permission preset, can
+ * hold any stage. Parallel wave lanes (scout pass / review wave) always
+ * dispatch under the signed read_only ("Ask") lane clamp regardless of the
+ * seat's preset; the seat's own posture governs its ordinary serial turns.
+ * The only role-based permission distinction in ensembles is Boss/Captain
+ * authority, which is itself stage-independent.
  *
- *   - 'scout'    — read-only investigator; joins the round-start parallel
- *                  read pass exactly like an unstaged read-only participant.
- *   - 'worker'   — always takes a serial turn, even when its permissions
- *                  would qualify it for the round-start read pass.
+ *   - 'scout'    — joins the round-start parallel read pass (any preset).
+ *   - 'worker'   — always takes a serial turn under its own posture, even
+ *                  when that posture would qualify it for the read pass.
  *   - 'reviewer' — deferred until every non-reviewer in the round has spoken
- *                  (or been dropped), then runs: as a parallel read-only
- *                  "review wave" when ≥2 eligible reviewers remain, serially
- *                  otherwise. Explicit routing (ensemble_yield / @-mention)
- *                  outranks the deferral.
+ *                  (or been dropped), then runs: as a parallel "review wave"
+ *                  when ≥2 reviewers remain pending, serially otherwise.
+ *                  Explicit routing (ensemble_yield / @-mention) outranks
+ *                  the deferral.
  *   - 'background' — excluded from ordinary serial/review rotation. It runs
  *                    only after an explicit user/participant @mention or an
  *                    ensemble_fanout delegation, using a detached lane whose

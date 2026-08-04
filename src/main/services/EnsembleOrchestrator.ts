@@ -13806,23 +13806,40 @@ export class EnsembleOrchestrator {
     ) {
       const readers: EnsembleParticipant[] = []
       const writers: EnsembleParticipant[] = []
-      // Spike 4 (staged fan-out) + review F1 — three-way partition:
-      //   readers  — read-only-eligible, unstaged or scout → round-start
-      //              parallel read pass.
-      //   writers  — NOT read-only-eligible → candidates for the
-      //              locked-writer fan-out block below. Stage-role REVIEWERS
-      //              are excluded even when write-capable: a reviewer must
-      //              never be dispatched at round start, and the
-      //              user-preflight write-claim pass requires EVERY member of
-      //              `writers` to produce a valid claim (review F1: a
-      //              reviewer's missing claim rejected the whole preflight
-      //              and it was dispatched a write-claim lane before any work
-      //              existed).
-      //   neither  — reviewers and read-only-eligible stage workers stay in
-      //              `remaining` for the serial loop, where the reviewer
-      //              stage gate defers reviewers until non-reviewers finish.
+      // Spike 4 (staged fan-out) + review F1, revised 2026-08-04: stage roles
+      // are PERMISSION-AGNOSTIC — an explicit stage is a pure dispatch role
+      // and never consults the seat's configured preset. Three-way partition:
+      //   readers  — explicit stage 'scout' (any preset), or unstaged seats
+      //              whose OWN permissions resolve read-only (the pre-stage
+      //              legacy inference) → round-start parallel pass, every
+      //              lane dispatched under the signed read_only lane clamp.
+      //   writers  — explicit stage 'worker' (any preset, including presets
+      //              that resolve read-only: it still takes its serial turn
+      //              and must NOT be silently dropped from BOTH buckets — a
+      //              stranded participant left inert in `remaining`
+      //              permanently defeats `eligibleWriterTail`), plus unstaged
+      //              seats that are not read-only-eligible → candidates for
+      //              the locked-writer fan-out block below. Stage-role
+      //              REVIEWERS are excluded even when write-capable: a
+      //              reviewer must never be dispatched at round start, and
+      //              the user-preflight write-claim pass requires EVERY
+      //              member of `writers` to produce a valid claim (review
+      //              F1: a reviewer's missing claim rejected the whole
+      //              preflight and it was dispatched a write-claim lane
+      //              before any work existed).
+      //   neither  — reviewers stay in `remaining` for the serial loop,
+      //              where the reviewer stage gate defers them until
+      //              non-reviewers finish.
       for (const participant of remaining) {
         if (participant.stageRole === 'reviewer') continue
+        if (participant.stageRole === 'scout') {
+          readers.push(participant)
+          continue
+        }
+        if (participant.stageRole === 'worker') {
+          writers.push(participant)
+          continue
+        }
         const permissions = chatForFanout
           ? this.resolveFanoutEligibilityPermissions(
               chatForFanout,
@@ -13831,14 +13848,9 @@ export class EnsembleOrchestrator {
               'read_only'
             )
           : null
-        if (permissions?.readOnly && participant.stageRole !== 'worker') {
+        if (permissions?.readOnly) {
           readers.push(participant)
         } else {
-          // Everything that isn't a read-only reader goes to `writers` — including
-          // an explicit stage 'worker' whose permissions resolve read-only. That
-          // worker still takes a serial turn (it's write-capable in role), but it
-          // must NOT be silently dropped from BOTH buckets: a stranded participant
-          // left inert in `remaining` permanently defeats `eligibleWriterTail`.
           writers.push(participant)
         }
       }
@@ -13856,6 +13868,10 @@ export class EnsembleOrchestrator {
         remaining.splice(0, remaining.length, ...rest)
         await this.runParallelFanoutPass(runtime, chatForFanout, readers, {
           mode: 'read_only',
+          // Readers may include write-postured explicit scouts; the flag
+          // routes the pre-dispatch check through the same read_only lane
+          // clamp the dispatch itself already uses.
+          forceReadOnlyDispatch: true,
           label: 'Automatic read stage'
         })
       } else if (
@@ -13866,7 +13882,7 @@ export class EnsembleOrchestrator {
         this.appendRoundStatus(
           runtime.chatId,
           runtime.roundId,
-          'Parallel mode requested but fewer than two read-only participants were available; continuing serially.'
+          'Parallel mode requested but fewer than two read-pass participants were available; continuing serially.'
         )
       }
       if (
@@ -14004,12 +14020,13 @@ export class EnsembleOrchestrator {
       }
       // Spike 4 — closing review wave: once only stage-role reviewers (and
       // leftovers already dispatched via mid-round ensemble_fanout) remain,
-      // run the read-only-eligible reviewers as ONE parallel pass — the
-      // inverse of the round-start scout pass. Wave members are spliced out
-      // of `remaining` BEFORE the pass so nothing double-dispatches (the
-      // pass itself does not mark fannedOutParticipantIds — only the
-      // ensemble_fanout tool path does). Ineligible reviewers
-      // (write-capable presets) fall through to serial turns below.
+      // run the pending reviewers as ONE parallel pass — the inverse of the
+      // round-start scout pass. Wave members are spliced out of `remaining`
+      // BEFORE the pass so nothing double-dispatches (the pass itself does
+      // not mark fannedOutParticipantIds — only the ensemble_fanout tool
+      // path does). Stage roles are permission-agnostic (2026-08-04): a
+      // write-postured reviewer joins the wave like any other; every wave
+      // lane dispatches under the read_only lane clamp.
       if (
         reviewerWaveEligible &&
         remaining.length >= 2 &&
@@ -14026,16 +14043,13 @@ export class EnsembleOrchestrator {
           (entry) =>
             entry.stageRole === 'reviewer' && !this.participantFanoutDispatchState(runtime, entry.id)
         )
-        const eligibleReviewers = pendingReviewers.filter(
-          (entry) =>
-            this.resolveFanoutEligibilityPermissions(chat, runtime, entry, 'read_only').readOnly
-        )
-        if (eligibleReviewers.length >= 2) {
-          const eligibleIds = new Set(eligibleReviewers.map((entry) => entry.id))
-          const rest = remaining.filter((entry) => !eligibleIds.has(entry.id))
+        if (pendingReviewers.length >= 2) {
+          const waveIds = new Set(pendingReviewers.map((entry) => entry.id))
+          const rest = remaining.filter((entry) => !waveIds.has(entry.id))
           remaining.splice(0, remaining.length, ...rest)
-          await this.runParallelFanoutPass(runtime, chat, eligibleReviewers, {
+          await this.runParallelFanoutPass(runtime, chat, pendingReviewers, {
             mode: 'read_only',
+            forceReadOnlyDispatch: true,
             label: 'Review wave'
           })
           continue
@@ -15360,7 +15374,10 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun,
     rawTargets: unknown,
-    mode: EnsembleFanoutMode,
+    /** Eligibility is mode-independent since 2026-08-04 (read_only lanes are
+     * clamped at dispatch; locked_writers lanes still require write scopes
+     * there). Kept in the signature so call sites stay self-documenting. */
+    _mode: EnsembleFanoutMode,
     targetStage?: EnsembleFanoutTargetStage
   ):
     | { ok: true; targets: EnsembleParticipant[] }
@@ -15377,10 +15394,28 @@ export class EnsembleOrchestrator {
         activeParticipantIds.add(active.participant.id)
       }
     }
+    // Boss/Captain authority seats are structurally excluded from BROAD
+    // discovery: authority allocates lanes, it is never conscripted into
+    // one by a peer's `all` sweep. (Pre-2026-08-04 this exclusion was a
+    // posture accident — a write-postured Boss failed the read-only filter
+    // while a read-only Boss would have been swept.) Explicit targets can
+    // still name an authority seat deliberately.
+    const authorityParticipantIds = new Set<string>(
+      [
+        chat.ensemble?.bossmanParticipantId,
+        ...configuredEnsembleCaptainParticipantIds({
+          participants: chat.ensemble?.participants || [],
+          bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+          captainParticipantIds: chat.ensemble?.captainParticipantIds,
+          secondInCommandParticipantId: chat.ensemble?.secondInCommandParticipantId
+        })
+      ].filter((id): id is string => Boolean(id))
+    )
     const isEligible = (participant: EnsembleParticipant): boolean => {
       if (!participant.enabled) return false
       if (!isEnsembleSeatProvider(participant.provider)) return false
       if (participant.id === run.participant.id) return false
+      if (authorityParticipantIds.has(participant.id)) return false
       if (activeParticipantIds.has(participant.id)) return false
       // A target can be reserved for a concurrent ensemble_fanout call whose
       // lane runs are not yet seeded into runsByRunId (the seat-compaction
@@ -15388,18 +15423,19 @@ export class EnsembleOrchestrator {
       // participants whose lane already SETTLED re-targetable, as before.
       if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') return false
       if (!fanoutTargetStageMatches(participant, targetStage)) return false
-      if (mode === 'locked_writers') return true
-      return this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode).readOnly
+      // Eligibility is otherwise permission-agnostic (2026-08-04): broad
+      // discovery matches explicit-target semantics. A seat's configured
+      // preset is immaterial because read_only-mode lanes are dispatched
+      // under the signed read_only clamp; locked_writers lanes still
+      // require write scopes at dispatch.
+      return true
     }
     if (explicitTargets.length === 0 || explicitTargets.some((target) => /^@?all$/i.test(target))) {
       const targets = participants.filter(isEligible)
       if (targets.length === 0) {
         return {
           ok: false,
-          message:
-            mode === 'locked_writers'
-              ? 'ensemble_fanout: no enabled, idle peer participants are available.'
-              : 'ensemble_fanout: no enabled, idle read-only peer participants are available.',
+          message: 'ensemble_fanout: no enabled, idle peer participants are available.',
           error: 'no_eligible_targets'
         }
       }
@@ -15449,7 +15485,7 @@ export class EnsembleOrchestrator {
       // read_only mode its configured seat posture is immaterial because the
       // actual lane dispatch below is rebuilt with the signed read_only preset,
       // ignores overrides, and disallows Full Access. Broad/all discovery
-      // remains restricted to participants already configured as read-only.
+      // applies the same permission-agnostic rule.
       targets.push(participant)
     }
     const deduped = dedupeParticipants(targets)
@@ -15987,7 +16023,7 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       writeCount > 0
         ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${isolationNote}${ollamaRamNote}`
-        : `${label} · ${participants.length} read-only participants dispatched concurrently.${ollamaRamNote}`,
+        : `${label} · ${participants.length} participant(s) dispatched concurrently (read-clamped lanes).${ollamaRamNote}`,
       { fanoutCategory, fanoutLabel: label }
     )
 

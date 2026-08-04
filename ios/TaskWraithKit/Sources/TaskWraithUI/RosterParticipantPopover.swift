@@ -330,7 +330,7 @@ struct RosterParticipantFieldsCluster: View {
                             help: "Schedule purely by permissions."),
                         TWCompactSegmentOption(
                             value: "scout", label: "Scout",
-                            help: "Joins the parallel read-only pass at round start."),
+                            help: "Joins the parallel pass at round start (any preset); lane runs read-clamped."),
                         TWCompactSegmentOption(
                             value: "worker", label: "Work",
                             help: "Always takes a serial implementation turn."),

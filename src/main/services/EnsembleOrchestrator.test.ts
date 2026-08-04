@@ -12937,7 +12937,7 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(3)
     expect(
       harness.chat.messages.filter((message) =>
-        message.content?.startsWith('Automatic read stage · 2 read-only participants')
+        message.content?.startsWith('Automatic read stage · 2 participant(s) dispatched concurrently')
       )
     ).toHaveLength(2)
   })
@@ -15346,7 +15346,7 @@ Next action:
       (m) =>
         m.role === 'system' &&
         typeof m.content === 'string' &&
-        m.content.includes('Automatic read stage · 2 read-only')
+        m.content.includes('Automatic read stage · 2 participant(s)')
     )
     expect(fanoutOpenNote).toBeDefined()
   })
@@ -19083,6 +19083,205 @@ describe('staged fan-out (stageRole)', () => {
         'Auditor'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
+  })
+
+  // Stage roles are permission-agnostic: a stage is a fan-out dispatch role,
+  // never a permission requirement. Wave lanes always dispatch under the
+  // signed read_only ("Ask") lane clamp regardless of the seat's configured
+  // preset — the seat's own posture governs only its ordinary serial turns.
+  // The only role-based permission distinction in ensembles stays Boss/
+  // Captain authority, which is stage-independent.
+
+  it('dispatches a write-postured scout in the opening wave under the read-only lane clamp', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'kimi-scout',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Scout A',
+        instructions: 'Investigate.',
+        order: 1,
+        permissionPresetId: 'read_only',
+        stageRole: 'scout'
+      },
+      {
+        id: 'codex-scout',
+        provider: 'codex',
+        enabled: true,
+        role: 'Scout B',
+        instructions: 'Investigate the build.',
+        order: 2,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'scout'
+      },
+      {
+        id: 'claude-builder',
+        provider: 'claude',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Investigate, then build.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    // Both explicit scouts fan out concurrently — the write-postured seat's
+    // preset no longer disqualifies it from the wave.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(new Set(harness.dispatched.map((payload) => payload.provider))).toEqual(
+      new Set(['kimi', 'codex'])
+    )
+    // Every wave lane carries the signed read_only lane clamp, including the
+    // workspace_write scout.
+    expect(
+      harness.dispatched.every(
+        (payload) =>
+          payload.effectivePermissions?.presetId === 'read_only' &&
+          payload.effectivePermissions?.readOnly === true
+      )
+    ).toBe(true)
+    completeRun(harness, 0, 'Scout A findings.')
+    completeRun(harness, 1, 'Scout B findings.')
+    // The unstaged Builder keeps its ordinary serial turn under its OWN posture.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].provider).toBe('claude')
+    expect(harness.dispatched[2].effectivePermissions?.presetId).toBe('workspace_write')
+    const waveNote = harness.chat.messages.find((message) =>
+      message.content?.includes('Automatic read stage · 2 participant(s) dispatched concurrently')
+    )
+    expect(waveNote).toBeTruthy()
+  })
+
+  it('runs write-postured reviewers as a closing review wave under the read-only lane clamp', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Builder',
+        instructions: 'Do the work.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude-rev',
+        provider: 'claude',
+        enabled: true,
+        role: 'Reviewer A',
+        instructions: 'Review.',
+        order: 2,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'reviewer'
+      },
+      {
+        id: 'kimi-rev',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer B',
+        instructions: 'Review.',
+        order: 3,
+        permissionPresetId: 'workspace_write',
+        stageRole: 'reviewer'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Build then review.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    completeRun(harness, 0, 'Built the feature.')
+    // Pre-change these write-postured reviewers fell through to serial turns.
+    // Now the review wave is stage-driven: both dispatch concurrently, each
+    // lane clamped read-only.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
+      new Set(['claude', 'kimi'])
+    )
+    expect(
+      harness.dispatched
+        .slice(1)
+        .every(
+          (payload) =>
+            payload.effectivePermissions?.presetId === 'read_only' &&
+            payload.effectivePermissions?.readOnly === true
+        )
+    ).toBe(true)
+    const waveNote = harness.chat.messages.find((message) =>
+      message.content?.includes('Review wave')
+    )
+    expect(waveNote).toBeTruthy()
+  })
+
+  it('broad ensemble_fanout discovery includes write-postured idle seats as clamped lanes', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Coordinate.',
+        order: 1,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Helper',
+        instructions: 'Help out.',
+        order: 2,
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'kimi',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Fan the panel out.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].provider).toBe('codex')
+    // Broad discovery (no targets) used to exclude the write-postured Helper.
+    // Discovery is now permission-agnostic; every lane still dispatches under
+    // the read_only clamp.
+    const result = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      prompt: 'Everyone: inspect the failing suite.'
+    })
+    expect(result.ok).toBe(true)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(new Set(harness.dispatched.slice(1).map((payload) => payload.provider))).toEqual(
+      new Set(['claude', 'kimi'])
+    )
+    expect(
+      harness.dispatched
+        .slice(1)
+        .every(
+          (payload) =>
+            payload.effectivePermissions?.presetId === 'read_only' &&
+            payload.effectivePermissions?.readOnly === true
+        )
+    ).toBe(true)
   })
 })
 
