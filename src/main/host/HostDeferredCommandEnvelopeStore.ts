@@ -8,8 +8,8 @@
  *
  * Persistence is an fsynced 0600 journal plus atomically replaced checkpoint
  * under an injected Host data directory. Stored and quarantined rows are never
- * evicted; consumed rows are the only capacity relief. Persisted tamper is
- * quarantined without projecting the command body.
+ * evicted; consumed rows are the only capacity relief. Any malformed durable
+ * evidence makes recovery unavailable, while intentional quarantine stays body-free.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -109,11 +109,13 @@ export type HostDeferredCommandEnvelopePutResult =
   | { kind: 'conflict'; code: HostDeferredCommandEnvelopeCollisionCode }
   | { kind: 'invalid'; code: HostDeferredCommandEnvelopeInvalidCode }
   | { kind: 'store_full' }
+  | { kind: 'unavailable' }
 
 export type HostDeferredCommandEnvelopeLookupResult =
   | { kind: 'found'; record: HostDeferredCommandEnvelopeRecord }
   | { kind: 'not_found' }
   | { kind: 'actor_mismatch' }
+  | { kind: 'unavailable' }
 
 export type HostDeferredCommandEnvelopeTransitionResult =
   | { kind: 'updated'; state: 'consumed' | 'quarantined' }
@@ -121,15 +123,31 @@ export type HostDeferredCommandEnvelopeTransitionResult =
   | { kind: 'not_found' }
   | { kind: 'actor_mismatch' }
   | { kind: 'state_conflict'; state: HostDeferredCommandEnvelopeLifecycle }
+  | { kind: 'unavailable' }
 
-export interface HostDeferredCommandEnvelopeRecoverySummary {
-  size: number
-  stored: number
-  consumed: number
-  quarantined: number
-  storedCommandIds: string[]
-  quarantinedCommandIds: string[]
-}
+export type HostDeferredCommandEnvelopeRecoverySummary =
+  | {
+      availability: 'available'
+      size: number
+      stored: number
+      consumed: number
+      quarantined: number
+      storedCommandIds: string[]
+      quarantinedCommandIds: string[]
+    }
+  | {
+      availability: 'unavailable'
+      size: null
+      stored: null
+      consumed: null
+      quarantined: null
+      storedCommandIds: null
+      quarantinedCommandIds: null
+    }
+
+export type HostDeferredCommandEnvelopeCompactResult =
+  | { kind: 'compacted' }
+  | { kind: 'unavailable' }
 
 export interface HostDeferredCommandEnvelopeStoreOptions {
   dataDir: string
@@ -148,6 +166,10 @@ interface CheckpointDocument {
 type JournalEvent =
   | { op: 'upsert'; record: HostDeferredCommandEnvelopeRecord }
   | { op: 'compact'; retainedDeferredIds: string[]; at: string }
+
+type PersistenceReadResult<T> =
+  | { availability: 'available'; values: T[] }
+  | { availability: 'unavailable' }
 
 interface NormalizedPut {
   deferredId: string
@@ -190,6 +212,7 @@ export class HostDeferredCommandEnvelopeStore {
   private deferredIdByIdempotencyKey = new Map<string, string>()
   private deferredIdByChallengeId = new Map<string, string>()
   private journalRecordCount = 0
+  private recoveryAvailability: 'available' | 'unavailable' = 'available'
 
   constructor(options: HostDeferredCommandEnvelopeStoreOptions) {
     if (!options.dataDir || typeof options.dataDir !== 'string') {
@@ -213,11 +236,23 @@ export class HostDeferredCommandEnvelopeStore {
 
   reopen(): void {
     this.resetIndexes()
+    this.recoveryAvailability = 'available'
 
-    for (const record of this.readCheckpoint()) {
+    const checkpoint = this.readCheckpoint()
+    if (checkpoint.availability === 'unavailable') {
+      this.recoveryAvailability = 'unavailable'
+      return
+    }
+    const journal = this.readJournal()
+    if (journal.availability === 'unavailable') {
+      this.recoveryAvailability = 'unavailable'
+      return
+    }
+
+    for (const record of checkpoint.values) {
       this.applyRecoveredRecord(record)
     }
-    for (const event of this.readJournal()) {
+    for (const event of journal.values) {
       this.journalRecordCount += 1
       if (event.op === 'upsert') {
         this.applyRecoveredRecord(event.record)
@@ -231,6 +266,7 @@ export class HostDeferredCommandEnvelopeStore {
   }
 
   put(input: unknown): HostDeferredCommandEnvelopePutResult {
+    if (this.recoveryAvailability === 'unavailable') return { kind: 'unavailable' }
     const normalized = normalizePutInput(input)
     if (!normalized.ok) return { kind: 'invalid', code: normalized.code }
     const value = normalized.value
@@ -279,6 +315,7 @@ export class HostDeferredCommandEnvelopeStore {
     deferredId: string,
     actor: HostActorIdentity
   ): HostDeferredCommandEnvelopeLookupResult {
+    if (this.recoveryAvailability === 'unavailable') return { kind: 'unavailable' }
     if (!isHostUuid(deferredId)) return { kind: 'not_found' }
     const record = this.recordsByDeferredId.get(deferredId)
     if (!record) return { kind: 'not_found' }
@@ -289,6 +326,7 @@ export class HostDeferredCommandEnvelopeStore {
     commandId: string,
     actor: HostActorIdentity
   ): HostDeferredCommandEnvelopeLookupResult {
+    if (this.recoveryAvailability === 'unavailable') return { kind: 'unavailable' }
     if (!isHostUuid(commandId)) return { kind: 'not_found' }
     const deferredId = this.deferredIdByCommandId.get(commandId)
     if (!deferredId) return { kind: 'not_found' }
@@ -358,6 +396,18 @@ export class HostDeferredCommandEnvelopeStore {
   }
 
   getRecoverySummary(): HostDeferredCommandEnvelopeRecoverySummary {
+    if (this.recoveryAvailability === 'unavailable') {
+      return {
+        availability: 'unavailable',
+        size: null,
+        stored: null,
+        consumed: null,
+        quarantined: null,
+        storedCommandIds: null,
+        quarantinedCommandIds: null
+      }
+    }
+
     const records = [...this.recordsByDeferredId.values()]
     const storedCommandIds = records
       .filter((record) => record.state === 'stored')
@@ -368,6 +418,7 @@ export class HostDeferredCommandEnvelopeStore {
       .map((record) => record.commandId)
       .sort()
     return {
+      availability: 'available',
       size: records.length,
       stored: storedCommandIds.length,
       consumed: records.filter((record) => record.state === 'consumed').length,
@@ -377,12 +428,14 @@ export class HostDeferredCommandEnvelopeStore {
     }
   }
 
-  compact(): void {
+  compact(): HostDeferredCommandEnvelopeCompactResult {
+    if (this.recoveryAvailability === 'unavailable') return { kind: 'unavailable' }
     this.writeCheckpointAndResetJournal(this.maxRecords)
+    return { kind: 'compacted' }
   }
 
-  get size(): number {
-    return this.recordsByDeferredId.size
+  get size(): number | null {
+    return this.recoveryAvailability === 'available' ? this.recordsByDeferredId.size : null
   }
 
   private lookupMutable(
@@ -391,7 +444,9 @@ export class HostDeferredCommandEnvelopeStore {
   ):
     | { kind: 'found'; record: HostDeferredCommandEnvelopeRecord }
     | { kind: 'not_found' }
-    | { kind: 'actor_mismatch' } {
+    | { kind: 'actor_mismatch' }
+    | { kind: 'unavailable' } {
+    if (this.recoveryAvailability === 'unavailable') return { kind: 'unavailable' }
     if (!isHostUuid(deferredId)) return { kind: 'not_found' }
     const record = this.recordsByDeferredId.get(deferredId)
     if (!record) return { kind: 'not_found' }
@@ -474,63 +529,74 @@ export class HostDeferredCommandEnvelopeStore {
     this.journalRecordCount += 1
   }
 
-  private readCheckpoint(): HostDeferredCommandEnvelopeRecord[] {
-    if (!existsSync(this.checkpointPath)) return []
+  private readCheckpoint(): PersistenceReadResult<HostDeferredCommandEnvelopeRecord> {
+    if (!existsSync(this.checkpointPath)) {
+      return { availability: 'available', values: [] }
+    }
     try {
       const parsed: unknown = JSON.parse(readFileSync(this.checkpointPath, 'utf8'))
       if (!isRecord(parsed) || !hasExactKeys(parsed, ['schemaVersion', 'updatedAt', 'records'])) {
-        this.log('[HostDeferredCommandEnvelopeStore] checkpoint malformed')
-        return []
+        this.log('[HostDeferredCommandEnvelopeStore] checkpoint recovery unavailable')
+        return { availability: 'unavailable' }
       }
       if (
         parsed.schemaVersion !== HOST_DEFERRED_COMMAND_ENVELOPE_SCHEMA_VERSION ||
         typeof parsed.updatedAt !== 'string' ||
+        !isBoundedTimestamp(parsed.updatedAt) ||
         !Array.isArray(parsed.records)
       ) {
-        this.log('[HostDeferredCommandEnvelopeStore] checkpoint schema mismatch')
-        return []
+        this.log('[HostDeferredCommandEnvelopeStore] checkpoint recovery unavailable')
+        return { availability: 'unavailable' }
       }
-      return parsed.records
-        .map(normalizeStoredRecord)
-        .filter((record): record is HostDeferredCommandEnvelopeRecord => record !== null)
+
+      const values: HostDeferredCommandEnvelopeRecord[] = []
+      for (const value of parsed.records) {
+        const record = normalizeStoredRecord(value)
+        if (!record || !persistedRecordMatchesNormalization(value, record)) {
+          this.log('[HostDeferredCommandEnvelopeStore] checkpoint recovery unavailable')
+          return { availability: 'unavailable' }
+        }
+        values.push(record)
+      }
+      return { availability: 'available', values }
     } catch {
-      this.log('[HostDeferredCommandEnvelopeStore] checkpoint load failed')
-      return []
+      this.log('[HostDeferredCommandEnvelopeStore] checkpoint recovery unavailable')
+      return { availability: 'unavailable' }
     }
   }
 
-  private readJournal(): JournalEvent[] {
-    if (!existsSync(this.journalPath)) return []
+  private readJournal(): PersistenceReadResult<JournalEvent> {
+    if (!existsSync(this.journalPath)) {
+      return { availability: 'available', values: [] }
+    }
+
     let source: string
     try {
       source = readFileSync(this.journalPath, 'utf8')
     } catch {
-      this.log('[HostDeferredCommandEnvelopeStore] journal read failed')
-      return []
+      this.log('[HostDeferredCommandEnvelopeStore] journal recovery unavailable')
+      return { availability: 'unavailable' }
+    }
+    if (source.length === 0) {
+      return { availability: 'available', values: [] }
     }
 
-    const events: JournalEvent[] = []
+    const values: JournalEvent[] = []
     const lines = source.split('\n')
-    const endsWithNewline = source.endsWith('\n')
-    const lastContentIndex = endsWithNewline ? lines.length - 2 : lines.length - 1
-
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]
       if (!line) continue
       try {
-        events.push(parseJournalEvent(line))
+        values.push(parseJournalEvent(line))
       } catch {
-        if (index === lastContentIndex && !endsWithNewline) {
-          this.log('[HostDeferredCommandEnvelopeStore] dropped truncated journal tail')
-          break
-        }
         this.log(
-          '[HostDeferredCommandEnvelopeStore] skipped corrupt journal line at index ' +
+          '[HostDeferredCommandEnvelopeStore] journal recovery unavailable at event ' +
             String(index)
         )
+        return { availability: 'unavailable' }
       }
     }
-    return events
+    return { availability: 'available', values }
   }
 
   private applyRecoveredRecord(record: HostDeferredCommandEnvelopeRecord): void {
@@ -803,20 +869,33 @@ function normalizeRawBase(
   }
 }
 
+function persistedRecordMatchesNormalization(
+  value: unknown,
+  record: HostDeferredCommandEnvelopeRecord
+): boolean {
+  if (!isRecord(value) || value.state !== record.state) return false
+  return value.state !== 'quarantined' || value.quarantineCode === record.quarantineCode
+}
+
 function parseJournalEvent(line: string): JournalEvent {
   const parsed: unknown = JSON.parse(line)
   if (!isRecord(parsed)) throw new Error('malformed journal event')
   if (parsed.op === 'upsert') {
-    if (!hasExactKeys(parsed, ['op', 'record'])) throw new Error('malformed upsert')
+    if (!hasExactKeys(parsed, ['op', 'record']) || !isRecord(parsed.record)) {
+      throw new Error('malformed upsert')
+    }
     const record = normalizeStoredRecord(parsed.record)
-    if (!record) throw new Error('malformed upsert record')
+    if (!record || !persistedRecordMatchesNormalization(parsed.record, record)) {
+      throw new Error('malformed upsert record')
+    }
     return { op: 'upsert', record }
   }
   if (parsed.op === 'compact') {
     if (
       !hasExactKeys(parsed, ['op', 'retainedDeferredIds', 'at']) ||
       !Array.isArray(parsed.retainedDeferredIds) ||
-      typeof parsed.at !== 'string'
+      typeof parsed.at !== 'string' ||
+      !isBoundedTimestamp(parsed.at)
     ) {
       throw new Error('malformed compact event')
     }

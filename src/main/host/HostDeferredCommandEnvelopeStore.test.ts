@@ -133,6 +133,51 @@ describe('HostDeferredCommandEnvelopeStore', () => {
     })
   }
 
+  function expectUnavailable(store: HostDeferredCommandEnvelopeStore): void {
+    const replacementCommand = command({
+      commandId: COMMAND_IDS[3],
+      idempotencyUuid: IDEMPOTENCY_UUIDS[3],
+      text: 'must never be persisted while unavailable'
+    })
+    const outputs = [
+      store.getRecoverySummary(),
+      store.getByDeferredId(DEFERRED_IDS[0], ACTOR),
+      store.getByCommandId(COMMAND_IDS[0], ACTOR),
+      store.put(
+        putInput(replacementCommand, {
+          deferredId: DEFERRED_IDS[3],
+          challengeId: CHALLENGE_IDS[3]
+        })
+      ),
+      store.markConsumed(DEFERRED_IDS[0], ACTOR),
+      store.markQuarantined(DEFERRED_IDS[0], ACTOR, 'verification_failed'),
+      store.compact()
+    ]
+
+    expect(store.size).toBeNull()
+    expect(outputs).toEqual([
+      {
+        availability: 'unavailable',
+        size: null,
+        stored: null,
+        consumed: null,
+        quarantined: null,
+        storedCommandIds: null,
+        quarantinedCommandIds: null
+      },
+      { kind: 'unavailable' },
+      { kind: 'unavailable' },
+      { kind: 'unavailable' },
+      { kind: 'unavailable' },
+      { kind: 'unavailable' },
+      { kind: 'unavailable' }
+    ])
+    const serialized = JSON.stringify({ outputs, logs })
+    expect(serialized).not.toContain(SECRET_TEXT)
+    expect(serialized).not.toContain('must never be persisted while unavailable')
+    expect(serialized).not.toContain('thread-1')
+  }
+
   it('persists a canonical command privately and exposes only actor-bound body access', () => {
     const store = open()
     const input = putInput()
@@ -150,6 +195,7 @@ describe('HostDeferredCommandEnvelopeStore', () => {
 
     const recovery = store.getRecoverySummary()
     expect(recovery).toEqual({
+      availability: 'available',
       size: 1,
       stored: 1,
       consumed: 0,
@@ -193,36 +239,57 @@ describe('HostDeferredCommandEnvelopeStore', () => {
     expect(terminal.record.command?.arguments).toEqual({ text: SECRET_TEXT })
   })
 
-  it('recovers valid rows around corrupt interior and truncated journal tails', () => {
+  it('treats missing persistence files as an available empty store', () => {
+    const store = open()
+
+    expect(store.size).toBe(0)
+    expect(store.getRecoverySummary()).toEqual({
+      availability: 'available',
+      size: 0,
+      stored: 0,
+      consumed: 0,
+      quarantined: 0,
+      storedCommandIds: [],
+      quarantinedCommandIds: []
+    })
+    expect(store.put(putInput())).toEqual({ kind: 'created' })
+  })
+
+  it('makes corrupt journal interiors unavailable without resurrecting a consumed command', () => {
     const first = open()
     expect(first.put(putInput())).toEqual({ kind: 'created' })
 
     const journalPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_JOURNAL_FILENAME)
     appendFileSync(journalPath, '{not-json}\n', 'utf8')
-
-    const secondCommand = command({
-      commandId: COMMAND_IDS[1],
-      idempotencyUuid: IDEMPOTENCY_UUIDS[1],
-      text: 'second command'
+    expect(first.markConsumed(DEFERRED_IDS[0], ACTOR)).toEqual({
+      kind: 'updated',
+      state: 'consumed'
     })
-    expect(
-      first.put(
-        putInput(secondCommand, {
-          deferredId: DEFERRED_IDS[1],
-          challengeId: CHALLENGE_IDS[1]
-        })
-      )
-    ).toEqual({ kind: 'created' })
-
-    appendFileSync(journalPath, '{"op":"upsert"', 'utf8')
+    const evidence = readFileSync(journalPath, 'utf8')
 
     const reopened = open()
-    expect(reopened.size).toBe(2)
-    expect(reopened.getByCommandId(COMMAND_IDS[0], ACTOR).kind).toBe('found')
-    expect(reopened.getByCommandId(COMMAND_IDS[1], ACTOR).kind).toBe('found')
-    expect(logs.some((line) => line.includes('skipped corrupt journal line'))).toBe(true)
-    expect(logs.some((line) => line.includes('dropped truncated journal tail'))).toBe(true)
-    expect(JSON.stringify(logs)).not.toContain(SECRET_TEXT)
+    expectUnavailable(reopened)
+    expect(readFileSync(journalPath, 'utf8')).toBe(evidence)
+    expect(logs.some((line) => line.includes('journal recovery unavailable'))).toBe(true)
+  })
+
+  it('makes a truncated consumed transition unavailable without exposing or healing it', () => {
+    const first = open()
+    expect(first.put(putInput())).toEqual({ kind: 'created' })
+    expect(first.markConsumed(DEFERRED_IDS[0], ACTOR)).toEqual({
+      kind: 'updated',
+      state: 'consumed'
+    })
+
+    const journalPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_JOURNAL_FILENAME)
+    const journal = readFileSync(journalPath, 'utf8')
+    const truncated = journal.slice(0, -12)
+    writeFileSync(journalPath, truncated, 'utf8')
+
+    const reopened = open()
+    expectUnavailable(reopened)
+    expect(readFileSync(journalPath, 'utf8')).toBe(truncated)
+    expect(logs.some((line) => line.includes('journal recovery unavailable'))).toBe(true)
   })
 
   it('makes exact repeats idempotent and rejects every identity collision', () => {
@@ -326,11 +393,10 @@ describe('HostDeferredCommandEnvelopeStore', () => {
     expect(store.size).toBe(0)
   })
 
-  it('quarantines persisted tamper without retaining or projecting the command body', () => {
+  it('makes persisted checkpoint record tamper unavailable without projecting the body', () => {
     const first = open()
-    const input = putInput()
-    expect(first.put(input)).toEqual({ kind: 'created' })
-    first.compact()
+    expect(first.put(putInput())).toEqual({ kind: 'created' })
+    expect(first.compact()).toEqual({ kind: 'compacted' })
 
     const checkpointPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_CHECKPOINT_FILENAME)
     const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
@@ -338,31 +404,29 @@ describe('HostDeferredCommandEnvelopeStore', () => {
     }
     checkpoint.records[0].unexpected = SECRET_TEXT
     writeFileSync(checkpointPath, JSON.stringify(checkpoint) + '\n', 'utf8')
+    const evidence = readFileSync(checkpointPath, 'utf8')
 
     const reopened = open()
-    const found = reopened.getByDeferredId(DEFERRED_IDS[0], ACTOR)
-    expect(found.kind).toBe('found')
-    if (found.kind !== 'found') return
-    expect(found.record.state).toBe('quarantined')
-    expect(found.record.quarantineCode).toBe('corrupt_record')
-    expect(found.record.command).toBeUndefined()
-    expect(JSON.stringify(found.record)).not.toContain(SECRET_TEXT)
-    expect(reopened.getRecoverySummary()).toMatchObject({
-      size: 1,
-      stored: 0,
-      quarantined: 1,
-      quarantinedCommandIds: [COMMAND_IDS[0]]
-    })
+    expectUnavailable(reopened)
+    expect(readFileSync(checkpointPath, 'utf8')).toBe(evidence)
+    expect(logs.some((line) => line.includes('checkpoint recovery unavailable'))).toBe(true)
+  })
 
-    const malformedSchema = JSON.parse(readFileSync(checkpointPath, 'utf8')) as Record<
-      string,
-      unknown
-    >
-    malformedSchema.schemaVersion = 99
-    writeFileSync(checkpointPath, JSON.stringify(malformedSchema) + '\n', 'utf8')
-    const schemaRejected = open()
-    expect(schemaRejected.size).toBe(0)
-    expect(JSON.stringify(logs)).not.toContain(SECRET_TEXT)
+  it('makes malformed checkpoints unavailable without overwriting the evidence', () => {
+    const first = open()
+    expect(first.put(putInput())).toEqual({ kind: 'created' })
+    expect(first.compact()).toEqual({ kind: 'compacted' })
+
+    const checkpointPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_CHECKPOINT_FILENAME)
+    const journalPath = join(dataDir, HOST_DEFERRED_COMMAND_ENVELOPE_JOURNAL_FILENAME)
+    const malformed = '{"schemaVersion":'
+    writeFileSync(checkpointPath, malformed, 'utf8')
+
+    const reopened = open()
+    expectUnavailable(reopened)
+    expect(readFileSync(checkpointPath, 'utf8')).toBe(malformed)
+    expect(existsSync(journalPath)).toBe(false)
+    expect(logs.some((line) => line.includes('checkpoint recovery unavailable'))).toBe(true)
   })
 
   it('makes terminal transitions idempotent and never revives a quarantined row', () => {
@@ -405,6 +469,14 @@ describe('HostDeferredCommandEnvelopeStore', () => {
       kind: 'conflict',
       code: 'deferred_id_collision'
     })
+    expect(quarantined.compact()).toEqual({ kind: 'compacted' })
+
+    const reopened = open()
+    const persisted = reopened.getByDeferredId(DEFERRED_IDS[0], ACTOR)
+    expect(persisted.kind).toBe('found')
+    if (persisted.kind !== 'found') return
+    expect(persisted.record.state).toBe('quarantined')
+    expect(persisted.record.command).toBeUndefined()
   })
 
   it('evicts only consumed rows and reports store_full for protected capacity', () => {
