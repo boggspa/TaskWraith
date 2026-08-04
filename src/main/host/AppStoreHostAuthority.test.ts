@@ -306,11 +306,47 @@ describe('AppStoreHostAuthority', () => {
       'fingerprintHostCommand(hostCommand)',
       'this.authorityEvaluator(hostCommand, context)',
       'this.runtime.receiptStore.begin({',
-      'this.commandExecutor(hostCommand, context)'
+      'new HostObservedMutationExecutor({',
+      'this.commandExecutor(command, context)',
+      'this.completionCoordinator.complete('
     ]
     const positions = orderedNeedles.map((needle) => commandBody.indexOf(needle))
     expect(positions.every((position) => position >= 0)).toBe(true)
     expect(positions).toEqual([...positions].sort((left, right) => left - right))
+  })
+
+  it('keeps the denied path free of observe/complete wiring (byte-identity fence)', () => {
+    const source = readFileSync(join(__dirname, 'AppStoreHostAuthority.ts'), 'utf8')
+    const deniedStart = source.indexOf("if (evaluation.decision === 'denied')")
+    const deferredStart = source.indexOf("if (evaluation.decision === 'deferred')", deniedStart)
+    expect(deniedStart).toBeGreaterThan(0)
+    expect(deferredStart).toBeGreaterThan(deniedStart)
+    const deniedBlock = source.slice(deniedStart, deferredStart)
+    expect(deniedBlock).toContain("status: 'denied'")
+    expect(deniedBlock).toContain("errorCode: 'authority_denied'")
+    expect(deniedBlock).toContain('this.runtime.receiptStore.complete({')
+    expect(deniedBlock).not.toMatch(
+      /HostObservedMutationExecutor|completionCoordinator|domainPublisher/
+    )
+  })
+
+  it('allowed path observes once, completes via sole journal, and preserves status passthrough', async () => {
+    const authority = open()
+    const ctx = contextFor(ACTOR_A, CLIENT_A)
+    const before = runtime.getPosition()
+    const result = await authority.command(
+      ctx,
+      makeCommand({ commandId: 'allow-obs-1', idempotencyKey: 'allow-obs-k', actor: ACTOR_A })
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.status).toBe('succeeded')
+    expect(result.value.resultSummary).toBe('pong')
+    expect(executorCalls).toBe(1)
+    // Terminal generation/cursor come from the sole journal (begin position when
+    // no domain effects were published).
+    expect(result.value.generation).toBe(before.generation)
+    expect(result.value.cursor).toBe(before.cursor)
   })
 
   it('injects runtime-only position and overrides donor position smuggling', async () => {
@@ -761,7 +797,7 @@ describe('AppStoreHostAuthority', () => {
     expect(executorCalls).toBe(0)
   })
 
-  it('sanitizes executor throws into bounded failed receipts', async () => {
+  it('promotes executor throws to recoverable indeterminate without leaking throw bodies', async () => {
     const authority = open({
       ports: {
         commandExecutor: () => {
@@ -776,9 +812,9 @@ describe('AppStoreHostAuthority', () => {
     )
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.value.status).toBe('failed')
-    expect(result.value.errorCode).toBe('executor_failed')
-    expect(result.value.errorMessage).toBe('command executor failed')
+    expect(result.value.status).toBe('indeterminate')
+    expect(result.value.errorCode).toBe('deferred_execution_may_have_begun')
+    expect(executorCalls).toBe(1)
     expect(JSON.stringify(result.value)).not.toMatch(/SECRET_TOKEN|sk-ant|stack/i)
   })
 

@@ -48,6 +48,15 @@ import type {
   HostCommandReceiptRecord,
   HostCommandReceiptTarget
 } from './HostCommandReceiptStore'
+import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
+import {
+  HostMutationCompletionCoordinator,
+  type HostMutationCompletionResult
+} from './HostMutationCompletionCoordinator'
+import {
+  HostObservedMutationExecutor,
+  type HostObservedMutationResult
+} from './HostObservedMutationExecutor'
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
@@ -143,8 +152,11 @@ export interface AppStoreHostAuthorityOptions {
   readonly now?: () => string
 }
 
-const EXECUTOR_FAILURE_CODE = 'executor_failed'
-const EXECUTOR_FAILURE_MESSAGE = 'command executor failed'
+const OBSERVER_THROW_MUTATION: HostObservedMutationResult = Object.freeze({
+  kind: 'execution_may_have_begun',
+  effects: Object.freeze([]) as readonly [],
+  afterCapture: Object.freeze({ status: 'capture_failed' as const })
+})
 
 function toReceiptActor(actor: HostActorIdentity): HostCommandReceiptActor {
   return {
@@ -194,6 +206,8 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
+  private readonly domainPublisher: HostDomainDeltaPublisher
+  private readonly completionCoordinator: HostMutationCompletionCoordinator
   private readonly now: () => string
   private stopped = false
 
@@ -235,6 +249,14 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
+    // Scope 2: sole-journal publish + completion ports (allowed branch only).
+    this.domainPublisher = new HostDomainDeltaPublisher({ store: this.runtime.deltaStore })
+    this.completionCoordinator = new HostMutationCompletionCoordinator({
+      publishEffects: (effects) => this.domainPublisher.publish(effects),
+      getPosition: () => this.runtime.getPosition(),
+      completeReceipt: (input) => this.runtime.receiptStore.complete(input),
+      markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input)
+    })
   }
 
   private gate(context: HostAuthorityCallContext): HostAuthorityResult<true> {
@@ -429,53 +451,88 @@ export class AppStoreHostAuthority implements HostAuthority {
       )
     }
 
-    // allowed — execute once
-    let executorResult: AppStoreHostAuthorityExecutorResult
-    try {
-      executorResult = await this.commandExecutor(hostCommand, context)
-    } catch {
-      const failed = this.runtime.receiptStore.complete({
-        commandId: hostCommand.commandId,
-        status: 'failed',
-        completedAt: this.now(),
-        errorCode: EXECUTOR_FAILURE_CODE,
-        errorMessage: EXECUTOR_FAILURE_MESSAGE
-      })
-      if (!failed) return { ok: false, error: 'host_unavailable' }
-      return projectFoundReceipt(failed)
-    }
+    // allowed — observe once (wrap existing executor + closed-over context),
+    // then complete once through the sole-journal coordinator.
+    return this.executeAllowedMutation(hostCommand, context)
+  }
 
-    if (
-      !executorResult ||
-      (executorResult.status !== 'succeeded' &&
-        executorResult.status !== 'failed' &&
-        executorResult.status !== 'cancelled')
-    ) {
-      const failed = this.runtime.receiptStore.complete({
-        commandId: hostCommand.commandId,
-        status: 'failed',
-        completedAt: this.now(),
-        errorCode: EXECUTOR_FAILURE_CODE,
-        errorMessage: EXECUTOR_FAILURE_MESSAGE
-      })
-      if (!failed) return { ok: false, error: 'host_unavailable' }
-      return projectFoundReceipt(failed)
-    }
-
-    const completed = this.runtime.receiptStore.complete({
-      commandId: hostCommand.commandId,
-      status: executorResult.status,
-      completedAt: this.now(),
-      ...(executorResult.resultSummary !== undefined
-        ? { resultSummary: executorResult.resultSummary }
-        : {}),
-      ...(executorResult.errorCode !== undefined ? { errorCode: executorResult.errorCode } : {}),
-      ...(executorResult.errorMessage !== undefined
-        ? { errorMessage: executorResult.errorMessage }
-        : {})
+  /**
+   * Scope 2 allowed path: HostObservedMutationExecutor wraps the injected
+   * commandExecutor (context closed over); HostMutationCompletionCoordinator
+   * publishes effects and terminalizes from the sole journal position.
+   */
+  private async executeAllowedMutation(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    const observedExecutor = new HostObservedMutationExecutor({
+      captureSnapshot: () => this.captureMutationSnapshot(),
+      executeCommand: async (command) => {
+        const result = await this.commandExecutor(command, context)
+        return result
+      }
     })
-    if (!completed) return { ok: false, error: 'host_unavailable' }
-    return projectFoundReceipt(completed)
+
+    let mutation: HostObservedMutationResult
+    try {
+      mutation = await observedExecutor.execute(hostCommand)
+    } catch {
+      mutation = OBSERVER_THROW_MUTATION
+    }
+
+    let completion: HostMutationCompletionResult
+    try {
+      completion = this.completionCoordinator.complete({
+        commandId: hostCommand.commandId,
+        mutation
+      })
+    } catch {
+      return { ok: false, error: 'host_unavailable' }
+    }
+
+    return this.projectAllowedCompletion(hostCommand.commandId, context, completion)
+  }
+
+  /** Privacy-clean live snapshot for observe before/after capture. */
+  private async captureMutationSnapshot(): Promise<unknown> {
+    const donor = await this.snapshotDonor()
+    if (!donor || typeof donor !== 'object') {
+      throw new Error('snapshot donor unavailable')
+    }
+    const position = this.runtime.getPosition()
+    const generatedAt = this.now()
+    const recovery = projectHostRecovery({ summary: this.runtime.getRecoverySummary() })
+    const input: HostSnapshotProjectorInput = {
+      ...donor,
+      position: {
+        generation: position.generation,
+        cursor: position.cursor,
+        freshness: 'live',
+        generatedAt
+      },
+      recovery
+    }
+    const projected = projectHostSnapshot(input)
+    if (!projected.ok) {
+      throw new Error('snapshot projection failed')
+    }
+    return projected.value
+  }
+
+  /** Map coordinator outcome to the existing HostAuthority receipt union. */
+  private projectAllowedCompletion(
+    commandId: string,
+    context: HostAuthorityCallContext,
+    completion: HostMutationCompletionResult
+  ): HostAuthorityResult<HostCommandReceipt> {
+    if (completion.kind !== 'completed' && completion.kind !== 'indeterminate') {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    const found = this.runtime.receiptStore.getByCommandId(commandId, toReceiptActor(context.actor))
+    if (found.kind !== 'found') {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    return projectFoundReceipt(found.receipt)
   }
 
   private async persistDeferredAsk(
