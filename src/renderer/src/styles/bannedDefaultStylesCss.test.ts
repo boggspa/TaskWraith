@@ -25,6 +25,14 @@ describe('banned default styles stay out of approval and menu chrome', () => {
     expect(css).not.toContain('.trusted-session-modal .approval-elevation-caution')
   })
 
+  it('keeps the shared approval-modal eyebrow sentence case', () => {
+    const css = readCss('08-theme-picker-overrides.css')
+    const eyebrow = cssBlockStartingAt(css, '.creative-approval-modal-eyebrow {')
+
+    expect(eyebrow).not.toContain('text-transform')
+    expect(eyebrow).not.toContain('0.12em')
+  })
+
   it('keeps the side-chat menu section header sentence case', () => {
     const css = readCss('11-side-chat.css')
     const section = cssBlockStartingAt(css, '.side-chat-layout-menu-section {')

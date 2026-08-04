@@ -742,9 +742,8 @@
 }
 
 .creative-approval-modal-eyebrow {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  letter-spacing: 0.01em;
   color: color-mix(in srgb, var(--accent) 90%, transparent);
   font-weight: 600;
   display: flex;
