@@ -30,6 +30,7 @@ import {
   type HostAuthorityShutdownResult
 } from './HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
+import { parseGovernedMutationCommandName } from './HostCommandRouting'
 import { projectHostCommandReceipt } from './HostCommandReceiptProjection'
 import type {
   HostCommandAuthorityDecision,
@@ -297,6 +298,13 @@ export class AppStoreHostAuthority implements HostAuthority {
     const decoded = decodeHostCommand(command)
     if (!decoded.ok) return { ok: false, error: 'invalid_lookup' }
     const hostCommand = decoded.value
+
+    // Body-bearing reads are Authority RPC methods only. Reserved read aliases
+    // must never reach actor denial, fingerprinting, evaluation, receipts, or
+    // execution through the durable mutation path.
+    if (parseGovernedMutationCommandName(hostCommand.name) === null) {
+      return { ok: false, error: 'invalid_lookup' }
+    }
 
     // Actor spoof: bind any durable denial to authenticated context.actor.
     if (!hostAuthorityCommandActorMatchesContext(context, hostCommand)) {

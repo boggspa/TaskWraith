@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -63,8 +63,8 @@ function makeCommand(
   return {
     type: 'host.command',
     protocolVersion: HOST_PROTOCOL_VERSION,
-    name: 'ping',
-    target: {},
+    name: 'thread.select',
+    target: { threadId: 'thread-default' },
     arguments: {},
     issuedAt: NOW,
     ...overrides
@@ -238,6 +238,69 @@ describe('AppStoreHostAuthority', () => {
       )
     ).toEqual({ ok: false, error: 'invalid_lookup' })
     expect(executorCalls).toBe(0)
+  })
+
+  it('rejects all reserved read aliases before actor denial, evaluation, receipts, or execution', async () => {
+    const authorityEvaluator = vi.fn(() => ({ decision: 'allowed' as const }))
+    const commandExecutor = vi.fn(() => ({ status: 'succeeded' as const }))
+    const authority = open({
+      ports: {
+        authorityEvaluator,
+        commandExecutor
+      }
+    })
+    const aliases: ReadonlyArray<
+      Pick<HostCommand, 'name' | 'target' | 'arguments'>
+    > = [
+      { name: 'snapshot.get' as const, target: {}, arguments: {} },
+      {
+        name: 'deltas.since' as const,
+        target: {},
+        arguments: { generation: 1, cursor: 0 }
+      },
+      {
+        name: 'receipt.lookup' as const,
+        target: { commandId: 'lookup-command' },
+        arguments: {}
+      },
+      { name: 'ping' as const, target: {}, arguments: {} }
+    ]
+
+    for (const [index, alias] of aliases.entries()) {
+      const result = await authority.command(
+        contextFor(ACTOR_A, CLIENT_A),
+        makeCommand({
+          commandId: `read-${index}`,
+          idempotencyKey: `read-key-${index}`,
+          actor: ACTOR_B,
+          ...alias
+        })
+      )
+      expect(result, alias.name).toEqual({ ok: false, error: 'invalid_lookup' })
+    }
+
+    expect(authorityEvaluator).not.toHaveBeenCalled()
+    expect(commandExecutor).not.toHaveBeenCalled()
+    expect(runtime.receiptStore.size).toBe(0)
+  })
+
+  it('orders the read-alias gate after decode and before every mutation-side effect', () => {
+    const source = readFileSync(join(__dirname, 'AppStoreHostAuthority.ts'), 'utf8')
+    const commandStart = source.indexOf('  async command(')
+    const commandEnd = source.indexOf('  /**\n   * Persist a denial', commandStart)
+    const commandBody = source.slice(commandStart, commandEnd)
+    const orderedNeedles = [
+      'decodeHostCommand(command)',
+      'parseGovernedMutationCommandName(hostCommand.name)',
+      'hostAuthorityCommandActorMatchesContext(context, hostCommand)',
+      'fingerprintHostCommand(hostCommand)',
+      'this.authorityEvaluator(hostCommand, context)',
+      'this.runtime.receiptStore.begin({',
+      'this.commandExecutor(hostCommand, context)'
+    ]
+    const positions = orderedNeedles.map((needle) => commandBody.indexOf(needle))
+    expect(positions.every((position) => position >= 0)).toBe(true)
+    expect(positions).toEqual([...positions].sort((left, right) => left - right))
   })
 
   it('injects runtime-only position and overrides donor position smuggling', async () => {
