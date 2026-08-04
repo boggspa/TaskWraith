@@ -365,25 +365,75 @@ describe('HostSession.bind', () => {
     })
   })
 
-  it('idempotently returns the same binding for repeated bind of the same actor', () => {
+  it('keeps the session id, refreshes sole-journal position, and never widens on re-bind', () => {
     let mintCount = 0
-    const session = openSession({
+    let position = { generation: 3, cursor: 17 }
+    let positionCalls = 0
+    const session = new HostSession({
+      host: { hostId: 'host-local-1', hostVersion: '1.9.2' },
+      runtime: {
+        getPosition: () => {
+          positionCalls += 1
+          return { ...position }
+        }
+      },
+      hostCapabilityOffer: ['snapshot', 'commands', 'health'],
       sessionIdFactory: () => {
         mintCount += 1
         return mintCount === 1 ? FIXED_SESSION_A : FIXED_SESSION_B
       }
     })
-    const first = session.bind(bindRequest(desktopVerified(), desktopAuth(), ['snapshot']))
-    const second = session.bind(
+    const first = session.bind(
       bindRequest(desktopVerified(), desktopAuth(), ['snapshot', 'health'])
+    )
+    position = { generation: 4, cursor: 29 }
+    const second = session.bind(
+      bindRequest(desktopVerified(), desktopAuth(), ['snapshot', 'commands'])
     )
     expect(first.ok).toBe(true)
     expect(second.ok).toBe(true)
     if (!first.ok || !second.ok) return
-    expect(second.value).toBe(first.value)
     expect(second.value.sessionId).toBe(FIXED_SESSION_A)
+    expect(second.value.boundGeneration).toBe(4)
+    expect(second.value.boundCursor).toBe(29)
+    expect(second.value.welcome.generation).toBe(4)
+    expect(second.value.welcome.cursor).toBe(29)
+    // `commands` was not in the original grant, while `health` was omitted
+    // from the current request: the refreshed grant can only narrow.
+    expect(second.value.welcome.capabilities).toEqual(['snapshot'])
+    expect(positionCalls).toBe(2)
     expect(mintCount).toBe(1)
     expect(session.size()).toBe(1)
+    const found = session.lookup(FIXED_SESSION_A)
+    expect(found.ok && found.value === second.value).toBe(true)
+  })
+
+  it('fails a re-bind without mutating the existing binding when position is unavailable', () => {
+    let shouldThrow = false
+    const session = new HostSession({
+      host: { hostId: 'host-local-1', hostVersion: '1.9.2' },
+      runtime: {
+        getPosition: () => {
+          if (shouldThrow) throw new Error('offline')
+          return { generation: 3, cursor: 17 }
+        }
+      },
+      hostCapabilityOffer: ['snapshot', 'health'],
+      sessionIdFactory: () => FIXED_SESSION_A
+    })
+    const first = session.bind(
+      bindRequest(desktopVerified(), desktopAuth(), ['snapshot', 'health'])
+    )
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+
+    shouldThrow = true
+    expect(session.bind(bindRequest(desktopVerified(), desktopAuth(), ['snapshot']))).toEqual({
+      ok: false,
+      error: 'runtime position unavailable'
+    })
+    const found = session.lookup(FIXED_SESSION_A)
+    expect(found.ok && found.value === first.value).toBe(true)
   })
 
   it('mints distinct sessions for distinct verified actors', () => {

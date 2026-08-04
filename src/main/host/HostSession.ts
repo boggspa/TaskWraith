@@ -84,7 +84,7 @@ export interface HostSessionBinding {
   readonly actor: HostActorIdentity
   readonly authenticatedClient: HostAuthenticatedClientIdentity
   readonly welcome: HostBootstrapWelcome
-  /** Position frozen into the welcome at first successful bind. */
+  /** Position refreshed from the sole journal on each successful bind/re-bind. */
   readonly boundGeneration: number
   readonly boundCursor: number
 }
@@ -204,8 +204,39 @@ export class HostSession {
       if (!existing) {
         return fail('session binding index is inconsistent')
       }
-      // Idempotent: same verified actor returns the stable binding.
-      return { ok: true, value: existing }
+
+      const positionResult = this.readPosition()
+      if (!positionResult.ok) return positionResult
+      const position = positionResult.value
+
+      // Re-bind may only retain/narrow the existing grant. A wider current
+      // request cannot add capabilities that were not already granted.
+      const retainedHostOffer = this.hostCapabilityOffer.filter((capability) =>
+        existing.welcome.capabilities.includes(capability)
+      )
+      const welcomeResult = buildHostBootstrapWelcome({
+        hostId: this.host.hostId,
+        hostVersion: this.host.hostVersion,
+        sessionId: existing.sessionId,
+        generation: position.generation,
+        cursor: position.cursor,
+        authenticatedClient: request.authenticatedClient,
+        hostCapabilityOffer: retainedHostOffer,
+        clientCapabilityRequest: request.clientCapabilityRequest,
+        freshness: this.freshness
+      })
+      if (!welcomeResult.ok) return welcomeResult
+
+      const refreshed: HostSessionBinding = {
+        sessionId: existing.sessionId,
+        actor: existing.actor,
+        authenticatedClient: welcomeResult.value.authenticatedClient,
+        welcome: welcomeResult.value,
+        boundGeneration: position.generation,
+        boundCursor: position.cursor
+      }
+      this.bySessionId.set(existingId, refreshed)
+      return { ok: true, value: refreshed }
     }
 
     let sessionId: string
@@ -221,24 +252,9 @@ export class HostSession {
       return fail('sessionId mint collided with an existing binding')
     }
 
-    let position: HostCursorPosition
-    try {
-      position = this.runtime.getPosition()
-    } catch {
-      return fail('runtime position unavailable')
-    }
-    if (
-      position === null ||
-      typeof position !== 'object' ||
-      typeof position.generation !== 'number' ||
-      typeof position.cursor !== 'number' ||
-      !Number.isInteger(position.generation) ||
-      !Number.isInteger(position.cursor) ||
-      position.generation < 0 ||
-      position.cursor < 0
-    ) {
-      return fail('runtime position is invalid')
-    }
+    const positionResult = this.readPosition()
+    if (!positionResult.ok) return positionResult
+    const position = positionResult.value
 
     const welcomeResult = buildHostBootstrapWelcome({
       hostId: this.host.hostId,
@@ -264,6 +280,28 @@ export class HostSession {
     this.bySessionId.set(sessionId, binding)
     this.sessionIdByActorKey.set(actorBindingKey(actor), sessionId)
     return { ok: true, value: binding }
+  }
+
+  private readPosition(): HostDecodeResult<HostCursorPosition> {
+    let position: HostCursorPosition
+    try {
+      position = this.runtime.getPosition()
+    } catch {
+      return fail('runtime position unavailable')
+    }
+    if (
+      position === null ||
+      typeof position !== 'object' ||
+      typeof position.generation !== 'number' ||
+      typeof position.cursor !== 'number' ||
+      !Number.isInteger(position.generation) ||
+      !Number.isInteger(position.cursor) ||
+      position.generation < 0 ||
+      position.cursor < 0
+    ) {
+      return fail('runtime position is invalid')
+    }
+    return { ok: true, value: position }
   }
 
   /**
