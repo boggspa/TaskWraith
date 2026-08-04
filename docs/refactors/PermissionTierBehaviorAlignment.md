@@ -124,7 +124,21 @@ Required, in one atomic slice because tests pin the pair:
   TaskWraith-brokered tools there; document per-provider truth in the tool docs
   rather than pretending uniformity.
 
-### D — Accept Edits: destructive-shell ask + ask-once native consent
+### D — LANDED 2026-08-04 (`dcc96942e`) — shell tier policy + codex posture gate
+Built as ShellCommandTierPolicy.ts (both polarities documented in-module) +
+holds folded into `neverAutoAllow` at both gate sites + the inspection fast
+path (ls/cat/grep-class prompt-free under ask policies, audit reason
+`inspection_shell`) + `codexNativeAutoApprovalFromPosture` (codex native gate
+honors the signed post-clamp posture; global deny survives). Deliberate
+residue: shellCommands stays promptable at Accept Edits for everything beyond
+the inspection allowlist (a general "non-destructive" blessing of build
+commands is unsound — `npm run` executes arbitrary scripts); process-mutation
+holds ask each time at Full WS Access (stricter than the ask-once spec until a
+narrower grant key exists); compound/wrapped commands evade the holds (#54
+residue); the codex exec-fallback setup guard keeps reading globals (no run
+posture exists at provider-setup time).
+
+Original notes: destructive-shell ask + ask-once native consent
 - Non-destructive vs destructive shell needs a CLASSIFIER before
   shellCommands can move to 'allow' at default — none exists today (the
   read-only git fast-path classifier is the nearest prior art). Until it
@@ -134,7 +148,18 @@ Required, in one atomic slice because tests pin the pair:
   memory (mirror the AntiGravity consent-wall pattern); codexNeedsApprovalGate
   currently reads GLOBAL settings, not run posture — fold into this slice.
 
-### E — Full WS / Full Access refinements
+### E — LANDED 2026-08-04 (`dcc96942e`) — external-read split + rm/remote rules
+Outside-workspace READS auto-approve (audited, reason `external_read`) at
+workspace_write/full_access on both gates; writes keep the external-path grant
+card. `rm -r`-class asks everywhere except provably in-workspace targets at
+Full Access ("always approve in workspace" — proof fails closed on `..`, `~`,
+globs, absolute escapes, or missing workspace). Remote/SSH + raw network shell
+(ssh family, curl/wget/nc, remote rsync) asks at EVERY tier per the owner
+spec — note the deliberate UX cost: `curl` in builds now prompts at the write
+tiers. rm -rf githook interplay resolved at the gate (git has no hook that
+fires on rm; the approval gate is the only sound seam).
+
+Original notes:
 - Outside-workspace READS auto at workspace_write+ (today external-path grants
   prompt for reads too — split read vs write in the external-path decision).
 - rm -rf githook interplay: the block lives in .githooks + shell approval
